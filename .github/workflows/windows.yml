@@ -60,8 +60,43 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Run desktop tests
+        id: desktop_tests
+        continue-on-error: true
         working-directory: shinsoux
         run: .\gradlew.bat :composeApp:desktopTest --stacktrace
+
+      - name: Report desktop test failures
+        if: steps.desktop_tests.outcome == 'failure'
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $reports = @(Get-ChildItem "composeApp/build/test-results/desktopTest/TEST-*.xml" `
+            -File -ErrorAction SilentlyContinue)
+          $failedCases = @()
+          foreach ($report in $reports) {
+            [xml]$document = Get-Content -LiteralPath $report.FullName -Raw
+            $failedCases += @($document.SelectNodes("//testcase[failure or error]"))
+          }
+          if ($failedCases.Count -eq 0) {
+            throw "Desktop tests failed before producing a JUnit failure report."
+          }
+          foreach ($case in $failedCases) {
+            $detailNode = @($case.failure, $case.error) |
+              Where-Object { $null -ne $_ } |
+              Select-Object -First 1
+            $title = "Desktop test failed: $($case.classname).$($case.name)"
+            $detail = if ($null -ne $detailNode.InnerText) {
+              [string]$detailNode.InnerText
+            } else {
+              "No failure details were reported."
+            }
+            if ($detail.Length -gt 4000) { $detail = $detail.Substring(0, 4000) }
+            $title = $title.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            $title = $title.Replace(":", "%3A").Replace(",", "%2C")
+            $detail = $detail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=$title::$detail"
+          }
+          throw "$($failedCases.Count) desktop test(s) failed."
 
       - name: Compile desktop application
         working-directory: shinsoux
