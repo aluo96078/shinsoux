@@ -128,6 +128,8 @@ class DesktopPluginKeyValueStoreTest {
 
     @Test
     fun requiredSecurityFrameworkSymbolsAreAvailable() {
+        if (DesktopPlatform.current != DesktopPlatform.MAC_OS) return
+
         val security = NativeLibrary.getInstance("/System/Library/Frameworks/Security.framework/Security")
         listOf(
             "SecKeychainFindGenericPassword",

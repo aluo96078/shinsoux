@@ -10,7 +10,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyShortcut
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
@@ -43,9 +42,8 @@ import javax.swing.SwingUtilities
 import kotlinx.coroutines.runBlocking
 
 fun main() {
-    System.setProperty("apple.awt.application.name", "Shinsou X")
-    System.setProperty("apple.laf.useScreenMenuBar", "true")
-    System.setProperty("apple.awt.application.appearance", "system")
+    val desktopPlatform = DesktopPlatform.current
+    configureDesktopSystemProperties(desktopPlatform)
 
     application {
         val repository = remember {
@@ -172,26 +170,30 @@ fun main() {
                     Separator()
                     Item(
                         strings.text("Settings…"),
-                        shortcut = KeyShortcut(Key.Comma, meta = true),
+                        shortcut = desktopPlatform.primaryShortcut(Key.Comma),
                         onClick = services::openSettings,
                     )
                     Separator()
                     Item(
                         strings.text("Quit Shinsou X"),
-                        shortcut = KeyShortcut(Key.Q, meta = true),
+                        shortcut = desktopPlatform.primaryShortcut(Key.Q),
                         onClick = ::requestClose,
                     )
                 }
                 Menu(strings.text("Go")) {
-                    navigationItem(strings.library, Key.One, DeepLinkSection.Library, services)
-                    navigationItem(strings.updates, Key.Two, DeepLinkSection.Updates, services)
-                    navigationItem(strings.history, Key.Three, DeepLinkSection.History, services)
-                    navigationItem(strings.browse, Key.Four, DeepLinkSection.Browse, services)
-                    navigationItem(strings.more, Key.Five, DeepLinkSection.More, services)
+                    navigationItem(strings.library, Key.One, DeepLinkSection.Library, desktopPlatform, services)
+                    navigationItem(strings.updates, Key.Two, DeepLinkSection.Updates, desktopPlatform, services)
+                    navigationItem(strings.history, Key.Three, DeepLinkSection.History, desktopPlatform, services)
+                    navigationItem(strings.browse, Key.Four, DeepLinkSection.Browse, desktopPlatform, services)
+                    navigationItem(strings.more, Key.Five, DeepLinkSection.More, desktopPlatform, services)
                 }
                 Menu(strings.text("Window")) {
                     Item(strings.text("Center window"), onClick = { window.setLocationRelativeTo(null) })
-                    Item(strings.text("Minimize"), shortcut = KeyShortcut(Key.M, meta = true), onClick = { window.isMinimized = true })
+                    Item(
+                        strings.text("Minimize"),
+                        shortcut = desktopPlatform.primaryShortcut(Key.M),
+                        onClick = { window.isMinimized = true },
+                    )
                 }
             }
 
@@ -209,11 +211,12 @@ private fun androidx.compose.ui.window.MenuScope.navigationItem(
     title: String,
     key: Key,
     section: DeepLinkSection,
+    platform: DesktopPlatform,
     services: DesktopAppServices,
 ) {
     Item(
         title,
-        shortcut = KeyShortcut(key, meta = true),
+        shortcut = platform.primaryShortcut(key),
         onClick = { services.openSection(section) },
     )
 }

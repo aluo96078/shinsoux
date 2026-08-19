@@ -60,6 +60,27 @@ class PluginSubsystemTest {
     }
 
     @Test
+    fun pluginIdentifiersAreSafeOnWindowsFilesystems() {
+        listOf(
+            "CON",
+            "nul.js",
+            "COM1.source",
+            "bad:name",
+            "bad*name",
+            "trailing.",
+            "trailing ",
+            "control\u001fcharacter",
+        ).forEach { value ->
+            assertFailsWith<PluginVerificationException.UnsafeIdentifier>(value) {
+                PluginVerifier.validateSafeFileComponent(value)
+            }
+        }
+
+        PluginVerifier.validateSafeFileComponent("zh.bika")
+        PluginVerifier.validateSafeFileName("all.example.js")
+    }
+
+    @Test
     fun keyValueStoresSurviveReconstructionAndKeepSourcesIsolated() = runTest {
         val kv = InMemoryPluginKeyValueStore()
         val first = KeyValuePluginStorage(kv)

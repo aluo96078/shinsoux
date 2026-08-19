@@ -27,4 +27,6 @@ Pods/
 *.apk
 *.aab
 *.dmg
+*.msi
+*.exe
 .DS_Store

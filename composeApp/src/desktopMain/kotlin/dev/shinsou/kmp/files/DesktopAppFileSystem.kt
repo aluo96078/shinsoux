@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.files
 
+import dev.shinsou.kmp.desktop.DesktopAppDirectories
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -8,13 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class DesktopAppFileSystem(
-    private val root: Path = Path.of(
-        System.getProperty("user.home"),
-        "Library",
-        "Application Support",
-        "Shinsou",
-        "Content",
-    ),
+    private val root: Path = DesktopAppDirectories.contentRoot,
 ) : AppFileSystem {
     override suspend fun write(relativePath: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
         path(relativePath).also { Files.createDirectories(it.parent) }.let { Files.write(it, bytes) }

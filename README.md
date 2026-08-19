@@ -1,6 +1,6 @@
 # Shinsou X
 
-**Shinsou X** 是一款本機優先、可擴充的跨平台漫畫書庫與閱讀器，也是原生 iOS 專案 [Shinsou](https://github.com/aluo96078/shinsou) 的正式後繼版本。它以 Kotlin Multiplatform 與 Compose Multiplatform 建構，讓 Android、iOS 與 macOS 共用核心資料、來源擴充套件、下載、備份與主要介面，同時保留各平台的安全儲存與系統整合。
+**Shinsou X** 是一款本機優先、可擴充的跨平台漫畫書庫與閱讀器，也是原生 iOS 專案 [Shinsou](https://github.com/aluo96078/shinsou) 的正式後繼版本。它以 Kotlin Multiplatform 與 Compose Multiplatform 建構，讓 Android、iOS、macOS 與 Windows 共用核心資料、來源擴充套件、下載、備份與主要介面，同時保留各平台的安全儲存與系統整合。
 
 > [!IMPORTANT]
 > **Shinsou X 是目前唯一持續開發的版本。** 舊版 Shinsou（Swift／SwiftUI）已停止開發，只保留作為歷史參考。新功能、問題修復與文件更新都會在本專案進行。
@@ -14,6 +14,7 @@
 | Android | Android 8.0（API 26）以上；Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
 | iOS／iPadOS | iOS 16 以上；Xcode App＋Widget | Keychain、iCloud Drive、BGTask、WKWebView、Widget |
 | macOS | Compose Desktop App／DMG；目前打包目標為 Apple Silicon | Menu Bar、快捷鍵、系統文件選擇器、macOS Keychain |
+| Windows | Windows 10／11 x64；MSI／EXE | `%LOCALAPPDATA%`、使用者範圍 DPAPI、Ctrl 快捷鍵、原生文件選擇器 |
 
 ## 核心特色
 
@@ -21,7 +22,7 @@
 - LTR、RTL、直向、Webtoon 等閱讀模式，支援縮放、濾鏡、預取與離線閱讀
 - 可安裝的 JavaScript 來源擴充套件，以及來源登入、Cookie、偏好與網路設定
 - 下載佇列、本地 ZIP／CBZ／EPUB／圖片匯入、備份還原與跨裝置快照同步
-- AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS 各自的安全儲存
+- AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
 ## 已實作範圍
@@ -54,14 +55,14 @@ JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Browse、Re
 
 ## Desktop
 
-Desktop 是 Compose Desktop 的 macOS 風格實作，不是 AppKit 原生介面。目前包含：
+Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；它不是 AppKit 或 WinUI 原生介面。目前包含：
 
 - sidebar 與寬視窗雙欄 master/detail
 - 系統 Menu Bar
-- `⌘1`～`⌘5` 切換主區、`⌘,` 開啟設定、`⌘Q` 結束
-- 可選的關閉確認、視窗最小尺寸與 DMG／ICNS 打包設定
+- macOS 使用 `⌘`、Windows 使用 `Ctrl` 的主區切換、設定及結束快捷鍵
+- 可選的關閉確認、視窗最小尺寸，以及 DMG／MSI／EXE 平台安裝包
 - 鍵盤 Reader 操作與 app 前景期間的自動備份排程
-- 敏感 plugin KV 使用 AES-256-GCM，master key 由 JNA 直接存取 macOS Security.framework Keychain；Desktop app lock／secure screen 則明示為不可用
+- 敏感 plugin KV 使用 AES-256-GCM；master key 在 macOS 存入 Keychain，在 Windows 經目前使用者範圍 DPAPI 保護；Desktop app lock／secure screen 則明示為不可用
 
 ## 專案結構
 
@@ -69,12 +70,12 @@ Desktop 是 Compose Desktop 的 macOS 風格實作，不是 AppKit 原生介面�
 - `composeApp/src/androidMain`：Android Activity、文件選擇器、Biometric、WebView、WorkManager 與持久化接線
 - `composeApp/src/iosMain`：iOS framework entry、JavaScriptCore、Keychain、WKWebView、iCloud Drive、BGTask、文件選擇器與 Widget payload
 - `composeApp/src/jvmCommonMain`：Android／Desktop 共用 Rhino JavaScript runtime
-- `composeApp/src/desktopMain`：macOS Desktop host、Menu Bar、bounded 檔案選擇器、Application Support 儲存與 Keychain master-key 接線
+- `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
 
 ## 開始使用與建置
 
-需求：JDK 17、Android SDK Platform 36；iOS 與 DMG 建置需在 macOS 執行，iOS 另需 Xcode、XcodeGen 與適用的 Apple 開發簽章設定。公開 fork 需將 `iosApp/project.yml` 中的 Development Team 換成自己的團隊。
+需求：JDK 17、Android SDK Platform 36；iOS 與 DMG 建置需在 macOS 執行，MSI／EXE 需在 Windows 與 WiX Toolset 3.x 環境執行。iOS 另需 Xcode、XcodeGen 與適用的 Apple 開發簽章設定。公開 fork 需將 `iosApp/project.yml` 中的 Development Team 換成自己的團隊。
 
 ```bash
 # 取得原始碼
@@ -111,7 +112,8 @@ xcodebuild -project Shinsou.xcodeproj \
 ## 文件與相關專案
 
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
-- [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS 的實作與外部驗證狀態
+- [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
+- [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
 - [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin)：Shinsou X JavaScript 擴充套件儲存庫
 - [Shinsou（停止開發）](https://github.com/aluo96078/shinsou)：舊 Swift／SwiftUI 版本的歷史封存
 
@@ -120,6 +122,7 @@ xcodebuild -project Shinsou.xcodeproj \
 - Android snapshot 與本地頁面位於 app-private files；credentials、cookies、OAuth token、proxy API key 等敏感 KV 使用 Android Keystore AES-GCM key 加密。
 - iOS snapshot 位於 Application Support；credentials、cookies、OAuth token、proxy API key 與其他 secrets 由 Keychain 保存。
 - Desktop snapshot 位於 `~/Library/Application Support/Shinsou`；敏感 KV 使用 AES-256-GCM，master key 存在 macOS Keychain。舊 `plugin-secrets.key` 只有在 Keychain 回讀及既有密文解密都成功後才會刪除；Keychain 失敗時不建立新的 file fallback。
+- Windows snapshot 與內容位於 `%LOCALAPPDATA%\Shinsou X`；敏感 KV 同樣使用 AES-256-GCM，master key 只以目前使用者範圍 DPAPI protected blob 落盤。
 - 可攜式備份、自動備份與 iCloud snapshot 以 `AppSnapshot` 為資料模型：會保存 extension repository 設定，但不包含已安裝的 JavaScript package、per-source plugin key-value state、credentials、cookies、OAuth token 或 proxy API key。proxy key 在序列化前會 redaction，restore／sync 也保留目的裝置的本機 secret。
 - Local source 與已下載頁面的檔案 bytes 不在 snapshot envelope 內。跨裝置還原會保留資料記錄，但仍需在目的裝置重新匯入原始檔或重新下載頁面。
 - Download completion manifest 與 Local v2 manifest 都留在 app-private storage，不會隨 portable snapshot 移動。同步合併不採用遠端 `downloadQueue`，只保留本機 queue；備份還原也保留並清理本機 queue，而不啟動另一台裝置的下載工作。

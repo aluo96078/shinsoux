@@ -13,6 +13,13 @@
 -keep interface dev.shinsou.kmp.desktop.JnaMacOsKeychainApi$SecurityFramework { *; }
 -keep interface dev.shinsou.kmp.desktop.JnaMacOsKeychainApi$CoreFoundationFramework { *; }
 
+# DPAPI uses the same reflective JNA binding model on Windows.  Keep native
+# function names and DATA_BLOB field names stable in release installers.
+-keep class dev.shinsou.kmp.desktop.JnaWindowsDpapiApi { *; }
+-keep interface dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$Crypt32Library { *; }
+-keep interface dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$Kernel32Library { *; }
+-keep class dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$DataBlob { *; }
+
 # Rhino selects its JVM bridge by class name at runtime.  ProGuard cannot see
 # the reflective lookup from VMBridge.makeInstance(), so a release image that
 # only keeps the entry point loses jdk18/VMBridge_jdk18 and every plugin fails

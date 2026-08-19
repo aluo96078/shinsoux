@@ -140,7 +140,7 @@ compose.desktop {
         }
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
             packageName = "Shinsou X"
             packageVersion = "1.0.0"
             description = "Shinsou X manga reader"
@@ -157,6 +157,21 @@ compose.desktop {
                         <string>Shinsou X</string>
                     """.trimIndent()
                 }
+            }
+            windows {
+                // Keep this UUID stable across releases so MSI/EXE upgrades replace
+                // an existing Shinsou X installation instead of installing side-by-side.
+                upgradeUuid = "1E4B4C87-A9D7-4C41-9270-401E627717A9"
+                perUserInstall = true
+                // A per-user jpackage install otherwise defaults to %LOCALAPPDATA%\Shinsou X,
+                // which is also the application data root. Keep binaries under Programs so
+                // upgrades and uninstallers can never remove the user's library and secrets.
+                installationPath = "Programs\\Shinsou X"
+                dirChooser = true
+                shortcut = true
+                menu = true
+                menuGroup = "Shinsou X"
+                iconFile.set(project.file("src/desktopMain/resources/shinsou.ico"))
             }
         }
     }

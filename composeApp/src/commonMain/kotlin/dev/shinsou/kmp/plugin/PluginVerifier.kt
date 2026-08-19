@@ -136,8 +136,12 @@ public class PluginVerifier(
         }
 
         public fun validateSafeFileComponent(value: String) {
+            val windowsDeviceName = value.substringBefore('.').uppercase()
             if (value.isBlank() || value == "." || value == ".." ||
-                value.any { it == '/' || it == '\\' || it == '\u0000' }
+                value.endsWith('.') || value.endsWith(' ') ||
+                value.any { character ->
+                    character.code < 32 || character in WINDOWS_FORBIDDEN_FILE_CHARACTERS
+                } || windowsDeviceName in WINDOWS_RESERVED_DEVICE_NAMES
             ) {
                 throw PluginVerificationException.UnsafeIdentifier(value)
             }
@@ -147,6 +151,15 @@ public class PluginVerifier(
             validateSafeFileComponent(value)
             if (!value.endsWith(".js", ignoreCase = true)) {
                 throw PluginVerificationException.UnsafeIdentifier(value)
+            }
+        }
+
+        private val WINDOWS_FORBIDDEN_FILE_CHARACTERS = setOf('/', '\\', '<', '>', ':', '"', '|', '?', '*')
+        private val WINDOWS_RESERVED_DEVICE_NAMES = buildSet {
+            addAll(listOf("CON", "PRN", "AUX", "NUL"))
+            (1..9).forEach { suffix ->
+                add("COM$suffix")
+                add("LPT$suffix")
             }
         }
     }

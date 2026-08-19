@@ -6,13 +6,6 @@ import com.sun.jna.Pointer
 import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.PointerByReference
 
-/** Storage boundary for the AES key used by desktop plugin state. */
-internal interface DesktopMasterKeyStore {
-    fun read(): ByteArray?
-
-    fun write(value: ByteArray)
-}
-
 /**
  * Uses Security.framework directly so key material never appears in process arguments, shell
  * history, command output, or an application-support file beside the ciphertext.
@@ -44,7 +37,7 @@ private class JnaMacOsKeychainApi : MacOsKeychainApi {
     private val coreFoundation: CoreFoundationFramework
 
     init {
-        check(System.getProperty("os.name").contains("mac", ignoreCase = true)) {
+        check(DesktopPlatform.fromOsName(System.getProperty("os.name")) == DesktopPlatform.MAC_OS) {
             "The macOS Keychain is unavailable on this operating system."
         }
         security = Native.load(SECURITY_FRAMEWORK, SecurityFramework::class.java)

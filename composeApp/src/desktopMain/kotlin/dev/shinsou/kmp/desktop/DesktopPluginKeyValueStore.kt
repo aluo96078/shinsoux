@@ -22,13 +22,8 @@ import kotlinx.coroutines.withContext
 
 /** Atomic, owner-only desktop persistence with AES-GCM protection for credential/token values. */
 internal class DesktopPluginKeyValueStore(
-    private val directory: Path = Path.of(
-        System.getProperty("user.home"),
-        "Library",
-        "Application Support",
-        "Shinsou",
-    ),
-    private val masterKeyStore: DesktopMasterKeyStore = MacOsKeychainMasterKeyStore(),
+    private val directory: Path = DesktopAppDirectories.dataRoot,
+    private val masterKeyStore: DesktopMasterKeyStore = DesktopMasterKeyStoreFactory.create(directory),
     private val secureRandom: SecureRandom = SecureRandom(),
 ) : PluginKeyValueStore {
     private val lock = Any()
@@ -169,11 +164,11 @@ internal class DesktopPluginKeyValueStore(
             }
 
             keychainKey != null && keychainDecryptsState -> keychainKey
-            else -> error("Neither the legacy file nor macOS Keychain can decrypt desktop plugin secrets.")
+            else -> error("Neither the legacy file nor protected credential store can decrypt desktop plugin secrets.")
         }
 
         check(decryptsAll(encryptedValues, resolved)) {
-            "Desktop plugin secrets were not decryptable after Keychain migration."
+            "Desktop plugin secrets were not decryptable after protected-store migration."
         }
         deleteLegacyMasterKeyFiles()
         return resolved
@@ -184,7 +179,7 @@ internal class DesktopPluginKeyValueStore(
         masterKeyStore.write(masterKey)
         val persisted = masterKeyStore.read()
         check(persisted != null && persisted.contentEquals(masterKey)) {
-            "macOS Keychain did not return the desktop master key after writing it."
+            "The protected credential store did not return the desktop master key after writing it."
         }
     }
 

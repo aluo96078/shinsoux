@@ -27,6 +27,7 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.Locale
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +45,7 @@ internal class DesktopAppServices(
     private val closeApplication: () -> Unit,
     private val frame: () -> Frame? = { null },
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
+    private val platform: DesktopPlatform = DesktopPlatform.current,
 ) : ShinsouAppServices {
     private val pendingDeepLink = MutableStateFlow<ShinsouDeepLink?>(null)
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
@@ -53,10 +55,10 @@ internal class DesktopAppServices(
     override val prefersDesktopChrome: Boolean = true
     override val securityCapabilities: PlatformSecurityCapabilities = PlatformSecurityCapabilities(
         appLock = SecurityFeatureCapability.unavailable(
-            "App lock is unavailable on Desktop because macOS authentication is not implemented.",
+            "Device authentication is unavailable on this platform.",
         ),
         secureScreen = SecurityFeatureCapability.unavailable(
-            "Secure screen is unavailable on Desktop because macOS does not expose this protection here.",
+            "Secure-screen protection is unavailable on this platform.",
         ),
     )
 
@@ -184,14 +186,17 @@ internal class DesktopAppServices(
         multiple: Boolean = true,
     ): List<Path> {
         val result = CompletableDeferred<List<Path>>()
+        val normalizedExtensions = normalizeAcceptedExtensions(acceptedExtensions)
         SwingUtilities.invokeLater {
             val dialog = FileDialog(frame(), title, mode).apply {
                 isMultipleMode = multiple
                 file = suggestedName
-                if (acceptedExtensions.isNotEmpty()) {
+                // Windows' native FileDialog does not honor FilenameFilter. Keep it as a
+                // convenience on supported platforms, then enforce the same rule after the
+                // native picker returns on every operating system.
+                if (normalizedExtensions.isNotEmpty() && platform != DesktopPlatform.WINDOWS) {
                     filenameFilter = java.io.FilenameFilter { _, name ->
-                        val extension = name.substringAfterLast('.', "").lowercase()
-                        extension in acceptedExtensions.map { it.trimStart('.').lowercase() }
+                        extensionOf(name) in normalizedExtensions
                     }
                 }
                 isVisible = true
@@ -199,20 +204,19 @@ internal class DesktopAppServices(
             val files = if (dialog.files.isNotEmpty()) {
                 dialog.files.map { it.toPath() }
             } else {
-                dialog.file?.let { listOf(Path.of(dialog.directory, it)) }.orEmpty()
+                dialog.file?.let { fileName ->
+                    listOf(dialog.directory?.let { Path.of(it, fileName) } ?: Path.of(fileName))
+                }.orEmpty()
             }
             dialog.dispose()
-            result.complete(files)
+            result.complete(filterAcceptedFileSelections(files, normalizedExtensions))
         }
         return result.await()
     }
 }
 
 internal object DesktopPersistence {
-    private val directory: Path by lazy {
-        val userHome = System.getProperty("user.home")
-        Path.of(userHome, "Library", "Application Support", "Shinsou")
-    }
+    private val directory: Path by lazy { DesktopAppDirectories.dataRoot }
     private val stateFile: Path get() = directory.resolve("shinsou-state.json")
 
     fun loadState(): String? = runCatching {
@@ -235,3 +239,22 @@ internal object DesktopPersistence {
         }
     }
 }
+
+internal fun filterAcceptedFileSelections(
+    files: List<Path>,
+    acceptedExtensions: Set<String>,
+): List<Path> {
+    val normalizedExtensions = normalizeAcceptedExtensions(acceptedExtensions)
+    if (normalizedExtensions.isEmpty()) return files
+    return files.filter { extensionOf(it.fileName?.toString().orEmpty()) in normalizedExtensions }
+}
+
+private fun normalizeAcceptedExtensions(extensions: Set<String>): Set<String> = extensions
+    .mapNotNull { extension ->
+        extension.trim().trimStart('.').takeIf(String::isNotBlank)?.lowercase(Locale.ROOT)
+    }
+    .toSet()
+
+private fun extensionOf(fileName: String): String = fileName
+    .substringAfterLast('.', missingDelimiterValue = "")
+    .lowercase(Locale.ROOT)

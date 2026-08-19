@@ -4,15 +4,17 @@
 
 ## 共通環境
 
-- macOS（iOS 與 DMG 建置必須）
-- JDK 17
+- JDK 17（Desktop 安裝包需使用包含 `jpackage` 的完整 JDK）
 - Android SDK Platform 36、Build Tools 與 platform-tools
-- Xcode（專案 deployment target 為 iOS 16）
-- XcodeGen
+- macOS：iOS、iOS Simulator 與 DMG 建置必須；另需 Xcode（專案 deployment target 為 iOS 16）及 XcodeGen
+- Windows 11 x64：Windows Desktop 執行與 MSI／EXE 的權威建置環境
+- WiX Toolset 3.x：Compose Desktop／`jpackage` 建立 Windows MSI／EXE 時需要；`candle.exe` 與 `light.exe` 必須可由 `PATH` 找到
 
 專案使用 Gradle Wrapper，不需要另外安裝 Gradle。若 shell 內的 `ANDROID_SDK_ROOT` 指向無效 SDK，可使用 `env -u ANDROID_SDK_ROOT` 讓 Android Gradle Plugin 改讀 `local.properties` 或預設 SDK 路徑。
 
 主要版本可在 `gradle/libs.versions.toml` 查閱；目前 Android `minSdk` 26、`compileSdk`／`targetSdk` 36，Kotlin/JVM target 為 17。
+
+Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 
 ## Workspace 佈局
 
@@ -39,7 +41,7 @@ project/
 
 測試使用 memory filesystem、mock transport 與本地 HTML／script fixture；不會登入 AniList／MAL、不會向正式來源站發 request，也不會真的通過 Cloudflare challenge。
 
-### 2. 三平台 Kotlin 編譯與 Android APK
+### 2. 各 target Kotlin 編譯與 Android APK
 
 ```bash
 ./gradlew :composeApp:compileKotlinDesktop
@@ -48,7 +50,7 @@ project/
 ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
 ```
 
-Debug APK 位於 `composeApp/build/outputs/apk/debug/`。這些命令驗證 expect／actual 與平台 API 可編譯，包括三平台 bounded picker、Android volume-key dispatch、iOS Keychain 及 Desktop Security.framework binding；不會啟動 Activity、文件 provider、Keychain prompt、WebView、WKWebView 或背景 scheduler。
+Debug APK 位於 `composeApp/build/outputs/apk/debug/`。這些命令驗證 expect／actual 與平台 API 可編譯，包括各平台 bounded picker、Android volume-key dispatch、iOS Keychain，以及 Desktop 的 macOS Security.framework／Windows DPAPI JNA binding；不會啟動 Activity、文件 provider、Keychain prompt、DPAPI、WebView、WKWebView 或背景 scheduler。
 
 ### 3. iOS Kotlin/Native tests
 
@@ -80,14 +82,41 @@ xcodebuild -project Shinsou.xcodeproj \
 
 這會一併驗證 SwiftUI host、Widget extension 與 Kotlin framework linkage，但無法驗證需要簽章或帳號的 capability。
 
-### 5. Desktop 執行與 DMG
+### 5. Desktop 執行與平台安裝包
+
+在 macOS 執行 Desktop、編譯並建立 DMG：
 
 ```bash
+./gradlew :composeApp:compileKotlinDesktop
 ./gradlew :composeApp:run
 ./gradlew :composeApp:packageDmg
 ```
 
-DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。Desktop 透過 JNA 直接呼叫 macOS Security.framework Keychain；打包成功只證明 linkage 與 package 設定，不代表 Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
+DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；打包成功只證明 linkage 與 package 設定，不代表 Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
+
+在 Windows 11 x64 的 PowerShell／Windows Terminal 執行 Desktop build、test 與 app：
+
+```powershell
+.\gradlew.bat :composeApp:compileKotlinDesktop
+.\gradlew.bat :composeApp:desktopTest --rerun-tasks
+.\gradlew.bat :composeApp:run
+```
+
+使用 WiX Toolset 3.x 建立 release MSI／EXE：
+
+```powershell
+.\gradlew.bat :composeApp:packageReleaseMsi
+.\gradlew.bat :composeApp:packageReleaseExe
+```
+
+產物位於：
+
+```text
+composeApp/build/compose/binaries/main-release/msi/
+composeApp/build/compose/binaries/main-release/exe/
+```
+
+Windows installer 採 per-user install，程式預設位於 `%LOCALAPPDATA%\Programs\Shinsou X`，並提供安裝目錄選擇、桌面捷徑與開始功能表項目；穩定的 upgrade UUID 讓後續版本覆蓋升級而非並存。程式安裝目錄刻意與 `%LOCALAPPDATA%\Shinsou X` 使用者資料目錄分離，避免升級或解除安裝刪除書庫、內容與 secrets。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%LOCALAPPDATA%\Shinsou X\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 
 ## iOS 簽章與 capability
 
@@ -156,15 +185,25 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 - Reader 啟用期間的系統音量 HUD 行為
 - App Group Widget timeline 與 iCloud Drive container
 
-### Desktop GUI
+### Desktop GUI（macOS／Windows）
 
-- macOS Menu Bar、sidebar、寬視窗雙欄 layout 與最小視窗尺寸
-- `⌘1`～`⌘5`、`⌘,`、`⌘Q`、最小化與關閉確認
+- Menu Bar、sidebar、寬視窗雙欄 layout 與最小視窗尺寸
+- macOS 的 `⌘1`～`⌘5`、`⌘,`、`⌘Q`，以及 Windows 的 `Ctrl+1`～`Ctrl+5`、`Ctrl+,`、`Ctrl+Q`
+- 最小化、一般關閉與 Alt+F4 關閉確認
 - Updates Upcoming、Local import、Reader 鍵盤／章節切換
 - Settings 的 Backup／Sync 說明、More 模式切換與 Browse pinned sources
 - Cloudflare fallback 只開外部瀏覽器，且不誤報已匯入外部 cookie
-- 首次保存敏感來源資料時確認 macOS Keychain 存取；若有舊 `plugin-secrets.key`，確認只有在 Keychain 回讀與既有 AES-GCM 密文驗證都成功後才移除舊檔
+- macOS 首次保存敏感來源資料時確認 Keychain 存取；若有舊 `plugin-secrets.key`，確認只有在 Keychain 回讀與既有 AES-GCM 密文驗證都成功後才移除舊檔
 - Security settings 中 App lock／Secure screen 顯示 unavailable 且不可切換；Desktop 不應以固定成功的假驗證繞過 capability gate
+
+### Windows x64 安裝與 DPAPI
+
+- 以非管理員帳號測試 MSI 及 EXE 的首次安裝、安裝目錄選擇、桌面捷徑、開始功能表啟動與解除安裝
+- 使用前一版安裝包後再安裝新版，確認 stable upgrade UUID 會原地升級而非產生並存安裝；解除安裝後確認 `%LOCALAPPDATA%\Shinsou X` 使用者資料仍保留
+- 首次保存 credentials／cookies／OAuth token／proxy API key 後重新啟動，確認同一 Windows 使用者可透過 DPAPI 解密，且磁碟上只有 protected `plugin-secrets.dpapi`，沒有明文 master-key fallback
+- 改用另一個 Windows 使用者或損毀／替換 DPAPI blob，確認解密會 fail closed，不會靜默產生新 key 覆蓋仍需解密的資料
+- 以 `%LOCALAPPDATA%`、使用者名稱與匯入路徑含空白、中文及非 ASCII 字元的環境測試書庫、擴充套件安裝、全域搜尋、Local import、下載與備份還原
+- 在 100%、150%、200% DPI 與 Windows Defender 即時掃描開啟時檢查冷啟動、大書庫搜尋、擴充套件安裝及大量小檔下載
 
 ## 文件匯入記憶體邊界
 

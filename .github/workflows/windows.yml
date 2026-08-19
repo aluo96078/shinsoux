@@ -1,0 +1,149 @@
+name: Windows
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Shinsou X
+        uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugin fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          architecture: x64
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages
+        shell: pwsh
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Verify Windows packaging tools
+        shell: pwsh
+        run: |
+          Get-Command candle.exe -ErrorAction Stop
+          Get-Command light.exe -ErrorAction Stop
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Run desktop tests
+        working-directory: shinsoux
+        run: .\gradlew.bat :composeApp:desktopTest --stacktrace
+
+      - name: Compile desktop application
+        working-directory: shinsoux
+        run: .\gradlew.bat :composeApp:compileKotlinDesktop --stacktrace
+
+      - name: Build Windows installers
+        working-directory: shinsoux
+        run: .\gradlew.bat :composeApp:packageReleaseMsi :composeApp:packageReleaseExe --stacktrace
+
+      - name: Verify Windows installer outputs
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem "composeApp/build/compose/binaries/main-release/msi/*.msi" -File)
+          $exe = @(Get-ChildItem "composeApp/build/compose/binaries/main-release/exe/*.exe" -File)
+          if ($msi.Count -ne 1) { throw "Expected exactly one MSI, found $($msi.Count)." }
+          if ($exe.Count -ne 1) { throw "Expected exactly one EXE, found $($exe.Count)." }
+          @($msi + $exe) | ForEach-Object {
+            $hash = Get-FileHash -Path $_.FullName -Algorithm SHA256
+            Write-Output "$($_.Name) $($hash.Hash) $($_.Length) bytes"
+          }
+
+      - name: Install, launch, and uninstall MSI
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "composeApp/build/compose/binaries/main-release/msi/*.msi" -File | Select-Object -First 1
+          $launcher = Join-Path $env:LOCALAPPDATA "Programs\Shinsou X\Shinsou X.exe"
+          $dataRoot = Join-Path $env:LOCALAPPDATA "Shinsou X"
+          $sentinel = Join-Path $dataRoot "ci-uninstall-preserves-user-data.txt"
+          $stdout = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stderr.log"
+          $installed = $false
+          $application = $null
+
+          try {
+            $install = Start-Process -FilePath "msiexec.exe" `
+              -ArgumentList "/i `"$($msi.FullName)`" /qn /norestart" `
+              -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "MSI install failed with exit code $($install.ExitCode)." }
+            $installed = $true
+            if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+              throw "Installed launcher was not found at $launcher."
+            }
+
+            New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+            Set-Content -LiteralPath $sentinel -Value "The uninstaller must preserve this file."
+            $application = Start-Process -FilePath $launcher -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            Start-Sleep -Seconds 15
+            if ($application.HasExited) {
+              throw "Shinsou X exited during launch smoke with code $($application.ExitCode)."
+            }
+            Write-Output "Shinsou X stayed alive for the 15-second launch smoke."
+          }
+          finally {
+            if ($null -ne $application -and -not $application.HasExited) {
+              Stop-Process -Id $application.Id -Force
+              $application.WaitForExit()
+            }
+            if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+            if ($installed) {
+              $uninstall = Start-Process -FilePath "msiexec.exe" `
+                -ArgumentList "/x `"$($msi.FullName)`" /qn /norestart" `
+                -Wait -PassThru
+              if ($uninstall.ExitCode -ne 0) {
+                throw "MSI uninstall failed with exit code $($uninstall.ExitCode)."
+              }
+              if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf)) {
+                throw "MSI uninstall removed the Shinsou X user-data directory."
+              }
+              Write-Output "MSI uninstall preserved the separate user-data directory."
+            }
+          }
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: shinsou-x-windows-x64
+          path: |
+            shinsoux/composeApp/build/compose/binaries/main-release/msi/*.msi
+            shinsoux/composeApp/build/compose/binaries/main-release/exe/*.exe
+          if-no-files-found: error
+          retention-days: 14
