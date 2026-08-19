@@ -1,0 +1,129 @@
+name: Shinsou
+options:
+  bundleIdPrefix: dev.aluo
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.10"
+targets:
+  Shinsou:
+    type: application
+    platform: iOS
+    sources:
+      - Shinsou
+    dependencies:
+      - sdk: JavaScriptCore.framework
+      - sdk: LocalAuthentication.framework
+      - sdk: Security.framework
+      - sdk: UniformTypeIdentifiers.framework
+      - sdk: UserNotifications.framework
+      - sdk: WidgetKit.framework
+      - target: ShinsouWidgetExtension
+        embed: true
+    info:
+      path: Shinsou/Info.plist
+      properties:
+        CFBundleDisplayName: Shinsou X
+        CADisableMinimumFrameDurationOnPhone: true
+        NSFaceIDUsageDescription: Shinsou X 使用 Face ID 保護您的閱讀資料。
+        NSPhotoLibraryAddUsageDescription: Shinsou X 需要權限以儲存漫畫封面與頁面。
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsInWebContent: true
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.aluo.shinsoux
+            CFBundleURLSchemes:
+              - shinsou
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
+        UIApplicationSupportsIndirectInputEvents: true
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: dev.shinsou.backup
+            UTTypeDescription: Shinsou X Backup
+            UTTypeConformsTo:
+              - public.json
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - shinsoubackup
+              public.mime-type:
+                - application/vnd.shinsou.backup+json
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes:
+          - fetch
+          - processing
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.aluo.shinsoux.backup
+          - dev.aluo.shinsoux.update
+        NSUbiquitousContainers:
+          iCloud.dev.aluo.shinsoux:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: Shinsou X
+            NSUbiquitousContainerSupportedFolderLevels: Any
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 5UKY38ZLK6
+        PRODUCT_BUNDLE_IDENTIFIER: dev.aluo.shinsoux
+        ARCHS: arm64
+        INFOPLIST_FILE: Shinsou/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Shinsou/Shinsou.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-framework"
+          - "ShinsouKit"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Shinsou/Shinsou.debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Shinsou/Shinsou.entitlements
+    preBuildScripts:
+      - name: Build ShinsouKit
+        script: |
+          cd "$SRCROOT/.."
+          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
+        basedOnDependencyAnalysis: false
+
+  ShinsouWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - ShinsouWidgetExtension
+    info:
+      path: ShinsouWidgetExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Shinsou X Widgets
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        DEVELOPMENT_TEAM: 5UKY38ZLK6
+        PRODUCT_BUNDLE_IDENTIFIER: dev.aluo.shinsoux.widget
+        INFOPLIST_FILE: ShinsouWidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements
+        SKIP_INSTALL: YES
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: ShinsouWidgetExtension/ShinsouWidgetExtension.debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements

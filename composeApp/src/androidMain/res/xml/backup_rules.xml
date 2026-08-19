@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Keystore keys cannot be restored with these values, and local content is device-owned. -->
+    <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
+    <exclude domain="file" path="shinsou-content/" />
+</full-backup-content>

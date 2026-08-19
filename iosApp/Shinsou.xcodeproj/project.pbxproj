@@ -1,0 +1,522 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0A8855874C2995DF13F43C08 /* ShinsouWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */; };
+		13916B7A9E9065A249ACA840 /* ShinsouWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		150698CA073E7EEFFABC2601 /* JavaScriptCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0650544E14A6630BFBC51175 /* JavaScriptCore.framework */; };
+		54BCAB350F7AA94A176465BD /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2427BA1695B2CF749A686803 /* UserNotifications.framework */; };
+		64469F7C32352DD4CCEEF85A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 070842C60618E9AAB41D2823 /* WidgetKit.framework */; };
+		8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */; };
+		A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */; };
+		AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E69591E6413F571C61BF418 /* LocalAuthentication.framework */; };
+		D6A39283A50BCFF28D52F213 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 79635F878DCD39F4CCB205A3 /* Assets.xcassets */; };
+		DD6464B1E0DFC3D650F0417A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4312D99006921159A0800C44 /* Security.framework */; };
+		E6CF088DEAD639AF124DF5FC /* JSDomLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2058CC8F352C6CEECA95B14E /* JSDomLib.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		40994BD6609B3C405DA8BE95 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6C33AB28E684B03070829378 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 239AED4ED3F937A6C31BCD31;
+			remoteInfo = ShinsouWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		62155E28008304A134262A6F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				13916B7A9E9065A249ACA840 /* ShinsouWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0650544E14A6630BFBC51175 /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		070842C60618E9AAB41D2823 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		106921D95AC2BBC96DA61073 /* ShinsouWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShinsouWidgetExtension.entitlements; sourceTree = "<group>"; };
+		11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniformTypeIdentifiers.framework; path = System/Library/Frameworks/UniformTypeIdentifiers.framework; sourceTree = SDKROOT; };
+		1234B93552EDFD0F4E1BEFE4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		2058CC8F352C6CEECA95B14E /* JSDomLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSDomLib.swift; sourceTree = "<group>"; };
+		2427BA1695B2CF749A686803 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
+		26CCA6FB059AEE9D02D6D578 /* Shinsou.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Shinsou.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4312D99006921159A0800C44 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		5A0CA09CF92F32CCAD13D559 /* Shinsou.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shinsou.entitlements; sourceTree = "<group>"; };
+		6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouApp.swift; sourceTree = "<group>"; };
+		79635F878DCD39F4CCB205A3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7E69591E6413F571C61BF418 /* LocalAuthentication.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = LocalAuthentication.framework; path = System/Library/Frameworks/LocalAuthentication.framework; sourceTree = SDKROOT; };
+		C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShinsouWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		EF035F63C497108A4F0BB514 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouWidgets.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		94C218ACDDB71E48CB444795 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				150698CA073E7EEFFABC2601 /* JavaScriptCore.framework in Frameworks */,
+				AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */,
+				DD6464B1E0DFC3D650F0417A /* Security.framework in Frameworks */,
+				8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */,
+				54BCAB350F7AA94A176465BD /* UserNotifications.framework in Frameworks */,
+				64469F7C32352DD4CCEEF85A /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		28CEB209C768ED5F008827E4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				26CCA6FB059AEE9D02D6D578 /* Shinsou.app */,
+				C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5FC597A45320FDC98ED90B85 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				0650544E14A6630BFBC51175 /* JavaScriptCore.framework */,
+				7E69591E6413F571C61BF418 /* LocalAuthentication.framework */,
+				4312D99006921159A0800C44 /* Security.framework */,
+				11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */,
+				2427BA1695B2CF749A686803 /* UserNotifications.framework */,
+				070842C60618E9AAB41D2823 /* WidgetKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		AC5A3675CD2388B1A371E97B /* ShinsouWidgetExtension */ = {
+			isa = PBXGroup;
+			children = (
+				EF035F63C497108A4F0BB514 /* Info.plist */,
+				106921D95AC2BBC96DA61073 /* ShinsouWidgetExtension.entitlements */,
+				F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */,
+			);
+			path = ShinsouWidgetExtension;
+			sourceTree = "<group>";
+		};
+		B718FDDB533A78EF194517D3 /* Shinsou */ = {
+			isa = PBXGroup;
+			children = (
+				79635F878DCD39F4CCB205A3 /* Assets.xcassets */,
+				1234B93552EDFD0F4E1BEFE4 /* Info.plist */,
+				2058CC8F352C6CEECA95B14E /* JSDomLib.swift */,
+				5A0CA09CF92F32CCAD13D559 /* Shinsou.entitlements */,
+				6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */,
+			);
+			path = Shinsou;
+			sourceTree = "<group>";
+		};
+		EC0CF7D6160FE2CBE95D3676 = {
+			isa = PBXGroup;
+			children = (
+				B718FDDB533A78EF194517D3 /* Shinsou */,
+				AC5A3675CD2388B1A371E97B /* ShinsouWidgetExtension */,
+				5FC597A45320FDC98ED90B85 /* Frameworks */,
+				28CEB209C768ED5F008827E4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		239AED4ED3F937A6C31BCD31 /* ShinsouWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C8FE4397FC71EF2250F35FC2 /* Build configuration list for PBXNativeTarget "ShinsouWidgetExtension" */;
+			buildPhases = (
+				66BE4B34831C684E79C57255 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShinsouWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = ShinsouWidgetExtension;
+			productReference = C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		FF58475CEB7B28133C4A5175 /* Shinsou */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 524C20A79DF8B087FA4AAD2A /* Build configuration list for PBXNativeTarget "Shinsou" */;
+			buildPhases = (
+				52406A9D197F749A095A68FE /* Build ShinsouKit */,
+				21F7F462E41AB5B6876FEEF0 /* Sources */,
+				8465A623A7116D8CA90FD491 /* Resources */,
+				94C218ACDDB71E48CB444795 /* Frameworks */,
+				62155E28008304A134262A6F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B18166C2A074239E106B2A24 /* PBXTargetDependency */,
+			);
+			name = Shinsou;
+			packageProductDependencies = (
+			);
+			productName = Shinsou;
+			productReference = 26CCA6FB059AEE9D02D6D578 /* Shinsou.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6C33AB28E684B03070829378 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 032691E692D9D8B744C71B4D /* Build configuration list for PBXProject "Shinsou" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = EC0CF7D6160FE2CBE95D3676;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 28CEB209C768ED5F008827E4 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FF58475CEB7B28133C4A5175 /* Shinsou */,
+				239AED4ED3F937A6C31BCD31 /* ShinsouWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8465A623A7116D8CA90FD491 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6A39283A50BCFF28D52F213 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		52406A9D197F749A095A68FE /* Build ShinsouKit */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build ShinsouKit";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cd \"$SRCROOT/..\"\n./gradlew :composeApp:embedAndSignAppleFrameworkForXcode\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		21F7F462E41AB5B6876FEEF0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E6CF088DEAD639AF124DF5FC /* JSDomLib.swift in Sources */,
+				A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		66BE4B34831C684E79C57255 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A8855874C2995DF13F43C08 /* ShinsouWidgets.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B18166C2A074239E106B2A24 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 239AED4ED3F937A6C31BCD31 /* ShinsouWidgetExtension */;
+			targetProxy = 40994BD6609B3C405DA8BE95 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1D2D8CF67128AA0FC311CF34 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		518F153076382711092565BA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Shinsou/Shinsou.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5UKY38ZLK6;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				INFOPLIST_FILE = Shinsou/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ShinsouKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5FF12602A8C4EF0B9C6B98A3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShinsouWidgetExtension/ShinsouWidgetExtension.debug.entitlements;
+				DEVELOPMENT_TEAM = 5UKY38ZLK6;
+				INFOPLIST_FILE = ShinsouWidgetExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux.widget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A5124DCF4243D079B9CA2887 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		ADDD44C7A7DC60FB86508984 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Shinsou/Shinsou.debug.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5UKY38ZLK6;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				INFOPLIST_FILE = Shinsou/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ShinsouKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E5AC3513E327A0C6981BA9F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements;
+				DEVELOPMENT_TEAM = 5UKY38ZLK6;
+				INFOPLIST_FILE = ShinsouWidgetExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux.widget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		032691E692D9D8B744C71B4D /* Build configuration list for PBXProject "Shinsou" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1D2D8CF67128AA0FC311CF34 /* Debug */,
+				A5124DCF4243D079B9CA2887 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		524C20A79DF8B087FA4AAD2A /* Build configuration list for PBXNativeTarget "Shinsou" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ADDD44C7A7DC60FB86508984 /* Debug */,
+				518F153076382711092565BA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C8FE4397FC71EF2250F35FC2 /* Build configuration list for PBXNativeTarget "ShinsouWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FF12602A8C4EF0B9C6B98A3 /* Debug */,
+				E5AC3513E327A0C6981BA9F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6C33AB28E684B03070829378 /* Project object */;
+}
