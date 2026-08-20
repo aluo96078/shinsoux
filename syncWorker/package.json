@@ -1,0 +1,17 @@
+{
+  "name": "shinsou-sync-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --no-warnings=ExperimentalWarning --experimental-strip-types --test --test-reporter=spec test/*.test.ts",
+    "smoke": "node --no-warnings=ExperimentalWarning --experimental-strip-types scripts/smoke-import.ts && node --no-warnings=ExperimentalWarning --experimental-strip-types --test --test-reporter=spec scripts/cloudflare-ops-self-test.ts",
+    "ops": "node --no-warnings=ExperimentalWarning --experimental-strip-types scripts/cloudflare-ops.ts",
+    "ops:test": "node --no-warnings=ExperimentalWarning --experimental-strip-types --test --test-reporter=spec scripts/cloudflare-ops-self-test.ts",
+    "dev": "npx wrangler@4 dev --local",
+    "deploy": "npx wrangler@4 deploy"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

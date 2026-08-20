@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shinsou-sync",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PROTOCOL_VERSION": "1",
+    "MIN_READER_VERSION": "1",
+    "MIN_WRITER_VERSION": "1",
+    "SCHEMA_VERSION": "1",
+    "MIN_SCHEMA_READER_VERSION": "1",
+    "MIN_SCHEMA_WRITER_VERSION": "1",
+    "REALTIME_ENABLED": "true",
+    "CAPABILITY_TTL_SECONDS": "300",
+    "ACCESS_TOKEN_TTL_SECONDS": "600",
+    "CHECKPOINT_SELF_ACK_GRACE_SECONDS": "600",
+    "CHECKPOINT_GC_SAFETY_SECONDS": "86400",
+    "ALLOWED_ORIGINS": "",
+    "INSTANCE_ID": "00000000-0000-4000-8000-000000000000"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shinsou-sync",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CHECKPOINTS",
+      "bucket_name": "shinsou-sync-checkpoints"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORKSPACE_HUB",
+        "class_name": "WorkspaceHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WorkspaceHub"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  }
+}
