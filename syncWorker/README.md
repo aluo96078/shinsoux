@@ -332,7 +332,7 @@ hello → event → checkpointAvailable → resyncRequired/reauthRequired
 
 ## 安全注意事項與上線前 Gate
 
-- CORS 預設不允許任何 browser origin；native App 無 `Origin` 可正常使用。若需要 Web client，只設定明確的 `ALLOWED_ORIGINS`，永不使用 `*`。
+- CORS 預設不允許任何 browser origin；native App 無 `Origin` 可正常使用。原生部署範本刻意省略 `ALLOWED_ORIGINS` 空值，避免 Cloudflare Deploy 表單要求填寫沒有用途的欄位。若需要 Web client，才在 Cloudflare 中新增明確的 `ALLOWED_ORIGINS`（逗號分隔），永不使用 `*`。
 - Log 只記 method/path 與固定錯誤碼，不記 bearer、invite/pairing/bootstrap secret、QR payload、ciphertext 或 decrypted content。
 - Body 在讀取前檢查 `Content-Length`，串流過程仍套用 hard cap。Checkpoint 目前因 WebCrypto SHA-256 沒有標準 incremental API，最多會在 Worker memory 緩衝 32 MiB；部署前需用目標 Cloudflare plan 做壓力測試。
 - 本機測試使用 Cloudflare D1 同源的 SQLite 語意，但仍必須在正式 Cloudflare preview/remote D1 驗證 migration、trigger、R2 conditional put、DO hibernation/restart 與 WebSocket invalidation。
