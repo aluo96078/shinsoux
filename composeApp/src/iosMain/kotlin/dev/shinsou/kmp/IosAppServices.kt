@@ -1,8 +1,10 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.ContentCallbacks
@@ -11,6 +13,7 @@ import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.ImportedDocumentReadException
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.SystemBackGestureEvent
@@ -56,12 +59,14 @@ import platform.Foundation.readDataOfLength
 import platform.Foundation.writeToURL
 import platform.LocalAuthentication.LAContext
 import platform.LocalAuthentication.LAPolicyDeviceOwnerAuthentication
+import platform.SafariServices.SFSafariViewController
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIDocumentPickerDelegateProtocol
 import platform.UIKit.UIDocumentPickerViewController
 import platform.UIKit.UIViewController
 import platform.UIKit.UIWindow
+import platform.UIKit.UIPasteboard
 import platform.UIKit.popoverPresentationController
 import platform.UniformTypeIdentifiers.UTTypeData
 import platform.UserNotifications.UNAuthorizationOptionAlert
@@ -79,8 +84,10 @@ internal class IosAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
+    override val cloudflareSync: CloudflareSyncUiController? = null,
+    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
 ) : ShinsouAppServices {
-    private val deepLinkChannel = Channel<ShinsouDeepLink>(capacity = Channel.BUFFERED)
+    private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val readerVolumeKeyChannel = Channel<ReaderVolumeKeyEvent>(capacity = Channel.BUFFERED)
     private val systemBackChannel = Channel<Unit>(capacity = Channel.BUFFERED)
     // Gesture progress can arrive faster than Compose consumes it. Keep only the latest event so
@@ -88,9 +95,11 @@ internal class IosAppServices(
     private val systemBackGestureChannel = Channel<SystemBackGestureEvent>(capacity = Channel.CONFLATED)
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
     private val documentPickerMutex = Mutex()
+    private val qrCodeScanner = IosQrCodeScanner(::topViewController)
     private var activeDocumentDelegate: IosDocumentPickerDelegate? = null
+    private var fallbackSafariController: SFSafariViewController? = null
 
-    override val deepLinks: Flow<ShinsouDeepLink> = deepLinkChannel.receiveAsFlow()
+    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
     override val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent> = readerVolumeKeyChannel.receiveAsFlow()
     override val systemBackEvents: Flow<Unit> = systemBackChannel.receiveAsFlow()
     override val systemBackGestureEvents: Flow<SystemBackGestureEvent> = systemBackGestureChannel.receiveAsFlow()
@@ -98,7 +107,11 @@ internal class IosAppServices(
     override val securityCapabilities: PlatformSecurityCapabilities
         get() = mobileSecurityCapabilities(deviceOwnerAuthenticationAvailable())
 
-    fun emitDeepLink(link: ShinsouDeepLink): Boolean = deepLinkChannel.trySend(link).isSuccess
+    fun emitDeepLink(link: ShinsouDeepLink): Boolean = pendingDeepLinks.tryEnqueue(link)
+
+    override fun deepLinkHandled(link: ShinsouDeepLink) {
+        pendingDeepLinks.handled(link)
+    }
 
     fun emitReaderVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
         // Gate on the durable preference and the committed reader presentation. The mirrored
@@ -128,13 +141,34 @@ internal class IosAppServices(
     }
 
     override fun openExternalUrl(url: String) {
-        val target = NSURL.URLWithString(url) ?: return
+        tryOpenExternalUrl(url)
+    }
+
+    override fun tryOpenExternalUrl(url: String): Boolean {
+        val target = NSURL.URLWithString(url) ?: return false
+        // Compose actions normally arrive on the main thread, but provisioning actions run in a
+        // coroutine. Use the scene-safe iOS 10+ API on the main queue; the legacy `openURL:`
+        // selector is deprecated on iOS 26 and can be ignored by a scene-based application.
         dispatch_async(dispatch_get_main_queue()) {
-            if (UIApplication.sharedApplication.canOpenURL(target)) {
-                @Suppress("DEPRECATION")
-                UIApplication.sharedApplication.openURL(target)
-            }
+            UIApplication.sharedApplication.openURL(
+                url = target,
+                options = emptyMap<Any?, Any?>(),
+                completionHandler = { opened ->
+                    // A device can have URL opening restricted (parental controls, an
+                    // enterprise browser policy, or a transient scene transition). Keep the
+                    // deployment flow usable by presenting the page in SafariServices when the
+                    // external hand-off is rejected instead of silently doing nothing.
+                    if (!opened) {
+                        topViewController()?.let { presenter ->
+                            val safari = SFSafariViewController(target)
+                            fallbackSafariController = safari
+                            presenter.presentViewController(safari, animated = true, completion = null)
+                        }
+                    }
+                },
+            )
         }
+        return true
     }
 
     override fun shareText(title: String, text: String) {
@@ -148,6 +182,15 @@ internal class IosAppServices(
             presenter.presentViewController(controller, animated = true, completion = null)
         }
     }
+
+    override fun copyText(label: String, text: String): Boolean {
+        UIPasteboard.generalPasteboard.string = text
+        return true
+    }
+
+    override suspend fun readClipboardText(): String? = UIPasteboard.generalPasteboard.string
+
+    override suspend fun scanQrCode(): String? = qrCodeScanner.scan()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean {
         val fileName = safeFileName(suggestedName)

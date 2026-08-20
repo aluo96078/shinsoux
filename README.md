@@ -21,7 +21,7 @@
 - 書庫分類、搜尋、篩選、排序、批次操作與閱讀進度管理
 - LTR、RTL、直向、Webtoon 等閱讀模式，支援縮放、濾鏡、預取與離線閱讀
 - 可安裝的 JavaScript 來源擴充套件，以及來源登入、Cookie、偏好與網路設定
-- 下載佇列、本地 ZIP／CBZ／EPUB／圖片匯入、備份還原與跨裝置快照同步
+- 下載佇列、本地 ZIP／CBZ／EPUB／圖片匯入、備份還原與端對端加密事件同步
 - AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
@@ -37,6 +37,16 @@
 - 內建 Local source（source `0`）：直接圖片與 ZIP／CBZ／EPUB；匯入後複製至 app-private storage，並以原子發布的 v2 manifest 拒絕部分匯入
 - AniList 登入／搜尋／綁定／編輯 UI 與 OAuth token 流程；MyAnimeList 因缺少正式 client ID 而明示停用
 - iOS Widget payload、iCloud Drive snapshot sync，以及 Android／iOS Reader 實體音量鍵接線
+
+## Cloudflare 端對端加密同步
+
+Shinsou X 內含可自行部署的 Cloudflare Worker + D1 + private R2 + Durable Object 同步服務。App 的設定頁已接入首次 setup、使用者邀請、裝置 QR／短碼配對、裝置撤銷、Recovery Kit、即時／Lite catch-up，以及 checkpoint 建立與回退。領域內容只會以經 Ed25519 驗證、ChaCha20-Poly1305 加密的 deterministic event／checkpoint 傳輸；Worker 不持有 workspace 明文金鑰。
+
+本機寫入會先與 CRDT replica、HLC、draft/outbox 一起提交至 SQLite WAL，取得 server receipt 後才移除 outbox。Reader 會同步 logical page 或 Webtoon page 內的 normalized offset；離線、程序終止、WebSocket 中斷、事件重播與 cursor GC 都走可恢復路徑。撤銷或 Recovery 後會輪替獨立的新 epoch key，Recovery Kit 遺失時伺服器管理員也無法解密資料。
+
+以下資料刻意維持裝置本機：下載 bytes／queue、Local source 原始檔、extension packages、cookies、OAuth token、密碼、API key、tracker credentials 及平台專屬設定。Portable backup 在已連線 workspace 中還原或 reset 時，必須明確選擇「產生 mutations/tombstones 並同步所有裝置」或「先離開 workspace，只修改本機」，不會直接覆寫同步權威狀態。
+
+伺服器實作、部署與本機測試位於 [`syncWorker`](syncWorker/README.md)，完整協定與信任邊界見[跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)。程式的 deterministic tests 不等同 Cloudflare 新帳戶部署、真實額度、各平台 secure-store 重啟與六組跨裝置矩陣已通過；這些仍屬正式標示 stable 前的外部上線 Gate。
 
 Local source 支援 `jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`heic`、`bmp`，以及以 ZIP 容器讀取的 `zip`、`cbz`、`epub`。EPUB 目前依原版作法抽取圖片並以漫畫頁排序，不解析書籍排版或文字 spine。
 
@@ -72,6 +82,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 - `composeApp/src/jvmCommonMain`：Android／Desktop 共用 Rhino JavaScript runtime
 - `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
+- `syncWorker`：Cloudflare Worker、D1 migrations、R2 checkpoint、WorkspaceHub Durable Object、部署／備份工具與伺服器測試
 
 ## 開始使用與建置
 
@@ -112,8 +123,11 @@ xcodebuild -project Shinsou.xcodeproj \
 ## 文件與相關專案
 
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
+- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` tag、APK／IPA／DMG／MSI／EXE 與簽章 secrets
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
+- [跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)：事件模型、E2EE、配對、checkpoint、Recovery、quota 與驗收 Gate
+- [Cloudflare Sync Worker](syncWorker/README.md)：本機測試、部署、D1/R2 bindings 與 API
 - [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin)：Shinsou X JavaScript 擴充套件儲存庫
 - [Shinsou（停止開發）](https://github.com/aluo96078/shinsou)：舊 Swift／SwiftUI 版本的歷史封存
 
@@ -127,7 +141,8 @@ xcodebuild -project Shinsou.xcodeproj \
 - Local source 與已下載頁面的檔案 bytes 不在 snapshot envelope 內。跨裝置還原會保留資料記錄，但仍需在目的裝置重新匯入原始檔或重新下載頁面。
 - Download completion manifest 與 Local v2 manifest 都留在 app-private storage，不會隨 portable snapshot 移動。同步合併不採用遠端 `downloadQueue`，只保留本機 queue；備份還原也保留並清理本機 queue，而不啟動另一台裝置的下載工作。
 - 自動備份是 app-private 原子快照，提供立即建立、列表、損毀標示、還原、刪除與 retention。Android 使用 WorkManager、iOS 使用 BGProcessingTask；實際背景執行時間由作業系統決定，Desktop 則只在 app 存活時以前景 scheduler 檢查。
-- iOS 同步使用 `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔快照與 NSFileCoordinator；它不是 record-level CloudKit，也不是即時逐筆同步。
+- Cloudflare v2 只同步明確 allowlist 的領域欄位，CRDT metadata、keyring、device directory pin、draft/outbox 與 cursor 留在獨立的 sync store，不會塞進 portable `AppSnapshot`。
+- 舊版 iOS iCloud 同步仍使用 `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔快照與 NSFileCoordinator；它不是 record-level CloudKit，也不能與 Cloudflare v2 同時作為寫入端。
 
 ## 尚需外部或真機驗證
 

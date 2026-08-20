@@ -1,4 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.api.attributes.Category
+import org.gradle.api.attributes.LibraryElements
+import org.gradle.api.attributes.Usage
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -7,6 +10,80 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.kotlinSerialization)
+}
+
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
+val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
+    .map { rawValue ->
+        rawValue.toIntOrNull()?.takeIf { it > 0 }
+            ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
+    }
+    .orElse(1)
+
+val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
+val androidReleaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
+val androidReleaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+val androidReleaseSigningValues = listOf(
+    androidReleaseStoreFile,
+    androidReleaseStorePassword,
+    androidReleaseKeyAlias,
+    androidReleaseKeyPassword,
+)
+val androidReleaseSigningConfigured = androidReleaseSigningValues.all { !it.isNullOrBlank() }
+
+check(androidReleaseSigningValues.none { !it.isNullOrBlank() } || androidReleaseSigningConfigured) {
+    "Android release signing is only enabled when ANDROID_KEYSTORE_PATH, " +
+        "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD are all set."
+}
+
+// Android local unit tests execute Android bytecode on the host JVM. The
+// libsodium and JNA Android AARs only carry device JNI libraries, while their
+// loaders correctly observe the host OS during those tests and request the
+// matching JVM native resources. Resolve the host artifacts in an isolated
+// configuration and expose only their native resources to Android unit tests;
+// no JVM classes or libraries are added to the application classpath.
+val androidHostNativeTestResources by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.JAR))
+    }
+}
+
+dependencies {
+    add(
+        androidHostNativeTestResources.name,
+        "com.ionspin.kotlin:multiplatform-crypto-libsodium-bindings-jvm:${libs.versions.libsodium.get()}",
+    )
+    // Must match the JNA version required by the configured libsodium Android
+    // AAR; JNA rejects a native dispatch library from a different release.
+    add(
+        androidHostNativeTestResources.name,
+        "net.java.dev.jna:jna:${libs.versions.jna.get()}@jar",
+    )
+}
+
+val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
+    from(
+        androidHostNativeTestResources.incoming.files.elements.map { artifacts ->
+            artifacts.map { archive -> zipTree(archive.asFile) }
+        },
+    ) {
+        include("libdynamic-*")
+        include("com/sun/jna/**/libjnidispatch.*")
+        include("com/sun/jna/**/jnidispatch.*")
+    }
+    into(layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"))
+}
+
+tasks.configureEach {
+    if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
+        dependsOn(prepareAndroidUnitTestLibsodiumResources)
+    }
 }
 
 // Keep generated Compose resource classes in a valid Kotlin package even
@@ -28,6 +105,9 @@ kotlin {
     iosSimulatorArm64()
 
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        binaries.all {
+            linkerOpts("-lsqlite3")
+        }
         binaries.framework {
             baseName = "ShinsouKit"
             isStatic = true
@@ -51,6 +131,12 @@ kotlin {
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.kotlinx.json)
+            implementation(libs.ktor.websockets)
+            implementation(libs.sqldelight.runtime)
+            implementation(libs.libsodium.bindings)
+            implementation(libs.qrose)
         }
 
         commonTest.dependencies {
@@ -78,6 +164,8 @@ kotlin {
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
                 implementation(libs.ktor.client.okhttp)
+                implementation(libs.sqldelight.android.driver)
+                implementation(libs.google.code.scanner)
             }
         }
 
@@ -85,6 +173,7 @@ kotlin {
             dependsOn(commonMain.get())
             dependencies {
                 implementation(libs.ktor.client.darwin)
+                implementation(libs.sqldelight.native.driver)
             }
         }
 
@@ -98,6 +187,7 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.cio)
                 implementation(libs.jna)
+                implementation(libs.sqldelight.sqlite.driver)
             }
         }
 
@@ -115,11 +205,34 @@ android {
         applicationId = "dev.aluo.shinsoux"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = releaseVersionCode.get()
+        versionName = releaseVersion.get()
+    }
+
+    signingConfigs {
+        if (androidReleaseSigningConfigured) {
+            create("release") {
+                storeFile = file(requireNotNull(androidReleaseStoreFile))
+                storePassword = requireNotNull(androidReleaseStorePassword)
+                keyAlias = requireNotNull(androidReleaseKeyAlias)
+                keyPassword = requireNotNull(androidReleaseKeyPassword)
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (androidReleaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     buildFeatures.compose = true
+
+    sourceSets.getByName("test").resources.srcDir(
+        layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"),
+    )
 
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
 }
@@ -142,7 +255,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
             packageName = "Shinsou X"
-            packageVersion = "1.0.0"
+            packageVersion = releaseVersion.get()
             description = "Shinsou X manga reader"
             vendor = "Shinsou X"
             macOS {
@@ -155,6 +268,17 @@ compose.desktop {
                     extraKeysRawXml = """
                         <key>CFBundleDisplayName</key>
                         <string>Shinsou X</string>
+                        <key>CFBundleURLTypes</key>
+                        <array>
+                            <dict>
+                                <key>CFBundleURLName</key>
+                                <string>dev.aluo.shinsoux.sync</string>
+                                <key>CFBundleURLSchemes</key>
+                                <array>
+                                    <string>shinsou</string>
+                                </array>
+                            </dict>
+                        </array>
                     """.trimIndent()
                 }
             }

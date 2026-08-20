@@ -122,6 +122,44 @@ class SnapshotSyncControllerTest {
         assertEquals(SnapshotSyncPhase.UNAVAILABLE, controller.state.value.phase)
     }
 
+    @Test
+    fun cloudflareWriterGateBlocksLegacyReadAndWriteFailClosed() = runTest {
+        val transport = MemorySnapshotTransport()
+        val controller = SnapshotSyncController(
+            repository = ShinsouRepository(),
+            transport = transport,
+            deviceId = "legacy-fallback",
+            writerAllowed = { false },
+            nowEpochMillis = { 400L },
+        )
+
+        val capability = controller.refreshCapability()
+        val result = controller.sync()
+
+        assertEquals(SnapshotSyncAvailability.UNAVAILABLE, capability.availability)
+        assertEquals(SnapshotSyncOutcome.UNAVAILABLE, result.outcome)
+        assertEquals(0, transport.readCount)
+        assertEquals(0, transport.writeCount)
+    }
+
+    @Test
+    fun persistentInstallationDeviceIdIsUsedInLegacyEnvelope() = runTest {
+        val transport = MemorySnapshotTransport()
+        val controller = SnapshotSyncController(
+            repository = ShinsouRepository(),
+            transport = transport,
+            deviceId = "legacy-fallback",
+            deviceIdProvider = { "stable-installation-device" },
+            nowEpochMillis = { 500L },
+        )
+
+        assertEquals(SnapshotSyncOutcome.UPLOADED_LOCAL, controller.sync().outcome)
+        assertEquals(
+            "stable-installation-device",
+            SnapshotBackupService.decode(requireNotNull(transport.payload)).deviceId,
+        )
+    }
+
     private data class ScenarioResult(
         val result: SnapshotSyncResult,
         val encodedPush: String,
@@ -135,10 +173,14 @@ class SnapshotSyncControllerTest {
             detail = "Test remote is available.",
         )
         var writeCount: Int = 0
+        var readCount: Int = 0
 
         override suspend fun capability(): SnapshotSyncCapability = initialCapability
 
-        override suspend fun readSnapshot(): String? = payload
+        override suspend fun readSnapshot(): String? {
+            readCount++
+            return payload
+        }
 
         override suspend fun writeSnapshot(encodedEnvelope: String) {
             payload = encodedEnvelope

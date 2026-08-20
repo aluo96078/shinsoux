@@ -12,17 +12,23 @@ import com.sun.jna.ptr.PointerByReference
  */
 internal class MacOsKeychainMasterKeyStore(
     private val keychain: MacOsKeychainApi = JnaMacOsKeychainApi(),
+    private val service: String = DEFAULT_SERVICE,
+    private val account: String = DEFAULT_ACCOUNT,
 ) : DesktopMasterKeyStore {
-    override fun read(): ByteArray? = keychain.readPassword(SERVICE, ACCOUNT)
+    init {
+        require(service.isNotBlank() && account.isNotBlank()) { "Keychain identity cannot be blank." }
+    }
+
+    override fun read(): ByteArray? = keychain.readPassword(service, account)
 
     override fun write(value: ByteArray) {
         require(value.isNotEmpty()) { "Refusing to store an empty desktop master key." }
-        keychain.upsertPassword(SERVICE, ACCOUNT, value)
+        keychain.upsertPassword(service, account, value)
     }
 
-    private companion object {
-        const val SERVICE = "dev.aluo.shinsoux.desktop.plugin-secrets"
-        const val ACCOUNT = "master-key-v1"
+    companion object {
+        internal const val DEFAULT_SERVICE = "dev.aluo.shinsoux.desktop.plugin-secrets"
+        internal const val DEFAULT_ACCOUNT = "master-key-v1"
     }
 }
 

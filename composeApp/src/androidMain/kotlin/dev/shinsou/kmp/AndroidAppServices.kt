@@ -3,6 +3,8 @@ package dev.shinsou.kmp
 import android.Manifest
 import android.app.Activity
 import android.app.KeyguardManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
@@ -17,8 +19,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import dev.shinsou.kmp.domain.model.ReaderOrientation
+import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.ContentCallbacks
@@ -26,6 +30,7 @@ import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
@@ -37,7 +42,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -54,24 +58,25 @@ internal class AndroidAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
+    override val cloudflareSync: CloudflareSyncUiController? = null,
+    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
 ) : ShinsouAppServices {
-    private val pendingDeepLink = MutableStateFlow<ShinsouDeepLink?>(null)
+    private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
     private val mutableReaderVolumeKeyEvents = MutableSharedFlow<ReaderVolumeKeyEvent>(extraBufferCapacity = 2)
+    private val qrCodeScanner = AndroidQrCodeScanner(activity)
     private var previousRequestedOrientation: Int? = null
     @Volatile
     private var monitorReaderVolumeKeys: Boolean = false
 
-    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLink.filterNotNull()
+    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
     override val appLifecycle: StateFlow<AppLifecycleState> = lifecycleState
     override val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent> = mutableReaderVolumeKeyEvents.asSharedFlow()
     override val securityCapabilities: PlatformSecurityCapabilities
         get() = mobileSecurityCapabilities(deviceOwnerAuthenticationAvailable())
 
-    fun emitDeepLink(link: ShinsouDeepLink) {
-        pendingDeepLink.value = link
-    }
+    fun emitDeepLink(link: ShinsouDeepLink): Boolean = pendingDeepLinks.tryEnqueue(link)
 
     fun emitForeground() {
         lifecycleState.value = AppLifecycleState.FOREGROUND
@@ -82,14 +87,17 @@ internal class AndroidAppServices(
     }
 
     override fun deepLinkHandled(link: ShinsouDeepLink) {
-        if (pendingDeepLink.value == link) pendingDeepLink.value = null
+        pendingDeepLinks.handled(link)
     }
 
     override fun openExternalUrl(url: String) {
-        runCatching {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        }
+        tryOpenExternalUrl(url)
     }
+
+    override fun tryOpenExternalUrl(url: String): Boolean = runCatching {
+            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        }.getOrDefault(false)
 
     override fun shareText(title: String, text: String) {
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -99,6 +107,19 @@ internal class AndroidAppServices(
         }
         activity.startActivity(Intent.createChooser(intent, title))
     }
+
+    override fun copyText(label: String, text: String): Boolean = runCatching {
+        activity.getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText(label, text))
+        true
+    }.getOrDefault(false)
+
+    override suspend fun readClipboardText(): String? = runCatching {
+        val clipboard = activity.getSystemService(ClipboardManager::class.java)
+        clipboard.primaryClip?.getItemAt(0)?.coerceToText(activity)?.toString()
+    }.getOrNull()
+
+    override suspend fun scanQrCode(): String? = qrCodeScanner.scan()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean =
         documentLauncher.export(suggestedName, contents.encodeToByteArray())

@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,13 +84,21 @@ import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.SnapshotSyncOutcome
 import dev.shinsou.kmp.sync.SnapshotSyncPhase
 import dev.shinsou.kmp.sync.SnapshotSyncState
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiState
+import dev.shinsou.kmp.sync.v2.MaterializationIssueKind
+import dev.shinsou.kmp.sync.v2.RepositoryTrustConfirmationStatus
+import dev.shinsou.kmp.sync.v2.SyncAdminQuota
+import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
+import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.components.HairlineDivider
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.launch
+import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import kotlin.math.roundToInt
 
 private enum class SettingsSection(val icon: ImageVector) {
@@ -110,6 +119,8 @@ fun SettingsScreen(
     settings: AppSettings,
     categories: List<Category>,
     snapshotSync: SnapshotSyncController? = null,
+    cloudflareSync: CloudflareSyncUiController? = null,
+    appServices: ShinsouAppServices = ShinsouAppServices.None,
     securityCapabilities: PlatformSecurityCapabilities = PlatformSecurityCapabilities.Unavailable,
     wideLayout: Boolean,
     onBack: () -> Unit,
@@ -158,6 +169,8 @@ fun SettingsScreen(
                 settings = settings,
                 categories = categories,
                 snapshotSync = snapshotSync,
+                cloudflareSync = cloudflareSync,
+                appServices = appServices,
                 securityCapabilities = securityCapabilities,
                 onBack = null,
                 onChange = onChange,
@@ -190,6 +203,8 @@ fun SettingsScreen(
                         settings = settings,
                         categories = categories,
                         snapshotSync = snapshotSync,
+                        cloudflareSync = cloudflareSync,
+                        appServices = appServices,
                         securityCapabilities = securityCapabilities,
                         onBack = { selected = null },
                         onChange = onChange,
@@ -251,6 +266,8 @@ private fun SettingsDetail(
     settings: AppSettings,
     categories: List<Category>,
     snapshotSync: SnapshotSyncController?,
+    cloudflareSync: CloudflareSyncUiController?,
+    appServices: ShinsouAppServices,
     securityCapabilities: PlatformSecurityCapabilities,
     onBack: (() -> Unit)?,
     onChange: (AppSettings) -> Unit,
@@ -284,7 +301,7 @@ private fun SettingsDetail(
             SettingsSection.Reader -> ReaderSettingsPane(settings, onChange)
             SettingsSection.Downloads -> DownloadSettingsPane(settings, onChange)
             SettingsSection.Tracking -> TrackingSettingsPane(settings, onChange)
-            SettingsSection.Sync -> SyncSettingsPane(settings, snapshotSync, onChange)
+            SettingsSection.Sync -> SyncSettingsPane(settings, snapshotSync, cloudflareSync, appServices, onChange)
             SettingsSection.Browse -> BrowseSettingsPane(settings, onChange)
             SettingsSection.Security -> SecuritySettingsPane(
                 settings = settings,
@@ -594,25 +611,612 @@ private fun TrackingSettingsPane(settings: AppSettings, onChange: (AppSettings) 
 @Composable
 private fun SyncSettingsPane(
     settings: AppSettings,
-    controller: SnapshotSyncController?,
+    legacyController: SnapshotSyncController?,
+    cloudflareController: CloudflareSyncUiController?,
+    appServices: ShinsouAppServices,
     onChange: (AppSettings) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
-    val observedState = controller?.state?.collectAsState()
-    val state = observedState?.value ?: SnapshotSyncState(
+    val observedLegacyState = legacyController?.state?.collectAsState()
+    val legacyState = observedLegacyState?.value ?: SnapshotSyncState(
         capability = dev.shinsou.kmp.sync.SnapshotSyncCapability(
             availability = SnapshotSyncAvailability.UNAVAILABLE,
             detail = strings.text("iCloud Drive snapshot sync is unavailable on this platform."),
         ),
         phase = SnapshotSyncPhase.UNAVAILABLE,
     )
-    val capability = state.capability
-    val busy = state.phase == SnapshotSyncPhase.CHECKING || state.phase == SnapshotSyncPhase.SYNCING
+    val observedCloudflareState = cloudflareController?.state?.collectAsState()
+    val cloudflareState = observedCloudflareState?.value ?: CloudflareSyncUiState()
+    val capability = legacyState.capability
+    val legacyBusy = legacyState.phase == SnapshotSyncPhase.CHECKING || legacyState.phase == SnapshotSyncPhase.SYNCING
+    val legacyBlocked = cloudflareState.configured
+    var linkOrCode by remember { mutableStateOf("") }
+    var localDiagnostic by remember { mutableStateOf<String?>(null) }
+    var localShare by remember { mutableStateOf<dev.shinsou.kmp.sync.v2.SyncShareRequest?>(null) }
+    var revokeDeviceId by remember { mutableStateOf<String?>(null) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    var quotaMaxUsers by remember { mutableStateOf("") }
+    var quotaMaxWorkspaces by remember { mutableStateOf("") }
+    var quotaMaxDevices by remember { mutableStateOf("") }
+    var quotaWorkspaceMiB by remember { mutableStateOf("") }
+    var quotaEventKiB by remember { mutableStateOf("") }
+    var quotaCheckpointMiB by remember { mutableStateOf("") }
 
-    LaunchedEffect(controller) { controller?.refreshCapability() }
+    val runCloudflareAction: (suspend () -> Unit) -> Unit = { action ->
+        scope.launch {
+            localDiagnostic = null
+            runCatching { action() }.onFailure { error ->
+                localDiagnostic = error.message ?: strings.text("Sync operation failed.")
+            }
+        }
+    }
+
+    LaunchedEffect(legacyController) { legacyController?.refreshCapability() }
+    LaunchedEffect(cloudflareState.adminUsage?.quota) {
+        cloudflareState.adminUsage?.quota?.let { quota ->
+            quotaMaxUsers = quota.maxUsers.toString()
+            quotaMaxWorkspaces = quota.maxWorkspacesPerUser.toString()
+            quotaMaxDevices = quota.maxDevicesPerUser.toString()
+            quotaWorkspaceMiB = (quota.maxWorkspaceBytes / MEBIBYTE).toString()
+            quotaEventKiB = (quota.maxEventBytes / KIBIBYTE).toString()
+            quotaCheckpointMiB = (quota.maxCheckpointBytes / MEBIBYTE).toString()
+        }
+    }
+    LaunchedEffect(legacyBlocked, settings.sync.enabled) {
+        if (legacyBlocked && settings.sync.enabled) {
+            onChange(settings.copy(sync = settings.sync.copy(enabled = false, syncOnForeground = false)))
+        }
+    }
 
     SettingsList {
+        item {
+            Surface(
+                shape = RoundedCornerShape(11.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(strings.text("Cloudflare encrypted sync"), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        strings.text(cloudflareStatusLabel(cloudflareState.status)),
+                        color = when (cloudflareState.status) {
+                            SyncSessionStatus.READY -> MaterialTheme.colorScheme.primary
+                            SyncSessionStatus.ERROR, SyncSessionStatus.REVOKED -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    cloudflareState.endpoint?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (cloudflareState.ready) {
+                        Text(
+                            strings.text(
+                                "Cursor {0}/{1} · {2} pending changes · {3} pending uploads",
+                                cloudflareState.cursor,
+                                cloudflareState.remoteHead,
+                                cloudflareState.pendingDrafts,
+                                cloudflareState.pendingUploads,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    (localDiagnostic ?: cloudflareState.diagnostic)?.let { message ->
+                        Text(strings.text(message), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (cloudflareController == null) {
+                        Text(
+                            strings.text("Encrypted event sync is unavailable in this runtime."),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            SettingDescription(strings.text(SYNC_SCOPE_DISCLOSURE))
+        }
+        if (cloudflareState.materializationIssues.isNotEmpty()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(strings.text("Synchronized data needs repair"), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            strings.text(
+                                "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded.",
+                                cloudflareState.materializationIssues.size,
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        TextButton(
+                            enabled = cloudflareState.ready && !cloudflareState.busy,
+                            onClick = { runCloudflareAction { cloudflareController?.retryMaterialization() } },
+                        ) { Text(strings.text("Retry validation")) }
+                    }
+                }
+            }
+            items(
+                cloudflareState.materializationIssues,
+                key = { "materialization-${it.kind}-${it.key?.stableString().orEmpty()}-${it.message}" },
+            ) { issue ->
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            strings.text(
+                                when (issue.kind) {
+                                    MaterializationIssueKind.ORPHAN -> "Missing synchronized dependency"
+                                    MaterializationIssueKind.IDENTITY_COLLISION -> "Identity mapping collision"
+                                    MaterializationIssueKind.INVALID_FIELD -> "Invalid synchronized record"
+                                },
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        issue.key?.let {
+                            Text(
+                                it.stableString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(strings.text(issue.message), style = MaterialTheme.typography.bodySmall)
+                        if (issue.kind == MaterializationIssueKind.IDENTITY_COLLISION && issue.key != null) {
+                            TextButton(
+                                enabled = cloudflareState.ready && !cloudflareState.busy,
+                                onClick = {
+                                    runCloudflareAction {
+                                        cloudflareController?.repairIdentityCollision(issue.key)
+                                    }
+                                },
+                            ) { Text(strings.text("Repair local identity mapping")) }
+                        }
+                    }
+                }
+            }
+        }
+        if (cloudflareState.repositoryTrustConfirmations.isNotEmpty()) {
+            items(
+                cloudflareState.repositoryTrustConfirmations,
+                key = { "repository-trust-${it.baseUrl}-${it.proposedFingerprint}" },
+            ) { confirmation ->
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(strings.text("Confirm repository signing key"), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            strings.text(
+                                "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint.",
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Text(confirmation.baseUrl, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            strings.text(
+                                "Trusted: {0}",
+                                confirmation.trustedFingerprint.ifBlank { strings.text("None on this device") },
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            strings.text("Proposed: {0}", confirmation.proposedFingerprint),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (confirmation.status == RepositoryTrustConfirmationStatus.REJECTED) {
+                            Text(
+                                strings.text("Rejected on this device"),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            TextButton(
+                                enabled = cloudflareState.ready && !cloudflareState.busy,
+                                onClick = {
+                                    runCloudflareAction {
+                                        cloudflareController?.acceptRepositoryTrust(
+                                            confirmation.baseUrl,
+                                            confirmation.proposedFingerprint,
+                                        )
+                                    }
+                                },
+                            ) { Text(strings.text("Trust exact fingerprint")) }
+                            if (confirmation.status != RepositoryTrustConfirmationStatus.REJECTED) {
+                                TextButton(
+                                    enabled = cloudflareState.ready && !cloudflareState.busy,
+                                    onClick = {
+                                        runCloudflareAction {
+                                            cloudflareController?.rejectRepositoryTrust(
+                                                confirmation.baseUrl,
+                                                confirmation.proposedFingerprint,
+                                            )
+                                        }
+                                    },
+                                ) { Text(strings.text("Reject"), color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!cloudflareState.ready) {
+            if (cloudflareState.status == SyncSessionStatus.DEPLOYING) {
+                item {
+                    Text(
+                        strings.text(
+                            "The deployment page is required to create your private sync service. The bootstrap secret is kept on this device and can be reused if you reopen the page.",
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = linkOrCode,
+                    onValueChange = { linkOrCode = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(strings.text("Setup, invite, pairing or emergency handoff link / code")) },
+                    minLines = 1,
+                    maxLines = 3,
+                )
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    TextButton(
+                        enabled = cloudflareController != null && linkOrCode.isNotBlank() && !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction {
+                                cloudflareController?.submitOneTimeLinkOrCode(linkOrCode.trim())
+                                linkOrCode = ""
+                            }
+                        },
+                    ) { Text(strings.text("Connect")) }
+                    TextButton(
+                        enabled = cloudflareController != null && !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction {
+                                appServices.readClipboardText()?.takeIf { it.isNotBlank() }?.let { linkOrCode = it }
+                            }
+                        },
+                    ) { Text(strings.text("Paste")) }
+                    TextButton(
+                        enabled = cloudflareController != null && !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction {
+                                appServices.scanQrCode()?.takeIf { it.isNotBlank() }?.let { scanned ->
+                                    cloudflareController?.submitOneTimeLinkOrCode(scanned)
+                                }
+                            }
+                        },
+                    ) { Text(strings.text("Scan QR")) }
+                    TextButton(
+                        enabled = cloudflareController != null &&
+                            !cloudflareState.busy &&
+                            cloudflareState.status in setOf(
+                                SyncSessionStatus.NOT_CONFIGURED,
+                                SyncSessionStatus.DEPLOYING,
+                            ),
+                        onClick = {
+                            runCloudflareAction {
+                                val deployment = requireNotNull(cloudflareController).beginDeployment()
+                                val copied = deployment.bootstrapSecret.use { secret ->
+                                    appServices.copyText(strings.text("Bootstrap secret"), secret)
+                                }
+                                val opened = appServices.tryOpenExternalUrl(deployment.deployUrl)
+                                when {
+                                    !copied && !opened -> {
+                                        localDiagnostic = strings.text(
+                                            "Could not copy the bootstrap secret or open the deployment page.",
+                                        )
+                                    }
+                                    !copied -> {
+                                        localDiagnostic = strings.text(
+                                            "Could not copy the bootstrap secret. Copying is required before deployment.",
+                                        )
+                                    }
+                                    !opened -> {
+                                        localDiagnostic = strings.text(
+                                            "Could not open the deployment page. Tap Open deployment page to retry.",
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    ) {
+                        Text(
+                            strings.text(
+                                if (cloudflareState.status == SyncSessionStatus.DEPLOYING) {
+                                    "Open deployment page"
+                                } else {
+                                    "Create sync service"
+                                },
+                            ),
+                        )
+                    }
+                }
+            }
+            item {
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(strings.text("Lost every device?"), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            strings.text("Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit."),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(
+                            enabled = cloudflareController != null && !cloudflareState.busy,
+                            onClick = {
+                                runCloudflareAction {
+                                    val document = appServices.importDocument(
+                                        setOf("json", "shinsourecovery", "txt"),
+                                    )
+                                    if (document != null) {
+                                        requireNotNull(cloudflareController).importRecoveryKit(
+                                            document.contents.decodeToString(),
+                                        )
+                                    }
+                                }
+                            },
+                        ) { Text(strings.text("Import Recovery Kit")) }
+                        if (cloudflareState.configured) {
+                            TextButton(
+                                enabled = cloudflareController != null && !cloudflareState.busy,
+                                onClick = { confirmLeave = true },
+                            ) {
+                                Text(
+                                    strings.text("Leave or clear pending workspace"),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = { runCloudflareAction { cloudflareController?.syncNow() } },
+                    ) { Text(strings.text("Sync now")) }
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction { localShare = cloudflareController?.createDevicePairing() }
+                        },
+                    ) { Text(strings.text("Add device")) }
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction { localShare = cloudflareController?.createUserInvite() }
+                        },
+                    ) { Text(strings.text("Invite user")) }
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = { runCloudflareAction { cloudflareController?.refreshDevices() } },
+                    ) { Text(strings.text("Refresh devices")) }
+                }
+            }
+            items(cloudflareState.pairingCandidates, key = { "pairing-${it.pairingId}" }) { candidate ->
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(strings.text("Approve new device"), style = MaterialTheme.typography.titleMedium)
+                        Text("${candidate.displayName} · ${candidate.platform}")
+                        Text(
+                            candidate.confirmationCode,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            TextButton(
+                                onClick = {
+                                    runCloudflareAction {
+                                        cloudflareController?.approvePairing(candidate.pairingId, true)
+                                    }
+                                },
+                            ) { Text(strings.text("Allow")) }
+                            TextButton(
+                                onClick = {
+                                    runCloudflareAction {
+                                        cloudflareController?.approvePairing(candidate.pairingId, false)
+                                    }
+                                },
+                            ) { Text(strings.text("Deny")) }
+                        }
+                    }
+                }
+            }
+            cloudflareState.adminUsage?.let { usage ->
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(11.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(strings.text("Instance usage and quota"), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                strings.text(
+                                    "{0} users · {1} devices · {2} workspaces",
+                                    usage.totals.activeUsers,
+                                    usage.totals.activeDevices,
+                                    usage.totals.activeWorkspaces,
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                strings.text(
+                                    "Stored {0} · reserved {1}",
+                                    formatSyncByteCount(usage.totals.committedBytes),
+                                    formatSyncByteCount(usage.totals.reservedBytes),
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                AdminQuotaField("Users", quotaMaxUsers) { quotaMaxUsers = it }
+                                AdminQuotaField("Workspaces / user", quotaMaxWorkspaces) { quotaMaxWorkspaces = it }
+                                AdminQuotaField("Devices / user", quotaMaxDevices) { quotaMaxDevices = it }
+                            }
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                AdminQuotaField("Workspace MiB", quotaWorkspaceMiB) { quotaWorkspaceMiB = it }
+                                AdminQuotaField("Event KiB", quotaEventKiB) { quotaEventKiB = it }
+                                AdminQuotaField("Checkpoint MiB", quotaCheckpointMiB) { quotaCheckpointMiB = it }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                TextButton(
+                                    enabled = !cloudflareState.busy,
+                                    onClick = {
+                                        runCloudflareAction {
+                                            val quota = SyncAdminQuota(
+                                                maxUsers = quotaMaxUsers.requirePositiveInt(),
+                                                maxWorkspacesPerUser = quotaMaxWorkspaces.requirePositiveInt(),
+                                                maxDevicesPerUser = quotaMaxDevices.requirePositiveInt(),
+                                                maxWorkspaceBytes = quotaWorkspaceMiB.requirePositiveLong() * MEBIBYTE,
+                                                maxEventBytes = (quotaEventKiB.requirePositiveLong() * KIBIBYTE)
+                                                    .requireIntRange(),
+                                                maxCheckpointBytes = (quotaCheckpointMiB.requirePositiveLong() * MEBIBYTE)
+                                                    .requireIntRange(),
+                                            )
+                                            requireNotNull(cloudflareController).updateAdminQuota(quota)
+                                        }
+                                    },
+                                ) { Text(strings.text("Save quota")) }
+                                TextButton(
+                                    enabled = !cloudflareState.busy,
+                                    onClick = {
+                                        runCloudflareAction {
+                                            requireNotNull(cloudflareController).refreshAdminUsage()
+                                        }
+                                    },
+                                ) { Text(strings.text("Refresh usage")) }
+                            }
+                            usage.daily.firstOrNull()?.let { daily ->
+                                Text(
+                                    strings.text(
+                                        "{0}: {1} events ({2}), {3} checkpoints ({4})",
+                                        daily.day,
+                                        daily.eventsWritten,
+                                        formatSyncByteCount(daily.eventBytesWritten),
+                                        daily.checkpointsWritten,
+                                        formatSyncByteCount(daily.checkpointBytesWritten),
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                strings.text("This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            items(cloudflareState.devices, key = { "device-${it.deviceId}" }) { device ->
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                device.displayName + if (device.currentDevice) strings.text(" (this device)") else "",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                "${device.platform} · " + if (device.revoked) strings.text("Revoked") else strings.text("Active"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!device.currentDevice && !device.revoked) {
+                            TextButton(onClick = { revokeDeviceId = device.deviceId }) {
+                                Text(strings.text("Revoke"), color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction {
+                                val kit = requireNotNull(cloudflareController).exportRecoveryKit()
+                                kit.encoded.useSuspending { encoded ->
+                                    appServices.exportDocument(kit.suggestedFileName, encoded)
+                                }
+                            }
+                        },
+                    ) { Text(strings.text("Export Recovery Kit")) }
+                    TextButton(
+                        enabled = !cloudflareState.busy,
+                        onClick = {
+                            runCloudflareAction {
+                                val document = appServices.importDocument(setOf("json", "shinsourecovery", "txt"))
+                                if (document != null) {
+                                    cloudflareController?.importRecoveryKit(document.contents.decodeToString())
+                                }
+                            }
+                        },
+                    ) { Text(strings.text("Import Recovery Kit")) }
+                    TextButton(onClick = { confirmLeave = true }) {
+                        Text(strings.text("Leave workspace"), color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+        item {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text(strings.text("Legacy iCloud snapshot"), style = MaterialTheme.typography.titleMedium)
+        }
         item {
             Surface(
                 shape = RoundedCornerShape(11.dp),
@@ -636,8 +1240,8 @@ private fun SyncSettingsPane(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(
-                        enabled = controller != null && !busy,
-                        onClick = { scope.launch { controller?.refreshCapability() } },
+                        enabled = legacyController != null && !legacyBusy && !legacyBlocked,
+                        onClick = { scope.launch { legacyController?.refreshCapability() } },
                     ) { Text(strings.text("Check again")) }
                 }
             }
@@ -647,7 +1251,7 @@ private fun SyncSettingsPane(
                 title = strings.text("Enable snapshot sync"),
                 summary = strings.text("Merge one versioned Shinsou X backup file through iCloud Drive"),
                 checked = settings.sync.enabled,
-                enabled = capability.available || settings.sync.enabled,
+                enabled = !legacyBlocked && (capability.available || settings.sync.enabled),
             ) { enabled ->
                 onChange(settings.copy(sync = settings.sync.copy(enabled = enabled)))
             }
@@ -657,7 +1261,7 @@ private fun SyncSettingsPane(
                 title = strings.text("Sync when app enters foreground"),
                 summary = strings.text("Runs only when sync is enabled; identical snapshots do not write again"),
                 checked = settings.sync.syncOnForeground,
-                enabled = capability.available && settings.sync.enabled,
+                enabled = !legacyBlocked && capability.available && settings.sync.enabled,
             ) { enabled ->
                 onChange(settings.copy(sync = settings.sync.copy(syncOnForeground = enabled)))
             }
@@ -675,7 +1279,7 @@ private fun SyncSettingsPane(
                     Column(Modifier.weight(1f)) {
                         Text(strings.text("Sync status"), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            when (state.phase) {
+                            when (legacyState.phase) {
                                 SnapshotSyncPhase.IDLE -> strings.text("Idle")
                                 SnapshotSyncPhase.CHECKING -> strings.text("Checking availability")
                                 SnapshotSyncPhase.SYNCING -> strings.text("Pulling, merging and uploading")
@@ -688,13 +1292,13 @@ private fun SyncSettingsPane(
                         )
                     }
                     TextButton(
-                        enabled = controller != null && capability.available && settings.sync.enabled && !busy,
-                        onClick = { scope.launch { controller?.sync() } },
+                        enabled = legacyController != null && !legacyBlocked && capability.available && settings.sync.enabled && !legacyBusy,
+                        onClick = { scope.launch { legacyController?.sync() } },
                     ) { Text(strings.text("Sync now")) }
                 }
             }
         }
-        state.lastResult?.let { result ->
+        legacyState.lastResult?.let { result ->
             item {
                 Surface(
                     shape = RoundedCornerShape(11.dp),
@@ -725,9 +1329,100 @@ private fun SyncSettingsPane(
             }
         }
         item {
-            SettingDescription(strings.text("This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization."))
+            SettingDescription(
+                if (legacyBlocked) {
+                    strings.text("iCloud snapshot writing is disabled while Cloudflare event sync is configured.")
+                } else {
+                    strings.text("This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization.")
+                },
+            )
         }
     }
+
+    val share = cloudflareState.activeShare ?: localShare
+    share?.let { request ->
+        val payload = request.payload.use { it }
+        AlertDialog(
+            onDismissRequest = {
+                localShare = null
+                runCloudflareAction { cloudflareController?.dismissShare() }
+            },
+            title = { Text(strings.text(request.title)) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Image(
+                        painter = rememberQrCodePainter(payload),
+                        contentDescription = strings.text("Sync QR code"),
+                        modifier = Modifier.size(240.dp),
+                    )
+                    request.confirmationCode?.let { code ->
+                        Text(code, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(
+                        strings.text("This is a one-time secret. Do not post it publicly."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { appServices.shareText(request.title, payload) }) {
+                    Text(strings.text("Share"))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { appServices.copyText(strings.text(request.title), payload) },
+                ) { Text(strings.text("Copy")) }
+            },
+        )
+    }
+
+    revokeDeviceId?.let { deviceId ->
+        AlertDialog(
+            onDismissRequest = { revokeDeviceId = null },
+            title = { Text(strings.text("Revoke this device?")) },
+            text = { Text(strings.text("The device will lose future access and the workspace key will rotate.")) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        revokeDeviceId = null
+                        runCloudflareAction { cloudflareController?.revokeDevice(deviceId) }
+                    },
+                ) { Text(strings.text("Revoke"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { revokeDeviceId = null }) { Text(strings.cancel) } },
+        )
+    }
+
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text(strings.text("Leave synced workspace?")) },
+            text = { Text(strings.text("This device will stop receiving updates. Local data remains until you restore or reset it.")) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLeave = false
+                        runCloudflareAction { cloudflareController?.leaveWorkspace() }
+                    },
+                ) { Text(strings.text("Leave"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text(strings.cancel) } },
+        )
+    }
+}
+
+internal const val SYNC_SCOPE_DISCLOSURE =
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized."
+
+private fun cloudflareStatusLabel(status: SyncSessionStatus): String = when (status) {
+    SyncSessionStatus.NOT_CONFIGURED -> "Not configured"
+    SyncSessionStatus.DEPLOYING -> "Deploying"
+    SyncSessionStatus.LINKING -> "Linking"
+    SyncSessionStatus.READY -> "Ready"
+    SyncSessionStatus.REVOKED -> "Device revoked"
+    SyncSessionStatus.ERROR -> "Error"
 }
 
 @Composable
@@ -1141,6 +1836,39 @@ private fun SettingDescription(text: String) {
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
     )
 }
+
+@Composable
+private fun AdminQuotaField(label: String, value: String, onValueChange: (String) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    OutlinedTextField(
+        value = value,
+        onValueChange = { candidate ->
+            if (candidate.length <= 12 && candidate.all(Char::isDigit)) onValueChange(candidate)
+        },
+        label = { Text(strings.text(label)) },
+        singleLine = true,
+        modifier = Modifier.width(150.dp),
+    )
+}
+
+private fun String.requirePositiveLong(): Long =
+    toLongOrNull()?.takeIf { it > 0 } ?: error("invalid_quota_value")
+
+private fun String.requirePositiveInt(): Int =
+    toIntOrNull()?.takeIf { it > 0 } ?: error("invalid_quota_value")
+
+private fun Long.requireIntRange(): Int =
+    takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt() ?: error("invalid_quota_value")
+
+private fun formatSyncByteCount(bytes: Long): String = when {
+    bytes >= 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L * 1024L)} GiB"
+    bytes >= MEBIBYTE -> "${bytes / MEBIBYTE} MiB"
+    bytes >= KIBIBYTE -> "${bytes / KIBIBYTE} KiB"
+    else -> "$bytes B"
+}
+
+private const val KIBIBYTE = 1024L
+private const val MEBIBYTE = 1024L * KIBIBYTE
 
 private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.ShinsouStrings): String = when (this) {
     SettingsSection.General -> strings.text("General")

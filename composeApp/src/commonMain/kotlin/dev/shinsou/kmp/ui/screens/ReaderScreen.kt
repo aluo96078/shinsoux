@@ -103,9 +103,18 @@ import dev.shinsou.kmp.domain.model.ReaderColorFilter
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 import dev.shinsou.kmp.reader.ReaderTapAction
+import dev.shinsou.kmp.reader.ReaderViewportSample
+import dev.shinsou.kmp.reader.coerceReaderPosition
+import dev.shinsou.kmp.reader.continuousReaderPosition
+import dev.shinsou.kmp.reader.isContinuousReaderMode
+import dev.shinsou.kmp.reader.pagedReaderPosition
+import dev.shinsou.kmp.reader.readerLogicalPageIndex
+import dev.shinsou.kmp.reader.readerPhysicalPageIndex
 import dev.shinsou.kmp.reader.readerPrefetchIndices
 import dev.shinsou.kmp.reader.readerTapAction
+import dev.shinsou.kmp.reader.restoredReaderPageOffsetPixels
 import dev.shinsou.kmp.reader.toCoilTransformation
+import dev.shinsou.kmp.sync.v2.ReaderPosition
 import dev.shinsou.kmp.ui.ReaderPage
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.components.EmptyState
@@ -114,9 +123,15 @@ import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.readerVolumeKeyAction
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -132,13 +147,19 @@ fun ReaderScreen(
     chapters: List<Chapter>,
     previousChapter: Chapter?,
     nextChapter: Chapter?,
+    readerSessionId: String,
+    initialPosition: ReaderPosition? = null,
+    remotePositionSuggestion: ReaderPosition? = null,
+    positionReportingEnabled: Boolean = true,
     volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
     systemBackRequest: Long = 0L,
     onClose: () -> Unit,
     onRetry: () -> Unit,
     onOpenWeb: (() -> Unit)?,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onPageChanged: (Int) -> Unit,
+    onPositionChanged: (ReaderPosition) -> Unit,
+    onApplyRemotePosition: (ReaderPosition) -> Unit = {},
+    onDismissRemotePositionSuggestion: () -> Unit = {},
     onToggleFavorite: () -> Unit,
     onPreviousChapter: () -> Unit,
     onNextChapter: () -> Unit,
@@ -146,13 +167,24 @@ fun ReaderScreen(
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalShinsouStrings.current
-    var controlsVisible by remember(chapter.id) { mutableStateOf(true) }
-    var settingsVisible by remember { mutableStateOf(false) }
-    var chapterListVisible by remember { mutableStateOf(false) }
-    var boundaryTransition by remember(chapter.id) { mutableStateOf<ReaderChapterBoundary?>(null) }
-    var currentPage by remember(chapter.id, pages.size) {
-        mutableStateOf(chapter.lastPageRead.coerceIn(0, (pages.size - 1).coerceAtLeast(0)))
+    var controlsVisible by remember(chapter.id, readerSessionId) { mutableStateOf(true) }
+    var settingsVisible by remember(readerSessionId) { mutableStateOf(false) }
+    var chapterListVisible by remember(readerSessionId) { mutableStateOf(false) }
+    var boundaryTransition by remember(chapter.id, readerSessionId) { mutableStateOf<ReaderChapterBoundary?>(null) }
+    var currentPosition by remember(chapter.id, readerSessionId, pages.size) {
+        mutableStateOf(
+            coerceReaderPosition(
+                position = initialPosition ?: ReaderPosition(
+                    readingMode = settings.readingMode,
+                    pageIndex = chapter.lastPageRead.coerceAtLeast(0),
+                ),
+                readingMode = settings.readingMode,
+                pageCount = pages.size,
+            ),
+        )
     }
+    var viewportRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
+    val currentPage = currentPosition.pageIndex
     val focusRequester = remember { FocusRequester() }
     val platformContext = LocalPlatformContext.current
 
@@ -172,9 +204,30 @@ fun ReaderScreen(
             index >= pages.size -> boundaryTransition = ReaderChapterBoundary.NEXT
             pages.isNotEmpty() -> {
                 boundaryTransition = null
-                currentPage = index.coerceIn(0, pages.lastIndex)
+                currentPosition = if (isContinuousReaderMode(settings.readingMode)) {
+                    ReaderPosition(
+                        readingMode = settings.readingMode,
+                        pageIndex = index.coerceIn(0, pages.lastIndex),
+                        normalizedOffsetFraction = 0.0,
+                        resetEpoch = currentPosition.resetEpoch,
+                    )
+                } else {
+                    pagedReaderPosition(
+                        readingMode = settings.readingMode,
+                        logicalPageIndex = index,
+                        pageCount = pages.size,
+                        resetEpoch = currentPosition.resetEpoch,
+                    )
+                }
+                viewportRequestSerial++
             }
         }
+    }
+
+    fun applyExternalPosition(position: ReaderPosition) {
+        currentPosition = coerceReaderPosition(position, settings.readingMode, pages.size)
+        boundaryTransition = null
+        viewportRequestSerial++
     }
 
     fun handlePageAction(action: ReaderTapAction) {
@@ -231,9 +284,16 @@ fun ReaderScreen(
     DisposableEffect(settings.keepScreenOn) {
         onDispose { }
     }
+    LaunchedEffect(chapter.id, readerSessionId, initialPosition, pages.size) {
+        initialPosition?.let(::applyExternalPosition)
+    }
+    LaunchedEffect(chapter.id, readerSessionId, settings.readingMode, pages.size) {
+        currentPosition = coerceReaderPosition(currentPosition, settings.readingMode, pages.size)
+        viewportRequestSerial++
+    }
     // Modal sheets own a separate focus tree on desktop and iPadOS. Reclaim focus when they close
     // so hardware paging and Escape/back keep working without requiring another pointer click.
-    LaunchedEffect(chapter.id, settingsVisible, chapterListVisible) {
+    LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible) {
         if (!settingsVisible && !chapterListVisible) focusRequester.requestFocus()
     }
     // ReaderScreen is first composed while the async chapter request still exposes an empty page
@@ -256,7 +316,7 @@ fun ReaderScreen(
             )
         }
     }
-    LaunchedEffect(volumeKeyEvents, chapter.id) {
+    LaunchedEffect(volumeKeyEvents, chapter.id, readerSessionId) {
         volumeKeyEvents.collect { event ->
             currentVolumeKeyHandler(event)
         }
@@ -265,10 +325,10 @@ fun ReaderScreen(
         if (systemBackRequest == 0L) return@LaunchedEffect
         handleReaderBack()
     }
-    LaunchedEffect(chapter.id, currentPage, pages.size, loading) {
-        if (!loading && pages.isNotEmpty()) onPageChanged(currentPage)
+    LaunchedEffect(chapter.id, readerSessionId, currentPosition, pages.size, loading, positionReportingEnabled) {
+        if (positionReportingEnabled && !loading && pages.isNotEmpty()) onPositionChanged(currentPosition)
     }
-    LaunchedEffect(chapter.id, currentPage, pages) {
+    LaunchedEffect(chapter.id, readerSessionId, currentPage, pages) {
         val loader = SingletonImageLoader.get(platformContext)
         val requests = readerPrefetchIndices(currentPage, pages.size).map { index ->
             val page = pages[index]
@@ -405,9 +465,15 @@ fun ReaderScreen(
                 -> ReaderHorizontalPager(
                     pages = pages,
                     currentPage = currentPage,
-                    rtl = settings.readingMode == ReadingMode.PAGER_RTL,
                     settings = settings,
-                    onPageChanged = { currentPage = it },
+                    onPageChanged = { logicalPage ->
+                        currentPosition = pagedReaderPosition(
+                            readingMode = settings.readingMode,
+                            logicalPageIndex = logicalPage,
+                            pageCount = pages.size,
+                            resetEpoch = currentPosition.resetEpoch,
+                        )
+                    },
                     onTap = ::handlePageAction,
                 )
 
@@ -415,7 +481,14 @@ fun ReaderScreen(
                     pages = pages,
                     currentPage = currentPage,
                     settings = settings,
-                    onPageChanged = { currentPage = it },
+                    onPageChanged = { logicalPage ->
+                        currentPosition = pagedReaderPosition(
+                            readingMode = settings.readingMode,
+                            logicalPageIndex = logicalPage,
+                            pageCount = pages.size,
+                            resetEpoch = currentPosition.resetEpoch,
+                        )
+                    },
                     onTap = ::handlePageAction,
                 )
 
@@ -423,9 +496,10 @@ fun ReaderScreen(
                 ReadingMode.CONTINUOUS_VERTICAL,
                 -> ReaderWebtoon(
                     pages = pages,
-                    currentPage = currentPage,
+                    position = currentPosition,
+                    viewportRequestSerial = viewportRequestSerial,
                     settings = settings,
-                    onPageChanged = { currentPage = it },
+                    onPositionChanged = { currentPosition = it },
                     onTap = ::handlePageAction,
                 )
             }
@@ -444,6 +518,40 @@ fun ReaderScreen(
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                 )
+            }
+        }
+
+        remotePositionSuggestion?.let { suggestion ->
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(14.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 76.dp, start = 18.dp, end = 18.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        strings.text("Another device has a newer position (page {0}).", suggestion.pageIndex + 1),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            applyExternalPosition(suggestion)
+                            onApplyRemotePosition(suggestion)
+                        },
+                    ) {
+                        Text(strings.text("Apply"))
+                    }
+                    TextButton(onClick = onDismissRemotePositionSuggestion) {
+                        Text(strings.text("Dismiss"))
+                    }
+                }
             }
         }
 
@@ -491,25 +599,25 @@ fun ReaderScreen(
 private fun ReaderHorizontalPager(
     pages: List<ReaderPage>,
     currentPage: Int,
-    rtl: Boolean,
     settings: ReaderSettings,
     onPageChanged: (Int) -> Unit,
     onTap: (ReaderTapAction) -> Unit,
 ) {
-    fun physical(logical: Int): Int = if (rtl) pages.lastIndex - logical else logical
-    fun logical(physical: Int): Int = if (rtl) pages.lastIndex - physical else physical
-    val pagerState = rememberPagerState(initialPage = physical(currentPage)) { pages.size }
+    val mode = settings.readingMode
+    val pagerState = rememberPagerState(
+        initialPage = readerPhysicalPageIndex(currentPage, pages.size, mode),
+    ) { pages.size }
 
-    LaunchedEffect(currentPage, pages.size, rtl, settings.animatePageTransitions) {
-        val target = physical(currentPage).coerceIn(0, pages.lastIndex)
+    LaunchedEffect(currentPage, pages.size, mode, settings.animatePageTransitions) {
+        val target = readerPhysicalPageIndex(currentPage, pages.size, mode)
         if (pagerState.currentPage != target) {
             if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
             else pagerState.scrollToPage(target)
         }
     }
-    LaunchedEffect(pagerState, rtl) {
+    LaunchedEffect(pagerState, mode) {
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect {
-            onPageChanged(logical(it))
+            onPageChanged(readerLogicalPageIndex(it, pages.size, mode))
         }
     }
 
@@ -519,7 +627,7 @@ private fun ReaderHorizontalPager(
         modifier = Modifier.fillMaxSize(),
     ) { physicalIndex ->
         ReaderPageImage(
-            page = pages[logical(physicalIndex)],
+            page = pages[readerLogicalPageIndex(physicalIndex, pages.size, mode)],
             settings = settings,
             zoomEnabled = true,
             onTap = onTap,
@@ -561,23 +669,63 @@ private fun ReaderVerticalPager(
     }
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 private fun ReaderWebtoon(
     pages: List<ReaderPage>,
-    currentPage: Int,
+    position: ReaderPosition,
+    viewportRequestSerial: Long,
     settings: ReaderSettings,
-    onPageChanged: (Int) -> Unit,
+    onPositionChanged: (ReaderPosition) -> Unit,
     onTap: (ReaderTapAction) -> Unit,
 ) {
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = currentPage)
-    LaunchedEffect(currentPage, settings.animatePageTransitions) {
-        if (listState.firstVisibleItemIndex != currentPage) {
-            if (settings.animatePageTransitions) listState.animateScrollToItem(currentPage)
-            else listState.scrollToItem(currentPage)
+    val safePosition = coerceReaderPosition(position, settings.readingMode, pages.size)
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState(
+        initialFirstVisibleItemIndex = safePosition.pageIndex,
+    )
+    LaunchedEffect(viewportRequestSerial, pages.size, settings.readingMode) {
+        val target = coerceReaderPosition(position, settings.readingMode, pages.size)
+        if (listState.firstVisibleItemIndex != target.pageIndex) {
+            listState.scrollToItem(target.pageIndex)
+        }
+        val extent = snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == target.pageIndex }
+                ?.size
+        }.filterNotNull().first()
+        val offset = restoredReaderPageOffsetPixels(target, extent)
+        val alreadyThere = listState.firstVisibleItemIndex == target.pageIndex &&
+            listState.firstVisibleItemScrollOffset == offset
+        if (!alreadyThere) {
+            if (settings.animatePageTransitions) listState.animateScrollToItem(target.pageIndex, offset)
+            else listState.scrollToItem(target.pageIndex, offset)
         }
     }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }.distinctUntilChanged().collect(onPageChanged)
+    LaunchedEffect(listState, pages.size, settings.readingMode, position.resetEpoch) {
+        snapshotFlow {
+            val pageIndex = listState.firstVisibleItemIndex
+            val extent = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == pageIndex }
+                ?.size
+                ?: 0
+            ReaderViewportSample(
+                pageIndex = pageIndex,
+                pageOffsetPixels = listState.firstVisibleItemScrollOffset,
+                pageExtentPixels = extent,
+            )
+        }
+            .filter { it.pageExtentPixels > 0 }
+            .map { sample ->
+                continuousReaderPosition(
+                    readingMode = settings.readingMode,
+                    sample = sample,
+                    pageCount = pages.size,
+                    resetEpoch = position.resetEpoch,
+                )
+            }
+            .distinctUntilChanged()
+            .debounce(500)
+            .collect(onPositionChanged)
     }
     LazyColumn(
         state = listState,

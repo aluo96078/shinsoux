@@ -207,6 +207,8 @@ private val EnglishStrings = ShinsouStrings()
 
 /** Additional copy for settings, tracking, and platform screens. */
 private val TraditionalAdditionalTranslations = mapOf(
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to
+        "下載內容、本機來源檔案、擴充套件安裝包、Cookie、密碼與 API 金鑰不會同步。",
     "Shinsou X" to "Shinsou X",
     "About Shinsou X" to "關於 Shinsou X",
     "Settings…" to "設定…",
@@ -497,6 +499,142 @@ private val TraditionalAdditionalTranslations = mapOf(
     "{0}% · {1}/{2} pages" to "{0}% · {1}/{2} 頁",
 )
 
+/** Strings used by both the encrypted Cloudflare sync and legacy iCloud sync panels. */
+private val TraditionalSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Cloudflare 加密同步",
+    "Not configured" to "未設定",
+    "Deploying" to "部署中",
+    "Linking" to "連結中",
+    "Ready" to "就緒",
+    "Device revoked" to "裝置已撤銷",
+    "Error" to "錯誤",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to
+        "游標 {0}/{1} · {2} 項變更待處理 · {3} 項上傳待處理",
+    "Encrypted event sync is unavailable in this runtime." to "此執行環境無法使用加密事件同步。",
+    "Synchronized data needs repair" to "同步資料需要修復",
+    "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to
+        "{0} 筆記錄無法投影。這些記錄仍保留在加密副本中，未被靜默丟棄。",
+    "Retry validation" to "重試驗證",
+    "Missing synchronized dependency" to "缺少同步相依項目",
+    "Identity mapping collision" to "身分對應衝突",
+    "Invalid synchronized record" to "無效的同步記錄",
+    "Repair local identity mapping" to "修復本機身分對應",
+    "Confirm repository signing key" to "確認儲存庫簽署金鑰",
+    "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to
+        "此儲存庫仍固定使用先前的金鑰；確認完全相符的新指紋後才能擴大信任。",
+    "Trusted: {0}" to "已信任：{0}",
+    "None on this device" to "此裝置上沒有",
+    "Proposed: {0}" to "提議：{0}",
+    "Rejected on this device" to "已在此裝置拒絕",
+    "Trust exact fingerprint" to "信任完全相符的指紋",
+    "Reject" to "拒絕",
+    "Setup, invite, pairing or emergency handoff link / code" to "設定、邀請、配對或緊急交接連結／代碼",
+    "Connect" to "連線",
+    "Paste" to "貼上",
+    "Scan QR" to "掃描 QR",
+    "Bootstrap secret" to "Bootstrap 秘密",
+    "Create sync service" to "建立同步服務",
+    "Open deployment page" to "開啟部署頁面",
+    "The deployment page is required to create your private sync service. The bootstrap secret is kept on this device and can be reused if you reopen the page." to
+        "建立私人同步服務需要開啟部署頁面。Bootstrap 秘密會保留在此裝置上，重新開啟頁面時可重複使用。",
+    "Could not copy the bootstrap secret or open the deployment page." to
+        "無法複製 Bootstrap 秘密或開啟部署頁面。",
+    "Could not copy the bootstrap secret. Copying is required before deployment." to
+        "無法複製 Bootstrap 秘密。部署前必須先完成複製。",
+    "Could not open the deployment page. Tap Open deployment page to retry." to
+        "無法開啟部署頁面，請點選「開啟部署頁面」重試。",
+    "Lost every device?" to "所有裝置都遺失了？",
+    "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to
+        "匯入 Recovery Kit 以驗證遠端工作區、撤銷舊裝置、輪替金鑰並建立替代 Kit。",
+    "Import Recovery Kit" to "匯入 Recovery Kit",
+    "Leave or clear pending workspace" to "離開或清除待處理工作區",
+    "Add device" to "新增裝置",
+    "Invite user" to "邀請使用者",
+    "Refresh devices" to "重新整理裝置",
+    "Approve new device" to "核准新裝置",
+    "Allow" to "允許",
+    "Deny" to "拒絕",
+    "Instance usage and quota" to "執行個體用量與配額",
+    "{0} users · {1} devices · {2} workspaces" to "{0} 位使用者 · {1} 部裝置 · {2} 個工作區",
+    "Stored {0} · reserved {1}" to "已儲存 {0} · 已保留 {1}",
+    "Users" to "使用者",
+    "Workspaces / user" to "工作區／使用者",
+    "Devices / user" to "裝置／使用者",
+    "Workspace MiB" to "工作區 MiB",
+    "Event KiB" to "事件 KiB",
+    "Checkpoint MiB" to "檢查點 MiB",
+    "Save quota" to "儲存配額",
+    "Refresh usage" to "重新整理用量",
+    "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}：{1} 個事件（{2}）、{3} 個檢查點（{4}）",
+    "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to
+        "此檢視僅包含用量中繼資料。加密的書庫內容永遠不會暴露給執行個體管理員。",
+    " (this device)" to "（此裝置）",
+    "Revoked" to "已撤銷",
+    "Active" to "作用中",
+    "Revoke" to "撤銷",
+    "Export Recovery Kit" to "匯出 Recovery Kit",
+    "Leave workspace" to "離開工作區",
+    "Legacy iCloud snapshot" to "舊版 iCloud 快照",
+    "Checking availability…" to "正在檢查可用性…",
+    "Available" to "可用",
+    "Enable snapshot sync" to "啟用快照同步",
+    "Sync when app enters foreground" to "應用程式進入前景時同步",
+    "Sync status" to "同步狀態",
+    "Idle" to "閒置",
+    "Checking availability" to "正在檢查可用性",
+    "Pulling, merging and uploading" to "擷取、合併與上傳中",
+    "Last sync succeeded" to "上次同步成功",
+    "Last sync failed" to "上次同步失敗",
+    "Last result" to "上次結果",
+    "Revision {0} → {1} · {2} conflicts" to "修訂版 {0} → {1} · {2} 個衝突",
+    "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to
+        "設定 Cloudflare 事件同步後，已停用 iCloud 快照寫入。",
+    "Sync QR code" to "同步 QR 碼",
+    "This is a one-time secret. Do not post it publicly." to "這是一次性秘密。請勿公開張貼。",
+    "Copy" to "複製",
+    "Revoke this device?" to "撤銷此裝置？",
+    "The device will lose future access and the workspace key will rotate." to "此裝置將失去未來存取權，且工作區金鑰會輪替。",
+    "Leave synced workspace?" to "離開已同步工作區？",
+    "This device will stop receiving updates. Local data remains until you restore or reset it." to
+        "此裝置將停止接收更新。除非還原或重設，否則本機資料會保留。",
+    "Leave" to "離開",
+    "Sync operation failed." to "同步操作失敗。",
+    "Checking the iCloud ubiquity container…" to "正在檢查 iCloud ubiquity 容器…",
+    "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to
+        "iCloud Drive 無法使用。請登入 iCloud 並為 Shinsou X 啟用 iCloud Drive。",
+    "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to
+        "Shinsou X 的 iCloud Drive 容器無法使用。請檢查應用程式的 iCloud Documents 權限。",
+    "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to
+        "Shinsou X 的 iCloud Drive 容器無法使用。請檢查 iCloud Documents 權限。",
+    "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to
+        "Cloudflare Sync v2 已設定。使用舊版快照同步前，請先離開該工作區。",
+    "Uploaded the first Shinsou X snapshot to iCloud Drive." to "第一份 Shinsou X 快照已上傳至 iCloud Drive。",
+    "Local data already matches iCloud Drive." to "本機資料已與 iCloud Drive 相符。",
+    "Merged local and remote snapshots." to "已合併本機與遠端快照。",
+    "Snapshot sync failed." to "快照同步失敗。",
+).plus(
+    // These entries are shared with other settings sections but are listed
+    // here as well so every sync label remains covered if it is moved later.
+    mapOf(
+        "iCloud Drive snapshot" to "iCloud Drive 快照",
+        "Unavailable" to "不可用",
+        "Check again" to "再次檢查",
+        "Sync now" to "立即同步",
+        "Merge one versioned Shinsou X backup file through iCloud Drive" to
+            "透過 iCloud Drive 合併一份具版本的 Shinsou X 備份檔案",
+        "Runs only when sync is enabled; identical snapshots do not write again" to
+            "只會在啟用同步時執行；相同的快照不會重複寫入",
+        "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to
+            "這會在 iCloud Drive 使用協調的單檔快照，不是記錄層級的 CloudKit 同步。",
+        "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to
+            "下載內容、本機來源檔案、擴充套件安裝包、Cookie、密碼與 API 金鑰不會同步。",
+    ),
+)
+
+private val SimplifiedSyncTranslations = TraditionalSyncTranslations.mapValues { (_, value) ->
+    value.toSimplifiedChinese()
+}
+
 private val TraditionalLongTranslations = mapOf(
     "Cover: {0}" to "封面：{0}",
     "Shinsou X is locked" to "Shinsou X 已鎖定",
@@ -744,9 +882,11 @@ private val TraditionalLongTranslations = mapOf(
     "Volume keys" to "音量鍵",
     "Vertical" to "垂直",
     "Webtoon" to "條漫",
-).plus(TraditionalAdditionalTranslations)
+).plus(TraditionalAdditionalTranslations).plus(TraditionalSyncTranslations)
 
 private val SimplifiedLongTranslations = mapOf(
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to
+        "下载内容、本机来源文件、扩展安装包、Cookie、密码和 API 密钥不同步。",
     "Cover: {0}" to "封面：{0}",
     "Shinsou X is locked" to "Shinsou X 已锁定",
     "Authenticate to continue." to "请完成身份验证后继续。",
@@ -976,6 +1116,205 @@ private fun String.toSimplifiedChinese(): String {
         .replace("佇列", "队列")
 }
 
+private val JapaneseSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Cloudflare 暗号化同期",
+    "Not configured" to "未設定", "Deploying" to "デプロイ中", "Linking" to "リンク中",
+    "Ready" to "準備完了", "Device revoked" to "デバイスを失効", "Error" to "エラー",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to
+        "カーソル {0}/{1} · 保留中の変更 {2} 件 · 保留中のアップロード {3} 件",
+    "Encrypted event sync is unavailable in this runtime." to "このランタイムでは暗号化イベント同期を利用できません。",
+    "Synchronized data needs repair" to "同期データの修復が必要です",
+    "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to
+        "{0} 件のレコードを反映できませんでした。暗号化レプリカに保持され、破棄されていません。",
+    "Retry validation" to "検証を再試行", "Missing synchronized dependency" to "同期された依存関係がありません",
+    "Identity mapping collision" to "ID マッピングが競合しています", "Invalid synchronized record" to "無効な同期レコード",
+    "Repair local identity mapping" to "ローカル ID マッピングを修復", "Confirm repository signing key" to "リポジトリ署名鍵を確認",
+    "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to
+        "このリポジトリは以前の鍵に固定されています。新しいフィンガープリントを正確に確認するまで信頼を拡張できません。",
+    "Trusted: {0}" to "信頼済み：{0}", "None on this device" to "このデバイスにはありません",
+    "Proposed: {0}" to "提案：{0}", "Rejected on this device" to "このデバイスで拒否済み",
+    "Trust exact fingerprint" to "正確なフィンガープリントを信頼", "Reject" to "拒否",
+    "Setup, invite, pairing or emergency handoff link / code" to "セットアップ、招待、ペアリング、緊急引き継ぎリンク／コード",
+    "Connect" to "接続", "Paste" to "貼り付け", "Scan QR" to "QR をスキャン",
+    "Bootstrap secret" to "ブートストラップシークレット", "Create sync service" to "同期サービスを作成", "Open deployment page" to "デプロイページを開く",
+    "Lost every device?" to "すべてのデバイスを失いましたか？",
+    "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to
+        "Recovery Kit をインポートしてリモートワークスペースを検証し、古いデバイスを失効、鍵をローテーションして交換キットを作成します。",
+    "Import Recovery Kit" to "Recovery Kit をインポート", "Leave or clear pending workspace" to "保留中のワークスペースを離脱または消去",
+    "Add device" to "デバイスを追加", "Invite user" to "ユーザーを招待", "Refresh devices" to "デバイスを更新",
+    "Approve new device" to "新しいデバイスを承認", "Allow" to "許可", "Deny" to "拒否",
+    "Instance usage and quota" to "インスタンス使用量とクォータ",
+    "{0} users · {1} devices · {2} workspaces" to "ユーザー {0} · デバイス {1} · ワークスペース {2}",
+    "Stored {0} · reserved {1}" to "保存済み {0} · 予約済み {1}", "Users" to "ユーザー",
+    "Workspaces / user" to "ワークスペース／ユーザー", "Devices / user" to "デバイス／ユーザー",
+    "Workspace MiB" to "ワークスペース MiB", "Event KiB" to "イベント KiB", "Checkpoint MiB" to "チェックポイント MiB",
+    "Save quota" to "クォータを保存", "Refresh usage" to "使用量を更新",
+    "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}：イベント {1} 件（{2}）、チェックポイント {3} 件（{4}）",
+    "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to
+        "この画面には使用量のメタデータのみが表示されます。暗号化されたライブラリの内容がインスタンス管理者に公開されることはありません。",
+    " (this device)" to "（このデバイス）", "Revoked" to "失効済み", "Active" to "アクティブ", "Revoke" to "失効",
+    "Export Recovery Kit" to "Recovery Kit をエクスポート", "Leave workspace" to "ワークスペースを離脱",
+    "Legacy iCloud snapshot" to "従来の iCloud スナップショット", "iCloud Drive snapshot" to "iCloud Drive スナップショット",
+    "Checking availability…" to "利用可能か確認中…", "Available" to "利用可能", "Unavailable" to "利用不可",
+    "Check again" to "再確認", "Enable snapshot sync" to "スナップショット同期を有効化",
+    "Merge one versioned Shinsou X backup file through iCloud Drive" to "iCloud Drive 経由でバージョン付き Shinsou X バックアップを 1 つ統合",
+    "Sync when app enters foreground" to "アプリがフォアグラウンドになったら同期",
+    "Runs only when sync is enabled; identical snapshots do not write again" to "同期が有効な場合のみ実行。同一のスナップショットは再書き込みしません",
+    "Sync status" to "同期ステータス", "Idle" to "待機中", "Checking availability" to "利用可能か確認中",
+    "Pulling, merging and uploading" to "取得、統合、アップロード中", "Last sync succeeded" to "前回の同期に成功",
+    "Last sync failed" to "前回の同期に失敗", "Sync now" to "今すぐ同期", "Last result" to "前回の結果",
+    "Revision {0} → {1} · {2} conflicts" to "リビジョン {0} → {1} · 競合 {2} 件",
+    "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "Cloudflare イベント同期の設定中は iCloud スナップショットの書き込みが無効です。",
+    "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "iCloud Drive の調整済み単一ファイルスナップショットを使用します。レコード単位の CloudKit 同期ではありません。",
+    "Sync QR code" to "同期 QR コード", "This is a one-time secret. Do not post it publicly." to "これは一度だけ使える秘密です。公開しないでください。",
+    "Share" to "共有", "Copy" to "コピー", "Revoke this device?" to "このデバイスを失効しますか？",
+    "The device will lose future access and the workspace key will rotate." to "このデバイスは今後アクセスできなくなり、ワークスペース鍵がローテーションされます。",
+    "Leave synced workspace?" to "同期済みワークスペースを離脱しますか？",
+    "This device will stop receiving updates. Local data remains until you restore or reset it." to "このデバイスは更新を受信しなくなります。復元またはリセットするまでローカルデータは残ります。",
+    "Leave" to "離脱", "Sync operation failed." to "同期操作に失敗しました。",
+    "Checking the iCloud ubiquity container…" to "iCloud ユビキタスコンテナを確認中…",
+    "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "iCloud Drive は利用できません。iCloud にサインインし、Shinsou X の iCloud Drive を有効にしてください。",
+    "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "Shinsou X の iCloud Drive コンテナを利用できません。アプリの iCloud Documents 権限を確認してください。",
+    "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "Shinsou X の iCloud Drive コンテナを利用できません。iCloud Documents 権限を確認してください。",
+    "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "Cloudflare Sync v2 が設定されています。従来のスナップショット同期を使う前にそのワークスペースを離脱してください。",
+    "Uploaded the first Shinsou X snapshot to iCloud Drive." to "最初の Shinsou X スナップショットを iCloud Drive にアップロードしました。",
+    "Local data already matches iCloud Drive." to "ローカルデータはすでに iCloud Drive と一致しています。",
+    "Merged local and remote snapshots." to "ローカルとリモートのスナップショットを統合しました。",
+    "Snapshot sync failed." to "スナップショット同期に失敗しました。",
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "ダウンロード、本機のソースファイル、拡張パッケージ、Cookie、パスワード、API キーは同期されません。",
+    "iCloud Drive snapshot sync is unavailable on this platform." to "このプラットフォームでは iCloud Drive スナップショット同期を利用できません。",
+    "Checking iCloud Drive availability…" to "iCloud Drive の利用可能性を確認中…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "アプリの iCloud Drive コンテナに Shinsou X のスナップショットを 1 つ保存します。",
+    "The remote snapshot service is unavailable." to "リモートスナップショットサービスを利用できません。",
+)
+
+private val KoreanSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Cloudflare 암호화 동기화", "Not configured" to "구성되지 않음", "Deploying" to "배포 중",
+    "Linking" to "연결 중", "Ready" to "준비됨", "Device revoked" to "기기 해지됨", "Error" to "오류",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to "커서 {0}/{1} · 대기 중 변경 {2}개 · 대기 중 업로드 {3}개",
+    "Encrypted event sync is unavailable in this runtime." to "이 런타임에서는 암호화 이벤트 동기화를 사용할 수 없습니다.",
+    "Synchronized data needs repair" to "동기화된 데이터에 복구가 필요합니다",
+    "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to "{0}개 레코드를 반영할 수 없습니다. 암호화된 복제본에 유지되며 조용히 삭제되지 않았습니다.",
+    "Retry validation" to "검증 다시 시도", "Missing synchronized dependency" to "동기화 종속 항목 누락", "Identity mapping collision" to "ID 매핑 충돌",
+    "Invalid synchronized record" to "잘못된 동기화 레코드", "Repair local identity mapping" to "로컬 ID 매핑 복구",
+    "Confirm repository signing key" to "저장소 서명 키 확인",
+    "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to "이 저장소는 이전 키에 고정되어 있습니다. 새 지문을 정확히 확인하기 전에는 신뢰를 확장할 수 없습니다.",
+    "Trusted: {0}" to "신뢰됨: {0}", "None on this device" to "이 기기에 없음", "Proposed: {0}" to "제안: {0}",
+    "Rejected on this device" to "이 기기에서 거부됨", "Trust exact fingerprint" to "정확한 지문 신뢰", "Reject" to "거부",
+    "Setup, invite, pairing or emergency handoff link / code" to "설정, 초대, 페어링 또는 긴급 인계 링크/코드",
+    "Connect" to "연결", "Paste" to "붙여넣기", "Scan QR" to "QR 스캔", "Bootstrap secret" to "부트스트랩 비밀",
+    "Create sync service" to "동기화 서비스 만들기", "Open deployment page" to "배포 페이지 열기", "Lost every device?" to "모든 기기를 잃으셨나요?",
+    "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to "Recovery Kit을 가져와 원격 작업 공간을 확인하고, 이전 기기를 해지하고, 키를 교체한 뒤 새 키트를 만드세요.",
+    "Import Recovery Kit" to "Recovery Kit 가져오기", "Leave or clear pending workspace" to "대기 중인 작업 공간 나가기 또는 지우기",
+    "Add device" to "기기 추가", "Invite user" to "사용자 초대", "Refresh devices" to "기기 새로 고침", "Approve new device" to "새 기기 승인",
+    "Allow" to "허용", "Deny" to "거부", "Instance usage and quota" to "인스턴스 사용량 및 할당량",
+    "{0} users · {1} devices · {2} workspaces" to "사용자 {0}명 · 기기 {1}개 · 작업 공간 {2}개", "Stored {0} · reserved {1}" to "저장됨 {0} · 예약됨 {1}",
+    "Users" to "사용자", "Workspaces / user" to "사용자당 작업 공간", "Devices / user" to "사용자당 기기", "Workspace MiB" to "작업 공간 MiB", "Event KiB" to "이벤트 KiB", "Checkpoint MiB" to "체크포인트 MiB",
+    "Save quota" to "할당량 저장", "Refresh usage" to "사용량 새로 고침", "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}: 이벤트 {1}개({2}), 체크포인트 {3}개({4})",
+    "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to "이 화면에는 사용량 메타데이터만 표시됩니다. 암호화된 라이브러리 내용은 인스턴스 관리자에게 공개되지 않습니다.",
+    " (this device)" to "(이 기기)", "Revoked" to "해지됨", "Active" to "활성", "Revoke" to "해지", "Export Recovery Kit" to "Recovery Kit 내보내기", "Leave workspace" to "작업 공간 나가기",
+    "Legacy iCloud snapshot" to "레거시 iCloud 스냅샷", "iCloud Drive snapshot" to "iCloud Drive 스냅샷", "Checking availability…" to "사용 가능 여부 확인 중…", "Available" to "사용 가능", "Unavailable" to "사용할 수 없음", "Check again" to "다시 확인",
+    "Enable snapshot sync" to "스냅샷 동기화 사용", "Merge one versioned Shinsou X backup file through iCloud Drive" to "iCloud Drive를 통해 버전이 지정된 Shinsou X 백업 파일 하나 병합",
+    "Sync when app enters foreground" to "앱이 포그라운드로 전환될 때 동기화", "Runs only when sync is enabled; identical snapshots do not write again" to "동기화가 활성화된 경우에만 실행하며 동일한 스냅샷은 다시 쓰지 않습니다.",
+    "Sync status" to "동기화 상태", "Idle" to "대기", "Checking availability" to "사용 가능 여부 확인 중", "Pulling, merging and uploading" to "가져오고 병합하고 업로드하는 중", "Last sync succeeded" to "마지막 동기화 성공", "Last sync failed" to "마지막 동기화 실패", "Sync now" to "지금 동기화", "Last result" to "마지막 결과",
+    "Revision {0} → {1} · {2} conflicts" to "개정 {0} → {1} · 충돌 {2}개", "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "Cloudflare 이벤트 동기화가 구성된 동안 iCloud 스냅샷 쓰기가 비활성화됩니다.",
+    "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "iCloud Drive의 조정된 단일 파일 스냅샷을 사용합니다. 레코드 수준 CloudKit 동기화가 아닙니다.", "Sync QR code" to "동기화 QR 코드", "This is a one-time secret. Do not post it publicly." to "일회성 비밀입니다. 공개하지 마세요.", "Share" to "공유", "Copy" to "복사",
+    "Revoke this device?" to "이 기기를 해지하시겠습니까?", "The device will lose future access and the workspace key will rotate." to "이 기기는 이후 접근 권한을 잃고 작업 공간 키가 교체됩니다.", "Leave synced workspace?" to "동기화된 작업 공간을 나가시겠습니까?", "This device will stop receiving updates. Local data remains until you restore or reset it." to "이 기기는 업데이트 수신을 중지합니다. 복원하거나 재설정할 때까지 로컬 데이터는 유지됩니다.", "Leave" to "나가기", "Sync operation failed." to "동기화 작업에 실패했습니다.",
+    "Checking the iCloud ubiquity container…" to "iCloud 유비쿼티 컨테이너 확인 중…", "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "iCloud Drive를 사용할 수 없습니다. iCloud에 로그인하고 Shinsou X의 iCloud Drive를 활성화하세요.",
+    "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "Shinsou X iCloud Drive 컨테이너를 사용할 수 없습니다. 앱의 iCloud Documents 권한을 확인하세요.", "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "Shinsou X iCloud Drive 컨테이너를 사용할 수 없습니다. iCloud Documents 권한을 확인하세요.",
+    "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "Cloudflare Sync v2가 구성되어 있습니다. 레거시 스냅샷 동기화를 사용하기 전에 해당 작업 공간을 나가세요.", "Uploaded the first Shinsou X snapshot to iCloud Drive." to "첫 번째 Shinsou X 스냅샷을 iCloud Drive에 업로드했습니다.", "Local data already matches iCloud Drive." to "로컬 데이터가 이미 iCloud Drive와 일치합니다.", "Merged local and remote snapshots." to "로컬 및 원격 스냅샷을 병합했습니다.", "Snapshot sync failed." to "스냅샷 동기화에 실패했습니다.",
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "다운로드, 로컬 소스 파일, 확장 패키지, 쿠키, 비밀번호 및 API 키는 동기화되지 않습니다.",
+    "iCloud Drive snapshot sync is unavailable on this platform." to "이 플랫폼에서는 iCloud Drive 스냅샷 동기화를 사용할 수 없습니다.",
+    "Checking iCloud Drive availability…" to "iCloud Drive 사용 가능 여부 확인 중…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "앱의 iCloud Drive 컨테이너에 Shinsou X 스냅샷 하나가 저장됩니다.",
+    "The remote snapshot service is unavailable." to "원격 스냅샷 서비스를 사용할 수 없습니다.",
+)
+
+private val FrenchSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Synchronisation chiffrée Cloudflare", "Not configured" to "Non configuré", "Deploying" to "Déploiement en cours",
+    "Linking" to "Liaison en cours", "Ready" to "Prêt", "Device revoked" to "Appareil révoqué", "Error" to "Erreur",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to "Curseur {0}/{1} · {2} modifications en attente · {3} téléversements en attente",
+    "Encrypted event sync is unavailable in this runtime." to "La synchronisation chiffrée des événements est indisponible dans cet environnement.",
+    "Synchronized data needs repair" to "Les données synchronisées doivent être réparées",
+    "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to "{0} enregistrements n’ont pas pu être projetés. Ils restent dans la réplique chiffrée et n’ont pas été supprimés silencieusement.",
+    "Retry validation" to "Réessayer la validation", "Missing synchronized dependency" to "Dépendance synchronisée manquante", "Identity mapping collision" to "Collision de mappage d’identité", "Invalid synchronized record" to "Enregistrement synchronisé non valide", "Repair local identity mapping" to "Réparer le mappage d’identité local",
+    "Confirm repository signing key" to "Confirmer la clé de signature du dépôt", "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to "Ce dépôt reste épinglé à son ancienne clé et ne peut élargir la confiance avant confirmation de la nouvelle empreinte exacte.",
+    "Trusted: {0}" to "Approuvée : {0}", "None on this device" to "Aucune sur cet appareil", "Proposed: {0}" to "Proposée : {0}", "Rejected on this device" to "Refusée sur cet appareil", "Trust exact fingerprint" to "Faire confiance à l’empreinte exacte", "Reject" to "Refuser",
+    "Setup, invite, pairing or emergency handoff link / code" to "Lien / code de configuration, d’invitation, d’association ou de transfert d’urgence",
+    "Connect" to "Connecter", "Paste" to "Coller", "Scan QR" to "Scanner le QR", "Bootstrap secret" to "Secret d’amorçage", "Create sync service" to "Créer le service de synchronisation", "Open deployment page" to "Ouvrir la page de déploiement",
+    "Lost every device?" to "Tous les appareils sont perdus ?", "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to "Importez votre Recovery Kit pour vérifier l’espace de travail distant, révoquer les anciens appareils, renouveler ses clés et créer un kit de remplacement.", "Import Recovery Kit" to "Importer le Recovery Kit", "Leave or clear pending workspace" to "Quitter ou effacer l’espace de travail en attente",
+    "Add device" to "Ajouter un appareil", "Invite user" to "Inviter un utilisateur", "Refresh devices" to "Actualiser les appareils", "Approve new device" to "Approuver le nouvel appareil", "Allow" to "Autoriser", "Deny" to "Refuser",
+    "Instance usage and quota" to "Utilisation et quota de l’instance", "{0} users · {1} devices · {2} workspaces" to "{0} utilisateurs · {1} appareils · {2} espaces de travail", "Stored {0} · reserved {1}" to "Stocké : {0} · réservé : {1}",
+    "Users" to "Utilisateurs", "Workspaces / user" to "Espaces de travail / utilisateur", "Devices / user" to "Appareils / utilisateur", "Workspace MiB" to "Espace de travail MiB", "Event KiB" to "Événement KiB", "Checkpoint MiB" to "Point de contrôle MiB", "Save quota" to "Enregistrer le quota", "Refresh usage" to "Actualiser l’utilisation",
+    "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0} : {1} événements ({2}), {3} points de contrôle ({4})", "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to "Cette vue contient uniquement des métadonnées d’utilisation. Les données chiffrées de la bibliothèque ne sont jamais exposées aux administrateurs de l’instance.",
+    " (this device)" to " (cet appareil)", "Revoked" to "Révoqué", "Active" to "Actif", "Revoke" to "Révoquer", "Export Recovery Kit" to "Exporter le Recovery Kit", "Leave workspace" to "Quitter l’espace de travail",
+    "Legacy iCloud snapshot" to "Ancien instantané iCloud", "iCloud Drive snapshot" to "Instantané iCloud Drive", "Checking availability…" to "Vérification de la disponibilité…", "Available" to "Disponible", "Unavailable" to "Indisponible", "Check again" to "Vérifier à nouveau",
+    "Enable snapshot sync" to "Activer la synchronisation des instantanés", "Merge one versioned Shinsou X backup file through iCloud Drive" to "Fusionner un fichier de sauvegarde Shinsou X versionné via iCloud Drive", "Sync when app enters foreground" to "Synchroniser au premier plan de l’application", "Runs only when sync is enabled; identical snapshots do not write again" to "S’exécute uniquement lorsque la synchronisation est activée ; les instantanés identiques ne sont pas réécrits.",
+    "Sync status" to "État de la synchronisation", "Idle" to "Inactif", "Checking availability" to "Vérification de la disponibilité", "Pulling, merging and uploading" to "Récupération, fusion et téléversement", "Last sync succeeded" to "Dernière synchronisation réussie", "Last sync failed" to "Dernière synchronisation échouée", "Sync now" to "Synchroniser maintenant", "Last result" to "Dernier résultat",
+    "Revision {0} → {1} · {2} conflicts" to "Révision {0} → {1} · {2} conflits", "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "L’écriture des instantanés iCloud est désactivée lorsque la synchronisation des événements Cloudflare est configurée.", "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "Utilise un instantané coordonné dans un fichier unique sur iCloud Drive. Il ne s’agit pas d’une synchronisation CloudKit au niveau des enregistrements.",
+    "Sync QR code" to "Code QR de synchronisation", "This is a one-time secret. Do not post it publicly." to "Il s’agit d’un secret à usage unique. Ne le publiez pas.", "Share" to "Partager", "Copy" to "Copier", "Revoke this device?" to "Révoquer cet appareil ?", "The device will lose future access and the workspace key will rotate." to "L’appareil perdra son accès futur et la clé de l’espace de travail sera renouvelée.", "Leave synced workspace?" to "Quitter l’espace de travail synchronisé ?", "This device will stop receiving updates. Local data remains until you restore or reset it." to "Cet appareil ne recevra plus de mises à jour. Les données locales restent présentes jusqu’à une restauration ou une réinitialisation.", "Leave" to "Quitter", "Sync operation failed." to "L’opération de synchronisation a échoué.",
+    "Checking the iCloud ubiquity container…" to "Vérification du conteneur ubiquitaire iCloud…", "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "iCloud Drive est indisponible. Connectez-vous à iCloud et activez iCloud Drive pour Shinsou X.", "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "Le conteneur iCloud Drive de Shinsou X est indisponible. Vérifiez l’autorisation iCloud Documents de l’application.", "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "Le conteneur iCloud Drive de Shinsou X est indisponible. Vérifiez l’autorisation iCloud Documents.", "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "Cloudflare Sync v2 est configuré. Quittez cet espace de travail avant d’utiliser la synchronisation d’instantanés héritée.", "Uploaded the first Shinsou X snapshot to iCloud Drive." to "Le premier instantané Shinsou X a été téléversé vers iCloud Drive.", "Local data already matches iCloud Drive." to "Les données locales correspondent déjà à iCloud Drive.", "Merged local and remote snapshots." to "Les instantanés local et distant ont été fusionnés.", "Snapshot sync failed." to "La synchronisation de l’instantané a échoué.",
+    "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "Les téléchargements, fichiers source locaux, paquets d’extensions, cookies, mots de passe et clés API ne sont pas synchronisés.",
+    "iCloud Drive snapshot sync is unavailable on this platform." to "La synchronisation des instantanés iCloud Drive est indisponible sur cette plateforme.",
+    "Checking iCloud Drive availability…" to "Vérification de la disponibilité d’iCloud Drive…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "Un instantané Shinsou X sera stocké dans le conteneur iCloud Drive de l’application.",
+    "The remote snapshot service is unavailable." to "Le service d’instantanés distant est indisponible.",
+)
+
+private val GermanSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Cloudflare-verschlüsselte Synchronisierung", "Not configured" to "Nicht konfiguriert", "Deploying" to "Wird bereitgestellt", "Linking" to "Wird verknüpft", "Ready" to "Bereit", "Device revoked" to "Gerät widerrufen", "Error" to "Fehler",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to "Cursor {0}/{1} · {2} ausstehende Änderungen · {3} ausstehende Uploads", "Encrypted event sync is unavailable in this runtime." to "Die verschlüsselte Ereignissynchronisierung ist in dieser Laufzeit nicht verfügbar.", "Synchronized data needs repair" to "Synchronisierte Daten müssen repariert werden", "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to "{0} Datensätze konnten nicht projiziert werden. Sie bleiben im verschlüsselten Replikat und wurden nicht still verworfen.", "Retry validation" to "Validierung wiederholen", "Missing synchronized dependency" to "Fehlende synchronisierte Abhängigkeit", "Identity mapping collision" to "Konflikt bei der Identitätszuordnung", "Invalid synchronized record" to "Ungültiger synchronisierter Datensatz", "Repair local identity mapping" to "Lokale Identitätszuordnung reparieren",
+    "Confirm repository signing key" to "Signaturschlüssel des Repositorys bestätigen", "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to "Dieses Repository bleibt an den bisherigen Schlüssel gebunden und kann erst nach Bestätigung des exakten neuen Fingerabdrucks weiteres Vertrauen erhalten.", "Trusted: {0}" to "Vertraut: {0}", "None on this device" to "Auf diesem Gerät keiner", "Proposed: {0}" to "Vorgeschlagen: {0}", "Rejected on this device" to "Auf diesem Gerät abgelehnt", "Trust exact fingerprint" to "Exaktem Fingerabdruck vertrauen", "Reject" to "Ablehnen",
+    "Setup, invite, pairing or emergency handoff link / code" to "Einrichtungs-, Einladungs-, Kopplungs- oder Notfallübergabe-Link / -Code", "Connect" to "Verbinden", "Paste" to "Einfügen", "Scan QR" to "QR scannen", "Bootstrap secret" to "Bootstrap-Geheimnis", "Create sync service" to "Synchronisierungsdienst erstellen", "Open deployment page" to "Bereitstellungsseite öffnen", "Lost every device?" to "Alle Geräte verloren?", "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to "Importiere dein Recovery Kit, um den entfernten Arbeitsbereich zu prüfen, alte Geräte zu widerrufen, Schlüssel zu wechseln und ein Ersatz-Kit zu erstellen.", "Import Recovery Kit" to "Recovery Kit importieren", "Leave or clear pending workspace" to "Ausstehende Arbeitsbereich-Konfiguration verlassen oder löschen",
+    "Add device" to "Gerät hinzufügen", "Invite user" to "Benutzer einladen", "Refresh devices" to "Geräte aktualisieren", "Approve new device" to "Neues Gerät genehmigen", "Allow" to "Erlauben", "Deny" to "Ablehnen", "Instance usage and quota" to "Instanznutzung und Kontingent", "{0} users · {1} devices · {2} workspaces" to "{0} Benutzer · {1} Geräte · {2} Arbeitsbereiche", "Stored {0} · reserved {1}" to "Gespeichert {0} · reserviert {1}", "Users" to "Benutzer", "Workspaces / user" to "Arbeitsbereiche / Benutzer", "Devices / user" to "Geräte / Benutzer", "Workspace MiB" to "Arbeitsbereich MiB", "Event KiB" to "Ereignis KiB", "Checkpoint MiB" to "Checkpoint MiB", "Save quota" to "Kontingent speichern", "Refresh usage" to "Nutzung aktualisieren", "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}: {1} Ereignisse ({2}), {3} Checkpoints ({4})", "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to "Diese Ansicht enthält nur Nutzungsmetadaten. Verschlüsselte Bibliotheksdaten werden Instanzadministratoren niemals offengelegt.",
+    " (this device)" to " (dieses Gerät)", "Revoked" to "Widerrufen", "Active" to "Aktiv", "Revoke" to "Widerrufen", "Export Recovery Kit" to "Recovery Kit exportieren", "Leave workspace" to "Arbeitsbereich verlassen", "Legacy iCloud snapshot" to "Veralteter iCloud-Snapshot", "iCloud Drive snapshot" to "iCloud-Drive-Snapshot", "Checking availability…" to "Verfügbarkeit wird geprüft…", "Available" to "Verfügbar", "Unavailable" to "Nicht verfügbar", "Check again" to "Erneut prüfen",
+    "Enable snapshot sync" to "Snapshot-Synchronisierung aktivieren", "Merge one versioned Shinsou X backup file through iCloud Drive" to "Eine versionierte Shinsou-X-Sicherungsdatei über iCloud Drive zusammenführen", "Sync when app enters foreground" to "Beim Wechsel der App in den Vordergrund synchronisieren", "Runs only when sync is enabled; identical snapshots do not write again" to "Wird nur bei aktivierter Synchronisierung ausgeführt; identische Snapshots werden nicht erneut geschrieben.", "Sync status" to "Synchronisierungsstatus", "Idle" to "Inaktiv", "Checking availability" to "Verfügbarkeit wird geprüft", "Pulling, merging and uploading" to "Abrufen, Zusammenführen und Hochladen", "Last sync succeeded" to "Letzte Synchronisierung erfolgreich", "Last sync failed" to "Letzte Synchronisierung fehlgeschlagen", "Sync now" to "Jetzt synchronisieren", "Last result" to "Letztes Ergebnis", "Revision {0} → {1} · {2} conflicts" to "Revision {0} → {1} · {2} Konflikte",
+    "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "Das Schreiben von iCloud-Snapshots ist deaktiviert, solange die Cloudflare-Ereignissynchronisierung konfiguriert ist.", "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "Verwendet einen koordinierten Ein-Datei-Snapshot in iCloud Drive. Dies ist keine CloudKit-Synchronisierung auf Datensatzebene.", "Sync QR code" to "Synchronisierungs-QR-Code", "This is a one-time secret. Do not post it publicly." to "Dies ist ein einmaliges Geheimnis. Veröffentliche es nicht.", "Share" to "Teilen", "Copy" to "Kopieren", "Revoke this device?" to "Dieses Gerät widerrufen?", "The device will lose future access and the workspace key will rotate." to "Das Gerät verliert den zukünftigen Zugriff und der Arbeitsbereichsschlüssel wird gewechselt.", "Leave synced workspace?" to "Synchronisierten Arbeitsbereich verlassen?", "This device will stop receiving updates. Local data remains until you restore or reset it." to "Dieses Gerät empfängt keine Updates mehr. Lokale Daten bleiben erhalten, bis du sie wiederherstellst oder zurücksetzt.", "Leave" to "Verlassen", "Sync operation failed." to "Synchronisierung fehlgeschlagen.",
+    "Checking the iCloud ubiquity container…" to "iCloud-Ubiquity-Container wird geprüft…", "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "iCloud Drive ist nicht verfügbar. Melde dich bei iCloud an und aktiviere iCloud Drive für Shinsou X.", "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "Der iCloud-Drive-Container von Shinsou X ist nicht verfügbar. Prüfe die iCloud-Documents-Berechtigung der App.", "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "Der iCloud-Drive-Container von Shinsou X ist nicht verfügbar. Prüfe die iCloud-Documents-Berechtigung.", "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "Cloudflare Sync v2 ist konfiguriert. Verlasse diesen Arbeitsbereich, bevor du die alte Snapshot-Synchronisierung verwendest.", "Uploaded the first Shinsou X snapshot to iCloud Drive." to "Der erste Shinsou-X-Snapshot wurde zu iCloud Drive hochgeladen.", "Local data already matches iCloud Drive." to "Die lokalen Daten entsprechen bereits iCloud Drive.", "Merged local and remote snapshots." to "Lokaler und entfernter Snapshot wurden zusammengeführt.", "Snapshot sync failed." to "Snapshot-Synchronisierung fehlgeschlagen.", "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "Downloads, lokale Quelldateien, Erweiterungspakete, Cookies, Passwörter und API-Schlüssel werden nicht synchronisiert.", "iCloud Drive snapshot sync is unavailable on this platform." to "Die iCloud-Drive-Snapshot-Synchronisierung ist auf dieser Plattform nicht verfügbar.",
+)
+
+private val GermanICloudSyncTranslations = mapOf(
+    "Checking iCloud Drive availability…" to "Verfügbarkeit von iCloud Drive wird geprüft…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "Ein einzelner Shinsou-X-Snapshot wird im iCloud-Drive-Container der App gespeichert.",
+    "The remote snapshot service is unavailable." to "Der entfernte Snapshot-Dienst ist nicht verfügbar.",
+)
+
+private val SpanishSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Sincronización cifrada de Cloudflare", "Not configured" to "No configurado", "Deploying" to "Desplegando", "Linking" to "Vinculando", "Ready" to "Listo", "Device revoked" to "Dispositivo revocado", "Error" to "Error",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to "Cursor {0}/{1} · {2} cambios pendientes · {3} cargas pendientes", "Encrypted event sync is unavailable in this runtime." to "La sincronización cifrada de eventos no está disponible en este entorno.", "Synchronized data needs repair" to "Los datos sincronizados necesitan reparación", "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to "No se pudieron proyectar {0} registros. Permanecen en la réplica cifrada y no se descartaron silenciosamente.", "Retry validation" to "Reintentar validación", "Missing synchronized dependency" to "Falta una dependencia sincronizada", "Identity mapping collision" to "Conflicto de asignación de identidad", "Invalid synchronized record" to "Registro sincronizado no válido", "Repair local identity mapping" to "Reparar la asignación de identidad local",
+    "Confirm repository signing key" to "Confirmar la clave de firma del repositorio", "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to "Este repositorio sigue fijado a su clave anterior y no puede ampliar la confianza hasta que confirmes la nueva huella exacta.", "Trusted: {0}" to "De confianza: {0}", "None on this device" to "Ninguna en este dispositivo", "Proposed: {0}" to "Propuesta: {0}", "Rejected on this device" to "Rechazada en este dispositivo", "Trust exact fingerprint" to "Confiar en la huella exacta", "Reject" to "Rechazar",
+    "Setup, invite, pairing or emergency handoff link / code" to "Enlace / código de configuración, invitación, emparejamiento o transferencia de emergencia", "Connect" to "Conectar", "Paste" to "Pegar", "Scan QR" to "Escanear QR", "Bootstrap secret" to "Secreto de arranque", "Create sync service" to "Crear servicio de sincronización", "Open deployment page" to "Abrir página de despliegue", "Lost every device?" to "¿Has perdido todos los dispositivos?", "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to "Importa tu Recovery Kit para verificar el espacio de trabajo remoto, revocar dispositivos antiguos, rotar sus claves y crear un kit de reemplazo.", "Import Recovery Kit" to "Importar Recovery Kit", "Leave or clear pending workspace" to "Salir o borrar el espacio de trabajo pendiente",
+    "Add device" to "Añadir dispositivo", "Invite user" to "Invitar usuario", "Refresh devices" to "Actualizar dispositivos", "Approve new device" to "Aprobar nuevo dispositivo", "Allow" to "Permitir", "Deny" to "Denegar", "Instance usage and quota" to "Uso y cuota de la instancia", "{0} users · {1} devices · {2} workspaces" to "{0} usuarios · {1} dispositivos · {2} espacios de trabajo", "Stored {0} · reserved {1}" to "Almacenado {0} · reservado {1}", "Users" to "Usuarios", "Workspaces / user" to "Espacios de trabajo / usuario", "Devices / user" to "Dispositivos / usuario", "Workspace MiB" to "Espacio de trabajo MiB", "Event KiB" to "Evento KiB", "Checkpoint MiB" to "Punto de control MiB", "Save quota" to "Guardar cuota", "Refresh usage" to "Actualizar uso", "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}: {1} eventos ({2}), {3} puntos de control ({4})", "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to "Esta vista solo contiene metadatos de uso. Las cargas cifradas de la biblioteca nunca se exponen a los administradores de la instancia.",
+    " (this device)" to " (este dispositivo)", "Revoked" to "Revocado", "Active" to "Activo", "Revoke" to "Revocar", "Export Recovery Kit" to "Exportar Recovery Kit", "Leave workspace" to "Salir del espacio de trabajo", "Legacy iCloud snapshot" to "Instantánea de iCloud heredada", "iCloud Drive snapshot" to "Instantánea de iCloud Drive", "Checking availability…" to "Comprobando disponibilidad…", "Available" to "Disponible", "Unavailable" to "No disponible", "Check again" to "Comprobar de nuevo",
+    "Enable snapshot sync" to "Activar sincronización de instantáneas", "Merge one versioned Shinsou X backup file through iCloud Drive" to "Combinar un archivo de copia de seguridad versionado de Shinsou X mediante iCloud Drive", "Sync when app enters foreground" to "Sincronizar cuando la aplicación pase a primer plano", "Runs only when sync is enabled; identical snapshots do not write again" to "Solo se ejecuta con la sincronización activada; las instantáneas idénticas no se vuelven a escribir.", "Sync status" to "Estado de sincronización", "Idle" to "Inactivo", "Checking availability" to "Comprobando disponibilidad", "Pulling, merging and uploading" to "Obteniendo, combinando y cargando", "Last sync succeeded" to "Última sincronización correcta", "Last sync failed" to "Última sincronización fallida", "Sync now" to "Sincronizar ahora", "Last result" to "Último resultado", "Revision {0} → {1} · {2} conflicts" to "Revisión {0} → {1} · {2} conflictos",
+    "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "La escritura de instantáneas de iCloud está desactivada mientras la sincronización de eventos de Cloudflare esté configurada.", "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "Usa una instantánea coordinada de un solo archivo en iCloud Drive. No es una sincronización de CloudKit a nivel de registro.", "Sync QR code" to "Código QR de sincronización", "This is a one-time secret. Do not post it publicly." to "Este es un secreto de un solo uso. No lo publiques.", "Share" to "Compartir", "Copy" to "Copiar", "Revoke this device?" to "¿Revocar este dispositivo?", "The device will lose future access and the workspace key will rotate." to "El dispositivo perderá el acceso futuro y la clave del espacio de trabajo rotará.", "Leave synced workspace?" to "¿Salir del espacio de trabajo sincronizado?", "This device will stop receiving updates. Local data remains until you restore or reset it." to "Este dispositivo dejará de recibir actualizaciones. Los datos locales permanecerán hasta que los restaures o restablezcas.", "Leave" to "Salir", "Sync operation failed." to "La operación de sincronización falló.",
+    "Checking the iCloud ubiquity container…" to "Comprobando el contenedor de ubicuidad de iCloud…", "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "iCloud Drive no está disponible. Inicia sesión en iCloud y activa iCloud Drive para Shinsou X.", "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "El contenedor de iCloud Drive de Shinsou X no está disponible. Comprueba el permiso iCloud Documents de la aplicación.", "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "El contenedor de iCloud Drive de Shinsou X no está disponible. Comprueba el permiso iCloud Documents.", "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "Cloudflare Sync v2 está configurado. Sal de ese espacio de trabajo antes de usar la sincronización de instantáneas heredada.", "Uploaded the first Shinsou X snapshot to iCloud Drive." to "Se ha cargado la primera instantánea de Shinsou X en iCloud Drive.", "Local data already matches iCloud Drive." to "Los datos locales ya coinciden con iCloud Drive.", "Merged local and remote snapshots." to "Se han combinado las instantáneas local y remota.", "Snapshot sync failed." to "La sincronización de instantáneas falló.", "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "Las descargas, los archivos de origen locales, los paquetes de extensiones, las cookies, las contraseñas y las claves API no se sincronizan.", "iCloud Drive snapshot sync is unavailable on this platform." to "La sincronización de instantáneas de iCloud Drive no está disponible en esta plataforma.",
+)
+
+private val SpanishICloudSyncTranslations = mapOf(
+    "Checking iCloud Drive availability…" to "Comprobando la disponibilidad de iCloud Drive…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "Se almacenará una instantánea de Shinsou X en el contenedor de iCloud Drive de la aplicación.",
+    "The remote snapshot service is unavailable." to "El servicio de instantáneas remoto no está disponible.",
+)
+
+private val PortugueseSyncTranslations = mapOf(
+    "Cloudflare encrypted sync" to "Sincronização criptografada do Cloudflare", "Not configured" to "Não configurado", "Deploying" to "Implantando", "Linking" to "Vinculando", "Ready" to "Pronto", "Device revoked" to "Dispositivo revogado", "Error" to "Erro",
+    "Cursor {0}/{1} · {2} pending changes · {3} pending uploads" to "Cursor {0}/{1} · {2} alterações pendentes · {3} uploads pendentes", "Encrypted event sync is unavailable in this runtime." to "A sincronização criptografada de eventos não está disponível neste ambiente.", "Synchronized data needs repair" to "Os dados sincronizados precisam de reparo", "{0} records could not be projected. They remain in the encrypted replica and were not silently discarded." to "Não foi possível projetar {0} registros. Eles permanecem na réplica criptografada e não foram descartados silenciosamente.", "Retry validation" to "Tentar validar novamente", "Missing synchronized dependency" to "Dependência sincronizada ausente", "Identity mapping collision" to "Conflito no mapeamento de identidade", "Invalid synchronized record" to "Registro sincronizado inválido", "Repair local identity mapping" to "Reparar mapeamento de identidade local",
+    "Confirm repository signing key" to "Confirmar chave de assinatura do repositório", "This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint." to "Este repositório continua fixado à chave anterior e não pode ampliar a confiança até você confirmar a nova impressão digital exata.", "Trusted: {0}" to "Confiável: {0}", "None on this device" to "Nenhuma neste dispositivo", "Proposed: {0}" to "Proposta: {0}", "Rejected on this device" to "Rejeitada neste dispositivo", "Trust exact fingerprint" to "Confiar na impressão digital exata", "Reject" to "Rejeitar",
+    "Setup, invite, pairing or emergency handoff link / code" to "Link / código de configuração, convite, emparelhamento ou transferência de emergência", "Connect" to "Conectar", "Paste" to "Colar", "Scan QR" to "Escanear QR", "Bootstrap secret" to "Segredo de inicialização", "Create sync service" to "Criar serviço de sincronização", "Open deployment page" to "Abrir página de implantação", "Lost every device?" to "Perdeu todos os dispositivos?", "Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit." to "Importe seu Recovery Kit para verificar o espaço de trabalho remoto, revogar dispositivos antigos, alternar as chaves e criar um kit substituto.", "Import Recovery Kit" to "Importar Recovery Kit", "Leave or clear pending workspace" to "Sair ou limpar o espaço de trabalho pendente",
+    "Add device" to "Adicionar dispositivo", "Invite user" to "Convidar usuário", "Refresh devices" to "Atualizar dispositivos", "Approve new device" to "Aprovar novo dispositivo", "Allow" to "Permitir", "Deny" to "Negar", "Instance usage and quota" to "Uso e cota da instância", "{0} users · {1} devices · {2} workspaces" to "{0} usuários · {1} dispositivos · {2} espaços de trabalho", "Stored {0} · reserved {1}" to "Armazenado {0} · reservado {1}", "Users" to "Usuários", "Workspaces / user" to "Espaços de trabalho / usuário", "Devices / user" to "Dispositivos / usuário", "Workspace MiB" to "Espaço de trabalho MiB", "Event KiB" to "Evento KiB", "Checkpoint MiB" to "Ponto de verificação MiB", "Save quota" to "Salvar cota", "Refresh usage" to "Atualizar uso", "{0}: {1} events ({2}), {3} checkpoints ({4})" to "{0}: {1} eventos ({2}), {3} pontos de verificação ({4})", "This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators." to "Esta tela contém apenas metadados de uso. Os dados criptografados da biblioteca nunca são expostos aos administradores da instância.",
+    " (this device)" to " (este dispositivo)", "Revoked" to "Revogado", "Active" to "Ativo", "Revoke" to "Revogar", "Export Recovery Kit" to "Exportar Recovery Kit", "Leave workspace" to "Sair do espaço de trabalho", "Legacy iCloud snapshot" to "Instantâneo legado do iCloud", "iCloud Drive snapshot" to "Instantâneo do iCloud Drive", "Checking availability…" to "Verificando disponibilidade…", "Available" to "Disponível", "Unavailable" to "Indisponível", "Check again" to "Verificar novamente",
+    "Enable snapshot sync" to "Ativar sincronização de instantâneos", "Merge one versioned Shinsou X backup file through iCloud Drive" to "Mesclar um arquivo de backup versionado do Shinsou X pelo iCloud Drive", "Sync when app enters foreground" to "Sincronizar quando o app entrar em primeiro plano", "Runs only when sync is enabled; identical snapshots do not write again" to "Executa somente quando a sincronização está ativada; instantâneos idênticos não são gravados novamente.", "Sync status" to "Status da sincronização", "Idle" to "Ocioso", "Checking availability" to "Verificando disponibilidade", "Pulling, merging and uploading" to "Baixando, mesclando e enviando", "Last sync succeeded" to "Última sincronização bem-sucedida", "Last sync failed" to "Última sincronização falhou", "Sync now" to "Sincronizar agora", "Last result" to "Último resultado", "Revision {0} → {1} · {2} conflicts" to "Revisão {0} → {1} · {2} conflitos",
+    "iCloud snapshot writing is disabled while Cloudflare event sync is configured." to "A gravação de instantâneos do iCloud está desativada enquanto a sincronização de eventos do Cloudflare estiver configurada.", "This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization." to "Usa um instantâneo coordenado de arquivo único no iCloud Drive. Não é uma sincronização do CloudKit em nível de registro.", "Sync QR code" to "Código QR de sincronização", "This is a one-time secret. Do not post it publicly." to "Este é um segredo de uso único. Não o publique.", "Share" to "Compartilhar", "Copy" to "Copiar", "Revoke this device?" to "Revogar este dispositivo?", "The device will lose future access and the workspace key will rotate." to "O dispositivo perderá o acesso futuro e a chave do espaço de trabalho será alternada.", "Leave synced workspace?" to "Sair do espaço de trabalho sincronizado?", "This device will stop receiving updates. Local data remains until you restore or reset it." to "Este dispositivo deixará de receber atualizações. Os dados locais permanecerão até você restaurá-los ou redefini-los.", "Leave" to "Sair", "Sync operation failed." to "Falha na operação de sincronização.",
+    "Checking the iCloud ubiquity container…" to "Verificando o contêiner de ubiquidade do iCloud…", "iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X." to "O iCloud Drive está indisponível. Inicie sessão no iCloud e ative o iCloud Drive para o Shinsou X.", "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement." to "O contêiner do iCloud Drive do Shinsou X está indisponível. Verifique a permissão iCloud Documents do app.", "The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement." to "O contêiner do iCloud Drive do Shinsou X está indisponível. Verifique a permissão iCloud Documents.", "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync." to "O Cloudflare Sync v2 está configurado. Saia desse espaço de trabalho antes de usar a sincronização de instantâneos legada.", "Uploaded the first Shinsou X snapshot to iCloud Drive." to "O primeiro instantâneo do Shinsou X foi enviado para o iCloud Drive.", "Local data already matches iCloud Drive." to "Os dados locais já correspondem ao iCloud Drive.", "Merged local and remote snapshots." to "Os instantâneos local e remoto foram mesclados.", "Snapshot sync failed." to "Falha na sincronização do instantâneo.", "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to "Downloads, arquivos de origem locais, pacotes de extensões, cookies, senhas e chaves de API não são sincronizados.", "iCloud Drive snapshot sync is unavailable on this platform." to "A sincronização de instantâneos do iCloud Drive não está disponível nesta plataforma.",
+)
+
+private val PortugueseICloudSyncTranslations = mapOf(
+    "Checking iCloud Drive availability…" to "Verificando a disponibilidade do iCloud Drive…",
+    "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "Um instantâneo do Shinsou X será armazenado no contêiner do iCloud Drive do app.",
+    "The remote snapshot service is unavailable." to "O serviço de instantâneos remoto está indisponível.",
+)
+
 private val TraditionalChineseStrings = EnglishStrings.copy(
     library = "書庫", updates = "更新", history = "歷史", browse = "瀏覽", more = "更多",
     sources = "來源", extensions = "擴充套件", migration = "遷移", downloads = "下載",
@@ -1010,7 +1349,8 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     readerModeVertical = "垂直翻页", readerModeWebtoon = "条漫", readerModeContinuousVertical = "连续垂直",
     pageTurnAnimation = "翻页动画", pageTurnAnimationDescription = "切换页面时显示动画",
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
-    translations = SimplifiedLongTranslations,
+    // Explicit Simplified wording wins over the character-converted Traditional fallback.
+    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations,
 )
 
 private val JapaneseStrings = EnglishStrings.copy(
@@ -1030,7 +1370,7 @@ private val JapaneseStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "縦スクロール", pageTurnAnimation = "ページ切り替えアニメーション",
     pageTurnAnimationDescription = "ページを切り替えるときにアニメーションを表示",
     noUpdates = "最近の更新はありません", noHistory = "閲覧履歴はありません", createBackup = "バックアップを作成",
-    restoreBackup = "バックアップを復元",
+    restoreBackup = "バックアップを復元", translations = JapaneseSyncTranslations,
 )
 
 private val KoreanStrings = EnglishStrings.copy(
@@ -1048,7 +1388,7 @@ private val KoreanStrings = EnglishStrings.copy(
     readerModeVertical = "세로 페이지 넘김", readerModeWebtoon = "웹툰", readerModeContinuousVertical = "연속 세로 스크롤",
     pageTurnAnimation = "페이지 전환 애니메이션", pageTurnAnimationDescription = "페이지를 전환할 때 애니메이션 표시",
     noMatches = "검색 결과 없음", libraryEmpty = "라이브러리가 비어 있습니다", noUpdates = "최근 업데이트 없음",
-    noHistory = "읽기 기록 없음", createBackup = "백업 만들기", restoreBackup = "백업 복원",
+    noHistory = "읽기 기록 없음", createBackup = "백업 만들기", restoreBackup = "백업 복원", translations = KoreanSyncTranslations,
 )
 
 private val FrenchStrings = EnglishStrings.copy(
@@ -1068,7 +1408,7 @@ private val FrenchStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Défilement vertical continu", pageTurnAnimation = "Animation de changement de page",
     pageTurnAnimationDescription = "Animer la transition entre les pages",
     noMatches = "Aucun résultat", libraryEmpty = "Votre bibliothèque est vide", noUpdates = "Aucune mise à jour récente",
-    noHistory = "Aucun historique", createBackup = "Créer une sauvegarde", restoreBackup = "Restaurer une sauvegarde",
+    noHistory = "Aucun historique", createBackup = "Créer une sauvegarde", restoreBackup = "Restaurer une sauvegarde", translations = FrenchSyncTranslations,
 )
 
 private val GermanStrings = EnglishStrings.copy(
@@ -1088,7 +1428,7 @@ private val GermanStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Fortlaufend vertikal", pageTurnAnimation = "Seitenwechsel animieren",
     pageTurnAnimationDescription = "Übergänge zwischen Seiten animieren",
     noUpdates = "Keine neuen Updates", noHistory = "Kein Leseverlauf", createBackup = "Backup erstellen",
-    restoreBackup = "Backup wiederherstellen",
+    restoreBackup = "Backup wiederherstellen", translations = GermanSyncTranslations + GermanICloudSyncTranslations,
 )
 
 private val SpanishStrings = EnglishStrings.copy(
@@ -1108,7 +1448,7 @@ private val SpanishStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Desplazamiento vertical continuo", pageTurnAnimation = "Animación al pasar página",
     pageTurnAnimationDescription = "Animar la transición entre páginas",
     noUpdates = "No hay actualizaciones recientes", noHistory = "No hay historial de lectura", createBackup = "Crear copia",
-    restoreBackup = "Restaurar copia",
+    restoreBackup = "Restaurar copia", translations = SpanishSyncTranslations + SpanishICloudSyncTranslations,
 )
 
 private val PortugueseStrings = EnglishStrings.copy(
@@ -1128,5 +1468,5 @@ private val PortugueseStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Rolagem vertical contínua", pageTurnAnimation = "Animação ao virar página",
     pageTurnAnimationDescription = "Animar a transição entre páginas",
     libraryEmpty = "Sua biblioteca está vazia", noUpdates = "Nenhuma atualização recente", noHistory = "Nenhum histórico de leitura",
-    createBackup = "Criar backup", restoreBackup = "Restaurar backup",
+    createBackup = "Criar backup", restoreBackup = "Restaurar backup", translations = PortugueseSyncTranslations + PortugueseICloudSyncTranslations,
 )

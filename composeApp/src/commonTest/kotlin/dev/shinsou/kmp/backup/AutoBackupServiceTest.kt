@@ -5,6 +5,11 @@ import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.domain.model.BackupStatus
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.files.AppFileSystem
+import dev.shinsou.kmp.sync.v2.CloudflareSnapshotReplacementGuard
+import dev.shinsou.kmp.sync.v2.InMemorySyncSessionStore
+import dev.shinsou.kmp.sync.v2.SyncSession
+import dev.shinsou.kmp.sync.v2.SyncSessionStatus
+import dev.shinsou.kmp.sync.v2.SyncWorkspaceDeparture
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -97,6 +102,37 @@ class AutoBackupServiceTest {
     }
 
     @Test
+    fun explicitDeviceOnlyAutomaticRestoreLeavesWorkspaceBeforeReplacing() = runTest {
+        val files = BackupMemoryFileSystem()
+        val repository = ShinsouRepository()
+        val manga = repository.upsertManga(Manga(source = 7, url = "/recover", title = "Recover safely"))
+        val sessionStore = InMemorySyncSessionStore(readyCloudflareSession())
+        var departed = false
+        repository.setSnapshotReplacementGuard(CloudflareSnapshotReplacementGuard(sessionStore))
+        val coordinator = SyncAwareSnapshotRestore(
+            repository = repository,
+            sessionStore = sessionStore,
+            workspaceDeparture = SyncWorkspaceDeparture {
+                departed = true
+                sessionStore.clear()
+            },
+        )
+        val service = AutoBackupService(
+            repository = repository,
+            fileSystem = files,
+            now = { 85_000L },
+        )
+        val backup = service.createNow()
+        repository.deleteManga(manga.id)
+
+        service.restore(backup.fileName, SnapshotRestoreTarget.THIS_DEVICE_ONLY, coordinator)
+
+        assertTrue(departed)
+        assertEquals(null, sessionStore.load())
+        assertEquals("Recover safely", repository.manga(manga.id)?.title)
+    }
+
+    @Test
     fun damagedAndFailedBackupsRemainActionable() = runTest {
         val files = BackupMemoryFileSystem()
         val repository = ShinsouRepository()
@@ -166,6 +202,20 @@ class AutoBackupServiceTest {
         scheduler.stop()
     }
 }
+
+private fun readyCloudflareSession() = SyncSession(
+    endpoint = "https://sync.example",
+    instanceId = "instance",
+    userId = "user",
+    workspaceId = "workspace",
+    deviceId = "device",
+    deviceDisplayName = "Phone",
+    platform = "ios",
+    status = SyncSessionStatus.READY,
+    deviceAuthEpoch = 1,
+    membershipAuthEpoch = 1,
+    activeKeyEpoch = 1,
+)
 
 private class BackupMemoryFileSystem : AppFileSystem {
     private val files = linkedMapOf<String, ByteArray>()

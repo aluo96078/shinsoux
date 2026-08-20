@@ -1,5 +1,6 @@
 package dev.shinsou.kmp
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -64,6 +65,7 @@ class MainActivity : FragmentActivity() {
         // networking policy used by source requests.
         val httpClient = createPlatformHttpClient()
         installConfiguredImageLoader(httpClient)
+        val syncInfrastructure = AndroidSyncInfrastructure(applicationContext)
         composition = ShinsouComposition(
             repository = repository,
             httpClient = httpClient,
@@ -71,13 +73,17 @@ class MainActivity : FragmentActivity() {
             fileSystem = sharedState.fileSystem,
             runtimeFactory = RhinoScriptPluginRuntimeFactory(),
             autoBackupService = sharedState.autoBackups,
+            syncInfrastructure = syncInfrastructure,
         )
+        val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
             activity = this,
             documentLauncher = documentLauncher,
             browse = composition.browse,
             content = composition.content,
             tracking = composition.tracking,
+            cloudflareSync = composition.cloudflareSync,
+            syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
             stringsProvider = {
                 val preference = repository.snapshot.value.settings.general.languagePreference
                 val tag = preference
@@ -91,11 +97,15 @@ class MainActivity : FragmentActivity() {
                     "iCloud Drive snapshot sync is available only on iOS.",
                 ),
                 deviceId = "android",
+                deviceIdProvider = composition::installationDeviceId,
+                writerAllowed = composition::isLegacySnapshotWriterAllowed,
             ),
         )
 
         setContent {
             val snapshot by repository.snapshot.collectAsState()
+            val readerProgressReporter by syncRuntime.readerProgressReporter.collectAsState()
+            val syncBoundaryReady by composition.syncBoundaryReady.collectAsState()
             val darkTheme = when (snapshot.settings.appearance.theme) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -114,6 +124,8 @@ class MainActivity : FragmentActivity() {
                 repository = repository,
                 appServices = appServices,
                 autoBackupService = composition.autoBackups,
+                readerProgressReporter = readerProgressReporter,
+                interactionReady = syncBoundaryReady,
             )
         }
         platformScope.launch { composition.start() }
@@ -145,6 +157,7 @@ class MainActivity : FragmentActivity() {
         handleIntent(intent)
     }
 
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val readerEvent = when (event.keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> ReaderVolumeKeyEvent.VOLUME_UP
@@ -168,10 +181,12 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         if (::appServices.isInitialized) appServices.emitForeground()
+        if (::composition.isInitialized) platformScope.launch { composition.onForeground() }
     }
 
     override fun onStop() {
         if (::appServices.isInitialized) appServices.emitBackground()
+        if (::composition.isInitialized) platformScope.launch { composition.onBackground() }
         super.onStop()
     }
 

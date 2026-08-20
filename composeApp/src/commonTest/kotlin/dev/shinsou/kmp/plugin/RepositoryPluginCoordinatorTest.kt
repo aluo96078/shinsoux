@@ -11,6 +11,8 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.http.headersOf
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,9 +38,10 @@ class RepositoryPluginCoordinatorTest {
             },
         )
         val transportRequests = mutableListOf<PluginHttpRequest>()
+        val transportRequestsMutex = Mutex()
         val pluginNetwork = PluginNetworkClient(
             transport = PluginHttpTransport { request ->
-                transportRequests += request
+                transportRequestsMutex.withLock { transportRequests += request }
                 PluginHttpResponse(
                     status = 200,
                     body = byteArrayOf(1, 2, 3),
@@ -130,15 +133,16 @@ class RepositoryPluginCoordinatorTest {
 
         coordinator.enqueueDownload(mangaId, chapterId)
         downloads.awaitIdle()
+        val completedTransportRequests = transportRequestsMutex.withLock { transportRequests.toList() }
         assertEquals(3, files.list("downloads/$mangaId/$chapterId").size)
-        assertEquals(2, transportRequests.size)
+        assertEquals(2, completedTransportRequests.size)
         assertEquals(
             setOf("https://images.example/0.jpg", "https://images.example/1.jpg"),
-            transportRequests.mapNotNull { Url(it.url).parameters["url"] }.toSet(),
+            completedTransportRequests.mapNotNull { Url(it.url).parameters["url"] }.toSet(),
         )
-        assertEquals("test-agent", transportRequests.first().headers["User-Agent"])
-        assertEquals("proxy-key", transportRequests.first().headers["X-Proxy-Key"])
-        assertEquals("https://reader.example/chapter", transportRequests.first().headers["Referer"])
+        assertEquals("test-agent", completedTransportRequests.first().headers["User-Agent"])
+        assertEquals("proxy-key", completedTransportRequests.first().headers["X-Proxy-Key"])
+        assertEquals("https://reader.example/chapter", completedTransportRequests.first().headers["Referer"])
 
         val offline = coordinator.loadReaderChapter(mangaId, chapterId)
         assertEquals(2, offline.pages.size)
@@ -218,16 +222,35 @@ private class FakeRuntime : ScriptPluginRuntime {
 
 private class CoordinatorMemoryFileSystem : AppFileSystem {
     private val values = linkedMapOf<String, ByteArray>()
-    override suspend fun write(relativePath: String, bytes: ByteArray) { values[relativePath] = bytes }
-    override suspend fun read(relativePath: String): ByteArray? = values[relativePath]
-    override suspend fun exists(relativePath: String): Boolean = relativePath in values
-    override suspend fun delete(relativePath: String): Boolean = values.remove(relativePath) != null
-    override suspend fun deleteTree(relativeDirectory: String): Boolean {
-        val matching = values.keys.filter { it.startsWith(relativeDirectory.trimEnd('/') + "/") }
-        matching.forEach(values::remove)
-        return matching.isNotEmpty()
+    private val mutex = Mutex()
+
+    override suspend fun write(relativePath: String, bytes: ByteArray) = mutex.withLock {
+        values[relativePath] = bytes
     }
-    override suspend fun list(relativeDirectory: String): List<String> =
-        values.keys.filter { it.startsWith(relativeDirectory.trimEnd('/') + "/") }
+
+    override suspend fun read(relativePath: String): ByteArray? = mutex.withLock {
+        values[relativePath]
+    }
+
+    override suspend fun exists(relativePath: String): Boolean = mutex.withLock {
+        relativePath in values
+    }
+
+    override suspend fun delete(relativePath: String): Boolean = mutex.withLock {
+        values.remove(relativePath) != null
+    }
+
+    override suspend fun deleteTree(relativeDirectory: String): Boolean = mutex.withLock {
+        val prefix = relativeDirectory.trimEnd('/') + "/"
+        val matching = values.keys.filter { it.startsWith(prefix) }
+        matching.forEach(values::remove)
+        matching.isNotEmpty()
+    }
+
+    override suspend fun list(relativeDirectory: String): List<String> = mutex.withLock {
+        val prefix = relativeDirectory.trimEnd('/') + "/"
+        values.keys.filter { it.startsWith(prefix) }
+    }
+
     override fun uri(relativePath: String): String = "memory://$relativePath"
 }

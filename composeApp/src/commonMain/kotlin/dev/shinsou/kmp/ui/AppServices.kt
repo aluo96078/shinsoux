@@ -1,15 +1,20 @@
 package dev.shinsou.kmp.ui
 
+import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.local.LocalImportResult
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.sync.SnapshotSyncController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
+import dev.shinsou.kmp.sync.v2.EphemeralSyncPayload
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 
 private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 private val emptySourceLoginRequests = MutableStateFlow<List<SourceLoginRequest>>(emptyList())
@@ -34,6 +39,14 @@ interface ShinsouAppServices {
 
     /** Complete-snapshot sync; iOS supplies iCloud Drive while other targets report unavailable. */
     val snapshotSync: SnapshotSyncController?
+        get() = null
+
+    /** Event-based E2EE sync. Runtime state and one-time secrets stay outside AppSnapshot. */
+    val cloudflareSync: CloudflareSyncUiController?
+        get() = null
+
+    /** Safe bulk restore/reset policy bound to the same v2 runtime/local store as cloud sync. */
+    val syncAwareSnapshotRestore: SyncAwareSnapshotRestore?
         get() = null
 
     /** Cold or hot stream of URLs/events received by the platform application. */
@@ -71,7 +84,24 @@ interface ShinsouAppServices {
 
     fun openExternalUrl(url: String) = Unit
 
+    /**
+     * Opens a URL and reports whether the platform accepted the request.  Existing callers use
+     * [openExternalUrl] as a fire-and-forget action; provisioning uses this explicit result so a
+     * browser-launch failure is visible instead of looking like a stalled deployment.
+     */
+    fun tryOpenExternalUrl(url: String): Boolean {
+        openExternalUrl(url)
+        return true
+    }
+
     fun shareText(title: String, text: String) = Unit
+
+    fun copyText(label: String, text: String): Boolean = false
+
+    suspend fun readClipboardText(): String? = null
+
+    /** Mobile camera scanner; every platform must retain paste/manual-code fallback. */
+    suspend fun scanQrCode(): String? = null
 
     suspend fun exportDocument(suggestedName: String, contents: String): Boolean = false
 
@@ -230,6 +260,86 @@ sealed interface ShinsouDeepLink {
     data class OpenSection(val section: DeepLinkSection) : ShinsouDeepLink
 
     data object OpenSettings : ShinsouDeepLink
+
+    /** One-time Cloudflare setup, invite, pairing, recovery, or operator handoff action. */
+    data class OpenSyncLink(val payload: SyncLinkPayload) : ShinsouDeepLink
+}
+
+/**
+ * Retains OS-delivered links in FIFO order until common navigation acknowledges the exact event.
+ * This is especially important for one-time sync links received while the app is locked or while
+ * an earlier provisioning request is still running. The small bound prevents custom-scheme spam
+ * from growing memory without limit; a full queue rejects the new link without disturbing secrets
+ * that were already accepted.
+ */
+internal class RetainedDeepLinkQueue(
+    private val maximumPending: Int = 32,
+) {
+    private val mutableState = MutableStateFlow(QueueState())
+
+    init {
+        require(maximumPending > 0)
+    }
+
+    val events: Flow<ShinsouDeepLink> = mutableState
+        .map { it.pending.firstOrNull()?.link }
+        .filterNotNull()
+
+    fun tryEnqueue(link: ShinsouDeepLink): Boolean {
+        while (true) {
+            val current = mutableState.value
+            if (current.pending.size >= maximumPending) return false
+            val queued = QueuedDeepLink(current.nextId, link)
+            val updated = QueueState(current.nextId + 1, current.pending + queued)
+            if (mutableState.compareAndSet(current, updated)) return true
+        }
+    }
+
+    fun handled(link: ShinsouDeepLink) {
+        while (true) {
+            val current = mutableState.value
+            if (current.pending.firstOrNull()?.link !== link) return
+            val updated = current.copy(pending = current.pending.drop(1))
+            if (mutableState.compareAndSet(current, updated)) return
+        }
+    }
+
+    private data class QueueState(
+        val nextId: Long = 0,
+        val pending: List<QueuedDeepLink> = emptyList(),
+    )
+
+    private data class QueuedDeepLink(
+        val id: Long,
+        val link: ShinsouDeepLink,
+    )
+}
+
+/**
+ * Parsed sync links deliberately keep secrets out of AppSnapshot and navigation route strings.
+ * Callers must consume the payload once and must never include it in logs or error messages.
+ */
+class SyncLinkPayload(
+    val action: SyncLinkAction,
+    val endpoint: String,
+    val oneTimeSecret: EphemeralSyncPayload?,
+    val sessionId: String? = null,
+    val instanceId: String? = null,
+    val userId: String? = null,
+    val workspaceId: String? = null,
+) {
+    override fun toString(): String =
+        "SyncLinkPayload(action=$action, endpoint=$endpoint, sessionId=$sessionId, " +
+            "instanceId=$instanceId, userId=$userId, workspaceId=$workspaceId, " +
+            "oneTimeSecret=${if (oneTimeSecret == null) "absent" else "REDACTED"})"
+}
+
+enum class SyncLinkAction {
+    SETUP,
+    INVITE,
+    PAIR,
+    RECOVERY,
+    EMERGENCY_RESET,
 }
 
 enum class DeepLinkSection {

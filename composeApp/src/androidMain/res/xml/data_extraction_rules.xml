@@ -3,9 +3,15 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
         <exclude domain="file" path="shinsou-content/" />
+        <exclude domain="database" path="shinsou-sync-v2.db" />
+        <exclude domain="database" path="shinsou-sync-v2.db-wal" />
+        <exclude domain="database" path="shinsou-sync-v2.db-shm" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
         <exclude domain="file" path="shinsou-content/" />
+        <exclude domain="database" path="shinsou-sync-v2.db" />
+        <exclude domain="database" path="shinsou-sync-v2.db-wal" />
+        <exclude domain="database" path="shinsou-sync-v2.db-shm" />
     </device-transfer>
 </data-extraction-rules>

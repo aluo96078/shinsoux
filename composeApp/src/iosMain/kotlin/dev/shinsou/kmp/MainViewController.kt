@@ -1,6 +1,8 @@
 package dev.shinsou.kmp
 
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.window.ComposeUIViewController
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
@@ -21,7 +23,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import platform.UIKit.UIViewController
-import platform.UIKit.UIDevice
 
 /** Native entry point consumed by the SwiftUI application host. */
 @Suppress("FunctionName")
@@ -29,10 +30,14 @@ public fun MainViewController(): UIViewController {
     val container = IosApplicationContainer
     return ComposeUIViewController {
         LaunchedEffect(container) { container.start() }
+        val readerProgressReporter by container.readerProgressReporter.collectAsState()
+        val syncBoundaryReady by container.syncBoundaryReady.collectAsState()
         App(
             repository = container.repository,
             appServices = container.services,
             autoBackupService = container.autoBackups,
+            readerProgressReporter = readerProgressReporter,
+            interactionReady = syncBoundaryReady,
         )
     }
 }
@@ -48,7 +53,7 @@ public fun isSecureScreenEnabled(): Boolean = IosSecurityState.enabled
 
 /** Receives SwiftUI scene transitions so common app-lock timeout logic is platform-neutral. */
 public fun setApplicationForeground(foreground: Boolean) {
-    IosApplicationContainer.services.setApplicationForeground(foreground)
+    IosApplicationContainer.setApplicationForeground(foreground)
 }
 
 /** Public presentation state queried by the Swift UIKit host after change notifications. */
@@ -109,18 +114,23 @@ internal object IosApplicationContainer {
         persist = IosSnapshotPersistence::save,
     )
 
+    private val syncInfrastructure = IosSyncInfrastructure()
+
     private val composition = ShinsouComposition(
         repository = repository,
         httpClient = createPlatformHttpClient(),
         pluginKeyValueStore = IosPluginKeyValueStore(),
         fileSystem = IosAppFileSystem(),
         runtimeFactory = JavaScriptCoreScriptPluginRuntimeFactory(),
+        syncInfrastructure = syncInfrastructure,
     )
 
     private val snapshotSync = SnapshotSyncController(
         repository = repository,
         transport = IosICloudDriveSnapshotTransport(),
-        deviceId = UIDevice.currentDevice.identifierForVendor?.UUIDString ?: "ios",
+        deviceId = "ios",
+        deviceIdProvider = composition::installationDeviceId,
+        writerAllowed = composition::isLegacySnapshotWriterAllowed,
     )
 
     private val startupMutex = Mutex()
@@ -134,14 +144,27 @@ internal object IosApplicationContainer {
 
     val autoBackups = composition.autoBackups
 
+    val readerProgressReporter = requireNotNull(composition.syncRuntime).readerProgressReporter
+
+    val syncBoundaryReady = composition.syncBoundaryReady
+
     val services = IosAppServices(
         browse = composition.browse,
         content = composition.content,
         tracking = composition.tracking,
+        cloudflareSync = composition.cloudflareSync,
+        syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
         snapshotSync = snapshotSync,
     )
 
     private var started = false
+
+    fun setApplicationForeground(foreground: Boolean) {
+        services.setApplicationForeground(foreground)
+        applicationScope.launch {
+            if (foreground) composition.onForeground() else composition.onBackground()
+        }
+    }
 
     suspend fun start() = startupMutex.withLock {
         if (started) return@withLock

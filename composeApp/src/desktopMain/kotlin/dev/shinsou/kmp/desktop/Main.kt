@@ -23,6 +23,7 @@ import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.DesktopAppFileSystem
 import dev.shinsou.kmp.network.createPlatformHttpClient
+import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
@@ -35,15 +36,20 @@ import java.awt.Dimension
 import java.awt.Frame
 import java.awt.desktop.AppForegroundEvent
 import java.awt.desktop.AppForegroundListener
+import java.awt.desktop.OpenURIHandler
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-fun main() {
+fun main(args: Array<String>) {
     val desktopPlatform = DesktopPlatform.current
     configureDesktopSystemProperties(desktopPlatform)
+    // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
+    // acknowledge-after-consumption flow used by mobile cold starts.
+    val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
 
     application {
         val repository = remember {
@@ -57,6 +63,7 @@ fun main() {
             ?.takeUnless { it.equals("system", ignoreCase = true) }
             ?: Locale.getDefault().toLanguageTag()
         val strings = remember(languageTag) { shinsouStringsFor(languageTag) }
+        val syncInfrastructure = remember { DesktopSyncInfrastructure() }
         val composition = remember {
             ShinsouComposition(
                 repository = repository,
@@ -64,8 +71,12 @@ fun main() {
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
                 runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+                syncInfrastructure = syncInfrastructure,
             )
         }
+        val syncRuntime = requireNotNull(composition.syncRuntime)
+        val readerProgressReporter by syncRuntime.readerProgressReporter.collectAsState()
+        val syncBoundaryReady by composition.syncBoundaryReady.collectAsState()
         val autoBackupScope = rememberCoroutineScope()
         val autoBackupScheduler = remember(composition, autoBackupScope) {
             ForegroundAutoBackupScheduler(composition.autoBackups, autoBackupScope)
@@ -109,12 +120,16 @@ fun main() {
                 browse = composition.browse,
                 content = composition.content,
                 tracking = composition.tracking,
+                cloudflareSync = composition.cloudflareSync,
+                syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
                 snapshotSync = SnapshotSyncController(
                     repository = repository,
                     transport = UnavailableSnapshotSyncTransport(
                         "iCloud Drive snapshot sync is available only on iOS.",
                     ),
                     deviceId = "desktop",
+                    deviceIdProvider = composition::installationDeviceId,
+                    writerAllowed = composition::isLegacySnapshotWriterAllowed,
                 ),
                 closeApplication = ::requestClose,
                 frame = { hostFrame },
@@ -138,6 +153,9 @@ fun main() {
                 window.minimumSize = Dimension(900, 600)
             }
             LaunchedEffect(composition) { composition.start() }
+            LaunchedEffect(services, initialDeepLink) {
+                initialDeepLink?.let(services::emitDeepLink)
+            }
             LaunchedEffect(autoBackupScheduler) { autoBackupScheduler.start() }
             DisposableEffect(composition) {
                 onDispose {
@@ -147,9 +165,15 @@ fun main() {
             }
             DisposableEffect(services) {
                 val listener = object : AppForegroundListener {
-                    override fun appRaisedToForeground(event: AppForegroundEvent) = services.emitForeground()
+                    override fun appRaisedToForeground(event: AppForegroundEvent) {
+                        services.emitForeground()
+                        autoBackupScope.launch { composition.onForeground() }
+                    }
 
-                    override fun appMovedToBackground(event: AppForegroundEvent) = services.emitBackground()
+                    override fun appMovedToBackground(event: AppForegroundEvent) {
+                        services.emitBackground()
+                        autoBackupScope.launch { composition.onBackground() }
+                    }
                 }
                 val desktop = runCatching {
                     if (Desktop.isDesktopSupported()) Desktop.getDesktop() else null
@@ -158,9 +182,22 @@ fun main() {
                     desktop.addAppEventListener(listener)
                     true
                 }.getOrDefault(false)
+                val uriHandlerRegistered = desktop != null &&
+                    desktop.isSupported(Desktop.Action.APP_OPEN_URI) && runCatching {
+                        desktop.setOpenURIHandler(
+                            OpenURIHandler { event ->
+                                DeepLinkParser.parse(event.uri.toString())?.let(services::emitDeepLink)
+                            },
+                        )
+                        true
+                    }.getOrDefault(false)
                 services.emitForeground()
+                autoBackupScope.launch { composition.onForeground() }
                 onDispose {
                     if (registered && desktop != null) runCatching { desktop.removeAppEventListener(listener) }
+                    if (uriHandlerRegistered && desktop != null) {
+                        runCatching { desktop.setOpenURIHandler(null) }
+                    }
                 }
             }
 
@@ -201,6 +238,8 @@ fun main() {
                 repository = repository,
                 appServices = services,
                 autoBackupService = composition.autoBackups,
+                readerProgressReporter = readerProgressReporter,
+                interactionReady = syncBoundaryReady,
             )
         }
     }

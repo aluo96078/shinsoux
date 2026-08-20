@@ -52,6 +52,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.domain.model.BackupStatus
 import dev.shinsou.kmp.backup.AutoBackupEntry
+import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
@@ -79,6 +81,9 @@ import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiState
+import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import kotlin.math.roundToInt
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -547,11 +552,20 @@ fun BackupScreen(
     onRefreshAutomatic: () -> Unit = {},
     onRestoreAutomatic: (AutoBackupEntry) -> Unit = {},
     onDeleteAutomatic: (AutoBackupEntry) -> Unit = {},
+    cloudflareSync: CloudflareSyncUiController? = null,
+    onRestoreWithTarget: ((SnapshotRestoreTarget) -> Unit)? = null,
+    onRestoreAutomaticWithTarget: ((AutoBackupEntry, SnapshotRestoreTarget) -> Unit)? = null,
+    onResetWithTarget: ((SnapshotRestoreTarget) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalShinsouStrings.current
+    val observedCloudflareState = cloudflareSync?.state?.collectAsState()
+    val cloudflareState = observedCloudflareState?.value ?: CloudflareSyncUiState()
+    val cloudflareConfigured = cloudflareState.configured
     var pendingRestore by remember { mutableStateOf<AutoBackupEntry?>(null) }
     var pendingDelete by remember { mutableStateOf<AutoBackupEntry?>(null) }
+    var pendingTargetOperation by remember { mutableStateOf<BackupReplacementOperation?>(null) }
+    var confirmLocalReset by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.backup,
@@ -602,11 +616,25 @@ fun BackupScreen(
                         Spacer(Modifier.width(7.dp))
                         Text(strings.createBackup)
                     }
-                    OutlinedButton(onClick = onRestore, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = {
+                            if (cloudflareConfigured) {
+                                pendingTargetOperation = BackupReplacementOperation.PortableRestore
+                            } else {
+                                onRestore()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
                         Icon(Icons.Outlined.Restore, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(strings.restoreBackup)
+                        Text(strings.text("Restore / import"))
                     }
+                }
+            }
+            if (cloudflareConfigured) {
+                item {
+                    SyncedBackupSafetyCard(cloudflareState)
                 }
             }
             item {
@@ -725,7 +753,13 @@ fun BackupScreen(
                                 )
                             }
                             IconButton(
-                                onClick = { pendingRestore = backup },
+                                onClick = {
+                                    if (cloudflareConfigured) {
+                                        pendingTargetOperation = BackupReplacementOperation.AutomaticRestore(backup)
+                                    } else {
+                                        pendingRestore = backup
+                                    }
+                                },
                                 enabled = backup.recoverable,
                             ) {
                                 Icon(Icons.Outlined.Restore, strings.text("Restore {0}", backup.fileName))
@@ -743,6 +777,48 @@ fun BackupScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            item {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(strings.text("Reset application data"), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (cloudflareConfigured) {
+                                strings.text("Choose whether to create synchronized deletions for the workspace or leave it before resetting only this device.")
+                            } else {
+                                strings.text("Removes the library, reading history, categories, settings and queued records from this device.")
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (cloudflareConfigured) {
+                                    pendingTargetOperation = BackupReplacementOperation.Reset
+                                } else {
+                                    confirmLocalReset = true
+                                }
+                            },
+                            enabled = onResetWithTarget != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.Delete, null)
+                            Spacer(Modifier.width(7.dp))
+                            Text(strings.text("Reset data"))
+                        }
+                        if (onResetWithTarget == null) {
+                            Text(
+                                strings.text("Safe reset is unavailable until the synchronization runtime is connected."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -780,6 +856,189 @@ fun BackupScreen(
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text(strings.cancel) } },
         )
     }
+    pendingTargetOperation?.let { operation ->
+        val handlerAvailable = when (operation) {
+            BackupReplacementOperation.PortableRestore -> onRestoreWithTarget != null
+            is BackupReplacementOperation.AutomaticRestore -> onRestoreAutomaticWithTarget != null
+            BackupReplacementOperation.Reset -> onResetWithTarget != null
+        }
+        val safety = backupReplacementSafety(cloudflareState.status, handlerAvailable)
+        SyncedReplacementTargetDialog(
+            operation = operation,
+            safety = safety,
+            onDismiss = { pendingTargetOperation = null },
+            onSelect = { target ->
+                pendingTargetOperation = null
+                when (operation) {
+                    BackupReplacementOperation.PortableRestore -> onRestoreWithTarget?.invoke(target)
+                    is BackupReplacementOperation.AutomaticRestore -> {
+                        onRestoreAutomaticWithTarget?.invoke(operation.backup, target)
+                    }
+                    BackupReplacementOperation.Reset -> onResetWithTarget?.invoke(target)
+                }
+            },
+        )
+    }
+    if (confirmLocalReset) {
+        AlertDialog(
+            modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
+            onDismissRequest = { confirmLocalReset = false },
+            title = { Text(strings.text("Reset this device?")) },
+            text = { Text(strings.text("This permanently removes the current library data and settings from this device.")) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLocalReset = false
+                        onResetWithTarget?.invoke(SnapshotRestoreTarget.THIS_DEVICE_ONLY)
+                    },
+                ) { Text(strings.text("Reset data"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmLocalReset = false }) { Text(strings.cancel) } },
+        )
+    }
+}
+
+private sealed interface BackupReplacementOperation {
+    data object PortableRestore : BackupReplacementOperation
+    data class AutomaticRestore(val backup: AutoBackupEntry) : BackupReplacementOperation
+    data object Reset : BackupReplacementOperation
+}
+
+internal data class BackupReplacementSafety(
+    val directReplacementAllowed: Boolean,
+    val allDevicesEnabled: Boolean,
+    val thisDeviceEnabled: Boolean,
+)
+
+/** Pure policy used by the UI so a missing callback or non-ready workspace always fails closed. */
+internal fun backupReplacementSafety(
+    status: SyncSessionStatus,
+    safeHandlerAvailable: Boolean,
+): BackupReplacementSafety {
+    val configured = status != SyncSessionStatus.NOT_CONFIGURED
+    return BackupReplacementSafety(
+        directReplacementAllowed = !configured,
+        allDevicesEnabled = configured && status == SyncSessionStatus.READY && safeHandlerAvailable,
+        thisDeviceEnabled = configured && safeHandlerAvailable,
+    )
+}
+
+@Composable
+private fun SyncedBackupSafetyCard(state: CloudflareSyncUiState) {
+    val strings = LocalShinsouStrings.current
+    val pending = state.pendingDrafts + state.pendingUploads
+    Surface(
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(strings.text("Cloudflare workspace protection"), style = MaterialTheme.typography.titleMedium)
+            Text(
+                strings.text("Restore, import and reset never overwrite the synchronized snapshot directly. You must choose a scope first."),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            if (pending > 0) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    strings.text("{0} durable change batches are still queued or uploading. Other devices are not yet guaranteed to be updated.", pending),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            } else {
+                Text(
+                    strings.text("A completed restore means the local transaction is safe; remote completion is confirmed by sync status."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncedReplacementTargetDialog(
+    operation: BackupReplacementOperation,
+    safety: BackupReplacementSafety,
+    onDismiss: () -> Unit,
+    onSelect: (SnapshotRestoreTarget) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val isReset = operation == BackupReplacementOperation.Reset
+    val title = when (operation) {
+        BackupReplacementOperation.PortableRestore -> strings.text("Where should this backup be restored?")
+        is BackupReplacementOperation.AutomaticRestore -> strings.text("Where should the backup from {0} be restored?", formatAutomaticBackupTime(operation.backup.createdAt))
+        BackupReplacementOperation.Reset -> strings.text("Where should data be reset?")
+    }
+    AlertDialog(
+        modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    strings.text("Choose explicitly. These actions have different synchronization and membership effects."),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(
+                    onClick = { onSelect(SnapshotRestoreTarget.ALL_SYNCED_DEVICES) },
+                    enabled = safety.allDevicesEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (isReset) strings.text("Reset on all synced devices")
+                        else strings.text("Restore and sync to all devices"),
+                    )
+                }
+                Text(
+                    if (isReset) {
+                        strings.text("Creates durable tombstones and uploads them in batches. Other devices change only after synchronization completes.")
+                    } else {
+                        strings.text("Converts additions, updates and deletions into durable mutations, then uploads them in batches.")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    strings.text("Downloads, Local source files, extension packages and credentials remain device-local."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!safety.allDevicesEnabled) {
+                    Text(
+                        strings.text("Syncing to all devices requires a Ready workspace and an available sync-safe handler."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedButton(
+                    onClick = { onSelect(SnapshotRestoreTarget.THIS_DEVICE_ONLY) },
+                    enabled = safety.thisDeviceEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (isReset) strings.text("Leave workspace and reset this device")
+                        else strings.text("Leave workspace and restore this device"),
+                    )
+                }
+                Text(
+                    strings.text("This device leaves the workspace first and stops receiving its updates; only then is local data replaced."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!safety.thisDeviceEnabled) {
+                    Text(
+                        strings.text("The sync-safe restore handler is unavailable, so direct replacement remains blocked."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
+    )
 }
 
 @Composable

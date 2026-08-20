@@ -4,6 +4,7 @@ import dev.shinsou.kmp.backup.SnapshotBackupService
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.withoutPortableSecrets
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -95,6 +96,8 @@ class SnapshotSyncController(
     private val deviceId: String,
     private val appVersion: String = "1.0.0",
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val deviceIdProvider: (suspend () -> String)? = null,
+    private val writerAllowed: suspend () -> Boolean = { true },
 ) {
     private val operationMutex = Mutex()
     private val mutableState = MutableStateFlow(SnapshotSyncState(transport.initialCapability))
@@ -103,6 +106,14 @@ class SnapshotSyncController(
 
     suspend fun refreshCapability(): SnapshotSyncCapability = operationMutex.withLock {
         mutableState.value = mutableState.value.copy(phase = SnapshotSyncPhase.CHECKING)
+        if (!legacyWriterAllowedFailClosed()) {
+            val blocked = blockedCapability()
+            mutableState.value = mutableState.value.copy(
+                capability = blocked,
+                phase = SnapshotSyncPhase.UNAVAILABLE,
+            )
+            return@withLock blocked
+        }
         val capability = runCatching { transport.capability() }.getOrElse { error ->
             SnapshotSyncCapability(
                 availability = SnapshotSyncAvailability.UNAVAILABLE,
@@ -122,6 +133,19 @@ class SnapshotSyncController(
         operationMutex.withLock {
             val startedWith = repository.currentSnapshot
             val completedAt = nowEpochMillis()
+            if (!legacyWriterAllowedFailClosed()) {
+                val blocked = blockedCapability()
+                return@withLock finish(
+                    capability = blocked,
+                    phase = SnapshotSyncPhase.UNAVAILABLE,
+                    result = SnapshotSyncResult(
+                        outcome = SnapshotSyncOutcome.UNAVAILABLE,
+                        completedAt = completedAt,
+                        localRevision = startedWith.revision,
+                        message = blocked.detail,
+                    ),
+                )
+            }
             val capability = runCatching { transport.capability() }.getOrElse { error ->
                 SnapshotSyncCapability(
                     availability = SnapshotSyncAvailability.UNAVAILABLE,
@@ -147,10 +171,18 @@ class SnapshotSyncController(
                 phase = SnapshotSyncPhase.SYNCING,
             )
             try {
+                val effectiveDeviceId = (deviceIdProvider?.invoke() ?: deviceId).also {
+                    require(it.isNotBlank()) { "Snapshot sync device id is unavailable" }
+                }
                 val remotePayload = transport.readSnapshot()
                 if (remotePayload == null) {
                     val localToUpload = repository.currentSnapshot
-                    val envelope = SnapshotBackupService.create(localToUpload, completedAt, appVersion, deviceId)
+                    val envelope = SnapshotBackupService.create(
+                        localToUpload,
+                        completedAt,
+                        appVersion,
+                        effectiveDeviceId,
+                    )
                     transport.writeSnapshot(SnapshotBackupService.encode(envelope))
                     return@withLock finish(
                         capability,
@@ -204,7 +236,7 @@ class SnapshotSyncController(
                         local = SnapshotReplica(
                             snapshot = localSnapshot,
                             modifiedAt = localSnapshot.revision,
-                            deviceId = deviceId,
+                            deviceId = effectiveDeviceId,
                         ),
                         remote = SnapshotReplica(
                             snapshot = remoteEnvelope.snapshot,
@@ -225,7 +257,7 @@ class SnapshotSyncController(
                     snapshot = finalSnapshot,
                     createdAt = completedAt,
                     appVersion = appVersion,
-                    deviceId = deviceId,
+                    deviceId = effectiveDeviceId,
                 )
                 transport.writeSnapshot(SnapshotBackupService.encode(mergedEnvelope))
                 return@withLock finish(
@@ -268,6 +300,21 @@ class SnapshotSyncController(
         mutableState.value = SnapshotSyncState(capability, phase, result)
         return result
     }
+
+    /** Metadata failures reserve the remote-writer slot rather than enabling two providers. */
+    private suspend fun legacyWriterAllowedFailClosed(): Boolean = try {
+        writerAllowed()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun blockedCapability(): SnapshotSyncCapability = SnapshotSyncCapability(
+        availability = SnapshotSyncAvailability.UNAVAILABLE,
+        serviceName = transport.initialCapability.serviceName,
+        detail = "Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync.",
+    )
 
     private companion object {
         const val MAX_LOCAL_MERGE_ATTEMPTS = 3

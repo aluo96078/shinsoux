@@ -18,6 +18,7 @@ targets:
       - sdk: JavaScriptCore.framework
       - sdk: LocalAuthentication.framework
       - sdk: Security.framework
+      - sdk: libsqlite3.tbd
       - sdk: UniformTypeIdentifiers.framework
       - sdk: UserNotifications.framework
       - sdk: WidgetKit.framework
@@ -27,8 +28,11 @@ targets:
       path: Shinsou/Info.plist
       properties:
         CFBundleDisplayName: Shinsou X
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CADisableMinimumFrameDurationOnPhone: true
         NSFaceIDUsageDescription: Shinsou X 使用 Face ID 保護您的閱讀資料。
+        NSCameraUsageDescription: Shinsou X 使用相機掃描裝置配對與同步設定 QR Code；影像不會被儲存。
         NSPhotoLibraryAddUsageDescription: Shinsou X 需要權限以儲存漫畫封面與頁面。
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -37,6 +41,9 @@ targets:
           - CFBundleURLName: dev.aluo.shinsoux
             CFBundleURLSchemes:
               - shinsou
+        LSApplicationQueriesSchemes:
+          - http
+          - https
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
         UIApplicationSupportsIndirectInputEvents: true
@@ -97,6 +104,8 @@ targets:
           CODE_SIGN_ENTITLEMENTS: Shinsou/Shinsou.debug.entitlements
         Release:
           CODE_SIGN_ENTITLEMENTS: Shinsou/Shinsou.entitlements
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: "$(SHINSOU_APP_PROVISIONING_PROFILE)"
     preBuildScripts:
       - name: Build ShinsouKit
         script: |
@@ -113,6 +122,8 @@ targets:
       path: ShinsouWidgetExtension/Info.plist
       properties:
         CFBundleDisplayName: Shinsou X Widgets
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -127,3 +138,5 @@ targets:
           CODE_SIGN_ENTITLEMENTS: ShinsouWidgetExtension/ShinsouWidgetExtension.debug.entitlements
         Release:
           CODE_SIGN_ENTITLEMENTS: ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: "$(SHINSOU_WIDGET_PROVISIONING_PROFILE)"

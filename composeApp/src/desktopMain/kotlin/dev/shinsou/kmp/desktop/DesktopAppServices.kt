@@ -1,7 +1,9 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
+import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.ContentCallbacks
 import dev.shinsou.kmp.ui.DeepLinkSection
@@ -11,6 +13,7 @@ import dev.shinsou.kmp.ui.ImportedDocumentReadException
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.SecurityFeatureCapability
+import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.readBoundedImportedBytes
@@ -21,6 +24,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.datatransfer.DataFlavor
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
@@ -34,7 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.withContext
 
 internal class DesktopAppServices(
@@ -42,15 +45,17 @@ internal class DesktopAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
+    override val cloudflareSync: CloudflareSyncUiController? = null,
+    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
     private val closeApplication: () -> Unit,
     private val frame: () -> Frame? = { null },
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
     private val platform: DesktopPlatform = DesktopPlatform.current,
 ) : ShinsouAppServices {
-    private val pendingDeepLink = MutableStateFlow<ShinsouDeepLink?>(null)
+    private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
-    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLink.filterNotNull()
+    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
     override val appLifecycle: StateFlow<AppLifecycleState> = lifecycleState
     override val prefersDesktopChrome: Boolean = true
     override val securityCapabilities: PlatformSecurityCapabilities = PlatformSecurityCapabilities(
@@ -71,33 +76,50 @@ internal class DesktopAppServices(
     }
 
     fun openSection(section: DeepLinkSection) {
-        pendingDeepLink.value = ShinsouDeepLink.OpenSection(section)
+        pendingDeepLinks.tryEnqueue(ShinsouDeepLink.OpenSection(section))
     }
 
     fun openSettings() {
-        pendingDeepLink.value = ShinsouDeepLink.OpenSettings
+        pendingDeepLinks.tryEnqueue(ShinsouDeepLink.OpenSettings)
     }
 
+    fun emitDeepLink(link: ShinsouDeepLink): Boolean = pendingDeepLinks.tryEnqueue(link)
+
     override fun deepLinkHandled(link: ShinsouDeepLink) {
-        if (pendingDeepLink.value == link) pendingDeepLink.value = null
+        pendingDeepLinks.handled(link)
     }
 
     override fun openExternalUrl(url: String) {
-        runCatching {
-            if (!Desktop.isDesktopSupported()) return@runCatching
+        tryOpenExternalUrl(url)
+    }
+
+    override fun tryOpenExternalUrl(url: String): Boolean = runCatching {
+            if (!Desktop.isDesktopSupported()) return@runCatching false
             val desktop = Desktop.getDesktop()
             val uri = URI(url)
             if (uri.scheme.equals("mailto", ignoreCase = true) && desktop.isSupported(Desktop.Action.MAIL)) {
                 desktop.mail(uri)
             } else if (desktop.isSupported(Desktop.Action.BROWSE)) {
                 desktop.browse(uri)
+            } else {
+                return@runCatching false
             }
-        }
-    }
+            true
+        }.getOrDefault(false)
 
     override fun shareText(title: String, text: String) {
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
     }
+
+    override fun copyText(label: String, text: String): Boolean = runCatching {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+        true
+    }.getOrDefault(false)
+
+    override suspend fun readClipboardText(): String? = runCatching {
+        Toolkit.getDefaultToolkit().systemClipboard
+            .getData(DataFlavor.stringFlavor) as? String
+    }.getOrNull()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean {
         val selected = chooseFile(

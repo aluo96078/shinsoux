@@ -46,6 +46,7 @@ public class AutoBackupService(
     private val appVersion: String = "1.0.0",
     private val deviceId: String? = null,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val syncAwareRestore: SyncAwareSnapshotRestore? = null,
 ) {
     /** Creates a backup only when automatic backup is enabled and its interval has elapsed. */
     public suspend fun runIfDue(): AutoBackupRunResult = AUTO_BACKUP_OPERATION_MUTEX.withLock {
@@ -85,10 +86,41 @@ public class AutoBackupService(
         fileName: String,
         selection: RestoreSelection = RestoreSelection.All,
     ): RestoreResult = AUTO_BACKUP_OPERATION_MUTEX.withLock {
+        restoreLocked(fileName, selection, target = null, coordinator = null)
+    }
+
+    /**
+     * Restores through the explicit Cloudflare replacement boundary selected by the user.
+     * No target is inferred: callers must first present both synchronized and device-only paths.
+     */
+    public suspend fun restore(
+        fileName: String,
+        target: SnapshotRestoreTarget,
+        selection: RestoreSelection = RestoreSelection.All,
+    ): RestoreResult = AUTO_BACKUP_OPERATION_MUTEX.withLock {
+        restoreLocked(fileName, selection, target, coordinator = syncAwareRestore)
+    }
+
+    /** Allows a composition-owned coordinator to be supplied without rebuilding a platform scheduler service. */
+    public suspend fun restore(
+        fileName: String,
+        target: SnapshotRestoreTarget,
+        coordinator: SyncAwareSnapshotRestore,
+        selection: RestoreSelection = RestoreSelection.All,
+    ): RestoreResult = AUTO_BACKUP_OPERATION_MUTEX.withLock {
+        restoreLocked(fileName, selection, target, coordinator)
+    }
+
+    private suspend fun restoreLocked(
+        fileName: String,
+        selection: RestoreSelection,
+        target: SnapshotRestoreTarget?,
+        coordinator: SyncAwareSnapshotRestore?,
+    ): RestoreResult {
         val safeName = validatedAutoBackupFileName(fileName)
         val started = repository.currentSnapshot.backupState
         repository.setBackupState(started.copy(status = BackupStatus.RESTORING, errorMessage = null))
-        try {
+        return try {
             val bytes = fileSystem.read("$AUTO_BACKUP_DIRECTORY/$safeName")
                 ?: throw AutoBackupException("Automatic backup no longer exists: $safeName")
             val envelope = try {
@@ -98,7 +130,13 @@ public class AutoBackupService(
                 throw AutoBackupException("Automatic backup is damaged or unsupported: $safeName", error)
             }
             val restoredAt = now().coerceAtLeast(0)
-            val result = repository.restoreBackup(envelope, selection, restoredAt)
+            val result = if (target == null) {
+                repository.restoreBackup(envelope, selection, restoredAt)
+            } else {
+                val safeCoordinator = coordinator
+                    ?: throw AutoBackupException("Sync-aware automatic backup restore is unavailable.")
+                safeCoordinator.restoreBackup(envelope, selection, restoredAt, target)
+            }
             repository.setBackupState(
                 repository.currentSnapshot.backupState.copy(
                     status = BackupStatus.COMPLETED,

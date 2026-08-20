@@ -3,4 +3,8 @@
     <!-- Keystore keys cannot be restored with these values, and local content is device-owned. -->
     <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
     <exclude domain="file" path="shinsou-content/" />
+    <!-- Local replica/session/device identity cannot be restored without this install's Keystore key. -->
+    <exclude domain="database" path="shinsou-sync-v2.db" />
+    <exclude domain="database" path="shinsou-sync-v2.db-wal" />
+    <exclude domain="database" path="shinsou-sync-v2.db-shm" />
 </full-backup-content>

@@ -60,6 +60,51 @@ class ShinsouStringsTest {
     }
 
     @Test
+    fun syncScopeDisclosureIsLocalizedBeforeWorkspaceSetup() {
+        val key = "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized."
+        assertEquals(
+            "下載內容、本機來源檔案、擴充套件安裝包、Cookie、密碼與 API 金鑰不會同步。",
+            shinsouStringsFor("zh-TW").text(key),
+        )
+        assertEquals(
+            "下载内容、本机来源文件、扩展安装包、Cookie、密码和 API 密钥不同步。",
+            shinsouStringsFor("zh-CN").text(key),
+        )
+    }
+
+    @Test
+    fun syncSettingsPanelDoesNotFallBackToEnglish() {
+        val keys = listOf(
+            "Cloudflare encrypted sync",
+            "Deploying",
+            "Setup, invite, pairing or emergency handoff link / code",
+            "Connect",
+            "Paste",
+            "Scan QR",
+            "Create sync service",
+            "Open deployment page",
+            "Lost every device?",
+            "Import Recovery Kit",
+            "Leave or clear pending workspace",
+            "Legacy iCloud snapshot",
+            "iCloud Drive snapshot",
+            "Unavailable",
+            "The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement.",
+        )
+        listOf("zh-TW", "zh-CN", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-BR").forEach { locale ->
+            val strings = shinsouStringsFor(locale)
+            keys.forEach { key ->
+                assertFalse(strings.text(key) == key, "$locale still falls back for '$key'")
+            }
+        }
+
+        val traditional = shinsouStringsFor("zh-TW")
+        assertEquals("Cloudflare 加密同步", traditional.text("Cloudflare encrypted sync"))
+        assertEquals("部署中", traditional.text("Deploying"))
+        assertEquals("游標 1/2 · 3 項變更待處理 · 4 項上傳待處理", traditional.text("Cursor {0}/{1} · {2} pending changes · {3} pending uploads", 1, 2, 3, 4))
+    }
+
+    @Test
     fun simplifiedLongTailDoesNotLeakCommonTraditionalTerms() {
         val simplified = shinsouStringsFor("zh-CN")
 

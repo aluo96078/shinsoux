@@ -13,6 +13,7 @@
 		54BCAB350F7AA94A176465BD /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2427BA1695B2CF749A686803 /* UserNotifications.framework */; };
 		64469F7C32352DD4CCEEF85A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 070842C60618E9AAB41D2823 /* WidgetKit.framework */; };
 		8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */; };
+		90ED20903A2EF6BE0860F312 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 450FD0B4BD0875569E7DC8F8 /* libsqlite3.tbd */; };
 		A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */; };
 		AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E69591E6413F571C61BF418 /* LocalAuthentication.framework */; };
 		D6A39283A50BCFF28D52F213 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 79635F878DCD39F4CCB205A3 /* Assets.xcassets */; };
@@ -54,11 +55,14 @@
 		2427BA1695B2CF749A686803 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		26CCA6FB059AEE9D02D6D578 /* Shinsou.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Shinsou.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4312D99006921159A0800C44 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		450FD0B4BD0875569E7DC8F8 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		5A0CA09CF92F32CCAD13D559 /* Shinsou.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shinsou.entitlements; sourceTree = "<group>"; };
 		6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouApp.swift; sourceTree = "<group>"; };
 		79635F878DCD39F4CCB205A3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7E69591E6413F571C61BF418 /* LocalAuthentication.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = LocalAuthentication.framework; path = System/Library/Frameworks/LocalAuthentication.framework; sourceTree = SDKROOT; };
+		87492B8AA4B8815744C9B3DB /* ShinsouWidgetExtension.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShinsouWidgetExtension.debug.entitlements; sourceTree = "<group>"; };
 		C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShinsouWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C3C6DEFDB0930F70046971C4 /* Shinsou.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shinsou.debug.entitlements; sourceTree = "<group>"; };
 		EF035F63C497108A4F0BB514 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouWidgets.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -71,6 +75,7 @@
 				150698CA073E7EEFFABC2601 /* JavaScriptCore.framework in Frameworks */,
 				AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */,
 				DD6464B1E0DFC3D650F0417A /* Security.framework in Frameworks */,
+				90ED20903A2EF6BE0860F312 /* libsqlite3.tbd in Frameworks */,
 				8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */,
 				54BCAB350F7AA94A176465BD /* UserNotifications.framework in Frameworks */,
 				64469F7C32352DD4CCEEF85A /* WidgetKit.framework in Frameworks */,
@@ -93,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				0650544E14A6630BFBC51175 /* JavaScriptCore.framework */,
+				450FD0B4BD0875569E7DC8F8 /* libsqlite3.tbd */,
 				7E69591E6413F571C61BF418 /* LocalAuthentication.framework */,
 				4312D99006921159A0800C44 /* Security.framework */,
 				11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */,
@@ -106,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				EF035F63C497108A4F0BB514 /* Info.plist */,
+				87492B8AA4B8815744C9B3DB /* ShinsouWidgetExtension.debug.entitlements */,
 				106921D95AC2BBC96DA61073 /* ShinsouWidgetExtension.entitlements */,
 				F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */,
 			);
@@ -118,6 +125,7 @@
 				79635F878DCD39F4CCB205A3 /* Assets.xcassets */,
 				1234B93552EDFD0F4E1BEFE4 /* Info.plist */,
 				2058CC8F352C6CEECA95B14E /* JSDomLib.swift */,
+				C3C6DEFDB0930F70046971C4 /* Shinsou.debug.entitlements */,
 				5A0CA09CF92F32CCAD13D559 /* Shinsou.entitlements */,
 				6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */,
 			);
@@ -185,6 +193,12 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					239AED4ED3F937A6C31BCD31 = {
+						DevelopmentTeam = 5UKY38ZLK6;
+					};
+					FF58475CEB7B28133C4A5175 = {
+						DevelopmentTeam = 5UKY38ZLK6;
+					};
 				};
 			};
 			buildConfigurationList = 032691E692D9D8B744C71B4D /* Build configuration list for PBXProject "Shinsou" */;
@@ -340,7 +354,7 @@
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Shinsou/Shinsou.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution";
 				DEVELOPMENT_TEAM = 5UKY38ZLK6;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -358,6 +372,7 @@
 					ShinsouKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux;
+				PROVISIONING_PROFILE_SPECIFIER = "$(SHINSOU_APP_PROVISIONING_PROFILE)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -472,6 +487,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
 				DEVELOPMENT_TEAM = 5UKY38ZLK6;
 				INFOPLIST_FILE = ShinsouWidgetExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -480,6 +496,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux.widget;
+				PROVISIONING_PROFILE_SPECIFIER = "$(SHINSOU_WIDGET_PROVISIONING_PROFILE)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";

@@ -16,6 +16,8 @@
 
 Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 
+建立正式 tag 時，多平台安裝包由 GitHub Actions 統一產生；版本格式、產物與 signing secrets 請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫預設版本，其中 version code 必須是正整數。
+
 ## Workspace 佈局
 
 官方擴充套件 compatibility fixture 取自相鄰的 `shinsou_plugin`：

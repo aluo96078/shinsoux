@@ -55,6 +55,8 @@ class ShinsouRepository(
     private val mutex = Mutex()
     private val mutableSnapshot = MutableStateFlow(initial.withRequiredDefaults().validate())
     private var persistenceClosed = false
+    private var mutationObserver: SnapshotMutationObserver? = null
+    private var replacementGuard: SnapshotReplacementGuard? = null
     private val persistence = persist?.let {
         SnapshotPersistenceWorker(
             initialRevision = mutableSnapshot.value.revision,
@@ -73,30 +75,127 @@ class ShinsouRepository(
 
     suspend fun importSnapshot(encoded: String): AppSnapshot = replaceSnapshot(decodeSnapshot(encoded))
 
-    suspend fun replaceSnapshot(imported: AppSnapshot): AppSnapshot = mutex.withLock {
+    /** Explicit bulk replacement whose synced portion must be published to every v2 device. */
+    suspend fun importSnapshotAcrossSyncedDevices(encoded: String): AppSnapshot =
+        replaceSnapshotAcrossSyncedDevices(decodeSnapshot(encoded))
+
+    suspend fun replaceSnapshot(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+        imported = imported,
+        notifyMutationObserver = true,
+        origin = SnapshotReplacementOrigin.DIRECT,
+    )
+
+    /**
+     * Explicit restore/reset path for Cloudflare v2. The observer first commits a selection-aware
+     * mutation/tombstone diff and durable drafts; only then may the replacement become visible.
+     */
+    suspend fun replaceSnapshotAcrossSyncedDevices(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+        imported = imported,
+        notifyMutationObserver = true,
+        origin = SnapshotReplacementOrigin.SYNCHRONIZED_BULK,
+    )
+
+    /**
+     * Installs the v2 local-first transaction boundary. The observer runs while the repository
+     * mutex is held and before a new projection becomes visible or is queued for persistence.
+     * Consequently, a failed replica/outbox commit cannot leave an unsynchronised domain write.
+     */
+    suspend fun setMutationObserver(observer: SnapshotMutationObserver?) = mutex.withLock {
         ensurePersistenceOpen()
+        mutationObserver = observer
+    }
+
+    suspend fun setSnapshotReplacementGuard(guard: SnapshotReplacementGuard?) = mutex.withLock {
+        ensurePersistenceOpen()
+        replacementGuard = guard
+    }
+
+    /** Installs/removes both halves without exposing a window where bulk replacement can bypass sync. */
+    suspend fun configureSyncMutationBoundary(
+        observer: SnapshotMutationObserver?,
+        guard: SnapshotReplacementGuard?,
+    ) = mutex.withLock {
+        ensurePersistenceOpen()
+        mutationObserver = observer
+        replacementGuard = guard
+    }
+
+    /**
+     * Publishes a projection materialised by the sync replica without feeding it back into the
+     * local mutation/outbox path. This is the only replacement entry point remote catch-up and
+     * checkpoint installation should use.
+     */
+    suspend fun replaceSnapshotFromSync(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+        imported = imported,
+        notifyMutationObserver = false,
+        origin = SnapshotReplacementOrigin.SYNC_MATERIALIZER,
+    )
+
+    private suspend fun replaceSnapshot(
+        imported: AppSnapshot,
+        notifyMutationObserver: Boolean,
+        origin: SnapshotReplacementOrigin,
+    ): AppSnapshot = mutex.withLock {
+        ensurePersistenceOpen()
+        val current = mutableSnapshot.value
+        replacementGuard?.beforeReplace(origin, current, imported)
+        if (origin == SnapshotReplacementOrigin.SYNCHRONIZED_BULK && mutationObserver == null) {
+            throw IllegalStateException("Cloudflare bulk replacement requires an installed sync mutation observer")
+        }
         val next = imported.withRequiredDefaults()
-            .copy(revision = nextRevision(mutableSnapshot.value.revision, imported.revision))
+            .copy(revision = nextRevision(current.revision, imported.revision))
             .validate()
+        if (notifyMutationObserver) mutationObserver?.beforeCommit(current, next)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         next
     }
 
     /** Optimistic replacement used by sync so a concurrent local edit is never overwritten. */
-    suspend fun replaceSnapshotIfRevision(expectedRevision: Long, imported: AppSnapshot): AppSnapshot? = mutex.withLock {
+    suspend fun replaceSnapshotIfRevision(expectedRevision: Long, imported: AppSnapshot): AppSnapshot? =
+        replaceSnapshotIfRevision(
+            expectedRevision,
+            imported,
+            notifyMutationObserver = true,
+            origin = SnapshotReplacementOrigin.DIRECT,
+        )
+
+    /** Remote replica projection CAS that cannot feed materialized fields back into the outbox. */
+    suspend fun replaceSnapshotFromSyncIfRevision(
+        expectedRevision: Long,
+        imported: AppSnapshot,
+    ): AppSnapshot? = replaceSnapshotIfRevision(
+        expectedRevision = expectedRevision,
+        imported = imported,
+        notifyMutationObserver = false,
+        origin = SnapshotReplacementOrigin.SYNC_MATERIALIZER,
+    )
+
+    private suspend fun replaceSnapshotIfRevision(
+        expectedRevision: Long,
+        imported: AppSnapshot,
+        notifyMutationObserver: Boolean,
+        origin: SnapshotReplacementOrigin,
+    ): AppSnapshot? = mutex.withLock {
         ensurePersistenceOpen()
         val current = mutableSnapshot.value
         if (current.revision != expectedRevision) return@withLock null
+        replacementGuard?.beforeReplace(origin, current, imported)
+        if (origin == SnapshotReplacementOrigin.SYNCHRONIZED_BULK && mutationObserver == null) {
+            throw IllegalStateException("Cloudflare bulk replacement requires an installed sync mutation observer")
+        }
         val next = imported.withRequiredDefaults()
             .copy(revision = nextRevision(current.revision, imported.revision))
             .validate()
+        if (notifyMutationObserver) mutationObserver?.beforeCommit(current, next)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         next
     }
 
     suspend fun reset(): AppSnapshot = replaceSnapshot(AppSnapshot())
+
+    suspend fun resetAcrossSyncedDevices(): AppSnapshot = replaceSnapshotAcrossSyncedDevices(AppSnapshot())
 
     /**
      * Persist the latest state before returning. This bypasses the debounce and propagates a disk
@@ -778,6 +877,7 @@ class ShinsouRepository(
         val mutation = block(current)
         val next = mutation.snapshot.withRequiredDefaults()
             .copy(revision = nextRevision(current.revision, mutation.snapshot.revision))
+        mutationObserver?.beforeCommit(current, next)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         mutation.result
@@ -788,6 +888,35 @@ class ShinsouRepository(
     private fun ensurePersistenceOpen() {
         check(!persistenceClosed) { "Repository persistence is closed" }
     }
+}
+
+/**
+ * Adapter used by Cloudflare sync v2 to atomically persist replica metadata and a durable draft
+ * before a local [AppSnapshot] projection is published. Implementations must be idempotent and
+ * must not call back into this repository while [beforeCommit] is running.
+ */
+fun interface SnapshotMutationObserver {
+    suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot)
+}
+
+/** Identifies the only replacement paths that may cross the v2 synchronization boundary. */
+enum class SnapshotReplacementOrigin {
+    /** Legacy import/restore/reset. A Cloudflare-ready guard must reject this path. */
+    DIRECT,
+
+    /** User explicitly chose to publish a bulk diff/tombstones to every synced device. */
+    SYNCHRONIZED_BULK,
+
+    /** Projection produced from the already-authoritative local replica. */
+    SYNC_MATERIALIZER,
+}
+
+fun interface SnapshotReplacementGuard {
+    suspend fun beforeReplace(
+        origin: SnapshotReplacementOrigin,
+        previous: AppSnapshot,
+        requested: AppSnapshot,
+    )
 }
 
 private val NO_PERSISTENCE_FAILURE: StateFlow<Throwable?> = MutableStateFlow(null).asStateFlow()

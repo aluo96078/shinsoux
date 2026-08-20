@@ -16,7 +16,11 @@ coil = "3.5.0"
 okio = "3.17.0"
 rhino = "1.7.15"
 jsoup = "1.18.3"
-jna = "5.16.0"
+jna = "5.18.1"
+sqldelight = "2.1.0"
+libsodium = "0.9.5"
+qrose = "1.0.1"
+google-code-scanner = "16.1.0"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
@@ -38,7 +42,17 @@ ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
 rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+libsodium-bindings = { module = "com.ionspin.kotlin:multiplatform-crypto-libsodium-bindings", version.ref = "libsodium" }
+qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
+google-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "google-code-scanner" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
