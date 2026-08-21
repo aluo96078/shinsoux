@@ -1,0 +1,174 @@
+package dev.shinsou.kmp.content
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class ContentManifestContractTest {
+    @Test
+    fun manifestSupportsMultipleRepresentationsOfTheSameKindWithoutBodyBytes() {
+        val pageOne = ResourceRef("page-1", blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "image/png"))
+        val pageTwo = ResourceRef("page-2", blob("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "image/png"))
+        val manifest = ContentManifest(
+            manifestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            schemaVersion = ContentManifest.CURRENT_SCHEMA_VERSION,
+            contentRevision = 7,
+            representations = listOf(
+                ContentRepresentation.ImageSequence(
+                    "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    listOf(ImagePage(pageOne)),
+                ),
+                ContentRepresentation.ImageSequence(
+                    "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                    listOf(ImagePage(pageTwo)),
+                ),
+            ),
+        )
+
+        assertEquals(2, manifest.imageSequences.size)
+        assertTrue(manifest.referencedBlobs.all { it is BlobRef })
+    }
+
+    @Test
+    fun plainTextBlockMapIsBoundedAndManifestRejectsConflictingBlobAliases() {
+        val textBlob = blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "text/plain")
+        val text = ContentRepresentation.PlainText(
+            representationId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            resource = ResourceRef("text-body", textBlob),
+            canonicalUtf16Length = 5,
+            blocks = listOf(TextBlock("block-1", 0, 5)),
+        )
+        ContentManifest(
+            manifestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            schemaVersion = 1,
+            contentRevision = 0,
+            representations = listOf(text),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            ContentRepresentation.PlainText(
+                "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                ResourceRef("bad", blob("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "text/plain")),
+                canonicalUtf16Length = 2,
+                blocks = listOf(TextBlock("block", 0, 3)),
+            )
+        }
+    }
+
+    @Test
+    fun blobRefsRequireCanonicalSchemaAndDigest() {
+        assertFailsWith<IllegalArgumentException> {
+            BlobRef("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 2, "SHA-256", "bad", 1, "text/plain")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BlobRef("00000000-0000-0000-0000-000000000000", 1, "SHA-256", DIGEST, 0, "text/plain")
+        }
+    }
+
+    @Test
+    fun hrefValidationRejectsNestedEscapesAndDeclaredSizeCannotOverflow() {
+        val body = ResourceRef(
+            "body",
+            blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "application/xhtml+xml"),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            EpubResource("body", "%252e%252e/secret.xhtml", body)
+        }
+        EpubResource("body", "Text/Chapter%201.xhtml", body)
+
+        val hugeA = BlobRef(
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            1,
+            BlobRef.SHA_256,
+            DIGEST,
+            Long.MAX_VALUE,
+            "image/png",
+        )
+        val hugeB = BlobRef(
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            1,
+            BlobRef.SHA_256,
+            DIGEST,
+            1,
+            "image/png",
+        )
+        assertFailsWith<IllegalArgumentException> {
+            ContentManifest(
+                manifestId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                schemaVersion = 1,
+                contentRevision = 0,
+                representations = listOf(
+                    ContentRepresentation.ImageSequence(
+                        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                        listOf(
+                            ImagePage(ResourceRef("page-a", hugeA)),
+                            ImagePage(ResourceRef("page-b", hugeB)),
+                        ),
+                    ),
+                ),
+                declaredSizeBytes = 0,
+            )
+        }
+    }
+
+    @Test
+    fun imageMediaTypeAndTransformWhitelistRemainHostControlled() {
+        assertFailsWith<IllegalArgumentException> {
+            ImagePage(ResourceRef("page", blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "text/plain")))
+        }
+
+        (ImageTransform.SUPPORTED_TRANSFORMS as? MutableSet<String>)?.add("untrusted-transform")
+        assertFalse("untrusted-transform" in ImageTransform.SUPPORTED_TRANSFORMS)
+        assertFailsWith<IllegalArgumentException> {
+            ImageTransform(1, "untrusted-transform")
+        }
+    }
+
+    @Test
+    fun epubRepresentationRequiresCanonicalArchiveMediaTypeAndResolvableGraph() {
+        val archive = blob(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "application/epub+zip",
+        )
+        val packageDocument = EpubResource(
+            id = "opf",
+            href = "OPS/Content%20Package.opf",
+            resource = ResourceRef(
+                "opf",
+                blob("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "application/oebps-package+xml"),
+            ),
+        )
+        val graph = EpubPackage(
+            archive = archive,
+            packageDocumentId = "opf",
+            resources = listOf(packageDocument),
+        )
+        val manifest = ContentManifest(
+            manifestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            schemaVersion = 1,
+            contentRevision = 1,
+            representations = listOf(
+                ContentRepresentation.EpubSpine(
+                    representationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    packageGraph = graph,
+                    documents = listOf(
+                        EpubSpineDocument("spine-opf", packageDocument.href, packageDocument.id),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(setOf(ContentKind.EPUB_SPINE), manifest.kinds)
+
+        assertFailsWith<IllegalArgumentException> {
+            graph.copy(archive = archive.copy(mediaType = "application/zip"))
+        }
+    }
+
+    private fun blob(id: String, mediaType: String): BlobRef =
+        BlobRef(id, 1, BlobRef.SHA_256, DIGEST, 0, mediaType)
+
+    private companion object {
+        const val DIGEST = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+}
