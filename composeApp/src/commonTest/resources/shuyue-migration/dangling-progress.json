@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "createdAt": 1700000000000,
+  "books": [
+    {
+      "id": "book-1",
+      "title": "Book",
+      "origin": "LocalTxt",
+      "chapters": [
+        {
+          "id": "chapter-1",
+          "bookId": "book-1",
+          "title": "Chapter",
+          "index": 0,
+          "text": "body",
+          "wordCount": 4
+        }
+      ],
+      "category": "Default"
+    }
+  ],
+  "progress": [
+    {
+      "bookId": "book-1",
+      "chapterId": "missing-chapter",
+      "charOffset": 0,
+      "progress": 0.0,
+      "updatedAt": 1
+    }
+  ]
+}

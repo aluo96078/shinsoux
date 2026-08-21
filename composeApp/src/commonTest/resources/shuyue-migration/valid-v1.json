@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "createdAt": 1700000000000,
+  "books": [
+    {
+      "id": "txt-1",
+      "title": "Local Text",
+      "author": "Author One",
+      "description": "A local text fixture.",
+      "origin": "LocalTxt",
+      "originalUri": "file:///imports/local.txt",
+      "chapters": [
+        {
+          "id": "txt-1-c1",
+          "bookId": "txt-1",
+          "title": "One",
+          "index": 0,
+          "text": "hello\nworld",
+          "wordCount": 11
+        }
+      ],
+      "addedAt": 1700000000000,
+      "updatedAt": 1700000001000,
+      "category": "Default"
+    },
+    {
+      "id": "epub-1",
+      "title": "Local EPUB",
+      "author": "Author Two",
+      "origin": "LocalEpub",
+      "originalUri": "file:///imports/local.epub",
+      "chapters": [
+        {
+          "id": "epub-1-c1",
+          "bookId": "epub-1",
+          "title": "Spine",
+          "index": 0,
+          "text": "epub text",
+          "wordCount": 9
+        }
+      ],
+      "addedAt": 1700000002000,
+      "updatedAt": 1700000002000,
+      "category": "Reading"
+    },
+    {
+      "id": "remote-1",
+      "title": "Remote Novel",
+      "author": "Remote Author",
+      "origin": "RemotePlugin",
+      "sourceId": "zh.wenku8.api",
+      "originalUri": "https://example.test/book/remote-1",
+      "chapters": [
+        {
+          "id": "remote-1-c1",
+          "bookId": "remote-1",
+          "title": "Remote Chapter",
+          "index": 0,
+          "href": "https://example.test/chapter/1",
+          "text": "remote body",
+          "wordCount": 11
+        }
+      ],
+      "addedAt": 1700000003000,
+      "updatedAt": 1700000003000,
+      "category": "Reading"
+    }
+  ],
+  "progress": [
+    {
+      "bookId": "remote-1",
+      "chapterId": "remote-1-c1",
+      "charOffset": 3,
+      "progress": 0.25,
+      "updatedAt": 1700000004000
+    }
+  ],
+  "readerSettings": {
+    "language": "TraditionalChinese",
+    "fontSizeSp": 18.0,
+    "lineHeightPercent": 165,
+    "pageChars": 800,
+    "theme": "Paper",
+    "accentColor": "Teal",
+    "volumeKeysEnabled": true,
+    "volumeUpAction": "Previous",
+    "volumeDownAction": "Next",
+    "keepScreenOn": true,
+    "syncOnLaunch": false,
+    "appLockEnabled": false,
+    "secureScreen": false,
+    "incognitoMode": false,
+    "showNsfwSources": false,
+    "imageParsingEnabled": true,
+    "showPluginErrors": false
+  },
+  "installedPlugins": [
+    {
+      "manifest": {
+        "id": "zh.example",
+        "name": "Example Source",
+        "version": "1.0.0",
+        "versionCode": 1,
+        "lang": "zh",
+        "nsfw": 0,
+        "script": "installed-script",
+        "signature": "",
+        "sources": [
+          {
+            "id": "example-source",
+            "name": "Example",
+            "lang": "zh",
+            "baseUrl": "https://example.test",
+            "supportsLogin": false,
+            "supportsLatest": true,
+            "supportsFavorites": false
+          }
+        ],
+        "repository": "https://repo.example.test"
+      },
+      "installedAt": 1700000005000,
+      "enabled": true
+    }
+  ],
+  "pluginInstallations": [
+    {
+      "plugin": {
+        "id": "zh.example",
+        "name": "Example Source",
+        "version": "1.0.0",
+        "versionCode": 1,
+        "lang": "zh",
+        "nsfw": 0,
+        "script": "installed-script",
+        "signature": "",
+        "sources": [
+          {
+            "id": "example-source",
+            "name": "Example",
+            "lang": "zh",
+            "baseUrl": "https://example.test",
+            "supportsLogin": false,
+            "supportsLatest": true,
+            "supportsFavorites": false
+          }
+        ],
+        "repository": "https://repo.example.test"
+      },
+      "script": "persisted-install-script"
+    }
+  ],
+  "pluginRepositories": [
+    {
+      "baseUrl": "https://repo.example.test",
+      "manifest": {
+        "meta": {
+          "name": "Example Repository",
+          "website": "https://repo.example.test/about",
+          "signingKeyFingerprint": "fingerprint"
+        }
+      },
+      "entries": [
+        {
+          "id": "zh.example",
+          "name": "Example Source",
+          "version": "1.0.0",
+          "versionCode": 1,
+          "lang": "zh",
+          "nsfw": 0,
+          "scriptUrl": "https://repo.example.test/zh.example.js",
+          "iconUrl": "https://repo.example.test/icon.png",
+          "description": "Example entry",
+          "sources": []
+        }
+      ],
+      "lastLoadedAt": 1700000006000
+    }
+  ],
+  "selectedPluginRepositoryUrl": "https://repo.example.test",
+  "pluginCredentials": [
+    {
+      "sourceId": "example-source",
+      "username": "fixture-user",
+      "password": "fixture-password-do-not-import",
+      "updatedAt": 1700000007000
+    }
+  ],
+  "pluginCookies": [
+    {
+      "sourceId": "example-source",
+      "name": "session",
+      "value": "fixture-cookie-do-not-import",
+      "domain": "example.test",
+      "path": "/",
+      "expiresAt": 1800000000000
+    }
+  ],
+  "pluginPreferences": {
+    "example-source\u0000theme": "dark"
+  },
+  "pluginImageParsingPolicies": {
+    "example-source": "FollowDefault"
+  }
+}

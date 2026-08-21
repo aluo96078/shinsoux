@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "createdAt": 1,
+  "books": [],
+  "pluginCookies": [
+    {
+      "sourceId": "source",
+      "name": "session",
+      "value": "do-not-print-this-cookie",
+      "domain": "https://evil.example",
+      "path": "//evil.example",
+      "expiresAt": 1
+    }
+  ]
+}

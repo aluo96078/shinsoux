@@ -1,0 +1,65 @@
+[
+  {
+    "id": "zh.wenku8",
+    "name": "輕小說文庫（停止維護）",
+    "version": "1.6.12",
+    "versionCode": 30,
+    "lang": "zh",
+    "nsfw": 0,
+    "scriptUrl": "wenku8.js?v=1.6.12",
+    "description": "已停止維護。Wenku8 HTML source is retained for compatibility; please use the maintained relay source instead.",
+    "sources": [
+      {
+        "id": "zh.wenku8",
+        "name": "輕小說文庫（停止維護）",
+        "lang": "zh",
+        "baseUrl": "https://www.wenku8.net",
+        "supportsLogin": true,
+        "supportsLatest": true,
+        "supportsFavorites": true
+      }
+    ]
+  },
+  {
+    "id": "zh.wenku8.api",
+    "name": "輕小說文庫",
+    "version": "1.0.2",
+    "versionCode": 3,
+    "lang": "zh",
+    "nsfw": 0,
+    "scriptUrl": "wenku8-api.js?v=1.0.2",
+    "description": "Wenku8 官方 relay 來源，支援登入、收藏庫、搜尋、排行榜、章節目錄與正文；建議使用此維護中的來源。",
+    "sources": [
+      {
+        "id": "zh.wenku8.api",
+        "name": "輕小說文庫",
+        "lang": "zh",
+        "baseUrl": "https://wenku8-relay.mewx.org/",
+        "supportsLogin": true,
+        "supportsLatest": true,
+        "supportsFavorites": true
+      }
+    ]
+  },
+  {
+    "id": "zh.biquge.tw",
+    "name": "筆趣閣",
+    "version": "1.0.1",
+    "versionCode": 2,
+    "lang": "zh",
+    "nsfw": 0,
+    "scriptUrl": "biquge-tw.js?v=1.0.1",
+    "description": "筆趣閣來源，支援搜尋、最新更新、分類瀏覽、章節目錄與分頁正文。",
+    "sources": [
+      {
+        "id": "zh.biquge.tw",
+        "name": "筆趣閣",
+        "lang": "zh",
+        "baseUrl": "https://www.biquge.tw",
+        "supportsLogin": false,
+        "supportsLatest": true,
+        "supportsFavorites": false
+      }
+    ]
+  }
+]
