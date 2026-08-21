@@ -8,6 +8,13 @@ enum class SyncEntityType {
     CHAPTER,
     CATEGORY,
     EXTENSION_REPOSITORY,
+    /** Schema-v2 unified-content identities. Keep new values appended for stable v1 ordering. */
+    PUBLICATION,
+    ACQUISITION,
+    PUBLICATION_UNIT,
+    CONTENT_MANIFEST,
+    ANNOTATION,
+    BLOB_REFERENCE,
 }
 
 /** Stable, portable identity. Local database ids must never be placed in [canonicalValue]. */
@@ -68,6 +75,48 @@ data class SyncEntityKey(
             canonicalValue = normalizeUrl(baseUrl, httpsOnly = true, requireAuthority = true),
         )
 
+        fun publication(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.PUBLICATION,
+            namespace = "publication",
+            portableId = portableId,
+            version = version,
+        )
+
+        fun acquisition(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.ACQUISITION,
+            namespace = "acquisition",
+            portableId = portableId,
+            version = version,
+        )
+
+        fun publicationUnit(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.PUBLICATION_UNIT,
+            namespace = "publication-unit",
+            portableId = portableId,
+            version = version,
+        )
+
+        fun contentManifest(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.CONTENT_MANIFEST,
+            namespace = "content-manifest",
+            portableId = portableId,
+            version = version,
+        )
+
+        fun annotation(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.ANNOTATION,
+            namespace = "annotation",
+            portableId = portableId,
+            version = version,
+        )
+
+        fun blobReference(portableId: String, version: Int = 1): SyncEntityKey = portableContentIdentity(
+            type = SyncEntityType.BLOB_REFERENCE,
+            namespace = "blob-reference",
+            portableId = portableId,
+            version = version,
+        )
+
         fun content(
             type: SyncEntityType,
             sourceIdentity: String,
@@ -88,6 +137,28 @@ data class SyncEntityKey(
                 entityType = type,
                 namespace = "source:${normalizeNamespace(sourceIdentity)}",
                 canonicalValue = canonical,
+            )
+        }
+
+        private fun portableContentIdentity(
+            type: SyncEntityType,
+            namespace: String,
+            portableId: String,
+            version: Int,
+        ): SyncEntityKey {
+            require(type in setOf(
+                SyncEntityType.PUBLICATION,
+                SyncEntityType.ACQUISITION,
+                SyncEntityType.PUBLICATION_UNIT,
+                SyncEntityType.CONTENT_MANIFEST,
+                SyncEntityType.ANNOTATION,
+                SyncEntityType.BLOB_REFERENCE,
+            )) { "Unsupported portable content identity type" }
+            return SyncEntityKey(
+                version = version,
+                entityType = type,
+                namespace = namespace,
+                canonicalValue = normalizeOpaqueId(portableId),
             )
         }
 

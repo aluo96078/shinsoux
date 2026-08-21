@@ -1,6 +1,11 @@
 package dev.shinsou.kmp.content
 
+import dev.shinsou.kmp.domain.model.Acquisition
+import dev.shinsou.kmp.domain.model.AcquisitionAvailability
+import dev.shinsou.kmp.domain.model.AcquisitionOrigin
+import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
+import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -89,6 +94,113 @@ class ContentTransactionContractTest {
     }
 
     @Test
+    fun typedPublicationAvailabilitySeparatesPortableMetadataFromLocalBodyDurability() {
+        val absentBlob = BlobRef(
+            blobId = "abababab-abab-4bab-8bab-abababababab",
+            schemaVersion = BlobRef.CURRENT_SCHEMA_VERSION,
+            digestAlgorithm = BlobRef.SHA_256,
+            plaintextDigest = "a".repeat(64),
+            byteSize = 5,
+            mediaType = "text/plain",
+        )
+        val absentManifest = textManifest(absentBlob)
+
+        listOf(
+            AcquisitionAvailability.PARTIAL,
+            AcquisitionAvailability.UNAVAILABLE,
+        ).forEach { availability ->
+            val store = InMemoryContentBlobStore(clock = { 100L })
+            val transactions = transactions(store)
+            val portable = typedPublication(absentManifest, availability)
+            val result = transactions.commit(
+                ContentCommitBatch<TestOutboxDraft>(
+                    commitId = "metadata-${availability.name.lowercase()}",
+                    publications = listOf(ContentPublicationMutation(portable)),
+                ),
+            )
+
+            assertEquals(listOf(publication.value), result.publicationIds)
+            assertEquals(portable, transactions.state.publications[publication])
+            assertEquals(null, store.attached(owner(18), absentManifest))
+        }
+
+        val availableStore = InMemoryContentBlobStore(clock = { 100L })
+        val availableTransactions = transactions(availableStore)
+        assertFailsWith<ContentBlobStoreException.InvalidStage> {
+            availableTransactions.commit(
+                ContentCommitBatch<TestOutboxDraft>(
+                    commitId = "available-without-body",
+                    publications = listOf(
+                        ContentPublicationMutation(
+                            typedPublication(absentManifest, AcquisitionAvailability.AVAILABLE),
+                        ),
+                    ),
+                ),
+            )
+        }
+        assertTrue(availableTransactions.state.publications.isEmpty())
+    }
+
+    @Test
+    fun typedPublicationAttachmentsRemainExactAndReceiptBoundForPartialMetadata() {
+        val missingReceiptStore = InMemoryContentBlobStore(clock = { 100L })
+        val pending = missingReceiptStore.put("hello".encodeToByteArray(), "text/plain")
+        val manifest = textManifest(pending.reference)
+        val attachment = ManifestAttachment(owner(18), manifest)
+        val partial = typedPublication(manifest, AcquisitionAvailability.PARTIAL)
+        assertFailsWith<ContentBlobStoreException.InvalidStage> {
+            transactions(missingReceiptStore).commit(
+                ContentCommitBatch<TestOutboxDraft>(
+                    commitId = "partial-missing-receipt",
+                    attachments = listOf(attachment),
+                    publications = listOf(ContentPublicationMutation(partial)),
+                ),
+            )
+        }
+        assertEquals(1, missingReceiptStore.pendingReceiptCount)
+
+        val mismatchStore = InMemoryContentBlobStore(clock = { 100L })
+        val expectedBody = mismatchStore.put("hello".encodeToByteArray(), "text/plain")
+        val wrongBody = mismatchStore.put("other".encodeToByteArray(), "text/plain")
+        val expectedManifest = textManifest(expectedBody.reference)
+        val wrongAttachment = ManifestAttachment(owner(18), textManifest(wrongBody.reference))
+        assertFailsWith<ContentBlobStoreException.InvalidStage> {
+            transactions(mismatchStore).commit(
+                ContentCommitBatch<TestOutboxDraft>(
+                    commitId = "partial-wrong-attachment",
+                    receipts = listOf(wrongBody),
+                    attachments = listOf(wrongAttachment),
+                    publications = listOf(
+                        ContentPublicationMutation(
+                            typedPublication(expectedManifest, AcquisitionAvailability.PARTIAL),
+                        ),
+                    ),
+                ),
+            )
+        }
+        assertEquals(2, mismatchStore.pendingReceiptCount)
+
+        val availableStore = InMemoryContentBlobStore(clock = { 100L })
+        val availableBody = availableStore.put("hello".encodeToByteArray(), "text/plain")
+        val availableManifest = textManifest(availableBody.reference)
+        val availableAttachment = ManifestAttachment(owner(18), availableManifest)
+        val result = transactions(availableStore).commit(
+            ContentCommitBatch<TestOutboxDraft>(
+                commitId = "available-with-exact-body",
+                receipts = listOf(availableBody),
+                attachments = listOf(availableAttachment),
+                publications = listOf(
+                    ContentPublicationMutation(
+                        typedPublication(availableManifest, AcquisitionAvailability.AVAILABLE),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(listOf(publication.value), result.publicationIds)
+        assertEquals(0, availableStore.pendingReceiptCount)
+    }
+
+    @Test
     fun migrationDigestLedgerIsAtomicDeterministicAndIdempotent() {
         val store = InMemoryContentBlobStore(clock = { 100L })
         val transactions = transactions(store)
@@ -149,6 +261,65 @@ class ContentTransactionContractTest {
         assertFailsWith<IllegalArgumentException> {
             batch.copy(commitId = "different-commit")
         }
+    }
+
+    @Test
+    fun portableGraphReplacementMergesLocalMetadataAliasesAndMultipleMigrationLedgers() {
+        val transactions = transactions(InMemoryContentBlobStore())
+        val retained = ContentMigrationLedgerMutation(
+            namespace = "legacy.local",
+            sourceDigestSha256 = "6".repeat(64),
+            resultFingerprintSha256 = "7".repeat(64),
+        )
+        val imported = ContentMigrationLedgerMutation(
+            namespace = "portable.archive",
+            sourceDigestSha256 = "8".repeat(64),
+            resultFingerprintSha256 = "9".repeat(64),
+        )
+        transactions.commit(
+            ContentCommitBatch(
+                commitId = retained.commitId,
+                metadata = listOf(ContentMetadataMutation("local/theme", "dark")),
+                aliases = listOf(ContentAliasMutation("local:book", "publication:local")),
+                migrations = listOf(retained),
+            ),
+        )
+
+        // An already-present single ledger must not turn a full restore into a replay shortcut.
+        val singleLedgerRestore = transactions.commit(
+            ContentCommitBatch(
+                commitId = "portable-restore-single-ledger",
+                metadata = listOf(ContentMetadataMutation("archive/title", "Imported")),
+                aliases = listOf(ContentAliasMutation("archive:book", "publication:archive")),
+                migrations = listOf(retained),
+                semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
+            ),
+        )
+        assertFalse(singleLedgerRestore.replayed)
+        assertEquals("Imported", transactions.state.metadata["archive/title"])
+
+        // Restore batches own a complete portable graph, so their archive bookkeeping can carry
+        // more than one ledger and does not inherit a single ledger's deterministic commit id.
+        transactions.commit(
+            ContentCommitBatch(
+                commitId = "portable-restore-multiple-ledgers",
+                migrations = listOf(retained, imported),
+                semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
+            ),
+        )
+
+        assertEquals(
+            mapOf("local/theme" to "dark", "archive/title" to "Imported"),
+            transactions.state.metadata,
+        )
+        assertEquals(
+            mapOf(
+                "local:book" to "publication:local",
+                "archive:book" to "publication:archive",
+            ),
+            transactions.state.aliases,
+        )
+        assertEquals(setOf(retained.migrationKey, imported.migrationKey), transactions.state.migrations.keys)
     }
 
     @Test
@@ -613,6 +784,29 @@ class ContentTransactionContractTest {
                 resource = ResourceRef("text-body", blob),
                 canonicalUtf16Length = 5,
                 blocks = listOf(TextBlock("body", 0, 5)),
+            ),
+        ),
+    )
+
+    private fun typedPublication(
+        manifest: ContentManifest,
+        availability: AcquisitionAvailability,
+    ): Publication = Publication(
+        key = publication,
+        title = "Typed publication",
+        acquisitions = listOf(
+            Acquisition(
+                id = acquisitionId,
+                origin = AcquisitionOrigin.LocalText,
+                units = listOf(
+                    PublicationUnit(
+                        key = owner(18).unitKey,
+                        title = "Unit",
+                        manifestRevisions = listOf(manifest),
+                        ordinal = 0,
+                    ),
+                ),
+                availability = availability,
             ),
         ),
     )

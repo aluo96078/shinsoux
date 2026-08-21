@@ -81,6 +81,8 @@ export interface ExecutionContext {
 export interface Env {
   DB: D1Database;
   CHECKPOINTS: R2Bucket;
+  /** Separate encrypted content-body namespace. Optional only for v1 test/deployment compatibility. */
+  BLOBS?: R2Bucket;
   WORKSPACE_HUB: DurableObjectNamespace;
   BOOTSTRAP_SECRET: string;
   TOKEN_PEPPER: string;
@@ -97,6 +99,8 @@ export interface Env {
   ACCESS_TOKEN_TTL_SECONDS?: string;
   CHECKPOINT_SELF_ACK_GRACE_SECONDS?: string;
   CHECKPOINT_GC_SAFETY_SECONDS?: string;
+  BLOB_UPLOAD_SESSION_TTL_SECONDS?: string;
+  BLOB_GC_SAFETY_SECONDS?: string;
   ALLOWED_ORIGINS?: string;
 }
 

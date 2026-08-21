@@ -1,0 +1,635 @@
+@file:OptIn(dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi::class)
+
+package dev.shinsou.kmp.plugin.shuyue
+
+import dev.shinsou.kmp.concurrent.SynchronousLock
+import dev.shinsou.kmp.concurrent.withLock
+import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.PluginCookie
+import dev.shinsou.kmp.plugin.PluginCredential
+import dev.shinsou.kmp.plugin.PluginLoginRequester
+import dev.shinsou.kmp.plugin.PluginManifest
+import dev.shinsou.kmp.plugin.PluginStorage
+import dev.shinsou.kmp.plugin.SChapter
+import dev.shinsou.kmp.plugin.SManga
+import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.ScriptPluginRuntime
+import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SourceIndexEntry
+import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.ImmutableExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsResolverV2
+import dev.shinsou.kmp.plugin.v2.LoginCredentialsV2
+import dev.shinsou.kmp.plugin.v2.LoginResultV2
+import dev.shinsou.kmp.plugin.v2.PagedResultV2
+import dev.shinsou.kmp.plugin.v2.PreferenceV2
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import dev.shinsou.kmp.plugin.v2.SourceDescriptorV2
+import dev.shinsou.kmp.plugin.v2.TextChunkStreamV2
+import dev.shinsou.kmp.plugin.v2.TextPayloadSourceV2
+import dev.shinsou.kmp.plugin.v2.UnitContentPayload
+import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
+
+/**
+ * Resolves a process-local v1 engine/storage scope for one reviewed opaque source identity.
+ * The resulting Long is deliberately absent from [SourceKey] and is never portable authority.
+ */
+public fun interface ShuYueExecutionScopeResolverV2 {
+    public fun resolve(identity: ShuYueArtifactIdentityV2, sourceKey: SourceKey): Long
+}
+
+/** Fixed, non-authoritative engine scopes for the reviewed built-in ShuYue packages. */
+public object BuiltInShuYueExecutionScopesV2 : ShuYueExecutionScopeResolverV2 {
+    override fun resolve(identity: ShuYueArtifactIdentityV2, sourceKey: SourceKey): Long {
+        require(identity.packageId == sourceKey.packageId) { "ShuYue execution scope package mismatch" }
+        return requireNotNull(SCOPES[sourceKey.packageId to sourceKey.sourceId]) {
+            "No host-local execution scope is assigned to ${sourceKey.canonicalId}"
+        }
+    }
+
+    private val SCOPES: Map<Pair<String, String>, Long> = mapOf(
+        ("zh.wenku8" to "zh.wenku8") to -9_110_000_000_000_001L,
+        ("zh.wenku8.api" to "zh.wenku8.api") to -9_110_000_000_000_002L,
+        ("zh.biquge.tw" to "zh.biquge.tw") to -9_110_000_000_000_003L,
+    )
+}
+
+/** Host construction path pairing admission gates with the concrete platform runtime factory. */
+public fun productionShuYueReviewedAdmissionV2(
+    quarantineStore: ShuYueScriptQuarantineStoreV2,
+    trustStore: ShuYueScriptTrustStoreV2,
+    permissionStore: ShuYueScriptPermissionStoreV2,
+    runtimeFactory: ScriptPluginRuntimeFactory,
+    environment: ScriptPluginEnvironment,
+    credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
+    executionScopes: ShuYueExecutionScopeResolverV2 = BuiltInShuYueExecutionScopesV2,
+    reviewedProfiles: List<ShuYueReviewedPluginProfileV2> = ShuYueReviewedPluginCatalogV2.profiles,
+): ShuYueReviewedPluginAdmissionV2 = ShuYueReviewedPluginAdmissionV2(
+    quarantineStore = quarantineStore,
+    trustStore = trustStore,
+    permissionStore = permissionStore,
+    runtimeFactory = ProductionShuYueReviewedRuntimeFactoryV2(
+        runtimeFactory = runtimeFactory,
+        environment = environment,
+        credentialsResolver = credentialsResolver,
+        executionScopes = executionScopes,
+    ),
+    reviewedProfiles = reviewedProfiles,
+)
+
+/**
+ * Production factory for the exact reviewed ShuYue scripts.
+ *
+ * Original bytes are decoded and evaluated only after admission. A constant host shim adapts the
+ * reviewed `search/latest/browse/chapters/chapterText` contract to the existing platform engines;
+ * the returned v2 runtime still exposes only the reviewed opaque [SourceKey].
+ */
+public class ProductionShuYueReviewedRuntimeFactoryV2(
+    private val runtimeFactory: ScriptPluginRuntimeFactory,
+    private val environment: ScriptPluginEnvironment,
+    private val credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
+    private val executionScopes: ShuYueExecutionScopeResolverV2 = BuiltInShuYueExecutionScopesV2,
+) : ShuYueReviewedRuntimeFactoryV2 {
+    override suspend fun create(artifact: ShuYueAdmittedScriptV2): CloseableExtensionPackageRuntimeV2 {
+        require(ShuYueExecutionPermissionV2.EXECUTE_SCRIPT in artifact.grantedPermissions) {
+            "Reviewed ShuYue runtime lacks script execution permission"
+        }
+        require(ShuYueExecutionPermissionV2.NETWORK in artifact.grantedPermissions) {
+            "Reviewed ShuYue runtime lacks network permission"
+        }
+        val descriptor = artifact.descriptor
+        descriptor.validate()
+        val sourceDescriptor = descriptor.sources.singleOrNull()
+            ?: throw IllegalArgumentException("A reviewed ShuYue script must declare exactly one source")
+        require(sourceDescriptor.sourceKey.packageId == artifact.identity.packageId) {
+            "Reviewed ShuYue descriptor package mismatch"
+        }
+
+        val executionScope = executionScopes.resolve(artifact.identity, sourceDescriptor.sourceKey)
+        val sourceEntry = SourceIndexEntry(
+            name = sourceDescriptor.displayName,
+            lang = sourceDescriptor.languageTag,
+            id = executionScope,
+            baseUrl = sourceDescriptor.baseUrl,
+        )
+        val manifest = PluginManifest(
+            id = artifact.identity.packageId,
+            name = descriptor.displayName,
+            version = artifact.identity.version,
+            versionCode = artifact.identity.versionCode,
+            lang = sourceDescriptor.languageTag,
+            script = "${artifact.identity.packageId}.reviewed.js",
+            signature = artifact.identity.sha256,
+            sources = listOf(sourceEntry),
+        )
+        val filteredStorage = CapabilityFilteredShuYueStorage(
+            delegate = environment.storage,
+            permissions = artifact.grantedPermissions,
+        )
+        val scopedEnvironment = environment.copy(
+            network = environment.network.scopedToStorage(filteredStorage),
+            storage = filteredStorage,
+            loginRequester = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
+                environment.loginRequester
+            } else {
+                PluginLoginRequester.None
+            },
+        )
+        val originalScript = artifact.copyBytes().decodeToString(throwOnInvalidSequence = true)
+        val script = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
+        val runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
+        try {
+            require(runtime.pluginId == artifact.identity.packageId && runtime.id == executionScope) {
+                "Reviewed ShuYue platform runtime escaped its assigned execution scope"
+            }
+            val source = ProductionShuYueSourceV2(
+                descriptor = sourceDescriptor,
+                runtime = runtime,
+                credentialsResolver = credentialsResolver,
+            )
+            return CloseableShuYuePackageRuntimeV2(
+                ImmutableExtensionPackageRuntimeV2(descriptor, listOf(source)),
+                runtime,
+                source::closeTextStreams,
+            )
+        } catch (error: Throwable) {
+            runCatching { runtime.close() }
+            throw error
+        }
+    }
+}
+
+private class CloseableShuYuePackageRuntimeV2(
+    private val delegate: ImmutableExtensionPackageRuntimeV2,
+    private val runtime: ScriptPluginRuntime,
+    private val closeTextStreams: () -> Unit,
+) : CloseableExtensionPackageRuntimeV2 {
+    override val descriptor: ExtensionPackageV2 get() = delegate.descriptor
+    override fun source(sourceKey: SourceKey): ExtensionSourceV2? = delegate.source(sourceKey)
+    override suspend fun close() {
+        closeTextStreams()
+        runtime.close()
+    }
+}
+
+private class ProductionShuYueSourceV2(
+    override val descriptor: SourceDescriptorV2,
+    private val runtime: ScriptPluginRuntime,
+    private val credentialsResolver: LegacyLoginCredentialsResolverV2?,
+) : ExtensionSourceV2 {
+    private val textStreamLock = SynchronousLock()
+    private val pendingTextStreams = linkedMapOf<String, PendingShuYueTextStream>()
+    private val activeTextStreams = linkedMapOf<String, ReviewedShuYueTextChunkStream>()
+    private var reservedTextStreamCount: Int = 0
+    private var reservedTextBytes: Long = 0
+    private var nextTextStreamOrdinal: Long = 1
+    private var textStreamsClosed: Boolean = false
+
+    override suspend fun browseOptions(): BrowseOptionsSchemaV2 =
+        BrowseOptionsSchemaV2(listOf(BROWSE_OPTION_KEY))
+
+    override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
+        runtime.getSearchManga(scriptPage(page), SEARCH_COMMAND_PREFIX + query, emptyList()).toV2Page()
+
+    override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> =
+        runtime.getLatestUpdates(scriptPage(page)).toV2Page()
+
+    override suspend fun browse(
+        options: BrowseOptionsV2,
+        page: Int,
+    ): PagedResultV2<RemotePublicationV2> {
+        require(options.values.keys.all { it == BROWSE_OPTION_KEY } && options.values.size <= 1) {
+            "Reviewed ShuYue browse accepts only '$BROWSE_OPTION_KEY'"
+        }
+        val option = options.values[BROWSE_OPTION_KEY]
+        val result = if (option == null) {
+            runtime.getPopularManga(scriptPage(page))
+        } else {
+            runtime.getSearchManga(scriptPage(page), BROWSE_COMMAND_PREFIX + option, emptyList())
+        }
+        return result.toV2Page()
+    }
+
+    override suspend fun details(remotePublicationId: String): RemotePublicationV2 {
+        val details = runtime.getMangaDetails(
+            SManga(url = remotePublicationId, title = remotePublicationId),
+        )
+        return details.toRemotePublication(remotePublicationId)
+    }
+
+    override suspend fun units(
+        remotePublicationId: String,
+        page: Int,
+    ): PagedResultV2<RemoteUnitV2> {
+        val chapters = runtime.getChapterList(
+            SManga(url = remotePublicationId, title = remotePublicationId),
+        )
+        require(chapters.size <= MAX_SHUYUE_UNITS) { "Reviewed ShuYue source returned too many units" }
+        val fromLong = page.toLong() * PAGE_SIZE.toLong()
+        if (fromLong >= chapters.size) return PagedResultV2(emptyList(), false)
+        val from = fromLong.toInt()
+        val to = minOf(chapters.size, from + PAGE_SIZE)
+        return PagedResultV2(
+            chapters.subList(from, to).map { chapter -> chapter.toRemoteUnit() },
+            hasNextPage = to < chapters.size,
+        )
+    }
+
+    override suspend fun content(
+        remotePublicationId: String,
+        remoteUnitId: String,
+    ): UnitContentResultV2 {
+        val carrier = runtime.getMangaDetails(
+            SManga(
+                url = CONTENT_COMMAND_PREFIX + remoteUnitId,
+                title = remotePublicationId,
+            ),
+        )
+        val text = carrier.description.orEmpty()
+        val textByteSize = text.utf8ByteSizeBounded(MAX_SHUYUE_TEXT_STREAM_BYTES)
+        val representation = if (textByteSize <= MAX_SHUYUE_INLINE_TEXT_BYTES) {
+            UnitContentPayload.InlineTextPayload(
+                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                representationId = SHUYUE_TEXT_REPRESENTATION_ID,
+                sourceKey = descriptor.sourceKey,
+                remoteUnitId = remoteUnitId,
+                source = TextPayloadSourceV2.InlineTextPayload(text),
+                blocks = listOf(TextBlock("body", 0, text.length)),
+            )
+        } else {
+            UnitContentPayload.ChunkedTextPayload(
+                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                representationId = SHUYUE_TEXT_REPRESENTATION_ID,
+                sourceKey = descriptor.sourceKey,
+                remoteUnitId = remoteUnitId,
+                source = registerTextStream(text, textByteSize),
+            )
+        }
+        return UnitContentResultV2(
+            schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+            sourceKey = descriptor.sourceKey,
+            remotePublicationId = remotePublicationId,
+            remoteUnitId = remoteUnitId,
+            representations = listOf(representation),
+        )
+    }
+
+    override suspend fun openTextStream(streamId: String): TextChunkStreamV2 {
+        return textStreamLock.withLock {
+            check(!textStreamsClosed) { "Reviewed ShuYue text streams are closed" }
+            val selected = requireNotNull(pendingTextStreams.remove(streamId)) {
+                "Reviewed ShuYue text stream is missing, expired, or already opened"
+            }
+            ReviewedShuYueTextChunkStream(selected.text) {
+                releaseTextStream(streamId, selected.byteSize)
+            }.also { activeTextStreams[streamId] = it }
+        }
+    }
+
+    private fun registerTextStream(
+        text: String,
+        byteSize: Long,
+    ): TextPayloadSourceV2.ChunkedTextPayload = textStreamLock.withLock {
+        check(!textStreamsClosed) { "Reviewed ShuYue text streams are closed" }
+        require(byteSize > MAX_SHUYUE_INLINE_TEXT_BYTES && byteSize <= MAX_SHUYUE_TEXT_STREAM_BYTES)
+        require(reservedTextStreamCount < MAX_RESERVED_SHUYUE_TEXT_STREAMS &&
+            reservedTextBytes <= MAX_RESERVED_SHUYUE_TEXT_BYTES - byteSize) {
+            "Too many reviewed ShuYue text bodies are pending or active"
+        }
+        check(nextTextStreamOrdinal < Long.MAX_VALUE) { "Reviewed ShuYue text stream id space is exhausted" }
+        val streamId = "shuyue-text-${nextTextStreamOrdinal++}"
+        pendingTextStreams[streamId] = PendingShuYueTextStream(text, byteSize)
+        reservedTextStreamCount++
+        reservedTextBytes += byteSize
+        TextPayloadSourceV2.ChunkedTextPayload(
+            streamId = streamId,
+            firstCursor = "0",
+            maxChunkBytes = SHUYUE_TEXT_CHUNK_BYTES,
+            maxTotalBytes = byteSize,
+            maxChunks = ((byteSize + SHUYUE_TEXT_CHUNK_BYTES - 4) /
+                (SHUYUE_TEXT_CHUNK_BYTES - 3)).toInt(),
+            cancellationReference = "$streamId-cancel",
+        )
+    }
+
+    private fun releaseTextStream(streamId: String, byteSize: Long) {
+        textStreamLock.withLock {
+            if (activeTextStreams.remove(streamId) == null) return@withLock
+            reservedTextStreamCount--
+            reservedTextBytes -= byteSize
+            check(reservedTextStreamCount >= 0 && reservedTextBytes >= 0) {
+                "Reviewed ShuYue text stream reservation underflow"
+            }
+        }
+    }
+
+    internal fun closeTextStreams() {
+        val active = textStreamLock.withLock {
+            if (textStreamsClosed) return
+            textStreamsClosed = true
+            pendingTextStreams.clear()
+            val streams = activeTextStreams.values.toList()
+            activeTextStreams.clear()
+            reservedTextStreamCount = 0
+            reservedTextBytes = 0
+            streams
+        }
+        active.forEach(TextChunkStreamV2::cancel)
+    }
+
+    override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
+        val resolved = credentialsResolver?.resolve(credentials) ?: return LoginResultV2(false)
+        return LoginResultV2(runtime.login(resolved.username, resolved.password))
+    }
+
+    override suspend fun logout(): Unit = runtime.logout()
+    override suspend fun preferences(): List<PreferenceV2> = emptyList()
+
+    override suspend fun favorite(remotePublicationId: String, favorite: Boolean) {
+        require(favorite) { "Reviewed ShuYue sources do not expose an unfavorite mutation" }
+        val result = runtime.getMangaDetails(
+            SManga(url = FAVORITE_COMMAND_PREFIX + remotePublicationId, title = remotePublicationId),
+        )
+        check(result.initialized) { "Reviewed ShuYue favorite mutation failed" }
+    }
+
+    private fun dev.shinsou.kmp.plugin.MangasPage.toV2Page(): PagedResultV2<RemotePublicationV2> {
+        val bounded = mangas.take(PAGE_SIZE)
+        return PagedResultV2(
+            items = bounded.map { it.toRemotePublication(it.url) },
+            hasNextPage = hasNextPage || mangas.size > bounded.size,
+        )
+    }
+
+    private fun SManga.toRemotePublication(remoteId: String): RemotePublicationV2 = RemotePublicationV2(
+        remoteId = remoteId,
+        title = title.ifBlank { remoteId },
+        url = resolveSourceHttpUrl(descriptor.baseUrl, url.ifBlank { remoteId }),
+    )
+
+    private fun SChapter.toRemoteUnit(): RemoteUnitV2 = RemoteUnitV2(
+        remoteId = url,
+        title = name.ifBlank { url },
+        url = resolveSourceHttpUrl(descriptor.baseUrl, url),
+    )
+
+    private fun scriptPage(page: Int): Int = page + 1
+}
+
+private data class PendingShuYueTextStream(
+    val text: String,
+    val byteSize: Long,
+)
+
+/** One-use, cursor-exact UTF-8 view over a legacy chapter String. */
+private class ReviewedShuYueTextChunkStream(
+    initialText: String,
+    private val releaseReservation: () -> Unit,
+) : TextChunkStreamV2 {
+    private var text: String? = initialText
+    private var expectedOffset: Int = 0
+    private var terminal: Boolean = false
+    private var cancelled: Boolean = false
+    private var reservationReleased: Boolean = false
+
+    override val maxChunkBytes: Int = SHUYUE_TEXT_CHUNK_BYTES
+
+    override suspend fun next(cursor: String?): dev.shinsou.kmp.plugin.v2.TextChunkResultV2 {
+        check(!cancelled) { "Reviewed ShuYue text stream is cancelled" }
+        check(!terminal) { "Reviewed ShuYue text stream is complete" }
+        require(cursor == expectedOffset.toString()) { "Reviewed ShuYue text cursor changed" }
+        val source = requireNotNull(text)
+        val end = source.utf8ChunkEnd(expectedOffset, maxChunkBytes)
+        val chunk = source.substring(expectedOffset, end)
+        expectedOffset = end
+        terminal = end == source.length
+        if (terminal) {
+            text = null
+            releaseOnce()
+        }
+        return dev.shinsou.kmp.plugin.v2.TextChunkResultV2(
+            utf8Text = chunk,
+            nextCursor = end.toString().takeUnless { terminal },
+            done = terminal,
+        )
+    }
+
+    override fun cancel() {
+        if (cancelled) return
+        cancelled = true
+        text = null
+        releaseOnce()
+    }
+
+    private fun releaseOnce() {
+        if (reservationReleased) return
+        reservationReleased = true
+        releaseReservation()
+    }
+}
+
+private fun String.utf8ByteSizeBounded(maximum: Long): Long {
+    var total = 0L
+    var index = 0
+    while (index < length) {
+        val value = this[index]
+        val width = when {
+            value.code <= 0x7f -> 1
+            value.code <= 0x7ff -> 2
+            value.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> {
+                index++
+                4
+            }
+            else -> 3
+        }
+        total += width
+        require(total <= maximum) { "Reviewed ShuYue chapter exceeds the text stream hard limit" }
+        index++
+    }
+    return total
+}
+
+private fun String.utf8ChunkEnd(start: Int, maximumBytes: Int): Int {
+    require(start in 0 until length)
+    var used = 0
+    var index = start
+    while (index < length) {
+        val value = this[index]
+        val units: Int
+        val width: Int
+        if (value.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate()) {
+            units = 2
+            width = 4
+        } else {
+            units = 1
+            width = when {
+                value.code <= 0x7f -> 1
+                value.code <= 0x7ff -> 2
+                else -> 3
+            }
+        }
+        if (used + width > maximumBytes) break
+        used += width
+        index += units
+    }
+    check(index > start) { "Reviewed ShuYue text chunk limit cannot fit one scalar" }
+    return index
+}
+
+/** Direct bridge calls and automatic network cookies see the same admitted permission filter. */
+private class CapabilityFilteredShuYueStorage(
+    private val delegate: PluginStorage,
+    permissions: Set<ShuYueExecutionPermissionV2>,
+) : PluginStorage {
+    private val credentialsAllowed = ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS in permissions
+    private val cookiesAllowed = ShuYueExecutionPermissionV2.COOKIE_STORAGE in permissions
+
+    override suspend fun getPreference(sourceId: Long, key: String): String? =
+        delegate.getPreference(sourceId, key)
+
+    override suspend fun setPreference(sourceId: Long, key: String, value: String): Unit =
+        delegate.setPreference(sourceId, key, value)
+
+    override suspend fun getCredential(sourceId: Long): PluginCredential? =
+        if (credentialsAllowed) delegate.getCredential(sourceId) else null
+
+    override suspend fun setCredential(sourceId: Long, credential: PluginCredential) {
+        if (credentialsAllowed) delegate.setCredential(sourceId, credential)
+    }
+
+    override suspend fun clearCredential(sourceId: Long) {
+        if (credentialsAllowed) delegate.clearCredential(sourceId)
+    }
+
+    override suspend fun getCookies(sourceId: Long): List<PluginCookie> =
+        if (cookiesAllowed) delegate.getCookies(sourceId) else emptyList()
+
+    override suspend fun setCookie(sourceId: Long, cookie: PluginCookie) {
+        if (cookiesAllowed) delegate.setCookie(sourceId, cookie)
+    }
+
+    override suspend fun deleteCookie(sourceId: Long, name: String, domain: String) {
+        if (cookiesAllowed) delegate.deleteCookie(sourceId, name, domain)
+    }
+
+    override suspend fun deleteCookieExact(sourceId: Long, name: String, domain: String, path: String) {
+        if (cookiesAllowed) delegate.deleteCookieExact(sourceId, name, domain, path)
+    }
+
+    override suspend fun clearCookies(sourceId: Long) {
+        if (cookiesAllowed) delegate.clearCookies(sourceId)
+    }
+}
+
+private fun compatibilityShim(opaqueSourceId: String): String {
+    val encoded = Json.encodeToString(String.serializer(), opaqueSourceId)
+    return SHUYUE_COMPATIBILITY_SHIM_PREFIX + encoded + SHUYUE_COMPATIBILITY_SHIM_SUFFIX
+}
+
+private const val SHUYUE_COMPATIBILITY_SHIM_PREFIX: String = """
+;(function(expectedOpaqueId){
+  'use strict';
+  if(typeof source!=='object'||!source)throw new Error('Reviewed ShuYue script does not export source');
+  if(String(source.id)!==String(expectedOpaqueId))throw new Error('Reviewed ShuYue source id changed');
+  var target=source,opaqueId=String(expectedOpaqueId);
+  var searchPrefix='__shinsou_shuyue_search__:';
+  var browsePrefix='__shinsou_shuyue_browse__:';
+  var contentPrefix='__shinsou_shuyue_content__:';
+  var favoritePrefix='__shinsou_shuyue_favorite__:';
+  var original={
+    search:target.search,latest:target.latest,browseOptions:target.browseOptions,browse:target.browse,
+    chapters:target.chapters,chapterText:target.chapterText,bookFromAid:target.bookFromAid,
+    aidFromText:target.aidFromText,favorite:target.favorite
+  };
+  if(typeof target.parseBookLinks==='function'){
+    var originalParseBookLinks=target.parseBookLinks;
+    target.parseBookLinks=function(html,pageUrl){
+      return originalParseBookLinks.call(target,String(html==null?'':html),pageUrl);
+    };
+  }
+  function call(fn,args){
+    if(typeof fn!=='function')return null;
+    target.id=opaqueId;
+    return fn.apply(target,args||[]);
+  }
+  function book(value){
+    if(!value||typeof value!=='object')return null;
+    var url=String(value.url||'');
+    var title=String(value.title||value.name||url||'Untitled');
+    if(!url)return null;
+    return {url:url,title:title,artist:value.artist||null,author:value.author||null,
+      description:value.description||null,genre:value.genre||null,status:Number(value.status||0),
+      thumbnailUrl:value.thumbnailUrl||value.thumbnail_url||value.coverImage||value.cover||null,initialized:true};
+  }
+  function books(values){
+    if(!Array.isArray(values))return [];
+    var out=[];for(var i=0;i<values.length;i++){var mapped=book(values[i]);if(mapped)out.push(mapped);}return out;
+  }
+  function page(values){var mapped=books(values);return {mangas:mapped,hasNextPage:mapped.length>0};}
+  target.getSearchManga=function(pageNumber,query){
+    var command=String(query||'');
+    if(command.indexOf(browsePrefix)===0){
+      return page(call(original.browse,[command.substring(browsePrefix.length),Number(pageNumber||1)]));
+    }
+    if(command.indexOf(searchPrefix)===0)command=command.substring(searchPrefix.length);
+    return page(call(original.search,[command,Number(pageNumber||1)]));
+  };
+  target.getLatestUpdates=function(pageNumber){return page(call(original.latest,[Number(pageNumber||1)]));};
+  target.getPopularManga=function(pageNumber){
+    var options=call(original.browseOptions,[])||[];
+    var option=options.length&&options[0]?String(options[0].id||''):'';
+    if(option&&typeof original.browse==='function')return page(call(original.browse,[option,Number(pageNumber||1)]));
+    return page(call(original.latest,[Number(pageNumber||1)]));
+  };
+  target.getMangaDetails=function(manga){
+    manga=manga||{};var url=String(manga.url||'');
+    if(url.indexOf(contentPrefix)===0){
+      var chapterUrl=url.substring(contentPrefix.length);
+      var text=call(original.chapterText,[{url:chapterUrl,bookUrl:String(manga.title||'')}]);
+      return {url:url,title:String(manga.title||chapterUrl),description:String(text==null?'':text),initialized:true};
+    }
+    if(url.indexOf(favoritePrefix)===0){
+      var publicationUrl=url.substring(favoritePrefix.length);
+      var success=!!call(original.favorite,[{url:publicationUrl,title:String(manga.title||publicationUrl)}]);
+      return {url:url,title:String(manga.title||publicationUrl),initialized:success};
+    }
+    var aid=typeof original.aidFromText==='function'?call(original.aidFromText,[url]):url;
+    var details=aid&&typeof original.bookFromAid==='function'?call(original.bookFromAid,[aid]):manga;
+    return book(details)||book(manga)||{url:url,title:String(manga.title||url),initialized:true};
+  };
+  target.getChapterList=function(manga){
+    var values=call(original.chapters,[{url:String(manga&&manga.url||''),title:String(manga&&manga.title||'')}])||[];
+    var out=[];for(var i=0;i<values.length;i++){
+      var value=values[i]||{},url=String(value.url||'');if(!url)continue;
+      out.push({url:url,name:String(value.title||value.name||url),scanlator:null,dateUpload:0,chapterNumber:Number(value.index||i)});
+    }return out;
+  };
+  target.getPageList=function(){return [];};
+  target.getFilterList=function(){return [];};
+})(
+"""
+
+private const val SHUYUE_COMPATIBILITY_SHIM_SUFFIX: String = ");\n"
+
+private const val SEARCH_COMMAND_PREFIX: String = "__shinsou_shuyue_search__:"
+private const val BROWSE_COMMAND_PREFIX: String = "__shinsou_shuyue_browse__:"
+private const val CONTENT_COMMAND_PREFIX: String = "__shinsou_shuyue_content__:"
+private const val FAVORITE_COMMAND_PREFIX: String = "__shinsou_shuyue_favorite__:"
+private const val BROWSE_OPTION_KEY: String = "option"
+private const val SHUYUE_TEXT_REPRESENTATION_ID: String = "shuyue-inline-text"
+private const val PAGE_SIZE: Int = 100
+private const val MAX_SHUYUE_UNITS: Int = 100_000
+private const val MAX_SHUYUE_INLINE_TEXT_BYTES: Long = 4L * 1024L * 1024L
+private const val SHUYUE_TEXT_CHUNK_BYTES: Int = 64 * 1024
+private const val MAX_SHUYUE_TEXT_STREAM_BYTES: Long = 512L * 1024L * 1024L
+private const val MAX_RESERVED_SHUYUE_TEXT_STREAMS: Int = 8
+private const val MAX_RESERVED_SHUYUE_TEXT_BYTES: Long = MAX_SHUYUE_TEXT_STREAM_BYTES

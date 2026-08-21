@@ -213,6 +213,18 @@ public class PluginRequestBuilder(
     private val proxyResolver: PluginProxyResolver = PluginProxyResolver.None,
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
+    /**
+     * Retains the host's user-agent/proxy policy while replacing only the state view used for
+     * cookies. Reviewed runtimes use this to make their granted storage permissions effective for
+     * automatic request/response cookie handling as well as direct JavaScript bridge calls.
+     */
+    public fun scopedToStorage(storage: PluginStorage): PluginRequestBuilder = PluginRequestBuilder(
+        storage = storage,
+        userAgents = userAgents,
+        proxyResolver = proxyResolver,
+        nowEpochMillis = nowEpochMillis,
+    )
+
     public suspend fun build(
         sourceId: Long,
         request: PluginHttpRequest,
@@ -277,6 +289,15 @@ public class PluginNetworkClient(
     private val requestGate: PerHostRequestGate = PerHostRequestGate(),
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
+    /** Shares transport/rate-limit policy but applies a capability-filtered storage view. */
+    public fun scopedToStorage(storage: PluginStorage): PluginNetworkClient = PluginNetworkClient(
+        transport = transport,
+        storage = storage,
+        requestBuilder = requestBuilder.scopedToStorage(storage),
+        requestGate = requestGate,
+        nowEpochMillis = nowEpochMillis,
+    )
+
     public suspend fun execute(
         sourceId: Long,
         request: PluginHttpRequest,

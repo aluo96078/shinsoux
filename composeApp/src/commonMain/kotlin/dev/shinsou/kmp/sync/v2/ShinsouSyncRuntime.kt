@@ -3,14 +3,23 @@ package dev.shinsou.kmp.sync.v2
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.SnapshotMutationObserver
+import dev.shinsou.kmp.annotation.ContentAnnotationStore
+import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.ContentRightsAdmissionLease
+import dev.shinsou.kmp.content.SharedContentTransactionStore
+import dev.shinsou.kmp.content.access.ContentOperationGate
+import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.sync.crypto.DeterministicSyncEventCodec
+import dev.shinsou.kmp.sync.crypto.SodiumBlobBodyCryptoV2
 import dev.shinsou.kmp.sync.crypto.SodiumSyncCrypto
 import dev.shinsou.kmp.sync.crypto.SyncDevicePublicKeyResolver
 import dev.shinsou.kmp.sync.network.KtorCloudflareSyncApi
+import dev.shinsou.kmp.sync.network.KtorCloudflareBlobBodyApiV2
 import dev.shinsou.kmp.sync.network.KtorRealtimeWorkspaceClient
 import dev.shinsou.kmp.sync.network.KtorSyncControlPlaneApi
 import dev.shinsou.kmp.sync.network.SyncApiException
 import dev.shinsou.kmp.sync.network.createSyncHttpClient
+import dev.shinsou.kmp.sync.persistence.SqlDriverBlobAuthorityDepartureV2
 import dev.shinsou.kmp.sync.provisioning.ProvisioningTrustContext
 import dev.shinsou.kmp.sync.provisioning.ProvisioningDeviceRevocationReceipt
 import dev.shinsou.kmp.sync.provisioning.ProvisioningRevocationWorkspaceBinding
@@ -54,9 +63,12 @@ class ShinsouSyncRuntime(
     private val platformInfrastructure: SyncPlatformInfrastructure,
     private val platformHttpClient: HttpClient,
     private val devicePublicKeyResolver: SyncDevicePublicKeyResolver? = null,
+    private val contentStore: SharedContentTransactionStore<SyncDraft>? = null,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) : SyncWorkspaceDeparture, SyncProvisioningActivationGate {
     private val lifecycleMutex = Mutex()
+    private val bodyDrainMutex = Mutex()
+    private val annotationReconciliationMutex = Mutex()
     private val scopeJob: Job = SupervisorJob()
     private val scope = CoroutineScope(scopeJob + Dispatchers.Default)
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
@@ -211,6 +223,197 @@ class ShinsouSyncRuntime(
                 configureInactiveMutationBoundaryLocked(session)
                 teardownComponentsLocked()
             }
+        }
+    }
+
+    /**
+     * Moves a bounded content-import batch into the authoritative sync journal. This is invoked
+     * only from composition-owned background jobs, never from the first-frame or reader path.
+     */
+    suspend fun drainContentOutbox(
+        contentStore: SharedContentTransactionStore<SyncDraft>,
+        maxDrafts: Int = ContentSyncOutboxDrainBridge.DEFAULT_MAX_DRAFTS,
+    ): ContentSyncOutboxDrainResult? = withContext(Dispatchers.Default) {
+        lifecycleMutex.withLock {
+            if (closed) return@withLock null
+            val session = platformInfrastructure.sessionStore.load()
+            if (!isReadyCloudflareSession(session)) return@withLock null
+            ContentSyncOutboxDrainBridge(
+                contentStore = contentStore,
+                localStore = ensureLocalStoreLocked(),
+                deviceId = requireNotNull(session).deviceId,
+                nowMillis = nowMillis,
+            ).drain(maxDrafts)
+        }
+    }
+
+    /**
+     * Reconciles one bounded annotation page after startup catch-up has finished. This work never
+     * runs on the first-frame or reader mutation path: composition owns a conflated background
+     * actor and passes the returned cursor back on its next slice.
+     */
+    internal suspend fun reconcileContentAnnotations(
+        annotationStore: ContentAnnotationStore,
+        contentStore: SharedContentTransactionStore<SyncDraft>,
+        maxAnnotations: Int = ContentAnnotationSyncReconciliationBridge.DEFAULT_MAX_ANNOTATIONS,
+        afterAnnotationId: String? = null,
+    ): ContentAnnotationSyncReconciliationResult? = withContext(Dispatchers.Default) {
+        val startup = lifecycleMutex.withLock {
+            if (closed) return@withContext null
+            startupSyncJob?.takeIf(Job::isActive)
+        }
+        // Catch-up can be slow, but this await belongs only to the detached annotation actor.
+        // Waiting here prevents a pre-catch-up replica snapshot from being mistaken for absence.
+        startup?.join()
+
+        annotationReconciliationMutex.withLock annotation@{
+            val localStore = lifecycleMutex.withLock lifecycle@{
+                if (closed) return@lifecycle null
+                val session = platformInfrastructure.sessionStore.load()
+                if (!isReadyCloudflareSession(session)) null else ensureLocalStoreLocked()
+            } ?: return@annotation null
+            ContentAnnotationSyncReconciliationBridge(
+                annotationStore = annotationStore,
+                contentStore = contentStore,
+                localStore = localStore,
+            ).reconcileSlice(
+                maxAnnotations = maxAnnotations,
+                afterAnnotationId = afterAnnotationId,
+            )
+        }
+    }
+
+    /**
+     * Runs at most one low-priority encrypted body slice outside the lifecycle mutex. The caller
+     * schedules this only after the reader/background flush, so large local reads, encryption and
+     * R2 traffic cannot delay startup, navigation, or progress durability.
+     */
+    suspend fun drainContentBlobJobs(
+        contentStore: SharedContentTransactionStore<SyncDraft>,
+        blobStore: ContentBlobStore,
+        operationGate: ContentOperationGate,
+        journal: BlobTransferJournalV2,
+        maxJobs: Int = ContentBlobSyncCoordinatorV2.DEFAULT_MAX_JOBS,
+    ): ContentBlobSyncDrainResultV2? = withContext(Dispatchers.Default) {
+        bodyDrainMutex.withLock bodyDrain@{
+            val access = lifecycleMutex.withLock lifecycle@{
+                if (closed) return@lifecycle null
+                val session = platformInfrastructure.sessionStore.load()
+                if (!isReadyCloudflareSession(session)) return@lifecycle null
+                val current = components ?: return@lifecycle null
+                BodyDrainAccess(requireNotNull(session), current)
+            } ?: return@bodyDrain null
+
+            // Capability refresh is intentionally outside lifecycleMutex. A slow Worker or R2
+            // request must never serialize foreground catch-up or a reader background flush.
+            val capability = obtainValidatedCapability(access.components, access.session)
+            val uploader = EncryptedBlobUploaderV2(
+                blobStore = blobStore,
+                bodyApi = KtorCloudflareBlobBodyApiV2(access.components.syncHttpClient),
+                crypto = SodiumBlobBodyCryptoV2(platformInfrastructure.secretStore),
+                journal = journal,
+                operationGate = operationGate,
+                nowEpochMillis = nowMillis,
+            )
+            ContentBlobSyncCoordinatorV2(
+                contentStore = contentStore,
+                localStore = access.components.localStore,
+                uploader = uploader,
+                journal = journal,
+                nowEpochMillis = nowMillis,
+            ).drain(access.session, capability, maxJobs)
+        }
+    }
+
+    /**
+     * Runs one restart-safe DEK re-wrap or tombstone/ack/GC item after ordinary body work.
+     * Composition calls this only from its cancellable background window; bootstrap/checkpoint
+     * downloads and Worker requests stay outside [lifecycleMutex].
+     */
+    internal suspend fun drainContentBlobLifecycle(
+        journal: BlobLifecycleJournalV2,
+        authorizeBlobSync: suspend (String) -> Boolean,
+    ): BlobLifecycleSliceResultV2? = withContext(Dispatchers.Default) {
+        bodyDrainMutex.withLock bodyDrain@{
+            val access = lifecycleMutex.withLock lifecycle@{
+                if (closed) return@lifecycle null
+                val session = platformInfrastructure.sessionStore.load()
+                if (!isReadyCloudflareSession(session)) return@lifecycle null
+                val current = components ?: return@lifecycle null
+                BodyDrainAccess(requireNotNull(session), current)
+            } ?: return@bodyDrain null
+
+            val capability = obtainValidatedCapability(access.components, access.session)
+            val bodyApi = KtorCloudflareBlobBodyApiV2(access.components.syncHttpClient)
+            val bodyCoordinator = BlobLifecycleCoordinatorV2(
+                bodyApi = bodyApi,
+                blobCrypto = SodiumBlobBodyCryptoV2(platformInfrastructure.secretStore),
+                syncCrypto = access.components.crypto,
+                nowEpochMillis = nowMillis,
+            )
+            DurableBlobLifecycleCoordinatorV2(
+                metadataApi = access.components.api,
+                bodyCoordinator = bodyCoordinator,
+                syncCrypto = access.components.crypto,
+                localStore = access.components.localStore,
+                journal = journal,
+                authorizeBlobSync = authorizeBlobSync,
+                nowEpochMillis = nowMillis,
+            ).drainSlice(access.session, capability)
+        }
+    }
+
+    /**
+     * Converts one terminal `reupload_required` lifecycle record into durable local upload work.
+     * No network or crypto runs here; the job is intentionally consumed by the next background
+     * edge, after metadata and foreground-sensitive work have had another chance to run first.
+     */
+    internal suspend fun drainContentBlobReuploadRecovery(
+        coordinator: BlobReuploadRecoveryCoordinatorV2,
+    ): BlobReuploadRecoveryResultV2? = withContext(Dispatchers.Default) {
+        bodyDrainMutex.withLock bodyDrain@{
+            val session = lifecycleMutex.withLock lifecycle@{
+                if (closed) return@lifecycle null
+                platformInfrastructure.sessionStore.load()
+                    ?.takeIf(::isReadyCloudflareSession)
+            } ?: return@bodyDrain null
+            coordinator.drainSlice(session.instanceId, session.workspaceId)
+        }
+    }
+
+    /**
+     * Runs one destination body/materialization slice. Like uploads, this is called only by the
+     * composition's cancellable background worker and never from startup or foreground catch-up.
+     */
+    internal suspend fun drainContentReplicaMaterialization(
+        contentStore: SharedContentTransactionStore<SyncDraft>,
+        blobStore: ContentBlobStore,
+        operationGate: ContentOperationGate,
+        acquireValidatedRights: (List<RightsGrant>) -> ContentRightsAdmissionLease,
+    ): ContentReplicaMaterializationResultV2? = withContext(Dispatchers.Default) {
+        bodyDrainMutex.withLock bodyDrain@{
+            val access = lifecycleMutex.withLock lifecycle@{
+                if (closed) return@lifecycle null
+                val session = platformInfrastructure.sessionStore.load()
+                if (!isReadyCloudflareSession(session)) return@lifecycle null
+                val current = components ?: return@lifecycle null
+                BodyDrainAccess(requireNotNull(session), current)
+            } ?: return@bodyDrain null
+
+            val capability = obtainValidatedCapability(access.components, access.session)
+            val downloader = EncryptedBlobDownloaderV2(
+                blobStore = blobStore,
+                bodyApi = KtorCloudflareBlobBodyApiV2(access.components.syncHttpClient),
+                crypto = SodiumBlobBodyCryptoV2(platformInfrastructure.secretStore),
+                operationGate = operationGate,
+            )
+            ContentReplicaMaterializerV2(
+                localStore = access.components.localStore,
+                blobStore = blobStore,
+                contentStore = contentStore,
+                downloader = downloader,
+                acquireValidatedRights = acquireValidatedRights,
+            ).drainSlice(access.session, capability)
         }
     }
 
@@ -515,20 +718,32 @@ class ShinsouSyncRuntime(
 
     /** Detaches every producer before deleting the workspace state, keys, credentials and pin. */
     override suspend fun leaveWorkspace(): Unit = withContext(Dispatchers.Default) {
-        lifecycleMutex.withLock {
-            check(!closed) { "Sync runtime is closed" }
-            repository.configureSyncMutationBoundary(FailClosedSyncMutationObserver, replacementGuard)
-            teardownComponentsLocked()
-            val localStore = ensureLocalStoreLocked()
-            LocalSyncWorkspaceDeparture(
-                sessionStore = platformInfrastructure.sessionStore,
-                secretStore = platformInfrastructure.secretStore,
-                localStore = localStore,
-                deviceDirectoryPinStore = platformInfrastructure.deviceDirectoryPinStore,
-            ).leaveWorkspace()
-            repository.configureSyncMutationBoundary(observer = null, guard = replacementGuard)
-            mutableFailure.value = null
-            mutableMaterializationDiagnostics.value = SyncMaterializationDiagnostics()
+        // Body transfer and annotation reconciliation deliberately release lifecycleMutex while
+        // doing bounded work. Take their outer locks first (the same order as their own paths)
+        // so neither can retain a now-departed local store or HTTP client after keys are erased.
+        bodyDrainMutex.withLock {
+            annotationReconciliationMutex.withLock {
+                lifecycleMutex.withLock {
+                    check(!closed) { "Sync runtime is closed" }
+                    repository.configureSyncMutationBoundary(FailClosedSyncMutationObserver, replacementGuard)
+                    teardownComponentsLocked()
+                    val localStore = ensureLocalStoreLocked()
+                    LocalSyncWorkspaceDeparture(
+                        sessionStore = platformInfrastructure.sessionStore,
+                        secretStore = platformInfrastructure.secretStore,
+                        localStore = localStore,
+                        deviceDirectoryPinStore = platformInfrastructure.deviceDirectoryPinStore,
+                        contentStore = contentStore,
+                        clearBlobAuthorityState = { authority ->
+                            SqlDriverBlobAuthorityDepartureV2(platformInfrastructure.contentDriver())
+                                .clearAuthority(authority.instanceId, authority.workspaceId)
+                        },
+                    ).leaveWorkspace()
+                    repository.configureSyncMutationBoundary(observer = null, guard = replacementGuard)
+                    mutableFailure.value = null
+                    mutableMaterializationDiagnostics.value = SyncMaterializationDiagnostics()
+                }
+            }
         }
     }
 
@@ -545,24 +760,28 @@ class ShinsouSyncRuntime(
         // Do not make shutdown wait for a startup catch-up that is intentionally allowed to be
         // slow. Cancellation also releases the lifecycle mutex before the final engine flush.
         startupSyncJob?.cancel()
-        lifecycleMutex.withLock {
-            if (closed) return@withLock
-            closed = true
-            val session = loadSessionFailClosed()
-            repository.configureSyncMutationBoundary(
-                observer = if (session == null) null else FailClosedSyncMutationObserver,
-                guard = if (session == null) null else replacementGuard,
-            )
-            val current = components
-            if (current != null) {
-                try {
-                    current.engine.onBackground()
-                } catch (failure: Throwable) {
-                    mutableFailure.value = failure
+        bodyDrainMutex.withLock {
+            annotationReconciliationMutex.withLock {
+                lifecycleMutex.withLock {
+                    if (closed) return@withLock
+                    closed = true
+                    val session = loadSessionFailClosed()
+                    repository.configureSyncMutationBoundary(
+                        observer = if (session == null) null else FailClosedSyncMutationObserver,
+                        guard = if (session == null) null else replacementGuard,
+                    )
+                    val current = components
+                    if (current != null) {
+                        try {
+                            current.engine.onBackground()
+                        } catch (failure: Throwable) {
+                            mutableFailure.value = failure
+                        }
+                    }
+                    teardownComponentsLocked()
+                    platformInfrastructure.close()
                 }
             }
-            teardownComponentsLocked()
-            platformInfrastructure.close()
         }
         scopeJob.cancelAndJoin()
     }
@@ -1407,6 +1626,11 @@ class ShinsouSyncRuntime(
         val trustContextProvider: suspend (SyncSession) -> DeviceDirectoryTrustContext,
     )
 
+    private data class BodyDrainAccess(
+        val session: SyncSession,
+        val components: RuntimeComponents,
+    )
+
     /**
      * Preserves the repository's fail-closed mutation contract while the local journal is being
      * opened off the first-frame path. It deliberately delegates only after the real bridge has
@@ -1417,6 +1641,14 @@ class ShinsouSyncRuntime(
     ) : SnapshotMutationObserver {
         override suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot) {
             delegate.await().beforeCommit(previous, next)
+        }
+
+        override suspend fun beforeAtomicHostCommit(previous: AppSnapshot, next: AppSnapshot) {
+            delegate.await().beforeAtomicHostCommit(previous, next)
+        }
+
+        override suspend fun afterAtomicHostRollback(previous: AppSnapshot, next: AppSnapshot) {
+            delegate.await().afterAtomicHostRollback(previous, next)
         }
     }
 

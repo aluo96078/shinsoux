@@ -15,7 +15,7 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     httpGet:function(url){return nativeCall('httpGet',[String(url)]);},
     httpGetWithHeaders:function(url,headers){return nativeCall('httpGetWithHeaders',[String(url),headers||{}]);},
     httpPost:function(url,body,headers){return nativeCall('httpPost',[String(url),String(body||''),headers||{}]);},
-    log:function(message){nativeCall('log',[String(message)]);},
+    log:function(sourceOrMessage,message){nativeCall('log',[String(message===undefined?sourceOrMessage:message)]);},
     getPreference:function(key){return nativeCall('getPreference',[String(key)]);},
     setPreference:function(key,value){nativeCall('setPreference',[String(key),String(value)]);},
     getCredentialUsername:function(){return nativeCall('getCredentialUsername',[]);},
@@ -207,6 +207,27 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
   if(!String.prototype.substringAfterLast)String.prototype.substringAfterLast=function(d){var i=this.lastIndexOf(d);return i>=0?this.substring(i+d.length):String(this);};
   if(!String.prototype.substringBeforeLast)String.prototype.substringBeforeLast=function(d){var i=this.lastIndexOf(d);return i>=0?this.substring(0,i):String(this);};
   global.setUrlWithoutDomain=function(object,url){var match=String(url).match(/^https?:\/\/[^\/]+(\/[^#]*)/i);object.url=match?match[1]:String(url);};
+  global.__shinsouSelectSource=function(requestedId){
+    if(requestedId!==null&&requestedId!==undefined&&typeof global.sources==='object'&&global.sources){
+      var requested=String(requestedId),matches=[];
+      Object.keys(global.sources).forEach(function(key){
+        var candidate=global.sources[key];
+        if(!candidate||typeof candidate!=='object')return;
+        var candidateId=candidate.id!==undefined?candidate.id:(candidate.sourceId!==undefined?candidate.sourceId:key);
+        if(String(candidateId)===requested)matches.push(candidate);
+      });
+      if(matches.length!==1)throw new Error('Plugin does not export exactly one source '+requested);
+      global.source=matches[0];
+    }
+    if(typeof global.source!=='object'||!global.source)throw new Error('Plugin does not export source');
+    if(requestedId!==null&&requestedId!==undefined){
+      global.source.id=String(requestedId);
+      if(global.__shinsouRequestedSourceName!==undefined)global.source.name=global.__shinsouRequestedSourceName;
+      if(global.__shinsouRequestedSourceLang!==undefined)global.source.lang=global.__shinsouRequestedSourceLang;
+      if(global.__shinsouRequestedSourceBaseUrl!==undefined)global.source.baseUrl=global.__shinsouRequestedSourceBaseUrl;
+    }
+    return true;
+  };
   global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,headers:source.headers||{}});};
   global.__shinsouPreferences=function(){if(typeof source!=='object'||!source)return '[]';var values=typeof source.getPreferenceDefinitions==='function'?source.getPreferenceDefinitions():(source.preferences||[]);return JSON.stringify(values||[]);};
   global.__shinsouInvoke=function(method,argsJson){bridge.domReleaseAll();if(typeof source!=='object'||!source||typeof source[method]!=='function')throw new Error('Plugin has no function '+method);var result=source[method].apply(source,JSON.parse(argsJson||'[]'));return JSON.stringify(result===undefined?null:result);};

@@ -1,14 +1,30 @@
 package dev.shinsou.kmp.ui
 
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
+import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.local.LocalImportResult
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
+import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.PagedResultV2
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptCandidateV2
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.sync.v2.EphemeralSyncPayload
 import dev.shinsou.kmp.tracking.TrackingCoordinator
+import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
+import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +49,10 @@ interface ShinsouAppServices {
     val content: ContentCallbacks
         get() = ContentCallbacks.None
 
+    /** Null only in previews/tests or a host that has not supplied the shared SQLite foundation. */
+    val contentFeatures: ContentFeatureRuntime?
+        get() = null
+
     /** Secure, platform-persisted tracker integration supplied by the application composition. */
     val tracking: TrackingCoordinator?
         get() = null
@@ -47,6 +67,14 @@ interface ShinsouAppServices {
 
     /** Safe bulk restore/reset policy bound to the same v2 runtime/local store as cloud sync. */
     val syncAwareSnapshotRestore: SyncAwareSnapshotRestore?
+        get() = null
+
+    /** Checksummed binary content archive controller; null only when shared atomic storage is absent. */
+    val portableContentBackupV2: PortableContentBackupV2UiController?
+        get() = null
+
+    /** Staged, redacted ShuYue v1 migration controller. */
+    val shuYueMigration: ShuYueMigrationUiController?
         get() = null
 
     /** Cold or hot stream of URLs/events received by the platform application. */
@@ -104,6 +132,24 @@ interface ShinsouAppServices {
     suspend fun scanQrCode(): String? = null
 
     suspend fun exportDocument(suggestedName: String, contents: String): Boolean = false
+
+    /** Binary-safe document export. Implementations must not stringify or transcode [contents]. */
+    suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean = false
+
+    /**
+     * Streaming binary export used by large content archives. Production hosts override this and
+     * write directly to their file/content-provider boundary. The bounded default keeps older
+     * small-document hosts source-compatible without allowing a large archive heap copy.
+     */
+    suspend fun exportBinaryDocument(
+        suggestedName: String,
+        source: BinaryDocumentExportSource,
+    ): Boolean {
+        if (source.expectedByteSize > DEFAULT_BINARY_DOCUMENT_BYTE_ARRAY_COMPATIBILITY_BYTES) {
+            return false
+        }
+        return exportBinaryDocument(suggestedName, source.copyToByteArray())
+    }
 
     suspend fun importDocument(
         acceptedExtensions: Set<String>,
@@ -350,15 +396,62 @@ enum class DeepLinkSection {
     More,
 }
 
-data class ImportedDocument(
+/** Immutable random-access picker result; large files need not live in the Kotlin heap. */
+interface ImportedDocumentSource {
+    val byteSize: Long
+    /** Returns exactly [byteCount] bytes or throws when the provider changed/truncated. */
+    fun read(offset: Long, byteCount: Int): ByteArray
+}
+
+class ImportedDocument(
     val name: String,
-    val contents: ByteArray,
-)
+    val source: ImportedDocumentSource,
+) {
+    constructor(name: String, contents: ByteArray) : this(name, ByteArrayImportedDocumentSource(contents))
+
+    val byteSize: Long get() = source.byteSize
+
+    /** Compatibility materialization for bounded images, text and legacy callers. */
+    val contents: ByteArray
+        get() {
+            require(byteSize <= Int.MAX_VALUE.toLong()) { "Imported document cannot fit in memory" }
+            val output = ByteArray(byteSize.toInt())
+            var offset = 0
+            while (offset < output.size) {
+                val count = minOf(IMPORTED_DOCUMENT_READ_CHUNK_BYTES, output.size - offset)
+                val chunk = source.read(offset.toLong(), count)
+                require(chunk.size == count) { "Imported document source returned a truncated read" }
+                chunk.copyInto(output, offset)
+                offset += count
+            }
+            return output
+        }
+}
+
+private class ByteArrayImportedDocumentSource(
+    private val bytes: ByteArray,
+) : ImportedDocumentSource {
+    override val byteSize: Long get() = bytes.size.toLong()
+
+    override fun read(offset: Long, byteCount: Int): ByteArray {
+        require(offset in 0..bytes.size.toLong() && byteCount >= 0 &&
+            byteCount.toLong() <= bytes.size.toLong() - offset) {
+            "Imported document source read is out of bounds"
+        }
+        return bytes.copyOfRange(offset.toInt(), offset.toInt() + byteCount)
+    }
+}
+
+private const val IMPORTED_DOCUMENT_READ_CHUNK_BYTES: Int = 64 * 1024
 
 /** Network/source operations needed by detail, updates, downloads, and the reader. */
 interface ContentCallbacks {
     /** Copies selected image or ZIP-based comic documents into the built-in source 0. */
-    suspend fun importLocalDocuments(documents: List<ImportedDocument>): List<LocalImportResult> = emptyList()
+    suspend fun importLocalDocuments(
+        documents: List<ImportedDocument>,
+        /** Explicit opt-in for rights-allowed TXT/EPUB bodies; ordinary import remains device-only. */
+        syncContentBodies: Boolean = false,
+    ): List<LocalImportResult> = emptyList()
 
     suspend fun refreshLibrary(mangaIds: Set<Long>) = Unit
 
@@ -393,6 +486,8 @@ data class ReaderChapter(
     val pages: List<ReaderPage> = emptyList(),
     val referer: String? = null,
     val sourceHeaders: Map<String, String> = emptyMap(),
+    /** Typed text/EPUB/image session; protected sessions must never be downgraded to legacy pages. */
+    val typedSession: TypedReaderContentSession? = null,
 )
 
 data class ReaderPage(
@@ -424,6 +519,8 @@ interface BrowseCallbacks {
 
     suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean) = Unit
 
+    suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean) = Unit
+
     suspend fun addRepository(url: String): BrowseRepository? = null
 
     suspend fun removeRepository(repositoryId: String) = Unit
@@ -442,6 +539,90 @@ interface BrowseCallbacks {
         sourceId: Long,
         page: Int = 1,
     ): BrowsePage = browseSource(sourceId = sourceId, page = page)
+
+    /** Exact, capability-gated v2 source; opaque ids are never projected into legacy Long DTOs. */
+    suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? = null
+
+    /** Production v2 browse route. Page numbering is zero-based at the extension contract. */
+    suspend fun browseSourceV2(
+        sourceKey: SourceKey,
+        options: BrowseOptionsV2 = BrowseOptionsV2(),
+        page: Int = 0,
+    ): PagedResultV2<RemotePublicationV2> =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    suspend fun searchSourceV2(
+        sourceKey: SourceKey,
+        query: String,
+        page: Int = 0,
+    ): PagedResultV2<RemotePublicationV2> =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    suspend fun latestSourceV2(
+        sourceKey: SourceKey,
+        page: Int = 0,
+    ): PagedResultV2<RemotePublicationV2> =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    suspend fun extensionDetailsV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+    ): RemotePublicationV2 =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    suspend fun extensionUnitsV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        page: Int = 0,
+    ): PagedResultV2<RemoteUnitV2> =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    /** Returns every representation supplied for the exact unit; no preferred form is selected. */
+    suspend fun extensionContentV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        remoteUnitId: String,
+    ): UnitContentResultV2 =
+        throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    /** Host-issued details/unit capabilities; raw extension units never become UI authority. */
+    suspend fun extensionPublicationPageV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        page: Int = 0,
+    ): ExtensionPublicationPageV2 =
+        throw IllegalStateException("Extension v2 content storage is unavailable")
+
+    /** Acquires one explicitly selected representation into the shared content transaction. */
+    suspend fun materializeExtensionContentV2(
+        selection: ExtensionUnitSelectionV2,
+        representationId: String? = null,
+    ): ExtensionContentMaterializationV2 =
+        throw IllegalStateException("Extension v2 content storage is unavailable")
+
+    /** Opens the exact immutable revision returned by materialization through host rights. */
+    suspend fun openMaterializedExtensionContentV2(
+        materialization: ExtensionContentMaterializationV2,
+    ): TypedReaderContentSession =
+        throw IllegalStateException("Extension v2 reader content is unavailable")
+
+    suspend fun stageReviewedShuYueV2(
+        candidate: ShuYueScriptCandidateV2,
+    ): ShuYueQuarantineReviewV2 = throw IllegalStateException("Reviewed ShuYue installation is unavailable")
+
+    /** Downloads one pinned reviewed package into quarantine; this does not execute it. */
+    suspend fun stageReviewedShuYuePackageV2(packageId: String): ShuYueQuarantineReviewV2 =
+        throw IllegalStateException("Reviewed ShuYue repository is unavailable")
+
+    suspend fun reviewShuYueQuarantineV2(quarantineId: String): ShuYueQuarantineReviewV2 =
+        throw IllegalStateException("Reviewed ShuYue installation is unavailable")
+
+    suspend fun approveAndInstallReviewedShuYueV2(
+        decision: ShuYueReviewedInstallApprovalV2,
+    ): Unit = throw IllegalStateException("Reviewed ShuYue installation is unavailable")
+
+    suspend fun uninstallReviewedShuYueV2(packageId: String): Unit =
+        throw IllegalStateException("Reviewed ShuYue installation is unavailable")
 
     /** Returns the local manga id when the bridge imported or resolved the item. */
     suspend fun resolveManga(item: BrowseManga): Long? = null
@@ -515,7 +696,11 @@ data class BrowseSource(
     val cookies: List<SourceCookie> = emptyList(),
     val preferences: List<SourcePreference> = emptyList(),
     val filters: List<BrowseFilter> = emptyList(),
-)
+    /** Exact v2 authority. [id] is only a process-local UI row key when this is non-null. */
+    val sourceKey: SourceKey? = null,
+) {
+    val identityKey: String get() = sourceKey?.canonicalId ?: "legacy:$id"
+}
 
 /** Stable UI-side representation of executable source filters, preserving recursive order/state. */
 sealed interface BrowseFilter {
@@ -624,6 +809,9 @@ data class BrowseExtension(
     val trusted: Boolean = false,
     val isNsfw: Boolean = false,
     val sourceIds: List<Long> = emptyList(),
+    /** Uses exact-digest quarantine and permission review instead of the v1 trust toggle. */
+    val reviewedShuYueV2: Boolean = false,
+    val description: String? = null,
 )
 
 data class BrowseManga(
@@ -634,7 +822,14 @@ data class BrowseManga(
     /** Headers prepared by the source request pipeline for the cover image. */
     val thumbnailHeaders: Map<String, String> = emptyMap(),
     val author: String? = null,
-)
+    /** Exact v2 authority; legacy consumers must reject this item instead of using [sourceId]. */
+    val sourceKey: SourceKey? = null,
+    val remotePublicationId: String? = null,
+) {
+    val identityKey: String
+        get() = sourceKey?.let { "${it.canonicalId}:${requireNotNull(remotePublicationId)}" }
+            ?: "legacy:$sourceId:$url"
+}
 
 data class BrowsePage(
     val items: List<BrowseManga> = emptyList(),

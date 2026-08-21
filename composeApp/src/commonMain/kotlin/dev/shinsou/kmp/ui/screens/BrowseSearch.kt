@@ -32,14 +32,17 @@ internal fun eligibleMigrationSources(
 ): List<BrowseSource> = sources
     .asSequence()
     .filter(BrowseSource::enabled)
+    // Migration still targets the legacy Long-keyed import bridge. Native v2 sources must not be
+    // narrowed into that authority until an exact SourceKey migration consumer exists.
+    .filter { it.sourceKey == null }
     .filterNot { it.name.equals(currentSourceName, ignoreCase = true) }
-    .distinctBy(BrowseSource::id)
-    .sortedWith(compareBy<BrowseSource> { it.name.lowercase() }.thenBy(BrowseSource::id))
+    .distinctBy(BrowseSource::identityKey)
+    .sortedWith(compareBy<BrowseSource> { it.name.lowercase() }.thenBy(BrowseSource::identityKey))
     .toList()
 
 internal fun rankBrowseResults(query: String, items: List<BrowseManga>): List<BrowseManga> {
     val normalizedQuery = normalizeSearchTitle(query).lowercase()
-    val distinct = items.distinctBy { it.sourceId to it.url }
+    val distinct = items.distinctBy(BrowseManga::identityKey)
     if (normalizedQuery.isBlank()) return distinct
     return distinct
         .map { item ->

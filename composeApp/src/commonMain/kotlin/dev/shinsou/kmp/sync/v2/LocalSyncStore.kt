@@ -324,6 +324,9 @@ data class LocalSyncStoreState(
 interface SyncStatePersistence {
     suspend fun load(): LocalSyncStoreState?
     suspend fun saveAtomically(state: LocalSyncStoreState)
+
+    /** Drops any optimistic cache after an enclosing host transaction rolled the save back. */
+    suspend fun reloadAfterExternalRollback(): LocalSyncStoreState? = load()
 }
 
 class InMemorySyncStatePersistence(initial: LocalSyncStoreState? = null) : SyncStatePersistence {
@@ -347,6 +350,9 @@ interface LocalSyncStore {
     suspend fun readState(): LocalSyncStoreState
 
     suspend fun <T> transaction(block: SyncStoreTransaction.() -> T): T
+
+    /** Restores the in-memory projection from the durable state after an enclosing SQL rollback. */
+    suspend fun reconcileAfterExternalRollback(): Unit = Unit
 }
 
 class PersistentLocalSyncStore private constructor(
@@ -379,6 +385,16 @@ class PersistentLocalSyncStore private constructor(
         }
     }
 
+    override suspend fun reconcileAfterExternalRollback() {
+        mutex.lock()
+        try {
+            state = (persistence.reloadAfterExternalRollback() ?: LocalSyncStoreState())
+                .reconciledAfterCrash()
+        } finally {
+            mutex.unlock()
+        }
+    }
+
     companion object {
         suspend fun open(
             persistence: SyncStatePersistence,
@@ -405,6 +421,9 @@ class InMemoryLocalSyncStore(
     override suspend fun readState(): LocalSyncStoreState = delegate.readState()
 
     override suspend fun <T> transaction(block: SyncStoreTransaction.() -> T): T = delegate.transaction(block)
+
+    override suspend fun reconcileAfterExternalRollback(): Unit =
+        delegate.reconcileAfterExternalRollback()
 
     fun persistedState(): LocalSyncStoreState = requireNotNull(persistence.current())
 }
@@ -924,6 +943,21 @@ class SyncStoreTransaction internal constructor(initial: LocalSyncStoreState) {
         is ReadingProgressPresenceSet -> "progress-presence:${chapterKey.stableString()}"
         is PortableSettingPatch -> "portable-settings"
         is EntityKeyRemap -> "remap:${oldKey.stableString()}"
+        is PublicationPatchV2 -> "publication:${key.stableString()}"
+        is AcquisitionPatchV2 -> "acquisition:${key.stableString()}"
+        is PublicationUnitPatchV2 -> "publication-unit:${key.stableString()}"
+        is ContentManifestPatchV2 -> "content-manifest:${key.stableString()}"
+        is ContentAnnotationPutV2 -> "content-annotation:${annotation.annotationId}"
+        is ContentAnnotationPatchV2 -> "content-annotation-document:${key.stableString()}"
+        is PublicationCategoryMembershipSetV2 ->
+            "publication-membership:${publicationKey.stableString()}:${categoryKey.stableString()}"
+        is ContentReadingProgressSetV2 ->
+            "content-progress:${ContentProgressKeyV2.from(locator).stableString()}"
+        is ContentReadingProgressPresenceSetV2 -> "content-progress-presence:${key.stableString()}"
+        is BlobReferenceCommitV2 -> "blob-commit:${blob.blobId}:$generation"
+        is BlobReferenceReincarnationCommitV2 -> "blob-reincarnation:${blob.blobId}:$generation"
+        is BlobDekEnvelopeRewrappedV2 -> "blob-envelope:$blobId:$generation:${envelope.keyEpoch}"
+        is BlobReferencePresenceSetV2 -> "blob-presence:$blobId"
     }
 
     private fun mergeMutation(previous: SyncMutation, incoming: SyncMutation): SyncMutation = when {
@@ -952,6 +986,37 @@ class SyncStoreTransaction internal constructor(initial: LocalSyncStoreState) {
         previous is ExtensionRepositoryPatch && incoming is ExtensionRepositoryPatch -> incoming.copy(
             fields = previous.fields + incoming.fields,
             ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is PublicationPatchV2 && incoming is PublicationPatchV2 -> incoming.copy(
+            fields = previous.fields + incoming.fields,
+            ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is AcquisitionPatchV2 && incoming is AcquisitionPatchV2 -> incoming.copy(
+            fields = previous.fields + incoming.fields,
+            ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is PublicationUnitPatchV2 && incoming is PublicationUnitPatchV2 -> incoming.copy(
+            fields = previous.fields + incoming.fields,
+            ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is ContentManifestPatchV2 && incoming is ContentManifestPatchV2 -> incoming.copy(
+            fields = previous.fields + incoming.fields,
+            ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is ContentAnnotationPatchV2 && incoming is ContentAnnotationPatchV2 -> incoming.copy(
+            fields = previous.fields + incoming.fields,
+            ensurePresent = previous.ensurePresent || incoming.ensurePresent,
+        )
+
+        previous is ContentReadingProgressSetV2 && incoming is ContentReadingProgressSetV2 -> incoming.copy(
+            readState = incoming.readState ?: previous.readState,
+            historyTouchedAtEpochMillis = incoming.historyTouchedAtEpochMillis
+                ?: previous.historyTouchedAtEpochMillis,
         )
 
         previous is PortableSettingPatch && incoming is PortableSettingPatch ->

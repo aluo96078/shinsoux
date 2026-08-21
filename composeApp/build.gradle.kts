@@ -32,6 +32,24 @@ val androidReleaseSigningValues = listOf(
 )
 val androidReleaseSigningConfigured = androidReleaseSigningValues.all { !it.isNullOrBlank() }
 
+// JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
+// artifacts use the build host classifier; release CI already builds DMG and MSI on their native
+// hosts, so each installer receives only its own browser runtime.
+val javafxPlatformClassifier = run {
+    val osName = System.getProperty("os.name").lowercase()
+    val architecture = System.getProperty("os.arch").lowercase()
+    when {
+        osName.contains("mac") && (architecture.contains("aarch64") || architecture.contains("arm64")) ->
+            "mac-aarch64"
+        osName.contains("mac") -> "mac"
+        osName.contains("win") -> "win"
+        osName.contains("linux") && (architecture.contains("aarch64") || architecture.contains("arm64")) ->
+            "linux-aarch64"
+        osName.contains("linux") -> "linux"
+        else -> error("Unsupported JavaFX EPUB renderer host: $osName/$architecture")
+    }
+}
+
 check(androidReleaseSigningValues.none { !it.isNullOrBlank() } || androidReleaseSigningConfigured) {
     "Android release signing is only enabled when ANDROID_KEYSTORE_PATH, " +
         "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD are all set."
@@ -188,6 +206,10 @@ kotlin {
                 implementation(libs.ktor.client.cio)
                 implementation(libs.jna)
                 implementation(libs.sqldelight.sqlite.driver)
+                implementation("org.openjfx:javafx-base:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation("org.openjfx:javafx-graphics:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation("org.openjfx:javafx-swing:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
             }
         }
 

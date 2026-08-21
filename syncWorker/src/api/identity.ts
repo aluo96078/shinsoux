@@ -16,6 +16,7 @@ import {
   randomUuid,
   requireHighEntropySecret,
   sha256Base64Url,
+  sha256Bytes,
   timingSafeSecretEqual,
   verifyEd25519,
 } from "../crypto/base.ts";
@@ -29,6 +30,10 @@ import {
   requireControlSignature,
 } from "../auth/service.ts";
 import { loadUserDevices } from "./device-directory.ts";
+import {
+  LIVE_BLOB_ENVELOPE_EPOCHS_SQL,
+  loadRequiredWorkspaceKeyEpochs,
+} from "./key-epochs.ts";
 
 const JSON_LIMIT = 256 * 1024;
 const FIVE_MINUTES = 5 * 60_000;
@@ -478,8 +483,8 @@ async function pairingTranscript(row: Record<string, unknown>): Promise<string> 
 }
 
 async function pairingShortCode(row: Record<string, unknown>): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", utf8Bytes(await pairingTranscript(row)));
-  const view = new DataView(hash);
+  const hash = await sha256Bytes(utf8Bytes(await pairingTranscript(row)));
+  const view = new DataView(hash.buffer, hash.byteOffset, hash.byteLength);
   return String(view.getUint32(0, false) % 1_000_000).padStart(6, "0");
 }
 
@@ -509,13 +514,7 @@ async function pairingKeyRequirements(env: Env, workspaceId: string): Promise<un
     FROM workspaces WHERE workspace_id = ?1 AND status = 'active'
   `, workspaceId);
   if (!workspace) throw new ApiError(404, "workspace_not_found");
-  const requiredEpochs = await all<{ keyEpoch: number }>(env.DB, `
-    SELECT DISTINCT key_epoch AS keyEpoch FROM (
-      SELECT active_key_epoch AS key_epoch FROM workspaces WHERE workspace_id = ?1
-      UNION SELECT key_epoch FROM checkpoints WHERE workspace_id = ?1 AND status = 'stable'
-      UNION SELECT key_epoch FROM events WHERE workspace_id = ?1
-    ) ORDER BY key_epoch
-  `, workspaceId);
+  const requiredKeyEpochs = await loadRequiredWorkspaceKeyEpochs(env.DB, workspaceId);
   const retainedStableCheckpoints = await all<{
     checkpointId: string;
     throughWorkspaceSeq: number;
@@ -532,7 +531,7 @@ async function pairingKeyRequirements(env: Env, workspaceId: string): Promise<un
     ? retainedStableCheckpoints[1]
     : retainedStableCheckpoints[0] ?? null;
   return {
-    requiredKeyEpochs: requiredEpochs.map((entry) => entry.keyEpoch),
+    requiredKeyEpochs,
     activeKeyEpoch: workspace.activeKeyEpoch,
     headSeq: workspace.headSeq,
     retainedStableCheckpoints,
@@ -665,14 +664,7 @@ export async function approvePairing(request: Request, env: Env, pairingId: stri
     return { pairingId, status: "cancelled" };
   }
   const envelopes = parsePairEnvelopes(value.keyEnvelopes);
-  const requiredEpochRows = await all<{ keyEpoch: number }>(env.DB, `
-    SELECT DISTINCT key_epoch AS keyEpoch FROM (
-      SELECT active_key_epoch AS key_epoch FROM workspaces WHERE workspace_id = ?1
-      UNION SELECT key_epoch FROM checkpoints WHERE workspace_id = ?1 AND status = 'stable'
-      UNION SELECT key_epoch FROM events WHERE workspace_id = ?1
-    ) ORDER BY key_epoch
-  `, row.workspaceId);
-  const expected = requiredEpochRows.map((entry) => entry.keyEpoch);
+  const expected = await loadRequiredWorkspaceKeyEpochs(env.DB, String(row.workspaceId));
   const actual = [...new Set(envelopes.map((entry) => entry.keyEpoch))].sort((a, b) => a - b);
   if (expected.length !== actual.length || expected.some((epoch, index) => epoch !== actual[index])) {
     throw new ApiError(409, "pairing_incomplete_keyring");
@@ -913,6 +905,10 @@ export async function createRecoveryChallenge(request: Request, env: Env, now = 
       UNION
       SELECT e.workspace_id, e.key_epoch FROM events e
       JOIN user_workspaces uw ON uw.workspace_id = e.workspace_id
+      UNION
+      SELECT blob.workspace_id, blob.key_epoch
+      FROM (${LIVE_BLOB_ENVELOPE_EPOCHS_SQL}) blob
+      JOIN user_workspaces uw ON uw.workspace_id = blob.workspace_id
     )
     SELECT required.workspace_id AS workspaceId,
            uw.active_key_epoch AS activeKeyEpoch,
@@ -1147,6 +1143,10 @@ export async function claimRecovery(request: Request, env: Env, now = Date.now()
       UNION
       SELECT e.workspace_id, e.key_epoch FROM events e
       JOIN user_workspaces uw ON uw.workspace_id = e.workspace_id
+      UNION
+      SELECT blob.workspace_id, blob.key_epoch
+      FROM (${LIVE_BLOB_ENVELOPE_EPOCHS_SQL}) blob
+      JOIN user_workspaces uw ON uw.workspace_id = blob.workspace_id
     )
     SELECT required.workspace_id AS workspaceId,
            uw.active_key_epoch AS activeKeyEpoch,

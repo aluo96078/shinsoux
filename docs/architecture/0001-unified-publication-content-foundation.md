@@ -214,6 +214,18 @@ BlobRef(
 5. Crash recovery 只能看見完整 committed blob，或可安全 GC 的 orphan；不得留下指向部分檔案
    的 committed ref。
 
+Production file body 補充約束：cold start 只 hydrate bounded metadata，不遍歷 `objects/`／
+`staging/`，也不讀 inline BLOB。舊 SQLite inline body 只能在 idle/background recovery edge 以
+bounded chunk 遷移；copy SHA-256 state、offset 與第二次目的檔 verification state 都必須 durable，
+每個 slice 可在任意點中斷重跑。只有目的檔 flush/close、atomic move、分片完整驗證都成功後，
+才可用 conditional SQL update 清空舊 payload。move 後、row update 前的檔案仍由 inline row 的
+canonical identity 保護。
+
+`objects/`／`staging/` crash artifacts 必須先寫入持久 discovery observation，經 minimum age 後
+再於另一個 bounded background slice 重查 exact name/size/mtime、SQLite row、migration state 與
+active stage 才能刪除；未知未來格式一律保留。這些 maintenance 工作不得進 cold-start、首幀、
+reader 或 import foreground path。
+
 Filesystem path、security-scoped URL、content-provider URI 與 platform handle 都是 device-local
 adapter state，不進 BlobRef、backup 或 sync event。
 
@@ -340,6 +352,10 @@ workspaces/{workspaceId}/blobs/v1/{blobId}/{chunkIndex}-{ciphertextHash}.bin
 - Checkpoint 保存 blob refs/envelopes/tombstones，不包含 body bytes。
 - GC 必須等待 reference tombstone、retained checkpoint/recovery boundary、ack 與 safety window；
   不可只依單一 client 宣告立即刪除。
+- 同一 removal boundary 的多裝置 provisional tombstone 必須由 Worker 收斂成 canonical handle；client
+  durable 採用 winner 後才可簽 ack。較新的 live reference 必須以 client-verified stable checkpoint
+  與 active-device signature 取消 `WAITING` tombstone；`DELETING` 後只能回報需重新上傳，且取消紀錄
+  必須保留供稽核與後續 remove/revive cycle 使用。
 - `SYNC_BLOB` rights deny 時不得上傳；新裝置改走合法 reacquisition／DRM reauthorization。
 
 M0 不建立上述 endpoint、migration 或新 wire mutation。當 body plane 開始實作時，

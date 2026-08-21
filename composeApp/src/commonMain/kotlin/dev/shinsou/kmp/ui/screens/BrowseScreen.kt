@@ -96,6 +96,15 @@ import dev.shinsou.kmp.ui.MigrationCandidate
 import dev.shinsou.kmp.ui.SourceCookie
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.app.ContentFeatureRuntime
+import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
+import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
@@ -103,6 +112,7 @@ import dev.shinsou.kmp.ui.components.LoadingScrim
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
+import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.CancellationException
@@ -145,6 +155,11 @@ internal data class SourceSearchUpdate(
 internal const val GLOBAL_SEARCH_MAX_CONCURRENCY: Int = 4
 private const val GLOBAL_SEARCH_VISIBLE_RESULTS: Int = 10
 
+private data class PendingReviewedShuYueInstall(
+    val extension: BrowseExtension,
+    val review: ShuYueQuarantineReviewV2,
+)
+
 /** Tracks only the newest catalogue request and cannot let an older job clear its replacement. */
 internal class CatalogueJobController {
     private var activeJob: Job? = null
@@ -174,6 +189,8 @@ fun BrowseScreen(
     onSourcePinnedChange: (sourceId: Long, pinned: Boolean) -> Unit,
     onOpenManga: (BrowseManga) -> Unit,
     onImportDocument: suspend (acceptedExtensions: Set<String>) -> ImportedDocument? = { null },
+    contentFeatures: ContentFeatureRuntime? = null,
+    copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
     modifier: Modifier = Modifier,
     systemBackRequest: Long = 0L,
     backGestureProgress: Float = 0f,
@@ -186,6 +203,7 @@ fun BrowseScreen(
     var query by remember { mutableStateOf("") }
     var activeSource by remember { mutableStateOf<BrowseSource?>(null) }
     var globalSearchVisible by remember { mutableStateOf(false) }
+    var activeV2Publication by remember { mutableStateOf<BrowseManga?>(null) }
     var page by remember { mutableStateOf(BrowsePage()) }
     var catalogueLoading by remember { mutableStateOf(false) }
     var catalogueLoadingMore by remember { mutableStateOf(false) }
@@ -193,9 +211,11 @@ fun BrowseScreen(
     var cataloguePageNumber by remember { mutableStateOf(1) }
     var catalogueRequestToken by remember { mutableStateOf(0) }
     val catalogueJobs = remember { CatalogueJobController() }
+    var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
+    var reviewedInstallBusyId by remember { mutableStateOf<String?>(null) }
     var handledSystemBackRequest by remember { mutableStateOf(systemBackRequest) }
     val operationSnackbar = remember { SnackbarHostState() }
-    val hasBrowseOverlay = activeSource != null || globalSearchVisible
+    val hasBrowseOverlay = activeSource != null || globalSearchVisible || activeV2Publication != null
     val currentBackAvailabilityCallback = rememberUpdatedState(onBackAvailabilityChanged)
 
     fun cancelCatalogueLoad() {
@@ -222,6 +242,7 @@ fun BrowseScreen(
         if (systemBackRequest != handledSystemBackRequest) {
             handledSystemBackRequest = systemBackRequest
             when {
+                activeV2Publication != null -> activeV2Publication = null
                 activeSource != null -> {
                     cancelCatalogueLoad()
                     activeSource = null
@@ -240,12 +261,39 @@ fun BrowseScreen(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                operationSnackbar.showSnackbar(error.diagnosticMessage())
+                operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings))
+            }
+        }
+    }
+
+    fun stageReviewedShuYue(extension: BrowseExtension) {
+        if (reviewedInstallBusyId != null) return
+        reviewedInstallBusyId = extension.id
+        scope.launch {
+            withFrameNanos { }
+            try {
+                val review = withContext(Dispatchers.Default) {
+                    callbacks.stageReviewedShuYuePackageV2(extension.id)
+                }
+                check(review.reviewStatus == ShuYueReviewStatusV2.REVIEWED) {
+                    "Downloaded ShuYue artifact is not an exact reviewed version"
+                }
+                pendingReviewedInstall = PendingReviewedShuYueInstall(extension, review)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings))
+            } finally {
+                reviewedInstallBusyId = null
             }
         }
     }
 
     fun openManga(item: BrowseManga) {
+        if (item.sourceKey != null) {
+            activeV2Publication = item
+            return
+        }
         // Let the app route to an immediate loading preview. Resolving source metadata can be
         // network-bound and must not hold the browse surface in place until it completes.
         onOpenManga(item)
@@ -279,7 +327,19 @@ fun BrowseScreen(
             try {
                 withFrameNanos { }
                 val result = withContext(Dispatchers.Default) {
-                    val loaded = if (mode == SourceCatalogueMode.Latest && search.isBlank()) {
+                    val loaded = if (source.sourceKey != null) {
+                        val v2Page = when {
+                            mode == SourceCatalogueMode.Latest && search.isBlank() ->
+                                callbacks.latestSourceV2(source.sourceKey, requestedPage - 1)
+                            search.isNotBlank() ->
+                                callbacks.searchSourceV2(source.sourceKey, search, requestedPage - 1)
+                            else -> callbacks.browseSourceV2(source.sourceKey, page = requestedPage - 1)
+                        }
+                        BrowsePage(
+                            items = v2Page.items.map { publication -> publication.toBrowseManga(source) },
+                            hasNextPage = v2Page.hasNextPage,
+                        )
+                    } else if (mode == SourceCatalogueMode.Latest && search.isBlank()) {
                         callbacks.browseSourceLatest(source.id, requestedPage)
                     } else {
                         callbacks.browseSource(
@@ -292,7 +352,7 @@ fun BrowseScreen(
                     if (append) {
                         loaded.copy(
                             items = (existingItems + loaded.items)
-                                .distinctBy { it.sourceId to it.url },
+                                .distinctBy(BrowseManga::identityKey),
                         )
                     } else {
                         loaded
@@ -305,7 +365,9 @@ fun BrowseScreen(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (catalogueRequestToken == requestToken) catalogueError = error.message
+                if (catalogueRequestToken == requestToken) {
+                    catalogueError = error.localizedDiagnosticMessage(strings)
+                }
             } finally {
                 if (catalogueRequestToken == requestToken) {
                     catalogueLoading = false
@@ -376,7 +438,10 @@ fun BrowseScreen(
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages)
                     }.filter { it.name.contains(query, ignoreCase = true) },
                     onToggle = { source, enabled ->
-                        launchOperation { callbacks.setSourceEnabled(source.id, enabled) }
+                        launchOperation {
+                            source.sourceKey?.let { callbacks.setSourceEnabledV2(it, enabled) }
+                                ?: callbacks.setSourceEnabled(source.id, enabled)
+                        }
                     },
                     pinnedSourceIds = pinnedSourceIds,
                     onSourcePinnedChange = onSourcePinnedChange,
@@ -408,8 +473,19 @@ fun BrowseScreen(
                     onAddRepository = { url -> launchOperation { callbacks.addRepository(url) } },
                     onRemoveRepository = { id -> launchOperation { callbacks.removeRepository(id) } },
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
-                    onInstall = { extension -> launchOperation { callbacks.installExtension(extension.id) } },
-                    onUninstall = { extension -> launchOperation { callbacks.uninstallExtension(extension.id) } },
+                    onInstall = { extension ->
+                        if (extension.reviewedShuYueV2) stageReviewedShuYue(extension)
+                        else launchOperation { callbacks.installExtension(extension.id) }
+                    },
+                    onUninstall = { extension ->
+                        launchOperation {
+                            if (extension.reviewedShuYueV2) {
+                                callbacks.uninstallReviewedShuYueV2(extension.id)
+                            } else {
+                                callbacks.uninstallExtension(extension.id)
+                            }
+                        }
+                    },
                     onTrust = { extension, trusted ->
                         launchOperation { callbacks.setExtensionTrusted(extension.id, trusted) }
                     },
@@ -492,6 +568,24 @@ fun BrowseScreen(
                 )
             }
         }
+        activeV2Publication?.let { publication ->
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationX = size.width * backGestureProgress.coerceIn(0f, 1f)
+                    },
+            ) {
+                ExtensionV2PublicationScreen(
+                    callbacks = callbacks,
+                    item = publication,
+                    contentFeatures = contentFeatures,
+                    copyText = copyText,
+                    onBack = { activeV2Publication = null },
+                )
+            }
+        }
         LoadingScrim(
             visible = snapshot.isRefreshing,
             label = strings.refresh,
@@ -501,7 +595,68 @@ fun BrowseScreen(
             modifier = Modifier.align(Alignment.BottomCenter).padding(18.dp),
         )
     }
+
+
+    pendingReviewedInstall?.let { pending ->
+        val review = pending.review
+        AlertDialog(
+            onDismissRequest = { pendingReviewedInstall = null },
+            title = { Text(strings.text("Approve reviewed extension")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
+                    pending.extension.description?.let { Text(it) }
+                    Text(
+                        strings.text("SHA-256: {0}", review.identity.sha256),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(strings.text("Required permissions"), fontWeight = FontWeight.SemiBold)
+                    review.requiredPermissions.sortedBy { it.name }.forEach { permission ->
+                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        strings.text("The script remains blocked until you approve this exact version and digest."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingReviewedInstall = null
+                        launchOperation {
+                            callbacks.approveAndInstallReviewedShuYueV2(
+                                ShuYueReviewedInstallApprovalV2(
+                                    quarantineId = review.quarantineId,
+                                    identity = review.identity,
+                                    grantedPermissions = review.requiredPermissions,
+                                    userConfirmed = true,
+                                    replaceInstalledVersion = pending.extension.installed,
+                                ),
+                            )
+                        }
+                    },
+                ) { Text(strings.install) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingReviewedInstall = null }) { Text(strings.cancel) }
+            },
+        )
+    }
 }
+
+private fun ShuYueExecutionPermissionV2.localizedLabel(strings: ShinsouStrings): String = strings.text(
+    when (this) {
+        ShuYueExecutionPermissionV2.EXECUTE_SCRIPT -> "Execute reviewed script"
+        ShuYueExecutionPermissionV2.NETWORK -> "Network access"
+        ShuYueExecutionPermissionV2.COOKIE_STORAGE -> "Cookie storage"
+        ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS -> "Credential access"
+        ShuYueExecutionPermissionV2.LOGIN_PROMPT -> "Show login prompt"
+        ShuYueExecutionPermissionV2.FAVORITE_MUTATION -> "Modify favorites"
+        ShuYueExecutionPermissionV2.BROWSER_CHALLENGE -> "Open browser challenge"
+    },
+)
 
 private fun Throwable.diagnosticMessage(): String {
     val messages = generateSequence(this) { it.cause }
@@ -511,6 +666,12 @@ private fun Throwable.diagnosticMessage(): String {
     return messages.joinToString(" ← ").ifBlank {
         this::class.simpleName ?: "Unknown error"
     }
+}
+
+private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
+    val diagnostic = diagnosticMessage()
+    val translated = strings.text(diagnostic)
+    return if (translated != diagnostic) translated else strings.text("The operation could not be completed.")
 }
 
 @Composable
@@ -532,7 +693,7 @@ private fun GlobalSearchScreen(
     fun search() {
         val submittedQuery = query.trim()
         if (submittedQuery.isEmpty()) return
-        val requestedSources = sources.distinctBy(BrowseSource::id)
+        val requestedSources = sources.distinctBy(BrowseSource::identityKey)
         val version = requestVersion + 1
         requestVersion = version
         searchJob?.cancel()
@@ -611,7 +772,7 @@ private fun GlobalSearchScreen(
                 contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                items(results, key = { "global:${it.source.id}" }) { result ->
+                items(results, key = { "global:${it.source.identityKey}" }) { result ->
                     SourceSearchResultSection(result, onOpenManga)
                 }
             }
@@ -640,7 +801,7 @@ private fun SourceSearchResultSection(
         }
         when {
             result.items.isNotEmpty() -> LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(result.items, key = { "${it.sourceId}:${it.url}" }) { item ->
+                items(result.items, key = BrowseManga::identityKey) { item ->
                     BrowseResultCard(item = item, onClick = { onOpenManga(item) })
                 }
             }
@@ -693,6 +854,297 @@ private fun BrowseResultCard(item: BrowseManga, onClick: () -> Unit) {
     }
 }
 
+private data class PendingExtensionRepresentationSelection(
+    val selection: ExtensionUnitSelectionV2,
+    val representationIds: List<String>,
+)
+
+/** Exact-keyed native extension path; host-issued selections remain the only content authority. */
+@Composable
+private fun ExtensionV2PublicationScreen(
+    callbacks: BrowseCallbacks,
+    item: BrowseManga,
+    contentFeatures: ContentFeatureRuntime?,
+    copyText: (label: String, text: String) -> Boolean,
+    onBack: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val scope = rememberCoroutineScope()
+    val sourceKey = requireNotNull(item.sourceKey)
+    val remotePublicationId = requireNotNull(item.remotePublicationId)
+    var publicationPage by remember(item.identityKey) {
+        mutableStateOf<ExtensionPublicationPageV2?>(null)
+    }
+    var units by remember(item.identityKey) {
+        mutableStateOf<List<ExtensionUnitSelectionV2>>(emptyList())
+    }
+    var nextPage by remember(item.identityKey) { mutableStateOf(0) }
+    var hasNextPage by remember(item.identityKey) { mutableStateOf(false) }
+    var loading by remember(item.identityKey) { mutableStateOf(true) }
+    var loadingMore by remember(item.identityKey) { mutableStateOf(false) }
+    var loadError by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var busyUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var operationMessage by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var operationFailed by remember(item.identityKey) { mutableStateOf(false) }
+    var readerSession by remember(item.identityKey) {
+        mutableStateOf<dev.shinsou.kmp.ui.TypedReaderContentSession?>(null)
+    }
+    var pendingRepresentation by remember(item.identityKey) {
+        mutableStateOf<PendingExtensionRepresentationSelection?>(null)
+    }
+
+    val openedReader = readerSession
+    if (openedReader != null && contentFeatures != null) {
+        Column(Modifier.fillMaxSize()) {
+            ScreenHeader(
+                title = publicationPage?.publication?.title ?: item.title,
+                subtitle = strings.text("Extension content"),
+                leading = {
+                    IconButton(onClick = { readerSession = null }) {
+                        Icon(Icons.Outlined.ArrowBack, strings.text("Back"))
+                    }
+                },
+            )
+            UnifiedContentReader(
+                session = openedReader,
+                features = contentFeatures,
+                copyText = copyText,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        return
+    }
+
+    suspend fun loadUnitPage(requestedPage: Int, append: Boolean) {
+        val loaded = withContext(Dispatchers.Default) {
+            callbacks.extensionPublicationPageV2(sourceKey, remotePublicationId, requestedPage)
+        }
+        check(loaded.sourceKey == sourceKey) { "Extension publication source identity changed" }
+        check(loaded.publication.remoteId == remotePublicationId) {
+            "Extension publication identity changed"
+        }
+        check(loaded.page == requestedPage) { "Extension unit page identity changed" }
+        publicationPage = publicationPage ?: loaded
+        units = if (append) {
+            (units + loaded.units).distinctBy { it.unit.remoteId }
+        } else {
+            loaded.units
+        }
+        nextPage = requestedPage + 1
+        hasNextPage = loaded.hasNextPage
+    }
+
+    fun materialize(selection: ExtensionUnitSelectionV2, representationId: String? = null) {
+        if (busyUnitId != null) return
+        busyUnitId = selection.unit.remoteId
+        operationMessage = null
+        operationFailed = false
+        scope.launch {
+            withFrameNanos { }
+            try {
+                val opened = withContext(Dispatchers.Default) {
+                    val materialization = callbacks.materializeExtensionContentV2(selection, representationId)
+                    if (contentFeatures != null) {
+                        callbacks.openMaterializedExtensionContentV2(materialization)
+                    } else {
+                        null
+                    }
+                }
+                if (opened != null) {
+                    readerSession = opened
+                } else {
+                    operationMessage = strings.text("Content saved for offline reading.")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (required: ExtensionContentConsumerException.RepresentationSelectionRequired) {
+                pendingRepresentation = PendingExtensionRepresentationSelection(
+                    selection = selection,
+                    representationIds = required.availableIds,
+                )
+            } catch (error: Throwable) {
+                operationFailed = true
+                operationMessage = error.localizedDiagnosticMessage(strings)
+            } finally {
+                busyUnitId = null
+            }
+        }
+    }
+
+    LaunchedEffect(item.identityKey) {
+        loading = true
+        loadError = null
+        try {
+            loadUnitPage(requestedPage = 0, append = false)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            loadError = error.localizedDiagnosticMessage(strings)
+        } finally {
+            loading = false
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = publicationPage?.publication?.title ?: item.title,
+            subtitle = strings.text("Extension content"),
+            leading = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Outlined.ArrowBack, strings.text("Back"))
+                }
+            },
+        )
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            loadError != null && units.isEmpty() -> EmptyState(
+                title = strings.text("Unable to load chapters"),
+                message = requireNotNull(loadError),
+                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+                action = {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                loading = true
+                                loadError = null
+                                try {
+                                    loadUnitPage(requestedPage = 0, append = false)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Throwable) {
+                                    loadError = error.localizedDiagnosticMessage(strings)
+                                } finally {
+                                    loading = false
+                                }
+                            }
+                        },
+                    ) { Text(strings.retry) }
+                },
+            )
+            units.isEmpty() -> EmptyState(
+                title = strings.text("No chapters"),
+                message = strings.text("This extension did not return any readable units."),
+                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+            )
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                operationMessage?.let { message ->
+                    item("extension-content-message") {
+                        Text(
+                            message,
+                            color = if (operationFailed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+                items(units, key = { it.unit.remoteId }) { selection ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(selection.unit.title, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    strings.text("Choose a format when this chapter provides more than one."),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Button(
+                                onClick = { materialize(selection) },
+                                enabled = busyUnitId == null,
+                            ) {
+                                if (busyUnitId == selection.unit.remoteId) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Text(strings.text("Save offline"))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (hasNextPage || loadingMore || loadError != null) {
+                    item("extension-content-more") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            loadError?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error)
+                            }
+                            if (loadingMore) {
+                                CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                            } else if (hasNextPage) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            loadingMore = true
+                                            loadError = null
+                                            try {
+                                                loadUnitPage(requestedPage = nextPage, append = true)
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (error: Throwable) {
+                                                loadError = error.localizedDiagnosticMessage(strings)
+                                            } finally {
+                                                loadingMore = false
+                                            }
+                                        }
+                                    },
+                                ) { Text(strings.text("Load more")) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pendingRepresentation?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingRepresentation = null },
+            title = { Text(strings.text("Choose content format")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    pending.representationIds.forEach { representationId ->
+                        OutlinedButton(
+                            onClick = {
+                                pendingRepresentation = null
+                                materialize(pending.selection, representationId)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(strings.text("Format: {0}", representationId))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pendingRepresentation = null }) {
+                    Text(strings.cancel)
+                }
+            },
+        )
+    }
+}
+
 internal fun searchAcrossSources(
     callbacks: BrowseCallbacks,
     sources: List<BrowseSource>,
@@ -700,11 +1152,11 @@ internal fun searchAcrossSources(
     strings: dev.shinsou.kmp.ui.i18n.ShinsouStrings,
 ): Flow<SourceSearchUpdate> = channelFlow {
     val semaphore = Semaphore(GLOBAL_SEARCH_MAX_CONCURRENCY)
-    sources.distinctBy(BrowseSource::id).forEachIndexed { sourceIndex, source ->
+    sources.distinctBy(BrowseSource::identityKey).forEachIndexed { sourceIndex, source ->
         launch(Dispatchers.Default) {
             val result = semaphore.withPermit {
                 try {
-                    val page = browseGlobalSearchSource(callbacks, source.id, query)
+                    val page = browseGlobalSearchSource(callbacks, source, query)
                     currentCoroutineContext().ensureActive()
                     val ranked = rankBrowseResults(query, page.items)
                     SourceSearchResult(
@@ -717,7 +1169,7 @@ internal fun searchAcrossSources(
                 } catch (error: Throwable) {
                     SourceSearchResult(
                         source = source,
-                        errorMessage = error.message ?: strings.text("Unable to search {0}", source.name),
+                        errorMessage = error.localizedDiagnosticMessage(strings),
                     )
                 }
             }
@@ -729,15 +1181,45 @@ internal fun searchAcrossSources(
 
 internal suspend fun browseGlobalSearchSource(
     callbacks: BrowseCallbacks,
+    source: BrowseSource,
+    query: String,
+): BrowsePage {
+    val sourceKey = source.sourceKey
+    if (sourceKey != null) {
+        val result = callbacks.searchSourceV2(sourceKey, query, page = 0)
+        return BrowsePage(
+            items = result.items.map { publication -> publication.toBrowseManga(source) },
+            hasNextPage = result.hasNextPage,
+        )
+    }
+    return callbacks.browseSource(
+        sourceId = source.id,
+        query = query,
+        page = 1,
+        // Global search intentionally ignores source-specific filters, matching original Shinsou.
+        // The explicit empty list also avoids requiring optional hooks from sources such as MangaCopy.
+        filters = emptyList(),
+    )
+}
+
+/** Compatibility helper for legacy-only focused tests/callers. */
+internal suspend fun browseGlobalSearchSource(
+    callbacks: BrowseCallbacks,
     sourceId: Long,
     query: String,
 ): BrowsePage = callbacks.browseSource(
     sourceId = sourceId,
     query = query,
     page = 1,
-    // Global search intentionally ignores source-specific filters, matching original Shinsou.
-    // The explicit empty list also avoids requiring optional hooks from sources such as MangaCopy.
     filters = emptyList(),
+)
+
+private fun RemotePublicationV2.toBrowseManga(source: BrowseSource): BrowseManga = BrowseManga(
+    sourceId = source.id,
+    url = url ?: remoteId,
+    title = title,
+    sourceKey = requireNotNull(source.sourceKey),
+    remotePublicationId = remoteId,
 )
 
 @Composable
@@ -759,7 +1241,7 @@ private fun SourcesPane(
         )
         return
     }
-    var settingsSourceId by remember { mutableStateOf<Long?>(null) }
+    var settingsSourceIdentity by remember { mutableStateOf<String?>(null) }
     val sections = browseSourceSections(sources, pinnedSourceIds)
     LazyColumn(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 104.dp),
@@ -769,14 +1251,14 @@ private fun SourcesPane(
             item("pinned-header") {
                 SourceSectionHeader(strings.text("Pinned"), sections.pinned.size, pinned = true)
             }
-            items(sections.pinned, key = { "pinned:${it.id}" }) { source ->
+            items(sections.pinned, key = { "pinned:${it.identityKey}" }) { source ->
                 SourceListRow(
                     source = source,
                     pinned = true,
                     onOpen = onOpen,
                     onToggle = onToggle,
                     onPinnedChange = onSourcePinnedChange,
-                    onSettings = { settingsSourceId = source.id },
+                    onSettings = { settingsSourceIdentity = source.identityKey },
                 )
             }
             if (sections.regular.isNotEmpty()) {
@@ -785,23 +1267,25 @@ private fun SourcesPane(
                 }
             }
         }
-        items(sections.regular, key = { "source:${it.id}" }) { source ->
+        items(sections.regular, key = { "source:${it.identityKey}" }) { source ->
             SourceListRow(
                 source = source,
                 pinned = false,
                 onOpen = onOpen,
                 onToggle = onToggle,
                 onPinnedChange = onSourcePinnedChange,
-                onSettings = { settingsSourceId = source.id },
+                onSettings = { settingsSourceIdentity = source.identityKey },
             )
         }
     }
-    sources.firstOrNull { it.id == settingsSourceId }?.let { source ->
+    sources.firstOrNull {
+        it.sourceKey == null && it.identityKey == settingsSourceIdentity
+    }?.let { source ->
         SourceSettingsDialog(
             source = source,
             callbacks = callbacks,
             onImportDocument = onImportDocument,
-            onDismiss = { settingsSourceId = null },
+            onDismiss = { settingsSourceIdentity = null },
         )
     }
 }
@@ -816,20 +1300,20 @@ internal fun browseSourceSections(
     sources: List<BrowseSource>,
     pinnedSourceIds: Set<Long>,
 ): BrowseSourceSections {
-    val unique = sources.distinctBy(BrowseSource::id)
+    val unique = sources.distinctBy(BrowseSource::identityKey)
     val pinnedOrder = compareBy<BrowseSource>(
         { it.name.trim().lowercase() },
         { it.language.trim().lowercase() },
-        BrowseSource::id,
+        BrowseSource::identityKey,
     )
     val regularOrder = compareBy<BrowseSource>(
         { it.language.trim().lowercase() },
         { it.name.trim().lowercase() },
-        BrowseSource::id,
+        BrowseSource::identityKey,
     )
     return BrowseSourceSections(
-        pinned = unique.filter { it.id in pinnedSourceIds }.sortedWith(pinnedOrder),
-        regular = unique.filterNot { it.id in pinnedSourceIds }.sortedWith(regularOrder),
+        pinned = unique.filter { it.sourceKey == null && it.id in pinnedSourceIds }.sortedWith(pinnedOrder),
+        regular = unique.filterNot { it.sourceKey == null && it.id in pinnedSourceIds }.sortedWith(regularOrder),
     )
 }
 
@@ -860,6 +1344,7 @@ private fun SourceListRow(
     onSettings: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
+    val legacyActions = source.sourceKey == null
     Surface(
         onClick = { if (source.enabled) onOpen(source) },
         shape = RoundedCornerShape(12.dp),
@@ -901,19 +1386,23 @@ private fun SourceListRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
-                            Icon(
-                                Icons.Outlined.PushPin,
-                                if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        if (legacyActions) {
+                            IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
+                                Icon(
+                                    Icons.Outlined.PushPin,
+                                    if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
+                                    tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         Switch(
                             checked = source.enabled,
                             onCheckedChange = { onToggle(source, it) },
                         )
-                        IconButton(onClick = onSettings) {
-                            Icon(Icons.Outlined.Settings, strings.text("Source settings"))
+                        if (legacyActions) {
+                            IconButton(onClick = onSettings) {
+                                Icon(Icons.Outlined.Settings, strings.text("Source settings"))
+                            }
                         }
                     }
                 }
@@ -937,19 +1426,23 @@ private fun SourceListRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
-                        Icon(
-                            Icons.Outlined.PushPin,
-                            if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                            tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (legacyActions) {
+                        IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
+                            Icon(
+                                Icons.Outlined.PushPin,
+                                if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
+                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     Switch(
                         checked = source.enabled,
                         onCheckedChange = { onToggle(source, it) },
                     )
-                    IconButton(onClick = onSettings) {
-                        Icon(Icons.Outlined.Settings, strings.text("Source settings"))
+                    if (legacyActions) {
+                        IconButton(onClick = onSettings) {
+                            Icon(Icons.Outlined.Settings, strings.text("Source settings"))
+                        }
                     }
                     Icon(Icons.Outlined.OpenInNew, strings.browse, Modifier.size(18.dp))
                 }
@@ -965,6 +1458,7 @@ private fun SourceSettingsDialog(
     onImportDocument: suspend (acceptedExtensions: Set<String>) -> ImportedDocument?,
     onDismiss: () -> Unit,
 ) {
+    require(source.sourceKey == null) { "Native extension v2 settings require an exact SourceKey settings surface" }
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var values by remember(source.id, source.preferences) {
@@ -1502,13 +1996,33 @@ private fun ExtensionRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (extension.installed) {
-                    AssistChip(
-                        onClick = { onTrust(extension, !extension.trusted) },
-                        label = {
-                            Text(if (extension.trusted) strings.text("Execution allowed") else strings.text("Execution blocked"))
-                        },
-                        leadingIcon = { Icon(Icons.Outlined.Security, null, Modifier.size(16.dp)) },
-                    )
+                    if (extension.reviewedShuYueV2) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Outlined.Security, null, Modifier.size(16.dp))
+                            Text(
+                                if (extension.trusted) {
+                                    strings.text("Exact reviewed permissions granted")
+                                } else {
+                                    strings.text("Execution blocked")
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    } else {
+                        AssistChip(
+                            onClick = { onTrust(extension, !extension.trusted) },
+                            label = {
+                                Text(
+                                    if (extension.trusted) strings.text("Execution allowed")
+                                    else strings.text("Execution blocked"),
+                                )
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Security, null, Modifier.size(16.dp)) },
+                        )
+                    }
                 }
             }
             when {
@@ -1726,16 +2240,16 @@ private fun SourceCatalogueScreen(
     onOpenManga: (BrowseManga) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
-    var query by remember(source.id) { mutableStateOf("") }
-    var mode by remember(source.id) { mutableStateOf(SourceCatalogueMode.Popular) }
-    var appliedFilters by remember(source.id) { mutableStateOf<List<BrowseFilter>?>(null) }
-    var filterDialogVisible by remember(source.id) { mutableStateOf(false) }
+    var query by remember(source.identityKey) { mutableStateOf("") }
+    var mode by remember(source.identityKey) { mutableStateOf(SourceCatalogueMode.Popular) }
+    var appliedFilters by remember(source.identityKey) { mutableStateOf<List<BrowseFilter>?>(null) }
+    var filterDialogVisible by remember(source.identityKey) { mutableStateOf(false) }
     // Keep the last submitted request separate from the editable search controls. Otherwise
     // typing a new query while the old result grid is at its end could auto-load another page
     // for a query that the user has not submitted yet.
-    var requestedQuery by remember(source.id) { mutableStateOf("") }
-    var requestedMode by remember(source.id) { mutableStateOf(SourceCatalogueMode.Popular) }
-    var requestedFilters by remember(source.id) { mutableStateOf<List<BrowseFilter>?>(null) }
+    var requestedQuery by remember(source.identityKey) { mutableStateOf("") }
+    var requestedMode by remember(source.identityKey) { mutableStateOf(SourceCatalogueMode.Popular) }
+    var requestedFilters by remember(source.identityKey) { mutableStateOf<List<BrowseFilter>?>(null) }
     val gridState = rememberLazyGridState()
 
     fun requestBrowse(
@@ -1759,7 +2273,7 @@ private fun SourceCatalogueScreen(
     val latestError = rememberUpdatedState(error)
     val latestLoadMore = rememberUpdatedState<() -> Unit> { requestLoadMore() }
     LaunchedEffect(
-        source.id,
+        source.identityKey,
         page.items.size,
         page.hasNextPage,
         loading,
@@ -1866,7 +2380,7 @@ private fun SourceCatalogueScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                items(page.items, key = { "${it.sourceId}:${it.url}" }) { item ->
+                items(page.items, key = BrowseManga::identityKey) { item ->
                     Column(
                         Modifier.combinedClickable(
                             onClick = { onOpenManga(item) },

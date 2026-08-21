@@ -1,6 +1,8 @@
 package dev.shinsou.kmp.sync.v2
 
 import dev.shinsou.kmp.domain.model.ReadingMode
+import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.reader.validate
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +28,13 @@ data class ReaderReportResult(
     val draftId: String? = null,
     val sealed: Boolean = false,
     val positionRegister: ReadingPositionRegister? = null,
+)
+
+data class ContentReaderReportResult(
+    val recorded: Boolean,
+    val draftId: String? = null,
+    val sealed: Boolean = false,
+    val locatorRegister: LwwRegister<ReadingLocator>? = null,
 )
 
 /**
@@ -72,6 +81,57 @@ class ReaderProgressReporter(
     suspend fun currentReadingPosition(chapterKey: SyncEntityKey): ReadingPositionRegister? {
         val state = localStore.readState().replica
         return state.readingProgress[state.resolveKey(chapterKey)]?.position
+    }
+
+    /** Winning TXT/EPUB/image-v2 locator, independent from legacy chapter page indexes. */
+    suspend fun currentContentReadingLocator(key: ContentProgressKeyV2): LwwRegister<ReadingLocator>? =
+        localStore.readState().replica.contentReadingProgress[key]?.locator
+
+    /**
+     * Records a stable typed locator without translating it through a lossy legacy page index.
+     * Drafts from one open reader session coalesce until sealed exactly like manga progress.
+     */
+    suspend fun recordContentReadingProgress(
+        locator: ReadingLocator,
+        sessionId: String,
+        completed: Boolean,
+        historyTouchedAt: Long,
+    ): ContentReaderReportResult = locked {
+        ensureOpen()
+        if (isIncognito()) return@locked ContentReaderReportResult(recorded = false)
+        require(sessionId.isNotBlank() && '|' !in sessionId) { "Invalid reader session id" }
+        locator.validate()
+        require(historyTouchedAt >= 0) { "Content reader history time cannot be negative" }
+        val key = ContentProgressKeyV2.from(locator)
+        val now = nowMillis()
+        val deviceId = requireReadyDeviceId()
+        val draft = localStore.transaction {
+            val hlc = nextLocalHlc(deviceId, now)
+            val event = SyncEvent(
+                opId = operationIdGenerator.nextId(),
+                hlc = hlc,
+                mutations = listOf(
+                    ContentReadingProgressSetV2(
+                        locator = locator,
+                        readState = true.takeIf { completed },
+                        historyTouchedAtEpochMillis = historyTouchedAt,
+                    ),
+                ),
+            )
+            applyLocalEvent(event, now, contentReaderCoalescingKey(sessionId, key))
+        }
+        flushProjectionIfPending()
+        val locatorRegister = currentContentReadingLocator(key)
+        val previousSeal = lastSealedAtBySession.getOrPut(sessionId) { now }
+        val due = now - previousSeal >= sealIntervalMillis
+        val sealed = if (due) trySealDraft(draft.draftId, sessionId) else false
+        if (sealed) requestRemoteFlush() else scheduleSeal(sessionId)
+        ContentReaderReportResult(
+            recorded = true,
+            draftId = draft.draftId,
+            sealed = sealed,
+            locatorRegister = locatorRegister,
+        )
     }
 
     suspend fun recordReadingProgress(
@@ -421,10 +481,17 @@ class ReaderProgressReporter(
     private fun readerCoalescingKey(sessionId: String, chapterKey: SyncEntityKey): String =
         "reader|$sessionId|${chapterKey.stableString()}"
 
+    private fun contentReaderCoalescingKey(sessionId: String, key: ContentProgressKeyV2): String =
+        "content-reader|$sessionId|${key.stableString()}"
+
     private fun SyncDraft.readerSessionId(): String? {
         val key = coalescingKey ?: return null
-        if (!key.startsWith("reader|")) return null
-        return key.substringAfter("reader|").substringBefore('|').takeIf { it.isNotBlank() }
+        val prefix = when {
+            key.startsWith("reader|") -> "reader|"
+            key.startsWith("content-reader|") -> "content-reader|"
+            else -> return null
+        }
+        return key.removePrefix(prefix).substringBefore('|').takeIf { it.isNotBlank() }
     }
 
     private suspend fun <T> locked(block: suspend () -> T): T {

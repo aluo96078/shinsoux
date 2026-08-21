@@ -5,6 +5,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import app.cash.sqldelight.db.SqlDriver
 import dev.shinsou.kmp.sync.persistence.JvmEncryptedSyncSecretStore
 import dev.shinsou.kmp.sync.persistence.JvmFileSyncInstallationStore
 import dev.shinsou.kmp.sync.persistence.JvmFileSyncSessionStore
@@ -46,22 +47,33 @@ internal class AndroidSyncInfrastructure(context: Context) : SyncPlatformInfrast
     override val deviceDisplayName: String = Build.MODEL.trim().ifBlank { "Android device" }
 
     private val driverLock = Any()
+    private var openDriver: SqlDriver? = null
     private var openPersistence: SqlDriverSyncStatePersistence? = null
 
     override fun statePersistence(): SqlDriverSyncStatePersistence = synchronized(driverLock) {
         openPersistence ?: SqlDriverSyncStatePersistence(
-            AndroidSqliteDriver(
-                schema = SyncLocalSchema,
-                context = applicationContext,
-                name = DATABASE_NAME,
-            ),
+            driver = databaseDriver(),
+            ownsDriver = false,
         ).also { openPersistence = it }
     }
+
+    override fun contentDriver(): SqlDriver = synchronized(driverLock) { databaseDriver() }
+
+    override fun contentBlobDirectory(): String =
+        metadataDirectory.resolve("content-blobs").absolutePath
 
     override fun close() = synchronized(driverLock) {
         openPersistence?.close()
         openPersistence = null
+        openDriver?.close()
+        openDriver = null
     }
+
+    private fun databaseDriver(): SqlDriver = openDriver ?: AndroidSqliteDriver(
+        schema = SyncLocalSchema,
+        context = applicationContext,
+        name = DATABASE_NAME,
+    ).also { openDriver = it }
 
     private companion object {
         const val DATABASE_NAME = "shinsou-sync-v2.db"

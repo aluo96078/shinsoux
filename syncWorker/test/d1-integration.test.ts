@@ -69,10 +69,12 @@ test("numbered migration creates every authoritative table and index", () => {
     "events", "event_receipts", "checkpoint_leases", "checkpoints",
     "key_rotations", "workspace_device_keys", "recovery_credentials",
     "device_revocation_workspaces",
+    "blob_upload_sessions", "encrypted_blob_manifests", "blob_dek_envelopes",
+    "blob_tombstones", "blob_tombstone_acks", "blob_gc_claims", "blob_gc_receipts",
   ]) assert.ok(tables.includes(required), `${required} missing`);
   assert.deepEqual(
     db.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version),
-    [1, 2, 4],
+    [1, 2, 4, 5],
   );
 });
 

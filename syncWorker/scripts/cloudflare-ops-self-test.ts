@@ -12,6 +12,7 @@ import {
   makeManifest,
   parseArguments,
   requestedFlag,
+  resolveR2BucketNames,
   safeObjectFile,
   verifyManifestShape,
   workspaceR2Prefix,
@@ -28,6 +29,34 @@ test("argument parsing is deterministic and does not imply apply", () => {
   assert.throws(() => requestedFlag(parseArguments(["deploy", "--apply=false"]), "apply"), /does not take a value/);
   assert.throws(() => parseArguments(["deploy", "--apply", "--apply"]), /Duplicate option/);
   assert.throws(() => parseArguments(["deploy", "--apply=false", "--apply"]), /Duplicate option/);
+  assert.deepEqual(resolveR2BucketNames(parseArguments(["deploy"])), {
+    checkpoints: "shinsou-sync-checkpoints",
+    blobs: "shinsou-sync-blobs",
+  });
+  assert.deepEqual(resolveR2BucketNames(parseArguments([
+    "deploy", "--checkpoints-bucket", "private-checkpoints", "--blobs-bucket", "private-blobs",
+  ])), { checkpoints: "private-checkpoints", blobs: "private-blobs" });
+  assert.deepEqual(resolveR2BucketNames(parseArguments([
+    "deploy", "--bucket", "legacy-checkpoints",
+  ])), { checkpoints: "legacy-checkpoints", blobs: "shinsou-sync-blobs" });
+  assert.deepEqual(resolveR2BucketNames(parseArguments(["deploy"]), {
+    r2_buckets: [
+      { binding: "CHECKPOINTS", bucket_name: "retained-checkpoints" },
+      { binding: "BLOBS", bucket_name: "retained-blobs" },
+    ],
+  }), { checkpoints: "retained-checkpoints", blobs: "retained-blobs" });
+  assert.throws(
+    () => resolveR2BucketNames(parseArguments([
+      "deploy", "--bucket", "legacy-checkpoints", "--checkpoints-bucket", "private-checkpoints",
+    ])),
+    /Use only one/,
+  );
+  assert.throws(
+    () => resolveR2BucketNames(parseArguments([
+      "deploy", "--checkpoints-bucket", "shared-bucket", "--blobs-bucket", "shared-bucket",
+    ])),
+    /different R2 buckets/,
+  );
 });
 
 test("emergency reset dry-run performs no Cloudflare command and apply requires exact confirmation", () => {
@@ -39,6 +68,8 @@ test("emergency reset dry-run performs no Cloudflare command and apply requires 
   ], { encoding: "utf8", env: { ...process.env, PATH: "" } });
   assert.equal(dryRun.status, 0, dryRun.stderr);
   assert.match(dryRun.stdout, /"mode": "dry-run"/);
+  assert.match(dryRun.stdout, /"checkpoints": "shinsou-sync-checkpoints"/);
+  assert.match(dryRun.stdout, /"blobs": "shinsou-sync-blobs"/);
   assert.match(dryRun.stdout, /No Cloudflare command was run/);
 
   const refused = spawnSync(process.execPath, [
@@ -76,7 +107,7 @@ test("generated config replaces deployment identifiers without secrets", () => {
     worker: "private-sync",
     database: "private-db",
     databaseId: "00000000-0000-0000-0000-000000000001",
-    bucket: "private-checkpoints",
+    buckets: { checkpoints: "private-checkpoints", blobs: "private-blobs" },
     instanceId: "00000000-0000-4000-8000-000000000002",
   });
   assert.equal(result.name, "private-sync");
@@ -86,41 +117,73 @@ test("generated config replaces deployment identifiers without secrets", () => {
     database_id: "00000000-0000-0000-0000-000000000001",
     migrations_dir: resolve("migrations"),
   }]);
+  assert.deepEqual(result.r2_buckets, [
+    { binding: "CHECKPOINTS", bucket_name: "private-checkpoints" },
+    { binding: "BLOBS", bucket_name: "private-blobs" },
+  ]);
   assert.equal(JSON.stringify(result).includes("SECRET"), false);
 });
 
-test("manifest is sorted deterministically and rejects traversal", () => {
+test("manifest keeps checkpoint and body inventories isolated and rejects traversal", () => {
   const manifest = makeManifest("2026-08-20T00:00:00.000Z", "a".repeat(64), [
-    { key: "workspaces/b/two", file: "objects/workspaces/b/two", byteSize: 2, sha256: "2".repeat(64), httpMetadata: {}, customMetadata: {} },
-    { key: "workspaces/a/one", file: "objects/workspaces/a/one", byteSize: 1, sha256: "1".repeat(64), httpMetadata: {}, customMetadata: { checkpointId: "id" } },
+    { key: "workspaces/b/two", file: "objects/checkpoints/workspaces/b/two", byteSize: 2, sha256: "2".repeat(64), httpMetadata: {}, customMetadata: {} },
+    { key: "workspaces/a/one", file: "objects/checkpoints/workspaces/a/one", byteSize: 1, sha256: "1".repeat(64), httpMetadata: {}, customMetadata: { checkpointId: "id" } },
+  ], [
+    { key: "workspaces/a/one", file: "objects/blobs/workspaces/a/one", byteSize: 3, sha256: "3".repeat(64), httpMetadata: {}, customMetadata: { blobId: "id" } },
   ]);
-  assert.deepEqual(manifest.r2.objects.map((entry) => entry.key), ["workspaces/a/one", "workspaces/b/two"]);
+  assert.deepEqual(manifest.r2.checkpoints.objects.map((entry) => entry.key), ["workspaces/a/one", "workspaces/b/two"]);
+  assert.deepEqual(manifest.r2.blobs.objects.map((entry) => entry.key), ["workspaces/a/one"]);
   assert.equal(verifyManifestShape(manifest), manifest);
-  assert.throws(() => safeObjectFile("../escape"), /Unsafe R2 object key/);
-  assert.throws(() => safeObjectFile(`workspaces/a/${"x".repeat(1025)}`), /Unsafe R2 object key/);
-  assert.throws(() => safeObjectFile("workspaces/a/line\nbreak"), /Unsafe R2 object key/);
-  assert.throws(() => verifyManifestShape({ ...manifest, r2: { objectCount: 1, objects: manifest.r2.objects } }), /count/);
+  assert.throws(() => safeObjectFile("checkpoints", "../escape"), /Unsafe R2 object key/);
+  assert.throws(() => safeObjectFile("blobs", `workspaces/a/${"x".repeat(1025)}`), /Unsafe R2 object key/);
+  assert.throws(() => safeObjectFile("checkpoints", "workspaces/a/line\nbreak"), /Unsafe R2 object key/);
+  assert.throws(() => verifyManifestShape({
+    ...manifest,
+    r2: { ...manifest.r2, blobs: { objectCount: 2, objects: manifest.r2.blobs.objects } },
+  }), /count/);
   assert.throws(() => assertOutsideCheckout(resolve("..", "local-backup")), /outside the Git checkout/);
   assert.doesNotThrow(() => assertOutsideCheckout(resolve("..", "..", "shinsou-sync-backup-test")));
-  assertR2Inventory(manifest.r2.objects, manifest.r2.objects.map((entry) => ({
+  assertR2Inventory(manifest.r2.checkpoints.objects, manifest.r2.checkpoints.objects.map((entry) => ({
     key: entry.key,
     size: entry.byteSize,
     httpMetadata: entry.httpMetadata,
     customMetadata: entry.customMetadata,
-  })));
-  assert.throws(() => assertR2Inventory(manifest.r2.objects, []), /count mismatch/);
+  })), "checkpoints");
+  assert.throws(() => assertR2Inventory(manifest.r2.blobs.objects, [], "blobs"), /count mismatch/);
+
+  const legacy = verifyManifestShape({
+    formatVersion: 1,
+    createdAt: "2026-08-20T00:00:00.000Z",
+    database: { file: "database.sql", sha256: "a".repeat(64) },
+    r2: {
+      objectCount: 1,
+      objects: [{
+        key: "workspaces/a/legacy",
+        file: "objects/workspaces/a/legacy",
+        byteSize: 1,
+        sha256: "4".repeat(64),
+        httpMetadata: {},
+        customMetadata: {},
+      }],
+    },
+  });
+  assert.equal(legacy.formatVersion, 1);
+  assert.equal(legacy.r2.checkpoints.objectCount, 1);
+  assert.equal(legacy.r2.blobs.objectCount, 0);
 });
 
 test("temporary bridge is bearer protected and preserves camelCase R2 metadata", async () => {
   type StoredOptions = { httpMetadata: Record<string, string | Date>; customMetadata: Record<string, string> };
   let storedOptions: StoredOptions | undefined;
-  let listedPrefix: string | undefined;
-  let deletedKey: string | undefined;
+  let checkpointListedPrefix: string | undefined;
+  let blobListedPrefix: string | undefined;
+  let checkpointDeletedKey: string | undefined;
+  let blobDeletedKey: string | undefined;
   const env = {
     OPS_TOKEN: "test-token",
     CHECKPOINTS: {
       async list(options: { prefix?: string }) {
-        listedPrefix = options.prefix;
+        checkpointListedPrefix = options.prefix;
         return {
           objects: [{
             key: "workspaces/a/checkpoint",
@@ -135,13 +198,32 @@ test("temporary bridge is bearer protected and preserves camelCase R2 metadata",
       async put(_key: string, _body: ReadableStream | ArrayBuffer, options: StoredOptions) {
         storedOptions = options;
       },
-      async delete(key: string) { deletedKey = key; },
+      async delete(key: string) { checkpointDeletedKey = key; },
+    },
+    BLOBS: {
+      async list(options: { prefix?: string }) {
+        blobListedPrefix = options.prefix;
+        return {
+          objects: [{
+            key: "workspaces/a/content/v2/blobs/body",
+            size: 3,
+            httpMetadata: { contentType: "application/octet-stream" },
+            customMetadata: { blobId: "body" },
+          }],
+          truncated: false,
+        };
+      },
+      async get() { return { body: new Blob(["xyz"]).stream(), size: 3 }; },
+      async put(_key: string, _body: ReadableStream | ArrayBuffer, options: StoredOptions) {
+        storedOptions = options;
+      },
+      async delete(key: string) { blobDeletedKey = key; },
     },
   };
-  const unauthorized = await bridgeWorker.fetch(new Request("https://ops.invalid/list"), env);
+  const unauthorized = await bridgeWorker.fetch(new Request("https://ops.invalid/checkpoints/list"), env);
   assert.equal(unauthorized.status, 401);
 
-  const listed = await bridgeWorker.fetch(new Request("https://ops.invalid/list", {
+  const listed = await bridgeWorker.fetch(new Request("https://ops.invalid/checkpoints/list", {
     headers: { Authorization: "Bearer test-token" },
   }), env);
   assert.equal(listed.status, 200);
@@ -149,13 +231,19 @@ test("temporary bridge is bearer protected and preserves camelCase R2 metadata",
 
   const prefix = "workspaces/00000000-0000-4000-8000-000000000007/";
   const prefixed = await bridgeWorker.fetch(new Request(
-    `https://ops.invalid/list?prefix=${encodeURIComponent(prefix)}`,
+    `https://ops.invalid/checkpoints/list?prefix=${encodeURIComponent(prefix)}`,
     { headers: { Authorization: "Bearer test-token" } },
   ), env);
   assert.equal(prefixed.status, 200);
-  assert.equal(listedPrefix, prefix);
+  assert.equal(checkpointListedPrefix, prefix);
+  const blobPrefixed = await bridgeWorker.fetch(new Request(
+    `https://ops.invalid/blobs/list?prefix=${encodeURIComponent(prefix)}`,
+    { headers: { Authorization: "Bearer test-token" } },
+  ), env);
+  assert.equal(blobPrefixed.status, 200);
+  assert.equal(blobListedPrefix, prefix);
   const unsafePrefix = await bridgeWorker.fetch(new Request(
-    "https://ops.invalid/list?prefix=workspaces%2Fother%2F",
+    "https://ops.invalid/checkpoints/list?prefix=workspaces%2Fother%2F",
     { headers: { Authorization: "Bearer test-token" } },
   ), env);
   assert.equal(unsafePrefix.status, 400);
@@ -164,8 +252,8 @@ test("temporary bridge is bearer protected and preserves camelCase R2 metadata",
     contentType: "application/octet-stream",
     cacheExpiry: "2026-08-20T00:00:00.000Z",
   })).toString("base64url");
-  const customMetadata = Buffer.from(JSON.stringify({ ciphertextSha256: "hash", checkpointId: "id" })).toString("base64url");
-  const stored = await bridgeWorker.fetch(new Request("https://ops.invalid/object?key=workspaces/a/checkpoint", {
+  const customMetadata = Buffer.from(JSON.stringify({ ciphertextSha256: "hash", blobId: "body" })).toString("base64url");
+  const stored = await bridgeWorker.fetch(new Request("https://ops.invalid/blobs/object?key=workspaces/a/content/v2/blobs/body", {
     method: "PUT",
     headers: {
       Authorization: "Bearer test-token",
@@ -176,14 +264,25 @@ test("temporary bridge is bearer protected and preserves camelCase R2 metadata",
     body: "abc",
   }), env);
   assert.equal(stored.status, 200);
-  assert.deepEqual(storedOptions?.customMetadata, { ciphertextSha256: "hash", checkpointId: "id" });
+  assert.deepEqual(storedOptions?.customMetadata, { ciphertextSha256: "hash", blobId: "body" });
   assert.equal(storedOptions?.httpMetadata.cacheExpiry instanceof Date, true);
   assert.equal((storedOptions?.httpMetadata.cacheExpiry as Date).toISOString(), "2026-08-20T00:00:00.000Z");
 
-  const deleted = await bridgeWorker.fetch(new Request("https://ops.invalid/object?key=workspaces/a/checkpoint", {
+  const checkpointDeleted = await bridgeWorker.fetch(new Request("https://ops.invalid/checkpoints/object?key=workspaces/a/checkpoint", {
     method: "DELETE",
     headers: { Authorization: "Bearer test-token" },
   }), env);
-  assert.equal(deleted.status, 200);
-  assert.equal(deletedKey, "workspaces/a/checkpoint");
+  assert.equal(checkpointDeleted.status, 200);
+  assert.equal(checkpointDeletedKey, "workspaces/a/checkpoint");
+  const blobDeleted = await bridgeWorker.fetch(new Request("https://ops.invalid/blobs/object?key=workspaces/a/content/v2/blobs/body", {
+    method: "DELETE",
+    headers: { Authorization: "Bearer test-token" },
+  }), env);
+  assert.equal(blobDeleted.status, 200);
+  assert.equal(blobDeletedKey, "workspaces/a/content/v2/blobs/body");
+
+  const ambiguousLegacyRoute = await bridgeWorker.fetch(new Request("https://ops.invalid/list", {
+    headers: { Authorization: "Bearer test-token" },
+  }), env);
+  assert.equal(ambiguousLegacyRoute.status, 400);
 });

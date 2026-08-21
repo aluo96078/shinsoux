@@ -1,15 +1,20 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.BrowseCallbacks
+import dev.shinsou.kmp.ui.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ContentCallbacks
 import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.ImportedDocumentReadException
+import dev.shinsou.kmp.ui.ImportedDocumentSource
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.SecurityFeatureCapability
@@ -17,8 +22,12 @@ import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.readBoundedImportedBytes
+import dev.shinsou.kmp.ui.requireImportedDocumentSize
+import dev.shinsou.kmp.ui.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
+import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
@@ -27,10 +36,13 @@ import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.DataFlavor
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.util.Locale
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.CompletableDeferred
@@ -43,10 +55,13 @@ import kotlinx.coroutines.withContext
 internal class DesktopAppServices(
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
+    override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
     override val cloudflareSync: CloudflareSyncUiController? = null,
     override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
+    override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val closeApplication: () -> Unit,
     private val frame: () -> Frame? = { null },
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
@@ -134,6 +149,27 @@ internal class DesktopAppServices(
         }.getOrDefault(false)
     }
 
+    override suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean {
+        return exportBinaryDocument(
+            suggestedName,
+            ByteArrayBinaryDocumentExportSource(contents),
+        )
+    }
+
+    override suspend fun exportBinaryDocument(
+        suggestedName: String,
+        source: BinaryDocumentExportSource,
+    ): Boolean {
+        val selected = chooseFile(
+            title = stringsProvider().text("Export {0}", suggestedName),
+            mode = FileDialog.SAVE,
+            suggestedName = suggestedName,
+        ) ?: return false
+        return withContext(Dispatchers.IO) {
+            writeBinaryDocument(selected, source)
+        }
+    }
+
     override suspend fun importDocument(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits,
@@ -154,7 +190,7 @@ internal class DesktopAppServices(
         return withContext(Dispatchers.IO) {
             var acceptedBytes = 0L
             selected.map { path ->
-                readImportedDocument(path, limits, acceptedBytes).also { acceptedBytes += it.contents.size }
+                readImportedDocument(path, limits, acceptedBytes).also { acceptedBytes += it.byteSize }
             }
         }
     }
@@ -174,6 +210,10 @@ internal class DesktopAppServices(
                 throw ImportedDocumentReadException("“$name” is not a readable regular file.")
             }
             val declaredSize = Files.size(path)
+            if (limits.prefersRandomAccess(name)) {
+                requireImportedDocumentSize(name, declaredSize, limits, previouslyAcceptedBytes)
+                return ImportedDocument(name, DesktopPathImportedDocumentSource(path, declaredSize))
+            }
             return Files.newInputStream(path).use { input ->
                 ImportedDocument(
                     name = name,
@@ -190,6 +230,44 @@ internal class DesktopAppServices(
             throw error
         } catch (error: Throwable) {
             throw ImportedDocumentReadException("Unable to read “$name”.", error)
+        }
+    }
+
+    private class DesktopPathImportedDocumentSource(
+        private val path: Path,
+        override val byteSize: Long,
+    ) : ImportedDocumentSource {
+        override fun read(offset: Long, byteCount: Int): ByteArray = synchronized(this) {
+            require(offset in 0..byteSize && byteCount >= 0 &&
+                byteCount.toLong() <= byteSize - offset) { "Imported document read is out of bounds" }
+            if (!Files.isRegularFile(path) || Files.size(path) != byteSize) {
+                throw ImportedDocumentReadException("The selected file changed while it was being imported.")
+            }
+            val output = ByteArray(byteCount)
+            if (byteCount == 0) return@synchronized output
+            try {
+                FileChannel.open(path, StandardOpenOption.READ).use { channel ->
+                    val buffer = ByteBuffer.wrap(output)
+                    var position = offset
+                    while (buffer.hasRemaining()) {
+                        val count = channel.read(buffer, position)
+                        if (count <= 0) {
+                            throw ImportedDocumentReadException(
+                                "The selected file changed while it was being imported.",
+                            )
+                        }
+                        position += count
+                    }
+                }
+                if (Files.size(path) != byteSize) {
+                    throw ImportedDocumentReadException("The selected file changed while it was being imported.")
+                }
+                output
+            } catch (error: ImportedDocumentReadException) {
+                throw error
+            } catch (error: Throwable) {
+                throw ImportedDocumentReadException("Unable to read the selected file.", error)
+            }
         }
     }
 
@@ -236,6 +314,40 @@ internal class DesktopAppServices(
         return result.await()
     }
 }
+
+/** Streams to a sibling temporary file so a failed source never truncates an existing export. */
+internal fun writeBinaryDocument(
+    selected: Path,
+    source: BinaryDocumentExportSource,
+): Boolean = runCatching {
+    val target = selected.toAbsolutePath()
+    val directory = requireNotNull(target.parent) { "Binary export has no parent directory" }
+    Files.createDirectories(directory)
+    val temporary = Files.createTempFile(directory, ".shinsou-export-", ".tmp")
+    try {
+        Files.newOutputStream(
+            temporary,
+            StandardOpenOption.WRITE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+        ).buffered(64 * 1024).use { output ->
+            source.writeCheckedTo(BinaryDocumentExportSink { chunk -> output.write(chunk) })
+            output.flush()
+        }
+        try {
+            Files.move(
+                temporary,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
+        }
+        true
+    } finally {
+        Files.deleteIfExists(temporary)
+    }
+}.getOrDefault(false)
 
 internal object DesktopPersistence {
     private val directory: Path by lazy { DesktopAppDirectories.dataRoot }

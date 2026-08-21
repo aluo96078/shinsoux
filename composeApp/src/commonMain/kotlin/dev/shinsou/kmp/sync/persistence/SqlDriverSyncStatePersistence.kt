@@ -27,6 +27,11 @@ import dev.shinsou.kmp.sync.v2.SyncReceipt
 import dev.shinsou.kmp.sync.v2.SyncState
 import dev.shinsou.kmp.sync.v2.SyncStatePersistence
 import dev.shinsou.kmp.sync.v2.SyncValue
+import dev.shinsou.kmp.sync.v2.SyncedAnnotationRecord
+import dev.shinsou.kmp.sync.v2.SyncedBlobReferenceRecord
+import dev.shinsou.kmp.sync.v2.ContentProgressKeyV2
+import dev.shinsou.kmp.sync.v2.ContentReadingProgressRecordV2
+import dev.shinsou.kmp.sync.v2.PublicationCategoryMembershipKeyV2
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -46,6 +51,8 @@ import kotlinx.serialization.json.encodeToJsonElement
 class SqlDriverSyncStatePersistence(
     private val driver: SqlDriver,
     json: Json = SyncPersistenceJson,
+    /** Unified platform database hosts keep the driver alive for content storage as well. */
+    private val ownsDriver: Boolean = true,
 ) : SyncStatePersistence {
     private val codec = Json(json) {
         encodeDefaults = true
@@ -119,7 +126,18 @@ class SqlDriverSyncStatePersistence(
         cacheInitialized = true
     }
 
-    fun close() = driver.close()
+    override suspend fun reloadAfterExternalRollback(): LocalSyncStoreState? {
+        // saveAtomically may have advanced this diff baseline after a nested savepoint completed,
+        // even though the host's enclosing transaction later rolled the SQL rows back.
+        cacheInitialized = false
+        cachedState = null
+        cachedV2 = false
+        return load()
+    }
+
+    fun close() {
+        if (ownsDriver) driver.close()
+    }
 
     private suspend fun loadV2OrNull(): LocalSyncStoreState? {
         val meta = selectSingleton(
@@ -169,6 +187,55 @@ class SqlDriverSyncStatePersistence(
             )
             progress.forEach { (key, value) ->
                 check(key == value.chapterKey) { "Reading-progress map key/body mismatch" }
+            }
+
+            val contentMemberships = readShardTable(
+                TABLE_CONTENT_MEMBERSHIPS,
+                counts.contentMemberships,
+                ContentMembershipShard.serializer(),
+            ) { contentMembershipRowKey(it.key) }.toUniqueMap(
+                "publication category membership",
+                ContentMembershipShard::key,
+                ContentMembershipShard::value,
+            )
+
+            val contentProgress = readShardTable(
+                TABLE_CONTENT_READING_PROGRESS,
+                counts.contentReadingProgress,
+                ContentProgressShard.serializer(),
+            ) { it.key.stableString() }.toUniqueMap(
+                "content reading progress",
+                ContentProgressShard::key,
+                ContentProgressShard::record,
+            )
+            contentProgress.forEach { (key, value) ->
+                check(key == value.key) { "Content-progress map key/body mismatch" }
+            }
+
+            val annotations = readShardTable(
+                TABLE_CONTENT_ANNOTATIONS,
+                counts.contentAnnotations,
+                AnnotationShard.serializer(),
+            ) { it.annotationId }.toUniqueMap(
+                "content annotation",
+                AnnotationShard::annotationId,
+                AnnotationShard::record,
+            )
+            annotations.forEach { (key, value) ->
+                check(key == value.annotationId) { "Content-annotation map key/body mismatch" }
+            }
+
+            val blobReferences = readShardTable(
+                TABLE_BLOB_REFERENCES,
+                counts.blobReferences,
+                BlobReferenceShard.serializer(),
+            ) { it.blobId }.toUniqueMap(
+                "blob reference",
+                BlobReferenceShard::blobId,
+                BlobReferenceShard::record,
+            )
+            blobReferences.forEach { (key, value) ->
+                check(key == value.blobId) { "Blob-reference map key/body mismatch" }
             }
 
             val settings = readShardTable(
@@ -290,6 +357,10 @@ class SqlDriverSyncStatePersistence(
                     entities = entities,
                     categoryMemberships = memberships,
                     readingProgress = progress,
+                    contentCategoryMemberships = contentMemberships,
+                    contentReadingProgress = contentProgress,
+                    contentAnnotations = annotations,
+                    blobReferences = blobReferences,
                     portableSettings = settings,
                     keyRemaps = remaps,
                     appliedOpIds = appliedOpIds,
@@ -418,6 +489,49 @@ class SqlDriverSyncStatePersistence(
                     ReadingProgressShard(key, progress)
                 },
                 ReadingProgressShard.serializer(),
+            )
+            diffMap(
+                TABLE_CONTENT_ANNOTATIONS,
+                previous?.replica?.contentAnnotations,
+                next.replica.contentAnnotations,
+                { it },
+                { annotationId, record ->
+                    require(annotationId == record.annotationId) {
+                        "Content-annotation map key/body mismatch"
+                    }
+                    AnnotationShard(annotationId, record)
+                },
+                AnnotationShard.serializer(),
+            )
+            diffMap(
+                TABLE_CONTENT_MEMBERSHIPS,
+                previous?.replica?.contentCategoryMemberships,
+                next.replica.contentCategoryMemberships,
+                ::contentMembershipRowKey,
+                ::ContentMembershipShard,
+                ContentMembershipShard.serializer(),
+            )
+            diffMap(
+                TABLE_CONTENT_READING_PROGRESS,
+                previous?.replica?.contentReadingProgress,
+                next.replica.contentReadingProgress,
+                ContentProgressKeyV2::stableString,
+                { key, record ->
+                    require(key == record.key) { "Content-progress map key/body mismatch" }
+                    ContentProgressShard(key, record)
+                },
+                ContentProgressShard.serializer(),
+            )
+            diffMap(
+                TABLE_BLOB_REFERENCES,
+                previous?.replica?.blobReferences,
+                next.replica.blobReferences,
+                { it },
+                { blobId, record ->
+                    require(blobId == record.blobId) { "Blob-reference map key/body mismatch" }
+                    BlobReferenceShard(blobId, record)
+                },
+                BlobReferenceShard.serializer(),
             )
             diffMap(
                 TABLE_SETTINGS,
@@ -686,6 +800,10 @@ class SqlDriverSyncStatePersistence(
             entities = replica.entities.size,
             memberships = replica.categoryMemberships.size,
             readingProgress = replica.readingProgress.size,
+            contentMemberships = replica.contentCategoryMemberships.size,
+            contentReadingProgress = replica.contentReadingProgress.size,
+            contentAnnotations = replica.contentAnnotations.size,
+            blobReferences = replica.blobReferences.size,
             settings = replica.portableSettings.size,
             remaps = replica.keyRemaps.size,
             appliedOpIds = replica.appliedOpIds.size,
@@ -704,6 +822,9 @@ class SqlDriverSyncStatePersistence(
 
     private fun membershipRowKey(key: CategoryMembershipKey): String =
         codec.encodeToString(CategoryMembershipKey.serializer(), key)
+
+    private fun contentMembershipRowKey(key: PublicationCategoryMembershipKeyV2): String =
+        codec.encodeToString(PublicationCategoryMembershipKeyV2.serializer(), key)
 }
 
 /** Public schema lets Android and Native drivers create and migrate the same v2 database. */
@@ -854,6 +975,10 @@ private data class ShardCounts(
     val entities: Int,
     val memberships: Int,
     val readingProgress: Int,
+    val contentMemberships: Int = 0,
+    val contentReadingProgress: Int = 0,
+    val contentAnnotations: Int = 0,
+    val blobReferences: Int = 0,
     val settings: Int,
     val remaps: Int,
     val appliedOpIds: Int,
@@ -874,6 +999,10 @@ private data class ShardCounts(
                 entities,
                 memberships,
                 readingProgress,
+                contentMemberships,
+                contentReadingProgress,
+                contentAnnotations,
+                blobReferences,
                 settings,
                 remaps,
                 appliedOpIds,
@@ -898,6 +1027,22 @@ private data class ShardCounts(
     val value: LwwRegister<Boolean>,
 )
 @Serializable private data class ReadingProgressShard(val key: SyncEntityKey, val value: ReadingProgressState)
+@Serializable private data class AnnotationShard(
+    val annotationId: String,
+    val record: SyncedAnnotationRecord,
+)
+@Serializable private data class ContentMembershipShard(
+    val key: PublicationCategoryMembershipKeyV2,
+    val value: LwwRegister<Boolean>,
+)
+@Serializable private data class ContentProgressShard(
+    val key: ContentProgressKeyV2,
+    val record: ContentReadingProgressRecordV2,
+)
+@Serializable private data class BlobReferenceShard(
+    val blobId: String,
+    val record: SyncedBlobReferenceRecord,
+)
 @Serializable private data class SettingShard(val name: String, val value: LwwRegister<SyncValue>)
 @Serializable private data class RemapShard(val oldKey: SyncEntityKey, val newKey: SyncEntityKey)
 @Serializable private data class AppliedOpShard(val opId: String)
@@ -930,6 +1075,10 @@ private const val TABLE_META = "sync_local_meta"
 private const val TABLE_ENTITIES = "sync_replica_entities"
 private const val TABLE_MEMBERSHIPS = "sync_replica_memberships"
 private const val TABLE_READING_PROGRESS = "sync_replica_reading_progress"
+private const val TABLE_CONTENT_ANNOTATIONS = "sync_replica_content_annotations_v2"
+private const val TABLE_CONTENT_MEMBERSHIPS = "sync_replica_content_memberships_v2"
+private const val TABLE_CONTENT_READING_PROGRESS = "sync_replica_content_reading_progress_v2"
+private const val TABLE_BLOB_REFERENCES = "sync_replica_blob_references_v2"
 private const val TABLE_SETTINGS = "sync_replica_settings"
 private const val TABLE_REMAPS = "sync_replica_remaps"
 private const val TABLE_APPLIED_OPS = "sync_replica_applied_ops"
@@ -948,6 +1097,10 @@ private val SHARD_TABLES = listOf(
     TABLE_ENTITIES,
     TABLE_MEMBERSHIPS,
     TABLE_READING_PROGRESS,
+    TABLE_CONTENT_ANNOTATIONS,
+    TABLE_CONTENT_MEMBERSHIPS,
+    TABLE_CONTENT_READING_PROGRESS,
+    TABLE_BLOB_REFERENCES,
     TABLE_SETTINGS,
     TABLE_REMAPS,
     TABLE_APPLIED_OPS,

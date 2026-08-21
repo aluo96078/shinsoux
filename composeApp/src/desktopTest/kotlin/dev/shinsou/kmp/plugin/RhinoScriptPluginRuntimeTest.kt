@@ -8,10 +8,59 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RhinoScriptPluginRuntimeTest {
+    @Test
+    fun multiSourcePackageSelectsExactExportedSourceInsteadOfListPosition() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { error("No network request expected") },
+            storage = storage,
+            requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+        )
+        val manifest = PluginManifest(
+            id = "multi.rhino",
+            name = "Multi Rhino",
+            version = "2.0.0",
+            versionCode = 2,
+            lang = "all",
+            script = "multi.rhino.js",
+            signature = "",
+            sources = listOf(
+                SourceIndexEntry("One", "en", 101L, "https://one.example"),
+                SourceIndexEntry("Two", "en", 202L, "https://two.example"),
+            ),
+        )
+        val factory = RhinoScriptPluginRuntimeFactory()
+        assertFailsWith<IllegalArgumentException> {
+            factory.create(RHINO_MULTI_SOURCE_FIXTURE, manifest, ScriptPluginEnvironment(network, storage))
+        }
+        val one = factory.createForSource(
+            RHINO_MULTI_SOURCE_FIXTURE,
+            manifest,
+            manifest.sources.orEmpty()[0],
+            ScriptPluginEnvironment(network, storage),
+        )
+        val two = factory.createForSource(
+            RHINO_MULTI_SOURCE_FIXTURE,
+            manifest,
+            manifest.sources.orEmpty()[1],
+            ScriptPluginEnvironment(network, storage),
+        )
+        try {
+            assertEquals(101L, one.id)
+            assertEquals("one|https://one.example", one.getPopularManga(0).mangas.single().title)
+            assertEquals(202L, two.id)
+            assertEquals("two|https://two.example", two.getPopularManga(0).mangas.single().title)
+        } finally {
+            one.close()
+            two.close()
+        }
+    }
+
     @Test
     fun loginRequestsCarrySourcePayloadAndDefaultRequesterIsANoOp() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
@@ -212,6 +261,25 @@ class RhinoScriptPluginRuntimeTest {
         }
     }
 }
+
+private val RHINO_MULTI_SOURCE_FIXTURE = """
+    var sources = {
+      '101': {
+        id: '101', baseUrl: 'https://script-one.invalid',
+        getPopularManga: function(page) {
+          var manga = SManga.create(); manga.url = '/one'; manga.title = 'one|' + baseUrl;
+          return new MangasPage([manga], false);
+        }
+      },
+      '202': {
+        id: '202', baseUrl: 'https://script-two.invalid',
+        getPopularManga: function(page) {
+          var manga = SManga.create(); manga.url = '/two'; manga.title = 'two|' + baseUrl;
+          return new MangasPage([manga], false);
+        }
+      }
+    };
+""".trimIndent()
 
 private val RHINO_LOGIN_REQUEST_FIXTURE = """
     var source = {

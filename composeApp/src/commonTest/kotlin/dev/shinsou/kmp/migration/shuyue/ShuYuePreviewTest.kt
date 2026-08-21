@@ -449,6 +449,10 @@ class ShuYuePreviewTest {
     @Test
     fun stagedResultFingerprintBindsEveryImportedResultPlane() {
         val session = requireNotNull(ShuYueBackupV1Stager.stage(fingerprintFixture()))
+        assertEquals(
+            listOf(12, 12, 12),
+            session.pluginInstallations.map { it.versionCode },
+        )
         val sourceDigest = "01".repeat(32)
         val baseline = ShuYueBackupV1Stager.fingerprintStagedResult(sourceDigest, session)
 
@@ -547,6 +551,14 @@ class ShuYuePreviewTest {
                 },
             ),
         )
+        assertChanged(
+            "quarantined script version code",
+            session.copy(
+                pluginInstallations = session.pluginInstallations.map {
+                    it.copy(versionCode = it.versionCode + 1)
+                },
+            ),
+        )
         assertNotEquals(
             baseline,
             ShuYueBackupV1Stager.fingerprintStagedResult("02".repeat(32), session),
@@ -569,7 +581,7 @@ class ShuYuePreviewTest {
     fun stagedResultFingerprintHasStableV2GoldenValue() {
         val session = requireNotNull(ShuYueBackupV1Stager.stage(fingerprintFixture()))
         assertEquals(
-            "5c42d2b73a9f43a805a1e376c8aa550d313bacc25f2cc835b9fec2f958b3834f",
+            "7d90f06c3a9787c5664b62eb6d7ed69fad6e187b37d3a99fb42a416b2b48c4fe",
             ShuYueBackupV1Stager.fingerprintStagedResult("01".repeat(32), session),
         )
     }

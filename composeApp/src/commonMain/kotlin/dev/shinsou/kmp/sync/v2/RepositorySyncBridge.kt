@@ -61,11 +61,18 @@ class RepositorySyncBridge(
             // Snapshot diffing, deterministic sizing and the WAL write can grow with the library.
             // Keep that synchronous durability boundary off the UI dispatcher while the
             // repository still awaits it before publishing the visible snapshot.
-            val session = sessionStore.load() ?: return@withContext
-            if (session.status != SyncSessionStatus.READY || session.provider != SyncProvider.CLOUDFLARE_V2) {
-                return@withContext
-            }
-            commitDifference(previous, next, session.deviceId)
+            commitDifferenceIfReady(previous, next)
+        }
+
+    override suspend fun beforeAtomicHostCommit(previous: AppSnapshot, next: AppSnapshot) {
+        // The shared-driver host transaction is bound to the current SQLDelight context. Switching
+        // dispatchers here would open a competing SQLite writer instead of nesting this journal.
+        commitDifferenceIfReady(previous, next)
+    }
+
+    override suspend fun afterAtomicHostRollback(previous: AppSnapshot, next: AppSnapshot): Unit =
+        withContext(Dispatchers.Default) {
+            localStore.reconcileAfterExternalRollback()
         }
 
     /**
@@ -248,6 +255,12 @@ class RepositorySyncBridge(
                 }
             }
         }
+    }
+
+    private suspend fun commitDifferenceIfReady(previous: AppSnapshot, next: AppSnapshot) {
+        val session = sessionStore.load() ?: return
+        if (session.status != SyncSessionStatus.READY || session.provider != SyncProvider.CLOUDFLARE_V2) return
+        commitDifference(previous, next, session.deviceId)
     }
 
     private fun mutationBatches(mutations: List<SyncMutation>, deviceId: String): List<List<SyncMutation>> {

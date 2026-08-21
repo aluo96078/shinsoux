@@ -2,6 +2,13 @@ import { ApiError } from "../http.ts";
 
 const encoder = new TextEncoder();
 
+/** WebCrypto's current DOM types require an ArrayBuffer-backed view, not SharedArrayBuffer. */
+function ownedBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy;
+}
+
 export function encodeBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -50,7 +57,7 @@ export function concatBytes(...parts: Uint8Array[]): Uint8Array {
 }
 
 export async function sha256Bytes(value: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", value));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", ownedBytes(value)));
 }
 
 export async function sha256Base64Url(value: Uint8Array): Promise<string> {
@@ -92,8 +99,19 @@ export async function verifyEd25519(
   const signature = decodeBase64Url(signatureBase64Url, "signature");
   if (publicKey.byteLength !== 32 || signature.byteLength !== 64) return false;
   try {
-    const key = await crypto.subtle.importKey("raw", publicKey, { name: "Ed25519" }, false, ["verify"]);
-    return crypto.subtle.verify({ name: "Ed25519" }, key, signature, message);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      ownedBytes(publicKey),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    return crypto.subtle.verify(
+      { name: "Ed25519" },
+      key,
+      ownedBytes(signature),
+      ownedBytes(message),
+    );
   } catch {
     return false;
   }
@@ -103,7 +121,18 @@ export function domainSeparatedMessage(
   domain: string,
   ...parts: Uint8Array[]
 ): Uint8Array {
-  return concatBytes(encoder.encode(`shinsou:${domain}:v1\0`), ...parts);
+  return versionedDomainSeparatedMessage(1, domain, ...parts);
+}
+
+export function versionedDomainSeparatedMessage(
+  version: number,
+  domain: string,
+  ...parts: Uint8Array[]
+): Uint8Array {
+  if (!Number.isSafeInteger(version) || version < 1 || !/^[a-z0-9-]+$/.test(domain)) {
+    throw new ApiError(400, "invalid_signature_domain");
+  }
+  return concatBytes(encoder.encode(`shinsou:${domain}:v${version}\0`), ...parts);
 }
 
 export function bytesToHex(bytes: Uint8Array): string {

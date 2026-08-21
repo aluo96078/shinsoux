@@ -120,6 +120,14 @@ public data class TextQuote(
 public sealed interface ReadingLocator {
     public val schemaVersion: Int
     public val scope: ReadingScope
+    /** Common semantic cursor used by search/TTS consumers without erasing the locator variant. */
+    public val progression: Double?
+    /** Canonical UTF-16 hint when this locator addresses text; absent for image locations. */
+    public val offset: Int?
+    /** Stable semantic block hint when one exists; CFI/href remain authoritative for EPUB. */
+    public val blockId: String?
+
+    public fun resolveOffset(text: String): Int?
 
     @Serializable
     @SerialName("image")
@@ -134,6 +142,10 @@ public sealed interface ReadingLocator {
         init { validate() }
 
         public val pageIndex: Int? get() = pageIndexHint
+        override val progression: Double get() = normalizedOffsetFraction
+        override val offset: Int? get() = null
+        override val blockId: String? get() = null
+        override fun resolveOffset(text: String): Int? = null
         public fun validate(): Unit = validateReadingLocator(this)
     }
 
@@ -143,10 +155,10 @@ public sealed interface ReadingLocator {
         override val schemaVersion: Int,
         override val scope: ReadingScope,
         val resourceId: String,
-        val blockId: String,
-        val offset: Int,
+        override val blockId: String,
+        override val offset: Int,
         val offsetUnit: TextOffsetUnit = TextOffsetUnit.UTF_16_CODE_UNIT,
-        val progression: Double? = null,
+        override val progression: Double? = null,
         val direction: TextDirection = TextDirection.FORWARD,
         val quote: TextQuote? = null,
     ) : ReadingLocator {
@@ -154,7 +166,7 @@ public sealed interface ReadingLocator {
 
         public fun validate(): Unit = validateReadingLocator(this)
 
-        public fun resolveOffset(text: String): Int? {
+        override fun resolveOffset(text: String): Int? {
             if (offset <= text.length && isUtf16Boundary(text, offset) &&
                 (quote == null || quote.matchesAt(text, offset))
             ) return offset
@@ -171,20 +183,23 @@ public sealed interface ReadingLocator {
         /** Safe package href is authoritative; spine/offset are materialized hints. */
         val resourceHref: String,
         val cfi: String,
-        val progression: Double? = null,
+        override val progression: Double? = null,
         val direction: TextDirection = TextDirection.FORWARD,
         val spineIndexHint: Int? = null,
         val offsetHint: Int? = null,
+        /** Derived semantic hint only; [resourceHref] and [cfi] remain portable authority. */
+        val blockIdHint: String? = null,
         val offsetUnit: TextOffsetUnit = TextOffsetUnit.UTF_16_CODE_UNIT,
         val quote: TextQuote? = null,
     ) : ReadingLocator {
         init { validate() }
 
         public val spineIndex: Int? get() = spineIndexHint
-        public val offset: Int? get() = offsetHint
+        override val offset: Int? get() = offsetHint
+        override val blockId: String? get() = blockIdHint
         public fun validate(): Unit = validateReadingLocator(this)
 
-        public fun resolveOffset(text: String): Int? {
+        override fun resolveOffset(text: String): Int? {
             val offset = offsetHint
             if (offset != null && offset <= text.length && isUtf16Boundary(text, offset) &&
                 (quote == null || quote.matchesAt(text, offset))
@@ -287,6 +302,7 @@ public fun validateReadingLocator(locator: ReadingLocator): Unit {
             require(locator.offsetHint == null || locator.offsetHint >= 0) {
                 "EPUB offset hint must be non-negative"
             }
+            locator.blockIdHint?.let { requireIdentifier(it, "EPUB semantic block id hint") }
             require(locator.offsetHint == null || locator.offsetUnit == TextOffsetUnit.UTF_16_CODE_UNIT) {
                 "EPUB offset hint must use UTF-16 code units"
             }

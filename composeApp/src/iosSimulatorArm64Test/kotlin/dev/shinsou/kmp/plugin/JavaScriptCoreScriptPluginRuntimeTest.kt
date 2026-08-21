@@ -10,10 +10,57 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class JavaScriptCoreScriptPluginRuntimeTest {
+    @Test
+    fun multiSourcePackageSelectsExactExportedSourceInsteadOfListPosition() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { error("No network request expected") },
+            storage = storage,
+            requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+        )
+        val manifest = PluginManifest(
+            "multi.ios",
+            "Multi iOS",
+            "2.0.0",
+            2,
+            "all",
+            script = "multi.ios.js",
+            signature = "",
+            sources = listOf(
+                SourceIndexEntry("One", "en", 301L, "https://one.example"),
+                SourceIndexEntry("Two", "en", 302L, "https://two.example"),
+            ),
+        )
+        val factory = JavaScriptCoreScriptPluginRuntimeFactory()
+        assertFailsWith<IllegalArgumentException> {
+            factory.create(IOS_MULTI_SOURCE_PLUGIN, manifest, ScriptPluginEnvironment(network, storage))
+        }
+        val one = factory.createForSource(
+            IOS_MULTI_SOURCE_PLUGIN,
+            manifest,
+            manifest.sources.orEmpty()[0],
+            ScriptPluginEnvironment(network, storage),
+        )
+        val two = factory.createForSource(
+            IOS_MULTI_SOURCE_PLUGIN,
+            manifest,
+            manifest.sources.orEmpty()[1],
+            ScriptPluginEnvironment(network, storage),
+        )
+        try {
+            assertEquals("one|https://one.example", one.getPopularManga(0).mangas.single().title)
+            assertEquals("two|https://two.example", two.getPopularManga(0).mangas.single().title)
+        } finally {
+            one.close()
+            two.close()
+        }
+    }
+
     @Test
     fun cancellingSearchCancelsHttpBridgeAndFreesTheEngineWorker() = runBlocking {
         val slowRequestStarted = CompletableDeferred<Unit>()
@@ -244,6 +291,13 @@ class JavaScriptCoreScriptPluginRuntimeTest {
         }
     }
 }
+
+private const val IOS_MULTI_SOURCE_PLUGIN: String = """
+var sources={
+  '301':{id:'301',getPopularManga:function(page){var manga=SManga.create();manga.url='/one';manga.title='one|'+baseUrl;return new MangasPage([manga],false);}},
+  '302':{id:'302',getPopularManga:function(page){var manga=SManga.create();manga.url='/two';manga.title='two|'+baseUrl;return new MangasPage([manga],false);}}
+};
+"""
 
 private fun cancellableManifest(): PluginManifest = PluginManifest(
     "all.cancel-test",

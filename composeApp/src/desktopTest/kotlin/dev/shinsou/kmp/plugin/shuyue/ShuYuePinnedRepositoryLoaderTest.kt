@@ -1,3 +1,5 @@
+@file:OptIn(dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi::class)
+
 package dev.shinsou.kmp.plugin.shuyue
 
 import dev.shinsou.kmp.plugin.Sha256
@@ -80,12 +82,30 @@ class ShuYuePinnedRepositoryLoaderTest {
             "wenku8-api.js" to "89a9d3236dd7ea1655cad57ddeaca100cc1a8ff2b99acdcd06b8fd69cf13d7ce",
             "biquge-tw.js" to "2dd28789d8be4d3d5ac88926bc1e143e5b46198b3fa579f46baf510f2591de78",
         )
+        assertEquals(
+            mapOf(
+                "zh.wenku8" to expectedScriptDigests.getValue("wenku8.js"),
+                "zh.wenku8.api" to expectedScriptDigests.getValue("wenku8-api.js"),
+                "zh.biquge.tw" to expectedScriptDigests.getValue("biquge-tw.js"),
+            ),
+            ShuYueReviewedPluginCatalogV2.profiles.associate { it.identity.packageId to it.identity.sha256 },
+        )
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val admission = ShuYueReviewedPluginAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = ShuYueReviewedRuntimeFactoryV2 {
+                error("Quarantine must not create a JavaScript runtime")
+            },
+        )
         loaded.entries.forEach { entry ->
             val path = "shuyue-plugin/${entry.scriptUrl.substringBefore('?')}"
             val bytes = requireNotNull(javaClass.classLoader.getResourceAsStream(path)).use { it.readBytes() }
             assertTrue(bytes.isNotEmpty(), path)
             assertEquals(expectedScriptDigests.getValue(path.substringAfterLast('/')), Sha256.hex(bytes), path)
             val artifact = loader.downloadScript(loaded, entry)
+            assertEquals(ShuYueReviewStatusV2.REVIEWED, admission.quarantine(artifact).reviewStatus, path)
             assertEquals(expectedScriptDigests.getValue(path.substringAfterLast('/')), artifact.sha256, path)
             assertEquals(entry.id, artifact.metadata.packageId)
             assertEquals(entry.version, artifact.metadata.version)

@@ -171,6 +171,22 @@ class ShinsouRepository(
         origin = SnapshotReplacementOrigin.SYNC_MATERIALIZER,
     )
 
+    /**
+     * Publishes legacy rows derived from the already-durable typed content authority. This CAS
+     * intentionally bypasses [mutationObserver]: the enclosing content transaction (or a restored
+     * portable graph) already owns the corresponding sync events, so observing this compatibility
+     * projection would emit a second, lossy Manga/Chapter mutation stream.
+     */
+    internal suspend fun materializeContentAuthorityProjectionIfRevision(
+        expectedRevision: Long,
+        requested: AppSnapshot,
+    ): AppSnapshot? = replaceSnapshotIfRevision(
+        expectedRevision = expectedRevision,
+        imported = requested,
+        notifyMutationObserver = false,
+        origin = SnapshotReplacementOrigin.CONTENT_AUTHORITY_MATERIALIZER,
+    )
+
     private suspend fun replaceSnapshotIfRevision(
         expectedRevision: Long,
         imported: AppSnapshot,
@@ -854,6 +870,59 @@ class ShinsouRepository(
         fun encodeSnapshot(snapshot: AppSnapshot): String = AppSnapshotJson.encode(snapshot.withRequiredDefaults().validate())
     }
 
+    /**
+     * Commits a host-coordinated portable-state mutation without using the legacy direct snapshot
+     * replacement path.
+     *
+     * The host callback owns the enclosing durable transaction and must invoke [commitSyncJournal]
+     * inside it. The repository projection is published, and queued for persistence, only after
+     * that transaction returns successfully. This is the boundary used by content-backup v2 so a
+     * failed body/annotation/content-outbox write cannot expose a partially restored AppSnapshot.
+     * The callback must not perform network I/O while its durable transaction is open.
+     */
+    internal suspend fun <T> commitSnapshotMutationAtomically(
+        requested: AppSnapshot,
+        origin: SnapshotReplacementOrigin,
+        hostCommit: suspend (
+            previous: AppSnapshot,
+            next: AppSnapshot,
+            commitSyncJournal: suspend () -> Unit,
+        ) -> T,
+    ): AtomicSnapshotMutationResult<T> = mutex.withLock {
+        ensurePersistenceOpen()
+        val previous = mutableSnapshot.value
+        replacementGuard?.beforeReplace(origin, previous, requested)
+        if (origin == SnapshotReplacementOrigin.SYNCHRONIZED_BULK && mutationObserver == null) {
+            throw IllegalStateException(
+                "Cloudflare bulk mutation requires an installed sync mutation observer",
+            )
+        }
+        val next = requested.withRequiredDefaults()
+            .copy(revision = nextRevision(previous.revision, requested.revision))
+            .validate()
+        var journalCommitted = false
+        val result = try {
+            hostCommit(previous, next) {
+                check(!journalCommitted) { "The sync journal callback may be committed only once" }
+                mutationObserver?.beforeAtomicHostCommit(previous, next)
+                journalCommitted = true
+            }
+        } catch (failure: Throwable) {
+            if (journalCommitted) {
+                try {
+                    mutationObserver?.afterAtomicHostRollback(previous, next)
+                } catch (rollbackFailure: Throwable) {
+                    failure.addSuppressed(rollbackFailure)
+                }
+            }
+            throw failure
+        }
+        check(journalCommitted) { "The host transaction did not commit the sync journal boundary" }
+        mutableSnapshot.value = next
+        persistence?.enqueue(next)
+        AtomicSnapshotMutationResult(snapshot = next, result = result)
+    }
+
     private fun replaceMangaAt(
         state: AppSnapshot,
         index: Int,
@@ -890,6 +959,11 @@ class ShinsouRepository(
     }
 }
 
+internal data class AtomicSnapshotMutationResult<T>(
+    val snapshot: AppSnapshot,
+    val result: T,
+)
+
 /**
  * Adapter used by Cloudflare sync v2 to atomically persist replica metadata and a durable draft
  * before a local [AppSnapshot] projection is published. Implementations must be idempotent and
@@ -897,6 +971,20 @@ class ShinsouRepository(
  */
 fun interface SnapshotMutationObserver {
     suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot)
+
+    /**
+     * Joins a host-owned durable transaction. Implementations that normally switch dispatchers
+     * must override this callback and remain on the enclosing SQLDelight transaction context.
+     */
+    suspend fun beforeAtomicHostCommit(previous: AppSnapshot, next: AppSnapshot): Unit =
+        beforeCommit(previous, next)
+
+    /**
+     * Reconciles observer-owned memory after [beforeAtomicHostCommit] joined a host SQLite
+     * transaction that subsequently rolled back. Ordinary repository mutations never need this
+     * callback.
+     */
+    suspend fun afterAtomicHostRollback(previous: AppSnapshot, next: AppSnapshot): Unit = Unit
 }
 
 /** Identifies the only replacement paths that may cross the v2 synchronization boundary. */
@@ -909,6 +997,9 @@ enum class SnapshotReplacementOrigin {
 
     /** Projection produced from the already-authoritative local replica. */
     SYNC_MATERIALIZER,
+
+    /** Legacy compatibility rows derived from the durable typed content graph. */
+    CONTENT_AUTHORITY_MATERIALIZER,
 }
 
 fun interface SnapshotReplacementGuard {

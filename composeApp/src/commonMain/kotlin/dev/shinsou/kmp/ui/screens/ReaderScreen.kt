@@ -104,6 +104,7 @@ import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReaderViewportSample
+import dev.shinsou.kmp.reader.UnifiedReaderContent
 import dev.shinsou.kmp.reader.coerceReaderPosition
 import dev.shinsou.kmp.reader.continuousReaderPosition
 import dev.shinsou.kmp.reader.isContinuousReaderMode
@@ -165,7 +166,12 @@ fun ReaderScreen(
     onNextChapter: () -> Unit,
     onChapterSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    unifiedReaderContent: UnifiedReaderContent? = null,
+    unifiedReaderRenderer: (@Composable (UnifiedReaderContent, Modifier) -> Unit)? = null,
 ) {
+    require((unifiedReaderContent == null) == (unifiedReaderRenderer == null)) {
+        "Unified reader content and renderer must be supplied together"
+    }
     val strings = LocalShinsouStrings.current
     var controlsVisible by remember(chapter.id, readerSessionId) { mutableStateOf(true) }
     var settingsVisible by remember(readerSessionId) { mutableStateOf(false) }
@@ -185,6 +191,7 @@ fun ReaderScreen(
     }
     var viewportRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
     val currentPage = currentPosition.pageIndex
+    val unifiedReaderEnabled = unifiedReaderContent != null && unifiedReaderRenderer != null
     val focusRequester = remember { FocusRequester() }
     val platformContext = LocalPlatformContext.current
 
@@ -293,8 +300,8 @@ fun ReaderScreen(
     }
     // Modal sheets own a separate focus tree on desktop and iPadOS. Reclaim focus when they close
     // so hardware paging and Escape/back keep working without requiring another pointer click.
-    LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible) {
-        if (!settingsVisible && !chapterListVisible) focusRequester.requestFocus()
+    LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled) {
+        if (!unifiedReaderEnabled && !settingsVisible && !chapterListVisible) focusRequester.requestFocus()
     }
     // ReaderScreen is first composed while the async chapter request still exposes an empty page
     // list. A long-lived collector that captures that first composition keeps calling the stale
@@ -302,6 +309,7 @@ fun ReaderScreen(
     // loaded, which made the feature appear to require an off/on cycle. Keep the collector stable
     // while forwarding every event to the handler from the latest composition instead.
     val currentVolumeKeyHandler by rememberUpdatedState<(ReaderVolumeKeyEvent) -> Unit> { event ->
+        if (unifiedReaderEnabled) return@rememberUpdatedState
         val action = readerVolumeKeyAction(
             event = event,
             readerOpen = true,
@@ -325,10 +333,21 @@ fun ReaderScreen(
         if (systemBackRequest == 0L) return@LaunchedEffect
         handleReaderBack()
     }
-    LaunchedEffect(chapter.id, readerSessionId, currentPosition, pages.size, loading, positionReportingEnabled) {
-        if (positionReportingEnabled && !loading && pages.isNotEmpty()) onPositionChanged(currentPosition)
+    LaunchedEffect(
+        chapter.id,
+        readerSessionId,
+        currentPosition,
+        pages.size,
+        loading,
+        positionReportingEnabled,
+        unifiedReaderEnabled,
+    ) {
+        if (!unifiedReaderEnabled && positionReportingEnabled && !loading && pages.isNotEmpty()) {
+            onPositionChanged(currentPosition)
+        }
     }
-    LaunchedEffect(chapter.id, readerSessionId, currentPage, pages) {
+    LaunchedEffect(chapter.id, readerSessionId, currentPage, pages, unifiedReaderEnabled) {
+        if (unifiedReaderEnabled) return@LaunchedEffect
         val loader = SingletonImageLoader.get(platformContext)
         val requests = readerPrefetchIndices(currentPage, pages.size).map { index ->
             val page = pages[index]
@@ -359,6 +378,13 @@ fun ReaderScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (unifiedReaderEnabled && event.key != Key.Escape && event.key != Key.Back &&
+                    event.key != Key.NavigatePrevious
+                ) {
+                    // Let the injected text/EPUB surface own navigation keys. The host retains
+                    // only the reader-level close/back behavior.
+                    return@onPreviewKeyEvent false
+                }
                 when (event.key) {
                     Key.VolumeDown -> {
                         readerVolumeKeyAction(
@@ -440,7 +466,7 @@ fun ReaderScreen(
                 onOpenWeb = onOpenWeb,
                 modifier = Modifier.align(Alignment.Center),
             )
-            pages.isEmpty() -> ReaderError(
+            pages.isEmpty() && !unifiedReaderEnabled -> ReaderError(
                 message = strings.text("This chapter has no pages."),
                 onRetry = onRetry,
                 onOpenWeb = onOpenWeb,
@@ -458,6 +484,16 @@ fun ReaderScreen(
                 onToggleChrome = { controlsVisible = !controlsVisible },
                 modifier = Modifier.fillMaxSize(),
             )
+            unifiedReaderEnabled -> key(
+                chapter.id,
+                readerSessionId,
+                requireNotNull(unifiedReaderContent).representation.representationId,
+            ) {
+                requireNotNull(unifiedReaderRenderer).invoke(
+                    requireNotNull(unifiedReaderContent),
+                    Modifier.fillMaxSize(),
+                )
+            }
             else -> key(chapter.id, settings.readingMode) {
                 when (settings.readingMode) {
                 ReadingMode.PAGER_LTR,
@@ -521,7 +557,7 @@ fun ReaderScreen(
             }
         }
 
-        remotePositionSuggestion?.let { suggestion ->
+        remotePositionSuggestion?.takeUnless { unifiedReaderEnabled }?.let { suggestion ->
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -561,6 +597,7 @@ fun ReaderScreen(
             chapter = chapter,
             page = currentPage,
             pageCount = pages.size,
+            showPageControls = !unifiedReaderEnabled,
             inLibrary = inLibrary,
             hasPreviousChapter = previousChapter != null,
             hasNextChapter = nextChapter != null,
@@ -937,6 +974,7 @@ private fun ReaderControls(
     chapter: Chapter,
     page: Int,
     pageCount: Int,
+    showPageControls: Boolean,
     inLibrary: Boolean,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
@@ -1001,7 +1039,7 @@ private fun ReaderControls(
                     }
                 }
             }
-            Column(
+            if (showPageControls) Column(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()

@@ -1,9 +1,9 @@
 package dev.shinsou.kmp.content
 
+import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
-import kotlinx.coroutines.sync.Mutex
 import kotlin.time.Clock
 
 /** Fail-closed errors raised by the blob boundary. */
@@ -260,6 +260,17 @@ public interface ContentBlobStore {
 
     public fun publish(candidate: PendingBlob): BlobPublishReceipt
 
+    /**
+     * Claims an exact, already durable blob for a new local metadata transaction.
+     *
+     * This is the restart boundary for background download/materialization workers: receipts are
+     * intentionally process-local, while a verified payload may already have reached durable
+     * storage before the process stopped. Implementations must verify only [reference]'s exact
+     * payload, must not scan or materialize unrelated bodies, and must return the same object while
+     * an unconsumed receipt for that incarnation is still pending. A missing blob returns null.
+     */
+    public fun claimExistingVerified(reference: BlobRef): BlobPublishReceipt?
+
     public fun attached(
         owner: ContentManifestOwner,
         manifestId: String,
@@ -387,6 +398,186 @@ public interface ContentBlobStore {
     }
 }
 
+/**
+ * Internal participant used by a metadata store while its SQLite transaction is open.
+ *
+ * Receipt identity remains process-local, while a restart-safe implementation reconstructs
+ * immutable blob metadata before SQL attachment rows are hydrated and fetches exact payloads only
+ * through [ContentBlobStore.openRead]. Keeping this contract separate from the public blob API
+ * prevents callers from attaching content outside [SharedContentTransactionStore].
+ */
+internal interface ContentBlobTransactionParticipant {
+    /** True only when lifecycle metadata and on-demand payload access survive process restart. */
+    val isRestartSafe: Boolean
+
+    fun <T> withExclusiveTransaction(block: () -> T): T
+    fun snapshotForTransactionLocked(): ContentBlobRollback
+    fun hydrateAttachmentsLocked(
+        attachmentsToHydrate: List<BlobAttachment>,
+        auxiliaryAttachmentsToHydrate: List<AuxiliaryBlobAttachment> = emptyList(),
+    )
+    /** Clears only the portable manifest-reference ledger inside an enclosing rollback boundary. */
+    fun clearManifestAttachmentsLocked()
+    /** Detaches exactly one publication graph and returns its former immutable reference ledger. */
+    fun detachManifestAttachmentsLocked(publicationKey: PublicationKey): List<BlobAttachment>
+    fun attachedLocked(
+        owner: ContentManifestOwner,
+        manifestId: String,
+        contentRevision: Long,
+    ): BlobAttachment?
+    fun auxiliaryAttachedLocked(attachmentKey: String): AuxiliaryBlobAttachment?
+    fun validateAtomicAttachmentsLocked(
+        receipts: List<BlobPublishReceipt>,
+        attachments: List<BlobAttachment>,
+        auxiliaryAttachments: List<AuxiliaryBlobAttachment> = emptyList(),
+    )
+    fun validateReceiptsOnlyLocked(receipts: List<BlobPublishReceipt>)
+    fun consumeAtomicAttachmentsLocked(
+        receipts: List<BlobPublishReceipt>,
+        attachments: List<BlobAttachment>,
+        auxiliaryAttachments: List<AuxiliaryBlobAttachment> = emptyList(),
+        afterAttachment: (() -> Unit)? = null,
+    )
+    fun consumeReceiptsLocked(receipts: List<BlobPublishReceipt>)
+}
+
+internal fun interface ContentBlobRollback {
+    fun rollback()
+}
+
+/** Durable representation used only between the state machine and its platform persistence. */
+internal data class DurableContentBlob(
+    val reference: BlobRef,
+    /** Null for cold-start metadata snapshots; payload bytes are fetched through durability on demand. */
+    val bytes: ByteArray?,
+    val incarnation: Long,
+    val generation: Long,
+    val publishedAtEpochMillis: Long,
+    val lifecycleState: BlobLifecycleState,
+    val discoveredAtEpochMillis: Long?,
+) {
+    init {
+        reference.validate()
+        bytes?.let {
+            require(it.size.toLong() == reference.byteSize) { "Durable blob size does not match its reference" }
+        }
+        require(incarnation > 0) { "Durable blob incarnation must be positive" }
+        require(generation >= 0) { "Durable blob generation must be non-negative" }
+        require(publishedAtEpochMillis >= 0) { "Durable blob publication timestamp must be non-negative" }
+        when (lifecycleState) {
+            BlobLifecycleState.AVAILABLE -> require(discoveredAtEpochMillis == null) {
+                "Available durable blob cannot carry orphan discovery time"
+            }
+            BlobLifecycleState.DISCOVERED_ORPHAN -> require(discoveredAtEpochMillis != null) {
+                "Discovered durable orphan must carry discovery time"
+            }
+        }
+    }
+
+    fun immutableCopy(): DurableContentBlob = copy(bytes = bytes?.copyOf())
+}
+
+/** Low-level streaming handles owned by a restart-safe durability adapter. */
+internal interface DurableContentBlobStageHandle {
+    val expectedSizeBytes: Long?
+    val bytesWritten: Long
+    val isSealed: Boolean
+    fun append(chunk: ByteArray)
+    fun seal(expected: BlobRef?, blobIdFactory: () -> String): DurableContentBlobPendingHandle
+    fun abort()
+}
+
+internal interface DurableContentBlobPendingHandle {
+    val stage: DurableContentBlobStageHandle
+    val reference: BlobRef
+}
+
+internal interface DurableContentBlobReadHandle {
+    fun readChunk(maxBytes: Int): ByteArray?
+    fun close()
+}
+
+/** Persistence hook. Implementations must make each upsert/delete durable before returning. */
+internal interface ContentBlobDurability {
+    val storeInstanceId: String
+    /** Loads only bounded metadata. Implementations must not materialize payload columns here. */
+    fun loadMetadata(): List<DurableContentBlob>
+    /** Reads one exact immutable incarnation when a caller opens or verifies that blob. */
+    fun readPayload(blob: DurableContentBlob): ByteArray?
+    fun beginStage(
+        expectedSizeBytes: Long?,
+        mediaType: String,
+        maximumBlobSizeBytes: Long,
+    ): DurableContentBlobStageHandle? = null
+    fun publish(blob: DurableContentBlob, pending: DurableContentBlobPendingHandle) {
+        throw ContentBlobStoreException.InvalidStage("Durability adapter does not accept streaming stages")
+    }
+    /** Returns a handle only after verifying this exact immutable incarnation's complete body. */
+    fun openRead(blob: DurableContentBlob): DurableContentBlobReadHandle? = null
+    fun verifyPayload(blob: DurableContentBlob): Boolean = readPayload(blob)?.let { payload ->
+        payload.size.toLong() == blob.reference.byteSize &&
+            Sha256.hex(payload) == blob.reference.plaintextDigest
+    } == true
+    fun upsert(blob: DurableContentBlob)
+    fun delete(blob: DurableContentBlob)
+
+    /**
+     * Runs one explicitly background-only, bounded representation-maintenance slice.
+     *
+     * Implementations must not enumerate files or read inline payload columns during
+     * [loadMetadata]. A slice may copy only [ContentBlobStorageMaintenanceRequest.maximumBytes]
+     * body bytes and inspect only [ContentBlobStorageMaintenanceRequest.maximumFiles] directory
+     * entries. The caller holds the blob state-machine lock, so a file cannot be mistaken for an
+     * orphan while publish/receipt/attachment state is changing.
+     */
+    fun runStorageMaintenanceSlice(
+        request: ContentBlobStorageMaintenanceRequest,
+    ): ContentBlobStorageMaintenanceResult = ContentBlobStorageMaintenanceResult()
+}
+
+/** Internal policy passed only by the idle/background recovery coordinator. */
+internal data class ContentBlobStorageMaintenanceRequest(
+    val nowEpochMillis: Long,
+    val minimumAgeMillis: Long,
+    val maximumBytes: Int,
+    val maximumFiles: Int,
+) {
+    init {
+        require(nowEpochMillis >= 0) { "Blob maintenance timestamp must be non-negative" }
+        require(minimumAgeMillis >= 0) { "Blob maintenance minimum age must be non-negative" }
+        require(maximumBytes > 0) { "Blob maintenance byte budget must be positive" }
+        require(maximumFiles > 0) { "Blob maintenance file budget must be positive" }
+    }
+}
+
+/** Bounded diagnostics for SQL/file representation maintenance. */
+internal data class ContentBlobStorageMaintenanceResult(
+    val migratedInlineBytes: Int = 0,
+    val completedInlineMigrations: Int = 0,
+    val scannedFiles: Int = 0,
+    val discoveredUnknownFiles: Int = 0,
+    val removedUnknownFiles: Int = 0,
+) {
+    init {
+        require(migratedInlineBytes >= 0)
+        require(completedInlineMigrations >= 0)
+        require(scannedFiles >= 0)
+        require(discoveredUnknownFiles >= 0)
+        require(removedUnknownFiles >= 0)
+        require(discoveredUnknownFiles <= scannedFiles)
+        require(removedUnknownFiles <= scannedFiles)
+    }
+
+    operator fun plus(other: ContentBlobStorageMaintenanceResult): ContentBlobStorageMaintenanceResult =
+        ContentBlobStorageMaintenanceResult(
+            migratedInlineBytes = migratedInlineBytes + other.migratedInlineBytes,
+            completedInlineMigrations = completedInlineMigrations + other.completedInlineMigrations,
+            scannedFiles = scannedFiles + other.scannedFiles,
+            discoveredUnknownFiles = discoveredUnknownFiles + other.discoveredUnknownFiles,
+            removedUnknownFiles = removedUnknownFiles + other.removedUnknownFiles,
+        )
+}
+
 /** Deterministic in-memory implementation used by common tests and staging callers. */
 public class InMemoryContentBlobStore(
     override val maximumBlobSizeBytes: Long = DEFAULT_MAXIMUM_BLOB_SIZE_BYTES,
@@ -398,24 +589,49 @@ public class InMemoryContentBlobStore(
     /** Stable identity used to reject receipts crossing store instances. */
     public val storeInstanceId: String = configuredStoreInstanceId?.takeIf(String::isNotBlank)
         ?: "memory-store-${hashCode().toUInt().toString(16)}"
-    private val stateMutex = Mutex()
+    private val stateMutex = SynchronousLock()
     private var lockHeld = false
     private val blobs = LinkedHashMap<String, StoredBlob>()
     private val attachments = LinkedHashMap<String, AttachmentLedger>()
+    private val auxiliaryAttachments = LinkedHashMap<String, AuxiliaryAttachmentLedger>()
     private val published = LinkedHashMap<String, PendingReceipt>()
-    private val activeReaders = LinkedHashSet<MemoryReader>()
-    private val liveStages = LinkedHashSet<MemoryStage>()
+    private val activeReaders = LinkedHashSet<StateReader>()
+    private val liveStages = LinkedHashSet<ContentBlobStage>()
     private var nextBlobSequence = 1L
     private var nextCommitSequence = 1L
     private var nextIncarnationValue = 1L
+    private var durability: ContentBlobDurability? = null
     override var currentGeneration: Long = 0
         private set
+
+    internal val isRestartSafe: Boolean get() = durability != null
 
     init {
         require(maximumBlobSizeBytes > 0) { "Maximum blob size must be positive" }
         require(maximumBlobSizeBytes <= Int.MAX_VALUE.toLong()) {
             "In-memory maximum blob size must fit a ByteArray"
         }
+    }
+
+    internal constructor(
+        maximumBlobSizeBytes: Long,
+        blobIdFactory: () -> String,
+        commitTokenFactory: () -> String,
+        clock: () -> Long,
+        configuredStoreInstanceId: String,
+        durability: ContentBlobDurability,
+    ) : this(
+        maximumBlobSizeBytes = maximumBlobSizeBytes,
+        blobIdFactory = blobIdFactory,
+        commitTokenFactory = commitTokenFactory,
+        clock = clock,
+        configuredStoreInstanceId = configuredStoreInstanceId,
+    ) {
+        require(durability.storeInstanceId == storeInstanceId) {
+            "Durable blob store identity does not match the in-memory participant"
+        }
+        this.durability = durability
+        restoreDurableBlobs(durability.loadMetadata())
     }
 
     override fun beginStage(expectedSizeBytes: Long?, mediaType: String): ContentBlobStage = withStateLock {
@@ -426,43 +642,54 @@ public class InMemoryContentBlobStore(
         require(mediaType.isNotBlank() && mediaType.length <= 256 && mediaType.none(Char::isISOControl)) {
             "Blob media type must be printable and bounded"
         }
-        MemoryStage(expectedSizeBytes, mediaType).also(liveStages::add)
+        val stage = durability
+            ?.beginStage(expectedSizeBytes, mediaType, maximumBlobSizeBytes)
+            ?.let(::DurableStage)
+            ?: MemoryStage(expectedSizeBytes, mediaType)
+        stage.also(liveStages::add)
     }
 
     override fun publish(candidate: PendingBlob): BlobPublishReceipt = withStateLock {
-        val pending = candidate as? MemoryPending
+        val memoryPending = candidate as? MemoryPending
+        val durablePending = candidate as? DurablePending
+        val stage = memoryPending?.stage ?: durablePending?.stage
             ?: throw ContentBlobStoreException.InvalidStage("Candidate belongs to another blob store")
-        if (!pending.stage.isSealed || pending.stage !in liveStages) {
+        if (!stage.isSealed || stage !in liveStages) {
             throw ContentBlobStoreException.InvalidStage("Blob candidate is not a live sealed stage")
         }
+        val reference = candidate.reference
+        val candidateBytes = memoryPending?.bytes
         val commitToken = nextCommitToken()
         require(published[commitToken] == null) { "Blob commit token factory returned a duplicate token" }
         val nextGeneration = checkedAdd(currentGeneration, 1)
         val publishedAt = clock().also { require(it >= 0) { "Blob clock must be non-negative" } }
-        val existing = blobs[pending.reference.blobId]
+        val existing = blobs[reference.blobId]
         if (existing != null) {
             if (existing.lifecycleState == BlobLifecycleState.DISCOVERED_ORPHAN) {
                 throw ContentBlobStoreException.InvalidStage("A discovered orphan cannot be republished before sweep")
             }
             if (published.values.any {
-                    it.receipt.reference.blobId == pending.reference.blobId &&
+                    it.receipt.reference.blobId == reference.blobId &&
                         it.receipt.incarnation == existing.incarnation
                 }
             ) {
                 throw ContentBlobStoreException.InvalidStage("Blob already has an unconsumed publish receipt")
             }
-            if (existing.reference != pending.reference || !existing.bytes.contentEquals(pending.bytes)) {
-                throw ContentBlobStoreException.CorruptBlob(pending.reference.blobId)
+            if (existing.reference != reference ||
+                (candidateBytes != null && !payloadBytesLocked(existing).contentEquals(candidateBytes)) ||
+                (durablePending != null && !isIntact(existing))
+            ) {
+                throw ContentBlobStoreException.CorruptBlob(reference.blobId)
             }
         } else {
-            checkSize(pending.bytes.size.toLong())
+            checkSize(reference.byteSize)
         }
         // All potentially throwing checks happen before visibility changes.  This is important
         // for a failed token factory or clock: `put` must never leave a blob without its receipt.
         val stored = if (existing == null) {
             StoredBlob(
-                reference = pending.reference,
-                bytes = pending.bytes.copyOf(),
+                reference = reference,
+                bytes = candidateBytes?.copyOf(),
                 incarnation = nextIncarnation().also { require(it > 0) },
                 generation = nextGeneration,
                 publishedAtEpochMillis = publishedAt,
@@ -473,23 +700,82 @@ public class InMemoryContentBlobStore(
             // A crash-recovered identical blob gets a fresh publication clock/generation.  It
             // cannot be collected using the age of its previous, lost receipt.
             existing.copy(
+                bytes = candidateBytes?.copyOf(),
                 generation = nextGeneration,
                 publishedAtEpochMillis = publishedAt,
                 lifecycleState = BlobLifecycleState.AVAILABLE,
                 discoveredAtEpochMillis = null,
             )
         }
-        blobs[pending.reference.blobId] = stored
-        liveStages.remove(pending.stage)
-        pending.stage.published = true
+        // Persistence happens before the in-process receipt becomes observable. A process death
+        // after this write leaves a complete, receipt-less orphan which is discovered only by an
+        // explicit recovery boundary after restart.
+        if (durablePending != null) {
+            val persistence = durability
+                ?: throw ContentBlobStoreException.InvalidStage("Durable stage lost its storage adapter")
+            persistence.publish(stored.toDurableBlob(includePayload = false), durablePending.handle)
+        } else {
+            durability?.upsert(stored.toDurableBlob(includePayload = true))
+        }
+        blobs[reference.blobId] = stored
+        liveStages.remove(stage)
+        when (stage) {
+            is MemoryStage -> stage.published = true
+            is DurableStage -> stage.markPublishedLocked()
+        }
         currentGeneration = nextGeneration
         val receipt = BlobPublishReceipt(
             storeInstanceId = storeInstanceId,
             commitToken = commitToken,
-            reference = pending.reference,
+            reference = reference,
             incarnation = stored.incarnation,
             generation = nextGeneration,
             publishedAtEpochMillis = publishedAt,
+        )
+        published[commitToken] = PendingReceipt(receipt)
+        receipt
+    }
+
+    override fun claimExistingVerified(reference: BlobRef): BlobPublishReceipt? = withStateLock {
+        reference.validate()
+        val stored = blobs[reference.blobId] ?: return null
+        if (stored.reference != reference) {
+            throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+        }
+        val matchingPending = published.values.filter {
+            it.receipt.reference == stored.reference && it.receipt.incarnation == stored.incarnation
+        }
+        check(matchingPending.size <= 1) { "A blob incarnation has multiple pending receipts" }
+        // A pending receipt was issued only after this exact immutable incarnation passed full
+        // verification. Return it before touching durable payload bytes again; final transaction
+        // validation still re-verifies every receipt immediately before attachment.
+        matchingPending.singleOrNull()?.let { return it.receipt }
+        if (!isIntact(stored)) {
+            throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+        }
+
+        val commitToken = nextCommitToken()
+        require(published[commitToken] == null) { "Blob commit token factory returned a duplicate token" }
+        val nextGeneration = checkedAdd(currentGeneration, 1)
+        val claimedAt = clock().also { require(it >= 0) { "Blob clock must be non-negative" } }
+        val claimed = stored.copy(
+            generation = nextGeneration,
+            publishedAtEpochMillis = claimedAt,
+            lifecycleState = BlobLifecycleState.AVAILABLE,
+            discoveredAtEpochMillis = null,
+        )
+        // Payload verification above reads only this exact blob. Persisting the claim updates
+        // lifecycle metadata without rewriting or reloading the body column.
+        durability?.upsert(claimed.toDurableBlob(includePayload = false))
+        blobs[reference.blobId] = claimed
+        currentGeneration = nextGeneration
+        val receipt = BlobPublishReceipt(
+            storeInstanceId = storeInstanceId,
+            commitToken = commitToken,
+            reference = claimed.reference,
+            incarnation = claimed.incarnation,
+            generation = claimed.generation,
+            publishedAtEpochMillis = claimedAt,
         )
         published[commitToken] = PendingReceipt(receipt)
         receipt
@@ -539,6 +825,7 @@ public class InMemoryContentBlobStore(
                             lifecycleState = BlobLifecycleState.DISCOVERED_ORPHAN,
                             discoveredAtEpochMillis = discoveredAt,
                         )
+                        durability?.upsert(stored.toDurableBlob(includePayload = false))
                         blobs[id] = stored
                     }
                     val discoveredAt = stored.discoveredAtEpochMillis ?: stored.publishedAtEpochMillis
@@ -592,6 +879,7 @@ public class InMemoryContentBlobStore(
                 ageMillis(discoveredAt, plan.boundary.nowEpochMillis) >=
                     plan.boundary.minimumAgeMillis
             if (stillSafe) {
+                durability?.delete(stored.toDurableBlob(includePayload = false))
                 blobs.remove(candidate.reference.blobId)
                 check(published.values.none {
                     it.receipt.reference == candidate.reference && it.receipt.incarnation == candidate.incarnation
@@ -605,13 +893,21 @@ public class InMemoryContentBlobStore(
     override fun openRead(reference: BlobRef): BlobReadLease? = withStateLock {
         reference.validate()
         val stored = blobs[reference.blobId] ?: return null
-        if (stored.reference != reference || !isIntact(stored)) {
+        if (stored.reference != reference) {
             throw ContentBlobStoreException.CorruptBlob(reference.blobId)
         }
         if (stored.lifecycleState == BlobLifecycleState.DISCOVERED_ORPHAN) {
             throw ContentBlobStoreException.InvalidStage("A discovered orphan cannot acquire a read lease")
         }
-        MemoryReader(stored.reference, stored.incarnation, stored.bytes.copyOf()).also(activeReaders::add)
+        val reader = stored.bytes?.let { payload ->
+            if (!isIntact(stored, payload)) {
+                throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+            }
+            MemoryReader(stored.reference, stored.incarnation, payload.copyOf())
+        } ?: durability?.openRead(stored.toDurableBlob(includePayload = false))?.let { handle ->
+            DurableReader(stored.reference, stored.incarnation, handle)
+        } ?: throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+        reader.also(activeReaders::add)
     }
 
     public val count: Int get() = withStateLock { blobs.size }
@@ -629,7 +925,7 @@ public class InMemoryContentBlobStore(
     /** Models a process death after immutable publish but before the shared transaction. */
     public fun simulateProcessCrashAndRecover() = withStateLock {
         liveStages.clear()
-        activeReaders.toList().forEach(MemoryReader::forceCloseLocked)
+        activeReaders.toList().forEach(StateReader::forceCloseLocked)
         activeReaders.clear()
         published.clear()
         val discoveredAt = clock().also { require(it >= 0) { "Blob clock must be non-negative" } }
@@ -648,17 +944,23 @@ public class InMemoryContentBlobStore(
 
     internal fun <T> withExclusiveTransaction(block: () -> T): T = withStateLock(block)
 
-    internal fun snapshotForTransactionLocked(): InMemoryBlobRollback {
+    internal fun snapshotForTransactionLocked(): ContentBlobRollback {
         requireLockHeld()
-        val blobSnapshot = blobs.mapValuesTo(LinkedHashMap()) { (_, stored) -> stored.copy(bytes = stored.bytes.copyOf()) }
+        val blobSnapshot = blobs.mapValuesTo(LinkedHashMap()) { (_, stored) ->
+            stored.copy(bytes = stored.bytes?.copyOf())
+        }
         val attachmentSnapshot = attachments.mapValuesTo(LinkedHashMap()) { (_, ledger) ->
             ledger.copy(record = copyAttachment(ledger.record), incarnations = ledger.incarnations.toMap())
         }
+        val auxiliaryAttachmentSnapshot = auxiliaryAttachments.mapValuesTo(LinkedHashMap()) { (_, ledger) ->
+            ledger.copy(record = copyAuxiliaryAttachment(ledger.record), incarnations = ledger.incarnations.toMap())
+        }
         val publishedSnapshot = LinkedHashMap(published)
-        return InMemoryBlobRollback {
+        return ContentBlobRollback {
             requireLockHeld()
             blobs.clear(); blobs.putAll(blobSnapshot)
             attachments.clear(); attachments.putAll(attachmentSnapshot)
+            auxiliaryAttachments.clear(); auxiliaryAttachments.putAll(auxiliaryAttachmentSnapshot)
             published.clear(); published.putAll(publishedSnapshot)
         }
     }
@@ -667,12 +969,16 @@ public class InMemoryContentBlobStore(
      * Installs durable attachment rows into a freshly opened in-memory participant.  This is
      * intentionally separate from receipt validation: a SQL row is already committed, so its
      * attachment must be hydrated even when the newly published receipt is only a deduplicated
-     * capability for an existing blob.  All blobs are verified before any ledger entry changes.
+     * capability for an existing blob. Exact references are verified before any ledger entry
+     * changes; payload digest verification is deferred until [ContentBlobStore.openRead].
      */
-    internal fun hydrateAttachmentsLocked(attachmentsToHydrate: List<BlobAttachment>) {
+    internal fun hydrateAttachmentsLocked(
+        attachmentsToHydrate: List<BlobAttachment>,
+        auxiliaryAttachmentsToHydrate: List<AuxiliaryBlobAttachment> = emptyList(),
+    ) {
         requireLockHeld()
         val keys = HashSet<String>()
-        val snapshots = attachmentsToHydrate.map { attachment ->
+        val manifestSnapshots = attachmentsToHydrate.map { attachment ->
             val snapshot = attachment.deepImmutableSnapshot()
             if (!keys.add(snapshot.attachmentKey)) {
                 throw ContentBlobStoreException.InvalidStage("Manifest attachments must be unique")
@@ -686,15 +992,53 @@ public class InMemoryContentBlobStore(
                     ?: throw ContentBlobStoreException.InvalidStage(
                         "Blob ${reference.blobId} is not available for attachment hydration",
                     )
-                if (stored.reference != reference || stored.lifecycleState != BlobLifecycleState.AVAILABLE ||
-                    !isIntact(stored)
-                ) {
+                // Payload integrity is intentionally deferred to openRead. Cold-start attachment
+                // hydration validates exact immutable metadata without reading every body.
+                if (stored.reference != reference) {
                     throw ContentBlobStoreException.CorruptBlob(reference.blobId)
                 }
             }
             snapshot
         }
-        snapshots.forEach { snapshot ->
+        keys.clear()
+        val auxiliarySnapshots = auxiliaryAttachmentsToHydrate.map { attachment ->
+            val snapshot = attachment.deepImmutableSnapshot()
+            if (!keys.add(snapshot.attachmentKey)) {
+                throw ContentBlobStoreException.InvalidStage("Auxiliary attachments must be unique")
+            }
+            val previous = auxiliaryAttachments[snapshot.attachmentKey]?.record
+            if (previous != null && previous != snapshot) {
+                throw ContentBlobStoreException.AttachmentConflict(snapshot.attachmentKey)
+            }
+            snapshot.blobs.forEach { reference ->
+                val stored = blobs[reference.blobId]
+                    ?: throw ContentBlobStoreException.InvalidStage(
+                        "Blob ${reference.blobId} is not available for attachment hydration",
+                    )
+                if (stored.reference != reference) {
+                    throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+                }
+            }
+            snapshot
+        }
+        // A committed SQL attachment is the durable reference authority. If recovery discovered
+        // its blob before attachment hydration, restore it to AVAILABLE before installing the
+        // in-memory ledger so GC cannot retain a stale orphan classification.
+        (manifestSnapshots.flatMap(BlobAttachment::blobs) +
+            auxiliarySnapshots.flatMap(AuxiliaryBlobAttachment::blobs))
+            .distinctBy(BlobRef::blobId)
+            .forEach { reference ->
+            val stored = requireNotNull(blobs[reference.blobId])
+            if (stored.lifecycleState == BlobLifecycleState.DISCOVERED_ORPHAN) {
+                val restored = stored.copy(
+                    lifecycleState = BlobLifecycleState.AVAILABLE,
+                    discoveredAtEpochMillis = null,
+                )
+                durability?.upsert(restored.toDurableBlob(includePayload = false))
+                blobs[reference.blobId] = restored
+            }
+        }
+        manifestSnapshots.forEach { snapshot ->
             val incarnations = snapshot.blobs.associate { reference ->
                 reference.blobId to requireNotNull(blobs[reference.blobId]).incarnation
             }
@@ -703,6 +1047,59 @@ public class InMemoryContentBlobStore(
                 incarnations,
             )
         }
+        auxiliarySnapshots.forEach { snapshot ->
+            val incarnations = snapshot.blobs.associate { reference ->
+                reference.blobId to requireNotNull(blobs[reference.blobId]).incarnation
+            }
+            auxiliaryAttachments[snapshot.attachmentKey] = AuxiliaryAttachmentLedger(
+                copyAuxiliaryAttachment(snapshot),
+                incarnations,
+            )
+        }
+    }
+
+    /**
+     * Drops the derived in-memory manifest ledger before a verified portable-state replacement.
+     * Immutable payloads are retained and become ordinary orphan candidates when the replacement
+     * graph no longer references them. The caller must hold a rollback snapshot and replace the
+     * matching SQLite rows in the same transaction.
+     */
+    internal fun clearManifestAttachmentsLocked() {
+        requireLockHeld()
+        attachments.clear()
+    }
+
+    /**
+     * Publication-scoped counterpart to [clearManifestAttachmentsLocked]. The enclosing content
+     * transaction persists the matching metadata deletion and a removed-reference lifecycle
+     * intent before releasing this lock.
+     */
+    internal fun detachManifestAttachmentsLocked(
+        publicationKey: PublicationKey,
+    ): List<BlobAttachment> {
+        requireLockHeld()
+        publicationKey.validate()
+        val keys = attachments.entries
+            .filter { (_, ledger) -> ledger.record.owner.publicationKey == publicationKey }
+            .map { it.key }
+        return keys.map { key ->
+            copyAttachment(requireNotNull(attachments.remove(key)).record)
+        }.sortedBy(BlobAttachment::attachmentKey)
+    }
+
+    /** Exact publication-scoped manifest view for semantic replica replay validation. */
+    internal fun manifestAttachmentsLocked(
+        publicationKey: PublicationKey,
+    ): List<BlobAttachment> {
+        requireLockHeld()
+        publicationKey.validate()
+        return attachments.values
+            .asSequence()
+            .map(AttachmentLedger::record)
+            .filter { it.owner.publicationKey == publicationKey }
+            .map(::copyAttachment)
+            .sortedBy(BlobAttachment::attachmentKey)
+            .toList()
     }
 
     /** Reads an attachment while the participant lock is already held. */
@@ -719,13 +1116,25 @@ public class InMemoryContentBlobStore(
         return attachments[key]?.record?.let(::copyAttachment)
     }
 
+    internal fun auxiliaryAttachedLocked(attachmentKey: String): AuxiliaryBlobAttachment? {
+        requireLockHeld()
+        require(attachmentKey.isNotBlank() && attachmentKey.length <= 4_096) {
+            "Auxiliary attachment key must be non-blank and bounded"
+        }
+        require(attachmentKey.none(Char::isISOControl) && attachmentKey.none(Char::isWhitespace)) {
+            "Auxiliary attachment key contains unsafe characters"
+        }
+        return auxiliaryAttachments[attachmentKey]?.record?.let(::copyAuxiliaryAttachment)
+    }
+
     /** Validate all receipt/attachment relations without mutating the store. */
     internal fun validateAtomicAttachmentsLocked(
         receipts: List<BlobPublishReceipt>,
         attachments: List<BlobAttachment>,
+        auxiliaryAttachments: List<AuxiliaryBlobAttachment> = emptyList(),
     ) {
         requireLockHeld()
-        if (receipts.isEmpty() && attachments.isEmpty()) return
+        if (receipts.isEmpty() && attachments.isEmpty() && auxiliaryAttachments.isEmpty()) return
         val receiptTokens = HashSet<String>()
         val receiptByBlobId = LinkedHashMap<String, BlobPublishReceipt>()
         receipts.forEach { receipt ->
@@ -770,6 +1179,30 @@ public class InMemoryContentBlobStore(
                 }
             }
             val previous = this.attachments[attachment.attachmentKey]?.record
+            if (previous != null && previous != attachment) {
+                throw ContentBlobStoreException.AttachmentConflict(attachment.attachmentKey)
+            }
+        }
+        attachmentKeys.clear()
+        auxiliaryAttachments.forEach { attachment ->
+            if (!attachmentKeys.add(attachment.attachmentKey)) {
+                throw ContentBlobStoreException.InvalidStage("Auxiliary attachments must be unique")
+            }
+            attachment.blobs.forEach { reference ->
+                val prior = attachmentRefs[reference.blobId]
+                if (prior != null && prior != reference) {
+                    throw ContentBlobStoreException.InvalidStage("Shared blob references must match in full")
+                }
+                if (prior == null) attachmentRefs[reference.blobId] = reference
+                val stored = blobs[reference.blobId]
+                    ?: throw ContentBlobStoreException.InvalidStage("Blob ${reference.blobId} is not published")
+                if (stored.reference != reference || stored.lifecycleState != BlobLifecycleState.AVAILABLE ||
+                    !isIntact(stored)
+                ) {
+                    throw ContentBlobStoreException.CorruptBlob(reference.blobId)
+                }
+            }
+            val previous = this.auxiliaryAttachments[attachment.attachmentKey]?.record
             if (previous != null && previous != attachment) {
                 throw ContentBlobStoreException.AttachmentConflict(attachment.attachmentKey)
             }
@@ -829,6 +1262,7 @@ public class InMemoryContentBlobStore(
     internal fun consumeAtomicAttachmentsLocked(
         receipts: List<BlobPublishReceipt>,
         attachments: List<BlobAttachment>,
+        auxiliaryAttachments: List<AuxiliaryBlobAttachment> = emptyList(),
         afterAttachment: (() -> Unit)? = null,
     ) {
         requireLockHeld()
@@ -837,6 +1271,16 @@ public class InMemoryContentBlobStore(
                 reference.blobId to requireNotNull(blobs[reference.blobId]).incarnation
             }
             this.attachments[attachment.attachmentKey] = AttachmentLedger(copyAttachment(attachment), incarnations)
+            afterAttachment?.invoke()
+        }
+        auxiliaryAttachments.forEach { attachment ->
+            val incarnations = attachment.blobs.associate { reference ->
+                reference.blobId to requireNotNull(blobs[reference.blobId]).incarnation
+            }
+            this.auxiliaryAttachments[attachment.attachmentKey] = AuxiliaryAttachmentLedger(
+                copyAuxiliaryAttachment(attachment),
+                incarnations,
+            )
             afterAttachment?.invoke()
         }
         receipts.forEach { published.remove(it.commitToken) }
@@ -860,9 +1304,26 @@ public class InMemoryContentBlobStore(
         }
     }
 
-    private fun isIntact(stored: StoredBlob): Boolean =
-        stored.bytes.size.toLong() == stored.reference.byteSize &&
-            Sha256.hex(stored.bytes) == stored.reference.plaintextDigest
+    private fun isIntact(stored: StoredBlob): Boolean = stored.bytes?.let { payload ->
+        isIntact(stored, payload)
+    } ?: durability?.verifyPayload(stored.toDurableBlob(includePayload = false)) == true
+
+    private fun isIntact(stored: StoredBlob, payload: ByteArray): Boolean =
+        payload.size.toLong() == stored.reference.byteSize &&
+            Sha256.hex(payload) == stored.reference.plaintextDigest
+
+    private fun payloadBytesLocked(stored: StoredBlob): ByteArray {
+        requireLockHeld()
+        stored.bytes?.let { return it }
+        return durability?.readPayload(stored.toDurableBlob(includePayload = false))
+            ?: throw ContentBlobStoreException.CorruptBlob(stored.reference.blobId)
+    }
+
+    internal fun runStorageMaintenanceSlice(
+        request: ContentBlobStorageMaintenanceRequest,
+    ): ContentBlobStorageMaintenanceResult = withStateLock {
+        durability?.runStorageMaintenanceSlice(request) ?: ContentBlobStorageMaintenanceResult()
+    }
 
     private fun hasPendingReceiptLocked(stored: StoredBlob): Boolean {
         requireLockHeld()
@@ -887,22 +1348,28 @@ public class InMemoryContentBlobStore(
         requireLockHeld()
         return attachments.values.any { ledger ->
             ledger.incarnations[reference.blobId] == incarnation && reference in ledger.record.blobs
+        } || auxiliaryAttachments.values.any { ledger ->
+            ledger.incarnations[reference.blobId] == incarnation && reference in ledger.record.blobs
         }
     }
 
     private fun copyAttachment(source: BlobAttachment): BlobAttachment =
         source.deepImmutableSnapshot()
 
+    private fun copyAuxiliaryAttachment(source: AuxiliaryBlobAttachment): AuxiliaryBlobAttachment =
+        source.deepImmutableSnapshot()
+
     private inline fun <T> withStateLock(block: () -> T): T {
-        if (!stateMutex.tryLock()) {
-            throw ContentBlobStoreException.InvalidStage("Concurrent blob-store access must retry")
-        }
-        check(!lockHeld) { "Blob store lock re-entry is forbidden" }
-        lockHeld = true
+        stateMutex.lock()
         return try {
-            block()
+            check(!lockHeld) { "Blob store lock re-entry is forbidden" }
+            lockHeld = true
+            try {
+                block()
+            } finally {
+                lockHeld = false
+            }
         } finally {
-            lockHeld = false
             stateMutex.unlock()
         }
     }
@@ -933,7 +1400,8 @@ public class InMemoryContentBlobStore(
 
     private data class StoredBlob(
         val reference: BlobRef,
-        val bytes: ByteArray,
+        /** Resident for new/in-memory publishes; null for lazily reopened durable rows. */
+        val bytes: ByteArray?,
         val incarnation: Long,
         val generation: Long,
         val publishedAtEpochMillis: Long,
@@ -941,10 +1409,53 @@ public class InMemoryContentBlobStore(
         val discoveredAtEpochMillis: Long?,
     )
 
+    private fun StoredBlob.toDurableBlob(includePayload: Boolean): DurableContentBlob = DurableContentBlob(
+        reference = reference,
+        bytes = if (includePayload) bytes?.copyOf() else null,
+        incarnation = incarnation,
+        generation = generation,
+        publishedAtEpochMillis = publishedAtEpochMillis,
+        lifecycleState = lifecycleState,
+        discoveredAtEpochMillis = discoveredAtEpochMillis,
+    )
+
+    private fun restoreDurableBlobs(restored: List<DurableContentBlob>) = withStateLock {
+        check(blobs.isEmpty() && attachments.isEmpty() && auxiliaryAttachments.isEmpty() && published.isEmpty()) {
+            "Durable blobs can only be restored into a fresh participant"
+        }
+        val ids = HashSet<String>()
+        var maximumGeneration = 0L
+        var maximumIncarnation = 0L
+        restored.forEach { durable ->
+            val snapshot = durable.immutableCopy()
+            if (!ids.add(snapshot.reference.blobId)) {
+                throw ContentBlobStoreException.CorruptBlob(snapshot.reference.blobId)
+            }
+            blobs[snapshot.reference.blobId] = StoredBlob(
+                reference = snapshot.reference,
+                bytes = snapshot.bytes?.copyOf(),
+                incarnation = snapshot.incarnation,
+                generation = snapshot.generation,
+                publishedAtEpochMillis = snapshot.publishedAtEpochMillis,
+                lifecycleState = snapshot.lifecycleState,
+                discoveredAtEpochMillis = snapshot.discoveredAtEpochMillis,
+            )
+            maximumGeneration = maxOf(maximumGeneration, snapshot.generation)
+            maximumIncarnation = maxOf(maximumIncarnation, snapshot.incarnation)
+        }
+        currentGeneration = maximumGeneration
+        nextIncarnationValue = checkedAdd(maximumIncarnation, 1L)
+    }
+
     private data class PendingReceipt(val receipt: BlobPublishReceipt)
 
     private data class AttachmentLedger(
         val record: BlobAttachment,
+        val incarnations: Map<String, Long>,
+    )
+
+    private data class AuxiliaryAttachmentLedger(
+        val record: AuxiliaryBlobAttachment,
         val incarnations: Map<String, Long>,
     )
 
@@ -1021,15 +1532,61 @@ public class InMemoryContentBlobStore(
         val bytes: ByteArray,
     ) : PendingBlob
 
+    private inner class DurableStage(
+        private val handle: DurableContentBlobStageHandle,
+    ) : ContentBlobStage {
+        private var published = false
+        override val expectedSizeBytes: Long? get() = handle.expectedSizeBytes
+        override val bytesWritten: Long get() = handle.bytesWritten
+        override val isSealed: Boolean get() = handle.isSealed
+
+        override fun append(chunk: ByteArray): Unit = withStateLock {
+            if (published || handle.isSealed) throw ContentBlobStoreException.InvalidStage("Stage is closed")
+            handle.append(chunk)
+        }
+
+        override fun seal(expected: BlobRef?): PendingBlob = withStateLock {
+            if (published || handle.isSealed) {
+                throw ContentBlobStoreException.InvalidStage("Stage is already closed")
+            }
+            DurablePending(this, handle.seal(expected, ::nextBlobId))
+        }
+
+        override fun abort(): Unit = withStateLock {
+            if (!published) {
+                handle.abort()
+                liveStages.remove(this)
+            }
+        }
+
+        fun markPublishedLocked() {
+            requireLockHeld()
+            published = true
+        }
+    }
+
+    private data class DurablePending(
+        val stage: DurableStage,
+        val handle: DurableContentBlobPendingHandle,
+    ) : PendingBlob {
+        override val reference: BlobRef get() = handle.reference
+    }
+
+    private interface StateReader : BlobReadLease {
+        val incarnation: Long
+        val closedLocked: Boolean
+        fun forceCloseLocked()
+    }
+
     private inner class MemoryReader(
         override val reference: BlobRef,
-        val incarnation: Long,
+        override val incarnation: Long,
         private val bytes: ByteArray,
-    ) : BlobReadLease {
+    ) : StateReader {
         private var offset = 0
         private var closed = false
 
-        val closedLocked: Boolean get() = closed
+        override val closedLocked: Boolean get() = closed
         override val isPinned: Boolean get() = withStateLock { !closed }
         override val isClosed: Boolean get() = withStateLock { closed }
 
@@ -1051,21 +1608,50 @@ public class InMemoryContentBlobStore(
             }
         }
 
-        fun forceCloseLocked() {
+        override fun forceCloseLocked() {
             requireLockHeld()
             closed = true
+        }
+    }
+
+    private inner class DurableReader(
+        override val reference: BlobRef,
+        override val incarnation: Long,
+        private val handle: DurableContentBlobReadHandle,
+    ) : StateReader {
+        private var closed = false
+        override val closedLocked: Boolean get() = closed
+        override val isPinned: Boolean get() = withStateLock { !closed }
+        override val isClosed: Boolean get() = withStateLock { closed }
+
+        override fun readChunk(maxBytes: Int): ByteArray? = withStateLock {
+            if (closed) throw ContentBlobStoreException.InvalidStage("Reader is closed")
+            require(maxBytes > 0) { "Read chunk size must be positive" }
+            handle.readChunk(maxBytes)
+        }
+
+        override fun pin(): BlobReadLease = withStateLock { this }
+
+        override fun close(): Unit = withStateLock {
+            if (!closed) {
+                closed = true
+                handle.close()
+                activeReaders.remove(this)
+            }
+        }
+
+        override fun forceCloseLocked() {
+            requireLockHeld()
+            if (!closed) {
+                closed = true
+                handle.close()
+            }
         }
     }
 
     public companion object {
         public const val DEFAULT_MAXIMUM_BLOB_SIZE_BYTES: Long = 64L * 1024L * 1024L
     }
-}
-
-internal class InMemoryBlobRollback internal constructor(
-    private val rollbackAction: () -> Unit,
-) {
-    internal fun rollback() = rollbackAction()
 }
 
 /** Common-source checked addition; java.lang.Math is unavailable to Kotlin/Native. */

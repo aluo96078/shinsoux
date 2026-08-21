@@ -101,7 +101,8 @@ test("checkpoint upload rejects protocol and schema writers outside server range
 
   for (const [header, expectedCode] of [
     [checkpointHeaderValues({ protocolVersion: 2 }), "protocol_write_version_incompatible"],
-    [checkpointHeaderValues({ schemaVersion: 2 }), "schema_write_version_incompatible"],
+    [checkpointHeaderValues({ schemaVersion: 2, stateFormat: "sync-state-v2" }),
+      "schema_write_version_incompatible"],
   ] as const) {
     await assert.rejects(
       uploadCheckpoint(await uploadRequest(header), env, principal, IDS.checkpointA),
@@ -117,7 +118,8 @@ test("checkpoint commit reparses R2 metadata and rejects incompatible writers be
 
   for (const [header, expectedCode] of [
     [checkpointHeaderValues({ protocolVersion: 2 }), "protocol_write_version_incompatible"],
-    [checkpointHeaderValues({ schemaVersion: 2 }), "schema_write_version_incompatible"],
+    [checkpointHeaderValues({ schemaVersion: 2, stateFormat: "sync-state-v2" }),
+      "schema_write_version_incompatible"],
   ] as const) {
     const db = database();
     seedTenant(db, NOW);

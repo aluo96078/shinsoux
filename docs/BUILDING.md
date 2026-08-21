@@ -39,7 +39,17 @@ project/
 ./gradlew :composeApp:desktopTest --rerun-tasks
 ```
 
-這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest／隱藏完成列、Reader navigation／來源特例、Local v2 manifest、ZIP traversal 防護、bounded document read、備份／自動備份、只保留本機 download queue 的 snapshot merge、extension repository reconciliation、執行授權撤銷、redirect／`Set-Cookie` 防護、Web challenge cookie 驗證、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。
+這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／ShuYue transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。
+
+Cloudflare Worker 的協定、雙 R2 bucket 與維運工具另需執行：
+
+```bash
+cd syncWorker
+npm test
+npm run typecheck
+npm run smoke
+npm run ops:test
+```
 
 測試使用 memory filesystem、mock transport 與本地 HTML／script fixture；不會登入 AniList／MAL、不會向正式來源站發 request，也不會真的通過 Cloudflare challenge。
 
@@ -220,10 +230,12 @@ Android 使用同一個 `ParcelFileDescriptor.statSize` 與 `AutoCloseInputStrea
 
 ## Local source 與備份注意事項
 
-Local import 會把頁面複製到各平台 app-private storage，並限制不安全 archive path、加密 archive、ZIP64、多卷 archive、頁面／總容量與 entry 數量。所有頁面寫入並核對後才原子發布 v2 manifest；Reader 只接受 manifest 中連續、受控且與目錄精確一致的檔名。舊 v1 marker 只會在 canonical marker 與完整頁面集合一致時升級。`epub` 以 ZIP 圖片 archive 處理。
+圖片、ZIP 與 CBZ import 會把頁面複製到各平台 app-private storage，並限制不安全 archive path、加密 archive、ZIP64、多卷 archive、頁面／總容量與 entry 數量。所有頁面寫入並核對後才原子發布 v2 manifest；Reader 只接受 manifest 中連續、受控且與目錄精確一致的檔名。舊 v1 marker 只會在 canonical marker 與完整頁面集合一致時升級。
+
+EPUB 不走圖片 archive 相容路徑。它由 typed acquisition pipeline 解析 OCF／OPF、manifest、spine、nav／NCX 與 encryption metadata，保留原始 package、XHTML、CSS、font、image、relative URL 與 rendition properties，並把 immutable resources 與 shared SQLite metadata／refs 原子提交。Reader 再由 Android WebView、iOS WKWebView 或 Desktop JavaFX WebKit 透過 app-private scheme 按需載入資源；不支援的 protection scheme 會 fail closed。
 
 Download 會在所有 page／transform sidecar 完成並核對後，最後原子發布 completion manifest。Clear completed 只把完成 queue row 設成 hidden；manifest、下載徽章與離線內容仍保留。缺少、損壞或與檔案集合不一致的 manifest 不會被 Reader 當作完整離線章節。
 
-Portable backup、automatic backup envelope 與 iCloud snapshot 以 `AppSnapshot` 為資料模型。它們會保留 extension repository 設定，但不內嵌已安裝的 JavaScript package、per-source plugin key-value state、Local／download page bytes、credentials、cookies、OAuth token 或 proxy API key；proxy key 在 encode 前 redaction，restore／sync 保留本機 secure-store 值。跨裝置還原後，擴充套件需重新安裝，Local source 需重新匯入原檔，遠端章節則需重新下載。
+舊版 portable snapshot、automatic backup envelope 與 iCloud snapshot 仍以 `AppSnapshot` 為資料模型。Content Backup v2 則保存 checksummed publication／manifest／rights graph，以及 body-free content metadata、legacy aliases 與 migration ledgers，並可依當下 `EXPORT` rights 明確選擇納入 immutable content blobs；metadata-only restore 不會宣告缺失 body 已存在。auxiliary rows 與 portable graph 由同一 restore transaction 驗證／提交，舊 v2 archive 缺少該 optional 欄位時仍可 decode。兩種格式都不包含已安裝的 JavaScript package、per-source plugin key-value state、credentials、cookies、OAuth token、proxy API key 或其他 secrets；proxy key 在 encode 前 redaction，restore／sync 保留本機 secure-store 值。未納入 v2 body、rights 不允許 export，或只還原舊 snapshot 時，目的裝置仍需合法重新匯入、重新取得或下載內容。
 
 同步 conflict resolver 不重映射或套用遠端 `downloadQueue`，合併結果保留本機 queue；備份還原同樣保留並移除本機 dangling rows，不會啟動另一台裝置的下載工作。`AppSnapshot.extensionRepositories` 則是可攜 source of truth：舊 KV 清單只做一次性遷移，之後 snapshot 會精確覆蓋 KV mirror。Repository 與其他 entity 的同步合併目前沒有 deletion tombstone，因此 stale replica 仍可能在衝突時帶回已刪除 record；不可把這描述成 record-level CloudKit 等價物。

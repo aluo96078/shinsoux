@@ -43,6 +43,28 @@ public fun interface ScriptPluginRuntimeFactory {
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
     ): ScriptPluginRuntime
+
+    /**
+     * Creates the executable runtime for one exact source declared by [manifest].
+     *
+     * The original v1 factory surface models one package as one source.  Keeping [create] lets
+     * existing embedders continue to provide that implementation, while package managers and v2
+     * adapters use this exact-source entry point.  The default narrows the manifest before calling
+     * the v1 factory, so even an older factory cannot silently select a different sibling source.
+     */
+    public suspend fun createForSource(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime {
+        manifest.requireDeclaredExecutableSource(source)
+        return create(script, manifest.copy(sources = listOf(source)), environment).also { runtime ->
+            require(runtime.id == source.id) {
+                "Plugin '${manifest.id}' runtime identity does not match requested source ${source.id}"
+            }
+        }
+    }
 }
 
 public class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
@@ -53,11 +75,23 @@ public object NoopScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = NoopScriptPluginRuntime(manifest)
+    ): ScriptPluginRuntime = NoopScriptPluginRuntime(manifest, manifest.requireLegacyExecutableSource())
+
+    override suspend fun createForSource(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime {
+        manifest.requireDeclaredExecutableSource(source)
+        return NoopScriptPluginRuntime(manifest, source)
+    }
 }
 
-private class NoopScriptPluginRuntime(manifest: PluginManifest) : ScriptPluginRuntime {
-    private val source = manifest.sources?.firstOrNull()
+private class NoopScriptPluginRuntime(
+    manifest: PluginManifest,
+    source: SourceIndexEntry?,
+) : ScriptPluginRuntime {
     override val pluginId: String = manifest.id
     override val id: Long = source?.id ?: stableSourceId(manifest.id)
     override val name: String = source?.name ?: manifest.name
@@ -79,6 +113,24 @@ private class NoopScriptPluginRuntime(manifest: PluginManifest) : ScriptPluginRu
     override suspend fun close() = Unit
 
     private fun emptyPage(): MangasPage = MangasPage(emptyList(), false)
+}
+
+/** Resolves only the unambiguous v1 package shape; multi-source callers must be explicit. */
+internal fun PluginManifest.requireLegacyExecutableSource(): SourceIndexEntry? {
+    val declared = sources.orEmpty()
+    require(declared.size <= 1) {
+        "Plugin '$id' declares ${declared.size} sources; use createForSource for an exact source"
+    }
+    return declared.singleOrNull()
+}
+
+/** Exact declaration check shared by platform factories and lifecycle management. */
+internal fun PluginManifest.requireDeclaredExecutableSource(source: SourceIndexEntry): SourceIndexEntry {
+    val matches = sources.orEmpty().filter { it.id == source.id }
+    require(matches.size == 1 && matches.single() == source) {
+        "Source ${source.id} is not exactly declared by plugin '$id'"
+    }
+    return matches.single()
 }
 
 internal fun stableSourceId(value: String): Long {

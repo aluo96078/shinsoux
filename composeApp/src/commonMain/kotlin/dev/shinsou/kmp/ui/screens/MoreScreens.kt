@@ -94,6 +94,8 @@ enum class MoreDestination {
     Statistics,
     Settings,
     Backup,
+    ContentBackupV2,
+    ShuYueMigration,
     About,
 }
 
@@ -104,17 +106,31 @@ fun MoreScreen(
     incognitoMode: Boolean,
     downloadOnlyMode: Boolean,
     onOpen: (MoreDestination) -> Unit,
-    onImportLocal: () -> Unit,
+    onImportLocal: (syncContentBodies: Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
     onDownloadOnlyModeChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalShinsouStrings.current
+    var showLocalImportOptions by remember { mutableStateOf(false) }
+    var syncImportedBodies by remember { mutableStateOf(false) }
     val rows = listOf(
         MoreRow(MoreDestination.Downloads, strings.downloads, strings.text("{0} queued or active", downloadCount), Icons.Outlined.Download),
         MoreRow(MoreDestination.Statistics, strings.statistics, strings.text("Library and reading insights"), Icons.Outlined.BarChart),
         MoreRow(MoreDestination.Settings, strings.settings, strings.text("Appearance, reader, sources and privacy"), Icons.Outlined.Settings),
         MoreRow(MoreDestination.Backup, strings.backup, lastBackupLabel ?: strings.text("No backup yet"), Icons.Outlined.Backup),
+        MoreRow(
+            MoreDestination.ContentBackupV2,
+            strings.text("Content backup v2"),
+            strings.text("Checksummed bodies, publications, and annotations"),
+            Icons.Outlined.Backup,
+        ),
+        MoreRow(
+            MoreDestination.ShuYueMigration,
+            strings.text("Import from ShuYue"),
+            strings.text("Staged review, script quarantine, and explicit secrets"),
+            Icons.Outlined.Security,
+        ),
         MoreRow(MoreDestination.About, strings.about, strings.text("Version, licenses and project links"), Icons.Outlined.Info),
     )
     Column(modifier.fillMaxSize()) {
@@ -153,7 +169,7 @@ fun MoreScreen(
             }
             item("local-content-import") {
                 Surface(
-                    onClick = onImportLocal,
+                    onClick = { showLocalImportOptions = true },
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.fillMaxWidth(),
@@ -173,9 +189,9 @@ fun MoreScreen(
                             }
                         }
                         Column(Modifier.weight(1f)) {
-                            Text(strings.text("Import local manga"), style = MaterialTheme.typography.titleMedium)
+                            Text(strings.text("Import local content"), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                strings.text("Images, CBZ, ZIP or EPUB · stored on this device"),
+                                strings.text("Images, CBZ, ZIP, TXT or EPUB · stored on this device"),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 maxLines = 1,
@@ -220,6 +236,61 @@ fun MoreScreen(
                 }
             }
         }
+    }
+
+    if (showLocalImportOptions) {
+        AlertDialog(
+            onDismissRequest = { showLocalImportOptions = false },
+            title = { Text(strings.text("Import local content")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        strings.text(
+                            "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync.",
+                        ),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            strings.text("Encrypted TXT/EPUB body sync"),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = syncImportedBodies,
+                            onCheckedChange = { syncImportedBodies = it },
+                        )
+                    }
+                    Text(
+                        strings.text(
+                            "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB.",
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val selected = syncImportedBodies
+                        showLocalImportOptions = false
+                        syncImportedBodies = false
+                        onImportLocal(selected)
+                    },
+                ) { Text(strings.text("Choose files")) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showLocalImportOptions = false
+                        syncImportedBodies = false
+                    },
+                ) { Text(strings.cancel) }
+            },
+        )
     }
 }
 

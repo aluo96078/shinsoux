@@ -1315,6 +1315,1398 @@ private val PortugueseICloudSyncTranslations = mapOf(
     "The remote snapshot service is unavailable." to "O serviço de instantâneos remoto está indisponível.",
 )
 
+private val TraditionalReaderTranslations = mapOf(
+    "Import local content" to "匯入本機內容",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "圖片、CBZ、ZIP、TXT 或 EPUB · 儲存於本機",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "除非您明確加入加密同步，TXT 與 EPUB 正文只會保留在此裝置上。",
+    "Encrypted TXT/EPUB body sync" to "加密 TXT／EPUB 正文同步",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "只有在目前權限授權 SYNC_BLOB 時才會在背景上傳。",
+    "Choose files" to "選擇檔案",
+    "Encrypted chapter body sync" to "加密章節正文同步",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "預設關閉。啟用後，只有目前 SYNC_BLOB 授權允許的正文會排入加密背景上傳。",
+    "This content is no longer available under the current rights grant." to "目前的內容權限已不允許使用此內容。",
+    "Full-text search is unavailable for this content." to "此內容目前無法使用全文搜尋。",
+    "Search text" to "搜尋文字",
+    "Speech stopped because it is unavailable or no longer permitted." to "語音朗讀無法使用或已不再獲得允許，因此已停止。",
+    "Speech unavailable" to "語音朗讀無法使用",
+    "Speaking…" to "正在朗讀…",
+    "Speak from paragraph" to "從本段開始朗讀",
+    "Stop" to "停止",
+    "Search this book" to "搜尋此書",
+    "Search is no longer permitted." to "目前的內容權限已不允許搜尋。",
+    "Find" to "尋找",
+    "Add note" to "新增註記",
+    "Reader paragraph" to "閱讀器段落",
+    "Copy is unavailable or not permitted." to "無法複製，或目前的內容權限不允許複製。",
+    "Copy" to "複製",
+    "{0} note" to "{0} 則註記",
+    "{0} notes" to "{0} 則註記",
+    "Add paragraph note" to "新增段落註記",
+    "Note" to "註記",
+    "The note could not be saved or is no longer permitted." to "無法儲存註記，或目前的內容權限已不允許註記。",
+    "The image navigation graph is unavailable." to "圖片導覽資料無法使用。",
+    "Page {0}" to "第 {0} 頁",
+    "The image resource could not be opened." to "無法開啟圖片資源。",
+    "The EPUB navigation graph is unavailable." to "EPUB 導覽資料無法使用。",
+    "The EPUB resources could not be opened." to "無法開啟 EPUB 資源。",
+    "Previous" to "上一節",
+    "Next" to "下一節",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "此平台尚未提供安全的瀏覽器渲染器，因此無法顯示 EPUB。",
+    "This image representation has not been materialized into reader pages." to
+        "此圖片內容尚未轉換為可供閱讀器顯示的頁面。",
+    "Content saved for offline reading." to "內容已儲存，可離線閱讀。",
+    "Extension content" to "擴充套件內容",
+    "Unable to load chapters" to "無法載入章節",
+    "No chapters" to "沒有章節",
+    "This extension did not return any readable units." to "此擴充套件未傳回任何可閱讀單元。",
+    "Choose a format when this chapter provides more than one." to "若此章節提供多種格式，請選擇一種。",
+    "Save offline" to "儲存供離線閱讀",
+    "Load more" to "載入更多",
+    "Choose content format" to "選擇內容格式",
+    "The operation could not be completed." to "無法完成操作。",
+    "Format: {0}" to "格式：{0}",
+)
+
+private val SimplifiedReaderTranslations = mapOf(
+    "Import local content" to "导入本机内容",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "图片、CBZ、ZIP、TXT 或 EPUB · 存储在本机",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "除非你明确加入加密同步，TXT 与 EPUB 正文只会保留在此设备上。",
+    "Encrypted TXT/EPUB body sync" to "加密 TXT／EPUB 正文同步",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "只有当前权限授予 SYNC_BLOB 时才会在后台上传。",
+    "Choose files" to "选择文件",
+    "Encrypted chapter body sync" to "加密章节正文同步",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "默认关闭。启用后，只有当前 SYNC_BLOB 授权允许的正文才会排入加密后台上传。",
+    "This content is no longer available under the current rights grant." to "当前的内容权限已不允许使用此内容。",
+    "Full-text search is unavailable for this content." to "此内容目前无法使用全文搜索。",
+    "Search text" to "搜索文字",
+    "Speech stopped because it is unavailable or no longer permitted." to "语音朗读无法使用或已不再获得允许，因此已停止。",
+    "Speech unavailable" to "语音朗读无法使用",
+    "Speaking…" to "正在朗读…",
+    "Speak from paragraph" to "从本段开始朗读",
+    "Stop" to "停止",
+    "Search this book" to "搜索此书",
+    "Search is no longer permitted." to "当前的内容权限已不允许搜索。",
+    "Find" to "查找",
+    "Add note" to "添加笔记",
+    "Reader paragraph" to "阅读器段落",
+    "Copy is unavailable or not permitted." to "无法复制，或当前的内容权限不允许复制。",
+    "Copy" to "复制",
+    "{0} note" to "{0} 条笔记",
+    "{0} notes" to "{0} 条笔记",
+    "Add paragraph note" to "添加段落笔记",
+    "Note" to "笔记",
+    "The note could not be saved or is no longer permitted." to "无法保存笔记，或当前的内容权限已不允许添加笔记。",
+    "The image navigation graph is unavailable." to "图片导航数据无法使用。",
+    "Page {0}" to "第 {0} 页",
+    "The image resource could not be opened." to "无法打开图片资源。",
+    "The EPUB navigation graph is unavailable." to "EPUB 导航数据无法使用。",
+    "The EPUB resources could not be opened." to "无法打开 EPUB 资源。",
+    "Previous" to "上一节",
+    "Next" to "下一节",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "此平台尚未提供安全的浏览器渲染器，因此无法显示 EPUB。",
+    "This image representation has not been materialized into reader pages." to
+        "此图片内容尚未转换为可供阅读器显示的页面。",
+    "Content saved for offline reading." to "内容已保存，可离线阅读。",
+    "Extension content" to "扩展内容",
+    "Unable to load chapters" to "无法加载章节",
+    "No chapters" to "没有章节",
+    "This extension did not return any readable units." to "此扩展未返回任何可阅读单元。",
+    "Choose a format when this chapter provides more than one." to "如果此章节提供多种格式，请选择一种。",
+    "Save offline" to "保存以供离线阅读",
+    "Load more" to "加载更多",
+    "Choose content format" to "选择内容格式",
+    "The operation could not be completed." to "无法完成操作。",
+    "Format: {0}" to "格式：{0}",
+)
+
+private val JapaneseReaderTranslations = mapOf(
+    "Import local content" to "ローカルコンテンツを読み込む",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "画像、CBZ、ZIP、TXT、EPUB · この端末に保存",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "暗号化同期へ明示的に追加しない限り、TXT と EPUB の本文はこの端末だけに保存されます。",
+    "Encrypted TXT/EPUB body sync" to "TXT／EPUB 本文の暗号化同期",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "現在の権利で SYNC_BLOB が許可される場合に限り、バックグラウンドでアップロードします。",
+    "Choose files" to "ファイルを選択",
+    "Encrypted chapter body sync" to "章本文の暗号化同期",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "既定ではオフです。有効にすると、現在の SYNC_BLOB 権限で許可された本文だけを暗号化バックグラウンドアップロードに追加します。",
+    "This content is no longer available under the current rights grant." to "現在の権利では、このコンテンツを利用できません。",
+    "Full-text search is unavailable for this content." to "このコンテンツでは全文検索を利用できません。",
+    "Search text" to "本文を検索",
+    "Speech stopped because it is unavailable or no longer permitted." to "音声読み上げを利用できないか、許可されていないため停止しました。",
+    "Speech unavailable" to "音声読み上げを利用できません",
+    "Speaking…" to "読み上げ中…",
+    "Speak from paragraph" to "この段落から読み上げ",
+    "Stop" to "停止",
+    "Search this book" to "この本を検索",
+    "Search is no longer permitted." to "現在の権利では検索できません。",
+    "Find" to "検索",
+    "Add note" to "メモを追加",
+    "Reader paragraph" to "リーダーの段落",
+    "Copy is unavailable or not permitted." to "コピーを利用できないか、許可されていません。",
+    "Copy" to "コピー",
+    "{0} note" to "メモ {0} 件",
+    "{0} notes" to "メモ {0} 件",
+    "Add paragraph note" to "段落メモを追加",
+    "Note" to "メモ",
+    "The note could not be saved or is no longer permitted." to "メモを保存できないか、現在の権利では許可されていません。",
+    "The image navigation graph is unavailable." to "画像のナビゲーション情報を利用できません。",
+    "Page {0}" to "{0} ページ",
+    "The image resource could not be opened." to "画像リソースを開けませんでした。",
+    "The EPUB navigation graph is unavailable." to "EPUB のナビゲーション情報を利用できません。",
+    "The EPUB resources could not be opened." to "EPUB リソースを開けませんでした。",
+    "Previous" to "前へ",
+    "Next" to "次へ",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "このプラットフォームに安全なブラウザレンダラーがないため、EPUB を表示できません。",
+    "This image representation has not been materialized into reader pages." to
+        "この画像コンテンツは、まだリーダーページとして生成されていません。",
+    "Content saved for offline reading." to "コンテンツをオフライン閲覧用に保存しました。",
+    "Extension content" to "拡張機能のコンテンツ",
+    "Unable to load chapters" to "章を読み込めません",
+    "No chapters" to "章がありません",
+    "This extension did not return any readable units." to "この拡張機能から閲覧可能な単位が返されませんでした。",
+    "Choose a format when this chapter provides more than one." to "この章に複数の形式がある場合は、形式を選択してください。",
+    "Save offline" to "オフラインに保存",
+    "Load more" to "さらに読み込む",
+    "Choose content format" to "コンテンツ形式を選択",
+    "The operation could not be completed." to "操作を完了できませんでした。",
+    "Format: {0}" to "形式：{0}",
+)
+
+private val KoreanReaderTranslations = mapOf(
+    "Import local content" to "로컬 콘텐츠 가져오기",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "이미지, CBZ, ZIP, TXT 또는 EPUB · 이 기기에 저장",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "암호화 동기화에 명시적으로 추가하지 않으면 TXT와 EPUB 본문은 이 기기에만 보관됩니다.",
+    "Encrypted TXT/EPUB body sync" to "TXT/EPUB 본문 암호화 동기화",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "현재 권한이 SYNC_BLOB을 허용할 때만 백그라운드에서 업로드합니다.",
+    "Choose files" to "파일 선택",
+    "Encrypted chapter body sync" to "장 본문 암호화 동기화",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "기본값은 꺼짐입니다. 활성화하면 현재 SYNC_BLOB 권한이 허용한 본문만 암호화 백그라운드 업로드 대기열에 추가됩니다.",
+    "This content is no longer available under the current rights grant." to "현재 콘텐츠 권한으로는 이 콘텐츠를 사용할 수 없습니다.",
+    "Full-text search is unavailable for this content." to "이 콘텐츠에서는 전문 검색을 사용할 수 없습니다.",
+    "Search text" to "본문 검색",
+    "Speech stopped because it is unavailable or no longer permitted." to "음성 읽기를 사용할 수 없거나 더 이상 허용되지 않아 중지했습니다.",
+    "Speech unavailable" to "음성 읽기 사용 불가",
+    "Speaking…" to "읽는 중…",
+    "Speak from paragraph" to "이 문단부터 읽기",
+    "Stop" to "중지",
+    "Search this book" to "이 책 검색",
+    "Search is no longer permitted." to "현재 콘텐츠 권한으로는 검색할 수 없습니다.",
+    "Find" to "찾기",
+    "Add note" to "메모 추가",
+    "Reader paragraph" to "리더 문단",
+    "Copy is unavailable or not permitted." to "복사를 사용할 수 없거나 허용되지 않습니다.",
+    "Copy" to "복사",
+    "{0} note" to "메모 {0}개",
+    "{0} notes" to "메모 {0}개",
+    "Add paragraph note" to "문단 메모 추가",
+    "Note" to "메모",
+    "The note could not be saved or is no longer permitted." to "메모를 저장할 수 없거나 현재 권한으로 허용되지 않습니다.",
+    "The image navigation graph is unavailable." to "이미지 탐색 정보를 사용할 수 없습니다.",
+    "Page {0}" to "{0}페이지",
+    "The image resource could not be opened." to "이미지 리소스를 열 수 없습니다.",
+    "The EPUB navigation graph is unavailable." to "EPUB 탐색 정보를 사용할 수 없습니다.",
+    "The EPUB resources could not be opened." to "EPUB 리소스를 열 수 없습니다.",
+    "Previous" to "이전",
+    "Next" to "다음",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "이 플랫폼에 안전한 브라우저 렌더러가 없어 EPUB을 표시할 수 없습니다.",
+    "This image representation has not been materialized into reader pages." to
+        "이 이미지 콘텐츠는 아직 리더 페이지로 생성되지 않았습니다.",
+    "Content saved for offline reading." to "오프라인 읽기용으로 콘텐츠를 저장했습니다.",
+    "Extension content" to "확장 콘텐츠",
+    "Unable to load chapters" to "챕터를 불러올 수 없음",
+    "No chapters" to "챕터 없음",
+    "This extension did not return any readable units." to "이 확장에서 읽을 수 있는 단위를 반환하지 않았습니다.",
+    "Choose a format when this chapter provides more than one." to "이 챕터가 여러 형식을 제공하면 하나를 선택하세요.",
+    "Save offline" to "오프라인 저장",
+    "Load more" to "더 불러오기",
+    "Choose content format" to "콘텐츠 형식 선택",
+    "The operation could not be completed." to "작업을 완료할 수 없습니다.",
+    "Format: {0}" to "형식: {0}",
+)
+
+private val FrenchReaderTranslations = mapOf(
+    "Import local content" to "Importer du contenu local",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "Images, CBZ, ZIP, TXT ou EPUB · stockés sur cet appareil",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "Les contenus TXT et EPUB restent sur cet appareil sauf ajout explicite à la synchronisation chiffrée.",
+    "Encrypted TXT/EPUB body sync" to "Synchronisation chiffrée des contenus TXT/EPUB",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "L’envoi s’exécute uniquement en arrière-plan lorsque les droits actuels autorisent SYNC_BLOB.",
+    "Choose files" to "Choisir des fichiers",
+    "Encrypted chapter body sync" to "Synchronisation chiffrée du texte des chapitres",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "Désactivée par défaut. Seuls les contenus autorisés par le droit SYNC_BLOB actuel sont placés dans la file d’envoi chiffré en arrière-plan.",
+    "This content is no longer available under the current rights grant." to "Les droits actuels ne permettent plus d’accéder à ce contenu.",
+    "Full-text search is unavailable for this content." to "La recherche plein texte n’est pas disponible pour ce contenu.",
+    "Search text" to "Rechercher dans le texte",
+    "Speech stopped because it is unavailable or no longer permitted." to "La lecture vocale s’est arrêtée, car elle est indisponible ou n’est plus autorisée.",
+    "Speech unavailable" to "Lecture vocale indisponible",
+    "Speaking…" to "Lecture en cours…",
+    "Speak from paragraph" to "Lire à partir du paragraphe",
+    "Stop" to "Arrêter",
+    "Search this book" to "Rechercher dans ce livre",
+    "Search is no longer permitted." to "La recherche n’est plus autorisée.",
+    "Find" to "Rechercher",
+    "Add note" to "Ajouter une note",
+    "Reader paragraph" to "Paragraphe du lecteur",
+    "Copy is unavailable or not permitted." to "La copie est indisponible ou n’est pas autorisée.",
+    "Copy" to "Copier",
+    "{0} note" to "{0} note",
+    "{0} notes" to "{0} notes",
+    "Add paragraph note" to "Ajouter une note au paragraphe",
+    "Note" to "Note",
+    "The note could not be saved or is no longer permitted." to "La note n’a pas pu être enregistrée ou n’est plus autorisée.",
+    "The image navigation graph is unavailable." to "La navigation entre les images est indisponible.",
+    "Page {0}" to "Page {0}",
+    "The image resource could not be opened." to "La ressource image n’a pas pu être ouverte.",
+    "The EPUB navigation graph is unavailable." to "La navigation EPUB est indisponible.",
+    "The EPUB resources could not be opened." to "Les ressources EPUB n’ont pas pu être ouvertes.",
+    "Previous" to "Précédent",
+    "Next" to "Suivant",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "L’affichage EPUB est indisponible tant que cette plateforme ne fournit pas de moteur de navigateur sécurisé.",
+    "This image representation has not been materialized into reader pages." to
+        "Ce contenu image n’a pas encore été matérialisé en pages de lecture.",
+    "Content saved for offline reading." to "Contenu enregistré pour la lecture hors ligne.",
+    "Extension content" to "Contenu de l’extension",
+    "Unable to load chapters" to "Impossible de charger les chapitres",
+    "No chapters" to "Aucun chapitre",
+    "This extension did not return any readable units." to "Cette extension n’a renvoyé aucune unité lisible.",
+    "Choose a format when this chapter provides more than one." to "Choisissez un format lorsque ce chapitre en propose plusieurs.",
+    "Save offline" to "Enregistrer hors ligne",
+    "Load more" to "Charger plus",
+    "Choose content format" to "Choisir le format du contenu",
+    "The operation could not be completed." to "L’opération n’a pas pu être effectuée.",
+    "Format: {0}" to "Format : {0}",
+)
+
+private val GermanReaderTranslations = mapOf(
+    "Import local content" to "Lokale Inhalte importieren",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "Bilder, CBZ, ZIP, TXT oder EPUB · auf diesem Gerät gespeichert",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "TXT- und EPUB-Inhalte bleiben auf diesem Gerät, sofern sie nicht ausdrücklich zur verschlüsselten Synchronisierung hinzugefügt werden.",
+    "Encrypted TXT/EPUB body sync" to "Verschlüsselte TXT-/EPUB-Inhaltssynchronisierung",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "Uploads laufen nur im Hintergrund und nur, wenn die aktuellen Rechte SYNC_BLOB erlauben.",
+    "Choose files" to "Dateien auswählen",
+    "Encrypted chapter body sync" to "Verschlüsselte Kapitelinhaltssynchronisierung",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "Standardmäßig deaktiviert. Nur durch das aktuelle SYNC_BLOB-Recht erlaubte Inhalte werden für den verschlüsselten Hintergrund-Upload vorgemerkt.",
+    "This content is no longer available under the current rights grant." to "Die aktuellen Rechte erlauben den Zugriff auf diesen Inhalt nicht mehr.",
+    "Full-text search is unavailable for this content." to "Die Volltextsuche ist für diesen Inhalt nicht verfügbar.",
+    "Search text" to "Text durchsuchen",
+    "Speech stopped because it is unavailable or no longer permitted." to "Die Sprachausgabe wurde beendet, weil sie nicht verfügbar oder nicht mehr erlaubt ist.",
+    "Speech unavailable" to "Sprachausgabe nicht verfügbar",
+    "Speaking…" to "Wird vorgelesen…",
+    "Speak from paragraph" to "Ab diesem Absatz vorlesen",
+    "Stop" to "Stopp",
+    "Search this book" to "Dieses Buch durchsuchen",
+    "Search is no longer permitted." to "Die Suche ist nicht mehr erlaubt.",
+    "Find" to "Suchen",
+    "Add note" to "Notiz hinzufügen",
+    "Reader paragraph" to "Reader-Absatz",
+    "Copy is unavailable or not permitted." to "Kopieren ist nicht verfügbar oder nicht erlaubt.",
+    "Copy" to "Kopieren",
+    "{0} note" to "{0} Notiz",
+    "{0} notes" to "{0} Notizen",
+    "Add paragraph note" to "Absatznotiz hinzufügen",
+    "Note" to "Notiz",
+    "The note could not be saved or is no longer permitted." to "Die Notiz konnte nicht gespeichert werden oder ist nicht mehr erlaubt.",
+    "The image navigation graph is unavailable." to "Die Bildnavigation ist nicht verfügbar.",
+    "Page {0}" to "Seite {0}",
+    "The image resource could not be opened." to "Die Bildressource konnte nicht geöffnet werden.",
+    "The EPUB navigation graph is unavailable." to "Die EPUB-Navigation ist nicht verfügbar.",
+    "The EPUB resources could not be opened." to "Die EPUB-Ressourcen konnten nicht geöffnet werden.",
+    "Previous" to "Zurück",
+    "Next" to "Weiter",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "EPUB kann erst angezeigt werden, wenn diese Plattform eine sichere Browser-Engine bereitstellt.",
+    "This image representation has not been materialized into reader pages." to
+        "Dieser Bildinhalt wurde noch nicht als Reader-Seiten materialisiert.",
+    "Content saved for offline reading." to "Inhalt zum Offline-Lesen gespeichert.",
+    "Extension content" to "Erweiterungsinhalt",
+    "Unable to load chapters" to "Kapitel konnten nicht geladen werden",
+    "No chapters" to "Keine Kapitel",
+    "This extension did not return any readable units." to "Diese Erweiterung hat keine lesbaren Einheiten zurückgegeben.",
+    "Choose a format when this chapter provides more than one." to "Wähle ein Format aus, wenn dieses Kapitel mehrere anbietet.",
+    "Save offline" to "Offline speichern",
+    "Load more" to "Mehr laden",
+    "Choose content format" to "Inhaltsformat auswählen",
+    "The operation could not be completed." to "Der Vorgang konnte nicht abgeschlossen werden.",
+    "Format: {0}" to "Inhaltsformat: {0}",
+)
+
+private val SpanishReaderTranslations = mapOf(
+    "Import local content" to "Importar contenido local",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "Imágenes, CBZ, ZIP, TXT o EPUB · guardados en este dispositivo",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "El contenido TXT y EPUB permanece en este dispositivo salvo que lo añadas expresamente a la sincronización cifrada.",
+    "Encrypted TXT/EPUB body sync" to "Sincronización cifrada del contenido TXT/EPUB",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "Las cargas solo se ejecutan en segundo plano cuando los permisos actuales autorizan SYNC_BLOB.",
+    "Choose files" to "Elegir archivos",
+    "Encrypted chapter body sync" to "Sincronización cifrada del contenido de capítulos",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "Desactivada de forma predeterminada. Solo el contenido autorizado por el permiso SYNC_BLOB actual se pone en cola para la carga cifrada en segundo plano.",
+    "This content is no longer available under the current rights grant." to "Los permisos actuales ya no permiten acceder a este contenido.",
+    "Full-text search is unavailable for this content." to "La búsqueda de texto completo no está disponible para este contenido.",
+    "Search text" to "Buscar en el texto",
+    "Speech stopped because it is unavailable or no longer permitted." to "La lectura por voz se detuvo porque no está disponible o ya no está permitida.",
+    "Speech unavailable" to "Lectura por voz no disponible",
+    "Speaking…" to "Leyendo…",
+    "Speak from paragraph" to "Leer desde este párrafo",
+    "Stop" to "Detener",
+    "Search this book" to "Buscar en este libro",
+    "Search is no longer permitted." to "La búsqueda ya no está permitida.",
+    "Find" to "Buscar",
+    "Add note" to "Añadir nota",
+    "Reader paragraph" to "Párrafo del lector",
+    "Copy is unavailable or not permitted." to "La copia no está disponible o no está permitida.",
+    "Copy" to "Copiar",
+    "{0} note" to "{0} nota",
+    "{0} notes" to "{0} notas",
+    "Add paragraph note" to "Añadir nota al párrafo",
+    "Note" to "Nota",
+    "The note could not be saved or is no longer permitted." to "No se pudo guardar la nota o ya no está permitida.",
+    "The image navigation graph is unavailable." to "La navegación de imágenes no está disponible.",
+    "Page {0}" to "Página {0}",
+    "The image resource could not be opened." to "No se pudo abrir el recurso de imagen.",
+    "The EPUB navigation graph is unavailable." to "La navegación EPUB no está disponible.",
+    "The EPUB resources could not be opened." to "No se pudieron abrir los recursos EPUB.",
+    "Previous" to "Anterior",
+    "Next" to "Siguiente",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "EPUB no puede mostrarse hasta que esta plataforma proporcione un navegador seguro.",
+    "This image representation has not been materialized into reader pages." to
+        "Este contenido de imágenes aún no se ha convertido en páginas del lector.",
+    "Content saved for offline reading." to "Contenido guardado para leer sin conexión.",
+    "Extension content" to "Contenido de la extensión",
+    "Unable to load chapters" to "No se pudieron cargar los capítulos",
+    "No chapters" to "No hay capítulos",
+    "This extension did not return any readable units." to "Esta extensión no devolvió ninguna unidad legible.",
+    "Choose a format when this chapter provides more than one." to "Elige un formato cuando este capítulo ofrezca más de uno.",
+    "Save offline" to "Guardar sin conexión",
+    "Load more" to "Cargar más",
+    "Choose content format" to "Elegir formato de contenido",
+    "The operation could not be completed." to "No se pudo completar la operación.",
+    "Format: {0}" to "Formato: {0}",
+)
+
+private val PortugueseReaderTranslations = mapOf(
+    "Import local content" to "Importar conteúdo local",
+    "Images, CBZ, ZIP, TXT or EPUB · stored on this device" to "Imagens, CBZ, ZIP, TXT ou EPUB · armazenados neste dispositivo",
+    "TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync." to
+        "O conteúdo TXT e EPUB permanece neste dispositivo, a menos que você o adicione explicitamente à sincronização criptografada.",
+    "Encrypted TXT/EPUB body sync" to "Sincronização criptografada do conteúdo TXT/EPUB",
+    "Uploads run only in the background and only when the current rights grant permits SYNC_BLOB." to
+        "Os uploads ocorrem apenas em segundo plano quando as permissões atuais autorizam SYNC_BLOB.",
+    "Choose files" to "Escolher arquivos",
+    "Encrypted chapter body sync" to "Sincronização criptografada do conteúdo dos capítulos",
+    "Off by default. When enabled, only bodies allowed by the current SYNC_BLOB grant are queued for encrypted background upload." to
+        "Desativada por padrão. Somente o conteúdo permitido pela autorização SYNC_BLOB atual entra na fila de upload criptografado em segundo plano.",
+    "This content is no longer available under the current rights grant." to "As permissões atuais não permitem mais acessar este conteúdo.",
+    "Full-text search is unavailable for this content." to "A pesquisa de texto completo não está disponível para este conteúdo.",
+    "Search text" to "Pesquisar no texto",
+    "Speech stopped because it is unavailable or no longer permitted." to "A leitura em voz alta foi interrompida porque não está disponível ou não é mais permitida.",
+    "Speech unavailable" to "Leitura em voz alta indisponível",
+    "Speaking…" to "Lendo…",
+    "Speak from paragraph" to "Ler a partir deste parágrafo",
+    "Stop" to "Parar",
+    "Search this book" to "Pesquisar neste livro",
+    "Search is no longer permitted." to "A pesquisa não é mais permitida.",
+    "Find" to "Pesquisar",
+    "Add note" to "Adicionar nota",
+    "Reader paragraph" to "Parágrafo do leitor",
+    "Copy is unavailable or not permitted." to "A cópia não está disponível ou não é permitida.",
+    "Copy" to "Copiar",
+    "{0} note" to "{0} nota",
+    "{0} notes" to "{0} notas",
+    "Add paragraph note" to "Adicionar nota ao parágrafo",
+    "Note" to "Nota",
+    "The note could not be saved or is no longer permitted." to "Não foi possível salvar a nota ou ela não é mais permitida.",
+    "The image navigation graph is unavailable." to "A navegação de imagens não está disponível.",
+    "Page {0}" to "Página {0}",
+    "The image resource could not be opened." to "Não foi possível abrir o recurso de imagem.",
+    "The EPUB navigation graph is unavailable." to "A navegação EPUB não está disponível.",
+    "The EPUB resources could not be opened." to "Não foi possível abrir os recursos EPUB.",
+    "Previous" to "Anterior",
+    "Next" to "Próximo",
+    "EPUB rendering is unavailable until this platform supplies its secure browser renderer." to
+        "O EPUB não pode ser exibido até que esta plataforma forneça um navegador seguro.",
+    "This image representation has not been materialized into reader pages." to
+        "Este conteúdo de imagens ainda não foi convertido em páginas do leitor.",
+    "Content saved for offline reading." to "Conteúdo salvo para leitura offline.",
+    "Extension content" to "Conteúdo da extensão",
+    "Unable to load chapters" to "Não foi possível carregar os capítulos",
+    "No chapters" to "Nenhum capítulo",
+    "This extension did not return any readable units." to "Esta extensão não retornou nenhuma unidade legível.",
+    "Choose a format when this chapter provides more than one." to "Escolha um formato quando este capítulo oferecer mais de um.",
+    "Save offline" to "Salvar offline",
+    "Load more" to "Carregar mais",
+    "Choose content format" to "Escolher formato do conteúdo",
+    "The operation could not be completed." to "Não foi possível concluir a operação.",
+    "Format: {0}" to "Formato: {0}",
+)
+
+private val TraditionalPortabilityTranslations = mapOf(
+    "Archive ready" to "封存檔已就緒",
+    "Back" to "返回",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "內容備份服務尚未連接，因此無法匯出二進位封存檔。",
+    "Books" to "書籍",
+    "Chapter bodies are not shown in this report" to "此報告不會顯示章節正文",
+    "Choose .shinsou2 archive" to "選擇 .shinsou2 封存檔",
+    "Choose another backup" to "選擇其他備份",
+    "Choose backup" to "選擇備份",
+    "Content backup v2" to "內容備份 v2",
+    "Cookies ({0})" to "Cookie（{0}）",
+    "Create binary archive" to "建立二進位封存檔",
+    "Create portable archive" to "建立可攜式封存檔",
+    "Credentials ({0})" to "登入憑證（{0}）",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "登入憑證、Cookie、OAuth 權杖與裝置金鑰一律排除。",
+    "Done" to "完成",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "只有權限授權允許匯出的正文才會納入；省略項目會記錄在資訊清單中。",
+    "Import from ShuYue" to "從 ShuYue 匯入",
+    "Import protected secrets?" to "要匯入受保護的機密嗎？",
+    "Import secrets" to "匯入機密",
+    "Import selected content" to "匯入所選內容",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "已將 {0} 組登入憑證與 {1} 個 Cookie 匯入受保護儲存空間。",
+    "Include exportable content bodies" to "包含可匯出的內容正文",
+    "Inspecting a bounded copy…" to "正在安全範圍內檢查副本…",
+    "Leave workspace and restore this device" to "離開工作區並還原此裝置",
+    "Moving from ShuYue?" to "要從 ShuYue 遷移嗎？",
+    "No backup selected" to "尚未選擇備份",
+    "Optional secrets" to "選用機密",
+    "Portable metadata" to "可攜式中繼資料",
+    "Preview truncated; only all-or-none selection is available" to "預覽已截斷，只能全選或全不選",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "平台的受保護儲存空間無法使用，因此已封鎖機密匯入。",
+    "Quarantined extension scripts" to "已隔離的擴充套件腳本",
+    "Reading positions ({0})" to "閱讀位置（{0}）",
+    "Restore and sync to all devices" to "還原並同步至所有裝置",
+    "Restore content archive" to "還原內容封存檔",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "必須先連接共用內容交易與同步寄件匣協調器，才能進行還原。",
+    "Restore this archive?" to "要還原此封存檔嗎？",
+    "Restore verified archive" to "還原已驗證的封存檔",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "已還原 {0} 部出版品、{1} 則註記與 {2} 份內容正文。",
+    "Review and import selected secrets" to "檢閱並匯入所選機密",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "請先檢閱；腳本會保持隔離，機密仍會排除",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "所選內容與隔離腳本已透過交易一次提交。",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "所選腳本只會保存供稍後檢閱，匯入過程絕不執行",
+    "ShuYue backup v1" to "ShuYue 備份 v1",
+    "The backup was rejected" to "備份已遭拒絕",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "啟用還原前，會驗證完整容器、宣告路徑、校驗和與可攜式狀態。",
+    "The device must leave the workspace before its local state is replaced." to
+        "此裝置必須先離開工作區，才能取代本機狀態。",
+    "This exact import was already committed; nothing was duplicated." to
+        "完全相同的匯入已提交，不會建立重複資料。",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "這需要狀態為就緒的工作區，並在共用提交中寫入持久變更、正文上傳與寄件匣記錄。",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "此獨立操作會取代已儲存的 ShuYue 遷移機密批次。數值只保留於此裝置，無法從可攜式備份復原。",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "請使用專用的分段匯入工具，以取得驗證報告、書籍選擇、腳本隔離與獨立機密同意流程。",
+    "Validated contents" to "已驗證的內容",
+    "Validated staging preview ready" to "已驗證的暫存預覽已就緒",
+    "Validation report" to "驗證報告",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "數值絕不顯示、備份、同步或自動匯入。",
+    "Verified portable state and bodies will be committed on this device." to
+        "已驗證的可攜式狀態與正文將提交到此裝置。",
+    "Verified restore preview" to "已驗證的還原預覽",
+    "Version {0} · {1} bytes · digest {2}…" to "版本 {0} · {1} 位元組 · 摘要 {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "具版本的資訊清單、校驗和與依權限篩選的正文",
+    "Where should this archive be restored?" to "要將此封存檔還原到哪裡？",
+    "{0} books · {1} chapters · {2} reading positions" to
+        "{0} 本書 · {1} 個章節 · {2} 個閱讀位置",
+    "{0} categories · {1} characters of chapter text" to "{0} 個分類 · 章節正文共 {1} 個字元",
+    "{0} chapters · {1}" to "{0} 個章節 · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "{0} 部出版品 · {1} 則註記 · {2} 份內容正文",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · {1} 份附加資訊清單 · 省略 {2} 份",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "共用內容儲存空間尚未連接，因此無法使用內容備份。",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "共用內容儲存空間尚未連接，因此無法使用 ShuYue 遷移。",
+    "The checksummed content archive could not be created." to "無法建立含校驗和的內容封存檔。",
+    "The selected content archive failed format or checksum validation." to
+        "所選內容封存檔未通過格式或校驗和驗證。",
+    "The selected content archive could not be inspected safely." to "無法安全檢查所選內容封存檔。",
+    "The sync-aware content restore did not commit." to "同步感知內容還原未能提交。",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "同步工作區已離開，但此裝置的本機還原已回復原狀。請重試同一份已驗證的封存檔。",
+    "The ShuYue backup could not be inspected safely." to "無法安全檢查 ShuYue 備份。",
+    "This backup was already imported with a different selection." to "此備份已用不同選擇匯入。",
+    "The transactional ShuYue import did not complete." to "ShuYue 交易式匯入未完成。",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "受保護儲存空間失敗，因此未取代任何 ShuYue 機密。",
+    "The selected file is not an importable ShuYue v1 backup." to "所選檔案不是可匯入的 ShuYue v1 備份。",
+    "The backup could not be inspected." to "無法檢查備份。",
+    "Validation issue ({0})" to "驗證問題（{0}）",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "備份包含無效或不支援的資料，請檢查代碼 {0}。",
+    "Not requested" to "未要求",
+    "Rights denied" to "權限拒絕",
+    "Missing" to "缺少",
+    "Corrupt" to "損毀",
+    "Archive limit" to "封存檔限制",
+)
+
+private val SimplifiedPortabilityTranslations = TraditionalPortabilityTranslations.mapValues { (_, value) ->
+    value.toSimplifiedChinese()
+} + mapOf(
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "已离开同步工作区，但设备本机还原已回滚。请使用同一份已验证的归档文件重试。",
+)
+
+private val JapanesePortabilityTranslations = mapOf(
+    "Archive ready" to "アーカイブの準備ができました",
+    "Back" to "戻る",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "コンテンツバックアップサービスに接続するまで、バイナリアーカイブを書き出せません。",
+    "Books" to "書籍",
+    "Chapter bodies are not shown in this report" to "このレポートには章の本文を表示しません",
+    "Choose .shinsou2 archive" to ".shinsou2 アーカイブを選択",
+    "Choose another backup" to "別のバックアップを選択",
+    "Choose backup" to "バックアップを選択",
+    "Content backup v2" to "コンテンツバックアップ v2",
+    "Cookies ({0})" to "Cookie（{0}）",
+    "Create binary archive" to "バイナリアーカイブを作成",
+    "Create portable archive" to "ポータブルアーカイブを作成",
+    "Credentials ({0})" to "認証情報（{0}）",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "認証情報、Cookie、OAuth トークン、デバイスキーは常に除外されます。",
+    "Done" to "完了",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "本文は権利が書き出しを許可する場合だけ含まれ、省略項目はマニフェストに記録されます。",
+    "Import from ShuYue" to "ShuYue から読み込む",
+    "Import protected secrets?" to "保護された機密情報を読み込みますか？",
+    "Import secrets" to "機密情報を読み込む",
+    "Import selected content" to "選択したコンテンツを読み込む",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "{0} 件の認証情報と {1} 件の Cookie を保護ストレージへ読み込みました。",
+    "Include exportable content bodies" to "書き出し可能な本文を含める",
+    "Inspecting a bounded copy…" to "制限付きコピーを検査しています…",
+    "Leave workspace and restore this device" to "ワークスペースを離れてこのデバイスを復元",
+    "Moving from ShuYue?" to "ShuYue から移行しますか？",
+    "No backup selected" to "バックアップが選択されていません",
+    "Optional secrets" to "任意の機密情報",
+    "Portable metadata" to "ポータブルメタデータ",
+    "Preview truncated; only all-or-none selection is available" to
+        "プレビューは省略されています。全選択または全解除のみ可能です",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "プラットフォームの保護ストレージを利用できないため、機密情報の読み込みはブロックされています。",
+    "Quarantined extension scripts" to "隔離された拡張スクリプト",
+    "Reading positions ({0})" to "読書位置（{0}）",
+    "Restore and sync to all devices" to "復元してすべてのデバイスへ同期",
+    "Restore content archive" to "コンテンツアーカイブを復元",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "共有コンテンツトランザクションと同期送信キューのコーディネーターに接続するまで、復元はブロックされます。",
+    "Restore this archive?" to "このアーカイブを復元しますか？",
+    "Restore verified archive" to "検証済みアーカイブを復元",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "{0} 件の出版物、{1} 件の注釈、{2} 件の本文を復元しました。",
+    "Review and import selected secrets" to "選択した機密情報を確認して読み込む",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "先に確認してください。スクリプトは隔離され、機密情報は除外されたままです",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "選択したコンテンツと隔離スクリプトをトランザクションとしてコミットしました。",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "選択したスクリプトは後の確認用に保存され、読み込み時には実行されません",
+    "ShuYue backup v1" to "ShuYue バックアップ v1",
+    "The backup was rejected" to "バックアップは拒否されました",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "復元を有効にする前に、コンテナ全体、宣言済みパス、チェックサム、ポータブル状態を検証します。",
+    "The device must leave the workspace before its local state is replaced." to
+        "ローカル状態を置き換える前に、このデバイスはワークスペースから離れる必要があります。",
+    "This exact import was already committed; nothing was duplicated." to
+        "同一の読み込みはすでにコミット済みです。重複は作成されませんでした。",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "準備完了のワークスペースと、共有コミット内の永続的な変更、本文アップロード、送信キュー記録が必要です。",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "この個別操作は保存済みの ShuYue 移行機密情報を置き換えます。値はこのデバイスだけに保持され、ポータブルバックアップからは復元できません。",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "検証レポート、書籍選択、スクリプト隔離、個別の機密情報同意には、専用の段階的インポーターを使用してください。",
+    "Validated contents" to "検証済みコンテンツ",
+    "Validated staging preview ready" to "検証済みのステージングプレビューが準備できました",
+    "Validation report" to "検証レポート",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "値が表示、バックアップ、同期、自動読み込みされることはありません。",
+    "Verified portable state and bodies will be committed on this device." to
+        "検証済みのポータブル状態と本文をこのデバイスにコミットします。",
+    "Verified restore preview" to "検証済み復元プレビュー",
+    "Version {0} · {1} bytes · digest {2}…" to "バージョン {0} · {1} バイト · ダイジェスト {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "バージョン付きマニフェスト、チェックサム、権利で絞り込まれた本文",
+    "Where should this archive be restored?" to "このアーカイブをどこへ復元しますか？",
+    "{0} books · {1} chapters · {2} reading positions" to "{0} 冊 · {1} 章 · 読書位置 {2} 件",
+    "{0} categories · {1} characters of chapter text" to "カテゴリ {0} 件 · 章本文 {1} 文字",
+    "{0} chapters · {1}" to "{0} 章 · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "出版物 {0} 件 · 注釈 {1} 件 · 本文 {2} 件",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · 添付マニフェスト {1} 件 · 省略 {2} 件",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "共有コンテンツストレージに接続するまで、コンテンツバックアップを利用できません。",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "共有コンテンツストレージに接続するまで、ShuYue 移行を利用できません。",
+    "The checksummed content archive could not be created." to "チェックサム付きコンテンツアーカイブを作成できませんでした。",
+    "The selected content archive failed format or checksum validation." to
+        "選択したコンテンツアーカイブは形式またはチェックサム検証に失敗しました。",
+    "The selected content archive could not be inspected safely." to "選択したコンテンツアーカイブを安全に検査できませんでした。",
+    "The sync-aware content restore did not commit." to "同期対応のコンテンツ復元をコミットできませんでした。",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "同期ワークスペースから離脱しましたが、デバイス内の復元はロールバックされました。同じ検証済みアーカイブで再試行してください。",
+    "The ShuYue backup could not be inspected safely." to "ShuYue バックアップを安全に検査できませんでした。",
+    "This backup was already imported with a different selection." to "このバックアップは別の選択内容ですでに読み込まれています。",
+    "The transactional ShuYue import did not complete." to "ShuYue のトランザクション読み込みが完了しませんでした。",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "保護ストレージでエラーが発生したため、ShuYue の機密情報は置き換えられませんでした。",
+    "The selected file is not an importable ShuYue v1 backup." to "選択したファイルは読み込み可能な ShuYue v1 バックアップではありません。",
+    "The backup could not be inspected." to "バックアップを検査できませんでした。",
+    "Validation issue ({0})" to "検証上の問題（{0}）",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "バックアップに無効または未対応のデータがあります。コード {0} を確認してください。",
+    "Not requested" to "要求なし",
+    "Rights denied" to "権利により拒否",
+    "Missing" to "不足",
+    "Corrupt" to "破損",
+    "Archive limit" to "アーカイブ上限",
+)
+
+private val KoreanPortabilityTranslations = mapOf(
+    "Archive ready" to "아카이브 준비 완료",
+    "Back" to "뒤로",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "콘텐츠 백업 서비스가 연결될 때까지 바이너리 아카이브를 내보낼 수 없습니다.",
+    "Books" to "도서",
+    "Chapter bodies are not shown in this report" to "이 보고서에는 장 본문이 표시되지 않습니다",
+    "Choose .shinsou2 archive" to ".shinsou2 아카이브 선택",
+    "Choose another backup" to "다른 백업 선택",
+    "Choose backup" to "백업 선택",
+    "Content backup v2" to "콘텐츠 백업 v2",
+    "Cookies ({0})" to "쿠키({0})",
+    "Create binary archive" to "바이너리 아카이브 만들기",
+    "Create portable archive" to "이동식 아카이브 만들기",
+    "Credentials ({0})" to "자격 증명({0})",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "자격 증명, 쿠키, OAuth 토큰 및 기기 키는 항상 제외됩니다.",
+    "Done" to "완료",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "현재 권한이 내보내기를 허용하는 본문만 포함되며, 누락 항목은 매니페스트에 기록됩니다.",
+    "Import from ShuYue" to "ShuYue에서 가져오기",
+    "Import protected secrets?" to "보호된 비밀 정보를 가져오시겠습니까?",
+    "Import secrets" to "비밀 정보 가져오기",
+    "Import selected content" to "선택한 콘텐츠 가져오기",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "자격 증명 {0}개와 쿠키 {1}개를 보호된 저장소로 가져왔습니다.",
+    "Include exportable content bodies" to "내보낼 수 있는 본문 포함",
+    "Inspecting a bounded copy…" to "제한된 복사본 검사 중…",
+    "Leave workspace and restore this device" to "작업 공간을 나가고 이 기기 복원",
+    "Moving from ShuYue?" to "ShuYue에서 이전하시나요?",
+    "No backup selected" to "선택한 백업 없음",
+    "Optional secrets" to "선택적 비밀 정보",
+    "Portable metadata" to "이동식 메타데이터",
+    "Preview truncated; only all-or-none selection is available" to
+        "미리보기가 잘려 전체 선택 또는 전체 해제만 가능합니다",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "플랫폼의 보호된 저장소를 사용할 수 없어 비밀 정보 가져오기가 차단되었습니다.",
+    "Quarantined extension scripts" to "격리된 확장 스크립트",
+    "Reading positions ({0})" to "읽기 위치({0})",
+    "Restore and sync to all devices" to "복원 후 모든 기기에 동기화",
+    "Restore content archive" to "콘텐츠 아카이브 복원",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "공유 콘텐츠 트랜잭션 및 동기화 보낼 편지함 코디네이터가 연결될 때까지 복원이 차단됩니다.",
+    "Restore this archive?" to "이 아카이브를 복원하시겠습니까?",
+    "Restore verified archive" to "검증된 아카이브 복원",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "간행물 {0}개, 주석 {1}개, 본문 {2}개를 복원했습니다.",
+    "Review and import selected secrets" to "선택한 비밀 정보 검토 및 가져오기",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "먼저 검토하세요. 스크립트는 격리되고 비밀 정보는 제외된 상태로 유지됩니다",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "선택한 콘텐츠와 격리된 스크립트를 하나의 트랜잭션으로 커밋했습니다.",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "선택한 스크립트는 나중에 검토하도록 저장되며 가져오기 중에는 실행되지 않습니다",
+    "ShuYue backup v1" to "ShuYue 백업 v1",
+    "The backup was rejected" to "백업이 거부되었습니다",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "복원을 활성화하기 전에 전체 컨테이너, 선언된 경로, 체크섬 및 이동식 상태를 검증합니다.",
+    "The device must leave the workspace before its local state is replaced." to
+        "로컬 상태를 교체하기 전에 이 기기가 작업 공간에서 나가야 합니다.",
+    "This exact import was already committed; nothing was duplicated." to
+        "동일한 가져오기가 이미 커밋되어 중복 항목을 만들지 않았습니다.",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "준비된 작업 공간과 공유 커밋의 영구 변경, 본문 업로드 및 보낼 편지함 기록이 필요합니다.",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "이 별도 작업은 저장된 ShuYue 이전 비밀 정보 묶음을 교체합니다. 값은 이 기기에만 남으며 이동식 백업에서 복구할 수 없습니다.",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "검증 보고서, 도서 선택, 스크립트 격리 및 별도 비밀 정보 동의를 위해 전용 단계별 가져오기 도구를 사용하세요.",
+    "Validated contents" to "검증된 콘텐츠",
+    "Validated staging preview ready" to "검증된 준비 미리보기 완료",
+    "Validation report" to "검증 보고서",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "값은 표시, 백업, 동기화 또는 자동 가져오기되지 않습니다.",
+    "Verified portable state and bodies will be committed on this device." to
+        "검증된 이동식 상태와 본문을 이 기기에 커밋합니다.",
+    "Verified restore preview" to "검증된 복원 미리보기",
+    "Version {0} · {1} bytes · digest {2}…" to "버전 {0} · {1}바이트 · 다이제스트 {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "버전이 지정된 매니페스트, 체크섬 및 권한으로 필터링된 본문",
+    "Where should this archive be restored?" to "이 아카이브를 어디에 복원하시겠습니까?",
+    "{0} books · {1} chapters · {2} reading positions" to "도서 {0}권 · 장 {1}개 · 읽기 위치 {2}개",
+    "{0} categories · {1} characters of chapter text" to "카테고리 {0}개 · 장 본문 {1}자",
+    "{0} chapters · {1}" to "장 {0}개 · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "간행물 {0}개 · 주석 {1}개 · 본문 {2}개",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · 첨부 매니페스트 {1}개 · 누락 {2}개",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "공유 콘텐츠 저장소가 연결될 때까지 콘텐츠 백업을 사용할 수 없습니다.",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "공유 콘텐츠 저장소가 연결될 때까지 ShuYue 이전을 사용할 수 없습니다.",
+    "The checksummed content archive could not be created." to "체크섬이 포함된 콘텐츠 아카이브를 만들 수 없습니다.",
+    "The selected content archive failed format or checksum validation." to
+        "선택한 콘텐츠 아카이브가 형식 또는 체크섬 검증에 실패했습니다.",
+    "The selected content archive could not be inspected safely." to "선택한 콘텐츠 아카이브를 안전하게 검사할 수 없습니다.",
+    "The sync-aware content restore did not commit." to "동기화 인식 콘텐츠 복원이 커밋되지 않았습니다.",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "동기화 작업 공간에서는 나갔지만 기기 내 복원은 롤백되었습니다. 동일한 검증된 아카이브로 다시 시도하세요.",
+    "The ShuYue backup could not be inspected safely." to "ShuYue 백업을 안전하게 검사할 수 없습니다.",
+    "This backup was already imported with a different selection." to "이 백업은 다른 선택 항목으로 이미 가져왔습니다.",
+    "The transactional ShuYue import did not complete." to "ShuYue 트랜잭션 가져오기가 완료되지 않았습니다.",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "보호된 저장소 오류로 ShuYue 비밀 정보를 교체하지 않았습니다.",
+    "The selected file is not an importable ShuYue v1 backup." to "선택한 파일은 가져올 수 있는 ShuYue v1 백업이 아닙니다.",
+    "The backup could not be inspected." to "백업을 검사할 수 없습니다.",
+    "Validation issue ({0})" to "검증 문제({0})",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "백업에 잘못되었거나 지원되지 않는 데이터가 있습니다. 코드 {0}을 확인하세요.",
+    "Not requested" to "요청하지 않음",
+    "Rights denied" to "권한 거부",
+    "Missing" to "누락",
+    "Corrupt" to "손상",
+    "Archive limit" to "아카이브 한도",
+)
+
+private val FrenchPortabilityTranslations = mapOf(
+    "Archive ready" to "Archive prête",
+    "Back" to "Retour",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "L’exportation de l’archive binaire est indisponible tant que le service de sauvegarde du contenu n’est pas connecté.",
+    "Books" to "Livres",
+    "Chapter bodies are not shown in this report" to "Le texte des chapitres n’apparaît pas dans ce rapport",
+    "Choose .shinsou2 archive" to "Choisir une archive .shinsou2",
+    "Choose another backup" to "Choisir une autre sauvegarde",
+    "Choose backup" to "Choisir une sauvegarde",
+    "Content backup v2" to "Sauvegarde du contenu v2",
+    "Cookies ({0})" to "Cookies : {0}",
+    "Create binary archive" to "Créer l’archive binaire",
+    "Create portable archive" to "Créer une archive portable",
+    "Credentials ({0})" to "Identifiants ({0})",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "Les identifiants, cookies, jetons OAuth et clés d’appareil sont toujours exclus.",
+    "Done" to "Terminé",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "Chaque contenu n’est inclus que si ses droits autorisent l’exportation ; les omissions sont consignées dans le manifeste.",
+    "Import from ShuYue" to "Importer depuis ShuYue",
+    "Import protected secrets?" to "Importer les secrets protégés ?",
+    "Import secrets" to "Importer les secrets",
+    "Import selected content" to "Importer le contenu sélectionné",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "{0} identifiants et {1} cookies ont été importés dans le stockage protégé.",
+    "Include exportable content bodies" to "Inclure les contenus exportables",
+    "Inspecting a bounded copy…" to "Inspection d’une copie limitée…",
+    "Leave workspace and restore this device" to "Quitter l’espace de travail et restaurer cet appareil",
+    "Moving from ShuYue?" to "Vous venez de ShuYue ?",
+    "No backup selected" to "Aucune sauvegarde sélectionnée",
+    "Optional secrets" to "Secrets facultatifs",
+    "Portable metadata" to "Métadonnées portables",
+    "Preview truncated; only all-or-none selection is available" to
+        "Aperçu tronqué : seule la sélection complète ou vide est disponible",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "Le stockage protégé de la plateforme est indisponible ; l’importation des secrets est donc bloquée.",
+    "Quarantined extension scripts" to "Scripts d’extension en quarantaine",
+    "Reading positions ({0})" to "Positions de lecture ({0})",
+    "Restore and sync to all devices" to "Restaurer et synchroniser sur tous les appareils",
+    "Restore content archive" to "Restaurer une archive de contenu",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "La restauration reste bloquée tant qu’un coordinateur commun des transactions de contenu et de la boîte d’envoi de synchronisation n’est pas connecté.",
+    "Restore this archive?" to "Restaurer cette archive ?",
+    "Restore verified archive" to "Restaurer l’archive vérifiée",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "{0} publications, {1} annotations et {2} contenus ont été restaurés.",
+    "Review and import selected secrets" to "Vérifier et importer les secrets sélectionnés",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "Vérifiez d’abord : les scripts restent en quarantaine et les secrets sont exclus",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "Le contenu sélectionné et les scripts en quarantaine ont été validés dans une même transaction.",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "Les scripts sélectionnés sont conservés pour vérification ultérieure et ne sont jamais exécutés pendant l’importation",
+    "ShuYue backup v1" to "Sauvegarde ShuYue v1",
+    "The backup was rejected" to "La sauvegarde a été rejetée",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "Le conteneur complet, les chemins déclarés, les sommes de contrôle et l’état portable sont validés avant d’autoriser la restauration.",
+    "The device must leave the workspace before its local state is replaced." to
+        "L’appareil doit quitter l’espace de travail avant le remplacement de son état local.",
+    "This exact import was already committed; nothing was duplicated." to
+        "Cette importation exacte avait déjà été validée ; aucun doublon n’a été créé.",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "Cette action exige un espace de travail prêt ainsi que des mutations durables, des envois de contenu et des entrées de boîte d’envoi dans la validation commune.",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "Cette action distincte remplace le lot de secrets de migration ShuYue enregistré. Les valeurs restent sur l’appareil et ne peuvent pas être récupérées depuis une sauvegarde portable.",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "Utilisez l’outil d’importation par étapes pour obtenir le rapport de validation, choisir les livres, mettre les scripts en quarantaine et donner un consentement distinct aux secrets.",
+    "Validated contents" to "Contenu validé",
+    "Validated staging preview ready" to "Aperçu intermédiaire validé prêt",
+    "Validation report" to "Rapport de validation",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "Les valeurs ne sont jamais affichées, sauvegardées, synchronisées ni importées automatiquement.",
+    "Verified portable state and bodies will be committed on this device." to
+        "L’état portable et les contenus vérifiés seront validés sur cet appareil.",
+    "Verified restore preview" to "Aperçu de restauration vérifié",
+    "Version {0} · {1} bytes · digest {2}…" to "Version {0} · {1} octets · empreinte {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "Manifeste versionné, sommes de contrôle et contenus filtrés selon les droits",
+    "Where should this archive be restored?" to "Où restaurer cette archive ?",
+    "{0} books · {1} chapters · {2} reading positions" to "{0} livres · {1} chapitres · {2} positions de lecture",
+    "{0} categories · {1} characters of chapter text" to "{0} catégories · {1} caractères de texte de chapitre",
+    "{0} chapters · {1}" to "{0} chapitres · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "{0} publications · {1} annotations · {2} contenus",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · {1} manifestes joints · {2} omis",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "La sauvegarde du contenu est indisponible tant que le stockage partagé du contenu n’est pas connecté.",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "La migration ShuYue est indisponible tant que le stockage partagé du contenu n’est pas connecté.",
+    "The checksummed content archive could not be created." to "L’archive de contenu avec somme de contrôle n’a pas pu être créée.",
+    "The selected content archive failed format or checksum validation." to
+        "L’archive de contenu sélectionnée a échoué à la validation du format ou de la somme de contrôle.",
+    "The selected content archive could not be inspected safely." to "L’archive de contenu sélectionnée n’a pas pu être inspectée en toute sécurité.",
+    "The sync-aware content restore did not commit." to "La restauration du contenu avec synchronisation n’a pas été validée.",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "L’espace de synchronisation a été quitté, mais la restauration locale a été annulée. Réessayez avec la même archive vérifiée.",
+    "The ShuYue backup could not be inspected safely." to "La sauvegarde ShuYue n’a pas pu être inspectée en toute sécurité.",
+    "This backup was already imported with a different selection." to "Cette sauvegarde a déjà été importée avec une autre sélection.",
+    "The transactional ShuYue import did not complete." to "L’importation transactionnelle ShuYue ne s’est pas terminée.",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "Aucun secret ShuYue n’a été remplacé, car le stockage protégé a échoué.",
+    "The selected file is not an importable ShuYue v1 backup." to "Le fichier sélectionné n’est pas une sauvegarde ShuYue v1 importable.",
+    "The backup could not be inspected." to "La sauvegarde n’a pas pu être inspectée.",
+    "Validation issue ({0})" to "Problème de validation ({0})",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "La sauvegarde contient des données invalides ou non prises en charge. Consultez le code {0}.",
+    "Not requested" to "Non demandé",
+    "Rights denied" to "Refusé par les droits",
+    "Missing" to "Manquant",
+    "Corrupt" to "Corrompu",
+    "Archive limit" to "Limite de l’archive",
+)
+
+private val GermanPortabilityTranslations = mapOf(
+    "Archive ready" to "Archiv bereit",
+    "Back" to "Zurück",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "Der Export des Binärarchivs ist erst verfügbar, wenn der Inhalts-Backupdienst verbunden ist.",
+    "Books" to "Bücher",
+    "Chapter bodies are not shown in this report" to "Kapitelinhalte werden in diesem Bericht nicht angezeigt",
+    "Choose .shinsou2 archive" to ".shinsou2-Archiv auswählen",
+    "Choose another backup" to "Anderes Backup auswählen",
+    "Choose backup" to "Backup auswählen",
+    "Content backup v2" to "Inhalts-Backup v2",
+    "Cookies ({0})" to "Cookies: {0}",
+    "Create binary archive" to "Binärarchiv erstellen",
+    "Create portable archive" to "Portables Archiv erstellen",
+    "Credentials ({0})" to "Anmeldedaten ({0})",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "Anmeldedaten, Cookies, OAuth-Token und Geräteschlüssel werden immer ausgeschlossen.",
+    "Done" to "Fertig",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "Ein Inhalt wird nur aufgenommen, wenn seine Rechte den Export erlauben; Auslassungen werden im Manifest protokolliert.",
+    "Import from ShuYue" to "Aus ShuYue importieren",
+    "Import protected secrets?" to "Geschützte Geheimnisse importieren?",
+    "Import secrets" to "Geheimnisse importieren",
+    "Import selected content" to "Ausgewählte Inhalte importieren",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "{0} Anmeldedaten und {1} Cookies wurden in den geschützten Speicher importiert.",
+    "Include exportable content bodies" to "Exportierbare Inhalte einbeziehen",
+    "Inspecting a bounded copy…" to "Begrenzte Kopie wird geprüft…",
+    "Leave workspace and restore this device" to "Arbeitsbereich verlassen und dieses Gerät wiederherstellen",
+    "Moving from ShuYue?" to "Wechsel von ShuYue?",
+    "No backup selected" to "Kein Backup ausgewählt",
+    "Optional secrets" to "Optionale Geheimnisse",
+    "Portable metadata" to "Portable Metadaten",
+    "Preview truncated; only all-or-none selection is available" to
+        "Vorschau gekürzt; nur vollständige Auswahl oder Abwahl ist möglich",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "Der geschützte Plattformspeicher ist nicht verfügbar; der Import von Geheimnissen ist daher gesperrt.",
+    "Quarantined extension scripts" to "Unter Quarantäne gestellte Erweiterungsskripte",
+    "Reading positions ({0})" to "Lesepositionen ({0})",
+    "Restore and sync to all devices" to "Wiederherstellen und mit allen Geräten synchronisieren",
+    "Restore content archive" to "Inhaltsarchiv wiederherstellen",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "Die Wiederherstellung bleibt gesperrt, bis ein gemeinsamer Koordinator für Inhaltstransaktionen und den Synchronisierungs-Postausgang verbunden ist.",
+    "Restore this archive?" to "Dieses Archiv wiederherstellen?",
+    "Restore verified archive" to "Geprüftes Archiv wiederherstellen",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "{0} Publikationen, {1} Anmerkungen und {2} Inhalte wurden wiederhergestellt.",
+    "Review and import selected secrets" to "Ausgewählte Geheimnisse prüfen und importieren",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "Zuerst prüfen; Skripte bleiben in Quarantäne und Geheimnisse ausgeschlossen",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "Ausgewählte Inhalte und quarantänisierte Skripte wurden gemeinsam in einer Transaktion übernommen.",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "Ausgewählte Skripte werden zur späteren Prüfung gespeichert und beim Import nie ausgeführt",
+    "ShuYue backup v1" to "ShuYue-Backup v1",
+    "The backup was rejected" to "Das Backup wurde abgelehnt",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "Vor Freigabe der Wiederherstellung werden der vollständige Container, deklarierte Pfade, Prüfsummen und der portable Zustand validiert.",
+    "The device must leave the workspace before its local state is replaced." to
+        "Das Gerät muss den Arbeitsbereich verlassen, bevor sein lokaler Zustand ersetzt wird.",
+    "This exact import was already committed; nothing was duplicated." to
+        "Dieser identische Import wurde bereits übernommen; es wurden keine Duplikate erzeugt.",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "Dafür sind ein bereiter Arbeitsbereich sowie dauerhafte Änderungen, Inhalts-Uploads und Postausgangseinträge im gemeinsamen Commit erforderlich.",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "Diese separate Aktion ersetzt den gespeicherten Stapel mit ShuYue-Migrationsgeheimnissen. Die Werte bleiben auf diesem Gerät und können nicht aus einem portablen Backup wiederhergestellt werden.",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "Verwende den speziellen stufenweisen Import für Validierungsbericht, Buchauswahl, Skriptquarantäne und separate Zustimmung zu Geheimnissen.",
+    "Validated contents" to "Validierte Inhalte",
+    "Validated staging preview ready" to "Validierte Vorbereitungsansicht ist bereit",
+    "Validation report" to "Validierungsbericht",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "Werte werden niemals angezeigt, gesichert, synchronisiert oder automatisch importiert.",
+    "Verified portable state and bodies will be committed on this device." to
+        "Der geprüfte portable Zustand und die Inhalte werden auf diesem Gerät übernommen.",
+    "Verified restore preview" to "Geprüfte Wiederherstellungsvorschau",
+    "Version {0} · {1} bytes · digest {2}…" to "Version {0} · {1} Byte · Prüfsumme {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "Versioniertes Manifest, Prüfsummen und nach Rechten gefilterte Inhalte",
+    "Where should this archive be restored?" to "Wo soll dieses Archiv wiederhergestellt werden?",
+    "{0} books · {1} chapters · {2} reading positions" to "{0} Bücher · {1} Kapitel · {2} Lesepositionen",
+    "{0} categories · {1} characters of chapter text" to "{0} Kategorien · {1} Zeichen Kapiteltext",
+    "{0} chapters · {1}" to "{0} Kapitel · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "{0} Publikationen · {1} Anmerkungen · {2} Inhalte",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · {1} angehängte Manifeste · {2} ausgelassen",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "Das Inhalts-Backup ist erst verfügbar, wenn der gemeinsame Inhaltsspeicher verbunden ist.",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "Die ShuYue-Migration ist erst verfügbar, wenn der gemeinsame Inhaltsspeicher verbunden ist.",
+    "The checksummed content archive could not be created." to "Das Inhaltsarchiv mit Prüfsumme konnte nicht erstellt werden.",
+    "The selected content archive failed format or checksum validation." to
+        "Das ausgewählte Inhaltsarchiv hat die Format- oder Prüfsummenprüfung nicht bestanden.",
+    "The selected content archive could not be inspected safely." to "Das ausgewählte Inhaltsarchiv konnte nicht sicher geprüft werden.",
+    "The sync-aware content restore did not commit." to "Die synchronisierungsfähige Inhaltswiederherstellung wurde nicht übernommen.",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "Der Synchronisierungsbereich wurde verlassen, die lokale Wiederherstellung jedoch zurückgesetzt. Versuchen Sie es mit demselben geprüften Archiv erneut.",
+    "The ShuYue backup could not be inspected safely." to "Das ShuYue-Backup konnte nicht sicher geprüft werden.",
+    "This backup was already imported with a different selection." to "Dieses Backup wurde bereits mit einer anderen Auswahl importiert.",
+    "The transactional ShuYue import did not complete." to "Der transaktionale ShuYue-Import wurde nicht abgeschlossen.",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "Wegen eines Fehlers im geschützten Speicher wurden keine ShuYue-Geheimnisse ersetzt.",
+    "The selected file is not an importable ShuYue v1 backup." to "Die ausgewählte Datei ist kein importierbares ShuYue-v1-Backup.",
+    "The backup could not be inspected." to "Das Backup konnte nicht geprüft werden.",
+    "Validation issue ({0})" to "Validierungsproblem ({0})",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "Das Backup enthält ungültige oder nicht unterstützte Daten. Prüfe Code {0}.",
+    "Not requested" to "Nicht angefordert",
+    "Rights denied" to "Durch Rechte verweigert",
+    "Missing" to "Fehlt",
+    "Corrupt" to "Beschädigt",
+    "Archive limit" to "Archivgrenze",
+)
+
+private val SpanishPortabilityTranslations = mapOf(
+    "Archive ready" to "Archivo listo",
+    "Back" to "Atrás",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "La exportación del archivo binario no estará disponible hasta conectar el servicio de copia de contenido.",
+    "Books" to "Libros",
+    "Chapter bodies are not shown in this report" to "El texto de los capítulos no se muestra en este informe",
+    "Choose .shinsou2 archive" to "Elegir archivo .shinsou2",
+    "Choose another backup" to "Elegir otra copia",
+    "Choose backup" to "Elegir copia",
+    "Content backup v2" to "Copia de contenido v2",
+    "Cookies ({0})" to "Cookies: {0}",
+    "Create binary archive" to "Crear archivo binario",
+    "Create portable archive" to "Crear archivo portátil",
+    "Credentials ({0})" to "Credenciales ({0})",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "Las credenciales, cookies, tokens OAuth y claves del dispositivo siempre se excluyen.",
+    "Done" to "Listo",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "Cada contenido solo se incluye si sus permisos autorizan la exportación; las omisiones se registran en el manifiesto.",
+    "Import from ShuYue" to "Importar desde ShuYue",
+    "Import protected secrets?" to "¿Importar secretos protegidos?",
+    "Import secrets" to "Importar secretos",
+    "Import selected content" to "Importar el contenido seleccionado",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "Se importaron {0} credenciales y {1} cookies en el almacenamiento protegido.",
+    "Include exportable content bodies" to "Incluir contenido exportable",
+    "Inspecting a bounded copy…" to "Inspeccionando una copia limitada…",
+    "Leave workspace and restore this device" to "Salir del espacio de trabajo y restaurar este dispositivo",
+    "Moving from ShuYue?" to "¿Vienes de ShuYue?",
+    "No backup selected" to "No hay ninguna copia seleccionada",
+    "Optional secrets" to "Secretos opcionales",
+    "Portable metadata" to "Metadatos portátiles",
+    "Preview truncated; only all-or-none selection is available" to
+        "Vista previa truncada; solo se puede seleccionar todo o nada",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "El almacenamiento protegido de la plataforma no está disponible, por lo que se bloqueó la importación de secretos.",
+    "Quarantined extension scripts" to "Scripts de extensión en cuarentena",
+    "Reading positions ({0})" to "Posiciones de lectura ({0})",
+    "Restore and sync to all devices" to "Restaurar y sincronizar en todos los dispositivos",
+    "Restore content archive" to "Restaurar archivo de contenido",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "La restauración seguirá bloqueada hasta conectar un coordinador compartido de transacciones de contenido y bandeja de salida de sincronización.",
+    "Restore this archive?" to "¿Restaurar este archivo?",
+    "Restore verified archive" to "Restaurar archivo verificado",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "Se restauraron {0} publicaciones, {1} anotaciones y {2} contenidos.",
+    "Review and import selected secrets" to "Revisar e importar los secretos seleccionados",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "Revisa primero; los scripts siguen en cuarentena y los secretos permanecen excluidos",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "El contenido seleccionado y los scripts en cuarentena se confirmaron en una misma transacción.",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "Los scripts seleccionados se guardan para revisarlos después y nunca se ejecutan durante la importación",
+    "ShuYue backup v1" to "Copia de ShuYue v1",
+    "The backup was rejected" to "La copia fue rechazada",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "Antes de activar la restauración se validan el contenedor completo, las rutas declaradas, las sumas de comprobación y el estado portátil.",
+    "The device must leave the workspace before its local state is replaced." to
+        "El dispositivo debe salir del espacio de trabajo antes de reemplazar su estado local.",
+    "This exact import was already committed; nothing was duplicated." to
+        "Esta importación exacta ya estaba confirmada; no se duplicó nada.",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "Esto requiere un espacio de trabajo listo y cambios duraderos, cargas de contenido y registros de salida dentro de la confirmación compartida.",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "Esta acción independiente reemplaza el lote guardado de secretos de migración de ShuYue. Los valores permanecen solo en el dispositivo y no pueden recuperarse desde una copia portátil.",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "Usa el importador por etapas para obtener el informe de validación, seleccionar libros, poner scripts en cuarentena y autorizar los secretos por separado.",
+    "Validated contents" to "Contenido validado",
+    "Validated staging preview ready" to "Vista previa intermedia validada lista",
+    "Validation report" to "Informe de validación",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "Los valores nunca se muestran, respaldan, sincronizan ni importan automáticamente.",
+    "Verified portable state and bodies will be committed on this device." to
+        "El estado portátil y el contenido verificados se confirmarán en este dispositivo.",
+    "Verified restore preview" to "Vista previa de restauración verificada",
+    "Version {0} · {1} bytes · digest {2}…" to "Versión {0} · {1} bytes · resumen {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "Manifiesto versionado, sumas de comprobación y contenido filtrado por permisos",
+    "Where should this archive be restored?" to "¿Dónde se debe restaurar este archivo?",
+    "{0} books · {1} chapters · {2} reading positions" to "{0} libros · {1} capítulos · {2} posiciones de lectura",
+    "{0} categories · {1} characters of chapter text" to "{0} categorías · {1} caracteres de texto de capítulos",
+    "{0} chapters · {1}" to "{0} capítulos · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "{0} publicaciones · {1} anotaciones · {2} contenidos",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · {1} manifiestos adjuntos · {2} omitidos",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "La copia de contenido no estará disponible hasta conectar el almacenamiento de contenido compartido.",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "La migración de ShuYue no estará disponible hasta conectar el almacenamiento de contenido compartido.",
+    "The checksummed content archive could not be created." to "No se pudo crear el archivo de contenido con suma de comprobación.",
+    "The selected content archive failed format or checksum validation." to
+        "El archivo de contenido seleccionado no superó la validación de formato o suma de comprobación.",
+    "The selected content archive could not be inspected safely." to "No se pudo inspeccionar de forma segura el archivo de contenido seleccionado.",
+    "The sync-aware content restore did not commit." to "La restauración de contenido con sincronización no se confirmó.",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "Se abandonó el espacio de sincronización, pero se revirtió la restauración local. Vuelve a intentarlo con el mismo archivo verificado.",
+    "The ShuYue backup could not be inspected safely." to "No se pudo inspeccionar de forma segura la copia de ShuYue.",
+    "This backup was already imported with a different selection." to "Esta copia ya se importó con una selección diferente.",
+    "The transactional ShuYue import did not complete." to "La importación transaccional de ShuYue no se completó.",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "No se reemplazó ningún secreto de ShuYue porque falló el almacenamiento protegido.",
+    "The selected file is not an importable ShuYue v1 backup." to "El archivo seleccionado no es una copia importable de ShuYue v1.",
+    "The backup could not be inspected." to "No se pudo inspeccionar la copia.",
+    "Validation issue ({0})" to "Problema de validación ({0})",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "La copia contiene datos no válidos o incompatibles. Revisa el código {0}.",
+    "Not requested" to "No solicitado",
+    "Rights denied" to "Denegado por permisos",
+    "Missing" to "Faltante",
+    "Corrupt" to "Dañado",
+    "Archive limit" to "Límite del archivo",
+)
+
+private val PortuguesePortabilityTranslations = mapOf(
+    "Archive ready" to "Arquivo pronto",
+    "Back" to "Voltar",
+    "Binary export is unavailable until the content-backup service is connected." to
+        "A exportação do arquivo binário ficará indisponível até que o serviço de backup de conteúdo seja conectado.",
+    "Books" to "Livros",
+    "Chapter bodies are not shown in this report" to "O texto dos capítulos não aparece neste relatório",
+    "Choose .shinsou2 archive" to "Escolher arquivo .shinsou2",
+    "Choose another backup" to "Escolher outro backup",
+    "Choose backup" to "Escolher backup",
+    "Content backup v2" to "Backup de conteúdo v2",
+    "Cookies ({0})" to "Cookies: {0}",
+    "Create binary archive" to "Criar arquivo binário",
+    "Create portable archive" to "Criar arquivo portátil",
+    "Credentials ({0})" to "Credenciais ({0})",
+    "Credentials, cookies, OAuth tokens, and device keys are always excluded." to
+        "Credenciais, cookies, tokens OAuth e chaves do dispositivo são sempre excluídos.",
+    "Done" to "Concluído",
+    "Each body is included only when its rights grant permits export; omissions are recorded in the manifest." to
+        "Cada conteúdo só é incluído quando suas permissões autorizam a exportação; as omissões são registradas no manifesto.",
+    "Import from ShuYue" to "Importar do ShuYue",
+    "Import protected secrets?" to "Importar segredos protegidos?",
+    "Import secrets" to "Importar segredos",
+    "Import selected content" to "Importar conteúdo selecionado",
+    "Imported {0} credentials and {1} cookies into protected storage." to
+        "Foram importadas {0} credenciais e {1} cookies para o armazenamento protegido.",
+    "Include exportable content bodies" to "Incluir conteúdo exportável",
+    "Inspecting a bounded copy…" to "Inspecionando uma cópia limitada…",
+    "Leave workspace and restore this device" to "Sair do espaço de trabalho e restaurar este dispositivo",
+    "Moving from ShuYue?" to "Migrando do ShuYue?",
+    "No backup selected" to "Nenhum backup selecionado",
+    "Optional secrets" to "Segredos opcionais",
+    "Portable metadata" to "Metadados portáteis",
+    "Preview truncated; only all-or-none selection is available" to
+        "Prévia truncada; somente a seleção total ou vazia está disponível",
+    "Protected platform storage is unavailable, so secret import is blocked." to
+        "O armazenamento protegido da plataforma está indisponível; por isso, a importação de segredos foi bloqueada.",
+    "Quarantined extension scripts" to "Scripts de extensão em quarentena",
+    "Reading positions ({0})" to "Posições de leitura ({0})",
+    "Restore and sync to all devices" to "Restaurar e sincronizar em todos os dispositivos",
+    "Restore content archive" to "Restaurar arquivo de conteúdo",
+    "Restore remains blocked until one shared content transaction and sync-outbox coordinator is connected." to
+        "A restauração continuará bloqueada até que um coordenador compartilhado de transações de conteúdo e caixa de saída de sincronização seja conectado.",
+    "Restore this archive?" to "Restaurar este arquivo?",
+    "Restore verified archive" to "Restaurar arquivo verificado",
+    "Restored {0} publications, {1} annotations, and {2} content bodies." to
+        "Foram restauradas {0} publicações, {1} anotações e {2} conteúdos.",
+    "Review and import selected secrets" to "Revisar e importar os segredos selecionados",
+    "Review first; scripts stay quarantined and secrets stay excluded" to
+        "Revise primeiro; os scripts permanecem em quarentena e os segredos continuam excluídos",
+    "Selected content and quarantined scripts were committed transactionally." to
+        "O conteúdo selecionado e os scripts em quarentena foram confirmados em uma única transação.",
+    "Selected scripts are stored for later review and are never executed by import" to
+        "Os scripts selecionados são armazenados para revisão posterior e nunca são executados durante a importação",
+    "ShuYue backup v1" to "Backup do ShuYue v1",
+    "The backup was rejected" to "O backup foi rejeitado",
+    "The complete container, declared paths, checksums, and portable state are validated before restore is enabled." to
+        "O contêiner completo, os caminhos declarados, as somas de verificação e o estado portátil são validados antes de ativar a restauração.",
+    "The device must leave the workspace before its local state is replaced." to
+        "O dispositivo precisa sair do espaço de trabalho antes que seu estado local seja substituído.",
+    "This exact import was already committed; nothing was duplicated." to
+        "Esta importação exata já havia sido confirmada; nenhum item foi duplicado.",
+    "This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit." to
+        "Isso exige um espaço de trabalho pronto e alterações duráveis, uploads de conteúdo e registros da caixa de saída na confirmação compartilhada.",
+    "This separate action replaces the stored ShuYue migration secret batch. Values remain device-only and cannot be recovered from a portable backup." to
+        "Esta ação separada substitui o lote salvo de segredos da migração do ShuYue. Os valores permanecem somente no dispositivo e não podem ser recuperados de um backup portátil.",
+    "Use the dedicated staged importer for its validation report, book selection, script quarantine, and separate secret consent." to
+        "Use o importador em etapas para obter o relatório de validação, selecionar livros, colocar scripts em quarentena e autorizar segredos separadamente.",
+    "Validated contents" to "Conteúdo validado",
+    "Validated staging preview ready" to "Prévia intermediária validada pronta",
+    "Validation report" to "Relatório de validação",
+    "Values are never shown, backed up, synchronized, or imported automatically." to
+        "Os valores nunca são exibidos, incluídos em backup, sincronizados ou importados automaticamente.",
+    "Verified portable state and bodies will be committed on this device." to
+        "O estado portátil e o conteúdo verificados serão confirmados neste dispositivo.",
+    "Verified restore preview" to "Prévia de restauração verificada",
+    "Version {0} · {1} bytes · digest {2}…" to "Versão {0} · {1} bytes · resumo {2}…",
+    "Versioned manifest, checksums, and rights-filtered bodies" to
+        "Manifesto versionado, somas de verificação e conteúdo filtrado por permissões",
+    "Where should this archive be restored?" to "Onde este arquivo deve ser restaurado?",
+    "{0} books · {1} chapters · {2} reading positions" to "{0} livros · {1} capítulos · {2} posições de leitura",
+    "{0} categories · {1} characters of chapter text" to "{0} categorias · {1} caracteres de texto de capítulos",
+    "{0} chapters · {1}" to "{0} capítulos · {1}",
+    "{0} publications · {1} annotations · {2} content bodies" to
+        "{0} publicações · {1} anotações · {2} conteúdos",
+    "{0} · {1} attached manifests · {2} omitted" to "{0} · {1} manifestos anexados · {2} omitidos",
+    "Content backup is unavailable until the shared content storage is connected." to
+        "O backup de conteúdo ficará indisponível até que o armazenamento compartilhado de conteúdo seja conectado.",
+    "ShuYue migration is unavailable until the shared content storage is connected." to
+        "A migração do ShuYue ficará indisponível até que o armazenamento compartilhado de conteúdo seja conectado.",
+    "The checksummed content archive could not be created." to "Não foi possível criar o arquivo de conteúdo com soma de verificação.",
+    "The selected content archive failed format or checksum validation." to
+        "O arquivo de conteúdo selecionado falhou na validação de formato ou soma de verificação.",
+    "The selected content archive could not be inspected safely." to "Não foi possível inspecionar com segurança o arquivo de conteúdo selecionado.",
+    "The sync-aware content restore did not commit." to "A restauração de conteúdo com sincronização não foi confirmada.",
+    "The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive." to
+        "O espaço de sincronização foi abandonado, mas a restauração local foi revertida. Tente novamente com o mesmo arquivo verificado.",
+    "The ShuYue backup could not be inspected safely." to "Não foi possível inspecionar com segurança o backup do ShuYue.",
+    "This backup was already imported with a different selection." to "Este backup já foi importado com outra seleção.",
+    "The transactional ShuYue import did not complete." to "A importação transacional do ShuYue não foi concluída.",
+    "No ShuYue secrets were replaced because protected storage failed." to
+        "Nenhum segredo do ShuYue foi substituído porque o armazenamento protegido falhou.",
+    "The selected file is not an importable ShuYue v1 backup." to "O arquivo selecionado não é um backup importável do ShuYue v1.",
+    "The backup could not be inspected." to "Não foi possível inspecionar o backup.",
+    "Validation issue ({0})" to "Problema de validação ({0})",
+    "The backup contains invalid or unsupported data. Review code {0}." to
+        "O backup contém dados inválidos ou não compatíveis. Revise o código {0}.",
+    "Not requested" to "Não solicitado",
+    "Rights denied" to "Negado pelas permissões",
+    "Missing" to "Ausente",
+    "Corrupt" to "Corrompido",
+    "Archive limit" to "Limite do arquivo",
+)
+
+private val TraditionalReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "核准已審核的擴充套件",
+    "SHA-256: {0}" to "SHA-256：{0}",
+    "Required permissions" to "必要權限",
+    "The script remains blocked until you approve this exact version and digest." to
+        "在你核准這個確切版本與摘要前，腳本會持續被阻擋。",
+    "Exact reviewed permissions granted" to "已授予精確審核的權限",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "下載的 ShuYue 成品不是完全相符的已審核版本",
+    "Execution blocked" to "已阻擋執行",
+    "Execute reviewed script" to "執行已審核腳本",
+    "Network access" to "網路存取",
+    "Cookie storage" to "Cookie 儲存",
+    "Credential access" to "登入憑證存取",
+    "Show login prompt" to "顯示登入提示",
+    "Modify favorites" to "修改收藏",
+    "Open browser challenge" to "開啟瀏覽器驗證",
+)
+
+private val SimplifiedReviewedExtensionTranslations =
+    TraditionalReviewedExtensionTranslations.mapValues { (_, value) -> value.toSimplifiedChinese() } + mapOf(
+        "Approve reviewed extension" to "批准已审核的扩展",
+        "Exact reviewed permissions granted" to "已授予精确审核的权限",
+    )
+
+private val JapaneseReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "レビュー済み拡張機能を承認",
+    "SHA-256: {0}" to "SHA-256：{0}",
+    "Required permissions" to "必要な権限",
+    "The script remains blocked until you approve this exact version and digest." to
+        "この正確なバージョンとダイジェストを承認するまで、スクリプトはブロックされたままです。",
+    "Exact reviewed permissions granted" to "レビュー済みの権限を付与済み",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "ダウンロードした ShuYue 成果物は、レビュー済みの正確なバージョンではありません",
+    "Execution blocked" to "実行をブロック中",
+    "Execute reviewed script" to "レビュー済みスクリプトを実行",
+    "Network access" to "ネットワークアクセス",
+    "Cookie storage" to "Cookie ストレージ",
+    "Credential access" to "認証情報へのアクセス",
+    "Show login prompt" to "ログイン画面を表示",
+    "Modify favorites" to "お気に入りを変更",
+    "Open browser challenge" to "ブラウザー認証を開く",
+)
+
+private val KoreanReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "검토된 확장 승인",
+    "SHA-256: {0}" to "SHA-256: {0}",
+    "Required permissions" to "필수 권한",
+    "The script remains blocked until you approve this exact version and digest." to
+        "이 정확한 버전과 다이제스트를 승인할 때까지 스크립트 실행이 차단됩니다.",
+    "Exact reviewed permissions granted" to "검토된 정확한 권한 부여됨",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "다운로드한 ShuYue 결과물이 검토된 정확한 버전이 아닙니다",
+    "Execution blocked" to "실행 차단됨",
+    "Execute reviewed script" to "검토된 스크립트 실행",
+    "Network access" to "네트워크 접근",
+    "Cookie storage" to "쿠키 저장소",
+    "Credential access" to "자격 증명 접근",
+    "Show login prompt" to "로그인 화면 표시",
+    "Modify favorites" to "즐겨찾기 변경",
+    "Open browser challenge" to "브라우저 인증 열기",
+)
+
+private val FrenchReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "Approuver l’extension vérifiée",
+    "SHA-256: {0}" to "SHA-256 : {0}",
+    "Required permissions" to "Autorisations requises",
+    "The script remains blocked until you approve this exact version and digest." to
+        "Le script reste bloqué tant que vous n’approuvez pas cette version et cette empreinte exactes.",
+    "Exact reviewed permissions granted" to "Autorisations vérifiées accordées",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "L’artefact ShuYue téléchargé ne correspond pas exactement à une version vérifiée",
+    "Execution blocked" to "Exécution bloquée",
+    "Execute reviewed script" to "Exécuter le script vérifié",
+    "Network access" to "Accès réseau",
+    "Cookie storage" to "Stockage des cookies",
+    "Credential access" to "Accès aux identifiants",
+    "Show login prompt" to "Afficher la connexion",
+    "Modify favorites" to "Modifier les favoris",
+    "Open browser challenge" to "Ouvrir la vérification du navigateur",
+)
+
+private val GermanReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "Geprüfte Erweiterung genehmigen",
+    "SHA-256: {0}" to "SHA-256: {0}",
+    "Required permissions" to "Erforderliche Berechtigungen",
+    "The script remains blocked until you approve this exact version and digest." to
+        "Das Skript bleibt gesperrt, bis du genau diese Version und Prüfsumme genehmigst.",
+    "Exact reviewed permissions granted" to "Geprüfte Berechtigungen erteilt",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "Das geladene ShuYue-Artefakt entspricht keiner exakt geprüften Version",
+    "Execution blocked" to "Ausführung blockiert",
+    "Execute reviewed script" to "Geprüftes Skript ausführen",
+    "Network access" to "Netzwerkzugriff",
+    "Cookie storage" to "Cookie-Speicher",
+    "Credential access" to "Zugriff auf Anmeldedaten",
+    "Show login prompt" to "Anmeldedialog anzeigen",
+    "Modify favorites" to "Favoriten ändern",
+    "Open browser challenge" to "Browser-Verifizierung öffnen",
+)
+
+private val SpanishReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "Aprobar extensión revisada",
+    "SHA-256: {0}" to "SHA-256: {0}",
+    "Required permissions" to "Permisos requeridos",
+    "The script remains blocked until you approve this exact version and digest." to
+        "El script seguirá bloqueado hasta que apruebes esta versión y este resumen exactos.",
+    "Exact reviewed permissions granted" to "Permisos revisados concedidos",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "El artefacto de ShuYue descargado no coincide con una versión revisada exacta",
+    "Execution blocked" to "Ejecución bloqueada",
+    "Execute reviewed script" to "Ejecutar script revisado",
+    "Network access" to "Acceso a la red",
+    "Cookie storage" to "Almacenamiento de cookies",
+    "Credential access" to "Acceso a credenciales",
+    "Show login prompt" to "Mostrar inicio de sesión",
+    "Modify favorites" to "Modificar favoritos",
+    "Open browser challenge" to "Abrir verificación del navegador",
+)
+
+private val PortugueseReviewedExtensionTranslations = mapOf(
+    "Approve reviewed extension" to "Aprovar extensão revisada",
+    "SHA-256: {0}" to "SHA-256: {0}",
+    "Required permissions" to "Permissões necessárias",
+    "The script remains blocked until you approve this exact version and digest." to
+        "O script continuará bloqueado até você aprovar esta versão e este resumo exatos.",
+    "Exact reviewed permissions granted" to "Permissões revisadas concedidas",
+    "Downloaded ShuYue artifact is not an exact reviewed version" to
+        "O artefato ShuYue baixado não corresponde a uma versão revisada exata",
+    "Execution blocked" to "Execução bloqueada",
+    "Execute reviewed script" to "Executar script revisado",
+    "Network access" to "Acesso à rede",
+    "Cookie storage" to "Armazenamento de cookies",
+    "Credential access" to "Acesso às credenciais",
+    "Show login prompt" to "Mostrar tela de login",
+    "Modify favorites" to "Modificar favoritos",
+    "Open browser challenge" to "Abrir verificação do navegador",
+)
+
 private val TraditionalChineseStrings = EnglishStrings.copy(
     library = "書庫", updates = "更新", history = "歷史", browse = "瀏覽", more = "更多",
     sources = "來源", extensions = "擴充套件", migration = "遷移", downloads = "下載",
@@ -1331,7 +2723,8 @@ private val TraditionalChineseStrings = EnglishStrings.copy(
     pageTurnAnimation = "翻頁動畫", pageTurnAnimationDescription = "切換頁面時顯示動畫",
     clearFilters = "清除篩選", noMatches = "沒有符合項目", libraryEmpty = "書庫是空的",
     noUpdates = "沒有最近更新", noHistory = "沒有閱讀歷史", createBackup = "建立備份", restoreBackup = "還原備份",
-    translations = TraditionalLongTranslations,
+    translations = TraditionalLongTranslations + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
+        TraditionalReviewedExtensionTranslations,
 )
 
 private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
@@ -1350,7 +2743,8 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     pageTurnAnimation = "翻页动画", pageTurnAnimationDescription = "切换页面时显示动画",
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
     // Explicit Simplified wording wins over the character-converted Traditional fallback.
-    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations,
+    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + SimplifiedReaderTranslations +
+        SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations,
 )
 
 private val JapaneseStrings = EnglishStrings.copy(
@@ -1370,7 +2764,9 @@ private val JapaneseStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "縦スクロール", pageTurnAnimation = "ページ切り替えアニメーション",
     pageTurnAnimationDescription = "ページを切り替えるときにアニメーションを表示",
     noUpdates = "最近の更新はありません", noHistory = "閲覧履歴はありません", createBackup = "バックアップを作成",
-    restoreBackup = "バックアップを復元", translations = JapaneseSyncTranslations,
+    restoreBackup = "バックアップを復元",
+    translations = JapaneseSyncTranslations + JapaneseReaderTranslations + JapanesePortabilityTranslations +
+        JapaneseReviewedExtensionTranslations,
 )
 
 private val KoreanStrings = EnglishStrings.copy(
@@ -1388,7 +2784,9 @@ private val KoreanStrings = EnglishStrings.copy(
     readerModeVertical = "세로 페이지 넘김", readerModeWebtoon = "웹툰", readerModeContinuousVertical = "연속 세로 스크롤",
     pageTurnAnimation = "페이지 전환 애니메이션", pageTurnAnimationDescription = "페이지를 전환할 때 애니메이션 표시",
     noMatches = "검색 결과 없음", libraryEmpty = "라이브러리가 비어 있습니다", noUpdates = "최근 업데이트 없음",
-    noHistory = "읽기 기록 없음", createBackup = "백업 만들기", restoreBackup = "백업 복원", translations = KoreanSyncTranslations,
+    noHistory = "읽기 기록 없음", createBackup = "백업 만들기", restoreBackup = "백업 복원",
+    translations = KoreanSyncTranslations + KoreanReaderTranslations + KoreanPortabilityTranslations +
+        KoreanReviewedExtensionTranslations,
 )
 
 private val FrenchStrings = EnglishStrings.copy(
@@ -1408,7 +2806,9 @@ private val FrenchStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Défilement vertical continu", pageTurnAnimation = "Animation de changement de page",
     pageTurnAnimationDescription = "Animer la transition entre les pages",
     noMatches = "Aucun résultat", libraryEmpty = "Votre bibliothèque est vide", noUpdates = "Aucune mise à jour récente",
-    noHistory = "Aucun historique", createBackup = "Créer une sauvegarde", restoreBackup = "Restaurer une sauvegarde", translations = FrenchSyncTranslations,
+    noHistory = "Aucun historique", createBackup = "Créer une sauvegarde", restoreBackup = "Restaurer une sauvegarde",
+    translations = FrenchSyncTranslations + FrenchReaderTranslations + FrenchPortabilityTranslations +
+        FrenchReviewedExtensionTranslations,
 )
 
 private val GermanStrings = EnglishStrings.copy(
@@ -1428,7 +2828,9 @@ private val GermanStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Fortlaufend vertikal", pageTurnAnimation = "Seitenwechsel animieren",
     pageTurnAnimationDescription = "Übergänge zwischen Seiten animieren",
     noUpdates = "Keine neuen Updates", noHistory = "Kein Leseverlauf", createBackup = "Backup erstellen",
-    restoreBackup = "Backup wiederherstellen", translations = GermanSyncTranslations + GermanICloudSyncTranslations,
+    restoreBackup = "Backup wiederherstellen",
+    translations = GermanSyncTranslations + GermanICloudSyncTranslations + GermanReaderTranslations +
+        GermanPortabilityTranslations + GermanReviewedExtensionTranslations,
 )
 
 private val SpanishStrings = EnglishStrings.copy(
@@ -1448,7 +2850,9 @@ private val SpanishStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Desplazamiento vertical continuo", pageTurnAnimation = "Animación al pasar página",
     pageTurnAnimationDescription = "Animar la transición entre páginas",
     noUpdates = "No hay actualizaciones recientes", noHistory = "No hay historial de lectura", createBackup = "Crear copia",
-    restoreBackup = "Restaurar copia", translations = SpanishSyncTranslations + SpanishICloudSyncTranslations,
+    restoreBackup = "Restaurar copia",
+    translations = SpanishSyncTranslations + SpanishICloudSyncTranslations + SpanishReaderTranslations +
+        SpanishPortabilityTranslations + SpanishReviewedExtensionTranslations,
 )
 
 private val PortugueseStrings = EnglishStrings.copy(
@@ -1468,5 +2872,7 @@ private val PortugueseStrings = EnglishStrings.copy(
     readerModeContinuousVertical = "Rolagem vertical contínua", pageTurnAnimation = "Animação ao virar página",
     pageTurnAnimationDescription = "Animar a transição entre páginas",
     libraryEmpty = "Sua biblioteca está vazia", noUpdates = "Nenhuma atualização recente", noHistory = "Nenhum histórico de leitura",
-    createBackup = "Criar backup", restoreBackup = "Restaurar backup", translations = PortugueseSyncTranslations + PortugueseICloudSyncTranslations,
+    createBackup = "Criar backup", restoreBackup = "Restaurar backup",
+    translations = PortugueseSyncTranslations + PortugueseICloudSyncTranslations + PortugueseReaderTranslations +
+        PortuguesePortabilityTranslations + PortugueseReviewedExtensionTranslations,
 )

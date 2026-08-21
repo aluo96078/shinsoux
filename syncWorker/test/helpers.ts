@@ -113,7 +113,11 @@ export function sqliteD1(db: DatabaseSync): D1Database {
   };
 }
 
-export function seedTenant(db: DatabaseSync, now = 1_000_000): void {
+export function seedTenant(
+  db: DatabaseSync,
+  now = 1_000_000,
+  signingPublicKey = "sign-a",
+): void {
   db.prepare(`INSERT INTO installation(instance_id, schema_version, initialized_at, signup_mode)
     VALUES (?, 1, ?, 'invite_only')`).run(IDS.instance, now);
   db.prepare(`INSERT INTO users(user_id, display_name, instance_role, status, quota_profile_id, created_at)
@@ -122,8 +126,8 @@ export function seedTenant(db: DatabaseSync, now = 1_000_000): void {
   db.prepare(`INSERT INTO devices(
     device_id, user_id, display_name, platform, signing_public_key, wrapping_public_key,
     token_hash, status, auth_epoch, created_at
-  ) VALUES (?, ?, 'A phone', 'ios', 'sign-a', 'wrap-a', 'token-a', 'active', 1, ?)`)
-    .run(IDS.deviceA, IDS.userA, now);
+  ) VALUES (?, ?, 'A phone', 'ios', ?, 'wrap-a', 'token-a', 'active', 1, ?)`)
+    .run(IDS.deviceA, IDS.userA, signingPublicKey, now);
   db.prepare(`INSERT INTO workspaces(workspace_id, owner_user_id, status, active_key_epoch, created_at)
     VALUES (?, ?, 'active', 1, ?)`)
     .run(IDS.workspaceA, IDS.userA, now);

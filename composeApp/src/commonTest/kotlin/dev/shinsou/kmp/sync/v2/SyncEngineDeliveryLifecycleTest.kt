@@ -173,10 +173,10 @@ class SyncEngineDeliveryLifecycleTest {
         var capabilityCalls = 0
 
         override suspend fun capabilities(endpoint: String) = SyncCapabilities(
-            protocolVersion = 1,
+            protocolVersion = SYNC_PROTOCOL_VERSION,
             minReaderVersion = 1,
             minWriterVersion = 1,
-            schemaVersion = 1,
+            schemaVersion = SYNC_STATE_SCHEMA_VERSION,
             minSchemaReaderVersion = 1,
             minSchemaWriterVersion = 1,
             realtimeAvailable = realtime,

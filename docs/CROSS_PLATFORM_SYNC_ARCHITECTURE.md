@@ -2,7 +2,7 @@
 
 - 狀態：Proposed
 - 適用專案：Shinsou X KMP
-- 最後更新：2026-08-20
+- 最後更新：2026-08-21
 - 目標平台：Android、iOS、macOS、Windows
 
 ## 1. 決策摘要
@@ -23,13 +23,16 @@ Android / iOS / macOS / Windows
         │   ├── 每個 workspace 的寫入序列化
         │   └── 限流與短期連線狀態
         └── R2
-            └── 客戶端產生的加密 checkpoint／備份
+            ├── 客戶端產生的加密 checkpoint／備份
+            └── 經 rights gate 允許的加密 content manifests／chunks
 ```
 
 核心決策如下：
 
 1. D1 control plane 加上 R2 stable checkpoint 與其後的 D1 event tail，共同構成可恢復的遠端權威狀態；Durable Object 不保存任何唯一資料。
-2. R2 只保存 checkpoint／備份，不在每次翻頁時覆寫完整 snapshot；event GC 後不可缺少 stable checkpoint。
+2. R2 的 control-plane namespace 保存 checkpoint／備份；M6 另設隔離的 encrypted content body
+   namespace。正文絕不塞入 event、checkpoint 或每次翻頁覆寫的 snapshot；event GC 後仍不可缺少
+   stable checkpoint。
 3. 一般使用者不需要 Cloudflare 帳號、Email、密碼或 OAuth。
 4. 裝置配對只呈現「掃描 QR、核對短碼、按下允許」。
 5. 一套 Cloudflare deployment 可服務多位互相隔離的使用者。
@@ -59,16 +62,21 @@ Android / iOS / macOS / Windows
 - explicit allowlist 中非敏感且具可攜性的應用設定；不直接同步整份 `AppSettings`
 - extension repository 清單
 - 刪除 tombstone
+- M6 schema v2 的 Publication／Acquisition／Unit／Manifest、annotation 與 blob reference metadata
+- 使用者選擇且當下 `RightsGrant` 明確允許 `SYNC_BLOB` 的 immutable content bodies；body 走獨立
+  R2 plane，不進 event／checkpoint
 
 ### 3.2 預設不同步
 
-- 已下載的圖片與 download queue
-- Local source 的原始圖片、ZIP、CBZ、EPUB bytes
+- download queue 與一般下載快取
+- Local source 的原始 ZIP／CBZ／EPUB 容器不會自動同步；只有已進 host `ContentBlobStore`、具完整
+  manifest graph 且通過 rights gate 的 immutable bodies 可明確加入 M6 body sync
 - extension package 與執行環境
 - 來源登入 cookie、OAuth token、密碼、API key
 - 裝置專屬設定，例如路徑、視窗狀態與平台權限
 
-另一臺裝置可能因此看得到 Local manga 的 metadata，卻仍需重新匯入原始檔案。來源 credentials 日後可提供獨立、明確 opt-in 的秘密同步，但不納入第一版。
+未獲 `SYNC_BLOB` 授權或未選擇同步的內容，在另一臺裝置只會看到 metadata，仍需重新匯入或由
+來源重新取得。來源 credentials 日後可提供獨立、明確 opt-in 的秘密同步，但不納入第一版。
 
 ### 3.3 非目標
 
@@ -249,6 +257,52 @@ workspaces/{workspaceId}/checkpoints/v1/{throughWorkspaceSeq}/{checkpointId}-{sh
 - 只有至少存在兩份已驗證的 stable checkpoint，且超過 safety window 後，才能 GC `workspaceSeq <= recoveryBase.throughWorkspaceSeq` 的 events；只有一份 stable checkpoint 時不得依賴它刪除全部歷史。
 - Recovery base 向前移動、stable pointer／retained set 更新與 event GC boundary 必須由同一個可恢復狀態機控制；刪除失敗可重試，不能先失去 recovery delta。
 - Candidate 與 stable pointer 必須分開；stable pointer 更新及對應 D1 metadata 變更必須是同一 transaction。
+
+### 6.5 M6 encrypted content body plane
+
+Content body plane 與 checkpoint control plane 共用 workspace capability、quota authority 與 key epoch，
+但使用不同的 D1 tables、R2 object prefixes 與 lifecycle。Worker 只接受已驗證 UUID，並由已驗證的
+`instanceId/workspaceId/blobId/manifestId/chunkIndex` 組成 object key；client 永遠不能提交任意 R2
+path。
+
+```text
+workspaces/{workspaceId}/content/v2/blobs/{blobId}/manifests/{manifestId}.bin
+workspaces/{workspaceId}/content/v2/blobs/{blobId}/manifests/{manifestId}/chunks/{chunkIndex}.bin
+```
+
+- Event/checkpoint 只保存 `BlobRef`、remote manifest reference、每個 retained key epoch 的 DEK
+  envelope、presence/tombstone 與 HLC；正文、私有 manifest、plaintext digest 與 DEK 不進 metadata
+  plane。
+- 每個 blob 使用隨機 256-bit DEK。Chunk 與 private manifest 分別使用 ChaCha20-Poly1305、獨立
+  domain-separated nonce/AAD；clear manifest reference 只暴露路由、大小、chunk 數、ciphertext hash
+  與 commit receipt identity。
+- Upload session 先以 D1 CAS reserve exact bytes，再分塊 idempotent upload；commit 必須驗證每個
+  chunk index/size/hash、private manifest hash 與 reservation。R2 成功但 D1 commit 失敗不得形成
+  remotely available blob。
+- Client 的 durable transfer journal 保存 exact upload intent、DEK envelope 與 commit receipt。順序
+  固定為「Worker manifest commit → durable receipt → durable `BlobReferenceCommitV2` draft → content
+  job ack → journal cleanup」；每個 crash boundary 都以 deterministic operation ID replay。
+- Key rotation 不重新加密大型 body；client 以新 workspace epoch key re-wrap 同一 DEK，envelope
+  必須鏈結 previous envelope hash。至少保留 recovery base 到 active epoch 所需 envelopes。
+- Metadata presence 先產生 tombstone。只有 stable checkpoint 已包含該 tombstone，且有效 validator
+  以 Ed25519 簽署 exact checkpoint/hash/through-seq ack 後，Worker 才接受 GC。GC 同時刪除 chunks、
+  private manifest、envelopes與 quota usage，並以 receipt 保持冪等。
+- Tombstone identity 綁定 immutable removal boundary
+  `(workspaceId, blobId, manifestId, referenceThroughWorkspaceSeq)`；多臺裝置可先產生不同 provisional
+  UUID，但 Worker 必須回傳同一 canonical handle，client 將 winner durable save 後才可簽 ack。
+- 較新的 `BlobReferencePresenceSetV2(true)` 會中止本機 tombstone intent。若 tombstone 已在 Worker
+  建立，client 必須先驗證 retained stable checkpoint 的 plaintext 確實含 live reference，再簽署
+  exact checkpoint identity/hash/through-seq revival assertion。Worker 看不到 E2EE presence，只驗證
+  active-device signature、retained checkpoint 與嚴格較新的 sequence。
+- Revival 與 GC claim 在 D1 原子競爭：`WAITING -> CANCELLED` 會恢復 manifest 為 committed 並保留
+  signed audit；GC 必須在刪 R2 前原子完成 `WAITING -> DELETING` 的最後重查。已進 `DELETING`／
+  `DELETED` 時 revival 回傳 typed `reupload_required`，不可假裝原 body 已恢復。Cancelled removal
+  history 不阻擋同一 blob 之後以較新 boundary 再次 remove/revive。
+- Upload/download/rewrap/tombstone/GC 都重新檢查 capability tenant/auth/key epoch；`SYNC_BLOB`、
+  `OFFLINE_STORE` 與其他 host rights operation 仍各自 fail closed，plugin hint 不能提升 grant。
+- Body worker 永遠不在 cold-start、foreground catch-up、reader navigation 或 progress flush critical
+  path 執行。ReadingProgress 與 metadata outbox 優先；body scheduler 每個低優先級 slice 最多處理
+  一個 blob，失敗只保留 durable job 等待重試。
 
 ## 7. 最小資料模型
 
@@ -435,8 +489,8 @@ Server 需要看見路由、版本、解密參數、驗證及限流所需欄位�
 ```json
 {
   "envelopeVersion": 1,
-  "protocolVersion": 1,
-  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "schemaVersion": 2,
   "cipherSuite": "CHACHA20_POLY1305",
   "nonce": "base64url",
   "instanceId": "uuid",
@@ -484,6 +538,14 @@ Server 需要看見路由、版本、解密參數、驗證及限流所需欄位�
 - `ExtensionRepositoryPresenceSet`
 - `PortableSettingPatch`
 - `EntityPresenceSet`，其中刪除使用 LWW tombstone
+- `PublicationPatchV2`／`AcquisitionPatchV2`／`PublicationUnitPatchV2`
+- `ContentManifestPatchV2`／chunked `ContentAnnotationPatchV2`
+- `PublicationCategoryMembershipSetV2`／`ContentReadingProgressSetV2`
+- `BlobReferenceCommitV2`／`BlobDekEnvelopeRewrappedV2`／`BlobReferencePresenceSetV2`
+
+Protocol/schema v1 只作既有 metadata envelope 的 read compatibility；active v1 writer 不可靜默丟棄
+v2 content mutations。Shared content transaction 必須明確 reject 或 durable defer，直到 negotiated writer
+升級至 v2。
 
 ### 8.3 Idempotency
 
@@ -654,6 +716,18 @@ PUT    /v1/workspaces/{id}/checkpoints/{checkpointId}
 POST   /v1/workspaces/{id}/checkpoints/{checkpointId}/commit
 POST   /v1/workspaces/{id}/checkpoints/{checkpointId}/ack
 GET    /v1/workspaces/{id}/checkpoints/{checkpointId}
+
+POST   /v2/workspaces/{id}/blob-upload-sessions
+GET    /v2/workspaces/{id}/blob-upload-sessions/{sessionId}
+PUT    /v2/workspaces/{id}/blob-upload-sessions/{sessionId}/chunks/{chunkIndex}
+POST   /v2/workspaces/{id}/blob-upload-sessions/{sessionId}/commit
+GET    /v2/workspaces/{id}/blobs/{blobId}/manifest
+GET    /v2/workspaces/{id}/blobs/{blobId}/chunks/{chunkIndex}
+POST   /v2/workspaces/{id}/blobs/{blobId}/envelopes
+POST   /v2/workspaces/{id}/blobs/{blobId}/tombstone
+POST   /v2/workspaces/{id}/blobs/{blobId}/tombstone/acks
+POST   /v2/workspaces/{id}/blobs/{blobId}/tombstone/revival
+POST   /v2/workspaces/{id}/blob-gc
 ```
 
 Catch-up 開始時 client 固定本輪 `until=headSeq` watermark，逐頁取得：
@@ -760,6 +834,13 @@ Cloudflare active 時，backup restore、import、clear/reset 與任何 bulk rep
 
 直接 `replaceSnapshot` 只允許 sync disabled、首次建立 v2 replica，或由 SnapshotMaterializer 內部更新 projection。Full reset 也必須讓使用者選擇「跨裝置 tombstone reset」或「離開 workspace 後本機 reset」，不可繞過 clocks/outbox。大型 restore 若超過 batch/quota，保持 durable drafts 並顯示進度，不得先宣稱遠端已完成。
 
+離開 workspace 時，content transaction store 必須在刪除 session／workspace keys 前，原子移除該
+`instanceId + workspaceId` 所擁有的 publication replica cursors、`replica:` replay journal 與尚未
+消費的 blob-removal intents。Publication、Acquisition、Unit、manifest refs、rights 與本機 body
+仍保留；GC intent 是舊 authority 的工作憑證，不得帶入下一個 workspace。清理失敗時 departure
+中止並保留憑證以便重試；成功後同一 publication 才能由新 authority 以空 cursor 重新
+materialize，而不會永久落入 cross-authority CAS conflict。
+
 ### 11.4 新增依賴決策
 
 實作前先以 spike 鎖定並記錄版本：
@@ -796,7 +877,8 @@ App 與 Worker 以明確的 `protocolVersion`、`minReaderVersion`、`minWriterV
 
 ### 12.1 金鑰與 token
 
-- Data encryption：protocol v1 固定使用 ChaCha20-Poly1305；Worker 與 App 都必須拒絕其他
+- Data encryption：protocol v1/v2 固定使用 ChaCha20-Poly1305；v2 另為 event、checkpoint、body
+  chunk、private body manifest 與 DEK envelope 使用不同 domain/AAD。Worker 與 App 都必須拒絕其他
   `cipherSuite`，不能把未實作的算法名稱送進 ChaCha primitive。未來增加 AES-256-GCM 時必須
   升級並協商 protocol contract，且所有平台先具備真正的 AES-GCM 實作與跨語言 vectors。
 - Device authorization：Ed25519。
@@ -854,6 +936,10 @@ batch body                         256 KiB
 events / device / minute            60，burst 20
 events / workspace / minute        300
 checkpoint body                     32 MiB
+content blob plaintext             128 MiB
+content blob chunk                   8 MiB（ciphertext 另加 AEAD tag）
+content private manifest           512 KiB
+content chunks / blob                 1024
 workspace stored ciphertext        250 MiB
 retained checkpoints                 3
 ```
@@ -864,6 +950,8 @@ retained checkpoints                 3
 - 讀取 request body 前先檢查 `Content-Length`，串流過程仍設 hard cap。
 - `workspaces.committed_bytes/reserved_bytes` 與有效 reservation 是 quota 權威，`usage_daily` 只供觀測。Event insert／GC 在同一 D1 transaction 加減 committed bytes。
 - Checkpoint upload 前先以 D1 CAS 建立有期限的 byte reservation；R2 commit 後按實際大小結算，失敗／過期則釋放，避免並行上傳繞過 quota。
+- Content body upload 使用同一 `workspaces.committed_bytes/reserved_bytes` authority；session reserve
+  綁 exact chunk plan、private-manifest hash 與初始 DEK envelope，不能用平行 sessions 超賣 quota。
 - 429 時 client 只更新同一 ReadingProgress 尚未 sealed 的最新 draft，不累積每一個中間翻頁事件。
 - 超過儲存 quota 回傳 507；本機修改與 outbox 不得因此刪除。
 - Cloudflare 免費方案額度可能調整，部署頁必須連到官方 pricing 並顯示實際資源用量，而不是硬編碼「永久免費」。
@@ -917,7 +1005,9 @@ Cloudflare 免費額度適合私人、家庭與小群組，不應用來承諾公
 3. 首次 upload 成功且重新下載驗證後，才將 Cloudflare 設為 active sync provider。
 4. 同一安裝一次只能有一個 active sync provider，避免 iCloud snapshot merge 與 Cloudflare events 互相回寫形成循環。
 5. 啟用 Cloudflare 後停用 iCloud 自動 merge；跨系統搬移使用現有 portable backup export/import。若要新增 iCloud 手動匯出入口，視為另一項待實作功能，不能把現況描述為已支援。
-6. 遷移不包含 downloaded bytes、Local source bytes、extension packages 或 secrets，UI 必須事前說明。
+6. Provider 遷移本身不自動加入 downloaded cache、Local source container bytes、extension packages 或
+   secrets；之後只有通過 rights gate 且由使用者選擇的 immutable content bodies 才可另行排入 M6
+   encrypted body sync，UI 必須事前說明。
 
 ## 17. 實作階段
 
@@ -969,6 +1059,17 @@ Cloudflare 免費額度適合私人、家庭與小群組，不應用來承諾公
 - 協定與 schema compatibility gate
 - 端到端安全與壓力測試
 
+### Phase 6：統一內容與 encrypted body plane
+
+- Publication／Acquisition／Unit／Manifest／annotation／unified progress schema v2 mutations
+- shared SQLite content transaction、durable metadata outbox 與 exact blob-job journal
+- R2 resumable encrypted chunk upload/download、DEK re-wrap、tombstone ack 與 GC
+- Backup v2 與 ShuYue transactional import 只經同一 content transaction／v2 outbox 進入同步
+- body scheduler 每 slice 一個 blob，且永遠排在 reader progress 與 metadata 後
+
+完成條件：body 不進 event/checkpoint；upload 每個 crash boundary 可重播；舊 epoch envelope 可由
+retained recovery path 解密；沒有 stable-checkpoint ack 就不能 GC；冷啟動與 reader path 不等待 body。
+
 ## 18. 必要測試與驗收
 
 ### 共用 client tests
@@ -990,6 +1091,11 @@ Cloudflare 免費額度適合私人、家庭與小群組，不應用來承諾公
 - Incognito 不產生任何同步事件
 - snapshot → 完整 v2 SyncState/checkpoint migration
 - Cloudflare active 時 backup restore/import/reset 產生 mutations/tombstones，不走 direct replace
+- content transaction 的 publication/manifest/blob job/outbox 必須同 commit，restart 後 exact replay
+- blob upload commit、LocalSyncStore draft、content job ack、journal cleanup 四個 crash boundary 均可恢復
+- tampered chunk/private manifest 在 publish 至本機 ContentBlobStore 前失敗
+- key rotation re-wrap 保留相同 DEK、鏈結 previous envelope hash，重試不得產生不同 durable intent
+- body scheduler 預設一次只處理一個 job，且 reader background flush 先完成
 
 ### Worker tests
 
@@ -1010,6 +1116,10 @@ Cloudflare 免費額度適合私人、家庭與小群組，不應用來承諾公
 - 兩臺 proposer 競爭 rotation 時只允許一個 lease/manifest commit；recipient 驗證相同 key commitment
 - 新裝置 keyring 必須能解密 retained recovery base 到 head 的每個 epoch
 - checkpoint byte reservation、過期釋放與並行 quota 測試
+- blob session reserve/status/chunk/commit exact-plan、跨 tenant、過期 capability、平行 quota 與 R2 rollback
+- blob download hash/size、re-wrap CAS、跨裝置 canonical tombstone、stable-checkpoint ack/revival signature、
+  全 active-device ack、revival/GC claim race、multi-cycle removal 與 GC receipt
+- blob R2 key traversal 不可能由 client input 形成；D1 commit 前不得回報 remotely available
 - Lite／Realtime protocol compatibility
 
 ### 跨裝置 smoke matrix
@@ -1036,7 +1146,8 @@ macOS ↔ Windows
 - A→B 接力延遲、離線恢復與大 event tail 有實測數據。
 - D1 migration 可從前一正式版升級，並有 export／restore 演練。
 - 至少一份 checkpoint 損壞時仍能從上一份 checkpoint 加 event tail 恢復。
-- UI 清楚標示不同步的 downloaded／Local／credential 資料。
+- UI 清楚區分一般 download cache、未獲 rights 的 Local bodies、已明確加入 encrypted body sync 的
+  content，以及永不同步的 credentials／extension executable packages。
 
 ## 20. 最終建議
 

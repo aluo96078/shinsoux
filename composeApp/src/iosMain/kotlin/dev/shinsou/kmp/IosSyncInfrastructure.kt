@@ -1,6 +1,7 @@
 package dev.shinsou.kmp
 
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
+import app.cash.sqldelight.db.SqlDriver
 import dev.shinsou.kmp.sync.persistence.SqlDriverSyncStatePersistence
 import dev.shinsou.kmp.sync.persistence.createIosFileDeviceDirectoryPinStore
 import dev.shinsou.kmp.sync.persistence.SyncInstallationIdentity
@@ -105,19 +106,28 @@ internal class IosSyncInfrastructure(
     override val deviceDisplayName: String = UIDevice.currentDevice.name.trim().ifBlank { "iOS device" }
 
     private val driverLock = NSLock()
+    private var openDriver: SqlDriver? = null
     private var openPersistence: SqlDriverSyncStatePersistence? = null
 
     override fun statePersistence(): SqlDriverSyncStatePersistence = withDriverLock {
-        openPersistence ?: createStatePersistence().also { openPersistence = it }
+        openPersistence ?: SqlDriverSyncStatePersistence(
+            driver = databaseDriver(),
+            ownsDriver = false,
+        ).also { openPersistence = it }
     }
+
+    override fun contentDriver(): SqlDriver = withDriverLock { databaseDriver() }
+
+    override fun contentBlobDirectory(): String = "$directory/content-blobs"
 
     override fun close() = withDriverLock {
         openPersistence?.close()
         openPersistence = null
+        openDriver?.close()
+        openDriver = null
     }
 
-    private fun createStatePersistence() = SqlDriverSyncStatePersistence(
-        NativeSqliteDriver(
+    private fun databaseDriver(): SqlDriver = openDriver ?: NativeSqliteDriver(
             schema = SyncLocalSchema,
             name = DATABASE_NAME,
             onConfiguration = { configuration ->
@@ -125,8 +135,7 @@ internal class IosSyncInfrastructure(
                     extendedConfig = configuration.extendedConfig.copy(basePath = directory),
                 )
             },
-        ),
-    )
+        ).also { openDriver = it }
 
     private inline fun <T> withDriverLock(block: () -> T): T {
         driverLock.lock()

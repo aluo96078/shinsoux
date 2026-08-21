@@ -26,12 +26,30 @@ public class RhinoScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = RhinoScriptPluginRuntime.create(script, manifest, environment)
+    ): ScriptPluginRuntime = RhinoScriptPluginRuntime.create(
+        script,
+        manifest,
+        manifest.requireLegacyExecutableSource(),
+        environment,
+    )
+
+    override suspend fun createForSource(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime = RhinoScriptPluginRuntime.create(
+        script,
+        manifest,
+        manifest.requireDeclaredExecutableSource(source),
+        environment,
+    )
 }
 
 private class RhinoScriptPluginRuntime private constructor(
     override val pluginId: String,
     private val manifest: PluginManifest,
+    private val selectedSource: SourceIndexEntry?,
     private val environment: ScriptPluginEnvironment,
     private val dispatcher: ExecutorCoroutineDispatcher,
 ) : ScriptPluginRuntime {
@@ -40,13 +58,13 @@ private class RhinoScriptPluginRuntime private constructor(
     private lateinit var bridge: RhinoPluginBridge
     private val logs = CopyOnWriteArrayList<String>()
 
-    override var id: Long = manifest.sources?.firstOrNull()?.id ?: stableSourceId(manifest.id)
+    override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
         private set
-    override var name: String = manifest.sources?.firstOrNull()?.name ?: manifest.name
+    override var name: String = selectedSource?.name ?: manifest.name
         private set
-    override var lang: String = manifest.sources?.firstOrNull()?.lang ?: manifest.lang
+    override var lang: String = selectedSource?.lang ?: manifest.lang
         private set
-    override var baseUrl: String = manifest.sources?.firstOrNull()?.baseUrl.orEmpty()
+    override var baseUrl: String = selectedSource?.baseUrl.orEmpty()
         private set
     override var supportsLatest: Boolean = false
         private set
@@ -67,6 +85,11 @@ private class RhinoScriptPluginRuntime private constructor(
             logs = logs,
         )
         ScriptableObject.putProperty(scope, "bridge", Context.javaToJS(bridge, scope))
+        selectedSource?.let { source ->
+            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceId", source.id.toString())
+            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceName", source.name)
+            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceBaseUrl", source.baseUrl.orEmpty())
+        }
         context.evaluateString(scope, RHINO_DOM_BOOTSTRAP, "shinsou-runtime.js", 1, null)
         context.evaluateString(
             scope,
@@ -78,11 +101,18 @@ private class RhinoScriptPluginRuntime private constructor(
             null,
         )
         context.evaluateString(scope, script, manifest.script, 1, null)
-        sourceObject = ScriptableObject.getProperty(scope, "source") as? Scriptable
-            ?: throw IllegalArgumentException("Plugin '${manifest.id}' does not export a source object")
+        sourceObject = selectSourceObject()
 
-        baseUrl = sourceObject.stringProperty("baseUrl")
-            ?: manifest.sources?.firstOrNull()?.baseUrl.orEmpty()
+        // The repository's exact source declaration scopes host network/storage identity. A v1
+        // script without source metadata can still supply its historical runtime baseUrl.
+        baseUrl = selectedSource?.baseUrl ?: sourceObject.stringProperty("baseUrl").orEmpty()
+        selectedSource?.let { source ->
+            // String form avoids IEEE-754 loss for published 64-bit Tachiyomi ids.
+            ScriptableObject.putProperty(sourceObject, "id", source.id.toString())
+            ScriptableObject.putProperty(sourceObject, "name", source.name)
+            ScriptableObject.putProperty(sourceObject, "lang", source.lang)
+            ScriptableObject.putProperty(sourceObject, "baseUrl", baseUrl)
+        }
         supportsLatest = sourceObject.booleanProperty("supportsLatest") ?: false
         supportsLogin = sourceObject.booleanProperty("supportsLogin") ?: false
         bridge.supportsLogin = supportsLogin
@@ -92,6 +122,35 @@ private class RhinoScriptPluginRuntime private constructor(
         }
         bridge.sourceHeaders = headers
         ScriptableObject.putProperty(scope, "baseUrl", baseUrl)
+    }
+
+    /**
+     * v2-capable packages may export `sources` as an array or object keyed by source id.  A legacy
+     * package may continue to export the single `source` object.  Selection is always by the exact
+     * requested id; list order is never executable authority.
+     */
+    private fun selectSourceObject(): Scriptable {
+        val requestedId = selectedSource?.id?.toString()
+        val exported = scope.property("sources") as? Scriptable
+        if (exported != null && requestedId != null) {
+            val matches = exported.ids.mapNotNull { key ->
+                val candidate = when (key) {
+                    is Int -> exported.get(key, exported)
+                    else -> exported.get(key.toString(), exported)
+                } as? Scriptable ?: return@mapNotNull null
+                val declaredId = candidate.stringProperty("id")
+                    ?: candidate.stringProperty("sourceId")
+                    ?: key.toString()
+                candidate.takeIf { declaredId == requestedId }
+            }
+            require(matches.size == 1) {
+                "Plugin '${manifest.id}' does not export exactly one source '$requestedId'"
+            }
+            return matches.single()
+        }
+
+        return scope.property("source") as? Scriptable
+            ?: throw IllegalArgumentException("Plugin '${manifest.id}' does not export a source object")
     }
 
     override suspend fun getPopularManga(page: Int): MangasPage =
@@ -196,6 +255,7 @@ private class RhinoScriptPluginRuntime private constructor(
         suspend fun create(
             script: String,
             manifest: PluginManifest,
+            selectedSource: SourceIndexEntry?,
             environment: ScriptPluginEnvironment,
         ): RhinoScriptPluginRuntime {
             val executor = Executors.newSingleThreadExecutor { runnable ->
@@ -204,6 +264,7 @@ private class RhinoScriptPluginRuntime private constructor(
             val runtime = RhinoScriptPluginRuntime(
                 manifest.id,
                 manifest,
+                selectedSource,
                 environment,
                 executor.asCoroutineDispatcher(),
             )
@@ -313,6 +374,11 @@ public class RhinoPluginBridge internal constructor(
     public fun log(message: String) {
         logs += message
         environment.logger.log(pluginId, message)
+    }
+
+    /** Reviewed ShuYue scripts retain their historical `bridge.log(sourceId, message)` call. */
+    public fun log(ignoredSourceId: String, message: Any?) {
+        log(message?.toString().orEmpty())
     }
 
     public fun getPreference(key: String): String? = runBlocking {

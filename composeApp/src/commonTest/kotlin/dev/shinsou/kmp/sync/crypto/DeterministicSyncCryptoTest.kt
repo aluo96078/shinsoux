@@ -21,6 +21,7 @@ import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.sync.v2.SyncState
 import dev.shinsou.kmp.sync.v2.SyncValue
 import dev.shinsou.kmp.sync.v2.SYNC_CHECKPOINT_MAX_UNCOMPRESSED_BYTES
+import dev.shinsou.kmp.sync.v2.SYNC_PROTOCOL_VERSION
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -211,7 +212,7 @@ class DeterministicSyncCryptoTest {
         assertFailsWith<RemoteCheckpointVerificationException> {
             fixture.crypto.openAndVerifyCheckpoint(
                 fixture.session,
-                sealed.copy(header = sealed.header.copy(protocolVersion = 2)),
+                sealed.copy(header = sealed.header.copy(protocolVersion = SYNC_PROTOCOL_VERSION + 1)),
                 descriptor,
             )
         }

@@ -7,6 +7,12 @@
     <!-- Google Code Scanner owns camera access, so Shinsou X does not request CAMERA itself. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

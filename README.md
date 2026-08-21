@@ -21,7 +21,7 @@
 - 書庫分類、搜尋、篩選、排序、批次操作與閱讀進度管理
 - LTR、RTL、直向、Webtoon 等閱讀模式，支援縮放、濾鏡、預取與離線閱讀
 - 可安裝的 JavaScript 來源擴充套件，以及來源登入、Cookie、偏好與網路設定
-- 下載佇列、本地 ZIP／CBZ／EPUB／圖片匯入、備份還原與端對端加密事件同步
+- 下載佇列、本地 TXT／ZIP／CBZ／完整 EPUB／圖片匯入、備份還原與端對端加密事件同步
 - AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
@@ -34,21 +34,23 @@
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
 - Shinsou X JavaScript extension repository 的安裝、更新、卸載、執行授權、偏好、登入與來源瀏覽；repository 設定納入可攜 snapshot
-- 內建 Local source（source `0`）：直接圖片與 ZIP／CBZ／EPUB；匯入後複製至 app-private storage，並以原子發布的 v2 manifest 拒絕部分匯入
+- 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
+- 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
+- 內建 Local source（source `0`）：直接圖片與 TXT／ZIP／CBZ／EPUB；匯入以原子發布的 v2 manifest 拒絕部分或損毀內容
 - AniList 登入／搜尋／綁定／編輯 UI 與 OAuth token 流程；MyAnimeList 因缺少正式 client ID 而明示停用
 - iOS Widget payload、iCloud Drive snapshot sync，以及 Android／iOS Reader 實體音量鍵接線
 
 ## Cloudflare 端對端加密同步
 
-Shinsou X 內含可自行部署的 Cloudflare Worker + D1 + private R2 + Durable Object 同步服務。App 的設定頁已接入首次 setup、使用者邀請、裝置 QR／短碼配對、裝置撤銷、Recovery Kit、即時／Lite catch-up，以及 checkpoint 建立與回退。領域內容只會以經 Ed25519 驗證、ChaCha20-Poly1305 加密的 deterministic event／checkpoint 傳輸；Worker 不持有 workspace 明文金鑰。
+Shinsou X 內含可自行部署的 Cloudflare Worker + D1 + 兩個隔離的 private R2 bucket + Durable Object 同步服務。App 的設定頁已接入首次 setup、使用者邀請、裝置 QR／短碼配對、裝置撤銷、Recovery Kit、即時／Lite catch-up，以及 checkpoint 建立與回退。Metadata 走經 Ed25519 驗證、ChaCha20-Poly1305 加密的 deterministic event／checkpoint；經使用者選擇且 `SYNC_BLOB` rights 明確允許的 immutable content body，另走可續傳、分塊、端對端加密的 body plane。Worker 不持有 workspace 明文金鑰、正文 plaintext 或 blob DEK。
 
 本機寫入會先與 CRDT replica、HLC、draft/outbox 一起提交至 SQLite WAL，取得 server receipt 後才移除 outbox。Reader 會同步 logical page 或 Webtoon page 內的 normalized offset；離線、程序終止、WebSocket 中斷、事件重播與 cursor GC 都走可恢復路徑。撤銷或 Recovery 後會輪替獨立的新 epoch key，Recovery Kit 遺失時伺服器管理員也無法解密資料。
 
-以下資料刻意維持裝置本機：下載 bytes／queue、Local source 原始檔、extension packages、cookies、OAuth token、密碼、API key、tracker credentials 及平台專屬設定。Portable backup 在已連線 workspace 中還原或 reset 時，必須明確選擇「產生 mutations/tombstones 並同步所有裝置」或「先離開 workspace，只修改本機」，不會直接覆寫同步權威狀態。
+以下資料預設維持裝置本機：一般 download cache／queue、尚未明確加入 body sync 的 Local content、Local source 原始容器、extension packages、cookies、OAuth token、密碼、API key、tracker credentials 及平台專屬設定。Portable backup 在已連線 workspace 中還原或 reset 時，必須明確選擇「產生 mutations/tombstones 並同步所有裝置」或「先離開 workspace，只修改本機」，不會直接覆寫同步權威狀態。
 
 伺服器實作、部署與本機測試位於 [`syncWorker`](syncWorker/README.md)，完整協定與信任邊界見[跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)。程式的 deterministic tests 不等同 Cloudflare 新帳戶部署、真實額度、各平台 secure-store 重啟與六組跨裝置矩陣已通過；這些仍屬正式標示 stable 前的外部上線 Gate。
 
-Local source 支援 `jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`heic`、`bmp`，以及以 ZIP 容器讀取的 `zip`、`cbz`、`epub`。EPUB 目前依原版作法抽取圖片並以漫畫頁排序，不解析書籍排版或文字 spine。
+Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`heic`、`bmp`，以及 `zip`、`cbz`、`epub`。EPUB 會保留 OCF／OPF、manifest、spine、nav、XHTML、CSS、font、image 與 rendition metadata；renderer 不會在開書時一次 hydration 全部資源。
 
 ## 擴充套件與網路
 
@@ -82,7 +84,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 - `composeApp/src/jvmCommonMain`：Android／Desktop 共用 Rhino JavaScript runtime
 - `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
-- `syncWorker`：Cloudflare Worker、D1 migrations、R2 checkpoint、WorkspaceHub Durable Object、部署／備份工具與伺服器測試
+- `syncWorker`：Cloudflare Worker、D1 migrations、隔離的 checkpoint／content-body R2、WorkspaceHub Durable Object、部署／備份工具與伺服器測試
 
 ## 開始使用與建置
 
@@ -137,11 +139,11 @@ xcodebuild -project Shinsou.xcodeproj \
 - iOS snapshot 位於 Application Support；credentials、cookies、OAuth token、proxy API key 與其他 secrets 由 Keychain 保存。
 - Desktop snapshot 位於 `~/Library/Application Support/Shinsou`；敏感 KV 使用 AES-256-GCM，master key 存在 macOS Keychain。舊 `plugin-secrets.key` 只有在 Keychain 回讀及既有密文解密都成功後才會刪除；Keychain 失敗時不建立新的 file fallback。
 - Windows snapshot 與內容位於 `%LOCALAPPDATA%\Shinsou X`；敏感 KV 同樣使用 AES-256-GCM，master key 只以目前使用者範圍 DPAPI protected blob 落盤。
-- 可攜式備份、自動備份與 iCloud snapshot 以 `AppSnapshot` 為資料模型：會保存 extension repository 設定，但不包含已安裝的 JavaScript package、per-source plugin key-value state、credentials、cookies、OAuth token 或 proxy API key。proxy key 在序列化前會 redaction，restore／sync 也保留目的裝置的本機 secret。
-- Local source 與已下載頁面的檔案 bytes 不在 snapshot envelope 內。跨裝置還原會保留資料記錄，但仍需在目的裝置重新匯入原始檔或重新下載頁面。
+- 舊版可攜 snapshot、自動備份與 iCloud snapshot 仍以 `AppSnapshot` 為資料模型；Content Backup v2 另保存 checksummed publication graph、body-free content metadata、legacy aliases 與 migration ledgers，並可選擇納入當下 rights 明確允許匯出的 immutable blobs。兩者都不包含已安裝的 JavaScript package、credentials、cookies、OAuth token、proxy API key 或其他 secrets。
+- Local source 與已下載頁面的檔案 bytes 不在舊 snapshot envelope 內。Content Backup v2 未附 body 或 Cloudflare body sync 未獲授權時，目的裝置只還原 metadata/ref，並要求合法重新匯入、重新取得或授權後下載；不會虛構本機 blob 已存在。
 - Download completion manifest 與 Local v2 manifest 都留在 app-private storage，不會隨 portable snapshot 移動。同步合併不採用遠端 `downloadQueue`，只保留本機 queue；備份還原也保留並清理本機 queue，而不啟動另一台裝置的下載工作。
 - 自動備份是 app-private 原子快照，提供立即建立、列表、損毀標示、還原、刪除與 retention。Android 使用 WorkManager、iOS 使用 BGProcessingTask；實際背景執行時間由作業系統決定，Desktop 則只在 app 存活時以前景 scheduler 檢查。
-- Cloudflare v2 只同步明確 allowlist 的領域欄位，CRDT metadata、keyring、device directory pin、draft/outbox 與 cursor 留在獨立的 sync store，不會塞進 portable `AppSnapshot`。
+- Cloudflare v2 只同步明確 allowlist 的領域 metadata；使用者選擇且 `SYNC_BLOB` 允許的 content body 走隔離、分塊、E2EE 的 R2 body plane。CRDT state、keyring、device directory pin、draft/outbox 與 cursor 留在獨立 sync store，不會塞進 portable `AppSnapshot`。
 - 舊版 iOS iCloud 同步仍使用 `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔快照與 NSFileCoordinator；它不是 record-level CloudKit，也不能與 Cloudflare v2 同時作為寫入端。
 
 ## 尚需外部或真機驗證
@@ -152,6 +154,10 @@ xcodebuild -project Shinsou.xcodeproj \
 - iOS 音量鍵事件、系統音量恢復與 HUD 抑制已接線且可編譯，但必須用實體 iPhone 驗證。
 - Android Keystore 與 iOS Keychain 的首次建立、重啟後解密及裝置 access-control 行為仍需簽章／真機 smoke；target compile 不等於 secure store 已在發布環境驗證。
 - 無簽章 Simulator build 無法驗證 App Group、Widget、iCloud entitlement、Keychain sharing 或 iOS 背景排程。
+- macOS／iOS 發布簽章與 Keychain ACL，以及 Windows MSI 安裝／升級／卸載和 DPAPI 重啟解密，仍須各自的已簽章 release artifact 實機驗證。
+- EPUB 的完整 CSS／font／relative-resource 排版、跨 DOM selection、locator 回復與平台 TTS voice 必須再以合法真實 EPUB，分別在 Android、iPhone、macOS 與 Windows 做 smoke；自動 contracts 不能取代 browser engine／語音引擎驗證。
+- Encrypted body sync 的本機 Worker／D1／R2 contracts 已覆蓋 resume、rotation、quota、rewrap、tombstone 與 GC，但仍需真實 Cloudflare D1＋雙 R2、兩台裝置、斷網續傳及額度邊界的端對端演練。
+- Rights gate 與 protection-scheme framework 不等於已取得 DRM 授權；任何受保護格式仍需合法 provider adapter、認證與授權內容 smoke，未知 scheme 會預設拒絕。
 - 三平台文件 picker 的 declared-size／bounded-read 路徑已接；Desktop packaged app 已確認 picker 可開啟與取消，但實際選取檔案及 Android／iOS cloud／stream provider 仍需 smoke。無法提供可靠 size metadata 的 provider 會被安全拒絕。
 - Desktop unsigned packaged app 已確認 sidebar、Menu Bar 導航、Updates Upcoming、Local picker、Backup／Sync、停用的 app-lock／secure-screen 控制與關閉確認。實體鍵盤 accelerator、含資料的 master/detail／Reader、Keychain access prompt／ACL 及 legacy key migration 仍需人工驗證。
 

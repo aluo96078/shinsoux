@@ -94,6 +94,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import dev.shinsou.kmp.backup.AutoBackupEntry
 import dev.shinsou.kmp.backup.AutoBackupService
+import dev.shinsou.kmp.backup.BackupV2ArchiveSource
+import dev.shinsou.kmp.backup.DEFAULT_MAX_ARCHIVE_BYTES
 import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -114,15 +116,18 @@ import dev.shinsou.kmp.domain.model.shouldAskForCategoriesOnFavorite
 import dev.shinsou.kmp.local.LOCAL_CONTENT_EXTENSIONS
 import dev.shinsou.kmp.local.LOCAL_IMPORTED_DOCUMENT_LIMITS
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
+import dev.shinsou.kmp.migration.shuyue.ShuYueBackupV1Limits
 import dev.shinsou.kmp.reader.buildReaderChapterNavigation
 import dev.shinsou.kmp.reader.ReaderPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerTrackingProgress
 import dev.shinsou.kmp.reader.readerStoryOrderComparator
 import dev.shinsou.kmp.sync.v2.HlcTimestamp
+import dev.shinsou.kmp.sync.v2.ContentProgressKeyV2
 import dev.shinsou.kmp.sync.v2.ReaderPosition
 import dev.shinsou.kmp.sync.v2.ReaderProgressReporter
 import dev.shinsou.kmp.sync.v2.ReadingPositionRegister
+import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
 import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
 import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
@@ -139,6 +144,7 @@ import dev.shinsou.kmp.ui.screens.BackupScreen
 import dev.shinsou.kmp.ui.screens.BrowseScreen
 import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
+import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
 import dev.shinsou.kmp.ui.screens.DownloadsScreen
 import dev.shinsou.kmp.ui.screens.HistoryScreen
 import dev.shinsou.kmp.ui.screens.LibraryScreen
@@ -147,10 +153,12 @@ import dev.shinsou.kmp.ui.screens.MoreDestination
 import dev.shinsou.kmp.ui.screens.MoreScreen
 import dev.shinsou.kmp.ui.screens.ReaderScreen
 import dev.shinsou.kmp.ui.screens.SettingsScreen
+import dev.shinsou.kmp.ui.screens.ShuYueMigrationScreen
 import dev.shinsou.kmp.ui.screens.SourceLoginDialog
 import dev.shinsou.kmp.ui.screens.StatisticsScreen
 import dev.shinsou.kmp.ui.screens.TrackingSheet
 import dev.shinsou.kmp.ui.screens.UpdatesScreen
+import dev.shinsou.kmp.ui.screens.UnifiedContentReader
 import dev.shinsou.kmp.ui.theme.ShinsouTheme
 import dev.shinsou.kmp.ui.theme.ShinsouThemeMode
 import dev.aluo.shinsoux.generated.resources.Res
@@ -511,17 +519,81 @@ private fun ShinsouAppContent(
         readerChapterSession = null
         // Reader chrome/loading state must reach the screen before chapter/plugin I/O begins.
         withFrameNanos { }
-        runCatching { appServices.content.loadReaderChapter(session.mangaId, session.chapterId) }
-            .onSuccess {
-                readerChapter = it
+        try {
+            val loadedChapter = withContext(Dispatchers.Default) {
+                val loaded = appServices.content.loadReaderChapter(session.mangaId, session.chapterId)
+                val restored = loaded.typedSession?.let { typed ->
+                    val features = requireNotNull(appServices.contentFeatures) {
+                        "Protected reader content is unavailable without the host content runtime"
+                    }
+                    val cleanupAccess = typed.canonicalText?.let { text ->
+                        typed.access.copy(
+                            context = typed.access.context.copy(textCharacters = text.length.toLong()),
+                        )
+                    } ?: typed.access
+                    features.cleanupRevokedDerivedData(typed.content.navigation.scope, cleanupAccess)
+                    check(
+                        features.operations.display(
+                            request = typed.access,
+                            textCharacters = typed.canonicalText?.length?.toLong(),
+                        ) { true },
+                    )
+                    val navigation = typed.content.navigation
+                    val localIndex = repository.chapter(session.chapterId)?.lastPageRead
+                        ?.coerceIn(0, navigation.itemCount - 1)
+                        ?: 0
+                    val localLocator = navigation.locatorAt(localIndex)
+                    val remoteLocator = readerProgressReporter
+                        ?.currentContentReadingLocator(ContentProgressKeyV2.from(typed.content.initialLocator))
+                        ?.value
+                        ?.takeIf { navigation.indexOf(it) != null }
+                    TypedReaderContentSession(
+                        content = typed.content.copy(initialLocator = remoteLocator ?: localLocator),
+                        canonicalText = typed.canonicalText,
+                        access = typed.access,
+                    )
+                }
+                if (restored == null) loaded else loaded.copy(typedSession = restored)
+            }
+            if (readerSession == session) {
+                readerChapter = loadedChapter
                 readerChapterSession = session
             }
-            .onFailure {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (readerSession == session) {
                 readerChapter = ReaderChapter()
                 readerChapterSession = session
-                readerError = it.message ?: strings.text("Unable to load chapter pages.")
+                readerError = failure.message ?: strings.text("Unable to load chapter pages.")
             }
-        readerLoading = false
+        } finally {
+            if (readerSession == session) readerLoading = false
+        }
+    }
+
+    LaunchedEffect(appLifecycle, readerChapter.typedSession, readerChapterSession) {
+        if (appLifecycle != AppLifecycleState.FOREGROUND) return@LaunchedEffect
+        val typed = readerChapter.typedSession ?: return@LaunchedEffect
+        val features = appServices.contentFeatures ?: return@LaunchedEffect
+        val textLength = typed.canonicalText?.length
+        val cleanupAccess = textLength?.let { length ->
+            typed.access.copy(
+                context = typed.access.context.copy(textCharacters = length.toLong()),
+            )
+        } ?: typed.access
+        try {
+            withContext(Dispatchers.Default) {
+                features.cleanupRevokedDerivedData(typed.content.navigation.scope, cleanupAccess)
+                check(features.operations.display(typed.access, textLength?.toLong()) { true })
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            features.textToSpeech.stop()
+            readerChapter = ReaderChapter()
+            readerError = strings.text("This content is no longer available under the current rights grant.")
+        }
     }
 
     LaunchedEffect(effectiveSecureScreen) {
@@ -801,6 +873,7 @@ private fun ShinsouAppContent(
                 readerSession = null
             } else {
                 val activeReaderChapter = readerChapter.takeIf { readerChapterSession == session } ?: ReaderChapter()
+                val typedReaderSession = activeReaderChapter.typedSession
                 val navigation = buildReaderChapterNavigation(
                     chapters = snapshot.chapters.filter { it.mangaId == manga.id },
                     currentChapterId = chapter.id,
@@ -1008,6 +1081,46 @@ private fun ShinsouAppContent(
                     },
                     onChapterSelected = { chapterId -> transitionReader(manga.id, chapterId) },
                     modifier = Modifier.zIndex(5f),
+                    unifiedReaderContent = typedReaderSession?.content,
+                    unifiedReaderRenderer = typedReaderSession?.let { typed ->
+                        { _, rendererModifier ->
+                            val features = appServices.contentFeatures
+                            if (features == null) {
+                                Box(rendererModifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(strings.text("Protected reader features are unavailable."))
+                                }
+                            } else {
+                                UnifiedContentReader(
+                                    session = typed,
+                                    features = features,
+                                    copyText = appServices::copyText,
+                                    onLocatorChanged = { locator ->
+                                        if (!snapshot.settings.security.incognitoMode) {
+                                            typed.content.navigation.indexOf(locator)?.let { index ->
+                                                val completed = index == typed.content.navigation.itemCount - 1
+                                                mutate {
+                                                    val readAt = Clock.System.now().toEpochMilliseconds()
+                                                    readerProgressReporter?.recordContentReadingProgress(
+                                                        locator = locator,
+                                                        sessionId = session.progressSessionId,
+                                                        completed = completed,
+                                                        historyTouchedAt = readAt,
+                                                    )
+                                                    repository.markChapterProgress(
+                                                        chapterId = chapter.id,
+                                                        lastPageRead = index,
+                                                        read = chapter.read || completed,
+                                                        readAt = readAt,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = rendererModifier,
+                                )
+                            }
+                        }
+                    },
                 )
 
                 if (readerCategoryPickerMangaId == manga.id) {
@@ -1203,6 +1316,7 @@ private fun ShinsouAppContent(
                                             onNestedBackAvailabilityChanged = { moreNestedBackAvailable = it },
                                             downloadsPaused = downloadsPaused,
                                             onDownloadsPausedChange = { downloadsPaused = it },
+                                            onOpenDestination = { moreDestination = it },
                                             onBack = { moreDestination = null },
                                             mutate = ::mutate,
                                         )
@@ -1242,6 +1356,7 @@ private fun ShinsouAppContent(
                             onNestedBackAvailabilityChanged = { moreNestedBackAvailable = it },
                             downloadsPaused = downloadsPaused,
                             onDownloadsPausedChange = { downloadsPaused = it },
+                            onOpenDestination = { moreDestination = it },
                             onBack = { moreDestination = null },
                             mutate = ::mutate,
                         )
@@ -1573,6 +1688,8 @@ private fun SectionPane(
                     }
                 },
                 onOpenManga = onOpenBrowseManga,
+                contentFeatures = appServices.contentFeatures,
+                copyText = appServices::copyText,
                 systemBackRequest = browseSystemBackRequest,
                 backGestureProgress = browseBackGestureProgress,
                 onBackAvailabilityChanged = onBrowseBackAvailabilityChanged,
@@ -1589,13 +1706,16 @@ private fun SectionPane(
                 incognitoMode = snapshot.settings.security.incognitoMode,
                 downloadOnlyMode = snapshot.settings.library.downloadOnly,
                 onOpen = onOpenMore,
-                onImportLocal = {
+                onImportLocal = { syncContentBodies ->
                     mutate {
                         val documents = appServices.pickLocalFiles(
                             acceptedExtensions = LOCAL_CONTENT_EXTENSIONS,
                             limits = LOCAL_IMPORTED_DOCUMENT_LIMITS,
                         )
-                        val imported = appServices.content.importLocalDocuments(documents)
+                        val imported = appServices.content.importLocalDocuments(
+                            documents = documents,
+                            syncContentBodies = syncContentBodies,
+                        )
                         imported.firstOrNull()?.let { onOpenManga(it.mangaId) }
                     }
                 },
@@ -1882,6 +2002,7 @@ private fun MoreDestinationPane(
     wideLayout: Boolean,
     downloadsPaused: Boolean,
     onDownloadsPausedChange: (Boolean) -> Unit,
+    onOpenDestination: (MoreDestination) -> Unit,
     systemBackRequest: Long = 0L,
     backGestureProgress: Float = 0f,
     onNestedBackAvailabilityChanged: (Boolean) -> Unit = {},
@@ -2153,7 +2274,107 @@ private fun MoreDestinationPane(
                 }
             },
         )
+        MoreDestination.ContentBackupV2 -> {
+            val controller = appServices.portableContentBackupV2
+            if (controller == null) {
+                PortabilityUnavailablePane(
+                    title = strings.text("Content backup v2"),
+                    message = strings.text(
+                        "Content backup is unavailable until the shared content storage is connected.",
+                    ),
+                    onBack = onBack,
+                )
+            } else {
+                val observedCloudflareState = appServices.cloudflareSync?.state?.collectAsState()
+                ContentBackupV2Screen(
+                    controller = controller,
+                    syncStatus = observedCloudflareState?.value?.status
+                        ?: SyncSessionStatus.NOT_CONFIGURED,
+                    onChooseRestoreArchive = {
+                        mutate {
+                            val document = appServices.importDocument(
+                                acceptedExtensions = setOf("shinsou2"),
+                                limits = ImportedDocumentLimits(
+                                    maxBytesPerFile = DEFAULT_MAX_ARCHIVE_BYTES,
+                                    randomAccessExtensions = setOf("shinsou2"),
+                                ),
+                            ) ?: return@mutate
+                            controller.inspectForRestore(
+                                object : BackupV2ArchiveSource {
+                                    override val byteSize: Long get() = document.byteSize
+                                    override fun read(offset: Long, byteCount: Int): ByteArray =
+                                        document.source.read(offset, byteCount)
+                                },
+                            )
+                        }
+                    },
+                    onExportReady = { artifact ->
+                        mutate {
+                            appServices.exportBinaryDocument(
+                                artifact.suggestedFileName,
+                                artifact,
+                            )
+                        }
+                    },
+                    onOpenShuYueMigration = {
+                        onOpenDestination(MoreDestination.ShuYueMigration)
+                    },
+                    onBack = onBack,
+                )
+            }
+        }
+        MoreDestination.ShuYueMigration -> {
+            val controller = appServices.shuYueMigration
+            if (controller == null) {
+                PortabilityUnavailablePane(
+                    title = strings.text("Import from ShuYue"),
+                    message = strings.text(
+                        "ShuYue migration is unavailable until the shared content storage is connected.",
+                    ),
+                    onBack = onBack,
+                )
+            } else {
+                ShuYueMigrationScreen(
+                    controller = controller,
+                    onChooseBackup = {
+                        mutate {
+                            val document = appServices.importDocument(
+                                acceptedExtensions = setOf("json"),
+                                limits = ImportedDocumentLimits(
+                                    ShuYueBackupV1Limits.Default.maxRawBytes.toLong(),
+                                ),
+                            ) ?: return@mutate
+                            controller.inspect(document.contents)
+                        }
+                    },
+                    onBack = onBack,
+                )
+            }
+        }
         MoreDestination.About -> AboutScreen(onBack, appServices::openExternalUrl)
+    }
+}
+
+@Composable
+private fun PortabilityUnavailablePane(
+    title: String,
+    message: String,
+    onBack: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = title,
+            leading = {
+                androidx.compose.material3.IconButton(onClick = onBack) {
+                    Icon(Icons.Outlined.ArrowBack, LocalShinsouStrings.current.text("Back"))
+                }
+            },
+        )
+        EmptyState(
+            title = LocalShinsouStrings.current.text("Unavailable"),
+            message = message,
+            icon = { Icon(Icons.Outlined.Lock, null) },
+        )
     }
 }
 

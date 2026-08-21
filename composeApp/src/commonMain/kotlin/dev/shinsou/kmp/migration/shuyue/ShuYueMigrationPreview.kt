@@ -114,6 +114,7 @@ public data class ShuYueMigrationChapterSummary(
 public data class QuarantinedPluginPreview(
     public val id: String,
     public val version: String,
+    public val versionCode: Int = 0,
     public val sourceIds: List<String>,
     public val scriptByteCount: Long,
     public val requiresExplicitTrust: Boolean = true,
@@ -391,6 +392,7 @@ internal object ShuYueBackupV1Stager {
             val scriptBytes = plugin.script.encodeToByteArray()
             writer.string(plugin.id)
             writer.string(plugin.version)
+            writer.int(plugin.versionCode)
             writer.int(plugin.sourceIds.size)
             plugin.sourceIds.forEach(writer::string)
             writer.string(plugin.origin)
@@ -549,6 +551,7 @@ internal object ShuYueBackupV1Stager {
         fun quarantine(
             id: String,
             version: String,
+            versionCode: Int,
             sourceIds: List<String>,
             origin: String,
             ordinal: Int,
@@ -560,6 +563,7 @@ internal object ShuYueBackupV1Stager {
             pluginDescriptions += ShuYueStagedPluginInstallationDescription(
                 id = id,
                 version = version,
+                versionCode = versionCode,
                 sourceIds = sourceIds.sorted(),
                 origin = origin,
                 ordinal = ordinal,
@@ -575,6 +579,7 @@ internal object ShuYueBackupV1Stager {
             quarantine(
                 id = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 origin = "installedPlugins.manifest.script",
                 ordinal = index,
@@ -588,6 +593,7 @@ internal object ShuYueBackupV1Stager {
             quarantine(
                 id = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 origin = "pluginInstallations.plugin.script",
                 ordinal = index,
@@ -598,6 +604,7 @@ internal object ShuYueBackupV1Stager {
             quarantine(
                 id = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 origin = "pluginInstallations.script",
                 ordinal = index,
@@ -616,6 +623,10 @@ internal object ShuYueBackupV1Stager {
             preferences = backup.pluginPreferences.toDeterministicMap(),
             imageParsingPolicies = backup.pluginImageParsingPolicies.toDeterministicMap(),
             pluginInstallations = pluginDescriptions,
+            secretMaterial = ShuYueStagedSecretMaterial(
+                credentials = backup.pluginCredentials.map { it.copy() },
+                cookies = backup.pluginCookies.map { it.copy() },
+            ),
         )
     }
 
@@ -632,6 +643,7 @@ internal object ShuYueBackupV1Stager {
         fun addOccurrence(
             pluginId: String,
             version: String,
+            versionCode: Int,
             sourceIds: List<String>,
             script: String,
             origin: String,
@@ -648,6 +660,7 @@ internal object ShuYueBackupV1Stager {
                 entries += QuarantinedPluginPreview(
                     id = pluginId,
                     version = version,
+                    versionCode = versionCode,
                     sourceIds = sourceIds.sorted(),
                     scriptByteCount = size,
                     requiresExplicitTrust = true,
@@ -664,6 +677,7 @@ internal object ShuYueBackupV1Stager {
             addOccurrence(
                 pluginId = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 script = manifest.script,
                 origin = "installedPlugins.manifest.script",
@@ -675,6 +689,7 @@ internal object ShuYueBackupV1Stager {
             addOccurrence(
                 pluginId = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 script = manifest.script,
                 origin = "pluginInstallations.plugin.script",
@@ -683,6 +698,7 @@ internal object ShuYueBackupV1Stager {
             addOccurrence(
                 pluginId = manifest.id,
                 version = manifest.version,
+                versionCode = manifest.versionCode,
                 sourceIds = manifest.sources.map { it.id },
                 script = installation.script,
                 origin = "pluginInstallations.script",
@@ -757,6 +773,7 @@ internal data class ShuYueStagedChapter(
 internal data class ShuYueStagedPluginInstallationDescription(
     val id: String,
     val version: String,
+    val versionCode: Int,
     val sourceIds: List<String>,
     val origin: String,
     val ordinal: Int,
@@ -769,6 +786,15 @@ internal data class ShuYueStagedPluginInstallationDescription(
     override fun toString(): String =
         "ShuYueStagedPluginInstallationDescription(<redacted>, origin=$origin, " +
             "scriptByteCount=$scriptByteCount, sha256=${sha256.take(8)}…)"
+}
+
+/** Plaintext exists only inside the prepared in-memory import and is never exposed by preview. */
+internal data class ShuYueStagedSecretMaterial(
+    val credentials: List<ShuYueV1PluginCredential>,
+    val cookies: List<ShuYueV1PluginCookie>,
+) {
+    override fun toString(): String =
+        "ShuYueStagedSecretMaterial(credentials=${credentials.size}, cookies=${cookies.size}, values=<redacted>)"
 }
 
 internal data class ShuYueStagingSession(
@@ -786,6 +812,7 @@ internal data class ShuYueStagingSession(
     val preferences: Map<String, String>,
     val imageParsingPolicies: Map<String, ShuYueV1PluginImageParsingPolicy>,
     val pluginInstallations: List<ShuYueStagedPluginInstallationDescription>,
+    val secretMaterial: ShuYueStagedSecretMaterial,
 ) {
     /** Compatibility view for reports/importers that only need the exact legacy names. */
     val categoryNames: List<String> get() = categories.map { it.name }
@@ -995,6 +1022,15 @@ internal object ShuYueReadingLocatorMapper {
 
     internal fun resourceId(book: ShuYueStagedBook, chapterId: String): String =
         derive("resource", bookIdentity(book), chapterId)
+
+    internal fun manifestId(book: ShuYueStagedBook, chapterId: String): String =
+        derive("manifest", bookIdentity(book), chapterId)
+
+    internal fun representationId(book: ShuYueStagedBook, chapterId: String): String =
+        derive("representation", bookIdentity(book), chapterId)
+
+    internal fun rightsGrantId(book: ShuYueStagedBook): String =
+        derive("rights-grant", bookIdentity(book))
 
     internal fun portableCategoryId(name: String): PortableCategoryId =
         if (name == DEFAULT_CATEGORY_NAME) {

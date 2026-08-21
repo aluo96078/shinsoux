@@ -65,6 +65,12 @@ export async function atomicBatch(
       "emergency_handoff_invalid", "emergency_handoff_device_invalid",
       "emergency_handoff_attestation_missing", "emergency_handoff_key_missing",
       "emergency_handoff_recovery_key_missing", "emergency_handoff_recovery_credential_missing",
+      "blob_upload_session_invalid", "blob_chunk_receipt_invalid",
+      "blob_manifest_commit_invalid", "blob_envelope_rewrap_invalid",
+      "blob_rotation_envelopes_incomplete",
+      "blob_tombstone_invalid", "blob_tombstone_ack_invalid",
+      "blob_tombstone_revival_invalid",
+      "blob_gc_claim_invalid", "blob_gc_completion_invalid",
     ].find((code) => message.includes(code));
     if (known) throw new ApiError(409, known);
     if (message.includes("UNIQUE constraint failed")) throw new ApiError(409, "conflict");
@@ -84,6 +90,7 @@ export function blobToBytes(value: unknown): Uint8Array {
 export async function expireEphemeralRows(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("UPDATE checkpoint_leases SET status = 'expired' WHERE status IN ('active', 'uploaded') AND expires_at <= ?1").bind(now),
+    db.prepare("UPDATE blob_upload_sessions SET status = 'expired' WHERE status = 'active' AND expires_at <= ?1").bind(now),
     db.prepare("UPDATE key_rotations SET status = 'expired' WHERE status = 'leased' AND lease_expires_at <= ?1").bind(now),
     db.prepare("UPDATE workspaces SET pending_rotation_id = NULL WHERE pending_rotation_id IN (SELECT rotation_id FROM key_rotations WHERE status = 'expired')").bind(),
     db.prepare("UPDATE invites SET status = 'expired' WHERE status = 'active' AND expires_at <= ?1").bind(now),

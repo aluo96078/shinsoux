@@ -27,6 +27,7 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
+import dev.shinsou.kmp.tts.DesktopTextToSpeechEngine
 import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
@@ -72,6 +73,8 @@ fun main(args: Array<String>) {
                 fileSystem = DesktopAppFileSystem(),
                 runtimeFactory = RhinoScriptPluginRuntimeFactory(),
                 syncInfrastructure = syncInfrastructure,
+                platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
+                shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
             )
         }
         val syncRuntime = requireNotNull(composition.syncRuntime)
@@ -119,9 +122,12 @@ fun main(args: Array<String>) {
             DesktopAppServices(
                 browse = composition.browse,
                 content = composition.content,
+                contentFeatures = composition.contentFeatures,
                 tracking = composition.tracking,
                 cloudflareSync = composition.cloudflareSync,
                 syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
+                portableContentBackupV2 = composition.portableContentBackupV2,
+                shuYueMigration = composition.shuYueMigration,
                 snapshotSync = SnapshotSyncController(
                     repository = repository,
                     transport = UnavailableSnapshotSyncTransport(

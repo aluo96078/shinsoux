@@ -4,6 +4,8 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.SnapshotMutationObserver
 import dev.shinsou.kmp.data.SnapshotReplacementGuard
 import dev.shinsou.kmp.data.SnapshotReplacementOrigin
+import dev.shinsou.kmp.content.ContentReplicaAuthority
+import dev.shinsou.kmp.content.SharedContentTransactionStore
 import dev.shinsou.kmp.sync.trust.DeviceDirectoryPinStore
 
 class DirectSnapshotReplacementBlockedException : IllegalStateException(
@@ -56,6 +58,11 @@ class CloudflareSnapshotReplacementGuard(
                     "A sync materializer cannot replace the snapshot without a Cloudflare workspace"
                 }
             }
+
+            // The typed graph is already durable and already owns its v2 publication/category/
+            // progress drafts. This replacement only restores observer-free legacy UI rows and
+            // is valid both before and after a Cloudflare workspace is configured.
+            SnapshotReplacementOrigin.CONTENT_AUTHORITY_MATERIALIZER -> Unit
         }
     }
 }
@@ -75,12 +82,26 @@ class LocalSyncWorkspaceDeparture(
     private val secretStore: SyncSecretStore,
     private val localStore: LocalSyncStore,
     private val deviceDirectoryPinStore: DeviceDirectoryPinStore? = null,
+    private val contentStore: SharedContentTransactionStore<SyncDraft>? = null,
     private val stopMutationProducers: suspend () -> Unit = {},
+    private val clearBlobAuthorityState: suspend (ContentReplicaAuthority) -> Unit = {},
     private val afterDeparture: suspend () -> Unit = {},
 ) : SyncWorkspaceDeparture {
     override suspend fun leaveWorkspace() {
         val session = sessionStore.load() ?: return
         stopMutationProducers()
+        // Replica CAS metadata and removal intents belong to the departed authority. Retire them
+        // before erasing credentials so a failure remains retryable and a later workspace can
+        // materialize the retained publication graph without a permanent cross-authority clash.
+        val authority = ContentReplicaAuthority(
+            instanceId = session.instanceId,
+            workspaceId = session.workspaceId,
+        )
+        contentStore?.detachReplicaAuthority(authority)
+        // Transfer receipts/envelopes and lifecycle terminals are cryptographic authority state.
+        // Clear both SQLite tables atomically before deleting any key; a failure leaves the
+        // session and keys intact so the exact departure can be retried safely.
+        clearBlobAuthorityState(authority)
         val local = localStore.readState()
         val epochs = buildSet {
             add(local.activeKeyEpoch)

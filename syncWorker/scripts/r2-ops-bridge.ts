@@ -1,5 +1,4 @@
-interface Env {
-  CHECKPOINTS: {
+interface R2BucketBinding {
     list(options: { cursor?: string; prefix?: string; limit: number; include: string[] }): Promise<{
       objects: Array<{
         key: string;
@@ -16,7 +15,11 @@ interface Env {
       customMetadata: Record<string, string>;
     }): Promise<unknown>;
     delete(key: string): Promise<void>;
-  };
+}
+
+interface Env {
+  CHECKPOINTS: R2BucketBinding;
+  BLOBS: R2BucketBinding;
   OPS_TOKEN: string;
 }
 
@@ -63,6 +66,15 @@ function workspacePrefix(url: URL): string | undefined {
   return prefix;
 }
 
+function route(url: URL, env: Env): { bucket: R2BucketBinding; operation: "list" | "object" } {
+  const match = /^\/(checkpoints|blobs)\/(list|object)$/.exec(url.pathname);
+  if (!match) throw new Error("route_invalid");
+  return {
+    bucket: match[1] === "checkpoints" ? env.CHECKPOINTS : env.BLOBS,
+    operation: match[2] as "list" | "object",
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!env.OPS_TOKEN || request.headers.get("Authorization") !== `Bearer ${env.OPS_TOKEN}`) {
@@ -70,10 +82,11 @@ export default {
     }
     const url = new URL(request.url);
     try {
-      if (request.method === "GET" && url.pathname === "/list") {
+      const selected = route(url, env);
+      if (request.method === "GET" && selected.operation === "list") {
         const cursor = url.searchParams.get("cursor") ?? undefined;
         const prefix = workspacePrefix(url);
-        const page = await env.CHECKPOINTS.list({
+        const page = await selected.bucket.list({
           cursor,
           prefix,
           limit: 1000,
@@ -90,8 +103,8 @@ export default {
           cursor: page.cursor,
         });
       }
-      if (request.method === "GET" && url.pathname === "/object") {
-        const object = await env.CHECKPOINTS.get(objectKey(url));
+      if (request.method === "GET" && selected.operation === "object") {
+        const object = await selected.bucket.get(objectKey(url));
         if (!object) return json({ error: "not_found" }, 404);
         return new Response(object.body, {
           headers: {
@@ -101,7 +114,7 @@ export default {
           },
         });
       }
-      if (request.method === "PUT" && url.pathname === "/object") {
+      if (request.method === "PUT" && selected.operation === "object") {
         const lengthHeader = request.headers.get("Content-Length");
         const length = Number(lengthHeader);
         if (lengthHeader === null || !Number.isSafeInteger(length) || length < 0 || length > 32 * 1024 * 1024) {
@@ -115,14 +128,14 @@ export default {
           }
           httpMetadata.cacheExpiry = parsed;
         }
-        await env.CHECKPOINTS.put(objectKey(url), request.body ?? new ArrayBuffer(0), {
+        await selected.bucket.put(objectKey(url), request.body ?? new ArrayBuffer(0), {
           httpMetadata,
           customMetadata: metadata(request, "X-Shinsou-Custom-Metadata"),
         });
         return json({ stored: true });
       }
-      if (request.method === "DELETE" && url.pathname === "/object") {
-        await env.CHECKPOINTS.delete(objectKey(url));
+      if (request.method === "DELETE" && selected.operation === "object") {
+        await selected.bucket.delete(objectKey(url));
         return json({ deleted: true });
       }
       return json({ error: "not_found" }, 404);

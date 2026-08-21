@@ -12,9 +12,12 @@ class ImportedDocumentLimits(
     val maxBytesPerFile: Long,
     val maxTotalBytes: Long = maxBytesPerFile,
     maxBytesByExtension: Map<String, Long> = emptyMap(),
+    randomAccessExtensions: Set<String> = emptySet(),
 ) {
     val maxBytesByExtension: Map<String, Long> = maxBytesByExtension
         .mapKeys { (extension, _) -> extension.trimStart('.').lowercase() }
+    val randomAccessExtensions: Set<String> = randomAccessExtensions
+        .mapTo(linkedSetOf()) { it.trimStart('.').lowercase() }
 
     init {
         require(maxBytesPerFile in 1..Int.MAX_VALUE.toLong()) {
@@ -30,6 +33,9 @@ class ImportedDocumentLimits(
         val extension = name.substringAfterLast('.', "").lowercase()
         return maxBytesByExtension[extension] ?: maxBytesPerFile
     }
+
+    fun prefersRandomAccess(name: String): Boolean =
+        name.substringAfterLast('.', "").lowercase() in randomAccessExtensions
 }
 
 class ImportedDocumentReadException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -53,28 +59,14 @@ internal fun readBoundedImportedBytes(
     read: (destination: ByteArray, offset: Int, length: Int) -> Int,
 ): ByteArray {
     val displayName = name.trim().ifBlank { "document" }
-    if (declaredSize == null || declaredSize < 0) {
-        throw ImportedDocumentReadException(
-            "Unable to determine the size of “$displayName”. Choose a file with readable size information.",
-        )
-    }
-    if (previouslyAcceptedBytes < 0 || previouslyAcceptedBytes > limits.maxTotalBytes) {
-        throw ImportedDocumentReadException("The selected files exceed the total import limit.")
-    }
+    val checkedSize = requireImportedDocumentSize(
+        name = displayName,
+        declaredSize = declaredSize,
+        limits = limits,
+        previouslyAcceptedBytes = previouslyAcceptedBytes,
+    )
 
-    val fileLimit = limits.maxBytesFor(displayName)
-    if (declaredSize > fileLimit) {
-        throw ImportedDocumentReadException(
-            "“$displayName” exceeds the ${formatImportByteLimit(fileLimit)} per-file import limit.",
-        )
-    }
-    if (declaredSize > limits.maxTotalBytes - previouslyAcceptedBytes) {
-        throw ImportedDocumentReadException(
-            "The selected files exceed the ${formatImportByteLimit(limits.maxTotalBytes)} total import limit.",
-        )
-    }
-
-    val expectedSize = declaredSize.toInt()
+    val expectedSize = checkedSize.toInt()
     val result = ByteArray(expectedSize)
     var offset = 0
     while (offset < expectedSize) {
@@ -102,6 +94,36 @@ internal fun readBoundedImportedBytes(
         )
     }
     return result
+}
+
+/** Applies picker byte limits without allocating the selected document. */
+internal fun requireImportedDocumentSize(
+    name: String,
+    declaredSize: Long?,
+    limits: ImportedDocumentLimits,
+    previouslyAcceptedBytes: Long = 0,
+): Long {
+    val displayName = name.trim().ifBlank { "document" }
+    if (declaredSize == null || declaredSize < 0) {
+        throw ImportedDocumentReadException(
+            "Unable to determine the size of “$displayName”. Choose a file with readable size information.",
+        )
+    }
+    if (previouslyAcceptedBytes < 0 || previouslyAcceptedBytes > limits.maxTotalBytes) {
+        throw ImportedDocumentReadException("The selected files exceed the total import limit.")
+    }
+    val fileLimit = limits.maxBytesFor(displayName)
+    if (declaredSize > fileLimit) {
+        throw ImportedDocumentReadException(
+            "“$displayName” exceeds the ${formatImportByteLimit(fileLimit)} per-file import limit.",
+        )
+    }
+    if (declaredSize > limits.maxTotalBytes - previouslyAcceptedBytes) {
+        throw ImportedDocumentReadException(
+            "The selected files exceed the ${formatImportByteLimit(limits.maxTotalBytes)} total import limit.",
+        )
+    }
+    return declaredSize
 }
 
 private inline fun readImportChunk(name: String, block: () -> Int): Int = try {

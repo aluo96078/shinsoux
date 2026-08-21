@@ -10,6 +10,8 @@ import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.LibraryUpdate
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaCategory
+import dev.shinsou.kmp.domain.model.PublicationKey
+import dev.shinsou.kmp.domain.model.PortableCategoryId
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.domain.model.TrackerAccountState
 import kotlinx.serialization.Serializable
@@ -39,6 +41,14 @@ data class AppSnapshot(
     val tracks: List<Track> = emptyList(),
     val trackerAccounts: List<TrackerAccountState> = emptyList(),
     val extensionRepositories: List<ExtensionRepo> = emptyList(),
+    /**
+     * Local durability receipts for one-shot projections derived from typed content authority.
+     * They live in the same atomic snapshot as the projected settings, so a process death can
+     * lose both (safe replay) or neither (preserve subsequent user edits).
+     */
+    val contentAuthorityProjectionMarkers: Set<String> = emptySet(),
+    /** Stable portable-category to legacy numeric-id bindings owned by the ShuYue projection. */
+    val shuyueCategoryProjectionBindings: Map<String, Long> = emptyMap(),
 ) {
     fun validate(): AppSnapshot {
         if (schemaVersion !in 1..APP_SNAPSHOT_SCHEMA_VERSION) {
@@ -62,6 +72,28 @@ data class AppSnapshot(
         requireUnique("manga/category link", mangaCategories) { it }
         requireUnique("update chapter", updates) { it.chapterId }
         requireUnique("manga/tracker link", tracks) { it.mangaId to it.trackerId }
+        ensure(contentAuthorityProjectionMarkers.size <= MAX_CONTENT_PROJECTION_MARKERS) {
+            "Too many content authority projection markers"
+        }
+        contentAuthorityProjectionMarkers.forEach { marker ->
+            ensure(marker.isNotBlank() && marker.length <= MAX_CONTENT_PROJECTION_MARKER_LENGTH) {
+                "Content authority projection marker is invalid"
+            }
+            ensure(marker.none(Char::isISOControl)) {
+                "Content authority projection marker contains control characters"
+            }
+        }
+        ensure(shuyueCategoryProjectionBindings.size <= MAX_CONTENT_PROJECTION_MARKERS) {
+            "Too many ShuYue category projection bindings"
+        }
+        shuyueCategoryProjectionBindings.forEach { (portableId, legacyId) ->
+            ensure(
+                PublicationKey.isPortableUuid(portableId) &&
+                    (if (portableId == PortableCategoryId.DEFAULT.value) legacyId == 0L else legacyId > 0L),
+            ) {
+                "ShuYue category projection binding is invalid"
+            }
+        }
 
         chapters.forEach { chapter ->
             ensure(chapter.mangaId in mangaIds) { "Chapter ${chapter.id} refers to missing manga ${chapter.mangaId}" }
@@ -110,6 +142,9 @@ data class AppSnapshot(
         copy(categories = listOf(Category.Default) + categories)
     }
 }
+
+private const val MAX_CONTENT_PROJECTION_MARKERS: Int = 10_000
+private const val MAX_CONTENT_PROJECTION_MARKER_LENGTH: Int = 256
 
 class SnapshotValidationException(message: String) : IllegalArgumentException(message)
 

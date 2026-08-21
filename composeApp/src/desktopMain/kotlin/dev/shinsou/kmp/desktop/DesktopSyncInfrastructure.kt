@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import app.cash.sqldelight.db.SqlDriver
 import dev.shinsou.kmp.sync.persistence.JvmEncryptedSyncSecretStore
 import dev.shinsou.kmp.sync.persistence.JvmFileSyncInstallationStore
 import dev.shinsou.kmp.sync.persistence.JvmFileSyncSessionStore
@@ -52,6 +53,7 @@ internal class DesktopSyncInfrastructure(
     override val deviceDisplayName: String = desktopDeviceDisplayName(desktopPlatform)
 
     private val driverLock = Any()
+    private var openDriver: SqlDriver? = null
     private var openPersistence: SqlDriverSyncStatePersistence? = null
 
     init {
@@ -60,17 +62,27 @@ internal class DesktopSyncInfrastructure(
     }
 
     override fun statePersistence(): SqlDriverSyncStatePersistence = synchronized(driverLock) {
-        openPersistence ?: run {
-            val database = directory.resolve("local-sync.db").toAbsolutePath().normalize()
-            SqlDriverSyncStatePersistence(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
-            ).also { openPersistence = it }
-        }
+        openPersistence ?: SqlDriverSyncStatePersistence(
+            driver = databaseDriver(),
+            ownsDriver = false,
+        ).also { openPersistence = it }
     }
+
+    override fun contentDriver(): SqlDriver = synchronized(driverLock) { databaseDriver() }
+
+    override fun contentBlobDirectory(): String =
+        directory.resolve("content-blobs").toAbsolutePath().normalize().toString()
 
     override fun close() = synchronized(driverLock) {
         openPersistence?.close()
         openPersistence = null
+        openDriver?.close()
+        openDriver = null
+    }
+
+    private fun databaseDriver(): SqlDriver = openDriver ?: run {
+        val database = directory.resolve("local-sync.db").toAbsolutePath().normalize()
+        JdbcSqliteDriver("jdbc:sqlite:$database").also { openDriver = it }
     }
 }
 

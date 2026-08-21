@@ -22,6 +22,7 @@ import dev.shinsou.kmp.sync.v2.SyncSecretStore
 import dev.shinsou.kmp.sync.v2.SyncSession
 import dev.shinsou.kmp.sync.v2.SyncState
 import dev.shinsou.kmp.sync.v2.SYNC_CHECKPOINT_MAX_UNCOMPRESSED_BYTES
+import dev.shinsou.kmp.sync.v2.SYNC_PROTOCOL_VERSION
 import dev.shinsou.kmp.sync.v2.VerifiedSyncCheckpoint
 import dev.shinsou.kmp.sync.v2.requireSecret
 import kotlinx.serialization.json.JsonObject
@@ -92,7 +93,9 @@ class SodiumSyncCrypto(
         val envelope = remote.envelope
         val header = envelope.header
         validateTenantHeader(session, header.instanceId, header.workspaceId)
-        require(header.protocolVersion == 1 && header.envelopeVersion == 1) { "Unsupported event envelope version" }
+        require(header.protocolVersion in 1..SYNC_PROTOCOL_VERSION && header.envelopeVersion == 1) {
+            "Unsupported event envelope version"
+        }
         require(header.cipherSuite == SyncCipherSuite.CHACHA20_POLY1305) {
             "Unsupported event cipher suite: ${header.cipherSuite}"
         }
@@ -144,7 +147,7 @@ class SodiumSyncCrypto(
         val header = checkpoint.header
         val canonicalHeader = verifyRemoteCheckpointPart("Checkpoint metadata is invalid") {
             validateTenantHeader(session, header.instanceId, header.workspaceId)
-            require(header.protocolVersion == 1 && header.envelopeVersion == 1) {
+            require(header.protocolVersion in 1..SYNC_PROTOCOL_VERSION && header.envelopeVersion == 1) {
                 "Unsupported checkpoint envelope version"
             }
             require(header.cipherSuite == SyncCipherSuite.CHACHA20_POLY1305) {

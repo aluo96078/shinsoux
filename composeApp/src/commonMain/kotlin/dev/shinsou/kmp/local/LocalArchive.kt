@@ -12,7 +12,8 @@ internal val LOCAL_IMAGE_EXTENSIONS: Set<String> = setOf(
 )
 
 // EPUB is ZIP-based. Matching the Swift source, its image payload is handled like a comic archive.
-internal val LOCAL_ARCHIVE_EXTENSIONS: Set<String> = setOf("zip", "cbz", "epub")
+/** Comic archives only. EPUB is parsed into the typed publication graph, never as image ZIP. */
+internal val LOCAL_ARCHIVE_EXTENSIONS: Set<String> = setOf("zip", "cbz")
 
 internal fun fileExtension(name: String): String = name.substringAfterLast('.', "").lowercase()
 

@@ -21,6 +21,7 @@ import {
 import { all, blobToBytes, enforceRateWindow, first, returning } from "../storage/d1.ts";
 import { APPEND_EVENT_SQL } from "../storage/sql.ts";
 import { loadWorkspaceDeviceDirectory } from "./device-directory.ts";
+import { loadRequiredWorkspaceKeyEpochs } from "./key-epochs.ts";
 import { requireWritableEnvelopeVersions } from "../versions.ts";
 
 interface ParsedEvent {
@@ -611,13 +612,7 @@ export async function workspaceBootstrap(
   const retainedStableCheckpoints = await loadRetainedStableCheckpoints(env, principal.workspaceId);
   const candidateCheckpoint = await loadCheckpointCandidate(env, principal.workspaceId);
   const deviceDirectory = await loadWorkspaceDeviceDirectory(env, principal.workspaceId);
-  const keyEpochRows = await all<{ keyEpoch: number }>(env.DB, `
-    SELECT DISTINCT key_epoch AS keyEpoch FROM (
-      SELECT active_key_epoch AS key_epoch FROM workspaces WHERE workspace_id = ?1
-      UNION SELECT key_epoch FROM checkpoints WHERE workspace_id = ?1 AND status = 'stable'
-      UNION SELECT key_epoch FROM events WHERE workspace_id = ?1
-    ) ORDER BY key_epoch
-  `, principal.workspaceId);
+  const requiredKeyEpochs = await loadRequiredWorkspaceKeyEpochs(env.DB, principal.workspaceId);
   const deviceKeyEnvelopes = await loadDeviceKeyEnvelopes(
     env,
     principal.workspaceId,
@@ -629,7 +624,7 @@ export async function workspaceBootstrap(
     rotationRequired: workspace.rotationRequired === 1,
     retainedStableCheckpoints,
     candidateCheckpoint,
-    requiredKeyEpochs: keyEpochRows.map((row) => row.keyEpoch),
+    requiredKeyEpochs,
     deviceKeyEnvelopes,
     deviceDirectory,
   };

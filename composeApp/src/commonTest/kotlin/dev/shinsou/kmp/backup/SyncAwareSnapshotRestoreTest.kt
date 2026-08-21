@@ -144,6 +144,25 @@ class SyncAwareSnapshotRestoreTest {
         assertEquals(SyncProvider.CLOUDFLARE_V2, sessionStore.load()?.provider)
     }
 
+    @Test
+    fun activeCloudflareAllowsObserverFreeTypedAuthorityCompatibilityProjection() = runTest {
+        val repository = ShinsouRepository()
+        val sessionStore = InMemorySyncSessionStore(readySession())
+        var observed = 0
+        repository.configureSyncMutationBoundary(
+            observer = { _, _ -> observed++ },
+            guard = CloudflareSnapshotReplacementGuard(sessionStore),
+        )
+
+        val projected = repository.materializeContentAuthorityProjectionIfRevision(
+            expectedRevision = 0,
+            requested = populatedSnapshot("Typed authority"),
+        )
+
+        assertEquals("Typed authority", projected?.mangas?.single()?.title)
+        assertEquals(0, observed)
+    }
+
     private fun populatedSnapshot(title: String): AppSnapshot {
         val manga = Manga(id = 1, source = 7, favorite = true, url = "/m", title = title)
         val chapter = Chapter(id = 10, mangaId = 1, url = "/c", name = "Chapter")

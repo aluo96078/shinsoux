@@ -20,7 +20,10 @@ const WORKER_DIR = resolve(dirname(SCRIPT_FILE), "..");
 const CHECKOUT_DIR = resolve(WORKER_DIR, "..");
 const BASE_CONFIG = join(WORKER_DIR, "wrangler.jsonc");
 const WRANGLER = ["--yes", "wrangler@4"];
-const BACKUP_FORMAT = 1;
+const BACKUP_FORMAT = 2;
+const LEGACY_BACKUP_FORMAT = 1;
+const DEFAULT_CHECKPOINTS_BUCKET = "shinsou-sync-checkpoints";
+const DEFAULT_BLOBS_BUCKET = "shinsou-sync-blobs";
 
 type Arguments = { command?: string; flags: Map<string, string | boolean> };
 type EmergencyResetBundle = {
@@ -44,28 +47,43 @@ type BackupObject = {
   httpMetadata: Record<string, string>;
   customMetadata: Record<string, string>;
 };
+type R2Plane = "checkpoints" | "blobs";
+type R2BackupInventory = { objectCount: number; objects: BackupObject[] };
+type R2BucketNames = { checkpoints: string; blobs: string };
 export type BackupManifest = {
   formatVersion: number;
   createdAt: string;
   database: { file: string; sha256: string };
-  r2: { objectCount: number; objects: BackupObject[] };
+  r2: { checkpoints: R2BackupInventory; blobs: R2BackupInventory };
+};
+
+type LegacyBackupManifest = {
+  formatVersion: 1;
+  createdAt: string;
+  database: { file: string; sha256: string };
+  r2: R2BackupInventory;
 };
 
 function usage(): string {
   return `Shinsou Cloudflare operations (safe by default)
 
 Usage:
-  npm run ops -- deploy [--apply] [--worker NAME] [--database NAME] [--bucket NAME]
-  npm run ops -- export --output DIR [--apply] [--config FILE] [--database NAME] [--bucket NAME]
+  npm run ops -- deploy [--apply] [--worker NAME] [--database NAME]
+    [--checkpoints-bucket NAME] [--blobs-bucket NAME]
+  npm run ops -- export --output DIR [--apply] [--config FILE] [--database NAME]
+    [--checkpoints-bucket NAME] [--blobs-bucket NAME]
   npm run ops -- verify-backup --input DIR
-  npm run ops -- restore --input DIR [--apply] --confirm-empty-target NAME --confirm-empty-r2 NAME
+  npm run ops -- restore --input DIR [--apply] --confirm-empty-target NAME
+    --confirm-empty-checkpoints NAME --confirm-empty-blobs NAME
   npm run ops -- emergency-reset --workspace UUID --endpoint URL [--apply]
-    --confirm "RESET EMPTY WORKSPACE <UUID>" [--config FILE] [--database NAME] [--bucket NAME]
+    --confirm "RESET EMPTY WORKSPACE <UUID>" [--config FILE] [--database NAME]
+    [--checkpoints-bucket NAME] [--blobs-bucket NAME]
 
 No remote command runs unless --apply is present. Secrets are stored in mode-0600 state outside
 the Git checkout and are never printed. Wrangler uses its normal login or CLOUDFLARE_API_TOKEN.
-Export/restore temporarily deploys a random, bearer-protected R2 binding bridge so Worker-native
-custom metadata casing is preserved; the bridge is deleted in a finally block.
+Export/restore temporarily deploys a random, bearer-protected bridge bound to the isolated
+CHECKPOINTS and BLOBS buckets so Worker-native custom metadata casing is preserved; the bridge is
+deleted in a finally block. Legacy --bucket/--confirm-empty-r2 remain checkpoint-bucket aliases.
 Emergency reset uses the logged-in Cloudflare operator as a separate authority, never bootstrap or
 device credentials. Its one-time App handoff is written only to the protected deployment state.
 `;
@@ -309,9 +327,63 @@ function containsNamedResource(value: unknown, name: string): boolean {
   );
 }
 
+function optionValue(args: Arguments, name: string): string | undefined {
+  if (!args.flags.has(name)) return undefined;
+  const value = flag(args, name);
+  if (!value) throw new Error(`--${name} requires a value`);
+  return value;
+}
+
+function configuredR2Bucket(config: Record<string, unknown> | undefined, binding: string): string | undefined {
+  const buckets = config?.r2_buckets;
+  if (!Array.isArray(buckets)) return undefined;
+  const matches = buckets.filter((candidate) =>
+    candidate && typeof candidate === "object" &&
+    (candidate as Record<string, unknown>).binding === binding
+  );
+  if (matches.length > 1) throw new Error(`Generated config contains duplicate ${binding} bindings`);
+  const name = matches.length === 1
+    ? (matches[0] as Record<string, unknown>).bucket_name
+    : undefined;
+  if (name === undefined) return undefined;
+  if (typeof name !== "string") throw new Error(`Generated config ${binding} bucket name is invalid`);
+  return name;
+}
+
+export function resolveR2BucketNames(
+  args: Arguments,
+  existingConfig?: Record<string, unknown>,
+): R2BucketNames {
+  const legacyCheckpointBucket = optionValue(args, "bucket");
+  const explicitCheckpointBucket = optionValue(args, "checkpoints-bucket");
+  if (legacyCheckpointBucket && explicitCheckpointBucket) {
+    throw new Error("Use only one of --bucket or --checkpoints-bucket");
+  }
+  const checkpoints = safeName(
+    explicitCheckpointBucket ?? legacyCheckpointBucket ??
+      configuredR2Bucket(existingConfig, "CHECKPOINTS") ?? DEFAULT_CHECKPOINTS_BUCKET,
+    "checkpoint bucket name",
+  );
+  const blobs = safeName(
+    optionValue(args, "blobs-bucket") ??
+      configuredR2Bucket(existingConfig, "BLOBS") ?? DEFAULT_BLOBS_BUCKET,
+    "blob bucket name",
+  );
+  if (checkpoints === blobs) {
+    throw new Error("CHECKPOINTS and BLOBS must use different R2 buckets");
+  }
+  return { checkpoints, blobs };
+}
+
 export function buildGeneratedConfig(
   base: Record<string, unknown>,
-  values: { worker: string; database: string; databaseId: string; bucket: string; instanceId: string },
+  values: {
+    worker: string;
+    database: string;
+    databaseId: string;
+    buckets: R2BucketNames;
+    instanceId: string;
+  },
 ): Record<string, unknown> {
   return {
     ...base,
@@ -324,26 +396,34 @@ export function buildGeneratedConfig(
       database_id: values.databaseId,
       migrations_dir: join(WORKER_DIR, "migrations"),
     }],
-    r2_buckets: [{ binding: "CHECKPOINTS", bucket_name: values.bucket }],
+    r2_buckets: [
+      { binding: "CHECKPOINTS", bucket_name: values.buckets.checkpoints },
+      { binding: "BLOBS", bucket_name: values.buckets.blobs },
+    ],
   };
 }
 
 function deploy(args: Arguments): void {
   assertKnownFlags(args, [
-    "apply", "worker", "database", "database-id", "bucket", "instance-id", "state-dir",
-    "bootstrap-secret-file", "endpoint",
+    "apply", "worker", "database", "database-id", "bucket", "checkpoints-bucket",
+    "blobs-bucket", "instance-id", "state-dir", "bootstrap-secret-file", "endpoint",
   ]);
   const worker = safeName(flag(args, "worker", "shinsou-sync")!, "worker name");
   const database = safeName(flag(args, "database", "shinsou-sync")!, "database name");
-  const bucket = safeName(flag(args, "bucket", "shinsou-sync-checkpoints")!, "bucket name");
   const stateDir = resolve(flag(args, "state-dir", defaultStateDir(worker))!);
   assertOutsideCheckout(stateDir, "Deployment state");
+  const existingConfigPath = join(stateDir, "wrangler.generated.jsonc");
+  const existingConfig = existsSync(existingConfigPath)
+    ? jsonFile(existingConfigPath) as Record<string, unknown>
+    : undefined;
+  const buckets = resolveR2BucketNames(args, existingConfig);
   if (!requestedFlag(args, "apply")) {
     console.log(JSON.stringify({
       mode: "dry-run",
       operations: [
         `find or create D1 database ${database}`,
-        `find or create private R2 bucket ${bucket}`,
+        `find or create private CHECKPOINTS R2 bucket ${buckets.checkpoints}`,
+        `find or create private BLOBS R2 bucket ${buckets.blobs}`,
         "generate/reuse three independent secrets in a mode-0600 state file outside Git",
         "apply numbered remote D1 migrations",
         `deploy Worker ${worker} and install encrypted secrets through stdin`,
@@ -368,20 +448,21 @@ function deploy(args: Arguments): void {
   }
   if (!/^[0-9a-f-]{36}$/i.test(databaseId)) throw new Error("Could not determine the D1 database ID");
 
-  const buckets = parseJsonOutput(runWrangler(["r2", "bucket", "list", "--json"], { quiet: true }));
-  const bucketExists = containsNamedResource(buckets, bucket);
-  if (!bucketExists) runWrangler(["r2", "bucket", "create", bucket], { quiet: true });
+  const listedBuckets = parseJsonOutput(runWrangler(["r2", "bucket", "list", "--json"], { quiet: true }));
+  for (const bucket of [buckets.checkpoints, buckets.blobs]) {
+    if (!containsNamedResource(listedBuckets, bucket)) {
+      runWrangler(["r2", "bucket", "create", bucket], { quiet: true });
+    }
+  }
 
-  const existingConfigPath = join(stateDir, "wrangler.generated.jsonc");
-  const existingConfig = existsSync(existingConfigPath)
-    ? jsonFile(existingConfigPath) as { vars?: { INSTANCE_ID?: string } }
-    : undefined;
-  const instanceId = flag(args, "instance-id") ?? existingConfig?.vars?.INSTANCE_ID ?? randomUUID();
+  const instanceId = flag(args, "instance-id") ??
+    (existingConfig?.vars as Record<string, unknown> | undefined)?.INSTANCE_ID ?? randomUUID();
+  if (typeof instanceId !== "string") throw new Error("Generated config INSTANCE_ID is invalid");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(instanceId)) {
     throw new Error("--instance-id must be a random UUID v4");
   }
   const base = JSON.parse(readFileSync(BASE_CONFIG, "utf8")) as Record<string, unknown>;
-  const generated = buildGeneratedConfig(base, { worker, database, databaseId, bucket, instanceId });
+  const generated = buildGeneratedConfig(base, { worker, database, databaseId, buckets, instanceId });
   const configPath = existingConfigPath;
   writeFileSync(configPath, `${JSON.stringify(generated, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   chmodSync(configPath, 0o600);
@@ -425,10 +506,12 @@ type BridgeObject = {
 class R2Bridge {
   private readonly endpoint: string;
   private readonly token: string;
+  private readonly plane: R2Plane;
 
-  constructor(endpoint: string, token: string) {
+  constructor(endpoint: string, token: string, plane: R2Plane) {
     this.endpoint = endpoint;
     this.token = token;
+    this.plane = plane;
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
@@ -453,7 +536,7 @@ class R2Bridge {
       const query = new URLSearchParams();
       if (prefix) query.set("prefix", prefix);
       if (cursor) query.set("cursor", cursor);
-      const response = await this.request(`/list${query.size ? `?${query}` : ""}`);
+      const response = await this.request(`/${this.plane}/list${query.size ? `?${query}` : ""}`);
       const page = await response.json() as { objects: BridgeObject[]; truncated: boolean; cursor?: string };
       result.push(...page.objects);
       cursor = page.truncated ? page.cursor ?? "" : "";
@@ -463,12 +546,12 @@ class R2Bridge {
   }
 
   async get(key: string): Promise<Uint8Array> {
-    const response = await this.request(`/object?key=${encodeURIComponent(key)}`);
+    const response = await this.request(`/${this.plane}/object?key=${encodeURIComponent(key)}`);
     return new Uint8Array(await response.arrayBuffer());
   }
 
   async put(object: BackupObject, data: Uint8Array): Promise<void> {
-    await this.request(`/object?key=${encodeURIComponent(object.key)}`, {
+    await this.request(`/${this.plane}/object?key=${encodeURIComponent(object.key)}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/octet-stream",
@@ -480,11 +563,16 @@ class R2Bridge {
   }
 
   async delete(key: string): Promise<void> {
-    await this.request(`/object?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    await this.request(`/${this.plane}/object?key=${encodeURIComponent(key)}`, { method: "DELETE" });
   }
 }
 
-async function withR2Bridge<T>(bucket: string, action: (bridge: R2Bridge) => Promise<T>): Promise<T> {
+type R2Bridges = { checkpoints: R2Bridge; blobs: R2Bridge };
+
+async function withR2Bridge<T>(
+  buckets: R2BucketNames,
+  action: (bridges: R2Bridges) => Promise<T>,
+): Promise<T> {
   const suffix = randomBytes(6).toString("hex");
   const workerName = `shinsou-r2-ops-${suffix}`;
   const temporaryDir = join(WORKER_DIR, ".wrangler", `ops-${suffix}`);
@@ -496,7 +584,10 @@ async function withR2Bridge<T>(bucket: string, action: (bridge: R2Bridge) => Pro
     main: join(WORKER_DIR, "scripts", "r2-ops-bridge.ts"),
     compatibility_date: "2026-08-20",
     workers_dev: true,
-    r2_buckets: [{ binding: "CHECKPOINTS", bucket_name: bucket }],
+    r2_buckets: [
+      { binding: "CHECKPOINTS", bucket_name: buckets.checkpoints },
+      { binding: "BLOBS", bucket_name: buckets.blobs },
+    ],
   }, null, 2)}\n`, { mode: 0o600 });
   let deployed = false;
   try {
@@ -505,7 +596,10 @@ async function withR2Bridge<T>(bucket: string, action: (bridge: R2Bridge) => Pro
     runWrangler(["secret", "put", "OPS_TOKEN", "--config", config], { input: `${token}\n`, secrets: [token], quiet: true });
     const endpoint = output.match(/https:\/\/[^\s]+\.workers\.dev/)?.[0];
     if (!endpoint) throw new Error("Could not determine temporary R2 bridge endpoint");
-    return await action(new R2Bridge(endpoint, token));
+    return await action({
+      checkpoints: new R2Bridge(endpoint, token, "checkpoints"),
+      blobs: new R2Bridge(endpoint, token, "blobs"),
+    });
   } finally {
     if (deployed) {
       try {
@@ -518,7 +612,7 @@ async function withR2Bridge<T>(bucket: string, action: (bridge: R2Bridge) => Pro
   }
 }
 
-export function safeObjectFile(key: string): string {
+function safeObjectPieces(key: string): string[] {
   if (!key || Buffer.byteLength(key, "utf8") > 1024 || key.startsWith("/") || key.includes("\\") ||
       /[\u0000-\u001f\u007f]/.test(key)) {
     throw new Error(`Unsafe R2 object key: ${JSON.stringify(key)}`);
@@ -527,7 +621,16 @@ export function safeObjectFile(key: string): string {
   if (pieces.some((piece) => piece === "" || piece === "." || piece === "..")) {
     throw new Error(`Unsafe R2 object key: ${JSON.stringify(key)}`);
   }
-  return `objects/${pieces.join("/")}`;
+  return pieces;
+}
+
+export function safeObjectFile(plane: R2Plane, key: string): string {
+  if (plane !== "checkpoints" && plane !== "blobs") throw new Error(`Unknown R2 plane: ${plane}`);
+  return `objects/${plane}/${safeObjectPieces(key).join("/")}`;
+}
+
+function safeLegacyObjectFile(key: string): string {
+  return `objects/${safeObjectPieces(key).join("/")}`;
 }
 
 const PRESERVED_HTTP_METADATA = new Set([
@@ -537,14 +640,19 @@ const PRESERVED_HTTP_METADATA = new Set([
 export function makeManifest(
   createdAt: string,
   databaseSha256: string,
-  objects: BackupObject[],
+  checkpointObjects: BackupObject[],
+  blobObjects: BackupObject[],
 ): BackupManifest {
-  const sorted = [...objects].sort((a, b) => a.key.localeCompare(b.key));
+  const checkpoints = [...checkpointObjects].sort((a, b) => a.key.localeCompare(b.key));
+  const blobs = [...blobObjects].sort((a, b) => a.key.localeCompare(b.key));
   return {
     formatVersion: BACKUP_FORMAT,
     createdAt,
     database: { file: "database.sql", sha256: databaseSha256 },
-    r2: { objectCount: sorted.length, objects: sorted },
+    r2: {
+      checkpoints: { objectCount: checkpoints.length, objects: checkpoints },
+      blobs: { objectCount: blobs.length, objects: blobs },
+    },
   };
 }
 
@@ -569,21 +677,24 @@ export function assertOutsideCheckout(path: string, label = "Backup output"): vo
 }
 
 async function exportBackup(args: Arguments): Promise<void> {
-  assertKnownFlags(args, ["apply", "output", "config", "database", "bucket"]);
+  assertKnownFlags(args, [
+    "apply", "output", "config", "database", "bucket", "checkpoints-bucket", "blobs-bucket",
+  ]);
   const output = resolve(requireFlag(args, "output"));
   const database = safeName(flag(args, "database", "shinsou-sync")!, "database name");
-  const bucket = safeName(flag(args, "bucket", "shinsou-sync-checkpoints")!, "bucket name");
   const config = resolve(flag(args, "config", BASE_CONFIG)!);
+  const buckets = resolveR2BucketNames(args, jsonFile(config) as Record<string, unknown>);
   assertOutsideCheckout(output);
   if (!requestedFlag(args, "apply")) {
-    console.log(JSON.stringify({ mode: "dry-run", operation: "export", database, bucket, output, config }, null, 2));
+    console.log(JSON.stringify({ mode: "dry-run", operation: "export", database, buckets, output, config }, null, 2));
     console.log("Dry-run only. Add --apply after reviewing the destination.");
     return;
   }
   if (existsSync(output)) throw new Error(`Backup destination already exists: ${output}`);
   mkdirSync(dirname(output), { recursive: true });
   const temporary = join(dirname(output), `.${basename(output)}.partial-${randomUUID()}`);
-  mkdirSync(join(temporary, "objects"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(temporary, "objects", "checkpoints"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(temporary, "objects", "blobs"), { recursive: true, mode: 0o700 });
   chmodSync(temporary, 0o700);
   try {
     const databaseFile = join(temporary, "database.sql");
@@ -592,12 +703,14 @@ async function exportBackup(args: Arguments): Promise<void> {
       "--output", databaseFile, "--config", config,
     ]);
     chmodSync(databaseFile, 0o600);
-    const objects = await withR2Bridge(bucket, async (bridge) => {
+    const exportInventory = async (bridge: R2Bridge, plane: R2Plane): Promise<BackupObject[]> => {
       const backedUp: BackupObject[] = [];
       for (const listed of await bridge.list()) {
-        const file = safeObjectFile(listed.key);
+        const file = safeObjectFile(plane, listed.key);
         const data = await bridge.get(listed.key);
-        if (data.byteLength !== listed.size) throw new Error(`R2 size changed during export: ${listed.key}`);
+        if (data.byteLength !== listed.size) {
+          throw new Error(`${plane} R2 size changed during export: ${listed.key}`);
+        }
         const target = resolve(temporary, file);
         if (!target.startsWith(`${temporary}${sep}`)) throw new Error("Resolved R2 path escaped backup directory");
         mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
@@ -612,13 +725,20 @@ async function exportBackup(args: Arguments): Promise<void> {
         });
       }
       return backedUp;
-    });
+    };
+    const objects = await withR2Bridge(buckets, async (bridges) => ({
+      checkpoints: await exportInventory(bridges.checkpoints, "checkpoints"),
+      blobs: await exportInventory(bridges.blobs, "blobs"),
+    }));
     const databaseHash = sha256(readFileSync(databaseFile));
-    const manifest = makeManifest(new Date().toISOString(), databaseHash, objects);
+    const manifest = makeManifest(new Date().toISOString(), databaseHash, objects.checkpoints, objects.blobs);
     writeFileSync(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     renameSync(temporary, output);
     chmodSync(output, 0o700);
-    console.log(`Verified backup written to ${output} (${objects.length} R2 objects).`);
+    console.log(
+      `Verified backup written to ${output} ` +
+        `(${objects.checkpoints.length} checkpoint objects, ${objects.blobs.length} blob objects).`,
+    );
   } catch (error) {
     rmSync(temporary, { recursive: true, force: true });
     throw error;
@@ -626,39 +746,69 @@ async function exportBackup(args: Arguments): Promise<void> {
 }
 
 export function verifyManifestShape(value: unknown): BackupManifest {
-  const manifest = value as BackupManifest;
-  if (!manifest || manifest.formatVersion !== BACKUP_FORMAT || !manifest.database || !manifest.r2) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Unsupported or invalid backup manifest");
+  }
+  const raw = value as Record<string, unknown>;
+  let manifest: BackupManifest;
+  let legacy = false;
+  if (raw.formatVersion === BACKUP_FORMAT) {
+    manifest = value as BackupManifest;
+    if (!manifest.r2?.checkpoints || !manifest.r2?.blobs) {
+      throw new Error("Backup manifest must contain isolated CHECKPOINTS and BLOBS inventories");
+    }
+  } else if (raw.formatVersion === LEGACY_BACKUP_FORMAT) {
+    const previous = value as LegacyBackupManifest;
+    if (!previous.database || !previous.r2) throw new Error("Unsupported or invalid backup manifest");
+    legacy = true;
+    manifest = {
+      formatVersion: LEGACY_BACKUP_FORMAT,
+      createdAt: previous.createdAt,
+      database: previous.database,
+      r2: {
+        checkpoints: previous.r2,
+        blobs: { objectCount: 0, objects: [] },
+      },
+    };
+  } else {
     throw new Error("Unsupported or invalid backup manifest");
   }
   if (manifest.database.file !== "database.sql" || !/^[0-9a-f]{64}$/.test(manifest.database.sha256)) {
     throw new Error("Invalid database manifest entry");
   }
-  if (!Array.isArray(manifest.r2.objects) || manifest.r2.objectCount !== manifest.r2.objects.length) {
-    throw new Error("Invalid R2 object count");
+  validateR2Inventory(manifest.r2.checkpoints, "checkpoints", legacy);
+  validateR2Inventory(manifest.r2.blobs, "blobs", false);
+  return manifest;
+}
+
+function validateR2Inventory(inventory: R2BackupInventory, plane: R2Plane, legacy: boolean): void {
+  if (!inventory || !Array.isArray(inventory.objects) || inventory.objectCount !== inventory.objects.length) {
+    throw new Error(`Invalid ${plane} R2 object count`);
   }
   let previous = "";
   const keys = new Set<string>();
-  for (const object of manifest.r2.objects) {
-    if (object.file !== safeObjectFile(object.key) || object.key.localeCompare(previous) < 0 || keys.has(object.key)) {
-      throw new Error("R2 manifest keys must be unique, sorted, and path-safe");
+  for (const object of inventory.objects) {
+    if (!object || typeof object !== "object") throw new Error(`Invalid ${plane} R2 manifest entry`);
+    const expectedFile = legacy ? safeLegacyObjectFile(object.key) : safeObjectFile(plane, object.key);
+    if (object.file !== expectedFile || object.key.localeCompare(previous) < 0 || keys.has(object.key)) {
+      throw new Error(`${plane} R2 manifest keys must be unique, sorted, and path-safe`);
     }
     if (!Number.isSafeInteger(object.byteSize) || object.byteSize < 0 || !/^[0-9a-f]{64}$/.test(object.sha256)) {
-      throw new Error(`Invalid R2 manifest entry for ${object.key}`);
+      throw new Error(`Invalid ${plane} R2 manifest entry for ${object.key}`);
     }
     for (const [name, metadataValue] of Object.entries(object.httpMetadata ?? {})) {
       if (!PRESERVED_HTTP_METADATA.has(name) || typeof metadataValue !== "string" || /[\r\n]/.test(metadataValue)) {
-        throw new Error(`Unsafe R2 HTTP metadata for ${object.key}`);
+        throw new Error(`Unsafe ${plane} R2 HTTP metadata for ${object.key}`);
       }
     }
     for (const [name, metadataValue] of Object.entries(object.customMetadata ?? {})) {
       if (!/^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(name) || typeof metadataValue !== "string" || /[\r\n]/.test(metadataValue)) {
-        throw new Error(`Unsafe R2 custom metadata for ${object.key}`);
+        throw new Error(`Unsafe ${plane} R2 custom metadata for ${object.key}`);
       }
     }
     previous = object.key;
     keys.add(object.key);
   }
-  return manifest;
 }
 
 function verifyBackup(input: string): BackupManifest {
@@ -668,12 +818,14 @@ function verifyBackup(input: string): BackupManifest {
   if (!databaseFile.startsWith(`${root}${sep}`) || sha256(readFileSync(databaseFile)) !== manifest.database.sha256) {
     throw new Error("D1 export SHA-256 mismatch");
   }
-  for (const object of manifest.r2.objects) {
-    const file = resolve(root, object.file);
-    if (!file.startsWith(`${root}${sep}`)) throw new Error("R2 backup path escaped input directory");
-    const data = readFileSync(file);
-    if (data.byteLength !== object.byteSize || sha256(data) !== object.sha256) {
-      throw new Error(`R2 object verification failed: ${object.key}`);
+  for (const [plane, inventory] of Object.entries(manifest.r2) as Array<[R2Plane, R2BackupInventory]>) {
+    for (const object of inventory.objects) {
+      const file = resolve(root, object.file);
+      if (!file.startsWith(`${root}${sep}`)) throw new Error(`${plane} R2 backup path escaped input directory`);
+      const data = readFileSync(file);
+      if (data.byteLength !== object.byteSize || sha256(data) !== object.sha256) {
+        throw new Error(`${plane} R2 object verification failed: ${object.key}`);
+      }
     }
   }
   return manifest;
@@ -782,7 +934,7 @@ function exactInteger(row: Record<string, unknown>, name: string, minimum = 0): 
 async function emergencyReset(args: Arguments): Promise<void> {
   assertKnownFlags(args, [
     "apply", "workspace", "confirm", "endpoint", "config", "database", "bucket",
-    "worker", "state-dir", "handoff-ttl-seconds",
+    "checkpoints-bucket", "blobs-bucket", "worker", "state-dir", "handoff-ttl-seconds",
   ]);
   const workspaceId = workspaceUuid(requireFlag(args, "workspace"));
   const prefix = workspaceR2Prefix(workspaceId);
@@ -792,7 +944,8 @@ async function emergencyReset(args: Arguments): Promise<void> {
   assertOutsideCheckout(stateDir, "Emergency reset state");
   const config = resolve(flag(args, "config", join(stateDir, "wrangler.generated.jsonc"))!);
   const database = safeName(flag(args, "database", "shinsou-sync")!, "database name");
-  const bucket = safeName(flag(args, "bucket", "shinsou-sync-checkpoints")!, "bucket name");
+  const configValues = existsSync(config) ? jsonFile(config) as Record<string, unknown> : undefined;
+  const buckets = resolveR2BucketNames(args, configValues);
   const ttlSeconds = Number(flag(args, "handoff-ttl-seconds", String(7 * 86_400)));
   if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 300 || ttlSeconds > 7 * 86_400) {
     throw new Error("--handoff-ttl-seconds must be between 300 and 604800");
@@ -805,14 +958,15 @@ async function emergencyReset(args: Arguments): Promise<void> {
       workspaceId,
       r2Prefix: prefix,
       database,
-      bucket,
+      buckets,
       config,
       stateDir,
       requiredConfirmation: confirmation,
       operations: [
         "verify private single-owner workspace scope",
         "atomically revoke credentials and clear only the exact workspace in D1",
-        `delete and verify only R2 prefix ${prefix}`,
+        `delete and verify only CHECKPOINTS R2 prefix ${prefix}`,
+        `delete and verify only BLOBS R2 prefix ${prefix}`,
         "write a mode-0600 one-time App handoff outside the checkout",
       ],
     }, null, 2));
@@ -896,17 +1050,24 @@ async function emergencyReset(args: Arguments): Promise<void> {
   if (!reset || reset.r2Prefix !== prefix) throw new Error("D1 reset receipt is missing or has the wrong R2 prefix");
 
   if (reset.status === "purge_pending") {
-    const deletedObjectCount = await withR2Bridge(bucket, async (bridge) => {
-      const objects = await bridge.list(prefix);
-      if (objects.some((object) => !object.key.startsWith(prefix))) {
-        throw new Error("R2 returned an object outside the exact workspace prefix; refusing deletion");
-      }
-      for (const object of objects) await bridge.delete(object.key);
-      const remaining = await bridge.list(prefix);
-      if (remaining.length !== 0) {
-        throw new Error(`R2 purge is incomplete (${remaining.length} objects remain); rerun the same command`);
-      }
-      return objects.length;
+    const deletedObjectCount = await withR2Bridge(buckets, async (bridges) => {
+      const purge = async (bridge: R2Bridge, plane: R2Plane): Promise<number> => {
+        const objects = await bridge.list(prefix);
+        if (objects.some((object) => !object.key.startsWith(prefix))) {
+          throw new Error(`${plane} R2 returned an object outside the exact workspace prefix; refusing deletion`);
+        }
+        for (const object of objects) await bridge.delete(object.key);
+        const remaining = await bridge.list(prefix);
+        if (remaining.length !== 0) {
+          throw new Error(
+            `${plane} R2 purge is incomplete (${remaining.length} objects remain); rerun the same command`,
+          );
+        }
+        return objects.length;
+      };
+      const checkpointCount = await purge(bridges.checkpoints, "checkpoints");
+      const blobCount = await purge(bridges.blobs, "blobs");
+      return checkpointCount + blobCount;
     });
     const purgedAt = Date.now();
     executeD1(database, config, `
@@ -935,15 +1096,19 @@ function canonicalMetadata(value: Record<string, string>): string {
   return JSON.stringify(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)));
 }
 
-export function assertR2Inventory(expected: BackupObject[], actual: BridgeObject[]): void {
-  if (actual.length !== expected.length) throw new Error("Restored R2 object count mismatch");
+export function assertR2Inventory(
+  expected: BackupObject[],
+  actual: BridgeObject[],
+  plane: R2Plane = "checkpoints",
+): void {
+  if (actual.length !== expected.length) throw new Error(`Restored ${plane} R2 object count mismatch`);
   for (let index = 0; index < expected.length; index += 1) {
     const wanted = expected[index]!;
     const stored = actual[index]!;
     if (stored.key !== wanted.key || stored.size !== wanted.byteSize ||
         canonicalMetadata(stored.httpMetadata) !== canonicalMetadata(wanted.httpMetadata) ||
         canonicalMetadata(stored.customMetadata) !== canonicalMetadata(wanted.customMetadata)) {
-      throw new Error(`Restored R2 object or metadata mismatch: ${wanted.key}`);
+      throw new Error(`Restored ${plane} R2 object or metadata mismatch: ${wanted.key}`);
     }
   }
 }
@@ -961,48 +1126,78 @@ async function assertEmptyD1(database: string, config: string): Promise<void> {
 
 async function restoreBackup(args: Arguments): Promise<void> {
   assertKnownFlags(args, [
-    "apply", "input", "config", "database", "bucket", "confirm-empty-target", "confirm-empty-r2",
+    "apply", "input", "config", "database", "bucket", "checkpoints-bucket", "blobs-bucket",
+    "confirm-empty-target", "confirm-empty-r2", "confirm-empty-checkpoints", "confirm-empty-blobs",
   ]);
   const input = resolve(requireFlag(args, "input"));
   const database = safeName(flag(args, "database", "shinsou-sync")!, "database name");
-  const bucket = safeName(flag(args, "bucket", "shinsou-sync-checkpoints")!, "bucket name");
   const config = resolve(flag(args, "config", BASE_CONFIG)!);
+  const buckets = resolveR2BucketNames(args, jsonFile(config) as Record<string, unknown>);
   const manifest = verifyBackup(input);
   if (!requestedFlag(args, "apply")) {
     console.log(JSON.stringify({
-      mode: "dry-run", operation: "restore", database, bucket, config,
-      d1Sha256: manifest.database.sha256, r2Objects: manifest.r2.objectCount,
+      mode: "dry-run", operation: "restore", database, buckets, config,
+      d1Sha256: manifest.database.sha256,
+      checkpointObjects: manifest.r2.checkpoints.objectCount,
+      blobObjects: manifest.r2.blobs.objectCount,
     }, null, 2));
-    console.log("Backup verified. Add --apply and both exact empty-target confirmations to restore.");
+    console.log("Backup verified. Add --apply and all three exact empty-target confirmations to restore.");
     return;
   }
-  if (flag(args, "confirm-empty-target") !== database || flag(args, "confirm-empty-r2") !== bucket) {
-    throw new Error("Refusing restore: confirmations must exactly match the empty target database and R2 bucket names");
+  const legacyCheckpointConfirmation = optionValue(args, "confirm-empty-r2");
+  const checkpointConfirmation = optionValue(args, "confirm-empty-checkpoints");
+  if (legacyCheckpointConfirmation && checkpointConfirmation) {
+    throw new Error("Use only one of --confirm-empty-r2 or --confirm-empty-checkpoints");
+  }
+  if (flag(args, "confirm-empty-target") !== database ||
+      (checkpointConfirmation ?? legacyCheckpointConfirmation) !== buckets.checkpoints ||
+      optionValue(args, "confirm-empty-blobs") !== buckets.blobs) {
+    throw new Error(
+      "Refusing restore: confirmations must exactly match the empty target database, " +
+        "CHECKPOINTS bucket, and BLOBS bucket names",
+    );
   }
   await assertEmptyD1(database, config);
-  await withR2Bridge(bucket, async (bridge) => {
-    const existing = await bridge.list();
-    if (existing.length > 0) throw new Error(`Target R2 bucket is not empty (${existing.length} objects)`);
-    // R2 goes first: a failed D1 import may leave harmless orphan ciphertext, while the reverse
-    // order could expose checkpoint rows whose immutable objects do not exist yet.
-    for (const object of manifest.r2.objects) {
-      const data = readFileSync(resolve(input, object.file));
-      await bridge.put(object, data);
+  await withR2Bridge(buckets, async (bridges) => {
+    const existingCheckpoints = await bridges.checkpoints.list();
+    const existingBlobs = await bridges.blobs.list();
+    if (existingCheckpoints.length > 0) {
+      throw new Error(`Target CHECKPOINTS bucket is not empty (${existingCheckpoints.length} objects)`);
     }
-    const restored = await bridge.list();
-    assertR2Inventory(manifest.r2.objects, restored);
-    for (const object of manifest.r2.objects) {
-      const data = await bridge.get(object.key);
-      if (data.byteLength !== object.byteSize || sha256(data) !== object.sha256) {
-        throw new Error(`Restored R2 object verification failed: ${object.key}`);
+    if (existingBlobs.length > 0) {
+      throw new Error(`Target BLOBS bucket is not empty (${existingBlobs.length} objects)`);
+    }
+    const restoreInventory = async (
+      bridge: R2Bridge,
+      plane: R2Plane,
+      inventory: R2BackupInventory,
+    ): Promise<void> => {
+      for (const object of inventory.objects) {
+        const data = readFileSync(resolve(input, object.file));
+        await bridge.put(object, data);
       }
-    }
+      const restored = await bridge.list();
+      assertR2Inventory(inventory.objects, restored, plane);
+      for (const object of inventory.objects) {
+        const data = await bridge.get(object.key);
+        if (data.byteLength !== object.byteSize || sha256(data) !== object.sha256) {
+          throw new Error(`Restored ${plane} R2 object verification failed: ${object.key}`);
+        }
+      }
+    };
+    // Both isolated R2 planes go first: a failed D1 import may leave harmless orphan ciphertext,
+    // while the reverse order could expose D1 rows whose immutable objects do not exist yet.
+    await restoreInventory(bridges.checkpoints, "checkpoints", manifest.r2.checkpoints);
+    await restoreInventory(bridges.blobs, "blobs", manifest.r2.blobs);
   });
   runWrangler([
     "d1", "execute", database, "--remote", "--yes", "--file",
     resolve(input, manifest.database.file), "--config", config,
   ]);
-  console.log(`Restore completed: ${manifest.r2.objectCount} R2 objects and the verified D1 export.`);
+  console.log(
+    `Restore completed: ${manifest.r2.checkpoints.objectCount} checkpoint objects, ` +
+      `${manifest.r2.blobs.objectCount} blob objects, and the verified D1 export.`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -1017,7 +1212,10 @@ async function main(): Promise<void> {
     case "verify-backup": {
       assertKnownFlags(args, ["input"]);
       const manifest = verifyBackup(requireFlag(args, "input"));
-      console.log(`Backup verified: D1 + ${manifest.r2.objectCount} R2 objects.`);
+      console.log(
+        `Backup verified: D1 + ${manifest.r2.checkpoints.objectCount} checkpoint objects + ` +
+          `${manifest.r2.blobs.objectCount} blob objects.`,
+      );
       break;
     }
     case "restore": await restoreBackup(args); break;

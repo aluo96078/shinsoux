@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  approvePairing,
   claimRecovery,
   createRecoveryChallenge,
   pairingView,
@@ -23,6 +24,49 @@ import { database, IDS, numberedGet, seedTenant, sqliteD1 } from "./helpers.ts";
 const NOW = 1_000_000;
 const PAIRING_ID = "00000000-0000-4000-8000-000000000013";
 const PAIRING_SECRET = "cGFpcmluZy1zZWNyZXQtMzItYnl0ZXMtbG9uZyEhISE";
+const BLOB_ID = "00000000-0000-4000-8000-000000000030";
+const MANIFEST_ID = "00000000-0000-4000-8000-000000000031";
+const SESSION_ID = "00000000-0000-4000-8000-000000000032";
+
+function insertLiveBlobManifest(
+  db: ReturnType<typeof database>,
+  currentEnvelopeEpoch: number,
+): void {
+  db.prepare(`INSERT INTO blob_upload_sessions(
+    session_id, workspace_id, blob_id, manifest_id, protocol_version, schema_version,
+    key_epoch, uploader_device_id, initial_capability_id, chunk_size_bytes,
+    chunk_plan_sha256, chunk_count, total_chunk_bytes, manifest_ciphertext_sha256,
+    manifest_byte_size, reserved_bytes, status, expires_at, created_at, committed_at
+  ) VALUES (?, ?, ?, ?, 2, 2, 1, ?, ?, 65536, 'chunk-plan-hash', 0, 0,
+    'manifest-ciphertext-hash', 1, 1, 'committed', ?, ?, ?)`).run(
+    SESSION_ID,
+    IDS.workspaceA,
+    BLOB_ID,
+    MANIFEST_ID,
+    IDS.deviceA,
+    IDS.capabilityA,
+    NOW + 60_000,
+    NOW,
+    NOW,
+  );
+  db.prepare(`INSERT INTO encrypted_blob_manifests(
+    workspace_id, blob_id, manifest_id, session_id, protocol_version, schema_version,
+    key_epoch, private_manifest_nonce, chunk_plan_sha256, chunk_count, chunk_size_bytes,
+    total_chunk_bytes, manifest_ciphertext_sha256, manifest_byte_size, manifest_r2_key,
+    uploader_device_id, current_envelope_epoch, status, created_at, committed_at
+  ) VALUES (?, ?, ?, ?, 2, 2, 1, 'private-nonce', 'chunk-plan-hash', 0, 65536, 0,
+    'manifest-ciphertext-hash', 1, 'blob-manifests/identity-required-epoch', ?, ?,
+    'committed', ?, ?)`).run(
+    IDS.workspaceA,
+    BLOB_ID,
+    MANIFEST_ID,
+    SESSION_ID,
+    IDS.deviceA,
+    currentEnvelopeEpoch,
+    NOW,
+    NOW,
+  );
+}
 
 test("initial claim requires a Recovery-root co-signature over the historical sender identity", async () => {
   const db = database();
@@ -146,11 +190,12 @@ test("initial claim requires a Recovery-root co-signature over the historical se
   assert.equal(JSON.parse(stored.manifestJson).recoveryDeviceTrustSignature, recoveryDeviceTrustSignature);
 });
 
-async function pairingEnvironment(): Promise<Env> {
+async function pairingEnvironment(): Promise<{ db: ReturnType<typeof database>; env: Env }> {
   const db = database();
   seedTenant(db, NOW);
   db.prepare("UPDATE workspaces SET active_key_epoch = 3, head_seq = 17 WHERE workspace_id = ?")
     .run(IDS.workspaceA);
+  insertLiveBlobManifest(db, 1);
   const secretHash = await hashSecret(PAIRING_SECRET, "p".repeat(32), "pairing");
   db.prepare(`INSERT INTO pairing_sessions(
     pairing_id, workspace_id, sponsor_device_id, secret_hash, transcript_nonce,
@@ -160,7 +205,7 @@ async function pairingEnvironment(): Promise<Env> {
   ) VALUES (?, ?, ?, ?, 'bm9uY2UtbG9uZy1lbm91Z2gtMzItYnl0ZXM', 'candidate', ?, ?, 'New phone', 'android',
             'candidate-signing', 'candidate-wrapping', 'candidate-token-hash', ?, ?)`)
     .run(PAIRING_ID, IDS.workspaceA, IDS.deviceA, secretHash, NOW + 60_000, IDS.deviceA2, NOW, NOW);
-  return {
+  const env: Env = {
     DB: sqliteD1(db),
     CHECKPOINTS: {} as Env["CHECKPOINTS"],
     WORKSPACE_HUB: {} as Env["WORKSPACE_HUB"],
@@ -170,13 +215,14 @@ async function pairingEnvironment(): Promise<Env> {
     INSTANCE_ID: IDS.instance,
     REALTIME_ENABLED: "false",
   };
+  return { db, env };
 }
 
 test("pairing key requirements are available only to the authenticated sponsor", async () => {
-  const env = await pairingEnvironment();
+  const { env } = await pairingEnvironment();
   const sponsor = await pairingView(env, PAIRING_ID, IDS.deviceA, null, NOW) as Record<string, unknown>;
   const requirements = sponsor.keyRequirements as Record<string, unknown>;
-  assert.deepEqual(requirements.requiredKeyEpochs, [3]);
+  assert.deepEqual(requirements.requiredKeyEpochs, [1, 3]);
   assert.equal(requirements.activeKeyEpoch, 3);
   assert.equal(requirements.headSeq, 17);
   assert.equal(sponsor.sponsorSigningPublicKey, "sign-a");
@@ -208,11 +254,73 @@ test("pairing key requirements are available only to the authenticated sponsor",
   );
 });
 
+test("pairing approval rejects a keyring that omits a live blob envelope epoch", async () => {
+  const controlNow = 1_700_000_000_000;
+  const { db, env } = await pairingEnvironment();
+  const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const signingPublicKey = encodeBase64Url(
+    new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)),
+  );
+  db.exec("DROP TRIGGER devices_identity_keys_immutable");
+  db.prepare("UPDATE devices SET signing_public_key = ? WHERE device_id = ?")
+    .run(signingPublicKey, IDS.deviceA);
+  db.prepare("UPDATE pairing_sessions SET expires_at = ? WHERE pairing_id = ?")
+    .run(controlNow + 60_000, PAIRING_ID);
+  const accessToken = encodeBase64Url(new Uint8Array(32).fill(41));
+  db.prepare(`INSERT INTO access_tokens(
+    access_token_id, device_id, token_hash, device_auth_epoch, expires_at, created_at
+  ) VALUES ('00000000-0000-4000-8000-000000000040', ?, ?, 1, ?, ?)`).run(
+    IDS.deviceA,
+    await hashSecret(accessToken, env.TOKEN_PEPPER, "access-token"),
+    controlNow + 60_000,
+    controlNow,
+  );
+  const path = `/v1/pairings/${PAIRING_ID}/approve`;
+  const body = JSON.stringify({
+    approved: true,
+    keyEnvelopes: [{
+      keyEpoch: 3,
+      keyCommitment: "k".repeat(43),
+      wrappedKey: "w".repeat(32),
+      signature: "s".repeat(80),
+    }],
+    approvalSignature: "a".repeat(80),
+  });
+  const nonce = encodeBase64Url(new Uint8Array(24).fill(42));
+  const bodyHash = await sha256Base64Url(new TextEncoder().encode(body));
+  const controlMessage = domainSeparatedMessage(
+    "control-request",
+    new TextEncoder().encode(
+      `POST\n${path}\n${controlNow}\n${nonce}\n${bodyHash}\n${IDS.deviceA}`,
+    ),
+  );
+  const controlSignature = encodeBase64Url(new Uint8Array(
+    await crypto.subtle.sign("Ed25519", keys.privateKey, controlMessage),
+  ));
+  const request = new Request(`https://sync.test${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "X-Shinsou-Timestamp": String(controlNow),
+      "X-Shinsou-Nonce": nonce,
+      "X-Shinsou-Signature": controlSignature,
+    },
+    body,
+  });
+
+  await assert.rejects(
+    approvePairing(request, env, PAIRING_ID, controlNow),
+    (error: unknown) => (error as { code?: string }).code === "pairing_incomplete_keyring",
+  );
+});
+
 test("recovery challenge returns every key epoch required from retained base to head", async () => {
   const db = database();
   seedTenant(db, NOW);
   db.prepare("UPDATE workspaces SET active_key_epoch = 3 WHERE workspace_id = ?")
     .run(IDS.workspaceA);
+  insertLiveBlobManifest(db, 1);
   for (const epoch of [1, 2, 3]) {
     db.prepare(`INSERT INTO workspace_recovery_keys(
       workspace_id, key_epoch, rotation_id, key_commitment, wrapped_key, created_at
@@ -230,7 +338,7 @@ test("recovery challenge returns every key epoch required from retained base to 
     envelope_version, schema_version, cipher_suite, nonce, previous_stable_sha256,
     r2_key, ciphertext_sha256, byte_size, uploader_device_id, device_signature,
     status, created_at, promoted_at
-  ) VALUES (?, 0, ?, 1, x'a0', 1, 1, 'CHACHA20_POLY1305', 'nonce', NULL,
+  ) VALUES (?, 0, ?, 3, x'a0', 1, 1, 'CHACHA20_POLY1305', 'nonce', NULL,
     'checkpoint/recovery-base', 'checkpoint-hash', 1, ?, 'signature', 'stable', ?, ?)`).run(
     IDS.workspaceA,
     IDS.checkpointA,
@@ -273,6 +381,31 @@ test("recovery challenge returns every key epoch required from retained base to 
   assert.equal(result.workspaces[0].workspaceId, IDS.workspaceA);
   assert.equal(result.workspaces[0].keyEpoch, 3);
   assert.deepEqual(result.workspaces[0].retainedKeyEnvelopes.map((entry) => entry.keyEpoch), [1, 2]);
+
+  db.prepare(`UPDATE encrypted_blob_manifests SET current_envelope_epoch = 3
+    WHERE workspace_id = ? AND blob_id = ?`).run(IDS.workspaceA, BLOB_ID);
+  const afterRewrap = await createRecoveryChallenge(new Request("https://sync.test/v1/recovery/challenge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: IDS.userA }),
+  }), env, NOW + 2) as typeof result;
+  assert.deepEqual(
+    afterRewrap.workspaces[0].retainedKeyEnvelopes.map((entry) => entry.keyEpoch),
+    [2],
+  );
+
+  db.prepare(`UPDATE encrypted_blob_manifests
+    SET status = 'deleted', current_envelope_epoch = 1, deleted_at = ?
+    WHERE workspace_id = ? AND blob_id = ?`).run(NOW + 3, IDS.workspaceA, BLOB_ID);
+  const afterDeletion = await createRecoveryChallenge(new Request("https://sync.test/v1/recovery/challenge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: IDS.userA }),
+  }), env, NOW + 4) as typeof result;
+  assert.deepEqual(
+    afterDeletion.workspaces[0].retainedKeyEnvelopes.map((entry) => entry.keyEpoch),
+    [2],
+  );
 });
 
 test("recovery claim commits exactly once and returns a successful receipt", async () => {
@@ -307,12 +440,13 @@ test("recovery claim commits exactly once and returns a successful receipt", asy
     NOW + 1,
   );
   db.prepare("UPDATE workspaces SET active_key_epoch = 2 WHERE workspace_id = ?").run(IDS.workspaceA);
+  insertLiveBlobManifest(db, 1);
   db.prepare(`INSERT INTO checkpoints(
     workspace_id, through_seq, checkpoint_id, key_epoch, authenticated_header_cbor,
     envelope_version, schema_version, cipher_suite, nonce, previous_stable_sha256,
     r2_key, ciphertext_sha256, byte_size, uploader_device_id, device_signature,
     status, created_at, promoted_at
-  ) VALUES (?, 0, ?, 1, x'a0', 1, 1, 'CHACHA20_POLY1305', 'nonce', NULL,
+  ) VALUES (?, 0, ?, 2, x'a0', 1, 1, 'CHACHA20_POLY1305', 'nonce', NULL,
     'checkpoint/claim-recovery-base', 'claim-checkpoint-hash', 1, ?, 'signature', 'stable', ?, ?)`).run(
     IDS.workspaceA,
     IDS.checkpointA,

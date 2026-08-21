@@ -1,16 +1,21 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
+import dev.shinsou.kmp.ui.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.BrowseCallbacks
+import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ContentCallbacks
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.ImportedDocumentReadException
+import dev.shinsou.kmp.ui.ImportedDocumentSource
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
@@ -19,6 +24,10 @@ import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.SystemBackGestureEvent
 import dev.shinsou.kmp.ui.mobileSecurityCapabilities
 import dev.shinsou.kmp.ui.readBoundedImportedBytes
+import dev.shinsou.kmp.ui.requireImportedDocumentSize
+import dev.shinsou.kmp.ui.writeCheckedTo
+import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
+import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -39,6 +48,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okio.FileSystem
+import okio.Path.Companion.toPath
+import okio.buffer
 import platform.Foundation.NSData
 import platform.Foundation.NSError
 import platform.Foundation.NSFileHandle
@@ -49,6 +61,7 @@ import platform.Foundation.NSString
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLFileSizeKey
+import platform.Foundation.NSUUID
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.create
@@ -56,6 +69,7 @@ import platform.Foundation.closeFile
 import platform.Foundation.dataUsingEncoding
 import platform.Foundation.fileHandleForReadingFromURL
 import platform.Foundation.readDataOfLength
+import platform.Foundation.seekToFileOffset
 import platform.Foundation.writeToURL
 import platform.LocalAuthentication.LAContext
 import platform.LocalAuthentication.LAPolicyDeviceOwnerAuthentication
@@ -82,10 +96,13 @@ import kotlin.coroutines.resume
 internal class IosAppServices(
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
+    override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
     override val cloudflareSync: CloudflareSyncUiController? = null,
     override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
+    override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val shuYueMigration: ShuYueMigrationUiController? = null,
 ) : ShinsouAppServices {
     private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val readerVolumeKeyChannel = Channel<ReaderVolumeKeyEvent>(capacity = Channel.BUFFERED)
@@ -205,6 +222,45 @@ internal class IosAppServices(
         }
     }
 
+    override suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean {
+        return exportBinaryDocument(
+            suggestedName,
+            ByteArrayBinaryDocumentExportSource(contents),
+        )
+    }
+
+    override suspend fun exportBinaryDocument(
+        suggestedName: String,
+        source: BinaryDocumentExportSource,
+    ): Boolean {
+        val fileName = safeFileName(suggestedName)
+        val temporaryUrl = NSURL.fileURLWithPath(
+            NSTemporaryDirectory() + "shinsou-export-${NSUUID().UUIDString}-$fileName",
+        )
+        val temporaryPath = temporaryUrl.path?.toPath() ?: return false
+        val written = withContext(Dispatchers.Default) {
+            runCatching {
+                val output = FileSystem.SYSTEM.sink(temporaryPath).buffer()
+                try {
+                    source.writeCheckedTo(BinaryDocumentExportSink { chunk -> output.write(chunk) })
+                    output.flush()
+                } finally {
+                    output.close()
+                }
+            }.isSuccess
+        }
+        if (!written) {
+            NSFileManager.defaultManager.removeItemAtPath(temporaryUrl.path.orEmpty(), error = null)
+            return false
+        }
+
+        return try {
+            pickDocumentUrls(exportUrl = temporaryUrl, allowsMultipleSelection = false).isNotEmpty()
+        } finally {
+            NSFileManager.defaultManager.removeItemAtPath(temporaryUrl.path.orEmpty(), error = null)
+        }
+    }
+
     override suspend fun importDocument(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits,
@@ -225,7 +281,7 @@ internal class IosAppServices(
         return withContext(Dispatchers.Default) {
             var acceptedBytes = 0L
             selected.map { url ->
-                url.readImportedDocument(limits, acceptedBytes).also { acceptedBytes += it.contents.size }
+                url.readImportedDocument(limits, acceptedBytes).also { acceptedBytes += it.byteSize }
             }
         }
     }
@@ -404,6 +460,15 @@ private fun NSURL.readImportedDocument(
     val name = lastPathComponent ?: "document"
     return try {
         val declaredSize = declaredFileSize()
+        if (limits.prefersRandomAccess(name)) {
+            val checkedSize = requireImportedDocumentSize(
+                name,
+                declaredSize,
+                limits,
+                previouslyAcceptedBytes,
+            )
+            return ImportedDocument(name, IosUrlImportedDocumentSource(this, name, checkedSize))
+        }
         val handle = NSFileHandle.fileHandleForReadingFromURL(this, error = null)
             ?: throw ImportedDocumentReadException("Unable to open “$name”.")
         try {
@@ -427,6 +492,48 @@ private fun NSURL.readImportedDocument(
         throw ImportedDocumentReadException("Unable to read “$name”.", error)
     } finally {
         if (granted) stopAccessingSecurityScopedResource()
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private class IosUrlImportedDocumentSource(
+    private val url: NSURL,
+    private val displayName: String,
+    override val byteSize: Long,
+) : ImportedDocumentSource {
+    override fun read(offset: Long, byteCount: Int): ByteArray {
+        require(offset in 0..byteSize && byteCount >= 0 &&
+            byteCount.toLong() <= byteSize - offset) { "Imported document read is out of bounds" }
+        val output = ByteArray(byteCount)
+        if (byteCount == 0) return output
+        val granted = url.startAccessingSecurityScopedResource()
+        try {
+            if (url.declaredFileSize() != byteSize) {
+                throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+            }
+            val handle = NSFileHandle.fileHandleForReadingFromURL(url, error = null)
+                ?: throw ImportedDocumentReadException("Unable to open “$displayName”.")
+            try {
+                handle.seekToFileOffset(offset.toULong())
+                val actual = handle.readDataOfLength(byteCount.toULong())
+                    .copyInto(output, offset = 0, requested = byteCount)
+                if (actual != byteCount) {
+                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+                }
+                if (url.declaredFileSize() != byteSize) {
+                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+                }
+            } finally {
+                runCatching { handle.closeFile() }
+            }
+            return output
+        } catch (error: ImportedDocumentReadException) {
+            throw error
+        } catch (error: Throwable) {
+            throw ImportedDocumentReadException("Unable to read “$displayName”.", error)
+        } finally {
+            if (granted) url.stopAccessingSecurityScopedResource()
+        }
     }
 }
 

@@ -198,8 +198,8 @@ class DownloadManager(
                 active[item.id] = scope.launch {
                     try {
                         download(item)
-                    } catch (_: CancellationException) {
-                        throw CancellationException()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (error: Throwable) {
                         repository.setDownloadState(
                             item.id,

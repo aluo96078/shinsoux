@@ -46,6 +46,20 @@ import {
 import { WorkspaceHub } from "./durable-objects/WorkspaceHub.ts";
 import { getAdminUsage, updateAdminQuota } from "./api/admin.ts";
 import { claimEmergencyWorkspaceHandoff } from "./api/emergency-reset.ts";
+import {
+  acknowledgeBlobTombstone,
+  commitBlobUpload,
+  createBlobTombstone,
+  createBlobUploadSession,
+  downloadBlobChunk,
+  downloadBlobManifest,
+  garbageCollectBlob,
+  getBlobEnvelope,
+  getBlobUploadSession,
+  rewrapBlobEnvelope,
+  reviveBlobReference,
+  uploadBlobChunk,
+} from "./api/blobs.ts";
 import { qrSvg } from "./qr.ts";
 import { versionCapabilities } from "./versions.ts";
 
@@ -150,6 +164,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (method === "GET" && path === "/setup") return setupPage(request, env);
   if (method === "GET" && path === "/v1/capabilities") {
     const versions = versionCapabilities(env);
+    const bodyPlaneConfigured = Boolean(env.BLOBS) &&
+      versions.protocolVersion >= 2 && versions.schemaVersion >= 2;
+    const blobUploadTtlSeconds = Number(env.BLOB_UPLOAD_SESSION_TTL_SECONDS ?? "3600");
+    const blobGcSafetySeconds = Number(env.BLOB_GC_SAFETY_SECONDS ?? "86400");
+    if (!Number.isSafeInteger(blobUploadTtlSeconds) || blobUploadTtlSeconds <= 0 ||
+        !Number.isSafeInteger(blobGcSafetySeconds) || blobGcSafetySeconds <= 0) {
+      throw new ApiError(503, "blob_body_configuration_invalid");
+    }
     return jsonResponse({
       instanceId: env.INSTANCE_ID.toLowerCase(),
       ...versions,
@@ -157,6 +179,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       websocket: realtime(env),
       checkpoint: { envelopeVersion: 1, maximumBytes: LIMITS.checkpointCiphertext, retainedStable: 3 },
       event: { envelopeVersion: 1, maximumBytes: LIMITS.eventCiphertext },
+      blobBody: {
+        enabled: bodyPlaneConfigured,
+        protocolVersion: 2,
+        schemaVersion: 2,
+        maxBlobBytes: LIMITS.blobCiphertext,
+        maxChunkBytes: LIMITS.blobChunkPlaintextMaximum,
+        maxChunks: LIMITS.blobChunks,
+        reservationTtlMillis: blobUploadTtlSeconds * 1000,
+        gcSafetyWindowMillis: blobGcSafetySeconds * 1000,
+      },
       auth: { accessTokenSeconds: Number(env.ACCESS_TOKEN_TTL_SECONDS ?? "600"), capabilitySeconds: Math.min(300, Number(env.CAPABILITY_TTL_SECONDS ?? "300")) },
     });
   }
@@ -242,6 +274,64 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   }
   if (method === "GET" && path === "/v1/recovery/claim") {
     return jsonResponse(await reconcileRecoveryClaim(request, env));
+  }
+
+  const bodyWorkspaceMatch = /^\/v2\/workspaces\/([0-9a-f-]+)(?:\/(.*))?$/.exec(path);
+  if (bodyWorkspaceMatch) {
+    const workspaceId = requireUuid(bodyWorkspaceMatch[1], "workspace_id");
+    const suffix = bodyWorkspaceMatch[2] ?? "";
+    const principal = await authenticateCapability(request, env, workspaceId);
+    if (method === "POST" && suffix === "blob-upload-sessions") {
+      return jsonResponse(await createBlobUploadSession(request, env, principal), 201);
+    }
+    const uploadSessionMatch = /^blob-upload-sessions\/([0-9a-f-]+)(?:\/(commit|chunks\/(\d+)))?$/.exec(suffix);
+    if (uploadSessionMatch) {
+      const sessionId = requireUuid(uploadSessionMatch[1], "session_id");
+      if (method === "GET" && !uploadSessionMatch[2]) {
+        return jsonResponse(await getBlobUploadSession(env, principal, sessionId));
+      }
+      if (method === "POST" && uploadSessionMatch[2] === "commit") {
+        return jsonResponse(await commitBlobUpload(request, env, principal, sessionId), 201);
+      }
+      if (method === "PUT" && uploadSessionMatch[3] !== undefined) {
+        return jsonResponse(await uploadBlobChunk(
+          request,
+          env,
+          principal,
+          sessionId,
+          Number(uploadSessionMatch[3]),
+        ), 201);
+      }
+    }
+    const blobMatch = /^blobs\/([0-9a-f-]+)(?:\/(manifest|chunks\/(\d+)|envelopes(?:\/(\d+))?|tombstone(?:\/(?:acks|revival))?))?$/.exec(suffix);
+    if (blobMatch) {
+      const blobId = requireUuid(blobMatch[1], "blob_id");
+      if (method === "GET" && blobMatch[2] === "manifest") {
+        return jsonResponse(await downloadBlobManifest(env, principal, blobId));
+      }
+      if (method === "GET" && blobMatch[3] !== undefined) {
+        return downloadBlobChunk(env, principal, blobId, Number(blobMatch[3]));
+      }
+      if (method === "POST" && blobMatch[2] === "envelopes") {
+        return jsonResponse(await rewrapBlobEnvelope(request, env, principal, blobId), 201);
+      }
+      if (method === "GET" && blobMatch[4] !== undefined) {
+        return jsonResponse(await getBlobEnvelope(env, principal, blobId, Number(blobMatch[4])));
+      }
+      if (method === "POST" && blobMatch[2] === "tombstone") {
+        return jsonResponse(await createBlobTombstone(request, env, principal, blobId), 201);
+      }
+      if (method === "POST" && blobMatch[2] === "tombstone/acks") {
+        await acknowledgeBlobTombstone(request, env, principal, blobId);
+        return emptyResponse(204);
+      }
+      if (method === "POST" && blobMatch[2] === "tombstone/revival") {
+        return jsonResponse(await reviveBlobReference(request, env, principal, blobId));
+      }
+    }
+    if (method === "POST" && suffix === "blob-gc") {
+      return jsonResponse(await garbageCollectBlob(request, env, principal), 201);
+    }
   }
 
   const workspaceMatch = /^\/v1\/workspaces\/([0-9a-f-]+)(?:\/(.*))?$/.exec(path);

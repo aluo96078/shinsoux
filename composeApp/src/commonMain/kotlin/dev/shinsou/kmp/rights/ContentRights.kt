@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.rights
 
+import dev.shinsou.kmp.concurrent.SynchronousLock
+import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlinx.serialization.SerialName
@@ -85,6 +87,17 @@ public data class RightsScope(
         require(contentRevision == null || contentRevision >= 0) {
             "Rights content revision must be non-negative"
         }
+    }
+
+    /** An acquisition-level grant may cover a more specific unit/manifest operation request. */
+    public fun covers(requested: RightsScope): Boolean {
+        validate()
+        requested.validate()
+        return publicationId == requested.publicationId &&
+            acquisitionId == requested.acquisitionId &&
+            (unitId == null || unitId == requested.unitId) &&
+            (manifestId == null || manifestId == requested.manifestId) &&
+            (contentRevision == null || contentRevision == requested.contentRevision)
     }
 }
 
@@ -216,6 +229,34 @@ public data class RightsGrant(
 
     public companion object {
         public const val CURRENT_SCHEMA_VERSION: Int = 1
+    }
+}
+
+/**
+ * Host-owned selector for derived plaintext cleanup.
+ *
+ * A grant selector retains its last known scope because a replica replacement may remove the
+ * durable grant before the low-priority cleanup coroutine gets CPU time. The hint can only narrow
+ * deletion candidates; every candidate is still re-evaluated against the current authority before
+ * any search or annotation row is changed.
+ */
+public sealed interface DerivedRightsCleanupTarget {
+    public data object All : DerivedRightsCleanupTarget
+
+    public data class Publication(
+        val publicationId: PublicationKey,
+    ) : DerivedRightsCleanupTarget {
+        init { publicationId.validate() }
+    }
+
+    public data class Grant(
+        val reference: RightsGrantRef,
+        val lastKnownScope: RightsScope? = null,
+    ) : DerivedRightsCleanupTarget {
+        init {
+            reference.validate()
+            lastKnownScope?.validate()
+        }
     }
 }
 
@@ -365,6 +406,7 @@ private val WATERMARK_CONSTRAINED_OPERATIONS = setOf(
 /** Non-serializable admission token. Its private constructor prevents a JSON field from granting trust. */
 public class VerifiedRightsGrant private constructor(
     public val grant: RightsGrant,
+    public val resolvedScope: RightsScope,
     public val admittedAtEpochMillis: Long,
     internal val authorityNonce: Any,
     public val protectionAuthorization: ProtectionAuthorization? = null,
@@ -373,6 +415,8 @@ public class VerifiedRightsGrant private constructor(
     init {
         require(admittedAtEpochMillis >= 0) { "Admission timestamp must be non-negative" }
         grant.validate()
+        resolvedScope.validate()
+        require(grant.scope.covers(resolvedScope)) { "Resolved rights scope exceeds the host grant" }
     }
 
     public fun allows(
@@ -394,7 +438,7 @@ public class VerifiedRightsGrant private constructor(
             is ProtectionScheme.Provider,
             is ProtectionScheme.Encrypted,
             -> protectionAuthorization?.matches(
-                scope = grant.scope,
+                scope = resolvedScope,
                 scheme = scheme,
                 operation = operation,
                 nowEpochMillis = nowEpochMillis,
@@ -421,12 +465,14 @@ public class VerifiedRightsGrant private constructor(
     internal companion object {
         fun issue(
             grant: RightsGrant,
+            resolvedScope: RightsScope = grant.scope,
             nowEpochMillis: Long,
             nonce: Any,
             authorization: ProtectionAuthorization? = null,
             admissionStillValid: () -> Boolean,
         ): VerifiedRightsGrant = VerifiedRightsGrant(
             grant.immutableSnapshot(),
+            resolvedScope,
             nowEpochMillis,
             nonce,
             authorization,
@@ -497,25 +543,55 @@ public interface RightsAuthority {
     ): VerifiedRightsGrant?
 }
 
-/** In-memory host authority for common tests; production uses the secure policy/ledger store. */
+/** One synchronous policy invalidation signal. It never contains provider secrets or key data. */
+public data class RightsGrantInvalidation(
+    val reference: RightsGrantRef,
+    val lastKnownGrant: RightsGrant?,
+)
+
+/** Idempotent listener handle used by feature runtimes which share one hydrated authority. */
+public fun interface RightsInvalidationSubscription {
+    public fun cancel()
+}
+
+/** Process-local host authority hydrated from the durable policy ledger; also used by common tests. */
 public class InMemoryRightsAuthority : RightsAuthority {
     private data class AdmissionRecord(
         val grant: RightsGrant,
         val marker: Any = Any(),
     )
 
+    private val lock = SynchronousLock()
     private val records = LinkedHashMap<String, AdmissionRecord>()
     private val revoked = HashSet<String>()
     private val authorityNonce = Any()
     private val registeredProviders = LinkedHashMap<String, MutableSet<Int>>()
     private var providerPolicyMarker: Any = Any()
+    private val invalidationListeners = LinkedHashMap<Long, (RightsGrantInvalidation) -> Unit>()
+    private var nextInvalidationListenerId: Long = 1L
+
+    /**
+     * Observers must do only bounded, non-blocking work. Production uses this edge to stop native
+     * speech immediately and enqueue a cancellable background cleanup; SQLite is never touched by
+     * the callback itself.
+     */
+    public fun observeInvalidations(
+        listener: (RightsGrantInvalidation) -> Unit,
+    ): RightsInvalidationSubscription {
+        val id = lock.withLock {
+            nextInvalidationListenerId++.also { invalidationListeners[it] = listener }
+        }
+        return RightsInvalidationSubscription { lock.withLock { invalidationListeners.remove(id) } }
+    }
 
     /** Register a provider scheme before protected grants can be admitted. */
     public fun registerProtectionProvider(providerId: String, schemeVersion: Int = 1) {
         requireSafeIdentifier(providerId, "Protection provider id")
         require(schemeVersion > 0) { "Protection scheme version must be positive" }
-        if (registeredProviders.getOrPut(providerId) { LinkedHashSet() }.add(schemeVersion)) {
-            providerPolicyMarker = Any()
+        lock.withLock {
+            if (registeredProviders.getOrPut(providerId) { LinkedHashSet() }.add(schemeVersion)) {
+                providerPolicyMarker = Any()
+            }
         }
     }
 
@@ -525,10 +601,19 @@ public class InMemoryRightsAuthority : RightsAuthority {
 
     /** Remove a provider scheme; existing grants fail closed on the next resolution. */
     public fun unregisterProtectionProvider(providerId: String, schemeVersion: Int = 1) {
-        registeredProviders[providerId]?.let { versions ->
-            val changed = versions.remove(schemeVersion)
+        val invalidated = lock.withLock {
+            val versions = registeredProviders[providerId] ?: return@withLock emptyList()
+            if (!versions.remove(schemeVersion)) return@withLock emptyList()
             if (versions.isEmpty()) registeredProviders.remove(providerId)
-            if (changed) providerPolicyMarker = Any()
+            providerPolicyMarker = Any()
+            records.values
+                .filter { record ->
+                    record.grant.protectionScheme.matchesProvider(providerId, schemeVersion)
+                }
+                .map(AdmissionRecord::grant)
+        }
+        invalidated.forEach { grant ->
+            notifyInvalidated(grant.grantId, grant)
         }
     }
 
@@ -547,7 +632,7 @@ public class InMemoryRightsAuthority : RightsAuthority {
             is ProtectionScheme.Encrypted -> scheme.providerId to scheme.schemeVersion
             ProtectionScheme.None -> return null
         }
-        if (!isRegistered(providerId, schemeVersion)) return null
+        if (!lock.withLock { isRegisteredLocked(providerId, schemeVersion) }) return null
         return ProtectionAuthorization.issue(
             providerId = providerId,
             schemeVersion = schemeVersion,
@@ -561,13 +646,22 @@ public class InMemoryRightsAuthority : RightsAuthority {
     public fun admit(grant: RightsGrant) {
         val snapshot = grant.immutableSnapshot()
         snapshot.validate()
-        records[snapshot.grantId.value] = AdmissionRecord(snapshot)
-        revoked.remove(snapshot.grantId.value)
+        val previous = lock.withLock {
+            records.put(snapshot.grantId.value, AdmissionRecord(snapshot)).also {
+                revoked.remove(snapshot.grantId.value)
+            }
+        }
+        if (previous != null && previous.grant != snapshot) {
+            notifyInvalidated(snapshot.grantId, previous.grant)
+        }
     }
 
     public fun revoke(reference: RightsGrantRef) {
         reference.validate()
-        revoked += reference.value
+        val invalidated = lock.withLock {
+            if (revoked.add(reference.value)) records[reference.value]?.grant to true else null to false
+        }
+        if (invalidated.second) notifyInvalidated(reference, invalidated.first)
     }
 
     override fun resolve(
@@ -576,44 +670,73 @@ public class InMemoryRightsAuthority : RightsAuthority {
         nowEpochMillis: Long,
         authorization: ProtectionAuthorization?,
     ): VerifiedRightsGrant? {
-        if (nowEpochMillis < 0 || reference.value in revoked) return null
-        val record = records[reference.value] ?: return null
-        val grant = record.grant
-        if (grant.scope != scope) return null
-        if (!isSupportedScheme(grant.protectionScheme)) return null
-        if (grant.protectionScheme != ProtectionScheme.None &&
-            (authorization == null || !authorization.matches(
-                scope = grant.scope,
-                scheme = grant.protectionScheme,
-                operation = authorization.operation,
-                nowEpochMillis = nowEpochMillis,
-                expectedAuthorityNonce = authorityNonce,
-            ))
-        ) return null
-        val resolvedProviderPolicyMarker = providerPolicyMarker
+        if (nowEpochMillis < 0) return null
+        val resolved = lock.withLock {
+            if (reference.value in revoked) return@withLock null
+            val record = records[reference.value] ?: return@withLock null
+            val grant = record.grant
+            if (!grant.scope.covers(scope) || !isSupportedSchemeLocked(grant.protectionScheme)) {
+                return@withLock null
+            }
+            if (grant.protectionScheme != ProtectionScheme.None &&
+                (authorization == null || !authorization.matches(
+                    scope = scope,
+                    scheme = grant.protectionScheme,
+                    operation = authorization.operation,
+                    nowEpochMillis = nowEpochMillis,
+                    expectedAuthorityNonce = authorityNonce,
+                ))
+            ) return@withLock null
+            Triple(record, grant, providerPolicyMarker)
+        } ?: return null
+        val (record, grant, resolvedProviderPolicyMarker) = resolved
         return VerifiedRightsGrant.issue(
             grant = grant,
+            resolvedScope = scope,
             nowEpochMillis = nowEpochMillis,
             nonce = authorityNonce,
             authorization = authorization,
             admissionStillValid = {
-                records[reference.value]?.marker === record.marker &&
-                    reference.value !in revoked &&
-                    isSupportedScheme(grant.protectionScheme) &&
-                    (grant.protectionScheme == ProtectionScheme.None ||
-                        providerPolicyMarker === resolvedProviderPolicyMarker)
+                lock.withLock {
+                    records[reference.value]?.marker === record.marker &&
+                        reference.value !in revoked &&
+                        isSupportedSchemeLocked(grant.protectionScheme) &&
+                        (grant.protectionScheme == ProtectionScheme.None ||
+                            providerPolicyMarker === resolvedProviderPolicyMarker)
+                }
             },
         )
     }
 
-    private fun isSupportedScheme(scheme: ProtectionScheme): Boolean = when (scheme) {
+    /** Call only while [lock] is held. */
+    private fun isSupportedSchemeLocked(scheme: ProtectionScheme): Boolean = when (scheme) {
         ProtectionScheme.None -> true
-        is ProtectionScheme.Provider -> isRegistered(scheme.providerId, scheme.schemeVersion)
-        is ProtectionScheme.Encrypted -> isRegistered(scheme.providerId, scheme.schemeVersion)
+        is ProtectionScheme.Provider -> isRegisteredLocked(scheme.providerId, scheme.schemeVersion)
+        is ProtectionScheme.Encrypted -> isRegisteredLocked(scheme.providerId, scheme.schemeVersion)
     }
 
-    private fun isRegistered(providerId: String, schemeVersion: Int): Boolean =
+    /** Call only while [lock] is held. */
+    private fun isRegisteredLocked(providerId: String, schemeVersion: Int): Boolean =
         registeredProviders[providerId]?.contains(schemeVersion) == true
+
+    private fun notifyInvalidated(reference: RightsGrantRef, lastKnownGrant: RightsGrant?) {
+        val listeners = lock.withLock { invalidationListeners.values.toList() }
+        if (listeners.isEmpty()) return
+        val event = RightsGrantInvalidation(reference, lastKnownGrant)
+        // Callbacks run outside the authority lock, so a listener may resolve policy or
+        // unsubscribe itself without deadlocking the mutation that emitted this event.
+        listeners.forEach { listener ->
+            // Policy mutation must remain fail-closed even if an optional background scheduler is
+            // already shutting down or rejects its signal.
+            runCatching { listener(event) }
+        }
+    }
+}
+
+private fun ProtectionScheme.matchesProvider(providerId: String, schemeVersion: Int): Boolean = when (this) {
+    ProtectionScheme.None -> false
+    is ProtectionScheme.Provider -> this.providerId == providerId && this.schemeVersion == schemeVersion
+    is ProtectionScheme.Encrypted -> this.providerId == providerId && this.schemeVersion == schemeVersion
 }
 
 /** Central host evaluator. Missing/unverified/expired/unsupported grants always deny. */

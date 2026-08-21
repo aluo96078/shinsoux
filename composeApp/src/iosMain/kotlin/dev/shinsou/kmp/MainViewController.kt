@@ -12,6 +12,7 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.JavaScriptCoreScriptPluginRuntimeFactory
 import dev.shinsou.kmp.sync.SnapshotSyncController
+import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -123,6 +124,8 @@ internal object IosApplicationContainer {
         fileSystem = IosAppFileSystem(),
         runtimeFactory = JavaScriptCoreScriptPluginRuntimeFactory(),
         syncInfrastructure = syncInfrastructure,
+        platformTextToSpeechEngine = IosTextToSpeechEngine(),
+        shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
     )
 
     private val snapshotSync = SnapshotSyncController(
@@ -151,9 +154,12 @@ internal object IosApplicationContainer {
     val services = IosAppServices(
         browse = composition.browse,
         content = composition.content,
+        contentFeatures = composition.contentFeatures,
         tracking = composition.tracking,
         cloudflareSync = composition.cloudflareSync,
         syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
+        portableContentBackupV2 = composition.portableContentBackupV2,
+        shuYueMigration = composition.shuYueMigration,
         snapshotSync = snapshotSync,
     )
 

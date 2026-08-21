@@ -182,6 +182,137 @@ public data class EpubRendition(
     }
 }
 
+/** Persisted OPF package metadata needed to reconstruct the package graph after restart. */
+@Serializable
+public data class EpubPackageDocumentMetadata(
+    val packageDocumentHref: String,
+    val packageVersion: String? = null,
+    val uniqueIdentifierIdRef: String? = null,
+    val uniqueIdentifier: String? = null,
+    val title: String? = null,
+    val language: String? = null,
+    /** The exact OPF declaration (`default`, `ltr`, or `rtl`), when one was present. */
+    val pageProgressionDirection: String? = null,
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireSafeRelativeHref(packageDocumentHref, "EPUB package document href")
+        packageVersion?.let { requireSafeIdentifier(it, "EPUB package version") }
+        uniqueIdentifierIdRef?.let { requireSafeIdentifier(it, "EPUB unique identifier idref") }
+        listOf(uniqueIdentifier, title, language).filterNotNull().forEach {
+            requireBoundedPrintable(it, "EPUB package metadata")
+        }
+        require(pageProgressionDirection in setOf(null, "default", "ltr", "rtl")) {
+            "EPUB page progression direction is invalid"
+        }
+    }
+}
+
+/** One lossless OPF manifest declaration, including relationships expressed by manifest idref. */
+@Serializable
+public data class EpubPackageManifestItem(
+    val manifestIdRef: String,
+    val declaredHref: String,
+    /** Stable hint in the acquisition that parsed the OPF; adapters may remap host resource ids. */
+    val resourceId: String,
+    val mediaType: String,
+    /** Canonical package-relative href is authoritative across host-side resource-id remapping. */
+    val resolvedHref: String = declaredHref,
+    val properties: Set<String> = emptySet(),
+    val fallbackIdRef: String? = null,
+    val mediaOverlayIdRef: String? = null,
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireSafeIdentifier(manifestIdRef, "EPUB manifest idref")
+        requireSafeRelativeHref(declaredHref, "EPUB declared manifest href")
+        requireSafeRelativeHref(resolvedHref, "EPUB resolved manifest href")
+        requireSafeIdentifier(resourceId, "EPUB manifest resource id")
+        requireMediaType(mediaType, "EPUB manifest media type")
+        requireEpubProperties(properties, "EPUB manifest properties")
+        fallbackIdRef?.let { requireSafeIdentifier(it, "EPUB fallback idref") }
+        mediaOverlayIdRef?.let { requireSafeIdentifier(it, "EPUB media-overlay idref") }
+    }
+}
+
+@Serializable
+public enum class EpubPackageNavigationKind {
+    EPUB3_NAV,
+    NCX,
+}
+
+/** A navigation target retains both publisher spelling and the resolved package identity. */
+@Serializable
+public data class EpubPackageNavigationPoint(
+    val label: String,
+    val declaredHref: String,
+    val resolvedHref: String? = null,
+    val resourceId: String? = null,
+    val fragment: String? = null,
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireBoundedPrintable(label, "EPUB navigation label", allowBlank = true)
+        requireBoundedPrintable(declaredHref, "EPUB declared navigation href")
+        resolvedHref?.let { requireSafeRelativeHref(it, "EPUB resolved navigation href") }
+        resourceId?.let { requireSafeIdentifier(it, "EPUB navigation resource id") }
+        require((resolvedHref == null) == (resourceId == null)) {
+            "EPUB resolved navigation href and resource id must be present together"
+        }
+        fragment?.let { requireBoundedPrintable(it, "EPUB navigation fragment") }
+    }
+}
+
+/** EPUB 3 nav or EPUB 2 NCX graph persisted as part of the immutable package revision. */
+@Serializable
+public data class EpubPackageNavigationDocument(
+    val kind: EpubPackageNavigationKind,
+    val documentResourceId: String,
+    val documentHref: String,
+    val points: List<EpubPackageNavigationPoint> = emptyList(),
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireSafeIdentifier(documentResourceId, "EPUB navigation document resource id")
+        requireSafeRelativeHref(documentHref, "EPUB navigation document href")
+        require(points.size <= MAX_RESOURCES) { "EPUB navigation document has too many points" }
+        points.forEach(EpubPackageNavigationPoint::validate)
+    }
+}
+
+@Serializable
+public data class EpubPackageCssReference(
+    val declaredReference: String,
+    val resolvedHref: String? = null,
+    val external: Boolean = false,
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireBoundedPrintable(declaredReference, "EPUB CSS reference")
+        resolvedHref?.let { requireSafeRelativeHref(it, "EPUB resolved CSS href") }
+        require(!external || resolvedHref == null) { "External EPUB CSS references cannot resolve in-package" }
+    }
+}
+
+@Serializable
+public data class EpubPackageCssDependency(
+    val stylesheetHref: String,
+    val references: List<EpubPackageCssReference> = emptyList(),
+) {
+    init { validate() }
+
+    public fun validate(): Unit {
+        requireSafeRelativeHref(stylesheetHref, "EPUB stylesheet href")
+        require(references.size <= MAX_RESOURCES) { "EPUB stylesheet has too many dependencies" }
+        references.forEach(EpubPackageCssReference::validate)
+    }
+}
+
 @Serializable
 public data class EpubEncryption(
     val descriptors: List<EpubEncryptionDescriptor>,
@@ -221,6 +352,12 @@ public data class EpubPackage(
     val resources: List<EpubResource>,
     val renditions: List<EpubRendition> = emptyList(),
     val encryption: EpubEncryption? = null,
+    /** Additive defaults keep manifests written before the full OPF graph backward-decodable. */
+    val packageMetadata: EpubPackageDocumentMetadata? = null,
+    val manifest: List<EpubPackageManifestItem> = emptyList(),
+    val spineTocManifestIdRef: String? = null,
+    val navigation: List<EpubPackageNavigationDocument> = emptyList(),
+    val cssDependencies: List<EpubPackageCssDependency> = emptyList(),
 ) {
     init { validate() }
 
@@ -241,6 +378,86 @@ public data class EpubPackage(
         resources.forEach(EpubResource::validate)
         require(renditions.size <= MAX_RENDITIONS) { "EPUB package has too many renditions" }
         renditions.forEach(EpubRendition::validate)
+        packageMetadata?.validate()
+        packageMetadata?.let { metadata ->
+            require(resources.singleOrNull { it.id == packageDocumentId }?.href == metadata.packageDocumentHref) {
+                "EPUB package metadata href does not match the package document resource"
+            }
+        }
+        require(manifest.size <= MAX_RESOURCES) { "EPUB package has too many manifest declarations" }
+        require(manifest.map(EpubPackageManifestItem::manifestIdRef).distinct().size == manifest.size) {
+            "EPUB package manifest idrefs must be unique"
+        }
+        manifest.forEach(EpubPackageManifestItem::validate)
+        val resourcesById = resources.associateBy(EpubResource::id)
+        val manifestById = manifest.associateBy(EpubPackageManifestItem::manifestIdRef)
+        manifest.forEach { item ->
+            val hintedResource = resourcesById[item.resourceId]
+            hintedResource?.let {
+                require(it.href == item.resolvedHref) {
+                    "EPUB manifest resource-id hint resolves to a different href"
+                }
+            }
+            val resource = resources.singleOrNull { it.href == item.resolvedHref }
+                ?: throw IllegalArgumentException("EPUB manifest declaration references an unknown resource")
+            require(resource.mediaType == item.mediaType) {
+                "EPUB manifest declaration media type does not match its resource"
+            }
+            item.fallbackIdRef?.let { fallback ->
+                require(fallback in manifestById) { "EPUB fallback references an unknown manifest id" }
+            }
+            item.mediaOverlayIdRef?.let { overlay ->
+                require(overlay in manifestById) { "EPUB media-overlay references an unknown manifest id" }
+            }
+        }
+        spineTocManifestIdRef?.let { toc ->
+            require(toc in manifestById) { "EPUB spine TOC references an unknown manifest id" }
+        }
+        require(navigation.size <= MAX_RESOURCES) { "EPUB package has too many navigation documents" }
+        navigation.forEach { document ->
+            document.validate()
+            resourcesById[document.documentResourceId]?.let { hintedResource ->
+                require(hintedResource.href == document.documentHref) {
+                    "EPUB navigation document resource-id hint resolves to a different href"
+                }
+            }
+            require(resources.any { it.href == document.documentHref }) {
+                "EPUB navigation document references an unknown resource"
+            }
+            document.points.forEach { point ->
+                point.resolvedHref?.let { targetHref ->
+                    point.resourceId?.let { targetId ->
+                        resourcesById[targetId]?.let { hintedTarget ->
+                            require(hintedTarget.href == targetHref) {
+                                "EPUB navigation point resource-id hint resolves to a different href"
+                            }
+                        }
+                    }
+                    require(resources.any { it.href == targetHref }) {
+                        "EPUB navigation point references an unknown resource"
+                    }
+                }
+            }
+        }
+        require(cssDependencies.size <= MAX_RESOURCES) { "EPUB package has too many stylesheets" }
+        cssDependencies.forEach { dependency ->
+            dependency.validate()
+            require(resources.any { it.href == dependency.stylesheetHref }) {
+                "EPUB stylesheet dependency references an unknown resource"
+            }
+            dependency.references.mapNotNull(EpubPackageCssReference::resolvedHref).forEach { href ->
+                require(resources.any { it.href == href }) {
+                    "EPUB CSS dependency target references an unknown resource"
+                }
+            }
+        }
+        val auxiliaryNodeCount = manifest.size.toLong() + navigation.size.toLong() +
+            navigation.sumOf { it.points.size.toLong() } + cssDependencies.size.toLong() +
+            cssDependencies.sumOf { it.references.size.toLong() } + renditions.size.toLong() +
+            (encryption?.descriptors?.size?.toLong() ?: 0L)
+        require(auxiliaryNodeCount <= MAX_EPUB_AUXILIARY_GRAPH_ENTRIES.toLong()) {
+            "EPUB package auxiliary graph is too large"
+        }
         encryption?.validate()
         encryption?.descriptors?.forEach { descriptor ->
             val encryptedId = descriptor.resourceId
@@ -259,6 +476,10 @@ public data class EpubSpineDocument(
     val resourceId: String,
     val linear: Boolean = true,
     val pageProgression: ImageProgression = ImageProgression.LEFT_TO_RIGHT,
+    val manifestIdRef: String? = null,
+    val properties: Set<String> = emptySet(),
+    /** Materialized per-item rendition override; raw OPF tokens remain in [properties]. */
+    val rendition: EpubRendition? = null,
 ) {
     init { validate() }
 
@@ -266,6 +487,9 @@ public data class EpubSpineDocument(
         requireSafeIdentifier(id, "EPUB spine document id")
         requireSafeRelativeHref(href, "EPUB spine document href")
         requireSafeIdentifier(resourceId, "EPUB spine resource id")
+        manifestIdRef?.let { requireSafeIdentifier(it, "EPUB spine manifest idref") }
+        requireEpubProperties(properties, "EPUB spine properties")
+        rendition?.validate()
     }
 }
 
@@ -383,6 +607,7 @@ public sealed interface ContentRepresentation {
                 "EPUB spine document ids must be unique"
             }
             val byId = packageGraph.resources.associateBy(EpubResource::id)
+            val manifestById = packageGraph.manifest.associateBy(EpubPackageManifestItem::manifestIdRef)
             documents.forEach { document ->
                 document.validate()
                 val resource = requireNotNull(byId[document.resourceId]) {
@@ -390,6 +615,14 @@ public sealed interface ContentRepresentation {
                 }
                 require(resource.href == document.href) {
                     "EPUB spine href does not match package graph"
+                }
+                document.manifestIdRef?.let { manifestIdRef ->
+                    val declaration = requireNotNull(manifestById[manifestIdRef]) {
+                        "EPUB spine manifest idref is missing from the package graph"
+                    }
+                    require(declaration.resolvedHref == document.href) {
+                        "EPUB spine manifest idref resolves to a different href"
+                    }
                 }
             }
         }
@@ -622,11 +855,33 @@ private fun EpubPackage.deepImmutableSnapshot(): EpubPackage = copy(
     resources = immutableListOf(resources.map(EpubResource::deepImmutableSnapshot)),
     renditions = immutableListOf(renditions.map(EpubRendition::deepImmutableSnapshot)),
     encryption = encryption?.deepImmutableSnapshot(),
+    packageMetadata = packageMetadata?.copy(),
+    manifest = immutableListOf(manifest.map(EpubPackageManifestItem::deepImmutableSnapshot)),
+    navigation = immutableListOf(navigation.map(EpubPackageNavigationDocument::deepImmutableSnapshot)),
+    cssDependencies = immutableListOf(cssDependencies.map(EpubPackageCssDependency::deepImmutableSnapshot)),
 )
 
 private fun EpubRendition.deepImmutableSnapshot(): EpubRendition = copy()
 
-private fun EpubSpineDocument.deepImmutableSnapshot(): EpubSpineDocument = copy()
+private fun EpubPackageManifestItem.deepImmutableSnapshot(): EpubPackageManifestItem =
+    copy(properties = immutableSetOf(properties))
+
+private fun EpubPackageNavigationPoint.deepImmutableSnapshot(): EpubPackageNavigationPoint = copy()
+
+private fun EpubPackageNavigationDocument.deepImmutableSnapshot(): EpubPackageNavigationDocument = copy(
+    points = immutableListOf(points.map(EpubPackageNavigationPoint::deepImmutableSnapshot)),
+)
+
+private fun EpubPackageCssReference.deepImmutableSnapshot(): EpubPackageCssReference = copy()
+
+private fun EpubPackageCssDependency.deepImmutableSnapshot(): EpubPackageCssDependency = copy(
+    references = immutableListOf(references.map(EpubPackageCssReference::deepImmutableSnapshot)),
+)
+
+private fun EpubSpineDocument.deepImmutableSnapshot(): EpubSpineDocument = copy(
+    properties = immutableSetOf(properties),
+    rendition = rendition?.deepImmutableSnapshot(),
+)
 
 private fun TextBlock.deepImmutableSnapshot(): TextBlock = copy()
 
@@ -653,6 +908,8 @@ private const val MAX_RESOURCES_TOTAL: Int = 100_000
 private const val MAX_REPRESENTATIONS: Int = 32
 private const val MAX_TRANSFORMS: Int = 16
 private const val MAX_RENDITIONS: Int = 64
+internal const val MAX_EPUB_AUXILIARY_GRAPH_ENTRIES: Int = 100_000
+internal const val MAX_CONTENT_METADATA_JSON_CHARS: Int = 4_000_000
 private const val EPUB_ARCHIVE_MEDIA_TYPE: String = "application/epub+zip"
 private const val ZERO_UUID: String = "00000000-0000-0000-0000-000000000000"
 private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
@@ -672,6 +929,20 @@ private fun requireSafeIdentifier(value: String, label: String) {
     require(value.none(Char::isISOControl) && value.none { it.isWhitespace() }) {
         "$label contains unsafe characters"
     }
+}
+
+private fun requireBoundedPrintable(value: String, label: String, allowBlank: Boolean = false) {
+    require(value.length <= MAX_ATTRIBUTE_VALUE_LENGTH && (allowBlank || value.isNotBlank())) {
+        "$label must be bounded${if (allowBlank) "" else " and non-blank"}"
+    }
+    require(value.none(Char::isISOControl)) { "$label contains unsafe characters" }
+}
+
+private fun requireEpubProperties(properties: Set<String>, label: String) {
+    require(properties.size <= MAX_ATTRIBUTES && properties.all {
+        it.isNotBlank() && it.length <= MAX_IDENTIFIER_LENGTH &&
+            it.none(Char::isISOControl) && it.none(Char::isWhitespace)
+    }) { "$label must be bounded and printable" }
 }
 
 private fun requireMediaType(value: String, label: String) {

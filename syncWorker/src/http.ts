@@ -92,6 +92,7 @@ export function corsHeaders(request: Request, env: Env): HeadersInit {
       "X-Shinsou-Device-Signature",
     ].join(", "),
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Expose-Headers": "Content-Length, X-Shinsou-Ciphertext-Sha256",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };

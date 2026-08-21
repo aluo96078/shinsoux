@@ -29,6 +29,8 @@ import dev.shinsou.kmp.sync.v2.SyncSession
 import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.sync.v2.WorkspaceCapability
 import dev.shinsou.kmp.sync.v2.WorkspaceKeyBootstrap
+import dev.shinsou.kmp.sync.v2.SYNC_PROTOCOL_VERSION
+import dev.shinsou.kmp.sync.v2.SYNC_STATE_SCHEMA_VERSION
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -246,7 +248,16 @@ class DefaultSyncRecoveryUiDelegateTest {
         private val control: LostResponseControlApi,
     ) : CloudflareProvisioningApi {
         override suspend fun capabilities(endpoint: String) =
-            ProvisioningCapabilities(INSTANCE_ID, 1, 1, 1, 1, 1, 1, realtime = true)
+            ProvisioningCapabilities(
+                instanceId = INSTANCE_ID,
+                protocolVersion = SYNC_PROTOCOL_VERSION,
+                minReaderVersion = 1,
+                minWriterVersion = 1,
+                schemaVersion = SYNC_STATE_SCHEMA_VERSION,
+                minSchemaReaderVersion = 1,
+                minSchemaWriterVersion = 1,
+                realtime = true,
+            )
 
         override suspend fun reconcileRecoveryClaim(session: SyncSession) = control.receipt
         override suspend fun claimSetup(endpoint: String, claim: InitialWorkspaceClaim) = error("not used")

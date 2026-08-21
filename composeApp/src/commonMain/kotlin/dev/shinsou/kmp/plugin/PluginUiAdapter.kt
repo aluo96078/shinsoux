@@ -2,6 +2,29 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.ExtensionRepo
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
+import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
+import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
+import dev.shinsou.kmp.plugin.v2.ExtensionCapability
+import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
+import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.PagedResultV2
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryPackageV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
+import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLocation
+import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptCandidateV2
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.BrowseExtension
 import dev.shinsou.kmp.ui.BrowseFilter
@@ -20,6 +43,7 @@ import dev.shinsou.kmp.ui.SourceCredential as BrowseSourceCredential
 import dev.shinsou.kmp.ui.SourcePreference as BrowseSourcePreference
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.ui.TypedReaderContentSession
 import io.ktor.http.Url
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -78,12 +102,38 @@ public class PluginBrowseAdapter(
     private val loginRequestCoordinator: PluginLoginRequestCoordinator = PluginLoginRequestCoordinator(),
     /** Optional host-provided repository. The application passes an empty value by default. */
     private val defaultRepositoryUrl: String = "",
+    private val extensionGatewayV2: ExtensionBrowseContentGatewayV2 = ExtensionBrowseContentGatewayV2(
+        ExtensionSourceResolverV2 { sourceKey -> manager.extensionSourceV2(sourceKey) },
+    ),
+    /** Null only in previews/tests that intentionally omit the shared content foundation. */
+    private val extensionContentConsumerV2: ExtensionContentConsumerV2? = null,
+    /** Production supplies the bounded reviewed repository loader; previews may omit it. */
+    private val reviewedShuYueRepositoryLoaderV2: ShuYueRepositoryIndexLoader? = null,
+    private val reviewedShuYueRepositoryLocationV2: ShuYueRepositoryLocation =
+        ShuYueRepositoryLocation.IndexUrl(
+            ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_INDEX_URL,
+        ),
 ) : BrowseCallbacks {
     private val operationMutex = Mutex()
     private val mutableState = MutableStateFlow(BrowseSnapshot())
+    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore)
+    private val reviewedShuYueInstallerV2 = manager.reviewedShuYueInstallCoordinatorV2(
+        quarantineStore = reviewedShuYueStoreV2,
+        approvalStore = reviewedShuYueStoreV2,
+        installationStore = reviewedShuYueStoreV2,
+    )
+    private val reviewedShuYueRepositoryV2 = reviewedShuYueRepositoryLoaderV2?.let { loader ->
+        ShuYueReviewedRepositoryCoordinatorV2(
+            loader = loader,
+            installer = reviewedShuYueInstallerV2,
+            location = reviewedShuYueRepositoryLocationV2,
+        )
+    }
     private var loadedInstalled = false
     private var descriptors: Map<String, ExtensionDescriptor> = emptyMap()
+    private var reviewedShuYuePackages: Map<String, ShuYueReviewedRepositoryPackageV2> = emptyMap()
     private var sourceProjections: Map<Long, BrowseSourceProjection> = emptyMap()
+    private val v2SourceRowIds = linkedMapOf<SourceKey, Long>()
 
     override val state: StateFlow<BrowseSnapshot> = mutableState
     override val loginRequests: StateFlow<List<SourceLoginRequest>> = loginRequestCoordinator.loginRequests
@@ -100,6 +150,15 @@ public class PluginBrowseAdapter(
         keyValueStore.putString(sourceEnabledKey(sourceId), enabled.toString())
         rebuildSnapshot(errorMessage = null)
     }
+
+    override suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean): Unit =
+        operationMutex.withLock {
+            check(manager.extensionSourceV2(sourceKey) != null) {
+                "Unknown extension v2 source: ${sourceKey.canonicalId}"
+            }
+            keyValueStore.putString(sourceEnabledV2Key(sourceKey), enabled.toString())
+            rebuildSnapshot(errorMessage = null)
+        }
 
     override suspend fun addRepository(url: String): BrowseRepository? = operationMutex.withLock {
         reconcilePortableRepositories()
@@ -169,10 +228,134 @@ public class PluginBrowseAdapter(
         )
     }
 
-    override suspend fun resolveManga(item: BrowseManga): Long? = mangaResolver.resolve(item)
+    override suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? =
+        extensionGatewayV2.source(sourceKey)
+
+    override suspend fun browseSourceV2(
+        sourceKey: SourceKey,
+        options: BrowseOptionsV2,
+        page: Int,
+    ): PagedResultV2<RemotePublicationV2> = withContext(Dispatchers.Default) {
+        extensionGatewayV2.browse(sourceKey, options, page)
+    }
+
+    override suspend fun searchSourceV2(
+        sourceKey: SourceKey,
+        query: String,
+        page: Int,
+    ): PagedResultV2<RemotePublicationV2> = withContext(Dispatchers.Default) {
+        extensionGatewayV2.search(sourceKey, query, page)
+    }
+
+    override suspend fun latestSourceV2(
+        sourceKey: SourceKey,
+        page: Int,
+    ): PagedResultV2<RemotePublicationV2> = withContext(Dispatchers.Default) {
+        extensionGatewayV2.latest(sourceKey, page)
+    }
+
+    override suspend fun extensionDetailsV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+    ): RemotePublicationV2 = withContext(Dispatchers.Default) {
+        extensionGatewayV2.details(sourceKey, remotePublicationId)
+    }
+
+    override suspend fun extensionUnitsV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        page: Int,
+    ): PagedResultV2<RemoteUnitV2> = withContext(Dispatchers.Default) {
+        extensionGatewayV2.units(sourceKey, remotePublicationId, page)
+    }
+
+    override suspend fun extensionContentV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        remoteUnitId: String,
+    ): UnitContentResultV2 = withContext(Dispatchers.Default) {
+        extensionGatewayV2.content(sourceKey, remotePublicationId, remoteUnitId)
+    }
+
+    override suspend fun extensionPublicationPageV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        page: Int,
+    ): ExtensionPublicationPageV2 = withContext(Dispatchers.Default) {
+        requireNotNull(extensionContentConsumerV2) {
+            "Extension v2 content storage is unavailable"
+        }.publicationPage(sourceKey, remotePublicationId, page)
+    }
+
+    override suspend fun materializeExtensionContentV2(
+        selection: ExtensionUnitSelectionV2,
+        representationId: String?,
+    ): ExtensionContentMaterializationV2 = withContext(Dispatchers.Default) {
+        requireNotNull(extensionContentConsumerV2) {
+            "Extension v2 content storage is unavailable"
+        }.materialize(selection, representationId)
+    }
+
+    override suspend fun openMaterializedExtensionContentV2(
+        materialization: ExtensionContentMaterializationV2,
+    ): TypedReaderContentSession = withContext(Dispatchers.Default) {
+        val readable = requireNotNull(extensionContentConsumerV2) {
+            "Extension v2 content storage is unavailable"
+        }.open(materialization)
+        TypedReaderContentSession(
+            content = readable.content,
+            canonicalText = readable.canonicalText,
+            access = readable.access,
+        )
+    }
+
+    override suspend fun stageReviewedShuYueV2(
+        candidate: ShuYueScriptCandidateV2,
+    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
+        reviewedShuYueInstallerV2.stage(candidate)
+    }
+
+    override suspend fun stageReviewedShuYuePackageV2(
+        packageId: String,
+    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
+        requireNotNull(reviewedShuYueRepositoryV2) {
+            "Reviewed ShuYue repository is unavailable"
+        }.stage(packageId)
+    }
+
+    override suspend fun reviewShuYueQuarantineV2(
+        quarantineId: String,
+    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
+        reviewedShuYueInstallerV2.review(quarantineId)
+    }
+
+    override suspend fun approveAndInstallReviewedShuYueV2(
+        decision: ShuYueReviewedInstallApprovalV2,
+    ): Unit = withContext(Dispatchers.Default) {
+        reviewedShuYueInstallerV2.approveAndInstall(decision)
+        operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
+    }
+
+    override suspend fun uninstallReviewedShuYueV2(packageId: String): Unit =
+        withContext(Dispatchers.Default) {
+            val installed = reviewedShuYueInstallerV2.installed(packageId)
+                ?: throw IllegalArgumentException("Reviewed ShuYue package '$packageId' is not installed")
+            reviewedShuYueInstallerV2.revokeAndUnload(installed.identity)
+            operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
+        }
+
+    override suspend fun resolveManga(item: BrowseManga): Long? {
+        require(item.sourceKey == null) {
+            "Extension v2 publications must use the exact details/unit/content workflow"
+        }
+        return mangaResolver.resolve(item)
+    }
 
     override suspend fun installExtension(extensionId: String): Unit = withContext(Dispatchers.Default) {
         operationMutex.withLock installOperation@{
+        require(ShuYueReviewedPluginCatalogV2.profiles.none { it.identity.packageId == extensionId }) {
+            "Reviewed ShuYue packages must use the reviewed installation flow"
+        }
         ensureInstalledLoaded()
         val descriptor = descriptors[extensionId]
             ?: throw IllegalArgumentException("Unknown extension: $extensionId")
@@ -353,6 +536,9 @@ public class PluginBrowseAdapter(
                 repositories.filter { it.baseUrl == selectedId }
             } ?: repositories
             descriptors = manager.refresh(visibleRepositories).associateBy { it.id }
+            reviewedShuYueRepositoryV2?.let { repository ->
+                reviewedShuYuePackages = repository.refresh().associateBy { it.packageId }
+            }
             rebuildSnapshot(errorMessage = null)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -448,6 +634,7 @@ public class PluginBrowseAdapter(
     private suspend fun ensureInstalledLoaded() {
         if (!loadedInstalled) {
             manager.loadInstalled()
+            reviewedShuYueInstallerV2.rehydrateInstalled()
             loadedInstalled = true
         }
     }
@@ -463,7 +650,7 @@ public class PluginBrowseAdapter(
             descriptor.sources.map { source -> source.id to descriptor }
         }.toMap()
         val rebuiltSourceProjections = linkedMapOf<Long, BrowseSourceProjection>()
-        val sources = manager.catalogueSources().map { source ->
+        val legacySources = manager.catalogueSources().map { source ->
             val reused = sourceProjections[source.id]
                 ?.takeIf { reuseUnchangedSources && it.source === source }
                 ?.value
@@ -520,8 +707,31 @@ public class PluginBrowseAdapter(
             }
             rebuiltSourceProjections[source.id] = BrowseSourceProjection(source, projected)
             projected
-        }.sortedWith(compareBy<BrowseSource> { it.language }.thenBy { it.name.lowercase() })
-        val extensions = descriptors.values.map { descriptor ->
+        }
+        val occupiedSourceIds = legacySources.mapTo(hashSetOf(), BrowseSource::id)
+        val nativeSources = manager.extensionDescriptorsV2()
+            .flatMap { it.sources }
+            .filterNot { descriptor -> legacySources.any { it.sourceKey == descriptor.sourceKey } }
+            .map { descriptor ->
+                BrowseSource(
+                    id = v2UiRowId(descriptor.sourceKey, occupiedSourceIds),
+                    name = descriptor.displayName,
+                    language = descriptor.languageTag,
+                    baseUrl = descriptor.baseUrl.orEmpty(),
+                    enabled = keyValueStore.getString(sourceEnabledV2Key(descriptor.sourceKey))
+                        ?.toBooleanStrictOrNull() ?: true,
+                    supportsLatest = ExtensionCapability.LATEST in descriptor.capabilities,
+                    supportsLogin = ExtensionCapability.LOGIN in descriptor.capabilities,
+                    sourceKey = descriptor.sourceKey,
+                )
+            }
+        val sources = (legacySources + nativeSources)
+            .distinctBy(BrowseSource::identityKey)
+            .sortedWith(compareBy<BrowseSource> { it.language }.thenBy { it.name.lowercase() })
+        val reservedReviewedIds = ShuYueReviewedPluginCatalogV2.profiles
+            .mapTo(hashSetOf()) { it.identity.packageId }
+        val liveV2Packages = manager.extensionDescriptorsV2().associateBy { it.packageId }
+        val extensions = descriptors.values.filterNot { it.id in reservedReviewedIds }.map { descriptor ->
             val local = installed[descriptor.id]
             val trusted = local?.let {
                 if (PluginVerifier.isLegacyTrustValid(it)) {
@@ -549,6 +759,31 @@ public class PluginBrowseAdapter(
                 trusted = trusted,
                 isNsfw = descriptor.nsfw,
                 sourceIds = descriptor.sources.map { it.id },
+            )
+        } + reviewedShuYuePackages.values.map { reviewed ->
+            val profile = requireNotNull(ShuYueReviewedPluginCatalogV2.profiles.singleOrNull { profile ->
+                profile.identity.packageId == reviewed.packageId &&
+                    profile.identity.version == reviewed.version &&
+                    profile.identity.versionCode == reviewed.versionCode
+            })
+            val installation = reviewedShuYueInstallerV2.installed(reviewed.packageId)
+            val live = liveV2Packages[reviewed.packageId]
+            val exactInstalled = installation?.identity == profile.identity &&
+                live == profile.descriptor
+            val trusted = exactInstalled &&
+                reviewedShuYueStoreV2.isTrusted(profile.identity) &&
+                reviewedShuYueStoreV2.grantedPermissions(profile.identity) == profile.requiredPermissions
+            BrowseExtension(
+                id = reviewed.packageId,
+                name = reviewed.name,
+                version = reviewed.version,
+                language = reviewed.languageTag,
+                installed = installation != null,
+                updateAvailable = installation != null && installation.identity != profile.identity,
+                trusted = trusted,
+                isNsfw = reviewed.isNsfw,
+                reviewedShuYueV2 = true,
+                description = reviewed.description,
             )
         }
         sourceProjections = rebuiltSourceProjections
@@ -644,6 +879,22 @@ public class PluginBrowseAdapter(
     }
 
     private fun sourceEnabledKey(sourceId: Long): String = "source.$sourceId.enabled"
+
+    private fun sourceEnabledV2Key(sourceKey: SourceKey): String =
+        "source.v2.${Sha256.hex(sourceKey.canonicalId.encodeToByteArray())}.enabled"
+
+    /** Allocates a process-local row id only; every extension operation still uses SourceKey. */
+    private fun v2UiRowId(sourceKey: SourceKey, occupied: Set<Long>): Long {
+        v2SourceRowIds[sourceKey]?.takeIf { it !in occupied }?.let { return it }
+        var candidate = Long.MIN_VALUE
+        val allocated = v2SourceRowIds.values.toHashSet()
+        while (candidate in occupied || candidate in allocated) {
+            check(candidate != Long.MAX_VALUE) { "Unable to allocate an extension v2 UI row id" }
+            candidate++
+        }
+        v2SourceRowIds[sourceKey] = candidate
+        return candidate
+    }
 
     private suspend fun networkProxyPreference(sourceId: Long): BrowseSourcePreference {
         val stored = pluginStorage.getPreference(

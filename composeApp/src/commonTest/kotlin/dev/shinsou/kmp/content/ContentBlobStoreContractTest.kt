@@ -8,6 +8,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ContentBlobStoreContractTest {
@@ -114,6 +115,28 @@ class ContentBlobStoreContractTest {
         lease.close()
         assertTrue(lease.isClosed)
         assertTrue(store.contains(republished.reference))
+    }
+
+    @Test
+    fun verifiedExistingBlobClaimAdoptsCrashRecoveredBodyIntoOneUseReceipt() {
+        var now = 100L
+        val store = InMemoryContentBlobStore(clock = { now })
+        val published = store.put("hello".encodeToByteArray(), "text/plain")
+        store.simulateProcessCrashAndRecover()
+        assertEquals(BlobLifecycleState.DISCOVERED_ORPHAN, store.lifecycleState(published.reference))
+
+        now = 200L
+        val claimed = store.claimExistingVerified(published.reference)!!
+        assertEquals(BlobLifecycleState.AVAILABLE, store.lifecycleState(published.reference))
+        assertTrue(claimed.generation > published.generation)
+        assertSame(claimed, store.claimExistingVerified(published.reference))
+
+        val manifest = textManifest(published.reference)
+        store.attach(claimed, ManifestAttachment(owner, manifest))
+        assertFailsWith<ContentBlobStoreException.ReceiptConsumed> {
+            store.attach(claimed, ManifestAttachment(owner, manifest))
+        }
+        assertContentEquals("hello".encodeToByteArray(), store.read(published.reference))
     }
 
     private fun textManifest(blob: BlobRef): ContentManifest = ContentManifest(

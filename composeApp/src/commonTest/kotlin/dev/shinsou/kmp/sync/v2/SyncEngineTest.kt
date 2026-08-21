@@ -251,10 +251,10 @@ class SyncEngineTest {
         val callOrder = mutableListOf<String>()
 
         override suspend fun capabilities(endpoint: String): SyncCapabilities = SyncCapabilities(
-            protocolVersion = 1,
+            protocolVersion = SYNC_PROTOCOL_VERSION,
             minReaderVersion = 1,
             minWriterVersion = 1,
-            schemaVersion = 1,
+            schemaVersion = SYNC_STATE_SCHEMA_VERSION,
             minSchemaReaderVersion = 1,
             minSchemaWriterVersion = 1,
             realtimeAvailable = false,
@@ -352,10 +352,10 @@ class SyncEngineTest {
         var lastAppended: EncryptedSyncEvent? = null
 
         override suspend fun capabilities(endpoint: String): SyncCapabilities = SyncCapabilities(
-            protocolVersion = 1,
+            protocolVersion = SYNC_PROTOCOL_VERSION,
             minReaderVersion = 1,
             minWriterVersion = 1,
-            schemaVersion = 1,
+            schemaVersion = SYNC_STATE_SCHEMA_VERSION,
             minSchemaReaderVersion = 1,
             minSchemaWriterVersion = 1,
             realtimeAvailable = false,

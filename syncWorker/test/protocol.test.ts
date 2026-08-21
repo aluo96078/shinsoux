@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CHECKPOINT_COMPRESSION,
+  blobChunkObjectKey,
+  blobManifestObjectKey,
   checkpointObjectKey,
   classifyDeviceSequence,
   LIMITS,
@@ -219,7 +221,7 @@ test("rotation recipient comparison includes auth epochs", () => {
   );
 });
 
-test("R2 keys can only be built from validated identities and hashes", () => {
+test("R2 keys can only be built from validated identities and exact namespaces", () => {
   const key = checkpointObjectKey(IDS.workspaceA, 123, IDS.checkpointA, "a".repeat(64));
   assert.equal(
     key,
@@ -227,6 +229,18 @@ test("R2 keys can only be built from validated identities and hashes", () => {
   );
   assert.throws(
     () => checkpointObjectKey("../../other", 1, IDS.checkpointA, "a".repeat(64)),
+    ApiError,
+  );
+  assert.equal(
+    blobManifestObjectKey(IDS.workspaceA, IDS.eventA, IDS.checkpointA),
+    `workspaces/${IDS.workspaceA}/content/v2/blobs/${IDS.eventA}/manifests/${IDS.checkpointA}.bin`,
+  );
+  assert.equal(
+    blobChunkObjectKey(IDS.workspaceA, IDS.eventA, IDS.checkpointA, 7),
+    `workspaces/${IDS.workspaceA}/content/v2/blobs/${IDS.eventA}/manifests/${IDS.checkpointA}/chunks/7.bin`,
+  );
+  assert.throws(
+    () => blobChunkObjectKey(IDS.workspaceA, IDS.eventA, "../manifest", 0),
     ApiError,
   );
 });

@@ -1,5 +1,8 @@
 package dev.shinsou.kmp.content
 
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -162,6 +165,131 @@ class ContentManifestContractTest {
 
         assertFailsWith<IllegalArgumentException> {
             graph.copy(archive = archive.copy(mediaType = "application/zip"))
+        }
+    }
+
+    @Test
+    fun legacyEpubJsonWithoutAdditivePackageGraphFieldsStillDecodes() {
+        val packageDocument = EpubResource(
+            id = "opf",
+            href = "OPS/package.opf",
+            resource = ResourceRef(
+                "opf",
+                blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "application/oebps-package+xml"),
+            ),
+        )
+        val legacyGraph = EpubPackage(
+            archive = blob("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "application/epub+zip"),
+            packageDocumentId = packageDocument.id,
+            resources = listOf(packageDocument),
+        )
+        val encoded = Json.encodeToString(legacyGraph)
+
+        assertFalse(encoded.contains("packageMetadata"))
+        assertFalse(encoded.contains("spineTocManifestIdRef"))
+        assertEquals(legacyGraph, Json.decodeFromString<EpubPackage>(encoded))
+
+        val legacySpine = EpubSpineDocument("spine", packageDocument.href, packageDocument.id)
+        val encodedSpine = Json.encodeToString(legacySpine)
+        assertFalse(encodedSpine.contains("manifestIdRef"))
+        assertEquals(legacySpine, Json.decodeFromString<EpubSpineDocument>(encodedSpine))
+    }
+
+    @Test
+    fun epubAuxiliaryGraphHasOnePackageWideAggregateLimit() {
+        val packageDocument = EpubResource(
+            id = "opf",
+            href = "OPS/package.opf",
+            resource = ResourceRef(
+                "opf",
+                blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "application/oebps-package+xml"),
+            ),
+        )
+        val stylesheet = EpubResource(
+            id = "style",
+            href = "OPS/style.css",
+            resource = ResourceRef(
+                "style",
+                blob("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "text/css"),
+            ),
+        )
+        val repeatedExternalReference = EpubPackageCssReference(
+            declaredReference = "https://example.test/theme.css",
+            external = true,
+        )
+        val dependency = EpubPackageCssDependency(
+            stylesheetHref = stylesheet.href,
+            references = List(MAX_EPUB_AUXILIARY_GRAPH_ENTRIES) { repeatedExternalReference },
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            EpubPackage(
+                archive = blob("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "application/epub+zip"),
+                packageDocumentId = packageDocument.id,
+                resources = listOf(packageDocument, stylesheet),
+                manifest = listOf(
+                    EpubPackageManifestItem(
+                        manifestIdRef = "style",
+                        declaredHref = "style.css",
+                        resolvedHref = stylesheet.href,
+                        resourceId = stylesheet.id,
+                        mediaType = "text/css",
+                    ),
+                ),
+                cssDependencies = listOf(dependency),
+            )
+        }
+    }
+
+    @Test
+    fun epubManifestIdrefUsesAuthoritativeHrefAcrossHostResourceIdRemapping() {
+        val packageDocument = EpubResource(
+            id = "remote-opf",
+            href = "OPS/package.opf",
+            resource = ResourceRef(
+                "remote-opf",
+                blob("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "application/oebps-package+xml"),
+            ),
+        )
+        val chapter = EpubResource(
+            id = "remote-chapter",
+            href = "OPS/chapter.xhtml",
+            resource = ResourceRef(
+                "remote-chapter",
+                blob("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "application/xhtml+xml"),
+            ),
+        )
+        val declaration = EpubPackageManifestItem(
+            manifestIdRef = "chapter",
+            declaredHref = "chapter.xhtml",
+            resolvedHref = chapter.href,
+            resourceId = "stale-host-derived-id",
+            mediaType = chapter.mediaType,
+        )
+        val graph = EpubPackage(
+            archive = blob("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "application/epub+zip"),
+            packageDocumentId = packageDocument.id,
+            resources = listOf(packageDocument, chapter),
+            manifest = listOf(declaration),
+        )
+
+        ContentRepresentation.EpubSpine(
+            representationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            packageGraph = graph,
+            documents = listOf(
+                EpubSpineDocument(
+                    id = "spine-chapter",
+                    href = chapter.href,
+                    resourceId = chapter.id,
+                    manifestIdRef = declaration.manifestIdRef,
+                ),
+            ),
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            graph.copy(
+                manifest = listOf(declaration.copy(resourceId = packageDocument.id)),
+            )
         }
     }
 

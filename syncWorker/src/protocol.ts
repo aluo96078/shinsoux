@@ -7,6 +7,12 @@ export const LIMITS = Object.freeze({
   eventCiphertext: 32 * 1024,
   checkpointCiphertext: 32 * 1024 * 1024,
   checkpointUncompressed: 32 * 1024 * 1024,
+  blobCiphertext: 128 * 1024 * 1024,
+  blobChunkPlaintextMinimum: 64 * 1024,
+  blobChunkPlaintextMaximum: 8 * 1024 * 1024,
+  blobChunkCiphertext: (8 * 1024 * 1024) + 16,
+  blobManifestCiphertext: 512 * 1024,
+  blobChunks: 1024,
   catchUpPage: 500,
   devicesPerUser: 10,
   eventDevicePerMinute: 60,
@@ -76,9 +82,9 @@ const EVENT_HEADER_KEYS = [
 
 function validateCipherSuite(map: Record<string, CborValue>): { cipherSuite: string; nonce: string } {
   const cipherSuite = valueString(map, "cipherSuite");
-  // Protocol v1 has one wire algorithm. Advertising another enum without implementing it on
-  // every client creates algorithm confusion: a correctly authenticated AES header would be fed
-  // into the ChaCha primitive. A future suite requires a new negotiated protocol contract.
+  // Protocols v1 and v2 share one implemented wire algorithm. Advertising another enum without
+  // implementing it on every client creates algorithm confusion: an authenticated AES header
+  // could otherwise be fed into the ChaCha primitive.
   if (cipherSuite !== "CHACHA20_POLY1305") {
     throw new ApiError(400, "unsupported_cipher_suite");
   }
@@ -144,8 +150,16 @@ export function parseCheckpointHeader(bytes: Uint8Array): CheckpointHeader {
   if (previous && decodeBase64Url(previous, "previous_stable_checkpoint_hash").byteLength !== 32) {
     throw new ApiError(400, "invalid_previous_stable_checkpoint_hash");
   }
+  const schemaVersion = valueInteger(map, "schemaVersion", 1);
   const stateFormat = valueString(map, "stateFormat");
-  if (stateFormat !== "sync-state-v1") throw new ApiError(400, "unsupported_checkpoint_state_format");
+  const expectedStateFormat = schemaVersion === 1
+    ? "sync-state-v1"
+    : schemaVersion === 2
+    ? "sync-state-v2"
+    : null;
+  if (!expectedStateFormat || stateFormat !== expectedStateFormat) {
+    throw new ApiError(400, "unsupported_checkpoint_state_format");
+  }
   const compression = valueString(map, "compression");
   if (compression !== CHECKPOINT_COMPRESSION) {
     throw new ApiError(400, "unsupported_checkpoint_compression");
@@ -157,7 +171,7 @@ export function parseCheckpointHeader(bytes: Uint8Array): CheckpointHeader {
   const header: CheckpointHeader = {
     envelopeVersion: valueInteger(map, "envelopeVersion", 1),
     protocolVersion: valueInteger(map, "protocolVersion", 1),
-    schemaVersion: valueInteger(map, "schemaVersion", 1),
+    schemaVersion,
     cipherSuite,
     nonce,
     instanceId: requireUuid(valueString(map, "instanceId"), "header_instance_id"),
@@ -175,6 +189,75 @@ export function parseCheckpointHeader(bytes: Uint8Array): CheckpointHeader {
     throw new ApiError(426, "protocol_upgrade_required");
   }
   return header;
+}
+
+export function requireSha256Base64Url(value: unknown, name: string): string {
+  if (typeof value !== "string" || decodeBase64Url(value, name).byteLength !== 32) {
+    throw new ApiError(400, `invalid_${name}`);
+  }
+  return value;
+}
+
+export const BLOB_MANIFEST_FORMAT = "encrypted-content-blob-manifest-v2" as const;
+
+export interface BlobManifestHeader {
+  envelopeVersion: number;
+  protocolVersion: 2;
+  schemaVersion: 2;
+  cipherSuite: string;
+  nonce: string;
+  instanceId: string;
+  workspaceId: string;
+  blobId: string;
+  deviceId: string;
+  keyEpoch: number;
+  chunkPlanSha256: string;
+  chunkCount: number;
+  totalChunkCiphertextBytes: number;
+  manifestFormat: typeof BLOB_MANIFEST_FORMAT;
+}
+
+const BLOB_MANIFEST_HEADER_KEYS = [
+  "envelopeVersion", "protocolVersion", "schemaVersion", "cipherSuite", "nonce",
+  "instanceId", "workspaceId", "blobId", "deviceId", "keyEpoch", "chunkPlanSha256",
+  "chunkCount", "totalChunkCiphertextBytes", "manifestFormat",
+] as const;
+
+export function parseBlobManifestHeader(bytes: Uint8Array): BlobManifestHeader {
+  const map = decodeCanonicalMap(bytes);
+  exactKeys(map, BLOB_MANIFEST_HEADER_KEYS);
+  const { cipherSuite, nonce } = validateCipherSuite(map);
+  const envelopeVersion = valueInteger(map, "envelopeVersion", 1);
+  const protocolVersion = valueInteger(map, "protocolVersion", 1);
+  const schemaVersion = valueInteger(map, "schemaVersion", 1);
+  const manifestFormat = valueString(map, "manifestFormat");
+  if (envelopeVersion !== 1 || protocolVersion !== 2 || schemaVersion !== 2) {
+    throw new ApiError(426, "body_protocol_upgrade_required");
+  }
+  if (manifestFormat !== BLOB_MANIFEST_FORMAT) {
+    throw new ApiError(400, "unsupported_blob_manifest_format");
+  }
+  const chunkCount = valueInteger(map, "chunkCount", 1);
+  const totalChunkCiphertextBytes = valueInteger(map, "totalChunkCiphertextBytes", 1);
+  if (chunkCount > LIMITS.blobChunks || totalChunkCiphertextBytes > LIMITS.blobCiphertext) {
+    throw new ApiError(400, "blob_manifest_limits_exceeded");
+  }
+  return {
+    envelopeVersion,
+    protocolVersion: 2,
+    schemaVersion: 2,
+    cipherSuite,
+    nonce,
+    instanceId: requireUuid(valueString(map, "instanceId"), "header_instance_id"),
+    workspaceId: requireUuid(valueString(map, "workspaceId"), "header_workspace_id"),
+    blobId: requireUuid(valueString(map, "blobId"), "header_blob_id"),
+    deviceId: requireUuid(valueString(map, "deviceId"), "header_device_id"),
+    keyEpoch: valueInteger(map, "keyEpoch", 1),
+    chunkPlanSha256: requireSha256Base64Url(valueString(map, "chunkPlanSha256"), "chunk_plan_sha256"),
+    chunkCount,
+    totalChunkCiphertextBytes,
+    manifestFormat,
+  };
 }
 
 export function envelopeSignatureMessage(
@@ -197,6 +280,32 @@ export function checkpointObjectKey(
   if (!Number.isSafeInteger(throughSeq) || throughSeq < 0) throw new ApiError(400, "invalid_through_seq");
   if (!/^[0-9a-f]{64}$/.test(sha256Hex)) throw new ApiError(400, "invalid_ciphertext_sha256_hex");
   return `workspaces/${workspace}/checkpoints/v1/${throughSeq}/${checkpoint}-${sha256Hex}.bin`;
+}
+
+export function blobChunkObjectKey(
+  workspaceId: string,
+  blobId: string,
+  manifestId: string,
+  chunkIndex: number,
+): string {
+  const workspace = requireUuid(workspaceId, "workspace_id");
+  const blob = requireUuid(blobId, "blob_id");
+  const manifest = requireUuid(manifestId, "manifest_id");
+  if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= LIMITS.blobChunks) {
+    throw new ApiError(400, "invalid_chunk_index");
+  }
+  return `workspaces/${workspace}/content/v2/blobs/${blob}/manifests/${manifest}/chunks/${chunkIndex}.bin`;
+}
+
+export function blobManifestObjectKey(
+  workspaceId: string,
+  blobId: string,
+  manifestId: string,
+): string {
+  const workspace = requireUuid(workspaceId, "workspace_id");
+  const blob = requireUuid(blobId, "blob_id");
+  const manifest = requireUuid(manifestId, "manifest_id");
+  return `workspaces/${workspace}/content/v2/blobs/${blob}/manifests/${manifest}.bin`;
 }
 
 export type SequenceDecision =

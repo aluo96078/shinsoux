@@ -51,3 +51,10 @@
 # class as well as the implementation that is already referenced directly by
 # the application's own HTTP client.
 -keep class io.ktor.client.engine.cio.CIOEngineContainer { *; }
+
+# JavaFX WebKit resolves the private EPUB URL scheme exclusively through the
+# META-INF/services/java.net.spi.URLStreamHandlerProvider entry.  There is no
+# direct Kotlin reference for the shrinker to follow, so keep the provider's
+# binary name aligned with that service descriptor in packaged DMG/MSI/EXE
+# builds.
+-keep class dev.shinsou.kmp.reader.protocol.EpubUrlStreamHandlerProvider { *; }

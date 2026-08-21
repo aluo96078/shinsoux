@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.content
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import java.nio.file.Files
@@ -91,6 +92,70 @@ class SqlDriverContentTransactionStoreTest {
     }
 
     @Test
+    fun oversizedDurablePayloadsAreRejectedBeforeJsonAndOutboxDecode() {
+        withDatabase("content-oversized-durable-payload") { database ->
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$database")
+            val store = SqlDriverContentTransactionStore(
+                driver,
+                InMemoryContentBlobStore(),
+                SqlDraftAdapter,
+                syncModeProvider = { ContentSyncMode.INACTIVE },
+            )
+            val publicationKey = PublicationKey("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            store.commit(
+                ContentCommitBatch(
+                    commitId = "oversized-publication-fixture",
+                    publications = listOf(
+                        ContentPublicationMutation(
+                            Publication(publicationKey, "Bounded publication"),
+                        ),
+                    ),
+                ),
+            )
+            val oversizedPayload = "x".repeat(MAX_CONTENT_METADATA_JSON_CHARS + 1)
+            driver.execute(
+                null,
+                "UPDATE content_publications SET publication_json = ? WHERE publication_id = ?",
+                2,
+            ) {
+                bindString(0, oversizedPayload)
+                bindString(1, publicationKey.value)
+            }.value
+
+            val publicationFailure = assertFailsWith<IllegalArgumentException> {
+                store.findPublicationDirect(publicationKey)
+            }
+            assertEquals("Content transaction payload is too large", publicationFailure.message)
+
+            driver.execute(
+                null,
+                "INSERT INTO content_transaction_outbox(draft_id, payload) VALUES (?, ?)",
+                2,
+            ) {
+                bindString(0, "oversized-draft")
+                bindString(1, oversizedPayload)
+            }.value
+
+            val pendingFailure = assertFailsWith<IllegalArgumentException> {
+                store.pendingOutbox()
+            }
+            assertEquals("Outbox payload is too large", pendingFailure.message)
+            val stateFailure = assertFailsWith<IllegalArgumentException> { store.state }
+            assertEquals("Outbox payload is too large", stateFailure.message)
+            val conflictFailure = assertFailsWith<IllegalArgumentException> {
+                store.commit(
+                    ContentCommitBatch(
+                        commitId = "oversized-outbox-conflict",
+                        outbox = listOf(SqlDraft("oversized-draft")),
+                    ),
+                )
+            }
+            assertEquals("Outbox payload is too large", conflictFailure.message)
+            store.close()
+        }
+    }
+
+    @Test
     fun sameMigrationDigestReplaysAfterReopenAndChangedResultConflicts() {
         withDatabase("content-migration-replay") { database ->
             val migration = migration("b")
@@ -118,6 +183,52 @@ class SqlDriverContentTransactionStoreTest {
                     reopened.commit(batch.copy(migrations = listOf(changed)))
                 }
                 reopened.close()
+            }
+        }
+    }
+
+    @Test
+    fun portableGraphReplacementDoesNotUseMigrationReplayShortcut() {
+        withDatabase("content-portable-replacement-ledgers") { database ->
+            val retained = migration("7")
+            val imported = migration("8")
+            SqlDriverContentTransactionStore(
+                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                InMemoryContentBlobStore(),
+                SqlDraftAdapter,
+                syncModeProvider = { ContentSyncMode.INACTIVE },
+            ).also { store ->
+                store.commit(
+                    ContentCommitBatch(
+                        commitId = retained.commitId,
+                        metadata = listOf(ContentMetadataMutation("local/theme", "dark")),
+                        migrations = listOf(retained),
+                    ),
+                )
+
+                val replacement = store.commit(
+                    ContentCommitBatch(
+                        commitId = "portable-sql-single-ledger",
+                        metadata = listOf(ContentMetadataMutation("archive/title", "Imported")),
+                        aliases = listOf(ContentAliasMutation("archive:book", "publication:archive")),
+                        migrations = listOf(retained),
+                        semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
+                    ),
+                )
+                assertFalse(replacement.replayed)
+                assertEquals("Imported", store.state.metadata["archive/title"])
+
+                store.commit(
+                    ContentCommitBatch(
+                        commitId = "portable-sql-multiple-ledgers",
+                        migrations = listOf(retained, imported),
+                        semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
+                    ),
+                )
+                assertEquals(setOf(retained.migrationKey, imported.migrationKey), store.state.migrations.keys)
+                assertEquals("dark", store.state.metadata["local/theme"])
+                assertEquals("publication:archive", store.state.aliases["archive:book"])
+                store.close()
             }
         }
     }
@@ -527,7 +638,7 @@ class SqlDriverContentTransactionStoreTest {
     }
 
     @Test
-    fun concurrentCommitIsRejectedAndCanBeRetriedAfterTheFirstCompletes() {
+    fun concurrentCommitWaitsAndCommitsAfterTheFirstCompletes() {
         withDatabase("content-concurrent") { database ->
             val enteredEncoder = CountDownLatch(1)
             val releaseEncoder = CountDownLatch(1)
@@ -554,6 +665,10 @@ class SqlDriverContentTransactionStoreTest {
             )
             val firstResult = AtomicReference<ContentCommitResult?>()
             val firstError = AtomicReference<Throwable?>()
+            val secondStarted = CountDownLatch(1)
+            val secondCompleted = CountDownLatch(1)
+            val secondResult = AtomicReference<ContentCommitResult?>()
+            val secondError = AtomicReference<Throwable?>()
             val first = thread(start = true) {
                 try {
                     firstResult.set(store.commit(ContentCommitBatch("concurrent-first", outbox = listOf(SqlDraft("first")))))
@@ -562,15 +677,33 @@ class SqlDriverContentTransactionStoreTest {
                 }
             }
             assertTrue(enteredEncoder.await(5, TimeUnit.SECONDS))
-            assertFailsWith<IllegalStateException> {
-                store.commit(ContentCommitBatch("concurrent-second", metadata = listOf(ContentMetadataMutation("key", "value"))))
+            val second = thread(start = true) {
+                secondStarted.countDown()
+                try {
+                    secondResult.set(
+                        store.commit(
+                            ContentCommitBatch(
+                                "concurrent-second",
+                                metadata = listOf(ContentMetadataMutation("key", "value")),
+                            ),
+                        ),
+                    )
+                } catch (error: Throwable) {
+                    secondError.set(error)
+                } finally {
+                    secondCompleted.countDown()
+                }
             }
+            assertTrue(secondStarted.await(5, TimeUnit.SECONDS))
+            assertFalse(secondCompleted.await(100, TimeUnit.MILLISECONDS))
             releaseEncoder.countDown()
             first.join()
+            second.join()
             assertEquals(null, firstError.get())
+            assertEquals(null, secondError.get())
             assertFalse(requireNotNull(firstResult.get()).replayed)
-            // The rejected second operation must not have written its metadata.
-            assertTrue(store.state.metadata.isEmpty())
+            assertFalse(requireNotNull(secondResult.get()).replayed)
+            assertEquals(mapOf("key" to "value"), store.state.metadata)
             store.close()
         }
     }

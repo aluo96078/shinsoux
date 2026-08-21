@@ -1,5 +1,20 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginAdmissionV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallCoordinatorV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallationStoreV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionApprovalStoreV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptQuarantineStoreV2
+import dev.shinsou.kmp.plugin.shuyue.productionShuYueReviewedAdmissionV2
+import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.ExtensionHostFacadeV2
+import dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi
+import dev.shinsou.kmp.plugin.v2.ExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionRuntimeRegistryV2
+import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.LegacyMangaPackageRuntimeV2
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -156,8 +171,10 @@ public class PluginManager(
     /** Serializes package mutations without blocking readers of the live source/runtime maps. */
     private val packageMutationMutex = Mutex()
     private val lifecycleMutex = Mutex()
-    private val runtimes = mutableMapOf<String, ScriptPluginRuntime>()
+    private val runtimes = mutableMapOf<String, List<ScriptPluginRuntime>>()
     private val sources = mutableMapOf<Long, CatalogueSource>()
+    private val sourceOwners = mutableMapOf<Long, String>()
+    private val extensionRegistryV2 = ExtensionRuntimeRegistryV2()
 
     public suspend fun refresh(repositories: List<ExtensionRepository>): List<ExtensionDescriptor> {
         val installed = packageStore.list().associateBy { it.manifest.id }
@@ -250,31 +267,27 @@ public class PluginManager(
                 ),
                 scriptBytes = scriptBytes,
             )
-            val candidate = runtimeFactory.create(stored.script, manifest, environment)
-            val candidateSourceId = try {
-                candidate.id
-            } catch (error: Throwable) {
-                closeRuntime(candidate)
-                throw error
-            }
+            val candidates = createRuntimeCandidates(stored)
+            val compatibilityResult = runtimeCompatibilityResult(manifest, candidates)
             var committed = false
             try {
                 // Downloading, verification and runtime construction remain cancellable. Once the
                 // durable/live commit starts, finish both halves so cancellation cannot leave a new
                 // package paired with the previous runtime (or no runtime on first installation).
                 currentCoroutineContext().ensureActive()
+                lifecycleMutex.withLock { validateRuntimeCandidates(entry.id, candidates) }
                 withContext(NonCancellable) {
                     packageStore.put(stored)
                     lifecycleMutex.withLock {
-                        replaceRuntime(entry.id, candidate, candidateSourceId)
+                        replaceRuntimes(entry.id, candidates)
                     }
                     committed = true
                 }
             } catch (error: Throwable) {
-                if (!committed) closeRuntime(candidate)
+                if (!committed) closeRuntimes(candidates)
                 throw error
             }
-            candidate
+            compatibilityResult
         }
         }
 
@@ -333,6 +346,7 @@ public class PluginManager(
             withContext(NonCancellable) {
                 packageStore.remove(pluginId)
                 lifecycleMutex.withLock { unloadPlugin(pluginId) }
+                extensionRegistryV2.uninstall(pluginId)
             }
         }
     }
@@ -386,18 +400,9 @@ public class PluginManager(
                 stored.manifest,
                 stored.metadata.installedSha256,
             )
-            val candidate = try {
-                runtimeFactory.create(stored.script, stored.manifest, environment)
+            val candidates = try {
+                createRuntimeCandidates(stored)
             } catch (error: Throwable) {
-                if (!wasTrusted) {
-                    withContext(NonCancellable) { verifier.revokeAll(pluginId) }
-                }
-                throw error
-            }
-            val candidateSourceId = try {
-                candidate.id
-            } catch (error: Throwable) {
-                closeRuntime(candidate)
                 if (!wasTrusted) {
                     withContext(NonCancellable) { verifier.revokeAll(pluginId) }
                 }
@@ -408,12 +413,12 @@ public class PluginManager(
                 currentCoroutineContext().ensureActive()
                 withContext(NonCancellable) {
                     lifecycleMutex.withLock {
-                        replaceRuntime(pluginId, candidate, candidateSourceId)
+                        replaceRuntimes(pluginId, candidates)
                     }
                     committed = true
                 }
             } catch (error: Throwable) {
-                if (!committed) closeRuntime(candidate)
+                if (!committed) closeRuntimes(candidates)
                 if (!committed && !wasTrusted) {
                     withContext(NonCancellable) { verifier.revokeAll(pluginId) }
                 }
@@ -431,6 +436,7 @@ public class PluginManager(
             lifecycleMutex.withLock {
                 closeAllRuntimes()
                 sources.clear()
+                sourceOwners.clear()
                 packageStore.list().forEach { stored ->
                     try {
                         loadStored(stored)
@@ -453,37 +459,119 @@ public class PluginManager(
 
     public suspend fun source(sourceId: Long): CatalogueSource? = lifecycleMutex.withLock { sources[sourceId] }
 
+    /** Materializes the currently live v1 package as an exact-keyed Extension v2 runtime. */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun extensionPackageRuntimeV2(pluginId: String): LegacyMangaPackageRuntimeV2? =
+        packageMutationMutex.withLock packageLock@{
+            val stored = packageStore.get(pluginId) ?: return@packageLock null
+            lifecycleMutex.withLock lifecycleLock@{
+                val live = runtimes[pluginId].orEmpty()
+                if (live.isEmpty()) return@lifecycleLock null
+                LegacyMangaPackageRuntimeV2(
+                    packageId = pluginId,
+                    version = stored.manifest.version,
+                    displayName = stored.manifest.name,
+                    sources = live,
+                )
+            }
+        }
+
+    /** Installs an already-admitted native v2 runtime; replacement and lifecycle are explicit. */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun installExtensionRuntimeV2(
+        runtime: ExtensionPackageRuntimeV2,
+        replace: Boolean = false,
+    ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
+        extensionRegistryV2.install(runtime, replace)
+    }
+
+    /** Admits reviewed ShuYue bytes and atomically publishes their guarded runtime to v2 browse. */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun installReviewedShuYueRuntimeV2(
+        admission: ShuYueReviewedPluginAdmissionV2,
+        quarantineId: String,
+        replace: Boolean = false,
+    ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
+        val runtime = admission.createRuntime(quarantineId)
+        try {
+            extensionRegistryV2.install(runtime, replace)
+        } catch (error: Throwable) {
+            if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
+            throw error
+        }
+    }
+
+    /** Builds the production reviewed installer without exposing runtimeFactory/environment. */
+    public fun reviewedShuYueInstallCoordinatorV2(
+        quarantineStore: ShuYueScriptQuarantineStoreV2,
+        approvalStore: ShuYueExecutionApprovalStoreV2,
+        installationStore: ShuYueReviewedInstallationStoreV2,
+    ): ShuYueReviewedInstallCoordinatorV2 {
+        val admission = productionShuYueReviewedAdmissionV2(
+            quarantineStore = quarantineStore,
+            trustStore = approvalStore,
+            permissionStore = approvalStore,
+            runtimeFactory = runtimeFactory,
+            environment = environment,
+        )
+        return ShuYueReviewedInstallCoordinatorV2(admission, approvalStore, this, installationStore)
+    }
+
+    public suspend fun uninstallExtensionRuntimeV2(packageId: String): Boolean =
+        packageMutationMutex.withLock { extensionRegistryV2.uninstall(packageId) }
+
+    /** Host-gated facade for an admitted native runtime or a currently live legacy package. */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun extensionFacadeV2(pluginId: String): ExtensionHostFacadeV2? =
+        extensionRegistryV2.packageFacade(pluginId)
+            ?: extensionPackageRuntimeV2(pluginId)?.let { ExtensionHostFacadeV2(it) }
+
+    /** Exact opaque source lookup used by the production browse/detail/content gateway. */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? =
+        extensionFacadeV2(sourceKey.packageId)?.source(sourceKey)
+
+    public suspend fun extensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()
+
     public suspend fun close(): Unit = withContext(NonCancellable + Dispatchers.Default) {
         packageMutationMutex.withLock {
             lifecycleMutex.withLock {
                 closeAllRuntimes()
                 sources.clear()
+                sourceOwners.clear()
+            }
+            extensionRegistryV2.close()
+        }
+    }
+
+    private suspend fun replaceRuntimes(
+        pluginId: String,
+        candidates: List<ScriptPluginRuntime>,
+    ) {
+        validateRuntimeCandidates(pluginId, candidates)
+        unloadPlugin(pluginId)
+        runtimes[pluginId] = candidates.toList()
+        candidates.forEach { candidate ->
+            sources[candidate.id] = candidate
+            sourceOwners[candidate.id] = pluginId
+        }
+    }
+
+    private fun validateRuntimeCandidates(
+        pluginId: String,
+        candidates: List<ScriptPluginRuntime>,
+    ) {
+        require(candidates.isNotEmpty()) { "Plugin '$pluginId' produced no executable sources" }
+        val candidateIds = candidates.map(ScriptPluginRuntime::id)
+        require(candidateIds.distinct().size == candidateIds.size) {
+            "Plugin '$pluginId' produced duplicate executable source ids"
+        }
+        candidateIds.forEach { sourceId ->
+            val owner = sourceOwners[sourceId]
+            require(owner == null || owner == pluginId) {
+                "Source id $sourceId is already owned by plugin '$owner'"
             }
         }
-    }
-
-    private suspend fun replaceRuntime(
-        pluginId: String,
-        candidate: ScriptPluginRuntime,
-    ) {
-        val candidateSourceId = try {
-            candidate.id
-        } catch (error: Throwable) {
-            closeRuntime(candidate)
-            throw error
-        }
-        replaceRuntime(pluginId, candidate, candidateSourceId)
-    }
-
-    private suspend fun replaceRuntime(
-        pluginId: String,
-        candidate: ScriptPluginRuntime,
-        candidateSourceId: Long,
-    ) {
-        unloadPlugin(pluginId)
-        // The current JS contract creates one runtime/source and uses the first manifest source.
-        runtimes[pluginId] = candidate
-        sources[candidateSourceId] = candidate
     }
 
     private suspend fun loadStored(stored: StoredPlugin) {
@@ -510,9 +598,52 @@ public class PluginManager(
                 trustOnValidatedDigest = false,
             )
         }
-        val runtime = runtimeFactory.create(stored.script, stored.manifest, environment)
-        replaceRuntime(stored.manifest.id, runtime)
+        val candidates = createRuntimeCandidates(stored)
+        try {
+            replaceRuntimes(stored.manifest.id, candidates)
+        } catch (error: Throwable) {
+            closeRuntimes(candidates)
+            throw error
+        }
     }
+
+    /** Builds every declared source independently; a package list position is never executed. */
+    private suspend fun createRuntimeCandidates(stored: StoredPlugin): List<ScriptPluginRuntime> {
+        val manifest = stored.manifest
+        val declared = manifest.sources.orEmpty()
+        require(declared.map(SourceIndexEntry::id).distinct().size == declared.size) {
+            "Plugin '${manifest.id}' declares duplicate source ids"
+        }
+        val candidates = mutableListOf<ScriptPluginRuntime>()
+        try {
+            if (declared.isEmpty()) {
+                candidates += runtimeFactory.create(stored.script, manifest, environment)
+            } else {
+                declared.forEach { source ->
+                    candidates += runtimeFactory.createForSource(stored.script, manifest, source, environment)
+                }
+            }
+            require(candidates.all { it.pluginId == manifest.id }) {
+                "Plugin runtime package identity does not match '${manifest.id}'"
+            }
+            if (declared.isNotEmpty()) {
+                require(candidates.map(ScriptPluginRuntime::id).toSet() == declared.map(SourceIndexEntry::id).toSet()) {
+                    "Plugin runtime source identities do not match '${manifest.id}' declarations"
+                }
+            }
+            return candidates.toList()
+        } catch (error: Throwable) {
+            closeRuntimes(candidates)
+            throw error
+        }
+    }
+
+    /** Existing install callers receive the single v1 source, or an explicit non-source handle. */
+    private fun runtimeCompatibilityResult(
+        manifest: PluginManifest,
+        candidates: List<ScriptPluginRuntime>,
+    ): ScriptPluginRuntime = candidates.singleOrNull()
+        ?: MultiSourceScriptPluginRuntimeHandle(manifest, candidates)
 
     private fun StoredPlugin.isMetadataOnly(): Boolean =
         scriptBytes.isEmpty() &&
@@ -523,16 +654,28 @@ public class PluginManager(
         stored.manifest.sources.orEmpty().map {
             MetadataStubCatalogueSource(stored.manifest.id, it)
         }.also { stubs ->
-            stubs.forEach { sources[it.id] = it }
+            require(stubs.map(CatalogueSource::id).distinct().size == stubs.size) {
+                "Plugin '${stored.manifest.id}' declares duplicate source ids"
+            }
+            stubs.forEach { source ->
+                val owner = sourceOwners[source.id]
+                require(owner == null || owner == stored.manifest.id) {
+                    "Source id ${source.id} is already owned by plugin '$owner'"
+                }
+            }
+            stubs.forEach { source ->
+                sources[source.id] = source
+                sourceOwners[source.id] = stored.manifest.id
+            }
         }
 
     private suspend fun unloadPlugin(pluginId: String) {
         removeSourcesFor(pluginId)
-        runtimes.remove(pluginId)?.let { runtime -> closeRuntime(runtime) }
+        runtimes.remove(pluginId)?.let { runtime -> closeRuntimes(runtime) }
     }
 
     private suspend fun closeAllRuntimes() {
-        runtimes.values.toList().forEach { runtime -> closeRuntime(runtime) }
+        runtimes.values.flatten().toList().forEach { runtime -> closeRuntime(runtime) }
         runtimes.clear()
     }
 
@@ -541,14 +684,22 @@ public class PluginManager(
         withContext(NonCancellable) { runCatching { runtime.close() } }
     }
 
+    private suspend fun closeRuntimes(values: Iterable<ScriptPluginRuntime>) {
+        values.forEach { runtime -> closeRuntime(runtime) }
+    }
+
     private fun removeSourcesFor(pluginId: String) {
-        val runtime = runtimes[pluginId]
+        val ownedRuntimeObjects = runtimes[pluginId].orEmpty()
         // Remove by object identity so a malfunctioning runtime getter cannot block revocation.
         // Also remove persisted IDs for legacy multi-source entries.
         val known = sources.filterValues { source ->
-            source === runtime || source is MetadataStubCatalogueSource && source.pluginId == pluginId
+            ownedRuntimeObjects.any { it === source } ||
+                source is MetadataStubCatalogueSource && source.pluginId == pluginId
         }.keys
-        known.forEach(sources::remove)
+        known.forEach { sourceId ->
+            sources.remove(sourceId)
+            if (sourceOwners[sourceId] == pluginId) sourceOwners.remove(sourceId)
+        }
     }
 
     private fun PluginIndexEntry.toDescriptor(
@@ -590,6 +741,44 @@ public class PluginManager(
         description = null,
         state = state,
         installedVersion = installedVersion,
+    )
+}
+
+/**
+ * Compatibility-only return value for the historical `install(): ScriptPluginRuntime` surface.
+ * It deliberately cannot execute catalogue calls because doing so would reintroduce an implicit
+ * "first source" decision. Callers select one of [PluginManager.catalogueSources] instead.
+ */
+private class MultiSourceScriptPluginRuntimeHandle(
+    private val manifest: PluginManifest,
+    private val delegates: List<ScriptPluginRuntime>,
+) : ScriptPluginRuntime {
+    override val pluginId: String = manifest.id
+    override val id: Long = stableSourceId("${manifest.id}:multi-source-handle")
+    override val name: String = manifest.name
+    override val lang: String = manifest.lang
+    override val baseUrl: String = ""
+    override val supportsLatest: Boolean = false
+    override val supportsLogin: Boolean = false
+    override val recentLogs: List<String>
+        get() = delegates.flatMap(ScriptPluginRuntime::recentLogs)
+
+    override suspend fun getPopularManga(page: Int): MangasPage = ambiguous()
+    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage = ambiguous()
+    override suspend fun getLatestUpdates(page: Int): MangasPage = ambiguous()
+    override suspend fun getFilterList(): FilterList = ambiguous()
+    override suspend fun getMangaDetails(manga: SManga): SManga = ambiguous()
+    override suspend fun getChapterList(manga: SManga): List<SChapter> = ambiguous()
+    override suspend fun getPageList(chapter: SChapter): List<Page> = ambiguous()
+    override suspend fun login(username: String, password: String): Boolean = ambiguous()
+    override suspend fun logout(): Unit = ambiguous()
+
+    // The package manager owns the real source runtimes; closing a compatibility view must not
+    // tear down live sources behind other consumers.
+    override suspend fun close(): Unit = Unit
+
+    private fun ambiguous(): Nothing = throw ScriptRuntimeUnavailableException(
+        "Plugin '${manifest.id}' contains multiple sources; select an exact source id",
     )
 }
 

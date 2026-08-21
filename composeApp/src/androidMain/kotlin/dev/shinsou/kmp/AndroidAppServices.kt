@@ -18,12 +18,14 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
+import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.ContentCallbacks
 import dev.shinsou.kmp.ui.ImportedDocument
@@ -36,6 +38,8 @@ import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.mobileSecurityCapabilities
+import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
+import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import java.util.concurrent.Executor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,6 +51,7 @@ import kotlin.coroutines.resume
 
 internal interface AndroidDocumentLauncher {
     suspend fun export(name: String, contents: ByteArray): Boolean
+    suspend fun export(name: String, source: BinaryDocumentExportSource): Boolean
     suspend fun import(extensions: Set<String>, limits: ImportedDocumentLimits): ImportedDocument?
     suspend fun pickMany(extensions: Set<String>, limits: ImportedDocumentLimits): List<ImportedDocument>
 }
@@ -56,10 +61,13 @@ internal class AndroidAppServices(
     private val documentLauncher: AndroidDocumentLauncher,
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
+    override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val snapshotSync: SnapshotSyncController? = null,
     override val cloudflareSync: CloudflareSyncUiController? = null,
     override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
+    override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
 ) : ShinsouAppServices {
     private val pendingDeepLinks = RetainedDeepLinkQueue()
@@ -123,6 +131,14 @@ internal class AndroidAppServices(
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean =
         documentLauncher.export(suggestedName, contents.encodeToByteArray())
+
+    override suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean =
+        documentLauncher.export(suggestedName, contents.copyOf())
+
+    override suspend fun exportBinaryDocument(
+        suggestedName: String,
+        source: BinaryDocumentExportSource,
+    ): Boolean = documentLauncher.export(suggestedName, source)
 
     override suspend fun importDocument(
         acceptedExtensions: Set<String>,

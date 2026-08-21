@@ -10,6 +10,9 @@ export type VersionCapabilities = {
   minSchemaWriterVersion: number;
 };
 
+export const BODY_PLANE_PROTOCOL_VERSION = 2;
+export const BODY_PLANE_SCHEMA_VERSION = 2;
+
 function configuredVersion(value: string | undefined, name: string): number {
   const encoded = value ?? "1";
   if (!/^[1-9][0-9]*$/.test(encoded)) {
@@ -69,6 +72,31 @@ export function requireWritableEnvelopeVersions(
       receivedVersion: schemaVersion,
       minWriterVersion: versions.minSchemaWriterVersion,
       maxWriterVersion: versions.schemaVersion,
+    });
+  }
+}
+
+/** Body bytes are a v2-only contract and must never be interpreted by a v1 deployment/client. */
+export function requireBodyPlaneVersions(
+  env: Env,
+  protocolVersion: number,
+  schemaVersion: number,
+): void {
+  const versions = versionCapabilities(env);
+  if (versions.protocolVersion < BODY_PLANE_PROTOCOL_VERSION ||
+      versions.schemaVersion < BODY_PLANE_SCHEMA_VERSION) {
+    throw new ApiError(503, "body_plane_not_configured");
+  }
+  if (protocolVersion !== BODY_PLANE_PROTOCOL_VERSION) {
+    throw new ApiError(409, "body_protocol_version_incompatible", "Body-plane protocol v2 is required", {
+      receivedVersion: protocolVersion,
+      requiredVersion: BODY_PLANE_PROTOCOL_VERSION,
+    });
+  }
+  if (schemaVersion !== BODY_PLANE_SCHEMA_VERSION) {
+    throw new ApiError(409, "body_schema_version_incompatible", "Body-plane schema v2 is required", {
+      receivedVersion: schemaVersion,
+      requiredVersion: BODY_PLANE_SCHEMA_VERSION,
     });
   }
 }

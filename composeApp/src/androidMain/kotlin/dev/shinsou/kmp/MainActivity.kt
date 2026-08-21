@@ -26,13 +26,22 @@ import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
+import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.ImportedDocumentReadException
+import dev.shinsou.kmp.ui.ImportedDocumentSource
+import dev.shinsou.kmp.ui.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.readBoundedImportedBytes
+import dev.shinsou.kmp.ui.requireImportedDocumentSize
+import dev.shinsou.kmp.ui.writeBinaryDocumentWithFailureCleanup
+import dev.shinsou.kmp.ui.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import java.util.Locale
+import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
@@ -74,6 +83,8 @@ class MainActivity : FragmentActivity() {
             runtimeFactory = RhinoScriptPluginRuntimeFactory(),
             autoBackupService = sharedState.autoBackups,
             syncInfrastructure = syncInfrastructure,
+            platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
+            shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
         )
         val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
@@ -81,9 +92,12 @@ class MainActivity : FragmentActivity() {
             documentLauncher = documentLauncher,
             browse = composition.browse,
             content = composition.content,
+            contentFeatures = composition.contentFeatures,
             tracking = composition.tracking,
             cloudflareSync = composition.cloudflareSync,
             syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
+            portableContentBackupV2 = composition.portableContentBackupV2,
+            shuYueMigration = composition.shuYueMigration,
             stringsProvider = {
                 val preference = repository.snapshot.value.settings.general.languagePreference
                 val tag = preference
@@ -202,7 +216,7 @@ class MainActivity : FragmentActivity() {
 
     private inner class ActivityDocumentLauncher : AndroidDocumentLauncher {
         private var exportContinuation: CancellableContinuation<Boolean>? = null
-        private var exportBytes: ByteArray? = null
+        private var exportSource: BinaryDocumentExportSource? = null
         private var importContinuation: CancellableContinuation<ImportedDocument?>? = null
         private var importLimits: ImportedDocumentLimits? = null
         private var multipleContinuation: CancellableContinuation<List<ImportedDocument>>? = null
@@ -210,16 +224,44 @@ class MainActivity : FragmentActivity() {
 
         private val createDocument = registerForActivityResult(
             ActivityResultContracts.CreateDocument("application/json"),
-        ) { uri ->
-            val continuation = exportContinuation ?: return@registerForActivityResult
-            val bytes = exportBytes
+        ) { uri -> completeExport(uri) }
+
+        private val createBinaryDocument = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/octet-stream"),
+        ) { uri -> completeExport(uri) }
+
+        private fun completeExport(uri: Uri?) {
+            val continuation = exportContinuation
+            val source = exportSource
             exportContinuation = null
-            exportBytes = null
+            exportSource = null
+            if (continuation == null || source == null) {
+                // CreateDocument may still return after its coroutine was cancelled. The URI is a
+                // newly created provider document, so remove the otherwise orphaned empty file.
+                if (uri != null) platformScope.launch(Dispatchers.IO) {
+                    runCatching { contentResolver.delete(uri, null, null) }
+                }
+                return
+            }
             platformScope.launch {
-                val saved = if (uri == null || bytes == null) false else withContext(Dispatchers.IO) {
-                    runCatching {
-                        contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } != null
-                    }.getOrDefault(false)
+                val saved = if (uri == null) false else withContext(Dispatchers.IO) {
+                    // Android SAF has no portable atomic-replace contract. Stream to the selected
+                    // content URI, then best-effort delete the newly created document if encoding,
+                    // declared-length validation, provider writing, or flush fails.
+                    writeBinaryDocumentWithFailureCleanup(
+                        source = source,
+                        write = { streamingSource ->
+                            val output = contentResolver.openOutputStream(uri, "wt")
+                                ?: error("The document provider did not open the export URI")
+                            output.use { stream ->
+                                streamingSource.writeCheckedTo(
+                                    BinaryDocumentExportSink { chunk -> stream.write(chunk) },
+                                )
+                                stream.flush()
+                            }
+                        },
+                        discardPartial = { contentResolver.delete(uri, null, null) },
+                    )
                 }
                 if (continuation.isActive) continuation.resume(saved)
             }
@@ -264,18 +306,28 @@ class MainActivity : FragmentActivity() {
         }
 
         override suspend fun export(name: String, contents: ByteArray): Boolean =
+            beginExport(name, ByteArrayBinaryDocumentExportSource(contents), binary = false)
+
+        override suspend fun export(name: String, source: BinaryDocumentExportSource): Boolean =
+            beginExport(name, source, binary = true)
+
+        private suspend fun beginExport(
+            name: String,
+            source: BinaryDocumentExportSource,
+            binary: Boolean,
+        ): Boolean =
             withContext(Dispatchers.Main.immediate) {
                 check(exportContinuation == null) { "Another export is already open" }
                 suspendCancellableCoroutine { continuation ->
                     exportContinuation = continuation
-                    exportBytes = contents.copyOf()
+                    exportSource = source
                     continuation.invokeOnCancellation {
                         if (exportContinuation === continuation) {
                             exportContinuation = null
-                            exportBytes = null
+                            exportSource = null
                         }
                     }
-                    createDocument.launch(name)
+                    if (binary) createBinaryDocument.launch(name) else createDocument.launch(name)
                 }
             }
 
@@ -323,7 +375,7 @@ class MainActivity : FragmentActivity() {
         ): List<ImportedDocument> {
             var acceptedBytes = 0L
             return uris.map { uri ->
-                readDocument(uri, limits, acceptedBytes).also { acceptedBytes += it.contents.size }
+                readDocument(uri, limits, acceptedBytes).also { acceptedBytes += it.byteSize }
             }
         }
 
@@ -349,6 +401,19 @@ class MainActivity : FragmentActivity() {
                     runCatching { descriptor.close() }
                     throw error
                 }
+                if (limits.prefersRandomAccess(name)) {
+                    runCatching { descriptor.close() }
+                    val checkedSize = requireImportedDocumentSize(
+                        name,
+                        declaredSize,
+                        limits,
+                        previouslyAcceptedBytes,
+                    )
+                    return ImportedDocument(
+                        name,
+                        AndroidUriImportedDocumentSource(uri, name, checkedSize),
+                    )
+                }
                 return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
                     ImportedDocument(
                         name = name,
@@ -365,6 +430,53 @@ class MainActivity : FragmentActivity() {
                 throw error
             } catch (error: Throwable) {
                 throw ImportedDocumentReadException("Unable to read “$name”.", error)
+            }
+        }
+
+        private inner class AndroidUriImportedDocumentSource(
+            private val uri: Uri,
+            private val displayName: String,
+            override val byteSize: Long,
+        ) : ImportedDocumentSource {
+            override fun read(offset: Long, byteCount: Int): ByteArray {
+                require(offset in 0..byteSize && byteCount >= 0 &&
+                    byteCount.toLong() <= byteSize - offset) { "Imported document read is out of bounds" }
+                val output = ByteArray(byteCount)
+                if (byteCount == 0) return output
+                try {
+                    val descriptor = contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw ImportedDocumentReadException("Unable to open “$displayName”.")
+                    val actualSize = descriptor.statSize.takeIf { it >= 0 }
+                    if (actualSize != null && actualSize != byteSize) {
+                        descriptor.close()
+                        throw ImportedDocumentReadException(
+                            "“$displayName” changed while it was being imported.",
+                        )
+                    }
+                    ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                        val channel = input.channel
+                        channel.position(offset)
+                        val buffer = ByteBuffer.wrap(output)
+                        while (buffer.hasRemaining()) {
+                            if (channel.read(buffer) <= 0) {
+                                throw ImportedDocumentReadException(
+                                    "“$displayName” changed while it was being imported.",
+                                )
+                            }
+                        }
+                        val finalSize = descriptor.statSize.takeIf { it >= 0 }
+                        if (finalSize != null && finalSize != byteSize) {
+                            throw ImportedDocumentReadException(
+                                "“$displayName” changed while it was being imported.",
+                            )
+                        }
+                    }
+                    return output
+                } catch (error: ImportedDocumentReadException) {
+                    throw error
+                } catch (error: Throwable) {
+                    throw ImportedDocumentReadException("Unable to read “$displayName”.", error)
+                }
             }
         }
 

@@ -29,6 +29,8 @@ import dev.shinsou.kmp.sync.v2.SyncAdminQuota
 import dev.shinsou.kmp.sync.v2.SyncAdminUsage
 import dev.shinsou.kmp.sync.v2.SyncAdminUsageTotals
 import dev.shinsou.kmp.sync.v2.SyncAdminWorkspaceUsage
+import dev.shinsou.kmp.sync.v2.SYNC_PROTOCOL_VERSION
+import dev.shinsou.kmp.sync.v2.SYNC_STATE_SCHEMA_VERSION
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -677,7 +679,16 @@ class DefaultCloudflareSyncUiControllerTest {
         private var sponsorView: ProvisioningPairingView? = null
 
         override suspend fun capabilities(endpoint: String) =
-            ProvisioningCapabilities(INSTANCE_ID, 1, 1, 1, 1, 1, 1, realtime = true)
+            ProvisioningCapabilities(
+                instanceId = INSTANCE_ID,
+                protocolVersion = SYNC_PROTOCOL_VERSION,
+                minReaderVersion = 1,
+                minWriterVersion = 1,
+                schemaVersion = SYNC_STATE_SCHEMA_VERSION,
+                minSchemaReaderVersion = 1,
+                minSchemaWriterVersion = 1,
+                realtime = true,
+            )
 
         override suspend fun claimSetup(endpoint: String, claim: InitialWorkspaceClaim): InitialWorkspaceClaimResult {
             lastClaim = claim

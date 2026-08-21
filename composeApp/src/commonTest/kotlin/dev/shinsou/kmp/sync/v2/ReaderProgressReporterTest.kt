@@ -1,6 +1,10 @@
 package dev.shinsou.kmp.sync.v2
 
 import dev.shinsou.kmp.domain.model.ReadingMode
+import dev.shinsou.kmp.domain.model.PublicationKey
+import dev.shinsou.kmp.domain.model.UnitKey
+import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.reader.ReadingScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -84,6 +88,65 @@ class ReaderProgressReporterTest {
         assertEquals(0.75, mutation.position?.normalizedOffsetFraction)
         assertTrue(requireNotNull(mutation.readState))
         assertFalse(store.readState().materializationPending)
+    }
+
+    @Test
+    fun typedLocatorsConflateRestoreAndSealThroughTheSameReaderPriorityBoundary() = runTest {
+        var now = 1_000L
+        var id = 0
+        val order = mutableListOf<String>()
+        val store = InMemoryLocalSyncStore()
+        val reporter = ReaderProgressReporter(
+            localStore = store,
+            sessionStore = InMemorySyncSessionStore(session),
+            crypto = FakeCrypto(order),
+            projectionSink = SyncProjectionSink { order += "projection" },
+            remoteOutboxFlusher = RemoteOutboxFlusher { order += "remote" },
+            operationIdGenerator = SyncOperationIdGenerator { "typed-${++id}" },
+            nowMillis = { now },
+            isIncognito = { false },
+            beforeBackgroundSeal = { order += "persistence" },
+            sealIntervalMillis = 500,
+        )
+        val scope = ReadingScope(
+            schemaVersion = ReadingScope.CURRENT_SCHEMA_VERSION,
+            publicationId = PublicationKey("11111111-1111-4111-8111-111111111111"),
+            acquisitionId = "22222222-2222-4222-8222-222222222222",
+            unitId = UnitKey(
+                PublicationKey("11111111-1111-4111-8111-111111111111"),
+                "33333333-3333-4333-8333-333333333333",
+            ),
+            contentRevision = 1,
+        )
+        val first = ReadingLocator.Text(
+            schemaVersion = scope.schemaVersion,
+            scope = scope,
+            resourceId = "resource-text",
+            blockId = "block-1",
+            offset = 10,
+            progression = 0.1,
+        )
+        val second = first.copy(blockId = "block-2", offset = 90, progression = 0.9)
+
+        reporter.recordContentReadingProgress(first, "typed-reader", completed = false, historyTouchedAt = now)
+        now += 100
+        val result = reporter.recordContentReadingProgress(
+            second,
+            "typed-reader",
+            completed = true,
+            historyTouchedAt = now,
+        )
+
+        assertEquals(1, store.readState().drafts.size)
+        assertEquals(second, result.locatorRegister?.value)
+        assertEquals(second, reporter.currentContentReadingLocator(ContentProgressKeyV2.from(second))?.value)
+        reporter.flushForBackground()
+        assertTrue(store.readState().drafts.isEmpty())
+        val mutation = store.readState().sealedOutbox.values.single().logicalEvent.mutations.single()
+            as ContentReadingProgressSetV2
+        assertEquals(second, mutation.locator)
+        assertEquals(true, mutation.readState)
+        assertEquals(listOf("projection", "projection", "persistence", "seal"), order)
     }
 
     @Test

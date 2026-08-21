@@ -11,8 +11,9 @@ import dev.shinsou.kmp.domain.model.ReadingMode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-const val SYNC_STATE_SCHEMA_VERSION: Int = 1
-const val SYNC_PROTOCOL_VERSION: Int = 1
+/** M6 content metadata/body references are schema/protocol v2. Readers still accept v1 envelopes. */
+const val SYNC_STATE_SCHEMA_VERSION: Int = 2
+const val SYNC_PROTOCOL_VERSION: Int = 2
 
 class SyncInvariantViolation(message: String) : IllegalStateException(message)
 
@@ -449,6 +450,10 @@ data class SyncState(
     val entities: Map<SyncEntityKey, SyncEntityRecord> = emptyMap(),
     val categoryMemberships: Map<CategoryMembershipKey, LwwRegister<Boolean>> = emptyMap(),
     val readingProgress: Map<SyncEntityKey, ReadingProgressState> = emptyMap(),
+    val contentCategoryMemberships: Map<PublicationCategoryMembershipKeyV2, LwwRegister<Boolean>> = emptyMap(),
+    val contentReadingProgress: Map<ContentProgressKeyV2, ContentReadingProgressRecordV2> = emptyMap(),
+    val contentAnnotations: Map<String, SyncedAnnotationRecord> = emptyMap(),
+    val blobReferences: Map<String, SyncedBlobReferenceRecord> = emptyMap(),
     val portableSettings: Map<String, LwwRegister<SyncValue>> = emptyMap(),
     val keyRemaps: Map<SyncEntityKey, SyncEntityKey> = emptyMap(),
     val appliedOpIds: Set<String> = emptySet(),
@@ -472,6 +477,10 @@ data class SyncState(
         entities = entities.deterministicallySorted(),
         categoryMemberships = categoryMemberships.deterministicallySorted(),
         readingProgress = readingProgress.deterministicallySorted(),
+        contentCategoryMemberships = contentCategoryMemberships.deterministicallySorted(),
+        contentReadingProgress = contentReadingProgress.deterministicallySorted(),
+        contentAnnotations = contentAnnotations.deterministicallySorted(),
+        blobReferences = blobReferences.deterministicallySorted(),
         portableSettings = portableSettings.deterministicallySorted(),
         keyRemaps = keyRemaps.deterministicallySorted(),
         appliedOpIds = appliedOpIds.sorted().toCollection(linkedSetOf()),
@@ -498,6 +507,23 @@ internal fun SyncState.maxRegisterHlc(): HlcTimestamp? {
         observe(record.presence?.hlc)
     }
     categoryMemberships.values.forEach { observe(it.hlc) }
+    contentCategoryMemberships.values.forEach { observe(it.hlc) }
+    contentReadingProgress.values.forEach { progress ->
+        observe(progress.locator?.hlc)
+        observe(progress.readState?.hlc)
+        observe(progress.historyTouchedAtEpochMillis?.hlc)
+        observe(progress.presence?.hlc)
+    }
+    contentAnnotations.values.forEach { record ->
+        observe(record.annotation?.hlc)
+        observe(record.presence?.hlc)
+    }
+    blobReferences.values.forEach { record ->
+        observe(record.blob?.hlc)
+        observe(record.remoteManifest?.hlc)
+        record.dekEnvelopes.values.forEach { observe(it.hlc) }
+        observe(record.presence?.hlc)
+    }
     readingProgress.values.forEach { progress ->
         observe(progress.position?.hlc)
         observe(progress.readState?.hlc)

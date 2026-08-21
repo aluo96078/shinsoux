@@ -20,13 +20,15 @@
 | Reader 平台整合 | 受限 | 受限 | 受限 | Android／iOS 接 keep-awake、fullscreen、orientation 與 Reader-only volume-key gate；Android 消耗 Volume Down／Up 且忽略 repeat，iOS 另處理音量恢復／audio session。兩者皆需真機驗證；Desktop 以鍵盤操作為主 |
 | Reader／Download 來源特例 | 已實作 | 已實作 | 已實作 | viewer HTML 解析、header／cookie／Referer、JM 分段反轉、離線 transform sidecar 與 E-Hentai 類 viewer 路徑 |
 | 下載佇列與離線閱讀 | 已實作 | 已實作 | 已實作 | 暫停、重試、重排、刪除與持久化 queue；page／transform 完成後最後原子發布 completion manifest。Clear completed 只把完成 row 設為 hidden，保留徽章、manifest 與離線閱讀 |
-| Local source `0` | 已實作 | 已實作 | 已實作 | 直接圖片、ZIP、CBZ、EPUB；bounded picker、app-private page copy 與原子 v2 manifest 已接，缺失／損壞／部分頁面不會載入。EPUB 只抽圖片，不解析文字排版 |
+| 統一內容／Local source `0` | 已實作 | 已實作 | 已實作 | TXT、圖片、ZIP、CBZ 與完整 EPUB package/resource graph；正文與資源存入 immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交。EPUB 保留 XHTML／CSS／font／image，三平台 browser-grade renderer 以 private scheme 按需讀取 |
+| 統一 Reader／全文搜尋／TTS／註記 | 已實作 | 已實作 | 已實作 | 文字、圖片、EPUB 共用 portable locator；搜尋、TTS 與 range annotation 都經 host rights gate。平台 TTS／browser engine 的真實 voice、排版與 accessibility 行為仍需各平台 smoke |
 | JavaScript extension 管理 | 已實作 | 已實作 | 已實作 | 安裝／更新／卸載、execution grant、preferences、credentials、login/logout；撤銷會立即卸載 runtime 但保留 package，重啟不會自行恢復授權。JVM Rhino、iOS JavaScriptCore |
 | Extension repository 可攜狀態 | 已實作 | 已實作 | 已實作 | `AppSnapshot.extensionRepositories` 是 source of truth；舊 KV 只做一次性遷移，之後 add／remove／default 及 restore／sync 結果會精確覆蓋 KV mirror，不會 union stale KV |
 | 官方 extension fixture | 已實作 | 受限 | 已實作 | Desktop test 在 Rhino 初始化 workspace 官方腳本；iOS test 驗證同步 JavaScriptCore contract，但未逐一執行全部 workspace 腳本 |
 | 手動 cookie 與檔案匯入 | 已實作 | 已實作 | 已實作 | 手動編輯及 Netscape `cookies.txt`／JSON；1 MiB、500 筆上限，驗證 domain/path/expiry／字元。picker 先驗 declared size 再 bounded read；macOS Desktop file picker 已做 packaged-app 開啟／取消 smoke，Windows Desktop 及 Android／iOS provider 仍需各平台驗證 |
 | Cloudflare／Web challenge | 已實作 | 已實作 | 受限 | Android WebView 先清 cookie jar 再 seed；iOS 使用 non-persistent WKWebView；兩者擷取後再次驗證。Desktop 只開外部瀏覽器，外部 cookie 不會自動匯入 |
-| 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | versioned BackupEnvelope、選擇性還原與 deterministic merge；保存 extension repository 設定，不含 extension package／plugin state、secrets、Local／download page bytes。proxy API key encode 時 redaction，restore 保留本機 secret／queue |
+| 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | legacy BackupEnvelope 與 checksummed Content Backup v2 並存；v2 同時保存 publication graph 與 body-free metadata／aliases／migration ledgers，可選擇納入 rights 允許的 immutable body，metadata-only restore 不宣告缺失 body 已存在。ShuYue v1 先 staging/report/quarantine，再以 shared transaction 匯入；secrets 只經明確 consent 進平台安全儲存 |
+| Cloudflare schema v2／encrypted body sync | 已實作 | 已實作 | 已實作 | publication/unit/annotation/blob-ref metadata 走 event/checkpoint；使用者選擇且 `SYNC_BLOB` 允許的 body 走隔離 R2、分塊 AEAD、resume、DEK re-wrap 與 checkpoint-ack GC。真實四平台跨裝置矩陣仍是外部上線 Gate |
 | App-private 自動備份 | 已實作 | 已實作 | 已實作 | 原子快照、due check、retention、損毀標示、立即建立／列表／還原／刪除；WorkManager、BGProcessingTask、Desktop 前景 scheduler |
 | iCloud Drive snapshot sync | 不適用 | 受限 | 不適用 | `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔、NSFileCoordinator、repository CAS 與 deterministic merge；不採用遠端 download queue、保留本機 proxy secret。無 deletion tombstone、非 record-level CloudKit，entitlement 尚需簽章真機驗證 |
 | AniList tracking | 受限 | 受限 | 受限 | OAuth／token、搜尋、綁定、refresh、編輯與登出 UI 已接；真實帳號／外部 API 未納入 deterministic tests，iOS 以 paste callback/token 為主要保底 |

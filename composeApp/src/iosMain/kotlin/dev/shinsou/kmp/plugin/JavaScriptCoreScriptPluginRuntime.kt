@@ -69,11 +69,29 @@ public class JavaScriptCoreScriptPluginRuntimeFactory : ScriptPluginRuntimeFacto
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = JavaScriptCoreScriptPluginRuntime.create(script, manifest, environment)
+    ): ScriptPluginRuntime = JavaScriptCoreScriptPluginRuntime.create(
+        script,
+        manifest,
+        manifest.requireLegacyExecutableSource(),
+        environment,
+    )
+
+    override suspend fun createForSource(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime = JavaScriptCoreScriptPluginRuntime.create(
+        script,
+        manifest,
+        manifest.requireDeclaredExecutableSource(source),
+        environment,
+    )
 }
 
 private class JavaScriptCoreScriptPluginRuntime private constructor(
     private val manifest: PluginManifest,
+    private val selectedSource: SourceIndexEntry?,
     private val environment: ScriptPluginEnvironment,
     private val engineDispatcher: CloseableCoroutineDispatcher,
 ) : ScriptPluginRuntime {
@@ -90,13 +108,13 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     private var closed = false
 
     override val pluginId: String = manifest.id
-    override var id: Long = manifest.sources?.firstOrNull()?.id ?: stableSourceId(manifest.id)
+    override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
         private set
-    override var name: String = manifest.sources?.firstOrNull()?.name ?: manifest.name
+    override var name: String = selectedSource?.name ?: manifest.name
         private set
-    override var lang: String = manifest.sources?.firstOrNull()?.lang ?: manifest.lang
+    override var lang: String = selectedSource?.lang ?: manifest.lang
         private set
-    override var baseUrl: String = manifest.sources?.firstOrNull()?.baseUrl.orEmpty()
+    override var baseUrl: String = selectedSource?.baseUrl.orEmpty()
         private set
     override var supportsLatest: Boolean = false
         private set
@@ -117,10 +135,26 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 registered = true
                 installNativeBridgeCallback()
                 evaluate(IOS_JAVASCRIPTCORE_BOOTSTRAP, "shinsou-ios-runtime.js")
+                selectedSource?.let { source ->
+                    evaluate(
+                        "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(source.id.toString())};" +
+                            "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
+                            "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
+                            "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};",
+                        "source-selection-context.js",
+                    )
+                }
                 evaluate(script, manifest.script)
+                val sourceSelectionId: JsonElement = selectedSource?.id?.toString()
+                    ?.let { JsonPrimitive(it) }
+                    ?: JsonNull
+                evaluate(
+                    "__shinsouSelectSource($sourceSelectionId)",
+                    "source-selection.js",
+                )
                 val metadata = parseJson(evaluate("__shinsouMetadata()", "metadata.js").toString_())
                     .jsonObject
-                baseUrl = metadata.string("baseUrl") ?: baseUrl
+                baseUrl = selectedSource?.baseUrl ?: metadata.string("baseUrl").orEmpty()
                 supportsLatest = metadata.boolean("supportsLatest")
                 supportsLogin = metadata.boolean("supportsLogin")
                 headers = metadata["headers"].stringMap()
@@ -510,10 +544,13 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         suspend fun create(
             script: String,
             manifest: PluginManifest,
+            selectedSource: SourceIndexEntry?,
             environment: ScriptPluginEnvironment,
         ): JavaScriptCoreScriptPluginRuntime {
-            val dispatcher = newSingleThreadContext("shinsou-jsc-${manifest.id}")
-            val runtime = JavaScriptCoreScriptPluginRuntime(manifest, environment, dispatcher)
+            val dispatcher = newSingleThreadContext(
+                "shinsou-jsc-${manifest.id}-${selectedSource?.id ?: "legacy"}",
+            )
+            val runtime = JavaScriptCoreScriptPluginRuntime(manifest, selectedSource, environment, dispatcher)
             try {
                 runtime.initialize(script)
             } catch (error: Throwable) {
