@@ -168,7 +168,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - Android snapshot 與本地頁面位於 app-private files；credentials、cookies、OAuth token、proxy API key 等敏感 KV 使用 Android Keystore AES-GCM key 加密。
 - iOS snapshot 位於 Application Support；credentials、cookies、OAuth token、proxy API key 與其他 secrets 由 Keychain 保存。
 - Desktop snapshot 位於 `~/Library/Application Support/Shinsou`；敏感 KV 使用 AES-256-GCM，master key 存在 macOS Keychain。舊 `plugin-secrets.key` 只有在 Keychain 回讀及既有密文解密都成功後才會刪除；Keychain 失敗時不建立新的 file fallback。
-- Windows snapshot 與內容位於 `%USERPROFILE%\ShinsouXData`，避開 MSI per-user installer 可能清理的 AppData 樹；敏感 KV 同樣使用 AES-256-GCM，master key 只以目前使用者範圍 DPAPI protected blob 落盤。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在首次啟動時遷移至新目錄；若新目錄已存在，舊目錄會保留供手動合併。
+- Windows snapshot 與內容位於 `%USERPROFILE%\ShinsouXData`，避開 MSI 安裝器管理的程式目錄；Windows MSI 使用 machine-scoped 安裝以避免 jpackage per-user 卸載器清理使用者資料。敏感 KV 同樣使用 AES-256-GCM，master key 只以目前使用者範圍 DPAPI protected blob 落盤。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在首次啟動時遷移至新目錄；若新目錄已存在，舊目錄會保留供手動合併。
 - 舊版可攜 snapshot、自動備份與 iCloud snapshot 仍以 `AppSnapshot` 為資料模型；Content Backup v2 另保存 checksummed publication graph、body-free content metadata、legacy aliases 與 migration ledgers，並可選擇納入當下 rights 明確允許匯出的 immutable blobs。兩者都不包含已安裝的 JavaScript package、credentials、cookies、OAuth token、proxy API key 或其他 secrets。
 - Local source 與已下載頁面的檔案 bytes 不在舊 snapshot envelope 內。Content Backup v2 未附 body 或 Cloudflare body sync 未獲授權時，目的裝置只還原 metadata/ref，並要求合法重新匯入、重新取得或授權後下載；不會虛構本機 blob 已存在。
 - Download completion manifest 與 Local v2 manifest 都留在 app-private storage，不會隨 portable snapshot 移動。同步合併不採用遠端 `downloadQueue`，只保留本機 queue；備份還原也保留並清理本機 queue，而不啟動另一台裝置的下載工作。

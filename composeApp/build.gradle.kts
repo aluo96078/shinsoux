@@ -315,11 +315,11 @@ compose.desktop {
                 // Keep this UUID stable across releases so MSI/EXE upgrades replace
                 // an existing Shinsou X installation instead of installing side-by-side.
                 upgradeUuid = "1E4B4C87-A9D7-4C41-9270-401E627717A9"
-                perUserInstall = true
-                // Keep binaries under Programs. The application data root lives directly under
-                // the user profile as ShinsouXData so jpackage's per-user uninstaller cannot
-                // treat it as a product directory and remove the user's library and secrets.
-                installationPath = "Programs\\Shinsou X"
+                // Use a machine-scoped MSI so jpackage's per-user RemoveFolderEx cleanup cannot
+                // run in a user's profile and remove application data outside the install tree.
+                // The app data root remains per-user and is protected by the user's DPAPI key.
+                perUserInstall = false
+                installationPath = "Shinsou X"
                 dirChooser = true
                 shortcut = true
                 menu = true
