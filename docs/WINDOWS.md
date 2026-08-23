@@ -75,12 +75,14 @@ Windows 資料預設位於：
 
 1. checkout Shinsou X 與相鄰的 `shinsou_plugin`；
 2. 執行 Desktop tests 與 Kotlin compile；
-3. 建立 release MSI／EXE；
-4. 分別核對 MSI／EXE 並輸出 SHA-256；
-5. 靜默安裝 MSI、啟動 release 程式 15 秒、解除安裝，並確認 `%USERPROFILE%\ShinsouXData` 與獨立的使用者資料目錄未被移除；
-6. 上傳 `shinsou-x-windows-x64` artifact。
+3. 不建立或上傳 Windows 安裝包。
 
-CI 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。
+一般 push／pull request 只做 Windows 編譯與測試。推送 `vMAJOR.MINOR.PATCH` tag 觸發的
+`.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android APK、iOS IPA
+及 macOS DMG 一起發布；該流程也會執行 Windows 產物完整性檢查。若需在本機驗證安裝器，仍可依照
+上方的 WiX 建置命令手動產生。
+
+Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。
 
 ## Windows smoke checklist
 
