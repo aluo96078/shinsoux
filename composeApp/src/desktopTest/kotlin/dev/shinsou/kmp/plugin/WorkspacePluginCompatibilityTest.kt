@@ -11,7 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Verifies the sibling repository through JVM classpath resources, independent of the test cwd. */
+/** Verifies legacy Shinsou scripts through JVM classpath resources, independent of the test cwd. */
 class WorkspacePluginCompatibilityTest {
     @Test
     fun everyRepositoryScriptInitializesInRhino() = runTest {
@@ -28,12 +28,26 @@ class WorkspacePluginCompatibilityTest {
             .map { it.name }
             .sorted()
 
-        assertEquals(17, pluginFiles.size, "The compatibility fixture should cover every v2 repository plugin")
+        assertEquals(
+            indexedScripts.size,
+            pluginFiles.size,
+            "The compatibility fixture should cover every v2 repository plugin",
+        )
         assertTrue(packages.isNotEmpty())
         assertTrue(
             indexedScripts.keys.all(pluginFiles::contains),
             "Every index.json script must be present in the plugins resource directory",
         )
+
+        // Reviewed ShuYue and reference-only packages use opaque SourceKey identities and are
+        // exercised by their admission/runtime suites; Rhino's legacy manifest only accepts a
+        // numeric SourceIndexEntry and cannot represent those packages faithfully.
+        val legacyExecutableFiles = pluginFiles.filter { fileName ->
+            val entry = indexedScripts[fileName] ?: return@filter false
+            entry["contract"]?.jsonPrimitive?.content == "shinsou" &&
+                entry["installable"]?.jsonPrimitive?.booleanOrNull != false &&
+                entry["referenceOnly"]?.jsonPrimitive?.booleanOrNull != true
+        }
 
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
@@ -43,7 +57,7 @@ class WorkspacePluginCompatibilityTest {
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
         )
-        pluginFiles.forEachIndexed { offset, fileName ->
+        legacyExecutableFiles.forEachIndexed { offset, fileName ->
             val entry = indexedScripts[fileName]
             val pluginId = entry?.getValue("id")?.jsonPrimitive?.content ?: fileName.removeSuffix(".js")
             val script = resourceText("plugins/$fileName")

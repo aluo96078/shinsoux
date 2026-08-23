@@ -223,7 +223,7 @@ public class PluginBrowseAdapter(
         }.getOrNull() ?: return null
         val profile = ShuYueReviewedPluginCatalogV2.profiles.singleOrNull {
             it.identity == reviewedIdentity &&
-                sourceKey.packageId == it.identity.packageId && sourceKey.sourceId == it.sourceId
+                sourceKey.packageId == it.identity.packageId && sourceKey.sourceId in it.sourceIds
         } ?: return null
         return runCatching { BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey) }.getOrNull()
     }
@@ -1739,14 +1739,17 @@ public class PluginBrowseAdapter(
         private const val V2_USERNAME_REFERENCE_PREFIX: String = "shinsou-v2-username-"
         private const val V2_PASSWORD_REFERENCE_PREFIX: String = "shinsou-v2-password-"
         private val REVIEWED_CREDENTIAL_SCOPES: Set<Long> =
-            ShuYueReviewedPluginCatalogV2.profiles.mapNotNull { profile ->
-                runCatching {
-                    BuiltInShuYueExecutionScopesV2.resolve(
-                        profile.identity,
-                        SourceKey(2, profile.identity.packageId, profile.sourceId),
-                    )
-                }.getOrNull()
-            }.toSet()
+            ShuYueReviewedPluginCatalogV2.profiles
+                .flatMap { profile ->
+                    profile.sourceIds.mapNotNull { sourceId ->
+                        runCatching {
+                            BuiltInShuYueExecutionScopesV2.resolve(
+                                profile.identity,
+                                SourceKey(2, profile.identity.packageId, sourceId),
+                            )
+                        }.getOrNull()
+                    }
+                }.toSet()
         private const val PORTABLE_REPOSITORY_MIGRATION_KEY: String =
             "plugin.repositories.portable-migration.v1"
 

@@ -257,6 +257,25 @@ public class InMemoryShuYueExecutionApprovalsV2 : ShuYueExecutionApprovalStoreV2
 }
 
 /** Exact reviewed metadata and digest pinned in the repository provenance fixture. */
+/** Exact identity and content contract for one source in a reviewed package. */
+public data class ShuYueReviewedSourceProfileV2(
+    public val sourceId: String,
+    public val sourceName: String,
+    public val languageTag: String,
+    public val baseUrl: String,
+    public val supportedContentKinds: Set<ContentKind> = setOf(ContentKind.PLAIN_TEXT),
+) {
+    init {
+        requireAdmissionId(sourceId, "Reviewed ShuYue source id")
+        requireAdmissionText(sourceName, "Reviewed ShuYue source name")
+        requireAdmissionId(languageTag, "Reviewed ShuYue source language")
+        requireAdmissionText(baseUrl, "Reviewed ShuYue source base URL")
+        require(this.supportedContentKinds.isNotEmpty()) {
+            "Reviewed ShuYue source must declare at least one content kind"
+        }
+    }
+}
+
 public class ShuYueReviewedPluginProfileV2(
     public val identity: ShuYueArtifactIdentityV2,
     public val displayName: String,
@@ -275,9 +294,24 @@ public class ShuYueReviewedPluginProfileV2(
     /** V2-index-only pin; it must never be selected for a legacy index without a digest. */
     public val v2IndexOnly: Boolean = false,
     public val systemEvents: PluginSystemEventDeclaration? = null,
+    /** Optional multi-source declaration. Empty keeps the historical single-source fields. */
+    sourceProfiles: List<ShuYueReviewedSourceProfileV2> = emptyList(),
 ) {
     public val capabilities: Set<ExtensionCapability> = capabilities.toSet()
     public val requiredPermissions: Set<ShuYueExecutionPermissionV2> = requiredPermissions.toSet()
+    public val sourceProfiles: List<ShuYueReviewedSourceProfileV2> =
+        (sourceProfiles.ifEmpty {
+            listOf(
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = sourceId,
+                    sourceName = sourceName,
+                    languageTag = languageTag,
+                    baseUrl = baseUrl,
+                ),
+            )
+        }).toList()
+
+    public val sourceIds: List<String> = this.sourceProfiles.map(ShuYueReviewedSourceProfileV2::sourceId)
 
     init {
         requireAdmissionText(displayName, "Reviewed ShuYue display name")
@@ -289,6 +323,22 @@ public class ShuYueReviewedPluginProfileV2(
         }
         require(ShuYueExecutionPermissionV2.NETWORK in this.requiredPermissions) {
             "Reviewed ShuYue remote source must require network permission"
+        }
+        require(this.sourceProfiles.isNotEmpty()) { "Reviewed ShuYue profile must declare a source" }
+        require(this.sourceIds.distinct().size == this.sourceIds.size) {
+            "Reviewed ShuYue profile contains duplicate source ids"
+        }
+        require(sourceId == this.sourceProfiles.first().sourceId) {
+            "Reviewed ShuYue legacy sourceId must match the first source profile"
+        }
+        require(sourceName == this.sourceProfiles.first().sourceName) {
+            "Reviewed ShuYue legacy sourceName must match the first source profile"
+        }
+        require(languageTag == this.sourceProfiles.first().languageTag) {
+            "Reviewed ShuYue legacy languageTag must match the first source profile"
+        }
+        require(baseUrl == this.sourceProfiles.first().baseUrl) {
+            "Reviewed ShuYue legacy baseUrl must match the first source profile"
         }
         if (ExtensionCapability.LOGIN in this.capabilities) {
             require(
@@ -308,21 +358,23 @@ public class ShuYueReviewedPluginProfileV2(
 
     public val descriptor: ExtensionPackageV2
         get() {
-            val source = SourceDescriptorV2(
-                sourceKey = SourceKey(2, identity.packageId, sourceId),
-                displayName = sourceName,
-                languageTag = languageTag,
-                supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
-                capabilities = capabilities + ExtensionCapability.CONTENT,
-                baseUrl = baseUrl,
-            )
+            val sources = sourceProfiles.map { profile ->
+                SourceDescriptorV2(
+                    sourceKey = SourceKey(2, identity.packageId, profile.sourceId),
+                    displayName = profile.sourceName,
+                    languageTag = profile.languageTag,
+                    supportedContentKinds = profile.supportedContentKinds,
+                    capabilities = capabilities + ExtensionCapability.CONTENT,
+                    baseUrl = profile.baseUrl,
+                )
+            }
             return ExtensionPackageV2(
                 contractVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
                 packageId = identity.packageId,
                 version = identity.version,
                 displayName = displayName,
-                sources = listOf(source),
-                supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+                sources = sources,
+                supportedContentKinds = sources.flatMap { it.supportedContentKinds }.toSet(),
             )
         }
 }
@@ -392,6 +444,47 @@ public object ShuYueReviewedPluginCatalogV2 {
             browserChallenge = true,
             v2IndexOnly = true,
         ),
+        ShuYueReviewedPluginProfileV2(
+            identity = ShuYueArtifactIdentityV2(
+                packageId = "zh.bilimanga",
+                version = "1.0.0",
+                versionCode = 1,
+                sha256 = "df3e9570ac875ec3990f615f38a96e26517b59c53064031c7c628527867f23c6",
+            ),
+            displayName = "嗶哩輕小說／漫畫（Linovelib + BiliManga）",
+            sourceId = "zh.bilimanga.novel",
+            sourceName = "嗶哩輕小說（Linovelib）",
+            languageTag = "zh",
+            baseUrl = "https://tw.linovelib.com",
+            capabilities = setOf(
+                ExtensionCapability.BROWSE,
+                ExtensionCapability.SEARCH,
+                ExtensionCapability.LATEST,
+                ExtensionCapability.METADATA,
+                ExtensionCapability.UNITS,
+                ExtensionCapability.CONTENT,
+            ),
+            requiredPermissions = setOf(
+                ShuYueExecutionPermissionV2.EXECUTE_SCRIPT,
+                ShuYueExecutionPermissionV2.NETWORK,
+            ),
+            sourceProfiles = listOf(
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = "zh.bilimanga.novel",
+                    sourceName = "嗶哩輕小說（Linovelib）",
+                    languageTag = "zh",
+                    baseUrl = "https://tw.linovelib.com",
+                    supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+                ),
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = "zh.bilimanga.manga",
+                    sourceName = "嗶哩漫畫（BiliManga）",
+                    languageTag = "zh",
+                    baseUrl = "https://www.bilimanga.net",
+                    supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
+                ),
+            ),
+        ),
         profile(
             packageId = "zh.wenku8",
             version = "1.6.14",
@@ -425,8 +518,11 @@ public object ShuYueReviewedPluginCatalogV2 {
     public fun sourceKeyForLegacySourceId(sourceId: String): SourceKey? {
         requireAdmissionId(sourceId, "Legacy ShuYue source id")
         return profiles.asSequence()
-            .filter { it.sourceId == sourceId }
-            .map { it.descriptor.sources.single().sourceKey }
+            .flatMap { profile ->
+                profile.descriptor.sources.asSequence()
+                    .filter { it.sourceKey.sourceId == sourceId }
+                    .map { it.sourceKey }
+            }
             .distinct()
             .toList()
             .singleOrNull()
@@ -467,7 +563,7 @@ public object ShuYueReviewedPluginCatalogV2 {
         if (versions.isEmpty()) return ShuYueReviewStatusV2.UNREVIEWED_VERSION
         val version = versions.singleOrNull { it.identity.sha256 == identity.sha256 }
             ?: return ShuYueReviewStatusV2.DIGEST_MISMATCH
-        if (sourceIds != listOf(version.sourceId)) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
+        if (sourceIds != version.sourceIds) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
         return ShuYueReviewStatusV2.REVIEWED
     }
 
@@ -692,7 +788,7 @@ public class ShuYueReviewedPluginAdmissionV2(
         if (versions.isEmpty()) return ShuYueReviewStatusV2.UNREVIEWED_VERSION
         val version = versions.singleOrNull { it.identity.sha256 == identity.sha256 }
             ?: return ShuYueReviewStatusV2.DIGEST_MISMATCH
-        if (sourceIds != listOf(version.sourceId)) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
+        if (sourceIds != version.sourceIds) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
         return ShuYueReviewStatusV2.REVIEWED
     }
 

@@ -90,6 +90,7 @@ class ShuYuePinnedRepositoryLoaderTest {
             ),
             ShuYueReviewedPluginCatalogV2.profiles
                 .filterNot { it.v2IndexOnly }
+                .filter { it.identity.packageId in setOf("zh.wenku8", "zh.wenku8.api", "zh.biquge.tw") }
                 .associate { it.identity.packageId to it.identity.sha256 },
         )
         val approvals = InMemoryShuYueExecutionApprovalsV2()

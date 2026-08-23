@@ -168,24 +168,28 @@ class ShuYueReviewedExtensionV2Test {
     }
 
     @Test
-    fun builtInReviewedCataloguePinsWenkuAndBiqugeOpaqueIdsAndDigests() {
+    fun builtInReviewedCataloguePinsWenkuBiqugeAndBiliMangaOpaqueIdsAndDigests() {
         assertEquals(
-            setOf("zh.wenku8", "zh.wenku8.api", "zh.biquge.tw"),
+            setOf("zh.wenku8", "zh.wenku8.api", "zh.biquge.tw", "zh.bilimanga"),
             ShuYueReviewedPluginCatalogV2.profiles.map { it.identity.packageId }.toSet(),
         )
         ShuYueReviewedPluginCatalogV2.profiles.forEach { profile ->
-            assertEquals(profile.identity.packageId, profile.sourceId)
-            assertEquals(profile.sourceId, profile.descriptor.sources.single().sourceKey.sourceId)
-            assertEquals(
-                profile.descriptor.sources.single().sourceKey,
-                ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId(profile.sourceId),
-            )
+            assertEquals(profile.sourceId, profile.descriptor.sources.first().sourceKey.sourceId)
+            profile.sourceIds.forEach { sourceId ->
+                assertEquals(
+                    SourceKey(2, profile.identity.packageId, sourceId),
+                    ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId(sourceId),
+                )
+            }
             assertEquals(64, profile.identity.sha256.length)
-            assertEquals(setOf(ContentKind.PLAIN_TEXT), profile.descriptor.supportedContentKinds)
+            assertEquals(
+                profile.sourceProfiles.flatMap { it.supportedContentKinds }.toSet(),
+                profile.descriptor.supportedContentKinds,
+            )
         }
         assertEquals(null, ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId("unknown.source"))
         assertEquals(
-            setOf("zh.wenku8.api", "zh.biquge.tw"),
+            setOf("zh.wenku8.api", "zh.biquge.tw", "zh.bilimanga"),
             ShuYueReviewedPluginCatalogV2.installableProfiles.map { it.identity.packageId }.toSet(),
         )
         assertTrue(

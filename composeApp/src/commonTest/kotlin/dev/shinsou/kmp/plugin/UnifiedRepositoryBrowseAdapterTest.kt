@@ -142,6 +142,24 @@ class UnifiedRepositoryBrowseAdapterTest {
                   "requestedHostPermissions":["REQUEST_LOGIN_UI"],
                   "sources":[{"sourceId":"zh.wenku8.api","name":"輕小說文庫","lang":"zh",
                     "baseUrl":"https://wenku8-relay.mewx.org/"}]
+                },
+                {
+                  "id":"zh.bilimanga","name":"嗶哩輕小說／漫畫（Linovelib + BiliManga）",
+                  "version":"1.0.0","versionCode":1,"lang":"zh","nsfw":true,
+                  "contract":"shuyue","contentType":"both",
+                  "scriptUrl":"plugins/zh.bilimanga.js",
+                  "sha256":"df3e9570ac875ec3990f615f38a96e26517b59c53064031c7c628527867f23c6",
+                  "byteSize":32757,"sidecarUrl":"sidecars/zh.bilimanga.json",
+                  "capabilities":["CATALOGUE","LATEST","BROWSE","METADATA","UNITS","CONTENT","SEARCH"],
+                  "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,
+                    "required":[],"optional":[]},
+                  "requestedHostPermissions":[],"installable":true,
+                  "sources":[
+                    {"sourceId":"zh.bilimanga.novel","name":"嗶哩輕小說（Linovelib）","lang":"zh",
+                     "baseUrl":"https://tw.linovelib.com","contentType":"novel"},
+                    {"sourceId":"zh.bilimanga.manga","name":"嗶哩漫畫（BiliManga）","lang":"zh",
+                     "baseUrl":"https://www.bilimanga.net","contentType":"manga"}
+                  ]
                 }
               ]
             }
@@ -197,6 +215,7 @@ class UnifiedRepositoryBrowseAdapterTest {
             val extensions = adapter.state.value.extensions
             assertTrue(extensions.any { it.id == "manga.v2" && !it.reviewedShuYueV2 })
             assertTrue(extensions.any { it.id == "zh.wenku8.api" && it.reviewedShuYueV2 })
+            assertTrue(extensions.any { it.id == "zh.bilimanga" && it.reviewedShuYueV2 })
             assertTrue(extensions.none { it.id == "example.login" })
             assertEquals("V2 mixed", added.name)
             assertEquals(added.id, adapter.state.value.selectedRepositoryId)

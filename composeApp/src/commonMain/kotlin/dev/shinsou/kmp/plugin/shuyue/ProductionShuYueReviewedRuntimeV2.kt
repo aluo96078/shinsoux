@@ -4,6 +4,7 @@ package dev.shinsou.kmp.plugin.shuyue
 
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
+import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.PluginCookie
@@ -35,6 +36,9 @@ import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionCapability
 import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.HttpMethodV2
+import dev.shinsou.kmp.plugin.v2.ImagePageV2
+import dev.shinsou.kmp.plugin.v2.RemoteRequestPlanV2
 import dev.shinsou.kmp.plugin.v2.UserInteractionScopedExtensionSourceV2
 import dev.shinsou.kmp.plugin.v2.ArtifactBoundExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ImmutableExtensionPackageRuntimeV2
@@ -79,6 +83,8 @@ public object BuiltInShuYueExecutionScopesV2 : ShuYueExecutionScopeResolverV2 {
         ("zh.wenku8" to "zh.wenku8") to -9_110_000_000_000_001L,
         ("zh.wenku8.api" to "zh.wenku8.api") to -9_110_000_000_000_002L,
         ("zh.biquge.tw" to "zh.biquge.tw") to -9_110_000_000_000_003L,
+        ("zh.bilimanga" to "zh.bilimanga.novel") to -9_110_000_000_000_004L,
+        ("zh.bilimanga" to "zh.bilimanga.manga") to -9_110_000_000_000_005L,
     )
 }
 
@@ -129,129 +135,99 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
         }
         val descriptor = artifact.descriptor
         descriptor.validate()
-        val sourceDescriptor = descriptor.sources.singleOrNull()
-            ?: throw IllegalArgumentException("A reviewed ShuYue script must declare exactly one source")
-        require(sourceDescriptor.sourceKey.packageId == artifact.identity.packageId) {
-            "Reviewed ShuYue descriptor package mismatch"
-        }
-
         val eventGateway = environment.systemEventSink as? PluginSystemEventGateway
         val eventContextRegistry = environment.systemEventContextRegistry ?: eventGateway?.contextRegistry
-        val eventRuntimeGeneration = ++nextEventRuntimeGeneration
-        val eventBinding = artifact.systemEvents?.let { declaration ->
-            eventGateway?.let { gateway ->
-                val scope = BoundPluginScopeFactory().bind(
-                    artifactIdentity = PluginArtifactIdentity(
-                        packageId = artifact.identity.packageId,
-                        version = artifact.identity.version,
-                        versionCode = artifact.identity.versionCode,
-                        sha256 = artifact.identity.sha256,
-                    ),
-                    sourceKey = sourceDescriptor.sourceKey,
-                    runtimeInstanceId = "shuyue-${artifact.identity.packageId}-${artifact.identity.sha256.take(16)}",
-                    runtimeGeneration = eventRuntimeGeneration,
-                )
-                val requestedHostPermissions = if (
-                    ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions
-                ) {
-                    setOf(PluginHostPermission.REQUEST_LOGIN_UI)
-                } else {
-                    emptySet()
-                }
-                gateway.grantRuntimePermissions(scope, requestedHostPermissions)
-                val negotiation = gateway.negotiate(scope, declaration)
-                if (!negotiation.enabled) {
-                    gateway.revokeRuntimePermissions(scope)
-                    null
-                } else {
-                    gateway.openRuntime(
-                        scope,
-                        PluginEventRuntimeStatus(
-                            lifecycle = PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED,
-                            sourceCapabilities = buildSet {
-                                add("CATALOGUE")
-                                if (ExtensionCapability.LOGIN in sourceDescriptor.capabilities) add("LOGIN")
-                                if (ExtensionCapability.LATEST in sourceDescriptor.capabilities) add("LATEST")
-                            },
-                        ),
-                    )
-                    ReviewedEventBinding(
-                        gateway = gateway,
-                        scope = scope,
-                        negotiation = negotiation,
-                        contextRegistry = eventContextRegistry,
-                    )
-                }
-            }
-        }
-
-        val executionScope = executionScopes.resolve(artifact.identity, sourceDescriptor.sourceKey)
-        val sourceEntry = SourceIndexEntry(
-            name = sourceDescriptor.displayName,
-            lang = sourceDescriptor.languageTag,
-            id = executionScope,
-            baseUrl = sourceDescriptor.baseUrl,
-        )
-        val manifest = PluginManifest(
-            id = artifact.identity.packageId,
-            name = descriptor.displayName,
-            version = artifact.identity.version,
-            versionCode = artifact.identity.versionCode,
-            lang = sourceDescriptor.languageTag,
-            script = "${artifact.identity.packageId}.reviewed.js",
-            signature = artifact.identity.sha256,
-            sources = listOf(sourceEntry),
-            systemEvents = artifact.systemEvents,
-            requestedHostPermissions = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
-                setOf(PluginHostPermission.REQUEST_LOGIN_UI)
-            } else {
-                emptySet()
-            },
-        )
         val filteredStorage = CapabilityFilteredShuYueStorage(
             delegate = environment.storage,
             permissions = artifact.grantedPermissions,
         )
-        val scopedEnvironment = environment.copy(
-            network = environment.network.scopedToStorage(filteredStorage),
-            storage = filteredStorage,
-            loginRequester = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
-                environment.loginRequester
-            } else {
-                PluginLoginRequester.None
-            },
-            systemEventSink = eventBinding?.gateway,
-            boundPluginScope = eventBinding?.scope,
-            systemEventNegotiation = eventBinding?.negotiation,
-            systemEventDeclaration = artifact.systemEvents,
-            systemEventContextRegistry = eventContextRegistry,
-        )
         val originalScript = artifact.copyBytes().decodeToString(throwOnInvalidSequence = true)
-        val script = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
-        var runtime: ScriptPluginRuntime? = null
+        val bundles = mutableListOf<ShuYueSourceRuntimeBundle>()
         try {
-            runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
-            require(runtime.pluginId == artifact.identity.packageId && runtime.id == executionScope) {
-                "Reviewed ShuYue platform runtime escaped its assigned execution scope"
-            }
-            val source = ProductionShuYueSourceV2(
-                descriptor = sourceDescriptor,
-                runtime = runtime,
-                credentialsResolver = credentialsResolver,
-                eventBinding = eventBinding,
-                hasStoredCredentials = { filteredStorage.getCredential(executionScope) != null },
-                requestLogin = { reason ->
-                    if (eventBinding != null) {
-                        submitLegacyLoginCompatibility(scopedEnvironment, supportsLogin = true, reason)
+            descriptor.sources.forEach { sourceDescriptor ->
+                require(sourceDescriptor.sourceKey.packageId == artifact.identity.packageId) {
+                    "Reviewed ShuYue descriptor package mismatch"
+                }
+                val eventRuntimeGeneration = ++nextEventRuntimeGeneration
+                val eventBinding = createEventBinding(
+                    artifact = artifact,
+                    sourceDescriptor = sourceDescriptor,
+                    eventGateway = eventGateway,
+                    eventContextRegistry = eventContextRegistry,
+                    runtimeGeneration = eventRuntimeGeneration,
+                )
+                val executionScope = executionScopes.resolve(artifact.identity, sourceDescriptor.sourceKey)
+                val sourceEntry = SourceIndexEntry(
+                    name = sourceDescriptor.displayName,
+                    lang = sourceDescriptor.languageTag,
+                    id = executionScope,
+                    baseUrl = sourceDescriptor.baseUrl,
+                )
+                val manifest = PluginManifest(
+                    id = artifact.identity.packageId,
+                    name = descriptor.displayName,
+                    version = artifact.identity.version,
+                    versionCode = artifact.identity.versionCode,
+                    lang = sourceDescriptor.languageTag,
+                    script = "${artifact.identity.packageId}.reviewed.js",
+                    signature = artifact.identity.sha256,
+                    sources = listOf(sourceEntry),
+                    systemEvents = artifact.systemEvents,
+                    requestedHostPermissions = if (
+                        ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions
+                    ) {
+                        setOf(PluginHostPermission.REQUEST_LOGIN_UI)
                     } else {
-                        environment.loginRequester.request(
-                            executionScope,
-                            sourceDescriptor.displayName,
-                            reason,
-                        )
+                        emptySet()
+                    },
+                )
+                val scopedEnvironment = environment.copy(
+                    network = environment.network.scopedToStorage(filteredStorage),
+                    storage = filteredStorage,
+                    loginRequester = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
+                        environment.loginRequester
+                    } else {
+                        PluginLoginRequester.None
+                    },
+                    systemEventSink = eventBinding?.gateway,
+                    boundPluginScope = eventBinding?.scope,
+                    systemEventNegotiation = eventBinding?.negotiation,
+                    systemEventDeclaration = artifact.systemEvents,
+                    systemEventContextRegistry = eventContextRegistry,
+                )
+                var runtime: ScriptPluginRuntime? = null
+                try {
+                    val script = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
+                    runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
+                    require(runtime.pluginId == artifact.identity.packageId && runtime.id == executionScope) {
+                        "Reviewed ShuYue platform runtime escaped its assigned execution scope"
                     }
-                },
-            )
+                    val source = ProductionShuYueSourceV2(
+                        descriptor = sourceDescriptor,
+                        runtime = runtime,
+                        credentialsResolver = credentialsResolver,
+                        eventBinding = eventBinding,
+                        hasStoredCredentials = { filteredStorage.getCredential(executionScope) != null },
+                        requestLogin = { reason ->
+                            if (eventBinding != null) {
+                                submitLegacyLoginCompatibility(scopedEnvironment, supportsLogin = true, reason)
+                            } else {
+                                environment.loginRequester.request(
+                                    executionScope,
+                                    sourceDescriptor.displayName,
+                                    reason,
+                                )
+                            }
+                        },
+                    )
+                    bundles += ShuYueSourceRuntimeBundle(runtime, source, eventBinding)
+                } catch (error: Throwable) {
+                    closeEventBinding(eventBinding)
+                    runtime?.let { failedRuntime -> runCatching { failedRuntime.close() } }
+                    throw error
+                }
+            }
+            require(bundles.isNotEmpty()) { "Reviewed ShuYue descriptor must declare a source" }
             return CloseableShuYuePackageRuntimeV2(
                 PluginArtifactIdentity(
                     artifact.identity.packageId,
@@ -259,47 +235,107 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     artifact.identity.versionCode,
                     artifact.identity.sha256,
                 ),
-                ImmutableExtensionPackageRuntimeV2(descriptor, listOf(source)),
-                runtime,
-                source::closeTextStreams,
-                source,
-                closeEventBinding = {
-                    eventBinding?.let {
-                        it.gateway.closeRuntime(it.scope)
-                        it.gateway.revokeRuntimePermissions(it.scope)
-                    }
-                },
+                ImmutableExtensionPackageRuntimeV2(descriptor, bundles.map { it.source }),
+                bundles,
             )
         } catch (error: Throwable) {
-            eventBinding?.let {
-                it.gateway.closeRuntime(it.scope)
-                it.gateway.revokeRuntimePermissions(it.scope)
+            bundles.asReversed().forEach { bundle ->
+                bundle.source.closeTextStreams()
+                closeEventBinding(bundle.eventBinding)
+                runCatching { bundle.runtime.close() }
             }
-            runtime?.let { failedRuntime -> runCatching { failedRuntime.close() } }
             throw error
         }
+    }
+
+    private fun createEventBinding(
+        artifact: ShuYueAdmittedScriptV2,
+        sourceDescriptor: SourceDescriptorV2,
+        eventGateway: PluginSystemEventGateway?,
+        eventContextRegistry: dev.shinsou.kmp.plugin.events.PluginEventContextRegistry?,
+        runtimeGeneration: Long,
+    ): ReviewedEventBinding? = artifact.systemEvents?.let { declaration ->
+        eventGateway?.let { gateway ->
+            val scope = BoundPluginScopeFactory().bind(
+                artifactIdentity = PluginArtifactIdentity(
+                    packageId = artifact.identity.packageId,
+                    version = artifact.identity.version,
+                    versionCode = artifact.identity.versionCode,
+                    sha256 = artifact.identity.sha256,
+                ),
+                sourceKey = sourceDescriptor.sourceKey,
+                runtimeInstanceId = "shuyue-${artifact.identity.packageId}-${artifact.identity.sha256.take(16)}-${runtimeGeneration}",
+                runtimeGeneration = runtimeGeneration,
+            )
+            val requestedHostPermissions = if (
+                ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions
+            ) {
+                setOf(PluginHostPermission.REQUEST_LOGIN_UI)
+            } else {
+                emptySet()
+            }
+            gateway.grantRuntimePermissions(scope, requestedHostPermissions)
+            val negotiation = gateway.negotiate(scope, declaration)
+            if (!negotiation.enabled) {
+                gateway.revokeRuntimePermissions(scope)
+                null
+            } else {
+                gateway.openRuntime(
+                    scope,
+                    PluginEventRuntimeStatus(
+                        lifecycle = PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED,
+                        sourceCapabilities = buildSet {
+                            add("CATALOGUE")
+                            if (ExtensionCapability.LOGIN in sourceDescriptor.capabilities) add("LOGIN")
+                            if (ExtensionCapability.LATEST in sourceDescriptor.capabilities) add("LATEST")
+                        },
+                    ),
+                )
+                ReviewedEventBinding(
+                    gateway = gateway,
+                    scope = scope,
+                    negotiation = negotiation,
+                    contextRegistry = eventContextRegistry,
+                )
+            }
+        }
+    }
+}
+
+private data class ShuYueSourceRuntimeBundle(
+    val runtime: ScriptPluginRuntime,
+    val source: ProductionShuYueSourceV2,
+    val eventBinding: ReviewedEventBinding?,
+)
+
+private fun closeEventBinding(binding: ReviewedEventBinding?) {
+    binding?.let {
+        it.gateway.closeRuntime(it.scope)
+        it.gateway.revokeRuntimePermissions(it.scope)
     }
 }
 
 private class CloseableShuYuePackageRuntimeV2(
     override val artifactIdentity: PluginArtifactIdentity,
     private val delegate: ImmutableExtensionPackageRuntimeV2,
-    private val runtime: ScriptPluginRuntime,
-    private val closeTextStreams: () -> Unit,
-    private val eventSource: ProductionShuYueSourceV2,
-    private val closeEventBinding: () -> Unit = {},
+    private val bundles: List<ShuYueSourceRuntimeBundle>,
 ) : CloseableExtensionPackageRuntimeV2,
     ArtifactBoundExtensionPackageRuntimeV2,
     SourceLifecycleControlledExtensionPackageRuntimeV2 {
     override val descriptor: ExtensionPackageV2 get() = delegate.descriptor
     override fun source(sourceKey: SourceKey): ExtensionSourceV2? = delegate.source(sourceKey)
     override suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean {
-        return eventSource.setSourceEnabled(sourceKey, enabled)
+        return bundles.singleOrNull { it.source.descriptor.sourceKey == sourceKey }
+            ?.source
+            ?.setSourceEnabled(sourceKey, enabled)
+            ?: false
     }
     override suspend fun close() {
-        closeTextStreams()
-        closeEventBinding()
-        runtime.close()
+        bundles.asReversed().forEach { bundle ->
+            bundle.source.closeTextStreams()
+            closeEventBinding(bundle.eventBinding)
+            bundle.runtime.close()
+        }
     }
 }
 
@@ -453,6 +489,42 @@ private class ProductionShuYueSourceV2(
     ): UnitContentResultV2 {
         ensureSourceEnabled()
         return withActiveInvocationContext(remotePublicationId, remoteUnitId) {
+            if (ContentKind.IMAGE_SEQUENCE in descriptor.supportedContentKinds) {
+                val pages = runtime.getPageList(
+                    SChapter(url = remoteUnitId, name = remoteUnitId),
+                )
+                require(pages.size <= MAX_SHUYUE_IMAGE_PAGES) {
+                    "Reviewed ShuYue image source returned too many pages"
+                }
+                val imagePages = pages.mapIndexed { index, page ->
+                    val imageUrl = page.imageUrl?.takeIf(String::isNotBlank)
+                        ?: page.url.takeIf(String::isNotBlank)
+                        ?: throw IllegalArgumentException("Reviewed ShuYue image page has no URL")
+                    ImagePageV2(
+                        resourceId = "page-$index",
+                        request = RemoteRequestPlanV2(
+                            method = HttpMethodV2.GET,
+                            url = resolveSourceHttpUrl(descriptor.baseUrl, imageUrl),
+                        ),
+                        mediaType = imageMediaType(imageUrl),
+                    )
+                }
+                return@withActiveInvocationContext UnitContentResultV2(
+                    schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                    sourceKey = descriptor.sourceKey,
+                    remotePublicationId = remotePublicationId,
+                    remoteUnitId = remoteUnitId,
+                    representations = listOf(
+                        UnitContentPayload.ImageSequence(
+                            schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                            representationId = SHUYUE_IMAGE_REPRESENTATION_ID,
+                            sourceKey = descriptor.sourceKey,
+                            remoteUnitId = remoteUnitId,
+                            pages = imagePages,
+                        ),
+                    ),
+                )
+            }
             val carrier = runtime.getMangaDetails(
                 SManga(
                     url = CONTENT_COMMAND_PREFIX + remoteUnitId,
@@ -623,6 +695,14 @@ private class ProductionShuYueSourceV2(
     )
 
     private fun scriptPage(page: Int): Int = page + 1
+
+    private fun imageMediaType(url: String): String = when {
+        url.substringBefore('?').substringBefore('#').lowercase().endsWith(".png") -> "image/png"
+        url.substringBefore('?').substringBefore('#').lowercase().endsWith(".webp") -> "image/webp"
+        url.substringBefore('?').substringBefore('#').lowercase().endsWith(".gif") -> "image/gif"
+        url.substringBefore('?').substringBefore('#').lowercase().endsWith(".avif") -> "image/avif"
+        else -> "image/jpeg"
+    }
 
     /** Disabling is terminal for this engine instance; re-enable must reload a new generation. */
     internal suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean {
@@ -805,9 +885,22 @@ private fun compatibilityShim(opaqueSourceId: String): String {
 private const val SHUYUE_COMPATIBILITY_SHIM_PREFIX: String = """
 ;(function(expectedOpaqueId){
   'use strict';
-  if(typeof source!=='object'||!source)throw new Error('Reviewed ShuYue script does not export source');
-  if(String(source.id)!==String(expectedOpaqueId))throw new Error('Reviewed ShuYue source id changed');
-  var target=source,opaqueId=String(expectedOpaqueId);
+  var target=null,opaqueId=String(expectedOpaqueId);
+  if(typeof sources==='object'&&sources){
+    var sourceKeys=Object.keys(sources);
+    for(var sourceIndex=0;sourceIndex<sourceKeys.length;sourceIndex++){
+      var sourceKey=sourceKeys[sourceIndex],candidate=sources[sourceKey];
+      if(!candidate||typeof candidate!=='object')continue;
+      var candidateId=candidate.id||candidate.sourceId||sourceKey;
+      if(String(candidateId)===opaqueId){
+        if(target)throw new Error('Reviewed ShuYue script exports duplicate source '+opaqueId);
+        target=candidate;
+      }
+    }
+  }
+  if(!target&&typeof source==='object'&&source&&String(source.id)===opaqueId)target=source;
+  if(!target)throw new Error('Reviewed ShuYue script does not export source '+opaqueId);
+  source=target;
   var searchPrefix='__shinsou_shuyue_search__:';
   var browsePrefix='__shinsou_shuyue_browse__:';
   var contentPrefix='__shinsou_shuyue_content__:';
@@ -942,8 +1035,10 @@ private const val FAVORITE_COMMAND_PREFIX: String = "__shinsou_shuyue_favorite__
 private const val BROWSE_OPTION_KEY: String = "option"
 private const val BOOKCASE_OPTION_VALUE: String = "bookcase"
 private const val SHUYUE_TEXT_REPRESENTATION_ID: String = "shuyue-inline-text"
+private const val SHUYUE_IMAGE_REPRESENTATION_ID: String = "shuyue-image-sequence"
 private const val PAGE_SIZE: Int = 100
 private const val MAX_SHUYUE_UNITS: Int = 100_000
+private const val MAX_SHUYUE_IMAGE_PAGES: Int = 2_000
 private const val MAX_SHUYUE_INLINE_TEXT_BYTES: Long = 4L * 1024L * 1024L
 private const val SHUYUE_TEXT_CHUNK_BYTES: Int = 64 * 1024
 private const val MAX_SHUYUE_TEXT_STREAM_BYTES: Long = 512L * 1024L * 1024L

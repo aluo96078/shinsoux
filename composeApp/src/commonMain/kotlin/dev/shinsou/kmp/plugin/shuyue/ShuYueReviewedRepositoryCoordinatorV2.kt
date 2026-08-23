@@ -90,21 +90,42 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
             versionCode = entry.versionCode,
             sha256 = entry.sha256,
         ) ?: return false
-        val source = entry.sources.singleOrNull() ?: return false
+        val indexedSources = entry.sources.associateBy { it.id }
+        if (indexedSources.size != entry.sources.size || indexedSources.keys != profile.sourceIds.toSet()) return false
         return entry.name == profile.displayName &&
             entry.lang == profile.languageTag &&
-            source.id == profile.sourceId &&
-            source.name == profile.sourceName &&
-            source.lang == profile.languageTag &&
-            source.baseUrl == profile.baseUrl &&
+            profile.sourceProfiles.all { sourceProfile ->
+                val source = indexedSources[sourceProfile.sourceId] ?: return@all false
+                source.name == sourceProfile.sourceName &&
+                    source.lang == sourceProfile.languageTag &&
+                    source.baseUrl == sourceProfile.baseUrl
+            } &&
             (entry.sha256 == null || entry.sha256 == profile.identity.sha256) &&
-            (entry.systemEvents == null || entry.systemEvents == profile.systemEvents) &&
+            eventDeclarationsMatch(entry.systemEvents, profile.systemEvents) &&
             (entry.requestedHostPermissions.isEmpty() || entry.requestedHostPermissions ==
                 if (dev.shinsou.kmp.plugin.v2.ExtensionCapability.LOGIN in profile.capabilities) {
                     setOf(dev.shinsou.kmp.plugin.events.PluginHostPermission.REQUEST_LOGIN_UI)
                 } else {
                     emptySet()
                 })
+    }
+
+    /**
+     * V2 indexes require a system-events object even for sources that expose no events. Treat an
+     * empty declaration as equivalent to the reviewed profile's `null` declaration; otherwise all
+     * non-login ShuYue packages are silently dropped during repository refresh.
+     */
+    private fun eventDeclarationsMatch(
+        indexed: dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration?,
+        reviewed: dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration?,
+    ): Boolean {
+        // Legacy ShuYue indexes predate the v2 event declaration and omit the field entirely.
+        // Their capability metadata is still reviewed elsewhere, so an absent declaration is a
+        // compatible wildcard rather than a reason to hide an otherwise valid package.
+        if (indexed == null) return true
+        val indexedMeaningful = indexed.takeIf { it.required.isNotEmpty() || it.optional.isNotEmpty() }
+        val reviewedMeaningful = reviewed?.takeIf { it.required.isNotEmpty() || it.optional.isNotEmpty() }
+        return indexedMeaningful == reviewedMeaningful
     }
 
     public companion object {
