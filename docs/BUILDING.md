@@ -128,7 +128,7 @@ composeApp/build/compose/binaries/main-release/msi/
 composeApp/build/compose/binaries/main-release/exe/
 ```
 
-Windows installer 採 per-user install，程式預設位於 `%LOCALAPPDATA%\Programs\Shinsou X`，並提供安裝目錄選擇、桌面捷徑與開始功能表項目；穩定的 upgrade UUID 讓後續版本覆蓋升級而非並存。程式安裝目錄刻意與 `%APPDATA%\ShinsouXData` 使用者資料目錄分離，且資料目錄不以產品顯示名稱開頭，避免升級或解除安裝刪除書庫、內容與 secrets。舊版 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%APPDATA%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
+Windows installer 採 per-user install，程式預設位於 `%LOCALAPPDATA%\Programs\Shinsou X`，並提供安裝目錄選擇、桌面捷徑與開始功能表項目；穩定的 upgrade UUID 讓後續版本覆蓋升級而非並存。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`，避免 jpackage per-user MSI 升級或解除安裝清理書庫、內容與 secrets。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 
 ## iOS 簽章與 capability
 
@@ -208,7 +208,7 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 ### Windows x64 安裝與 DPAPI
 
 - 以非管理員帳號測試 MSI 及 EXE 的首次安裝、安裝目錄選擇、桌面捷徑、開始功能表啟動與解除安裝
-- 使用前一版安裝包後再安裝新版，確認 stable upgrade UUID 會原地升級而非產生並存安裝；首次啟動確認 `%LOCALAPPDATA%\Shinsou X` 會遷移至 `%APPDATA%\ShinsouXData`，解除安裝後確認新資料目錄仍保留
+- 使用前一版安裝包後再安裝新版，確認 stable upgrade UUID 會原地升級而非產生並存安裝；首次啟動確認 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會遷移至 `%USERPROFILE%\ShinsouXData`，解除安裝後確認新資料目錄仍保留
 - 首次保存 credentials／cookies／OAuth token／proxy API key 後重新啟動，確認同一 Windows 使用者可透過 DPAPI 解密，且磁碟上只有 protected `plugin-secrets.dpapi`，沒有明文 master-key fallback
 - 改用另一個 Windows 使用者或損毀／替換 DPAPI blob，確認解密會 fail closed，不會靜默產生新 key 覆蓋仍需解密的資料
 - 以 `%LOCALAPPDATA%`、使用者名稱與匯入路徑含空白、中文及非 ASCII 字元的環境測試書庫、擴充套件安裝、全域搜尋、Local import、下載與備份還原

@@ -60,13 +60,15 @@ class DesktopPlatformTest {
     }
 
     @Test
-    fun windowsDataRootUsesInstallerSafeAppDataDirectory() {
+    fun windowsDataRootUsesInstallerSafeUserProfileDirectory() {
+        val userProfile = testPath("windows-user-profile")
         val appData = testPath("windows-app-data")
         val localAppData = testPath("windows-local-app-data")
         val root = DesktopAppDirectories.resolveDataRoot(
             platform = DesktopPlatform.WINDOWS,
             environment = {
                 when (it) {
+                    "USERPROFILE" -> userProfile.toString()
                     "APPDATA" -> appData.toString()
                     "LOCALAPPDATA" -> localAppData.toString()
                     else -> null
@@ -75,11 +77,11 @@ class DesktopPlatformTest {
             property = testProperties(userHome = testPath("unused-windows-home").toString()),
         )
 
-        assertEquals(appData.resolve("ShinsouXData"), root)
+        assertEquals(userProfile.resolve("ShinsouXData"), root)
     }
 
     @Test
-    fun windowsDataRootFallsBackToUserRoamingDirectory() {
+    fun windowsDataRootFallsBackToUserProfileProperty() {
         val userHome = testPath("windows-home")
         val root = DesktopAppDirectories.resolveDataRoot(
             platform = DesktopPlatform.WINDOWS,
@@ -87,10 +89,28 @@ class DesktopPlatformTest {
             property = testProperties(userHome = userHome.toString()),
         )
 
-        assertEquals(
-            userHome.resolve("AppData").resolve("Roaming").resolve("ShinsouXData"),
-            root,
+        assertEquals(userHome.resolve("ShinsouXData"), root)
+    }
+
+    @Test
+    fun windowsDataRootDoesNotFallBackIntoAppDataTrees() {
+        val temporaryDirectory = testPath("windows-temporary")
+        val root = DesktopAppDirectories.resolveDataRoot(
+            platform = DesktopPlatform.WINDOWS,
+            environment = {
+                when (it) {
+                    "APPDATA" -> testPath("windows-roaming").toString()
+                    "LOCALAPPDATA" -> testPath("windows-local").toString()
+                    else -> null
+                }
+            },
+            property = testProperties(
+                userHome = " ",
+                temporaryDirectory = temporaryDirectory.toString(),
+            ),
         )
+
+        assertEquals(temporaryDirectory.resolve("ShinsouXData"), root)
     }
 
     @Test
@@ -101,6 +121,30 @@ class DesktopPlatformTest {
             DesktopAppDirectories.resolveLegacyWindowsDataRoot(
                 environment = { name -> if (name == "LOCALAPPDATA") localAppData.toString() else null },
                 property = testProperties(userHome = testPath("unused-windows-home").toString()),
+            ),
+        )
+    }
+
+    @Test
+    fun legacyWindowsRoamingDataRootUsesAppData() {
+        val appData = testPath("legacy-windows-app-data")
+        assertEquals(
+            appData.resolve("ShinsouXData"),
+            DesktopAppDirectories.resolveLegacyRoamingWindowsDataRoot(
+                environment = { name -> if (name == "APPDATA") appData.toString() else null },
+                property = testProperties(userHome = testPath("unused-windows-home").toString()),
+            ),
+        )
+    }
+
+    @Test
+    fun legacyWindowsRoamingDataRootFallsBackToUserHomeRoamingDirectory() {
+        val userHome = testPath("legacy-windows-home")
+        assertEquals(
+            userHome.resolve("AppData").resolve("Roaming").resolve("ShinsouXData"),
+            DesktopAppDirectories.resolveLegacyRoamingWindowsDataRoot(
+                environment = { null },
+                property = testProperties(userHome = userHome.toString()),
             ),
         )
     }
@@ -126,6 +170,23 @@ class DesktopPlatformTest {
 
         assertTrue(Files.isRegularFile(legacy.resolve("keep-me.txt")))
         assertTrue(Files.isRegularFile(current.resolve("current.txt")))
+    }
+
+    @Test
+    fun legacyWindowsRoamingDirectoryMigratesIntoUserProfileDataRoot() {
+        val userProfile = testPath("windows-migration-profile")
+        val appData = testPath("windows-migration-app-data")
+        val current = userProfile.resolve("ShinsouXData")
+        val legacy = appData.resolve("ShinsouXData")
+        current.toFile().deleteRecursively()
+        legacy.toFile().deleteRecursively()
+        Files.createDirectories(legacy)
+        Files.writeString(legacy.resolve("shinsou-state.json"), "legacy")
+
+        DesktopAppDirectories.migrateLegacyWindowsData(current, legacy)
+
+        assertTrue(Files.isRegularFile(current.resolve("shinsou-state.json")))
+        assertFalse(Files.exists(legacy))
     }
 
     @Test

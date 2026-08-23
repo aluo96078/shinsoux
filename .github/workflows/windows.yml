@@ -125,9 +125,9 @@ jobs:
         run: |
           $msi = Get-ChildItem "composeApp/build/compose/binaries/main-release/msi/*.msi" -File | Select-Object -First 1
           $launcher = Join-Path $env:LOCALAPPDATA "Programs\Shinsou X\Shinsou X.exe"
-          $dataRoot = Join-Path $env:APPDATA "ShinsouXData"
+          $dataRoot = Join-Path $env:USERPROFILE "ShinsouXData"
           $sentinel = Join-Path $dataRoot "ci-uninstall-preserves-user-data.txt"
-          $externalDataRoot = Join-Path $env:APPDATA "ShinsouCiData"
+          $externalDataRoot = Join-Path $env:USERPROFILE "ShinsouCiData"
           $externalSentinel = Join-Path $externalDataRoot "ci-uninstall-preserves-external-data.txt"
           $stdout = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stdout.log"
           $stderr = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stderr.log"
@@ -170,16 +170,16 @@ jobs:
               if ($uninstall.ExitCode -ne 0) {
                 throw "MSI uninstall failed with exit code $($uninstall.ExitCode)."
               }
-            $dataRootPreserved = Test-Path -LiteralPath $sentinel -PathType Leaf
-            $externalDataPreserved = Test-Path -LiteralPath $externalSentinel -PathType Leaf
-            Write-Output "Product data sentinel preserved: $dataRootPreserved ($dataRoot)"
-            Write-Output "External data sentinel preserved: $externalDataPreserved ($externalDataRoot)"
-            if (-not $dataRootPreserved) {
-              throw "MSI uninstall removed the ShinsouXData user-data directory."
-            }
-            if (-not $externalDataPreserved) {
-              throw "MSI uninstall removed the external user-data directory."
-            }
+              $dataRootPreserved = Test-Path -LiteralPath $sentinel -PathType Leaf
+              $externalDataPreserved = Test-Path -LiteralPath $externalSentinel -PathType Leaf
+              Write-Output "Product data sentinel preserved: $dataRootPreserved ($dataRoot)"
+              Write-Output "External data sentinel preserved: $externalDataPreserved ($externalDataRoot)"
+              if (-not $dataRootPreserved) {
+                throw "MSI uninstall removed the ShinsouXData user-data directory."
+              }
+              if (-not $externalDataPreserved) {
+                throw "MSI uninstall removed the external user-data directory."
+              }
               Write-Output "MSI uninstall preserved the separate user-data directory."
             }
           }

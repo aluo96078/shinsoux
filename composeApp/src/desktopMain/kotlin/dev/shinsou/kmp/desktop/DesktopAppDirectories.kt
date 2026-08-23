@@ -10,15 +10,16 @@ internal object DesktopAppDirectories {
     private const val LEGACY_WINDOWS_DATA_DIRECTORY = "Shinsou X"
 
     /**
-     * The Windows data directory intentionally does not start with the product's display name.
-     * jpackage's per-user MSI uninstaller can clean the LocalAppData tree around the installation
-     * directory. Keep persistent data in APPDATA and retain the old LocalAppData location as a
-     * one-time migration source.
+     * Keep Windows data outside both AppData trees. jpackage's per-user MSI uninstaller has
+     * removed user-profile application-data trees on some runner images, so neither LocalAppData
+     * nor Roaming AppData is a safe persistence boundary for the library and secrets. Existing
+     * AppData locations are retained as one-time migration sources below.
      */
     val dataRoot: Path by lazy {
         val platform = DesktopPlatform.current
         resolveDataRoot(platform).also { root ->
             if (platform == DesktopPlatform.WINDOWS) {
+                migrateLegacyWindowsData(root, resolveLegacyRoamingWindowsDataRoot())
                 migrateLegacyWindowsData(root, resolveLegacyWindowsDataRoot())
             }
         }
@@ -41,10 +42,8 @@ internal object DesktopAppDirectories {
                 .resolve("Shinsou")
 
             DesktopPlatform.WINDOWS -> (
-                usablePath(environment("APPDATA"))
-                    ?: userHome?.resolve("AppData")?.resolve("Roaming")
-                    ?: usablePath(environment("LOCALAPPDATA"))
-                    ?: userHome?.resolve("AppData")?.resolve("Local")
+                usablePath(environment("USERPROFILE"))
+                    ?: userHome
                     ?: temporaryDirectory
                     ?: Path.of(".")
                 ).resolve(WINDOWS_DATA_DIRECTORY)
@@ -74,10 +73,25 @@ internal object DesktopAppDirectories {
             ).resolve(LEGACY_WINDOWS_DATA_DIRECTORY).normalize().toAbsolutePath()
     }
 
+    internal fun resolveLegacyRoamingWindowsDataRoot(
+        environment: (String) -> String? = System::getenv,
+        property: (String) -> String? = System::getProperty,
+    ): Path {
+        val userHome = usablePath(property("user.home"))
+        val temporaryDirectory = usablePath(property("java.io.tmpdir"))
+        return (
+            usablePath(environment("APPDATA"))
+                ?: userHome?.resolve("AppData")?.resolve("Roaming")
+                ?: temporaryDirectory
+                ?: Path.of(".")
+            ).resolve(WINDOWS_DATA_DIRECTORY).normalize().toAbsolutePath()
+    }
+
     /**
-     * Move data created by versions that used `%LOCALAPPDATA%\\Shinsou X` before the Windows
-     * installer cleanup behavior was diagnosed. If the new directory already exists, leave the
-     * legacy directory untouched so a failed or partial migration cannot destroy user data.
+     * Move data created by versions that used `%APPDATA%\\ShinsouXData` or
+     * `%LOCALAPPDATA%\\Shinsou X` before the Windows installer cleanup behavior was diagnosed.
+     * If the new directory already exists, leave the legacy directory untouched so a failed or
+     * partial migration cannot destroy user data.
      */
     internal fun migrateLegacyWindowsData(dataRoot: Path) {
         val legacyRoot = dataRoot.toAbsolutePath().normalize().parent

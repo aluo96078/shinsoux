@@ -316,9 +316,9 @@ compose.desktop {
                 // an existing Shinsou X installation instead of installing side-by-side.
                 upgradeUuid = "1E4B4C87-A9D7-4C41-9270-401E627717A9"
                 perUserInstall = true
-                // Keep binaries under Programs. The application data root is deliberately named
-                // ShinsouXData so jpackage's per-user uninstaller cannot treat it as a product
-                // directory and remove the user's library and secrets.
+                // Keep binaries under Programs. The application data root lives directly under
+                // the user profile as ShinsouXData so jpackage's per-user uninstaller cannot
+                // treat it as a product directory and remove the user's library and secrets.
                 installationPath = "Programs\\Shinsou X"
                 dirChooser = true
                 shortcut = true
