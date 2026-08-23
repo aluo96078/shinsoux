@@ -3,6 +3,10 @@ package dev.shinsou.kmp.reader
 import android.annotation.SuppressLint
 import android.net.http.SslError
 import android.os.SystemClock
+import android.view.GestureDetector
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
@@ -22,26 +26,31 @@ import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
 import org.json.JSONTokener
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Suppress("DEPRECATION")
 @Composable
 public actual fun EpubBrowserView(
     request: EpubRenderRequest,
     modifier: Modifier,
+    configuration: EpubBrowserConfiguration,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     selectionRequestKey: Long,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit,
     onSelectionChanged: (ReadingRange?) -> Unit,
+    onReaderTap: (ReaderTapAction) -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val currentLocatorChanged = rememberUpdatedState(onLocatorChanged)
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
+    val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
     val state = remember(request.publicationRootUrl) {
         val webView = WebView(context).apply {
             settings.apply {
                 // Publisher scripts remain blocked by the injected/response CSP. JavaScript is
-                // enabled only so the host can query the native DOM selection on explicit demand.
+                // enabled only for host-authored layout, navigation, viewport and selection work.
                 javaScriptEnabled = true
                 javaScriptCanOpenWindowsAutomatically = false
                 domStorageEnabled = false
@@ -58,12 +67,52 @@ public actual fun EpubBrowserView(
                 builtInZoomControls = true
                 displayZoomControls = false
             }
+            isHorizontalScrollBarEnabled = false
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFocusable = true
+            isFocusableInTouchMode = true
             removeJavascriptInterface("searchBoxJavaBridge_")
             removeJavascriptInterface("accessibility")
             removeJavascriptInterface("accessibilityTraversal")
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
         }
-        AndroidEpubBrowserState(webView, request).also { browserState ->
+        AndroidEpubBrowserState(webView, request, configuration).also { browserState ->
+            val tapDetector = GestureDetector(
+                context,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(event: MotionEvent): Boolean = true
+
+                    override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
+                        val width = webView.width
+                        val height = webView.height
+                        if (width <= 0 || height <= 0) return false
+                        browserState.tap(
+                            horizontalFraction = (event.x / width.toDouble()).coerceIn(0.0, 1.0),
+                            verticalFraction = (event.y / height.toDouble()).coerceIn(0.0, 1.0),
+                            onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                            onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+                            onError = { message -> currentError.value.invoke(message) },
+                        )
+                        return true
+                    }
+                },
+            )
+            webView.setOnTouchListener { view, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) view.requestFocus()
+                tapDetector.onTouchEvent(event)
+                // Observation only: WebView retains native scrolling, links, selection and zoom.
+                false
+            }
+            webView.setOnKeyListener { _, keyCode, event ->
+                browserState.handleKeyEvent(
+                    keyCode = keyCode,
+                    event = event,
+                    onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                    onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+                    onError = { message -> currentError.value.invoke(message) },
+                )
+            }
             webView.setOnScrollChangeListener { _, _, _, _, _ ->
                 browserState.sampleViewport(force = false) { locator ->
                     currentLocatorChanged.value.invoke(locator)
@@ -172,6 +221,26 @@ public actual fun EpubBrowserView(
         state.webView.loadUrl(documentUrl)
     }
 
+    LaunchedEffect(state, configuration) {
+        state.configure(
+            configuration = configuration,
+            onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+            onError = { message -> currentError.value.invoke(message) },
+        )
+    }
+
+    LaunchedEffect(state, navigationRequestKey) {
+        if (navigationRequestKey > 0L && navigationAction != null) {
+            state.navigate(
+                action = navigationAction,
+                configuration = configuration,
+                onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+                onError = { message -> currentError.value.invoke(message) },
+            )
+        }
+    }
+
     LaunchedEffect(state, selectionRequestKey) {
         if (selectionRequestKey > 0L) {
             state.captureSelection { range -> currentSelectionChanged.value.invoke(range) }
@@ -186,6 +255,9 @@ public actual fun EpubBrowserView(
     DisposableEffect(state) {
         onDispose {
             state.webView.stopLoading()
+            state.webView.setOnTouchListener(null)
+            state.webView.setOnKeyListener(null)
+            state.webView.setOnScrollChangeListener(null)
             state.webView.webViewClient = WebViewClient()
             state.webView.loadUrl("about:blank")
             state.close()
@@ -197,6 +269,7 @@ public actual fun EpubBrowserView(
 private class AndroidEpubBrowserState(
     val webView: WebView,
     initialRequest: EpubRenderRequest,
+    initialConfiguration: EpubBrowserConfiguration,
 ) {
     private val documentState = EpubBrowserDocumentState(initialRequest)
     private val resolverSlot = EpubBrowserResolverSlot(EpubPublicationResourceResolver(initialRequest))
@@ -205,8 +278,14 @@ private class AndroidEpubBrowserState(
     private var viewportEvaluationPending: Boolean = false
     private var forceViewportAfterPending: Boolean = false
     private var lastViewportEvaluationAtMillis: Long = 0L
+    private var configuration: EpubBrowserConfiguration = initialConfiguration
+    private var configurationGeneration: Long = 0L
+    private var documentReady: Boolean = false
+    private var closed: Boolean = false
+    private var pendingNavigation: PendingAndroidEpubNavigation? = null
 
     fun update(request: EpubRenderRequest): String {
+        documentReady = false
         resolverSlot.stage(EpubPublicationResourceResolver(request))
         val documentUrl = documentState.updateHostRequest(request)
         return epubBrowserUrlWithLoadGeneration(
@@ -221,6 +300,7 @@ private class AndroidEpubBrowserState(
         val sameCommittedDocument = target.hasExplicitAnchor &&
             target.documentIndex == documentState.committedRequest.documentIndex &&
             target.resourceHref == documentState.committedRequest.document.href
+        if (!sameCommittedDocument) documentReady = false
         return if (sameCommittedDocument) url else epubBrowserUrlWithLoadGeneration(url, generation)
     }
 
@@ -255,19 +335,18 @@ private class AndroidEpubBrowserState(
     ) {
         resolverSlot.commit()
         activate(loaded.target.request)
+        documentReady = false
         webView.evaluateJavascript(
             epubBrowserNavigationGuardScript(documentState.urlPolicy.browserPublicationRootUrl),
         ) { raw ->
             if (raw != "true") onError("The Android EPUB navigation guard could not start.")
         }
-        webView.post {
-            val script = if (loaded.restoreInitialLocator) {
-                epubBrowserRestoreScript(loaded.target.request)
-            } else {
-                epubBrowserViewportScript(loaded.target.request)
-            }
-            evaluateViewport(loaded.target.request, script, force = true, onLocator = onLocator)
-        }
+        configureAndRestoreDocument(
+            request = loaded.target.request,
+            restoreInitialLocator = loaded.restoreInitialLocator,
+            onLocator = onLocator,
+            onError = onError,
+        )
     }
 
     fun documentLoadFailed(view: WebView?, failedUrl: String): Boolean {
@@ -276,12 +355,14 @@ private class AndroidEpubBrowserState(
         resolverSlot.rollback()
         val rollback = documentState.documentLoadFailed(generation) ?: return false
         activate(rollback.request)
+        documentReady = true
         val currentUrl = view?.url
         if (!currentUrl.isNullOrBlank() &&
             epubBrowserUrlWithoutLoadGeneration(currentUrl) != rollback.browserUrl
         ) {
             val target = documentState.navigationRequested(rollback.browserUrl)
             if (target != null) {
+                documentReady = false
                 val retryUrl = epubBrowserUrlWithLoadGeneration(
                     rollback.browserUrl,
                     requireNotNull(documentState.pendingLoadGeneration),
@@ -289,11 +370,12 @@ private class AndroidEpubBrowserState(
                 view.post { view.loadUrl(retryUrl) }
             }
         }
+        if (documentReady) drainPendingNavigation()
         return true
     }
 
     fun sampleViewport(force: Boolean, onLocator: (ReadingLocator.Epub) -> Unit) {
-        if (!documentState.canSampleViewport) return
+        if (!documentReady || closed || !documentState.canSampleViewport) return
         val now = SystemClock.uptimeMillis()
         if (viewportEvaluationPending) {
             forceViewportAfterPending = forceViewportAfterPending || force
@@ -305,7 +387,7 @@ private class AndroidEpubBrowserState(
     }
 
     fun captureSelection(onRange: (ReadingRange?) -> Unit) {
-        if (!documentState.canSampleViewport) return onRange(null)
+        if (!documentReady || closed || !documentState.canSampleViewport) return onRange(null)
         val request = documentState.activeRequest
         webView.evaluateJavascript(epubBrowserSelectionScript(request)) { raw ->
             if (!documentState.canSampleViewport || documentState.activeRequest !== request) {
@@ -349,7 +431,95 @@ private class AndroidEpubBrowserState(
     )
 
     fun close() {
+        closed = true
+        documentReady = false
+        pendingNavigation = null
         resolverSlot.close()
+    }
+
+    fun configure(
+        configuration: EpubBrowserConfiguration,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (closed || this.configuration == configuration) return
+        this.configuration = configuration
+        configurationGeneration++
+        if (!documentState.canSampleViewport) return
+        val request = documentState.activeRequest
+        if (!documentReady) return
+        documentReady = false
+        configureAndRestoreDocument(
+            request = request,
+            restoreInitialLocator = false,
+            onLocator = onLocator,
+            onError = onError,
+        )
+    }
+
+    fun navigate(
+        action: ReaderTapAction,
+        configuration: EpubBrowserConfiguration,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onReaderTap: (ReaderTapAction) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (closed) return
+        if (!documentReady || !documentState.canSampleViewport) {
+            pendingNavigation = PendingAndroidEpubNavigation(
+                action = action,
+                onLocator = onLocator,
+                onReaderTap = onReaderTap,
+                onError = onError,
+            )
+            return
+        }
+        val request = documentState.activeRequest
+        evaluateAction(
+            request = request,
+            script = epubBrowserNavigationScript(request, configuration, action),
+            onLocator = onLocator,
+            onReaderTap = onReaderTap,
+            onError = onError,
+        )
+    }
+
+    fun tap(
+        horizontalFraction: Double,
+        verticalFraction: Double,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onReaderTap: (ReaderTapAction) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (!documentReady || closed || !documentState.canSampleViewport) return
+        val request = documentState.activeRequest
+        val activeConfiguration = configuration
+        evaluateAction(
+            request = request,
+            script = epubBrowserTapScript(
+                request = request,
+                configuration = activeConfiguration,
+                horizontalFraction = horizontalFraction,
+                verticalFraction = verticalFraction,
+            ),
+            onLocator = onLocator,
+            onReaderTap = onReaderTap,
+            onError = onError,
+        )
+    }
+
+    fun handleKeyEvent(
+        keyCode: Int,
+        event: KeyEvent,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onReaderTap: (ReaderTapAction) -> Unit,
+        onError: (String) -> Unit,
+    ): Boolean {
+        val action = readerActionForKey(keyCode, event, configuration) ?: return false
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            navigate(action, configuration, onLocator, onReaderTap, onError)
+        }
+        return true
     }
 
     private fun activate(request: EpubRenderRequest) {
@@ -358,11 +528,101 @@ private class AndroidEpubBrowserState(
         locatorEvents.updateRequest(request)
     }
 
+    private fun evaluateAction(
+        request: EpubRenderRequest,
+        script: String,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onReaderTap: (ReaderTapAction) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        webView.evaluateJavascript(script) { raw ->
+            if (!ownsReadyDocument(request)) return@evaluateJavascript
+            val result = raw.decodeJavascriptString()?.let(::decodeEpubBrowserActionResult)
+            if (result == null) {
+                onError("The Android EPUB page action could not be completed.")
+                return@evaluateJavascript
+            }
+            result.boundaryAction()?.let(onReaderTap)
+            webView.post {
+                if (ownsReadyDocument(request)) sampleViewport(force = true, onLocator = onLocator)
+            }
+        }
+    }
+
+    private fun ownsReadyDocument(request: EpubRenderRequest): Boolean =
+        !closed && documentReady && documentState.canSampleViewport && documentState.activeRequest === request
+
+    private fun ownsCommittedDocument(request: EpubRenderRequest): Boolean =
+        !closed && documentState.canSampleViewport && documentState.activeRequest === request
+
+    private fun configureAndRestoreDocument(
+        request: EpubRenderRequest,
+        restoreInitialLocator: Boolean,
+        onLocator: (ReadingLocator.Epub) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (!ownsCommittedDocument(request)) return
+        val generation = configurationGeneration
+        val appliedConfiguration = configuration
+        webView.evaluateJavascript(epubBrowserConfigureScript(request, appliedConfiguration)) { raw ->
+            if (!ownsCommittedDocument(request)) return@evaluateJavascript
+            if (generation != configurationGeneration) {
+                configureAndRestoreDocument(request, restoreInitialLocator, onLocator, onError)
+                return@evaluateJavascript
+            }
+            if (raw.decodeJavascriptString()?.let(::decodeEpubBrowserActionResult) == null) {
+                onError("The Android EPUB reader layout could not be applied.")
+            }
+            webView.post {
+                if (!ownsCommittedDocument(request)) return@post
+                if (generation != configurationGeneration) {
+                    configureAndRestoreDocument(request, restoreInitialLocator, onLocator, onError)
+                    return@post
+                }
+                val script = if (restoreInitialLocator) {
+                    epubBrowserRestoreScript(request)
+                } else {
+                    epubBrowserViewportScript(request)
+                }
+                evaluateViewport(
+                    request = request,
+                    script = script,
+                    force = true,
+                    onLocator = onLocator,
+                    onComplete = {
+                        if (!ownsCommittedDocument(request)) return@evaluateViewport
+                        if (generation != configurationGeneration) {
+                            configureAndRestoreDocument(request, restoreInitialLocator, onLocator, onError)
+                        } else {
+                            documentReady = true
+                            drainPendingNavigation()
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    private fun drainPendingNavigation() {
+        val pending = pendingNavigation ?: return
+        pendingNavigation = null
+        webView.post {
+            navigate(
+                action = pending.action,
+                configuration = configuration,
+                onLocator = pending.onLocator,
+                onReaderTap = pending.onReaderTap,
+                onError = pending.onError,
+            )
+        }
+    }
+
     private fun evaluateViewport(
         request: EpubRenderRequest,
         script: String,
         force: Boolean,
         onLocator: (ReadingLocator.Epub) -> Unit,
+        onComplete: () -> Unit = {},
     ) {
         viewportEvaluationPending = true
         lastViewportEvaluationAtMillis = SystemClock.uptimeMillis()
@@ -378,11 +638,51 @@ private class AndroidEpubBrowserState(
                     )?.let(onLocator)
                 }
             }
+            onComplete()
             if (forceViewportAfterPending) {
                 forceViewportAfterPending = false
                 webView.post { sampleViewport(force = true, onLocator = onLocator) }
             }
         }
+    }
+}
+
+private data class PendingAndroidEpubNavigation(
+    val action: ReaderTapAction,
+    val onLocator: (ReadingLocator.Epub) -> Unit,
+    val onReaderTap: (ReaderTapAction) -> Unit,
+    val onError: (String) -> Unit,
+)
+
+private fun readerActionForKey(
+    keyCode: Int,
+    event: KeyEvent,
+    configuration: EpubBrowserConfiguration,
+): ReaderTapAction? {
+    if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return null
+    if (event.isAltPressed || event.isCtrlPressed || event.isMetaPressed) return null
+    val rightToLeft = configuration.readingMode == EpubBrowserReadingMode.PAGED_RIGHT_TO_LEFT
+    return when (keyCode) {
+        KeyEvent.KEYCODE_PAGE_DOWN -> ReaderTapAction.NEXT_PAGE
+        KeyEvent.KEYCODE_PAGE_UP -> ReaderTapAction.PREVIOUS_PAGE
+        KeyEvent.KEYCODE_SPACE -> if (event.isShiftPressed) {
+            ReaderTapAction.PREVIOUS_PAGE
+        } else {
+            ReaderTapAction.NEXT_PAGE
+        }
+        KeyEvent.KEYCODE_DPAD_DOWN -> ReaderTapAction.NEXT_PAGE
+        KeyEvent.KEYCODE_DPAD_UP -> ReaderTapAction.PREVIOUS_PAGE
+        KeyEvent.KEYCODE_DPAD_RIGHT -> if (rightToLeft) {
+            ReaderTapAction.PREVIOUS_PAGE
+        } else {
+            ReaderTapAction.NEXT_PAGE
+        }
+        KeyEvent.KEYCODE_DPAD_LEFT -> if (rightToLeft) {
+            ReaderTapAction.NEXT_PAGE
+        } else {
+            ReaderTapAction.PREVIOUS_PAGE
+        }
+        else -> null
     }
 }
 

@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,10 +13,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -25,23 +29,45 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Brightness4
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -50,11 +76,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -63,6 +91,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -77,7 +106,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,6 +127,8 @@ import dev.shinsou.kmp.ui.BrowseManga
 import dev.shinsou.kmp.ui.BrowsePage
 import dev.shinsou.kmp.ui.BrowseRepository
 import dev.shinsou.kmp.ui.BrowseSource
+import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.plugin.toBrowseFilterV2
 import dev.shinsou.kmp.ui.BrowseSortSelection
 import dev.shinsou.kmp.ui.BrowseTriState
 import dev.shinsou.kmp.ui.ImportedDocument
@@ -96,8 +136,14 @@ import dev.shinsou.kmp.ui.MigrationCandidate
 import dev.shinsou.kmp.ui.SourceCookie
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.ui.TypedReaderContentSession
 import dev.shinsou.kmp.app.ContentFeatureRuntime
+import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.model.ReaderSettings
+import dev.shinsou.kmp.reader.ReaderTapAction
+import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
@@ -108,7 +154,6 @@ import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
-import dev.shinsou.kmp.ui.components.LoadingScrim
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -138,6 +183,7 @@ enum class BrowseSection {
 private enum class SourceCatalogueMode {
     Popular,
     Latest,
+    Favorites,
 }
 
 internal data class SourceSearchResult(
@@ -158,6 +204,11 @@ private const val GLOBAL_SEARCH_VISIBLE_RESULTS: Int = 10
 private data class PendingReviewedShuYueInstall(
     val extension: BrowseExtension,
     val review: ShuYueQuarantineReviewV2,
+)
+
+private data class PendingPluginEventGrant(
+    val extension: BrowseExtension,
+    val review: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
 )
 
 /** Tracks only the newest catalogue request and cannot let an older job clear its replacement. */
@@ -191,19 +242,37 @@ fun BrowseScreen(
     onImportDocument: suspend (acceptedExtensions: Set<String>) -> ImportedDocument? = { null },
     contentFeatures: ContentFeatureRuntime? = null,
     copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
+    readerSettings: ReaderSettings = ReaderSettings(),
+    onReaderSettingsChange: (ReaderSettings) -> Unit = {},
+    openExternalUrl: (String) -> Unit = {},
+    shareText: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     systemBackRequest: Long = 0L,
     backGestureProgress: Float = 0f,
     onBackAvailabilityChanged: (Boolean) -> Unit = {},
+    onReaderVisibilityChanged: (Boolean) -> Unit = {},
+    onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit = { _, _, _ -> },
+    /** App-owned library mutation for novel publications; source favorites remain source-owned. */
+    onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
+    isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
+    /** Stable v2 source identities corresponding to [BrowseSettings.pinnedSourceKeys]. */
+    pinnedSourceKeys: Set<String> = emptySet(),
+    onSourcePinnedKeyChange: (sourceKey: String, pinned: Boolean) -> Unit = { _, _ -> },
 ) {
     val strings = LocalShinsouStrings.current
     val snapshot by callbacks.state.collectAsState()
+    val sourceRefreshInvalidations by callbacks.sourceRefreshInvalidations.collectAsState()
     val scope = rememberCoroutineScope()
     var section by remember { mutableStateOf(initialSection) }
     var query by remember { mutableStateOf("") }
     var activeSource by remember { mutableStateOf<BrowseSource?>(null) }
     var globalSearchVisible by remember { mutableStateOf(false) }
     var activeV2Publication by remember { mutableStateOf<BrowseManga?>(null) }
+    var activeV2Reader by remember { mutableStateOf(false) }
+    // A reader is owned by ExtensionV2PublicationScreen. Keep a monotonically increasing
+    // request so a system back gesture can ask that child to dispose its materialized session
+    // before the parent changes the layout back to the publication detail pane.
+    var v2ReaderBackRequest by remember { mutableStateOf(0L) }
     var page by remember { mutableStateOf(BrowsePage()) }
     var catalogueLoading by remember { mutableStateOf(false) }
     var catalogueLoadingMore by remember { mutableStateOf(false) }
@@ -212,11 +281,28 @@ fun BrowseScreen(
     var catalogueRequestToken by remember { mutableStateOf(0) }
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
+    var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
     var reviewedInstallBusyId by remember { mutableStateOf<String?>(null) }
     var handledSystemBackRequest by remember { mutableStateOf(systemBackRequest) }
     val operationSnackbar = remember { SnackbarHostState() }
     val hasBrowseOverlay = activeSource != null || globalSearchVisible || activeV2Publication != null
     val currentBackAvailabilityCallback = rememberUpdatedState(onBackAvailabilityChanged)
+    val currentReaderVisibilityCallback = rememberUpdatedState(onReaderVisibilityChanged)
+
+    DisposableEffect(Unit) {
+        onDispose { currentReaderVisibilityCallback.value(false) }
+    }
+
+    LaunchedEffect(snapshot.extensions.map { Triple(it.id, it.version, it.installed) }) {
+        if (pendingPluginEventGrant == null) {
+            snapshot.extensions.firstOrNull { it.installed && !it.reviewedShuYueV2 }?.let { extension ->
+                callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
+                    pendingPluginEventGrant = PendingPluginEventGrant(extension, review)
+                }
+            }
+
+        }
+    }
 
     fun cancelCatalogueLoad() {
         // Invalidate completion handlers before cancellation so an old request cannot mutate the
@@ -242,6 +328,9 @@ fun BrowseScreen(
         if (systemBackRequest != handledSystemBackRequest) {
             handledSystemBackRequest = systemBackRequest
             when {
+                activeV2Reader -> {
+                    v2ReaderBackRequest += 1
+                }
                 activeV2Publication != null -> activeV2Publication = null
                 activeSource != null -> {
                     cancelCatalogueLoad()
@@ -292,6 +381,7 @@ fun BrowseScreen(
     fun openManga(item: BrowseManga) {
         if (item.sourceKey != null) {
             activeV2Publication = item
+            activeV2Reader = false
             return
         }
         // Let the app route to an immediate loading preview. Resolving source metadata can be
@@ -328,12 +418,35 @@ fun BrowseScreen(
                 withFrameNanos { }
                 val result = withContext(Dispatchers.Default) {
                     val loaded = if (source.sourceKey != null) {
-                        val v2Page = when {
+                    val v2Options = BrowseOptionsV2(
+                        filters = filters.orEmpty().map { it.toBrowseFilterV2() },
+                    )
+                    val v2Page = when {
+                            mode == SourceCatalogueMode.Favorites -> {
+                                val optionKey = source.favoriteBrowseOptionKey
+                                    ?: error("Source does not expose a favorites catalogue")
+                                callbacks.browseSourceV2(
+                                    sourceKey = source.sourceKey,
+                                    options = BrowseOptionsV2(
+                                        mapOf(optionKey to source.favoriteBrowseOptionValue),
+                                    ),
+                                    page = requestedPage - 1,
+                                )
+                            }
                             mode == SourceCatalogueMode.Latest && search.isBlank() ->
                                 callbacks.latestSourceV2(source.sourceKey, requestedPage - 1)
                             search.isNotBlank() ->
-                                callbacks.searchSourceV2(source.sourceKey, search, requestedPage - 1)
-                            else -> callbacks.browseSourceV2(source.sourceKey, page = requestedPage - 1)
+                                callbacks.searchSourceV2(
+                                    source.sourceKey,
+                                    search,
+                                    requestedPage - 1,
+                                    options = v2Options,
+                                )
+                            else -> callbacks.browseSourceV2(
+                                source.sourceKey,
+                                options = v2Options,
+                                page = requestedPage - 1,
+                            )
                         }
                         BrowsePage(
                             items = v2Page.items.map { publication -> publication.toBrowseManga(source) },
@@ -341,6 +454,8 @@ fun BrowseScreen(
                         )
                     } else if (mode == SourceCatalogueMode.Latest && search.isBlank()) {
                         callbacks.browseSourceLatest(source.id, requestedPage)
+                    } else if (mode == SourceCatalogueMode.Favorites) {
+                        callbacks.browseSourceFavorites(source.id, requestedPage)
                     } else {
                         callbacks.browseSource(
                             sourceId = source.id,
@@ -397,8 +512,15 @@ fun BrowseScreen(
                             Icon(Icons.Outlined.Search, contentDescription = strings.text("Search all sources"))
                         }
                     }
-                    IconButton(onClick = { launchOperation { callbacks.refresh() } }) {
-                        Icon(Icons.Outlined.Refresh, strings.refresh)
+                    IconButton(
+                        onClick = { launchOperation { callbacks.refresh() } },
+                        enabled = !snapshot.isRefreshing,
+                    ) {
+                        if (snapshot.isRefreshing) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Outlined.Refresh, strings.refresh)
+                        }
                     }
                 },
             )
@@ -443,8 +565,10 @@ fun BrowseScreen(
                                 ?: callbacks.setSourceEnabled(source.id, enabled)
                         }
                     },
-                    pinnedSourceIds = pinnedSourceIds,
-                    onSourcePinnedChange = onSourcePinnedChange,
+                        pinnedSourceIds = pinnedSourceIds,
+                        pinnedSourceKeys = pinnedSourceKeys,
+                        onSourcePinnedChange = onSourcePinnedChange,
+                        onSourcePinnedKeyChange = onSourcePinnedKeyChange,
                     callbacks = callbacks,
                     onImportDocument = onImportDocument,
                     onOpen = { source ->
@@ -475,7 +599,12 @@ fun BrowseScreen(
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
                         if (extension.reviewedShuYueV2) stageReviewedShuYue(extension)
-                        else launchOperation { callbacks.installExtension(extension.id) }
+                        else launchOperation {
+                            callbacks.installExtension(extension.id)
+                            callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
+                                pendingPluginEventGrant = PendingPluginEventGrant(extension, review)
+                            }
+                        }
                     },
                     onUninstall = { extension ->
                         launchOperation {
@@ -539,6 +668,7 @@ fun BrowseScreen(
             ) {
                 SourceCatalogueScreen(
                     source = source,
+                    refreshGeneration = source.sourceKey?.let(sourceRefreshInvalidations::get) ?: 0L,
                     page = page,
                     loading = catalogueLoading,
                     loadingMore = catalogueLoadingMore,
@@ -569,31 +699,66 @@ fun BrowseScreen(
             }
         }
         activeV2Publication?.let { publication ->
-            Surface(
-                color = MaterialTheme.colorScheme.background,
-                modifier = Modifier
+            val source = snapshot.sources.firstOrNull { source ->
+                source.sourceKey == publication.sourceKey
+            }
+            val isNovelPublication = source?.contentType == PluginContentType.NOVEL
+            val supportsFavorite = source?.supportsFavorites == true || isNovelPublication
+            val localFavorite = isNovelPublication && isLocalLibraryFavorite(publication)
+            BoxWithConstraints(
+                Modifier
                     .fillMaxSize()
                     .graphicsLayer {
                         translationX = size.width * backGestureProgress.coerceIn(0f, 1f)
                     },
             ) {
-                ExtensionV2PublicationScreen(
-                    callbacks = callbacks,
-                    item = publication,
-                    contentFeatures = contentFeatures,
-                    copyText = copyText,
-                    onBack = { activeV2Publication = null },
-                )
+                // Keep the catalogue mounted on desktop, exactly like the legacy manga detail
+                // pane. Mobile still receives a full-screen destination so the chapter list can
+                // scroll naturally without squeezing the source grid.
+                val detailModifier = if (maxWidth >= 900.dp && !activeV2Reader) {
+                    Modifier.fillMaxHeight().fillMaxWidth(0.68f).align(Alignment.CenterEnd)
+                } else {
+                    Modifier.fillMaxSize()
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = detailModifier,
+                ) {
+                    ExtensionV2PublicationScreen(
+                        callbacks = callbacks,
+                        item = publication,
+                        supportsFavorite = supportsFavorite,
+                        localLibrary = isNovelPublication,
+                        localLibraryFavorite = localFavorite,
+                        onToggleLocalLibrary = onToggleLocalLibrary,
+                        refreshGeneration = publication.sourceKey?.let(sourceRefreshInvalidations::get) ?: 0L,
+                        contentFeatures = contentFeatures,
+                        copyText = copyText,
+                        readerSettings = readerSettings,
+                        onReaderSettingsChange = onReaderSettingsChange,
+                        onOpenExternalUrl = openExternalUrl,
+                        onShareText = shareText,
+                        onReaderVisibilityChanged = { visible ->
+                            activeV2Reader = visible
+                            currentReaderVisibilityCallback.value(visible)
+                        },
+                        onReaderProgress = onReaderProgress,
+                        readerBackRequest = v2ReaderBackRequest,
+                        onBack = {
+                            activeV2Reader = false
+                            currentReaderVisibilityCallback.value(false)
+                            activeV2Publication = null
+                        },
+                    )
+                }
             }
         }
-        LoadingScrim(
-            visible = snapshot.isRefreshing,
-            label = strings.refresh,
-        )
-        SnackbarHost(
-            hostState = operationSnackbar,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(18.dp),
-        )
+        if (!activeV2Reader) {
+            SnackbarHost(
+                hostState = operationSnackbar,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(18.dp),
+            )
+        }
     }
 
 
@@ -644,6 +809,40 @@ fun BrowseScreen(
             },
         )
     }
+
+    pendingPluginEventGrant?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingPluginEventGrant = null },
+            title = { Text(strings.text("Review host permissions")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
+                    Text("SHA-256: ${pending.review.artifact.sha256}", style = MaterialTheme.typography.labelSmall)
+                    pending.review.requestedPermissions.sortedBy { it.name }.forEach { permission ->
+                        Text("• ${permission.name}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        strings.text("Host event permissions remain blocked until you approve this exact version and digest."),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    pendingPluginEventGrant = null
+                    launchOperation {
+                        callbacks.approvePluginEventGrantReview(
+                            pending.extension.id,
+                            pending.review.requestedPermissions,
+                        )
+                    }
+                }) { Text(strings.text("Approve")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPluginEventGrant = null }) { Text(strings.cancel) }
+            },
+        )
+    }
 }
 
 private fun ShuYueExecutionPermissionV2.localizedLabel(strings: ShinsouStrings): String = strings.text(
@@ -671,8 +870,17 @@ private fun Throwable.diagnosticMessage(): String {
 private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
     val diagnostic = diagnosticMessage()
     val translated = strings.text(diagnostic)
-    return if (translated != diagnostic) translated else strings.text("The operation could not be completed.")
+    if (translated != diagnostic) return translated
+    // Repository/extension failures carry a deliberately bounded, non-secret message (status,
+    // URL policy, metadata field, etc.). Hiding it behind one generic sentence made ShuYue
+    // `index.json`/legacy `repo.json` mismatches impossible to diagnose from the UI.
+    return diagnostic
+        .filterNot(Char::isISOControl)
+        .take(MAX_DIAGNOSTIC_MESSAGE_CHARS)
+        .ifBlank { strings.text("The operation could not be completed.") }
 }
+
+private const val MAX_DIAGNOSTIC_MESSAGE_CHARS: Int = 512
 
 @Composable
 private fun GlobalSearchScreen(
@@ -857,15 +1065,307 @@ private fun BrowseResultCard(item: BrowseManga, onClick: () -> Unit) {
 private data class PendingExtensionRepresentationSelection(
     val selection: ExtensionUnitSelectionV2,
     val representationIds: List<String>,
+    val openReader: Boolean,
 )
 
+private enum class ExtensionChapterFilter {
+    ALL,
+    UNREAD,
+    READ,
+    BOOKMARKED,
+    DOWNLOADED,
+}
+
+@Composable
+private fun ExtensionNovelReaderShell(
+    title: String,
+    currentUnitTitle: String,
+    units: List<ExtensionUnitSelectionV2>,
+    activeUnitIndex: Int,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onOpenUnit: (ExtensionUnitSelectionV2) -> Unit,
+    onChapterList: () -> Unit,
+    session: TypedReaderContentSession,
+    features: ContentFeatureRuntime,
+    copyText: (label: String, text: String) -> Boolean,
+    readerSettings: ReaderSettings,
+    onReaderSettingsChange: (ReaderSettings) -> Unit,
+    onCompleted: () -> Unit,
+    onReaderProgress: (ReadingLocator) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val hasCurrent = activeUnitIndex in units.indices
+    val epubReader = session.content.representation is ContentRepresentation.EpubSpine
+    val initialPage = session.content.navigation.indexOf(session.content.initialLocator) ?: 0
+    var controlsVisible by remember(session) { mutableStateOf(false) }
+    var settingsVisible by remember(session) { mutableStateOf(false) }
+    var currentPage by remember(session) { mutableStateOf(if (epubReader) initialPage else 0) }
+    var pageCount by remember(session) {
+        mutableStateOf(if (epubReader) session.content.navigation.itemCount.coerceAtLeast(1) else 1)
+    }
+    var requestedPage by remember(session) { mutableStateOf(if (epubReader) initialPage else 0) }
+    var pageRequestSerial by remember(session) { mutableStateOf(0L) }
+    val focusRequester = remember { FocusRequester() }
+    val heldNavigationKeys = remember(session) { mutableSetOf<Key>() }
+
+    fun requestPage(index: Int) {
+        when {
+            index < 0 && hasCurrent && activeUnitIndex > 0 && !busy ->
+                onOpenUnit(units[activeUnitIndex - 1])
+            index >= pageCount && hasCurrent && activeUnitIndex + 1 < units.size && !busy ->
+                onOpenUnit(units[activeUnitIndex + 1])
+            index in 0 until pageCount -> {
+                requestedPage = index
+                pageRequestSerial++
+            }
+        }
+    }
+
+    fun handleTap(action: ReaderTapAction) {
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
+            ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
+            ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
+        }
+    }
+
+    LaunchedEffect(session, settingsVisible) {
+        heldNavigationKeys.clear()
+        if (!settingsVisible && !epubReader) focusRequester.requestFocus()
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF211D1B))
+            // The iOS host is edge-to-edge. Reserve the top safe area for the Face ID cutout
+            // for the entire reader surface, so the first paragraph is shifted with the chrome.
+            .statusBarsPadding()
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp) {
+                    heldNavigationKeys.remove(event.key)
+                    return@onPreviewKeyEvent false
+                }
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (epubReader && event.key != Key.Escape && event.key != Key.Back &&
+                    event.key != Key.NavigatePrevious
+                ) {
+                    return@onPreviewKeyEvent false
+                }
+                val handledNavigationKey = when (event.key) {
+                    Key.DirectionDown, Key.NumPadDirectionDown,
+                    Key.PageDown, Key.NumPadPageDown,
+                    Key.Spacebar,
+                    Key.DirectionUp, Key.NumPadDirectionUp,
+                    Key.PageUp, Key.NumPadPageUp,
+                    -> true
+                    Key.DirectionRight, Key.NumPadDirectionRight,
+                    Key.DirectionLeft, Key.NumPadDirectionLeft,
+                    -> !isNovelContinuousMode(readerSettings.readingMode)
+                    Key.Escape, Key.Back, Key.NavigatePrevious,
+                    -> true
+                    else -> false
+                }
+                if (handledNavigationKey && !heldNavigationKeys.add(event.key)) {
+                    return@onPreviewKeyEvent true
+                }
+                when (event.key) {
+                    Key.DirectionDown, Key.NumPadDirectionDown,
+                    Key.PageDown, Key.NumPadPageDown,
+                    Key.Spacebar,
+                    -> {
+                        handleTap(ReaderTapAction.NEXT_PAGE)
+                        true
+                    }
+                    Key.DirectionUp, Key.NumPadDirectionUp,
+                    Key.PageUp, Key.NumPadPageUp,
+                    -> {
+                        handleTap(ReaderTapAction.PREVIOUS_PAGE)
+                        true
+                    }
+                    Key.DirectionRight, Key.NumPadDirectionRight -> {
+                        if (isNovelContinuousMode(readerSettings.readingMode)) return@onPreviewKeyEvent false
+                        handleTap(
+                            if (readerSettings.readingMode == dev.shinsou.kmp.domain.model.ReadingMode.PAGER_RTL) {
+                                ReaderTapAction.PREVIOUS_PAGE
+                            } else {
+                                ReaderTapAction.NEXT_PAGE
+                            },
+                        )
+                        true
+                    }
+                    Key.DirectionLeft, Key.NumPadDirectionLeft -> {
+                        if (isNovelContinuousMode(readerSettings.readingMode)) return@onPreviewKeyEvent false
+                        handleTap(
+                            if (readerSettings.readingMode == dev.shinsou.kmp.domain.model.ReadingMode.PAGER_RTL) {
+                                ReaderTapAction.NEXT_PAGE
+                            } else {
+                                ReaderTapAction.PREVIOUS_PAGE
+                            },
+                        )
+                        true
+                    }
+                    Key.Escape, Key.Back, Key.NavigatePrevious -> {
+                        onBack()
+                        true
+                    }
+                    else -> false
+                }
+            },
+    ) {
+        UnifiedContentReader(
+            session = session,
+            features = features,
+            copyText = copyText,
+            settings = readerSettings,
+            requestedPageIndex = requestedPage,
+            pageRequestSerial = pageRequestSerial,
+            readerControlsVisible = controlsVisible,
+            onPageIndexChanged = { index, count ->
+                currentPage = index
+                pageCount = count.coerceAtLeast(1)
+            },
+            onLocatorChanged = { locator ->
+                onReaderProgress(locator)
+                val navigation = session.content.navigation
+                if (navigation.indexOf(locator) == navigation.itemCount - 1 &&
+                    (locator.progression ?: 0.0) >= 0.995
+                ) {
+                    onCompleted()
+                }
+            },
+            onReaderTap = ::handleTap,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        if (controlsVisible) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.88f),
+                contentColor = Color.White,
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Outlined.ArrowBack, strings.text("Close reader"))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "$currentUnitTitle · ${currentPage + 1} / $pageCount",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(onClick = onChapterList, enabled = units.isNotEmpty()) {
+                        Icon(Icons.Outlined.MenuBook, strings.chapters)
+                    }
+                    IconButton(onClick = { settingsVisible = true }) {
+                        Icon(Icons.Outlined.Settings, strings.settings)
+                    }
+                }
+            }
+            // ShuYue-style novel chrome: keep the action strip out of the reading surface until
+            // the centre tap toggles the controls. EPUB keeps its semantic search/speech/note
+            // strip inside UnifiedContentReader; plain-text novels use this compact icon-only bar.
+            if (!epubReader) {
+                val canGoPrevious = currentPage > 0 || (hasCurrent && activeUnitIndex > 0 && !busy)
+                val canGoNext = currentPage + 1 < pageCount ||
+                    (hasCurrent && activeUnitIndex + 1 < units.size && !busy)
+                val previousOnLeft = readerSettings.readingMode !=
+                    dev.shinsou.kmp.domain.model.ReadingMode.PAGER_RTL
+                val leftEnabled = if (previousOnLeft) canGoPrevious else canGoNext
+                val rightEnabled = if (previousOnLeft) canGoNext else canGoPrevious
+                val leftAction = if (previousOnLeft) {
+                    { requestPage(currentPage - 1) }
+                } else {
+                    { requestPage(currentPage + 1) }
+                }
+                val rightAction = if (previousOnLeft) {
+                    { requestPage(currentPage + 1) }
+                } else {
+                    { requestPage(currentPage - 1) }
+                }
+                Row(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.92f))
+                        .navigationBarsPadding()
+                        .padding(horizontal = 34.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    IconButton(onClick = { settingsVisible = true }) {
+                        Icon(
+                            Icons.Outlined.Brightness4,
+                            contentDescription = strings.settings,
+                            tint = Color.White,
+                        )
+                    }
+                    IconButton(onClick = onChapterList, enabled = units.isNotEmpty()) {
+                        Icon(
+                            Icons.Outlined.MenuBook,
+                            contentDescription = strings.chapters,
+                            tint = Color.White,
+                        )
+                    }
+                    IconButton(onClick = leftAction, enabled = leftEnabled) {
+                        Icon(
+                            Icons.Outlined.KeyboardArrowLeft,
+                            contentDescription = strings.text("Previous page"),
+                            tint = if (leftEnabled) Color.White else Color.White.copy(alpha = 0.32f),
+                        )
+                    }
+                    IconButton(onClick = rightAction, enabled = rightEnabled) {
+                        Icon(
+                            Icons.Outlined.KeyboardArrowRight,
+                            contentDescription = strings.text("Next page"),
+                            tint = if (rightEnabled) Color.White else Color.White.copy(alpha = 0.32f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (settingsVisible) {
+        ReaderSettingsSheet(
+            settings = readerSettings,
+            textContent = true,
+            onChange = onReaderSettingsChange,
+            onDismiss = { settingsVisible = false },
+        )
+    }
+}
+
 /** Exact-keyed native extension path; host-issued selections remain the only content authority. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtensionV2PublicationScreen(
     callbacks: BrowseCallbacks,
     item: BrowseManga,
+    supportsFavorite: Boolean,
+    localLibrary: Boolean,
+    localLibraryFavorite: Boolean,
+    onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
+    refreshGeneration: Long,
     contentFeatures: ContentFeatureRuntime?,
     copyText: (label: String, text: String) -> Boolean,
+    readerSettings: ReaderSettings,
+    onReaderSettingsChange: (ReaderSettings) -> Unit,
+    onOpenExternalUrl: (String) -> Unit,
+    onShareText: (String, String) -> Unit,
+    onReaderVisibilityChanged: (Boolean) -> Unit,
+    onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit,
+    readerBackRequest: Long = 0L,
     onBack: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
@@ -874,6 +1374,9 @@ private fun ExtensionV2PublicationScreen(
     val remotePublicationId = requireNotNull(item.remotePublicationId)
     var publicationPage by remember(item.identityKey) {
         mutableStateOf<ExtensionPublicationPageV2?>(null)
+    }
+    var refreshedPublication by remember(item.identityKey) {
+        mutableStateOf<RemotePublicationV2?>(null)
     }
     var units by remember(item.identityKey) {
         mutableStateOf<List<ExtensionUnitSelectionV2>>(emptyList())
@@ -889,52 +1392,46 @@ private fun ExtensionV2PublicationScreen(
     var readerSession by remember(item.identityKey) {
         mutableStateOf<dev.shinsou.kmp.ui.TypedReaderContentSession?>(null)
     }
+    var readerUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var chapterListVisible by remember(item.identityKey) { mutableStateOf(false) }
+    var handledReaderBackRequest by remember(item.identityKey) {
+        mutableStateOf(readerBackRequest)
+    }
     var pendingRepresentation by remember(item.identityKey) {
         mutableStateOf<PendingExtensionRepresentationSelection?>(null)
     }
+    var favorite by remember(item.identityKey, localLibraryFavorite) {
+        mutableStateOf(localLibrary && localLibraryFavorite)
+    }
+    var notes by remember(item.identityKey) { mutableStateOf("") }
+    var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var bookmarkedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var downloadedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var chapterFilter by remember(item.identityKey) { mutableStateOf(ExtensionChapterFilter.ALL) }
+    var descending by remember(item.identityKey) { mutableStateOf(true) }
 
-    val openedReader = readerSession
-    if (openedReader != null && contentFeatures != null) {
-        Column(Modifier.fillMaxSize()) {
-            ScreenHeader(
-                title = publicationPage?.publication?.title ?: item.title,
-                subtitle = strings.text("Extension content"),
-                leading = {
-                    IconButton(onClick = { readerSession = null }) {
-                        Icon(Icons.Outlined.ArrowBack, strings.text("Back"))
-                    }
-                },
-            )
-            UnifiedContentReader(
-                session = openedReader,
-                features = contentFeatures,
-                copyText = copyText,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        return
+    // Catalogue metadata is already available when the user taps a result. Use it as the
+    // immediate detail hint so chapters do not wait for a second metadata roundtrip.
+    val cataloguePublication = remember(item.identityKey) {
+        RemotePublicationV2(
+            remoteId = remotePublicationId,
+            title = item.title,
+            url = item.url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+            thumbnailUrl = item.thumbnailUrl,
+            author = item.author,
+            artist = item.artist,
+            description = item.description,
+            genre = item.genre,
+            status = item.status,
+        )
     }
 
-    suspend fun loadUnitPage(requestedPage: Int, append: Boolean) {
-        val loaded = withContext(Dispatchers.Default) {
-            callbacks.extensionPublicationPageV2(sourceKey, remotePublicationId, requestedPage)
-        }
-        check(loaded.sourceKey == sourceKey) { "Extension publication source identity changed" }
-        check(loaded.publication.remoteId == remotePublicationId) {
-            "Extension publication identity changed"
-        }
-        check(loaded.page == requestedPage) { "Extension unit page identity changed" }
-        publicationPage = publicationPage ?: loaded
-        units = if (append) {
-            (units + loaded.units).distinctBy { it.unit.remoteId }
-        } else {
-            loaded.units
-        }
-        nextPage = requestedPage + 1
-        hasNextPage = loaded.hasNextPage
-    }
-
-    fun materialize(selection: ExtensionUnitSelectionV2, representationId: String? = null) {
+    fun materialize(
+        selection: ExtensionUnitSelectionV2,
+        representationId: String? = null,
+        openReader: Boolean = true,
+    ) {
         if (busyUnitId != null) return
         busyUnitId = selection.unit.remoteId
         operationMessage = null
@@ -944,7 +1441,7 @@ private fun ExtensionV2PublicationScreen(
             try {
                 val opened = withContext(Dispatchers.Default) {
                     val materialization = callbacks.materializeExtensionContentV2(selection, representationId)
-                    if (contentFeatures != null) {
+                    if (openReader && contentFeatures != null) {
                         callbacks.openMaterializedExtensionContentV2(materialization)
                     } else {
                         null
@@ -952,7 +1449,14 @@ private fun ExtensionV2PublicationScreen(
                 }
                 if (opened != null) {
                     readerSession = opened
+                    readerUnitId = selection.unit.remoteId
+                    // Keep the parent layout in sync with the session creation frame. The
+                    // lifecycle effect below remains a fallback, but relying on it alone lets
+                    // desktop briefly (and sometimes permanently) retain the split catalogue
+                    // pane while the novel reader is already visible.
+                    onReaderVisibilityChanged(true)
                 } else {
+                    downloadedUnitIds = downloadedUnitIds + selection.unit.remoteId
                     operationMessage = strings.text("Content saved for offline reading.")
                 }
             } catch (cancelled: CancellationException) {
@@ -961,6 +1465,7 @@ private fun ExtensionV2PublicationScreen(
                 pendingRepresentation = PendingExtensionRepresentationSelection(
                     selection = selection,
                     representationIds = required.availableIds,
+                    openReader = openReader,
                 )
             } catch (error: Throwable) {
                 operationFailed = true
@@ -971,9 +1476,163 @@ private fun ExtensionV2PublicationScreen(
         }
     }
 
-    LaunchedEffect(item.identityKey) {
+    val openedReader = readerSession
+    val activeUnitIndex = readerUnitId?.let { id -> units.indexOfFirst { it.unit.remoteId == id } } ?: -1
+    // Visibility is opened explicitly when materialization returns and closed explicitly by
+    // the reader/back handlers below. Do not emit a transient `false` from an effect keyed only
+    // by a nullable session: during the first materialization recomposition that stale callback
+    // can race the `true` notification and put desktop back into the split catalogue layout.
+    LaunchedEffect(openedReader) {
+        if (openedReader != null) onReaderVisibilityChanged(true)
+    }
+    LaunchedEffect(readerBackRequest) {
+        if (readerBackRequest == 0L || readerBackRequest == handledReaderBackRequest) return@LaunchedEffect
+        handledReaderBackRequest = readerBackRequest
+        chapterListVisible = false
+        readerSession = null
+        readerUnitId = null
+        onReaderVisibilityChanged(false)
+    }
+    if (openedReader != null && contentFeatures != null) {
+        ExtensionNovelReaderShell(
+            title = publicationPage?.publication?.title ?: item.title,
+            currentUnitTitle = units.getOrNull(activeUnitIndex)?.unit?.title
+                ?: item.title,
+            units = units,
+            activeUnitIndex = activeUnitIndex,
+            busy = busyUnitId != null,
+            onBack = {
+                readerSession = null
+                readerUnitId = null
+                onReaderVisibilityChanged(false)
+            },
+            onOpenUnit = { selection -> materialize(selection, openReader = true) },
+            onChapterList = { chapterListVisible = true },
+            session = openedReader,
+            features = contentFeatures,
+            copyText = copyText,
+            readerSettings = readerSettings,
+            onReaderSettingsChange = onReaderSettingsChange,
+            onCompleted = {
+                readerUnitId?.let { unitId -> readUnitIds = readUnitIds + unitId }
+            },
+            onReaderProgress = { locator ->
+                val publicationTitle = publicationPage?.publication?.title ?: item.title
+                val unitTitle = units.getOrNull(activeUnitIndex)?.unit?.title ?: item.title
+                // Start the hand-off synchronously so a rapid reader close/navigation cannot
+                // cancel the child coroutine before it queues the app-owned history write.
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    onReaderProgress(publicationTitle, unitTitle, locator)
+                }
+            },
+        )
+        if (chapterListVisible) {
+            ModalBottomSheet(onDismissRequest = { chapterListVisible = false }) {
+                Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                    Text(
+                        strings.chapters,
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
+                    )
+                    LazyColumn(Modifier.fillMaxWidth()) {
+                        items(units, key = { it.unit.remoteId }) { selection ->
+                            val selected = selection.unit.remoteId == readerUnitId
+                            TextButton(
+                                onClick = {
+                                    chapterListVisible = false
+                                    if (!selected) materialize(selection, openReader = true)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    selection.unit.title,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    suspend fun loadUnitPage(requestedPage: Int, append: Boolean) {
+        val loaded = withContext(Dispatchers.Default) {
+            callbacks.extensionPublicationUnitsPageV2(
+                sourceKey = sourceKey,
+                remotePublicationId = remotePublicationId,
+                publication = publicationPage?.publication ?: cataloguePublication,
+                page = requestedPage,
+            )
+        }
+        check(loaded.sourceKey == sourceKey) { "Extension publication source identity changed" }
+        check(loaded.publication.remoteId == remotePublicationId) {
+            "Extension publication identity changed"
+        }
+        check(loaded.page == requestedPage) { "Extension unit page identity changed" }
+        publicationPage = if (append) publicationPage ?: loaded else loaded
+        units = if (append) {
+            (units + loaded.units).distinctBy { it.unit.remoteId }
+        } else {
+            loaded.units
+        }
+        nextPage = requestedPage + 1
+        hasNextPage = loaded.hasNextPage
+    }
+
+    fun downloadUnits(selections: List<ExtensionUnitSelectionV2>) {
+        val pending = selections.distinctBy { it.unit.remoteId }
+        if (pending.isEmpty() || busyUnitId != null) return
+        operationMessage = null
+        operationFailed = false
+        scope.launch {
+            withFrameNanos { }
+            try {
+                pending.forEach { selection ->
+                    busyUnitId = selection.unit.remoteId
+                    withContext(Dispatchers.Default) {
+                        callbacks.materializeExtensionContentV2(selection)
+                    }
+                    downloadedUnitIds = downloadedUnitIds + selection.unit.remoteId
+                }
+                operationMessage = strings.text("{0} chapters saved for offline reading.", pending.size)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (required: ExtensionContentConsumerException.RepresentationSelectionRequired) {
+                pendingRepresentation = PendingExtensionRepresentationSelection(
+                    selection = pending.firstOrNull { it.unit.remoteId == busyUnitId } ?: pending.first(),
+                    representationIds = required.availableIds,
+                    openReader = false,
+                )
+            } catch (error: Throwable) {
+                operationFailed = true
+                operationMessage = error.localizedDiagnosticMessage(strings)
+            } finally {
+                busyUnitId = null
+            }
+        }
+    }
+
+    LaunchedEffect(item.identityKey, refreshGeneration) {
         loading = true
         loadError = null
+        refreshedPublication = null
+        // Keep the units request on the critical path. Wenku8 fetches the long introduction in
+        // the full details call, so refresh metadata only after the first chapter page is ready.
+        val detailsRefresh = launch(start = CoroutineStart.LAZY) {
+            try {
+                refreshedPublication = withContext(Dispatchers.Default) {
+                    callbacks.extensionDetailsV2(sourceKey, remotePublicationId)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Catalogue metadata remains a valid fallback if the background refresh fails.
+            }
+        }
         try {
             loadUnitPage(requestedPage = 0, append = false)
         } catch (cancelled: CancellationException) {
@@ -982,135 +1641,252 @@ private fun ExtensionV2PublicationScreen(
             loadError = error.localizedDiagnosticMessage(strings)
         } finally {
             loading = false
+            detailsRefresh.start()
+        }
+        detailsRefresh.join()
+    }
+
+    val publication = refreshedPublication ?: publicationPage?.publication
+    val displayPublication = publication ?: cataloguePublication
+    val targetUrl = (displayPublication.url ?: item.url).takeIf {
+        it.startsWith("http://") || it.startsWith("https://")
+    }
+
+    fun retryInitialPage() {
+        scope.launch {
+            loading = true
+            loadError = null
+            publicationPage = null
+            refreshedPublication = null
+            units = emptyList()
+            nextPage = 0
+            hasNextPage = false
+            try {
+                loadUnitPage(requestedPage = 0, append = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                loadError = error.localizedDiagnosticMessage(strings)
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    fun refreshPublication() {
+        if (loading || loadingMore || busyUnitId != null) return
+        retryInitialPage()
+    }
+
+    fun loadMore() {
+        if (loadingMore) return
+        scope.launch {
+            loadingMore = true
+            loadError = null
+            try {
+                loadUnitPage(requestedPage = nextPage, append = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                loadError = error.localizedDiagnosticMessage(strings)
+            } finally {
+                loadingMore = false
+            }
+        }
+    }
+
+    val continueUnit = remember(units, readUnitIds) {
+        units.firstOrNull { it.unit.remoteId !in readUnitIds } ?: units.lastOrNull()
+    }
+    val continueLabel = when {
+        continueUnit == null -> null
+        continueUnit.unit.remoteId in readUnitIds -> strings.text("Read again")
+        readUnitIds.isNotEmpty() -> strings.continueReading
+        else -> strings.text("Start reading")
+    }
+
+    fun toggleFavorite() {
+        val next = !favorite
+        operationMessage = null
+        operationFailed = false
+        scope.launch {
+            withFrameNanos { }
+            try {
+                withContext(Dispatchers.Default) {
+                    if (localLibrary) {
+                        onToggleLocalLibrary(
+                            item,
+                            refreshedPublication ?: publicationPage?.publication ?: cataloguePublication,
+                            next,
+                        )
+                    } else {
+                        callbacks.favoriteExtensionPublicationV2(sourceKey, remotePublicationId, next)
+                    }
+                }
+                favorite = next
+                operationMessage = if (next) {
+                    if (localLibrary) strings.text("Added to app library.")
+                    else strings.text("Added to source favorites.")
+                } else {
+                    if (localLibrary) strings.text("Removed from app library.")
+                    else strings.text("Removed from source favorites.")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                operationFailed = true
+                operationMessage = error.localizedDiagnosticMessage(strings)
+            }
         }
     }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(
-            title = publicationPage?.publication?.title ?: item.title,
-            subtitle = strings.text("Extension content"),
-            leading = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Outlined.ArrowBack, strings.text("Back"))
-                }
-            },
-        )
-        when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            loadError != null && units.isEmpty() -> EmptyState(
-                title = strings.text("Unable to load chapters"),
-                message = requireNotNull(loadError),
-                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
-                action = {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                loading = true
-                                loadError = null
-                                try {
-                                    loadUnitPage(requestedPage = 0, append = false)
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (error: Throwable) {
-                                    loadError = error.localizedDiagnosticMessage(strings)
-                                } finally {
-                                    loading = false
-                                }
-                            }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wideLayout = maxWidth >= 900.dp
+            if (wideLayout) {
+                Row(Modifier.fillMaxSize()) {
+                    ExtensionV2PublicationInfoPane(
+                        publication = displayPublication,
+                        supportsFavorite = supportsFavorite,
+                        favorite = favorite,
+                        notes = notes,
+                        operationMessage = operationMessage,
+                        operationFailed = operationFailed,
+                        refreshingFromSource = loading,
+                        showClose = true,
+                        hasChapters = units.isNotEmpty() || hasNextPage,
+                        continueLabel = continueLabel,
+                        onToggleFavorite = ::toggleFavorite,
+                        onRefresh = ::refreshPublication,
+                        onShare = {
+                            onShareText(displayPublication.title, targetUrl ?: displayPublication.title)
                         },
-                    ) { Text(strings.retry) }
-                },
-            )
-            units.isEmpty() -> EmptyState(
-                title = strings.text("No chapters"),
-                message = strings.text("This extension did not return any readable units."),
-                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
-            )
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                operationMessage?.let { message ->
-                    item("extension-content-message") {
-                        Text(
-                            message,
-                            color = if (operationFailed) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
+                        onOpenWeb = {
+                            targetUrl?.let(onOpenExternalUrl)
+                                ?: run { operationMessage = strings.text("This title has no original URL.") }
+                        },
+                        onOpenTracking = {
+                            targetUrl?.let(onOpenExternalUrl)
+                                ?: run { operationMessage = strings.text("This title has no tracking URL.") }
+                        },
+                        onUpdateNotes = { notes = it },
+                        onDownloadAll = { downloadUnits(units) },
+                        onContinueReading = continueUnit?.let { { materialize(it, openReader = true) } },
+                        onBack = onBack,
+                        scrollable = true,
+                        modifier = Modifier.width(330.dp).fillMaxHeight(),
+                    )
+                    VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+                    ExtensionV2ChapterPane(
+                        units = units,
+                        selectedUnitIds = selectedUnitIds,
+                        readUnitIds = readUnitIds,
+                        bookmarkedUnitIds = bookmarkedUnitIds,
+                        downloadedUnitIds = downloadedUnitIds,
+                        chapterFilter = chapterFilter,
+                        descending = descending,
+                        loading = loading,
+                        loadingMore = loadingMore,
+                        loadError = loadError,
+                        hasNextPage = hasNextPage,
+                        operationMessage = operationMessage,
+                        operationFailed = operationFailed,
+                        busyUnitId = busyUnitId,
+                        onRetry = ::retryInitialPage,
+                        onLoadMore = ::loadMore,
+                        onReadUnit = { materialize(it, openReader = true) },
+                        onDownloadUnits = { downloadUnits(it) },
+                        onSelectionChange = { selectedUnitIds = it },
+                        onReadStateChange = { ids, read ->
+                            readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
+                        },
+                        onBookmarkStateChange = { ids, bookmarked ->
+                            bookmarkedUnitIds = if (bookmarked) bookmarkedUnitIds + ids else bookmarkedUnitIds - ids
+                        },
+                        onDeleteDownloads = { ids ->
+                            downloadedUnitIds = downloadedUnitIds - ids
+                            operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
+                        },
+                        onFilterChange = { chapterFilter = it },
+                        onToggleSortDirection = { descending = !descending },
+                        scrollable = true,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 96.dp),
+                ) {
+                    item("extension-info") {
+                        ExtensionV2PublicationInfoPane(
+                            publication = displayPublication,
+                            supportsFavorite = supportsFavorite,
+                            favorite = favorite,
+                            notes = notes,
+                            operationMessage = operationMessage,
+                            operationFailed = operationFailed,
+                            refreshingFromSource = loading,
+                            showClose = false,
+                            hasChapters = units.isNotEmpty() || hasNextPage,
+                            continueLabel = continueLabel,
+                            onToggleFavorite = ::toggleFavorite,
+                            onRefresh = ::refreshPublication,
+                            onShare = {
+                                onShareText(displayPublication.title, targetUrl ?: displayPublication.title)
                             },
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                            onOpenWeb = {
+                                targetUrl?.let(onOpenExternalUrl)
+                                    ?: run { operationMessage = strings.text("This title has no original URL.") }
+                            },
+                            onOpenTracking = {
+                                targetUrl?.let(onOpenExternalUrl)
+                                    ?: run { operationMessage = strings.text("This title has no tracking URL.") }
+                            },
+                            onUpdateNotes = { notes = it },
+                            onDownloadAll = { downloadUnits(units) },
+                            onContinueReading = continueUnit?.let { { materialize(it, openReader = true) } },
+                            onBack = onBack,
+                            scrollable = false,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                }
-                items(units, key = { it.unit.remoteId }) { selection ->
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(selection.unit.title, style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    strings.text("Choose a format when this chapter provides more than one."),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Button(
-                                onClick = { materialize(selection) },
-                                enabled = busyUnitId == null,
-                            ) {
-                                if (busyUnitId == selection.unit.remoteId) {
-                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Text(strings.text("Save offline"))
-                                }
-                            }
-                        }
-                    }
-                }
-                if (hasNextPage || loadingMore || loadError != null) {
-                    item("extension-content-more") {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            loadError?.let {
-                                Text(it, color = MaterialTheme.colorScheme.error)
-                            }
-                            if (loadingMore) {
-                                CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
-                            } else if (hasNextPage) {
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            loadingMore = true
-                                            loadError = null
-                                            try {
-                                                loadUnitPage(requestedPage = nextPage, append = true)
-                                            } catch (cancelled: CancellationException) {
-                                                throw cancelled
-                                            } catch (error: Throwable) {
-                                                loadError = error.localizedDiagnosticMessage(strings)
-                                            } finally {
-                                                loadingMore = false
-                                            }
-                                        }
-                                    },
-                                ) { Text(strings.text("Load more")) }
-                            }
-                        }
+                    item("extension-chapters") {
+                        ExtensionV2ChapterPane(
+                            units = units,
+                            selectedUnitIds = selectedUnitIds,
+                            readUnitIds = readUnitIds,
+                            bookmarkedUnitIds = bookmarkedUnitIds,
+                            downloadedUnitIds = downloadedUnitIds,
+                            chapterFilter = chapterFilter,
+                            descending = descending,
+                            loading = loading,
+                            loadingMore = loadingMore,
+                            loadError = loadError,
+                            hasNextPage = hasNextPage,
+                            operationMessage = operationMessage,
+                            operationFailed = operationFailed,
+                            busyUnitId = busyUnitId,
+                            onRetry = ::retryInitialPage,
+                            onLoadMore = ::loadMore,
+                            onReadUnit = { materialize(it, openReader = true) },
+                            onDownloadUnits = { downloadUnits(it) },
+                            onSelectionChange = { selectedUnitIds = it },
+                            onReadStateChange = { ids, read ->
+                                readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
+                            },
+                            onBookmarkStateChange = { ids, bookmarked ->
+                                bookmarkedUnitIds = if (bookmarked) bookmarkedUnitIds + ids else bookmarkedUnitIds - ids
+                            },
+                            onDeleteDownloads = { ids ->
+                                downloadedUnitIds = downloadedUnitIds - ids
+                                operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
+                            },
+                            onFilterChange = { chapterFilter = it },
+                            onToggleSortDirection = { descending = !descending },
+                            scrollable = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -1127,7 +1903,7 @@ private fun ExtensionV2PublicationScreen(
                         OutlinedButton(
                             onClick = {
                                 pendingRepresentation = null
-                                materialize(pending.selection, representationId)
+                                materialize(pending.selection, representationId, pending.openReader)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -1144,6 +1920,480 @@ private fun ExtensionV2PublicationScreen(
         )
     }
 }
+
+/** Native publication metadata pane deliberately mirrors MangaInfoPane's layout and actions. */
+@Composable
+private fun ExtensionV2PublicationInfoPane(
+    publication: RemotePublicationV2,
+    supportsFavorite: Boolean,
+    favorite: Boolean,
+    notes: String,
+    operationMessage: String?,
+    operationFailed: Boolean,
+    refreshingFromSource: Boolean,
+    showClose: Boolean,
+    hasChapters: Boolean,
+    continueLabel: String?,
+    onBack: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRefresh: () -> Unit,
+    onShare: () -> Unit,
+    onOpenWeb: () -> Unit,
+    onOpenTracking: () -> Unit,
+    onUpdateNotes: (String) -> Unit,
+    onDownloadAll: () -> Unit,
+    onContinueReading: (() -> Unit)?,
+    scrollable: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalShinsouStrings.current
+    var editingNotes by remember(publication.remoteId) { mutableStateOf(false) }
+    var notesDraft by remember(publication.remoteId, notes) { mutableStateOf(notes) }
+    val contentModifier = modifier
+        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 28.dp)
+        .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+    Column(contentModifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    if (showClose) Icons.Outlined.Close else Icons.Outlined.ArrowBack,
+                    if (showClose) strings.close else strings.text("Back"),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onRefresh, enabled = !refreshingFromSource) {
+                if (refreshingFromSource) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.Refresh, strings.refresh)
+                }
+            }
+            IconButton(onClick = onOpenWeb) {
+                Icon(Icons.Outlined.OpenInBrowser, strings.text("Open original page"))
+            }
+            IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, strings.share) }
+        }
+        CoverImage(
+            title = publication.title,
+            url = publication.thumbnailUrl,
+            modifier = Modifier.width(186.dp).aspectRatio(2f / 3f),
+        )
+        Spacer(Modifier.height(18.dp))
+        Text(
+            publication.title,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            publication.author?.takeIf(String::isNotBlank)
+                ?: publication.artist?.takeIf(String::isNotBlank)
+                ?: strings.text("Unknown author"),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        publication.artist?.takeIf { it.isNotBlank() && it != publication.author }?.let { artist ->
+            Text(
+                strings.text("Artist: {0}", artist),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            if (supportsFavorite) {
+                Button(onClick = onToggleFavorite, enabled = !favorite) {
+                    Icon(
+                        if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (favorite) strings.unfavorite else strings.favorite)
+                }
+            }
+            OutlinedButton(onClick = onOpenTracking) {
+                Icon(Icons.Outlined.Sync, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(strings.text("Track"))
+            }
+        }
+        operationMessage?.let { message ->
+            Spacer(Modifier.height(10.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (operationFailed) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (hasChapters) {
+            Spacer(Modifier.height(9.dp))
+            OutlinedButton(onClick = onDownloadAll, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Download, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(strings.text("Download all chapters"))
+            }
+        }
+        if (continueLabel != null && onContinueReading != null) {
+            Spacer(Modifier.height(9.dp))
+            OutlinedButton(onClick = onContinueReading, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(continueLabel)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        publication.status?.takeIf(String::isNotBlank)?.let { status ->
+            AssistChip(onClick = {}, label = { Text(status) })
+            Spacer(Modifier.height(10.dp))
+        }
+        publication.genre?.takeIf { it.isNotEmpty() }?.let { genres ->
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                items(genres) { genre -> AssistChip(onClick = {}, label = { Text(genre) }) }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+        Text(
+            publication.description?.takeIf(String::isNotBlank)
+                ?: strings.text("No description available."),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(14.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(strings.text("Notes"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            notesDraft = notes
+                            editingNotes = true
+                        },
+                    ) { Icon(Icons.Outlined.Edit, strings.text("Edit notes")) }
+                }
+                Text(
+                    notes.ifBlank { strings.text("Add a private note for this title.") },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (notes.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+
+        }
+    }
+    if (editingNotes) {
+        AlertDialog(
+            modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
+            onDismissRequest = { editingNotes = false },
+            title = { Text(strings.text("Novel notes")) },
+            text = {
+                OutlinedTextField(
+                    value = notesDraft,
+                    onValueChange = { notesDraft = it },
+                    label = { Text(strings.text("Notes")) },
+                    minLines = 4,
+                    maxLines = 10,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUpdateNotes(notesDraft.trim())
+                        editingNotes = false
+                    },
+                ) { Text(strings.save) }
+            },
+            dismissButton = { TextButton(onClick = { editingNotes = false }) { Text(strings.cancel) } },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ExtensionV2ChapterPane(
+    units: List<ExtensionUnitSelectionV2>,
+    selectedUnitIds: Set<String>,
+    readUnitIds: Set<String>,
+    bookmarkedUnitIds: Set<String>,
+    downloadedUnitIds: Set<String>,
+    chapterFilter: ExtensionChapterFilter,
+    descending: Boolean,
+    loading: Boolean,
+    loadingMore: Boolean,
+    loadError: String?,
+    hasNextPage: Boolean,
+    operationMessage: String?,
+    operationFailed: Boolean,
+    busyUnitId: String?,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
+    onDownloadUnits: (List<ExtensionUnitSelectionV2>) -> Unit,
+    onSelectionChange: (Set<String>) -> Unit,
+    onReadStateChange: (Set<String>, Boolean) -> Unit,
+    onBookmarkStateChange: (Set<String>, Boolean) -> Unit,
+    onDeleteDownloads: (Set<String>) -> Unit,
+    onFilterChange: (ExtensionChapterFilter) -> Unit,
+    onToggleSortDirection: () -> Unit,
+    scrollable: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalShinsouStrings.current
+    var sortMenuVisible by remember { mutableStateOf(false) }
+    val visibleUnits = remember(units, readUnitIds, bookmarkedUnitIds, downloadedUnitIds, chapterFilter, descending) {
+        units.asSequence()
+            .filter { selection ->
+                when (chapterFilter) {
+                    ExtensionChapterFilter.ALL -> true
+                    ExtensionChapterFilter.UNREAD -> selection.unit.remoteId !in readUnitIds
+                    ExtensionChapterFilter.READ -> selection.unit.remoteId in readUnitIds
+                    ExtensionChapterFilter.BOOKMARKED -> selection.unit.remoteId in bookmarkedUnitIds
+                    ExtensionChapterFilter.DOWNLOADED -> selection.unit.remoteId in downloadedUnitIds
+                }
+            }
+            .sortedWith(
+                if (descending) {
+                    compareByDescending<ExtensionUnitSelectionV2> { it.unit.title.lowercase() }
+                } else {
+                    compareBy<ExtensionUnitSelectionV2> { it.unit.title.lowercase() }
+                },
+            )
+            .toList()
+    }
+    val selectedVisible = visibleUnits.filter { it.unit.remoteId in selectedUnitIds }
+    val markSelectedRead = selectedVisible.isEmpty() || selectedVisible.any { it.unit.remoteId !in readUnitIds }
+    val bookmarkSelected = selectedVisible.isEmpty() || selectedVisible.any { it.unit.remoteId !in bookmarkedUnitIds }
+    val contentModifier = modifier
+        .padding(horizontal = 14.dp, vertical = 12.dp)
+        .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+    Column(contentModifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (selectedUnitIds.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { onSelectionChange(emptySet()) }) {
+                    Icon(Icons.Filled.Check, strings.done)
+                }
+                Text(
+                    "${selectedUnitIds.size} ${strings.selected}",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { onSelectionChange(visibleUnits.mapTo(linkedSetOf()) { it.unit.remoteId }) }) {
+                    Icon(Icons.Outlined.SelectAll, strings.text("Select all visible chapters"))
+                }
+                IconButton(onClick = { onReadStateChange(selectedUnitIds, markSelectedRead) }) {
+                    Icon(
+                        Icons.Outlined.CheckCircle,
+                        if (markSelectedRead) strings.markRead else strings.markUnread,
+                    )
+                }
+                IconButton(onClick = { onBookmarkStateChange(selectedUnitIds, bookmarkSelected) }) {
+                    Icon(
+                        if (bookmarkSelected) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (bookmarkSelected) strings.text("Bookmark") else strings.text("Remove bookmarks"),
+                    )
+                }
+                IconButton(onClick = { onDownloadUnits(selectedVisible) }) {
+                    Icon(Icons.Outlined.Download, strings.download)
+                }
+                IconButton(onClick = { onDeleteDownloads(selectedUnitIds) }) {
+                    Icon(Icons.Outlined.Delete, strings.delete, tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.chapters, style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        if (hasNextPage) strings.text("{0} loaded", units.size) else strings.text("{0} total", units.size),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box {
+                    IconButton(onClick = { sortMenuVisible = true }) {
+                        Icon(Icons.Outlined.Sort, strings.text("Sort chapters"))
+                    }
+                    DropdownMenu(sortMenuVisible, onDismissRequest = { sortMenuVisible = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (descending) strings.text("Descending") else strings.text("Ascending")) },
+                            onClick = {
+                                onToggleSortDirection()
+                                sortMenuVisible = false
+                            },
+                        )
+                    }
+                }
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                item {
+                    FilterChip(
+                        selected = chapterFilter == ExtensionChapterFilter.UNREAD,
+                        onClick = {
+                            onFilterChange(
+                                if (chapterFilter == ExtensionChapterFilter.UNREAD) ExtensionChapterFilter.ALL
+                                else ExtensionChapterFilter.UNREAD,
+                            )
+                        },
+                        label = { Text(strings.text("Unread")) },
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = chapterFilter == ExtensionChapterFilter.BOOKMARKED,
+                        onClick = {
+                            onFilterChange(
+                                if (chapterFilter == ExtensionChapterFilter.BOOKMARKED) ExtensionChapterFilter.ALL
+                                else ExtensionChapterFilter.BOOKMARKED,
+                            )
+                        },
+                        label = { Text(strings.text("Bookmarked")) },
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = chapterFilter == ExtensionChapterFilter.DOWNLOADED,
+                        onClick = {
+                            onFilterChange(
+                                if (chapterFilter == ExtensionChapterFilter.DOWNLOADED) ExtensionChapterFilter.ALL
+                                else ExtensionChapterFilter.DOWNLOADED,
+                            )
+                        },
+                        label = { Text(strings.text("Downloaded")) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        operationMessage?.let { message ->
+            Text(
+                message,
+                color = if (operationFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+        when {
+            loading && units.isEmpty() -> Box(
+                Modifier.fillMaxWidth().height(220.dp),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator() }
+            loadError != null && units.isEmpty() -> EmptyState(
+                title = strings.text("Unable to load chapters"),
+                message = loadError,
+                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+                action = { Button(onClick = onRetry) { Text(strings.retry) } },
+            )
+            units.isEmpty() -> EmptyState(
+                title = strings.text("No chapters"),
+                message = strings.text("This extension did not return any readable units."),
+                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+            )
+            visibleUnits.isEmpty() -> EmptyState(
+                title = strings.text("No matching chapters"),
+                message = strings.text("Change the chapter filter to see more."),
+                icon = { Icon(Icons.Outlined.FilterList, null, Modifier.size(30.dp)) },
+            )
+            else -> visibleUnits.forEach { selection ->
+                val unitId = selection.unit.remoteId
+                val selected = unitId in selectedUnitIds
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth().combinedClickable(
+                        onLongClick = { onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId)) },
+                        onClick = {
+                            if (selectedUnitIds.isNotEmpty()) {
+                                onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId))
+                            } else {
+                                onReadUnit(selection)
+                            }
+                        },
+                    ),
+                ) {
+                    Row(
+                        Modifier.padding(start = 13.dp, top = 10.dp, bottom = 10.dp, end = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    selection.unit.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = if (unitId in readUnitIds) FontWeight.Normal else FontWeight.SemiBold,
+                                    color = if (unitId in readUnitIds) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                if (unitId in bookmarkedUnitIds) {
+                                    Spacer(Modifier.width(5.dp))
+                                    Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
+                                }
+                            }
+                            Text(
+                                strings.text("Choose a format when this chapter provides more than one."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (unitId in downloadedUnitIds) {
+                            Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))
+                        }
+                        IconButton(
+                            onClick = { onDownloadUnits(listOf(selection)) },
+                            enabled = busyUnitId == null,
+                        ) {
+                            if (busyUnitId == unitId) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Outlined.Download, strings.download)
+                            }
+                        }
+                        IconButton(onClick = { onReadUnit(selection) }, enabled = busyUnitId == null) {
+                            Icon(Icons.Filled.PlayArrow, strings.text("Start reading"))
+                        }
+                    }
+                }
+            }
+        }
+        if (hasNextPage || loadingMore || loadError != null) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                loadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (loadingMore) {
+                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                } else if (hasNextPage) {
+                    OutlinedButton(onClick = onLoadMore) { Text(strings.text("Load more")) }
+                }
+            }
+        }
+    }
+}
+
+private fun Set<String>.toggleExtensionUnit(id: String): Set<String> =
+    if (id in this) this - id else this + id
 
 internal fun searchAcrossSources(
     callbacks: BrowseCallbacks,
@@ -1218,6 +2468,12 @@ private fun RemotePublicationV2.toBrowseManga(source: BrowseSource): BrowseManga
     sourceId = source.id,
     url = url ?: remoteId,
     title = title,
+    thumbnailUrl = thumbnailUrl,
+    author = author,
+    artist = artist,
+    description = description,
+    genre = genre,
+    status = status,
     sourceKey = requireNotNull(source.sourceKey),
     remotePublicationId = remoteId,
 )
@@ -1227,7 +2483,9 @@ private fun SourcesPane(
     sources: List<BrowseSource>,
     onToggle: (BrowseSource, Boolean) -> Unit,
     pinnedSourceIds: Set<Long>,
+    pinnedSourceKeys: Set<String>,
     onSourcePinnedChange: (sourceId: Long, pinned: Boolean) -> Unit,
+    onSourcePinnedKeyChange: (sourceKey: String, pinned: Boolean) -> Unit,
     callbacks: BrowseCallbacks,
     onImportDocument: suspend (acceptedExtensions: Set<String>) -> ImportedDocument?,
     onOpen: (BrowseSource) -> Unit,
@@ -1242,7 +2500,7 @@ private fun SourcesPane(
         return
     }
     var settingsSourceIdentity by remember { mutableStateOf<String?>(null) }
-    val sections = browseSourceSections(sources, pinnedSourceIds)
+    val sections = browseSourceSections(sources, pinnedSourceIds, pinnedSourceKeys)
     LazyColumn(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1258,6 +2516,7 @@ private fun SourcesPane(
                     onOpen = onOpen,
                     onToggle = onToggle,
                     onPinnedChange = onSourcePinnedChange,
+                    onPinnedKeyChange = onSourcePinnedKeyChange,
                     onSettings = { settingsSourceIdentity = source.identityKey },
                 )
             }
@@ -1274,13 +2533,12 @@ private fun SourcesPane(
                 onOpen = onOpen,
                 onToggle = onToggle,
                 onPinnedChange = onSourcePinnedChange,
+                onPinnedKeyChange = onSourcePinnedKeyChange,
                 onSettings = { settingsSourceIdentity = source.identityKey },
             )
         }
     }
-    sources.firstOrNull {
-        it.sourceKey == null && it.identityKey == settingsSourceIdentity
-    }?.let { source ->
+    sources.firstOrNull { it.identityKey == settingsSourceIdentity }?.let { source ->
         SourceSettingsDialog(
             source = source,
             callbacks = callbacks,
@@ -1299,6 +2557,7 @@ internal data class BrowseSourceSections(
 internal fun browseSourceSections(
     sources: List<BrowseSource>,
     pinnedSourceIds: Set<Long>,
+    pinnedSourceKeys: Set<String> = emptySet(),
 ): BrowseSourceSections {
     val unique = sources.distinctBy(BrowseSource::identityKey)
     val pinnedOrder = compareBy<BrowseSource>(
@@ -1312,9 +2571,22 @@ internal fun browseSourceSections(
         BrowseSource::identityKey,
     )
     return BrowseSourceSections(
-        pinned = unique.filter { it.sourceKey == null && it.id in pinnedSourceIds }.sortedWith(pinnedOrder),
-        regular = unique.filterNot { it.sourceKey == null && it.id in pinnedSourceIds }.sortedWith(regularOrder),
+        pinned = unique.filter { source ->
+            source.isPinned(pinnedSourceIds, pinnedSourceKeys)
+        }.sortedWith(pinnedOrder),
+        regular = unique.filterNot { source ->
+            source.isPinned(pinnedSourceIds, pinnedSourceKeys)
+        }.sortedWith(regularOrder),
     )
+}
+
+private fun BrowseSource.isPinned(
+    pinnedSourceIds: Set<Long>,
+    pinnedSourceKeys: Set<String>,
+): Boolean = if (sourceKey == null) {
+    id in pinnedSourceIds
+} else {
+    identityKey in pinnedSourceKeys
 }
 
 @Composable
@@ -1334,6 +2606,21 @@ private fun SourceSectionHeader(title: String, count: Int, pinned: Boolean) {
     }
 }
 
+internal data class SourceSettingsSections(
+    val credentials: Boolean,
+    val preferences: Boolean,
+)
+
+/**
+ * Login UI is capability-driven. A stale credential from an older plugin version must not make
+ * username/password controls reappear after that source stops implementing the login contract.
+ */
+internal fun sourceSettingsSections(source: BrowseSource): SourceSettingsSections =
+    SourceSettingsSections(
+        credentials = source.supportsLogin,
+        preferences = source.preferences.isNotEmpty(),
+    )
+
 @Composable
 private fun SourceListRow(
     source: BrowseSource,
@@ -1341,10 +2628,14 @@ private fun SourceListRow(
     onOpen: (BrowseSource) -> Unit,
     onToggle: (BrowseSource, Boolean) -> Unit,
     onPinnedChange: (sourceId: Long, pinned: Boolean) -> Unit,
+    onPinnedKeyChange: (sourceKey: String, pinned: Boolean) -> Unit,
     onSettings: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     val legacyActions = source.sourceKey == null
+    val settingsSections = sourceSettingsSections(source)
+    val settingsAvailable = legacyActions || settingsSections.credentials ||
+        settingsSections.preferences || source.cookies.isNotEmpty()
     Surface(
         onClick = { if (source.enabled) onOpen(source) },
         shape = RoundedCornerShape(12.dp),
@@ -1374,6 +2665,8 @@ private fun SourceListRow(
                             Text(
                                 buildString {
                                     append(source.language.uppercase())
+                                    append(" · ")
+                                    append(source.contentType.label(strings))
                                     if (source.isNsfw) append(" · NSFW")
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
@@ -1386,20 +2679,26 @@ private fun SourceListRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        if (legacyActions) {
-                            IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
-                                Icon(
-                                    Icons.Outlined.PushPin,
-                                    if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                                    tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                        IconButton(
+                            onClick = {
+                                if (source.sourceKey == null) {
+                                    onPinnedChange(source.id, !pinned)
+                                } else {
+                                    onPinnedKeyChange(source.identityKey, !pinned)
+                                }
+                            },
+                        ) {
+                            Icon(
+                                Icons.Outlined.PushPin,
+                                if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
+                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         Switch(
                             checked = source.enabled,
                             onCheckedChange = { onToggle(source, it) },
                         )
-                        if (legacyActions) {
+                        if (settingsAvailable) {
                             IconButton(onClick = onSettings) {
                                 Icon(Icons.Outlined.Settings, strings.text("Source settings"))
                             }
@@ -1420,26 +2719,34 @@ private fun SourceListRow(
                         Text(
                             buildString {
                                 append(source.language.uppercase())
+                                append(" · ")
+                                append(source.contentType.label(strings))
                                 if (source.isNsfw) append(" · NSFW")
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (legacyActions) {
-                        IconButton(onClick = { onPinnedChange(source.id, !pinned) }) {
-                            Icon(
-                                Icons.Outlined.PushPin,
-                                if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    IconButton(
+                        onClick = {
+                            if (source.sourceKey == null) {
+                                onPinnedChange(source.id, !pinned)
+                            } else {
+                                onPinnedKeyChange(source.identityKey, !pinned)
+                            }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Outlined.PushPin,
+                            if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
+                            tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Switch(
                         checked = source.enabled,
                         onCheckedChange = { onToggle(source, it) },
                     )
-                    if (legacyActions) {
+                    if (settingsAvailable) {
                         IconButton(onClick = onSettings) {
                             Icon(Icons.Outlined.Settings, strings.text("Source settings"))
                         }
@@ -1458,9 +2765,9 @@ private fun SourceSettingsDialog(
     onImportDocument: suspend (acceptedExtensions: Set<String>) -> ImportedDocument?,
     onDismiss: () -> Unit,
 ) {
-    require(source.sourceKey == null) { "Native extension v2 settings require an exact SourceKey settings surface" }
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
+    val settingsSections = sourceSettingsSections(source)
     var values by remember(source.id, source.preferences) {
         mutableStateOf(source.preferences.associate { it.key to it.value })
     }
@@ -1483,66 +2790,68 @@ private fun SourceSettingsDialog(
         title = { Text("${source.name} ${strings.settings}") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text(strings.text("Credentials"), style = MaterialTheme.typography.titleMedium)
-                        OutlinedTextField(
-                            value = username,
-                            onValueChange = { username = it },
-                            label = { Text(strings.text("Username")) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text(strings.text("Password")) },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    loginBusy = true
-                                    loginError = null
-                                    scope.launch {
-                                        withFrameNanos { }
-                                        runCatching {
-                                            callbacks.saveSourceCredentials(source.id, username, password)
-                                        }.onSuccess { success ->
-                                            if (!success) loginError = strings.text("Login failed. Check your username and password.")
-                                        }.onFailure { error ->
-                                            loginError = error.message ?: strings.text("Unable to save credentials")
-                                        }
-                                        loginBusy = false
-                                    }
-                                },
-                                enabled = username.isNotBlank() && password.isNotEmpty() && !loginBusy,
-                            ) {
-                                Text(if (source.supportsLogin) strings.text("Login") else strings.text("Save credentials"))
-                            }
-                            if (source.credential != null) {
-                                OutlinedButton(
+                if (settingsSections.credentials) {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(strings.text("Credentials"), style = MaterialTheme.typography.titleMedium)
+                            OutlinedTextField(
+                                value = username,
+                                onValueChange = { username = it },
+                                label = { Text(strings.text("Username")) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it },
+                                label = { Text(strings.text("Password")) },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
                                     onClick = {
+                                        loginBusy = true
+                                        loginError = null
                                         scope.launch {
                                             withFrameNanos { }
-                                            runCatching { callbacks.logoutSource(source.id) }
-                                                .onFailure { loginError = it.message }
-                                            username = ""
-                                            password = ""
+                                            runCatching {
+                                                callbacks.saveSourceCredentials(source.id, username, password)
+                                            }.onSuccess { success ->
+                                                if (!success) loginError = strings.text("Login failed. Check your username and password.")
+                                            }.onFailure { error ->
+                                                loginError = error.message ?: strings.text("Unable to save credentials")
+                                            }
+                                            loginBusy = false
                                         }
                                     },
-                                ) { Text(strings.text("Logout")) }
+                                    enabled = username.isNotBlank() && password.isNotEmpty() && !loginBusy,
+                                ) {
+                                    Text(strings.text("Login"))
+                                }
+                                if (source.credential != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                withFrameNanos { }
+                                                runCatching { callbacks.logoutSource(source.id) }
+                                                    .onFailure { loginError = it.message }
+                                                username = ""
+                                                password = ""
+                                            }
+                                        },
+                                    ) { Text(strings.text("Logout")) }
+                                }
                             }
-                        }
-                        loginError?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            loginError?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
 
-                if (source.preferences.isNotEmpty()) {
+                if (settingsSections.preferences) {
                     item { Text(strings.text("Preferences"), style = MaterialTheme.typography.titleMedium) }
                     items(source.preferences, key = { "preference:${it.key}" }) { preference ->
                         Column {
@@ -1606,170 +2915,170 @@ private fun SourceSettingsDialog(
                 }
 
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text(strings.text("Cookies"), style = MaterialTheme.typography.titleMedium)
-                        OutlinedButton(
-                            onClick = {
-                                challengeBusy = true
-                                challengeMessage = null
-                                scope.launch {
-                                    withFrameNanos { }
-                                    runCatching { callbacks.sourceWebChallenge(source.id) }
-                                        .onSuccess { request ->
-                                            if (request == null) {
-                                                challengeMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
-                                            } else {
-                                                challengeRequest = request
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(strings.text("Cookies"), style = MaterialTheme.typography.titleMedium)
+                            OutlinedButton(
+                                onClick = {
+                                    challengeBusy = true
+                                    challengeMessage = null
+                                    scope.launch {
+                                        withFrameNanos { }
+                                        runCatching { callbacks.sourceWebChallenge(source.id) }
+                                            .onSuccess { request ->
+                                                if (request == null) {
+                                                    challengeMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
+                                                } else {
+                                                    challengeRequest = request
+                                                }
                                             }
-                                        }
-                                        .onFailure { error ->
-                                            challengeMessage = error.message ?: strings.text("Unable to start the web challenge.")
-                                        }
-                                    challengeBusy = false
-                                }
-                            },
-                            enabled = !challengeBusy,
-                        ) {
-                            Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
-                            Text(if (challengeBusy) strings.text("Preparing…") else strings.text("Web challenge / Cloudflare"))
-                        }
-                        Text(
-                            strings.text("Uses the source's exact User-Agent and imports only cookies valid for its domain and path."),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                cookieImportBusy = true
-                                cookieImportMessage = null
-                                scope.launch {
-                                    withFrameNanos { }
-                                    runCatching {
-                                        val document = onImportDocument(setOf("json", "txt"))
-                                            ?: return@runCatching null
-                                        require(document.contents.size <= MAX_COOKIE_FILE_BYTES) {
-                                            strings.text("Cookie file is larger than 1 MiB.")
-                                        }
-                                        val content = document.contents.decodeToString(throwOnInvalidSequence = true)
-                                        val imported = CookieFileParser.parse(content, source.baseUrl)
-                                        require(imported.isNotEmpty()) {
-                                            strings.text("No valid cookies for {0} were found.", defaultCookieDomain(source.baseUrl).trimStart('.'))
-                                        }
-                                        imported.forEach { cookie -> callbacks.setSourceCookie(source.id, cookie) }
-                                        imported.size
-                                    }.onSuccess { importedCount ->
-                                        if (importedCount != null) {
-                                            cookieImportMessage = strings.text("Imported {0} cookie(s).", importedCount)
-                                        }
-                                    }.onFailure { error ->
-                                        cookieImportMessage = strings.text("Error: {0}", error.message ?: strings.text("unable to import cookies"))
+                                            .onFailure { error ->
+                                                challengeMessage = error.message ?: strings.text("Unable to start the web challenge.")
+                                            }
+                                        challengeBusy = false
                                     }
-                                    cookieImportBusy = false
-                                }
-                            },
-                            enabled = !cookieImportBusy,
-                        ) {
-                            Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
-                            Text(if (cookieImportBusy) strings.text("Importing…") else strings.text("Import cookies.txt / JSON"))
-                        }
-                        cookieImportMessage?.let { message ->
-                            Text(
-                                message,
-                                color = if (message.startsWith("Error", ignoreCase = true)) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.primary
                                 },
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        challengeMessage?.let { message ->
+                                enabled = !challengeBusy,
+                            ) {
+                                Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
+                                Text(if (challengeBusy) strings.text("Preparing…") else strings.text("Web challenge / Cloudflare"))
+                            }
                             Text(
-                                message,
-                                color = if (message.startsWith("Error", ignoreCase = true) ||
-                                    message.startsWith("Unable", ignoreCase = true)
-                                ) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        if (source.cookies.isEmpty()) {
-                            Text(strings.text("No cookies saved"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                items(
-                    source.cookies,
-                    key = { "cookie:${it.domain}:${it.path}:${it.name}" },
-                ) { cookie ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(cookie.name, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "${cookie.value} · ${cookie.domain}${cookie.path}",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                strings.text("Uses the source's exact User-Agent and imports only cookies valid for its domain and path."),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                        }
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    callbacks.deleteSourceCookie(source.id, cookie.name, cookie.domain)
-                                }
-                            },
-                        ) { Icon(Icons.Outlined.Delete, strings.delete) }
-                    }
-                }
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        OutlinedTextField(
-                            value = cookieName,
-                            onValueChange = { cookieName = it },
-                            label = { Text(strings.text("Cookie name")) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = cookieValue,
-                            onValueChange = { cookieValue = it },
-                            label = { Text(strings.text("Cookie value")) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = cookieDomain,
-                            onValueChange = { cookieDomain = it },
-                            label = { Text(strings.text("Cookie domain")) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = {
+                                    cookieImportBusy = true
+                                    cookieImportMessage = null
                                     scope.launch {
-                                        callbacks.setSourceCookie(
-                                            source.id,
-                                            SourceCookie(cookieName, cookieValue, cookieDomain),
-                                        )
-                                        cookieName = ""
-                                        cookieValue = ""
+                                        withFrameNanos { }
+                                        runCatching {
+                                            val document = onImportDocument(setOf("json", "txt"))
+                                                ?: return@runCatching null
+                                            require(document.contents.size <= MAX_COOKIE_FILE_BYTES) {
+                                                strings.text("Cookie file is larger than 1 MiB.")
+                                            }
+                                            val content = document.contents.decodeToString(throwOnInvalidSequence = true)
+                                            val imported = CookieFileParser.parse(content, source.baseUrl)
+                                            require(imported.isNotEmpty()) {
+                                                strings.text("No valid cookies for {0} were found.", defaultCookieDomain(source.baseUrl).trimStart('.'))
+                                            }
+                                            imported.forEach { cookie -> callbacks.setSourceCookie(source.id, cookie) }
+                                            imported.size
+                                        }.onSuccess { importedCount ->
+                                            if (importedCount != null) {
+                                                cookieImportMessage = strings.text("Imported {0} cookie(s).", importedCount)
+                                            }
+                                        }.onFailure { error ->
+                                            cookieImportMessage = strings.text("Error: {0}", error.message ?: strings.text("unable to import cookies"))
+                                        }
+                                        cookieImportBusy = false
                                     }
                                 },
-                                enabled = cookieName.isNotBlank() && cookieValue.isNotEmpty() && cookieDomain.isNotBlank(),
-                            ) { Text(strings.text("Add cookie")) }
-                            if (source.cookies.isNotEmpty()) {
-                                TextButton(
-                                    onClick = { scope.launch { callbacks.clearSourceCookies(source.id) } },
-                                ) { Text(strings.text("Clear cookies")) }
+                                enabled = !cookieImportBusy,
+                            ) {
+                                Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                                Text(if (cookieImportBusy) strings.text("Importing…") else strings.text("Import cookies.txt / JSON"))
+                            }
+                            cookieImportMessage?.let { message ->
+                                Text(
+                                    message,
+                                    color = if (message.startsWith("Error", ignoreCase = true)) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            challengeMessage?.let { message ->
+                                Text(
+                                    message,
+                                    color = if (message.startsWith("Error", ignoreCase = true) ||
+                                        message.startsWith("Unable", ignoreCase = true)
+                                    ) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            if (source.cookies.isEmpty()) {
+                                Text(strings.text("No cookies saved"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                }
+                    items(
+                        source.cookies,
+                        key = { "cookie:${it.domain}:${it.path}:${it.name}" },
+                    ) { cookie ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(cookie.name, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${cookie.value} · ${cookie.domain}${cookie.path}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    scope.launch {
+                                        callbacks.deleteSourceCookie(source.id, cookie.name, cookie.domain)
+                                    }
+                                },
+                            ) { Icon(Icons.Outlined.Delete, strings.delete) }
+                        }
+                    }
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            OutlinedTextField(
+                                value = cookieName,
+                                onValueChange = { cookieName = it },
+                                label = { Text(strings.text("Cookie name")) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = cookieValue,
+                                onValueChange = { cookieValue = it },
+                                label = { Text(strings.text("Cookie value")) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = cookieDomain,
+                                onValueChange = { cookieDomain = it },
+                                label = { Text(strings.text("Cookie domain")) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            callbacks.setSourceCookie(
+                                                source.id,
+                                                SourceCookie(cookieName, cookieValue, cookieDomain),
+                                            )
+                                            cookieName = ""
+                                            cookieValue = ""
+                                        }
+                                    },
+                                    enabled = cookieName.isNotBlank() && cookieValue.isNotEmpty() && cookieDomain.isNotBlank(),
+                                ) { Text(strings.text("Add cookie")) }
+                                if (source.cookies.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = { scope.launch { callbacks.clearSourceCookies(source.id) } },
+                                    ) { Text(strings.text("Clear cookies")) }
+                                }
+                            }
+                        }
+                    }
             }
         },
         confirmButton = {
@@ -1903,10 +3212,11 @@ private fun ExtensionsPane(
                         }
                         if (repository.official) {
                             Icon(Icons.Filled.CheckCircle, strings.text("Official"), tint = MaterialTheme.colorScheme.primary)
-                        } else {
-                            IconButton(onClick = { onRemoveRepository(repository.id) }) {
-                                Icon(Icons.Outlined.Delete, strings.delete)
-                            }
+                        }
+                        // Official repositories are recoverable defaults, not immutable rows. The
+                        // adapter hides an official ShuYue row until the user adds it again.
+                        IconButton(onClick = { onRemoveRepository(repository.id) }) {
+                            Icon(Icons.Outlined.Delete, strings.delete)
                         }
                     }
                 }
@@ -1991,6 +3301,7 @@ private fun ExtensionRow(
                 Text(extension.name, style = MaterialTheme.typography.titleMedium)
                 Text(
                     "${extension.language.uppercase()} · v${extension.version}" +
+                        " · ${extension.contentType.label(strings)}" +
                         if (extension.updateAvailable) " · ${strings.text("Update available")}" else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2040,6 +3351,12 @@ private fun ExtensionRow(
             }
         }
     }
+}
+
+private fun PluginContentType.label(strings: ShinsouStrings): String = when (this) {
+    PluginContentType.MANGA -> strings.text("Manga")
+    PluginContentType.NOVEL -> strings.text("Novel")
+    PluginContentType.BOTH -> strings.text("Manga + novel")
 }
 
 @Composable
@@ -2230,6 +3547,7 @@ private fun MigrationCandidateCard(
 @Composable
 private fun SourceCatalogueScreen(
     source: BrowseSource,
+    refreshGeneration: Long,
     page: BrowsePage,
     loading: Boolean,
     loadingMore: Boolean,
@@ -2265,6 +3583,12 @@ private fun SourceCatalogueScreen(
 
     fun requestLoadMore() {
         onLoadMore(requestedQuery, requestedMode, requestedFilters)
+    }
+
+    LaunchedEffect(source.identityKey, refreshGeneration) {
+        if (refreshGeneration > 0L) {
+            requestBrowse(requestedQuery, requestedMode, requestedFilters)
+        }
     }
 
     val latestPage = rememberUpdatedState(page)
@@ -2342,6 +3666,18 @@ private fun SourceCatalogueScreen(
                 },
                 label = { Text(strings.text("Popular")) },
             )
+            if (source.supportsFavorites) {
+                FilterChip(
+                    selected = mode == SourceCatalogueMode.Favorites,
+                    onClick = {
+                        mode = SourceCatalogueMode.Favorites
+                        query = ""
+                        appliedFilters = null
+                        requestBrowse("", SourceCatalogueMode.Favorites, null)
+                    },
+                    label = { Text(strings.myLibrary) },
+                )
+            }
             if (source.supportsLatest) {
                 FilterChip(
                     selected = mode == SourceCatalogueMode.Latest,
@@ -2353,7 +3689,15 @@ private fun SourceCatalogueScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Button(onClick = { requestBrowse() }) { Text(strings.search) }
+            Button(
+                onClick = {
+                    if (mode == SourceCatalogueMode.Favorites) {
+                        requestBrowse("", SourceCatalogueMode.Favorites, null)
+                    } else {
+                        requestBrowse()
+                    }
+                },
+            ) { Text(if (mode == SourceCatalogueMode.Favorites) strings.text("Refresh") else strings.search) }
         }
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

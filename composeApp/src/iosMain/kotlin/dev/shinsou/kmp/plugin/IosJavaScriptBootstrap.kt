@@ -15,6 +15,7 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     httpGet:function(url){return nativeCall('httpGet',[String(url)]);},
     httpGetWithHeaders:function(url,headers){return nativeCall('httpGetWithHeaders',[String(url),headers||{}]);},
     httpPost:function(url,body,headers){return nativeCall('httpPost',[String(url),String(body||''),headers||{}]);},
+    httpPostBatch:function(urls,bodies,headers){return nativeCall('httpPostBatch',[urls||[],bodies||[],headers||{}]);},
     log:function(sourceOrMessage,message){nativeCall('log',[String(message===undefined?sourceOrMessage:message)]);},
     getPreference:function(key){return nativeCall('getPreference',[String(key)]);},
     setPreference:function(key,value){nativeCall('setPreference',[String(key),String(value)]);},
@@ -24,6 +25,13 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     clearCredential:function(){nativeCall('clearCredential',[]);},
     hasCredential:function(){return !!nativeCall('hasCredential',[]);},
     requestLogin:function(reason){return !!nativeCall('requestLogin',reason==null?[]:[String(reason)]);},
+    requestHostEvent:function(envelope){
+      var value=nativeCall('requestHostEvent',[String(envelope)]);
+      if(typeof value==='string'){try{return JSON.parse(value);}catch(e){return null;}}
+      return value;
+    },
+    getHostEventContext:function(){return nativeCall('getHostEventContext',[]);},
+    getHostEventCapabilities:function(){return nativeCall('getHostEventCapabilities',[])||{enabled:false};},
     getCookie:function(name,url){return nativeCall('getCookie',[String(name),String(url)]);},
     getCookies:function(url){return nativeCall('getCookies',[String(url)])||{};},
     setCookie:function(name,value,domain,path,seconds){return !!nativeCall('setCookie',[String(name),String(value),String(domain),String(path||'/'),Number(seconds||0)]);},
@@ -32,6 +40,20 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     domReleaseAll:function(){nativeCall('domReleaseAll',[]);},
     domRelease:function(id){nativeCall('domRelease',[Number(id||0)]);},
     parseHtml:function(html,selector){var doc=parseHtml(String(html),'');return doc.select(String(selector)).map(function(e){return{text:e.text(),html:e.html(),outerHtml:e.outerHtml(),attr_href:e.attr('href'),attr_src:e.attr('src'),tagName:e.tagName()};});}
+  };
+  bridge.system={
+    submit:function(name,kind,payload,options){
+      options=options||{};
+      var envelope={protocol:'dev.shinsou.system',version:1,kind:String(kind),name:String(name),
+        id:String(options.id||('event-'+Date.now())),payloadVersion:1,payload:payload||{}};
+      if(options.idempotencyKey!=null)envelope.idempotencyKey=String(options.idempotencyKey);
+      if(options.contextRef!=null)envelope.contextRef=String(options.contextRef);
+      return bridge.requestHostEvent(JSON.stringify(envelope));
+    },
+    requestLogin:function(reason){return this.submit('auth.login.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    requestRefresh:function(scope,contextRef){scope=String(scope||'SELF');if(scope==='ACTIVE_CONTEXT'&&contextRef==null)contextRef=bridge.getHostEventContext();return this.submit('source.refresh.request','command',{scope:scope,reasonCode:null},{contextRef:contextRef});},
+    requestLogout:function(reason){return this.submit('auth.logout.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    reportMessage:function(message){return this.submit('diagnostic.message.report','event',message||{});}
   };
   global.console={log:bridge.log,error:bridge.log,warn:bridge.log,info:bridge.log};
 
@@ -228,7 +250,7 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     }
     return true;
   };
-  global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,headers:source.headers||{}});};
+  global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,supportsFavorites:!!source.supportsFavorites,headers:source.headers||{}});};
   global.__shinsouPreferences=function(){if(typeof source!=='object'||!source)return '[]';var values=typeof source.getPreferenceDefinitions==='function'?source.getPreferenceDefinitions():(source.preferences||[]);return JSON.stringify(values||[]);};
   global.__shinsouInvoke=function(method,argsJson){bridge.domReleaseAll();if(typeof source!=='object'||!source||typeof source[method]!=='function')throw new Error('Plugin has no function '+method);var result=source[method].apply(source,JSON.parse(argsJson||'[]'));return JSON.stringify(result===undefined?null:result);};
 })(this);

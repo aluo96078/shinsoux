@@ -238,6 +238,24 @@ public class ExtensionContentConsumerV2(
         page: Int = 0,
     ): ExtensionPublicationPageV2 {
         val publication = gateway.details(sourceKey, remotePublicationId)
+        return publicationUnitsPage(sourceKey, remotePublicationId, publication, page)
+    }
+
+    /**
+     * Loads a unit page using metadata the host already has (normally from the catalogue row).
+     * This keeps the detail surface responsive: chapters can be shown first while a full metadata
+     * refresh (description/author/etc.) continues independently. The normal [publicationPage]
+     * path remains strict and still fetches authoritative details when no hint exists.
+     */
+    public suspend fun publicationUnitsPage(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        publication: RemotePublicationV2,
+        page: Int = 0,
+    ): ExtensionPublicationPageV2 {
+        require(publication.remoteId == remotePublicationId) {
+            "Known extension publication metadata changed remote identity"
+        }
         val units = gateway.units(sourceKey, remotePublicationId, page)
         return ExtensionPublicationPageV2(
             sourceKey = sourceKey,
@@ -900,9 +918,8 @@ public class ExtensionContentConsumerV2(
         error("Extension graph commit retry budget was exhausted")
     }
 
-    private fun publicationKey(selection: ExtensionUnitSelectionV2): PublicationKey = PublicationKey(
-        extensionId("publication", selection),
-    )
+    private fun publicationKey(selection: ExtensionUnitSelectionV2): PublicationKey =
+        extensionPublicationKey(selection.sourceKey, selection.remotePublicationId)
 
     private fun acquisitionId(selection: ExtensionUnitSelectionV2): String =
         extensionId("acquisition", selection)
@@ -1117,6 +1134,27 @@ private inline fun <T, K> List<T>.replaceOrAppend(value: T, key: (T) -> K): List
     val index = indexOfFirst { key(it) == replacementKey }
     if (index < 0) return this + value
     return toMutableList().apply { set(index, value) }
+}
+
+/**
+ * Returns the stable typed-content publication identity for an extension publication.
+ *
+ * The browse UI uses this before a unit has been materialized so a locally favourited novel can
+ * share the exact compatibility URL that the reader/history bridge creates later. Keep this
+ * derivation in one place; changing it would split one remote publication into two local rows.
+ */
+internal fun extensionPublicationKey(
+    sourceKey: SourceKey,
+    remotePublicationId: String,
+): PublicationKey {
+    sourceKey.validate()
+    require(remotePublicationId.isNotBlank()) { "Remote publication id cannot be blank" }
+    return PublicationKey(
+        Rfc9562UuidV5.derive(
+            EXTENSION_CONTENT_NAMESPACE,
+            framedIdentity("publication", sourceKey.canonicalId, remotePublicationId),
+        ),
+    )
 }
 
 private fun framedIdentity(vararg fields: String): String = buildString {

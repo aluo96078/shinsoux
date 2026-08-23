@@ -381,6 +381,66 @@ class PluginSubsystemTest {
     }
 
     @Test
+    fun nonLoginSourceDoesNotExposeOrAcceptCredentials() = runTest {
+        val index = """[{"id":"all.no-login","name":"No Login","version":"1.0.0","versionCode":1,
+            "lang":"all","scriptUrl":"plugins/all.no-login.js","sources":[
+            {"name":"No Login Source","lang":"all","id":404,"baseUrl":"https://source.example"}]}]"""
+        val engine = MockEngine { request ->
+            when {
+                request.url.encodedPath.endsWith("/repo.json") -> respond(
+                    """{"meta":{"name":"Test Repository"}}""",
+                    HttpStatusCode.OK,
+                )
+                request.url.encodedPath.endsWith("/index.json") -> respond(index, HttpStatusCode.OK)
+                request.url.encodedPath.endsWith("/plugins/all.no-login.js") ->
+                    respond("var source={};", HttpStatusCode.OK)
+                else -> respond("not found", HttpStatusCode.NotFound)
+            }
+        }
+        val kv = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(kv)
+        val staleCredential = PluginCredential("stale-user", "stale-password")
+        storage.setCredential(404L, staleCredential)
+        storage.setCookie(404L, PluginCookie("stale-session", "stale-cookie", ".source.example"))
+        val trust = KeyValuePluginTrustStore(kv)
+        val repositoryClient = ExtensionRepositoryClient(HttpClient(engine), cacheToken = { 1L })
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = KeyValuePluginPackageStore(kv),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = RecordingRuntimeFactory(supportsLogin = false),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                    requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                ),
+                storage = storage,
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(kv),
+            pluginStorage = storage,
+            keyValueStore = kv,
+            trustStore = trust,
+            defaultRepositoryUrl = "https://repo.example",
+        )
+
+        browse.refresh()
+        browse.installExtension("all.no-login")
+
+        val source = browse.state.value.sources.single()
+        assertFalse(source.supportsLogin)
+        assertNull(source.credential, "stale secrets must not enter the UI snapshot")
+        assertFailsWith<IllegalStateException> {
+            browse.saveSourceCredentials(source.id, "new-user", "new-password")
+        }
+        assertEquals(staleCredential, storage.getCredential(404L), "unsupported writes must be rejected")
+    }
+
+    @Test
     fun uiAdaptersInstallBrowseAndBuildReaderRequestsWithSharedSemantics() = runTest {
         val index = """[{"id":"all.test","name":"Test","version":"1.0.0","versionCode":1,
             "lang":"all","nsfw":0,"scriptUrl":"plugins/all.test.js","sources":[
@@ -441,6 +501,7 @@ class PluginSubsystemTest {
         assertEquals("Test Repository", browse.state.value.repositories.single().name)
         assertFalse(browse.state.value.extensions.single().installed)
         browse.installExtension("all.test")
+        manager.setPluginUiAvailable(true)
         assertEquals(2, indexRequestCount, "install must reuse its fetched index when rebuilding UI state")
         assertTrue(browse.state.value.extensions.single().installed)
         assertTrue(browse.state.value.extensions.single().trusted)
@@ -558,7 +619,9 @@ class PluginSubsystemTest {
     }
 }
 
-private class RecordingRuntimeFactory : ScriptPluginRuntimeFactory {
+private class RecordingRuntimeFactory(
+    private val supportsLogin: Boolean = true,
+) : ScriptPluginRuntimeFactory {
     var runtime: RecordingRuntime? = null
     val createdPluginIds = mutableListOf<String>()
     val runtimes = mutableMapOf<String, RecordingRuntime>()
@@ -567,14 +630,17 @@ private class RecordingRuntimeFactory : ScriptPluginRuntimeFactory {
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = RecordingRuntime(manifest).also {
+    ): ScriptPluginRuntime = RecordingRuntime(manifest, supportsLogin).also {
         runtime = it
         createdPluginIds += manifest.id
         runtimes[manifest.id] = it
     }
 }
 
-private class RecordingRuntime(manifest: PluginManifest) : ScriptPluginRuntime {
+private class RecordingRuntime(
+    manifest: PluginManifest,
+    override val supportsLogin: Boolean,
+) : ScriptPluginRuntime {
     private val source = requireNotNull(manifest.sources?.firstOrNull())
     var popularPage: Int? = null
     var searchPage: Int? = null
@@ -592,7 +658,6 @@ private class RecordingRuntime(manifest: PluginManifest) : ScriptPluginRuntime {
     override val baseUrl: String = source.baseUrl.orEmpty()
     override val headers: Map<String, String> = emptyMap()
     override val supportsLatest: Boolean = true
-    override val supportsLogin: Boolean = true
     override val recentLogs: List<String> = emptyList()
 
     override suspend fun getPopularManga(page: Int): MangasPage {

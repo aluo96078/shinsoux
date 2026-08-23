@@ -9,6 +9,8 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.PluginCookie
 import dev.shinsou.kmp.plugin.PluginCredential
 import dev.shinsou.kmp.plugin.PluginLoginRequester
+import dev.shinsou.kmp.plugin.submitLegacyLoginCompatibility
+import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
 import dev.shinsou.kmp.plugin.PluginManifest
 import dev.shinsou.kmp.plugin.PluginStorage
 import dev.shinsou.kmp.plugin.SChapter
@@ -17,12 +19,24 @@ import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntime
 import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.SourceIndexEntry
+import dev.shinsou.kmp.plugin.events.BoundPluginScope
+import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
+import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
+import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
+import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
 import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
+import dev.shinsou.kmp.plugin.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.toPluginFilter
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.v2.BrowseFilterListV2
 import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.ExtensionCapability
 import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.UserInteractionScopedExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.ArtifactBoundExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ImmutableExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsResolverV2
 import dev.shinsou.kmp.plugin.v2.LoginCredentialsV2
@@ -36,8 +50,13 @@ import dev.shinsou.kmp.plugin.v2.TextChunkStreamV2
 import dev.shinsou.kmp.plugin.v2.TextPayloadSourceV2
 import dev.shinsou.kmp.plugin.v2.UnitContentPayload
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import dev.shinsou.kmp.plugin.v2.SourceLifecycleControlledExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.toBoundedRemoteMetadata
+import dev.shinsou.kmp.plugin.v2.toOptionalBoundedRemoteMetadata
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Resolves a process-local v1 engine/storage scope for one reviewed opaque source identity.
@@ -99,6 +118,8 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
     private val credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
     private val executionScopes: ShuYueExecutionScopeResolverV2 = BuiltInShuYueExecutionScopesV2,
 ) : ShuYueReviewedRuntimeFactoryV2 {
+    private var nextEventRuntimeGeneration: Long = 0
+
     override suspend fun create(artifact: ShuYueAdmittedScriptV2): CloseableExtensionPackageRuntimeV2 {
         require(ShuYueExecutionPermissionV2.EXECUTE_SCRIPT in artifact.grantedPermissions) {
             "Reviewed ShuYue runtime lacks script execution permission"
@@ -112,6 +133,56 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
             ?: throw IllegalArgumentException("A reviewed ShuYue script must declare exactly one source")
         require(sourceDescriptor.sourceKey.packageId == artifact.identity.packageId) {
             "Reviewed ShuYue descriptor package mismatch"
+        }
+
+        val eventGateway = environment.systemEventSink as? PluginSystemEventGateway
+        val eventContextRegistry = environment.systemEventContextRegistry ?: eventGateway?.contextRegistry
+        val eventRuntimeGeneration = ++nextEventRuntimeGeneration
+        val eventBinding = artifact.systemEvents?.let { declaration ->
+            eventGateway?.let { gateway ->
+                val scope = BoundPluginScopeFactory().bind(
+                    artifactIdentity = PluginArtifactIdentity(
+                        packageId = artifact.identity.packageId,
+                        version = artifact.identity.version,
+                        versionCode = artifact.identity.versionCode,
+                        sha256 = artifact.identity.sha256,
+                    ),
+                    sourceKey = sourceDescriptor.sourceKey,
+                    runtimeInstanceId = "shuyue-${artifact.identity.packageId}-${artifact.identity.sha256.take(16)}",
+                    runtimeGeneration = eventRuntimeGeneration,
+                )
+                val requestedHostPermissions = if (
+                    ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions
+                ) {
+                    setOf(PluginHostPermission.REQUEST_LOGIN_UI)
+                } else {
+                    emptySet()
+                }
+                gateway.grantRuntimePermissions(scope, requestedHostPermissions)
+                val negotiation = gateway.negotiate(scope, declaration)
+                if (!negotiation.enabled) {
+                    gateway.revokeRuntimePermissions(scope)
+                    null
+                } else {
+                    gateway.openRuntime(
+                        scope,
+                        PluginEventRuntimeStatus(
+                            lifecycle = PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED,
+                            sourceCapabilities = buildSet {
+                                add("CATALOGUE")
+                                if (ExtensionCapability.LOGIN in sourceDescriptor.capabilities) add("LOGIN")
+                                if (ExtensionCapability.LATEST in sourceDescriptor.capabilities) add("LATEST")
+                            },
+                        ),
+                    )
+                    ReviewedEventBinding(
+                        gateway = gateway,
+                        scope = scope,
+                        negotiation = negotiation,
+                        contextRegistry = eventContextRegistry,
+                    )
+                }
+            }
         }
 
         val executionScope = executionScopes.resolve(artifact.identity, sourceDescriptor.sourceKey)
@@ -130,6 +201,12 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
             script = "${artifact.identity.packageId}.reviewed.js",
             signature = artifact.identity.sha256,
             sources = listOf(sourceEntry),
+            systemEvents = artifact.systemEvents,
+            requestedHostPermissions = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
+                setOf(PluginHostPermission.REQUEST_LOGIN_UI)
+            } else {
+                emptySet()
+            },
         )
         val filteredStorage = CapabilityFilteredShuYueStorage(
             delegate = environment.storage,
@@ -143,11 +220,17 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
             } else {
                 PluginLoginRequester.None
             },
+            systemEventSink = eventBinding?.gateway,
+            boundPluginScope = eventBinding?.scope,
+            systemEventNegotiation = eventBinding?.negotiation,
+            systemEventDeclaration = artifact.systemEvents,
+            systemEventContextRegistry = eventContextRegistry,
         )
         val originalScript = artifact.copyBytes().decodeToString(throwOnInvalidSequence = true)
         val script = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
-        val runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
+        var runtime: ScriptPluginRuntime? = null
         try {
+            runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
             require(runtime.pluginId == artifact.identity.packageId && runtime.id == executionScope) {
                 "Reviewed ShuYue platform runtime escaped its assigned execution scope"
             }
@@ -155,37 +238,116 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                 descriptor = sourceDescriptor,
                 runtime = runtime,
                 credentialsResolver = credentialsResolver,
+                eventBinding = eventBinding,
+                hasStoredCredentials = { filteredStorage.getCredential(executionScope) != null },
+                requestLogin = { reason ->
+                    if (eventBinding != null) {
+                        submitLegacyLoginCompatibility(scopedEnvironment, supportsLogin = true, reason)
+                    } else {
+                        environment.loginRequester.request(
+                            executionScope,
+                            sourceDescriptor.displayName,
+                            reason,
+                        )
+                    }
+                },
             )
             return CloseableShuYuePackageRuntimeV2(
+                PluginArtifactIdentity(
+                    artifact.identity.packageId,
+                    artifact.identity.version,
+                    artifact.identity.versionCode,
+                    artifact.identity.sha256,
+                ),
                 ImmutableExtensionPackageRuntimeV2(descriptor, listOf(source)),
                 runtime,
                 source::closeTextStreams,
+                source,
+                closeEventBinding = {
+                    eventBinding?.let {
+                        it.gateway.closeRuntime(it.scope)
+                        it.gateway.revokeRuntimePermissions(it.scope)
+                    }
+                },
             )
         } catch (error: Throwable) {
-            runCatching { runtime.close() }
+            eventBinding?.let {
+                it.gateway.closeRuntime(it.scope)
+                it.gateway.revokeRuntimePermissions(it.scope)
+            }
+            runtime?.let { failedRuntime -> runCatching { failedRuntime.close() } }
             throw error
         }
     }
 }
 
 private class CloseableShuYuePackageRuntimeV2(
+    override val artifactIdentity: PluginArtifactIdentity,
     private val delegate: ImmutableExtensionPackageRuntimeV2,
     private val runtime: ScriptPluginRuntime,
     private val closeTextStreams: () -> Unit,
-) : CloseableExtensionPackageRuntimeV2 {
+    private val eventSource: ProductionShuYueSourceV2,
+    private val closeEventBinding: () -> Unit = {},
+) : CloseableExtensionPackageRuntimeV2,
+    ArtifactBoundExtensionPackageRuntimeV2,
+    SourceLifecycleControlledExtensionPackageRuntimeV2 {
     override val descriptor: ExtensionPackageV2 get() = delegate.descriptor
     override fun source(sourceKey: SourceKey): ExtensionSourceV2? = delegate.source(sourceKey)
+    override suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean {
+        return eventSource.setSourceEnabled(sourceKey, enabled)
+    }
     override suspend fun close() {
         closeTextStreams()
+        closeEventBinding()
         runtime.close()
     }
 }
+
+private data class ReviewedEventBinding(
+    val gateway: PluginSystemEventGateway,
+    val scope: BoundPluginScope,
+    val negotiation: dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation,
+    val contextRegistry: dev.shinsou.kmp.plugin.events.PluginEventContextRegistry?,
+)
 
 private class ProductionShuYueSourceV2(
     override val descriptor: SourceDescriptorV2,
     private val runtime: ScriptPluginRuntime,
     private val credentialsResolver: LegacyLoginCredentialsResolverV2?,
-) : ExtensionSourceV2 {
+    private val eventBinding: ReviewedEventBinding?,
+    private val hasStoredCredentials: suspend () -> Boolean,
+    private val requestLogin: (String?) -> Boolean,
+) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2 {
+    private val interactionMutex = Mutex()
+    /** Serializes context-bearing engine calls so a later invocation cannot replace its handle. */
+    private val invocationMutex = Mutex()
+    private var interactionCount = 0
+    private val sourceStateLock = SynchronousLock()
+    private var sourceEnabled: Boolean = true
+
+    override suspend fun <T> withUserInteractionContext(block: suspend () -> T): T {
+        interactionMutex.withLock {
+            interactionCount += 1
+            if (interactionCount == 1) eventBinding?.gateway?.setUserInteractionContext(eventBinding.scope, true)
+        }
+        return try {
+            block()
+        } finally {
+            interactionMutex.withLock {
+                interactionCount = (interactionCount - 1).coerceAtLeast(0)
+                if (interactionCount == 0) eventBinding?.gateway?.setUserInteractionContext(eventBinding.scope, false)
+            }
+        }
+    }
+
+    override fun setHostUiAvailable(available: Boolean) {
+        eventBinding?.gateway?.setRuntimeLifecycle(
+            eventBinding.scope,
+            if (available) PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED
+            else PluginRuntimeLifecycle.OPEN_BACKGROUND,
+        )
+        if (!available) eventBinding?.gateway?.setUserInteractionContext(eventBinding.scope, false)
+    }
     private val textStreamLock = SynchronousLock()
     private val pendingTextStreams = linkedMapOf<String, PendingShuYueTextStream>()
     private val activeTextStreams = linkedMapOf<String, ReviewedShuYueTextChunkStream>()
@@ -194,96 +356,160 @@ private class ProductionShuYueSourceV2(
     private var nextTextStreamOrdinal: Long = 1
     private var textStreamsClosed: Boolean = false
 
-    override suspend fun browseOptions(): BrowseOptionsSchemaV2 =
-        BrowseOptionsSchemaV2(listOf(BROWSE_OPTION_KEY))
+    override suspend fun getFilterList(): BrowseFilterListV2 = ensureSourceEnabled().let {
+        runtime.getFilterList().map { it.toBrowseFilterV2() }
+    }
+
+    override suspend fun browseOptions(): BrowseOptionsSchemaV2 = ensureSourceEnabled().let {
+        BrowseOptionsSchemaV2(
+            keys = listOf(BROWSE_OPTION_KEY),
+            filters = getFilterList(),
+        )
+    }
 
     override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
-        runtime.getSearchManga(scriptPage(page), SEARCH_COMMAND_PREFIX + query, emptyList()).toV2Page()
+        ensureSourceEnabled().let {
+            runtime.getSearchManga(scriptPage(page), SEARCH_COMMAND_PREFIX + query, emptyList()).toV2Page()
+        }
+
+    override suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> = ensureSourceEnabled().let {
+        runtime.getSearchManga(
+            scriptPage(page),
+            SEARCH_COMMAND_PREFIX + query,
+            options.filters.map { it.toPluginFilter() },
+        ).toV2Page()
+    }
 
     override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> =
-        runtime.getLatestUpdates(scriptPage(page)).toV2Page()
+        ensureSourceEnabled().let { runtime.getLatestUpdates(scriptPage(page)).toV2Page() }
 
     override suspend fun browse(
         options: BrowseOptionsV2,
         page: Int,
     ): PagedResultV2<RemotePublicationV2> {
+        ensureSourceEnabled()
         require(options.values.keys.all { it == BROWSE_OPTION_KEY } && options.values.size <= 1) {
             "Reviewed ShuYue browse accepts only '$BROWSE_OPTION_KEY'"
         }
         val option = options.values[BROWSE_OPTION_KEY]
-        val result = if (option == null) {
-            runtime.getPopularManga(scriptPage(page))
-        } else {
+        val result = if (option != null) {
+            if (option == BOOKCASE_OPTION_VALUE && !hasStoredCredentials()) {
+                // In a fully wired app this queues the exact v2 login dialog and avoids a
+                // needless unauthenticated request. Test/embedded hosts without a presenter
+                // return false, in which case the source retains its historical network path.
+                if (requestLogin("收藏庫需要登入")) return PagedResultV2(emptyList(), false)
+            }
             runtime.getSearchManga(scriptPage(page), BROWSE_COMMAND_PREFIX + option, emptyList())
+        } else if (options.filters.isNotEmpty()) {
+            runtime.getSearchManga(
+                scriptPage(page),
+                "",
+                options.filters.map { it.toPluginFilter() },
+            )
+        } else {
+            runtime.getPopularManga(scriptPage(page))
         }
         return result.toV2Page()
     }
 
     override suspend fun details(remotePublicationId: String): RemotePublicationV2 {
-        val details = runtime.getMangaDetails(
-            SManga(url = remotePublicationId, title = remotePublicationId),
-        )
-        return details.toRemotePublication(remotePublicationId)
+        ensureSourceEnabled()
+        return withActiveInvocationContext(remotePublicationId) {
+            val details = runtime.getMangaDetails(
+                SManga(url = remotePublicationId, title = remotePublicationId),
+            )
+            details.toRemotePublication(remotePublicationId)
+        }
     }
 
     override suspend fun units(
         remotePublicationId: String,
         page: Int,
     ): PagedResultV2<RemoteUnitV2> {
-        val chapters = runtime.getChapterList(
-            SManga(url = remotePublicationId, title = remotePublicationId),
-        )
-        require(chapters.size <= MAX_SHUYUE_UNITS) { "Reviewed ShuYue source returned too many units" }
-        val fromLong = page.toLong() * PAGE_SIZE.toLong()
-        if (fromLong >= chapters.size) return PagedResultV2(emptyList(), false)
-        val from = fromLong.toInt()
-        val to = minOf(chapters.size, from + PAGE_SIZE)
-        return PagedResultV2(
-            chapters.subList(from, to).map { chapter -> chapter.toRemoteUnit() },
-            hasNextPage = to < chapters.size,
-        )
+        ensureSourceEnabled()
+        return withActiveInvocationContext(remotePublicationId) {
+            val chapters = runtime.getChapterList(
+                SManga(url = remotePublicationId, title = remotePublicationId),
+            )
+            require(chapters.size <= MAX_SHUYUE_UNITS) { "Reviewed ShuYue source returned too many units" }
+            val fromLong = page.toLong() * PAGE_SIZE.toLong()
+            if (fromLong >= chapters.size) return@withActiveInvocationContext PagedResultV2(emptyList(), false)
+            val from = fromLong.toInt()
+            val to = minOf(chapters.size, from + PAGE_SIZE)
+            PagedResultV2(
+                chapters.subList(from, to).map { chapter -> chapter.toRemoteUnit() },
+                hasNextPage = to < chapters.size,
+            )
+        }
     }
 
     override suspend fun content(
         remotePublicationId: String,
         remoteUnitId: String,
     ): UnitContentResultV2 {
-        val carrier = runtime.getMangaDetails(
-            SManga(
-                url = CONTENT_COMMAND_PREFIX + remoteUnitId,
-                title = remotePublicationId,
-            ),
-        )
-        val text = carrier.description.orEmpty()
-        val textByteSize = text.utf8ByteSizeBounded(MAX_SHUYUE_TEXT_STREAM_BYTES)
-        val representation = if (textByteSize <= MAX_SHUYUE_INLINE_TEXT_BYTES) {
-            UnitContentPayload.InlineTextPayload(
-                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
-                representationId = SHUYUE_TEXT_REPRESENTATION_ID,
-                sourceKey = descriptor.sourceKey,
-                remoteUnitId = remoteUnitId,
-                source = TextPayloadSourceV2.InlineTextPayload(text),
-                blocks = listOf(TextBlock("body", 0, text.length)),
+        ensureSourceEnabled()
+        return withActiveInvocationContext(remotePublicationId, remoteUnitId) {
+            val carrier = runtime.getMangaDetails(
+                SManga(
+                    url = CONTENT_COMMAND_PREFIX + remoteUnitId,
+                    title = remotePublicationId,
+                ),
             )
-        } else {
-            UnitContentPayload.ChunkedTextPayload(
+            val text = carrier.description.orEmpty()
+            val textByteSize = text.utf8ByteSizeBounded(MAX_SHUYUE_TEXT_STREAM_BYTES)
+            val representation = if (textByteSize <= MAX_SHUYUE_INLINE_TEXT_BYTES) {
+                UnitContentPayload.InlineTextPayload(
+                    schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                    representationId = SHUYUE_TEXT_REPRESENTATION_ID,
+                    sourceKey = descriptor.sourceKey,
+                    remoteUnitId = remoteUnitId,
+                    source = TextPayloadSourceV2.InlineTextPayload(text),
+                    blocks = listOf(TextBlock("body", 0, text.length)),
+                )
+            } else {
+                UnitContentPayload.ChunkedTextPayload(
+                    schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                    representationId = SHUYUE_TEXT_REPRESENTATION_ID,
+                    sourceKey = descriptor.sourceKey,
+                    remoteUnitId = remoteUnitId,
+                    source = registerTextStream(text, textByteSize),
+                )
+            }
+            UnitContentResultV2(
                 schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
-                representationId = SHUYUE_TEXT_REPRESENTATION_ID,
                 sourceKey = descriptor.sourceKey,
+                remotePublicationId = remotePublicationId,
                 remoteUnitId = remoteUnitId,
-                source = registerTextStream(text, textByteSize),
+                representations = listOf(representation),
             )
         }
-        return UnitContentResultV2(
-            schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
-            sourceKey = descriptor.sourceKey,
-            remotePublicationId = remotePublicationId,
-            remoteUnitId = remoteUnitId,
-            representations = listOf(representation),
-        )
+    }
+
+    private suspend fun <T> withActiveInvocationContext(
+        publicationId: String,
+        unitId: String? = null,
+        block: suspend () -> T,
+    ): T {
+        val registry = eventBinding?.contextRegistry
+        val scope = eventBinding?.scope
+        if (registry == null || scope == null) return block()
+        return invocationMutex.withLock {
+            registry.withInvocation(
+                scope,
+                dev.shinsou.kmp.plugin.events.PluginEventContextRegistry.VisibleContext(
+                    publicationId,
+                    unitId,
+                ),
+            ) { block() }
+        }
     }
 
     override suspend fun openTextStream(streamId: String): TextChunkStreamV2 {
+        ensureSourceEnabled()
         return textStreamLock.withLock {
             check(!textStreamsClosed) { "Reviewed ShuYue text streams are closed" }
             val selected = requireNotNull(pendingTextStreams.remove(streamId)) {
@@ -347,19 +573,27 @@ private class ProductionShuYueSourceV2(
     }
 
     override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
+        ensureSourceEnabled()
         val resolved = credentialsResolver?.resolve(credentials) ?: return LoginResultV2(false)
         return LoginResultV2(runtime.login(resolved.username, resolved.password))
     }
 
-    override suspend fun logout(): Unit = runtime.logout()
-    override suspend fun preferences(): List<PreferenceV2> = emptyList()
+    override suspend fun logout(): Unit = ensureSourceEnabled().let { runtime.logout() }
+    override suspend fun preferences(): List<PreferenceV2> = ensureSourceEnabled().let { emptyList() }
 
     override suspend fun favorite(remotePublicationId: String, favorite: Boolean) {
+        ensureSourceEnabled()
         require(favorite) { "Reviewed ShuYue sources do not expose an unfavorite mutation" }
-        val result = runtime.getMangaDetails(
-            SManga(url = FAVORITE_COMMAND_PREFIX + remotePublicationId, title = remotePublicationId),
-        )
-        check(result.initialized) { "Reviewed ShuYue favorite mutation failed" }
+        // The favorite hook is an ordinary script invocation, so it must receive the same
+        // short-lived visible publication context as details/chapters/content.  Without this
+        // wrapper a script-triggered ACTIVE_CONTEXT refresh is rejected and the UI only sees a
+        // no-op/failed mutation.
+        withActiveInvocationContext(remotePublicationId) {
+            val result = runtime.getMangaDetails(
+                SManga(url = FAVORITE_COMMAND_PREFIX + remotePublicationId, title = remotePublicationId),
+            )
+            check(result.initialized) { "Reviewed ShuYue favorite mutation failed" }
+        }
     }
 
     private fun dev.shinsou.kmp.plugin.MangasPage.toV2Page(): PagedResultV2<RemotePublicationV2> {
@@ -372,8 +606,14 @@ private class ProductionShuYueSourceV2(
 
     private fun SManga.toRemotePublication(remoteId: String): RemotePublicationV2 = RemotePublicationV2(
         remoteId = remoteId,
-        title = title.ifBlank { remoteId },
+        title = title.toBoundedRemoteMetadata().ifBlank { remoteId.toBoundedRemoteMetadata() },
         url = resolveSourceHttpUrl(descriptor.baseUrl, url.ifBlank { remoteId }),
+        thumbnailUrl = thumbnailUrl?.let { resolveSourceHttpUrl(descriptor.baseUrl, it) },
+        author = author.toOptionalBoundedRemoteMetadata(),
+        artist = artist.toOptionalBoundedRemoteMetadata(),
+        description = description.toOptionalBoundedRemoteMetadata(),
+        genre = genre?.mapNotNull { it.toOptionalBoundedRemoteMetadata() }?.takeIf { it.isNotEmpty() },
+        status = status.takeIf { it != dev.shinsou.kmp.plugin.MangaStatus.UNKNOWN }?.name,
     )
 
     private fun SChapter.toRemoteUnit(): RemoteUnitV2 = RemoteUnitV2(
@@ -383,6 +623,33 @@ private class ProductionShuYueSourceV2(
     )
 
     private fun scriptPage(page: Int): Int = page + 1
+
+    /** Disabling is terminal for this engine instance; re-enable must reload a new generation. */
+    internal suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean {
+        require(sourceKey == descriptor.sourceKey) { "Source lifecycle target does not match runtime" }
+        if (enabled) return false
+        val shouldDisable = sourceStateLock.withLock {
+            if (!sourceEnabled) {
+                false
+            } else {
+                sourceEnabled = false
+                true
+            }
+        }
+        if (!shouldDisable) return true
+        closeTextStreams()
+        eventBinding?.let {
+            it.gateway.closeRuntime(it.scope)
+            it.gateway.revokeRuntimePermissions(it.scope)
+        }
+        return true
+    }
+
+    private fun ensureSourceEnabled() {
+        sourceStateLock.withLock {
+            check(sourceEnabled) { "Reviewed ShuYue source '${descriptor.sourceKey.canonicalId}' is disabled" }
+        }
+    }
 }
 
 private data class PendingShuYueTextStream(
@@ -548,7 +815,11 @@ private const val SHUYUE_COMPATIBILITY_SHIM_PREFIX: String = """
   var original={
     search:target.search,latest:target.latest,browseOptions:target.browseOptions,browse:target.browse,
     chapters:target.chapters,chapterText:target.chapterText,bookFromAid:target.bookFromAid,
-    aidFromText:target.aidFromText,favorite:target.favorite
+    aidFromText:target.aidFromText,favorite:target.favorite,
+    legacyPopular:target.getPopularManga,legacySearch:target.getSearchManga,
+    legacyLatest:target.getLatestUpdates,legacyDetails:target.getMangaDetails,
+    legacyChapters:target.getChapterList,legacyPages:target.getPageList,
+    legacyFilters:target.getFilterList
   };
   if(typeof target.parseBookLinks==='function'){
     var originalParseBookLinks=target.parseBookLinks;
@@ -574,17 +845,53 @@ private const val SHUYUE_COMPATIBILITY_SHIM_PREFIX: String = """
     if(!Array.isArray(values))return [];
     var out=[];for(var i=0;i<values.length;i++){var mapped=book(values[i]);if(mapped)out.push(mapped);}return out;
   }
-  function page(values){var mapped=books(values);return {mangas:mapped,hasNextPage:mapped.length>0};}
-  target.getSearchManga=function(pageNumber,query){
+  function page(values,hasNext){var mapped=books(values);return {mangas:mapped,hasNextPage:hasNext===undefined?mapped.length>0:!!hasNext};}
+  function legacyPage(value){
+    if(value&&typeof value==='object'&&Array.isArray(value.mangas))return value;
+    return page(value);
+  }
+  function selectedFilter(filters){
+    if(!Array.isArray(filters))return 0;
+    for(var i=0;i<filters.length;i++){
+      var filter=filters[i]||{};
+      if(Array.isArray(filter.values)){
+        var state=Number(filter.state);
+        if(isFinite(state))return Math.max(0,Math.floor(state));
+      }
+      var nested=selectedFilter(filter.filters);
+      if(nested>0)return nested;
+    }
+    return 0;
+  }
+  target.getSearchManga=function(pageNumber,query,filters){
     var command=String(query||'');
     if(command.indexOf(browsePrefix)===0){
-      return page(call(original.browse,[command.substring(browsePrefix.length),Number(pageNumber||1)]));
+      var browseId=command.substring(browsePrefix.length);
+      var browseValues=call(original.browse,[browseId,Number(pageNumber||1)]);
+      // Account-owned collections are complete snapshots in both reviewed Wenku8 scripts;
+      // advertising another page makes the UI issue a needless second network request.
+      return page(browseValues,browseId==='bookcase'?false:undefined);
+    }
+    var selected=selectedFilter(filters);
+    if(selected>0&&typeof original.browse==='function'){
+      var browseOptions=call(original.browseOptions,[])||[];
+      if(browseOptions[selected-1]){
+        var filteredValues=call(original.browse,[String(browseOptions[selected-1].id||''),Number(pageNumber||1)]);
+        return page(filteredValues);
+      }
     }
     if(command.indexOf(searchPrefix)===0)command=command.substring(searchPrefix.length);
+    if(typeof original.legacySearch==='function'){
+      return legacyPage(call(original.legacySearch,[Math.max(0,Number(pageNumber||1)-1),command,filters||[]]));
+    }
     return page(call(original.search,[command,Number(pageNumber||1)]));
   };
-  target.getLatestUpdates=function(pageNumber){return page(call(original.latest,[Number(pageNumber||1)]));};
+  target.getLatestUpdates=function(pageNumber){
+    if(typeof original.legacyLatest==='function')return legacyPage(call(original.legacyLatest,[Math.max(0,Number(pageNumber||1)-1)]));
+    return page(call(original.latest,[Number(pageNumber||1)]));
+  };
   target.getPopularManga=function(pageNumber){
+    if(typeof original.legacyPopular==='function')return legacyPage(call(original.legacyPopular,[Math.max(0,Number(pageNumber||1)-1)]));
     var options=call(original.browseOptions,[])||[];
     var option=options.length&&options[0]?String(options[0].id||''):'';
     if(option&&typeof original.browse==='function')return page(call(original.browse,[option,Number(pageNumber||1)]));
@@ -602,19 +909,27 @@ private const val SHUYUE_COMPATIBILITY_SHIM_PREFIX: String = """
       var success=!!call(original.favorite,[{url:publicationUrl,title:String(manga.title||publicationUrl)}]);
       return {url:url,title:String(manga.title||publicationUrl),initialized:success};
     }
+    if(typeof original.legacyDetails==='function')return call(original.legacyDetails,[manga]);
     var aid=typeof original.aidFromText==='function'?call(original.aidFromText,[url]):url;
     var details=aid&&typeof original.bookFromAid==='function'?call(original.bookFromAid,[aid]):manga;
     return book(details)||book(manga)||{url:url,title:String(manga.title||url),initialized:true};
   };
   target.getChapterList=function(manga){
+    if(typeof original.legacyChapters==='function')return call(original.legacyChapters,[manga||{}]);
     var values=call(original.chapters,[{url:String(manga&&manga.url||''),title:String(manga&&manga.title||'')}])||[];
     var out=[];for(var i=0;i<values.length;i++){
       var value=values[i]||{},url=String(value.url||'');if(!url)continue;
       out.push({url:url,name:String(value.title||value.name||url),scanlator:null,dateUpload:0,chapterNumber:Number(value.index||i)});
     }return out;
   };
-  target.getPageList=function(){return [];};
-  target.getFilterList=function(){return [];};
+  target.getPageList=function(chapter){
+    if(typeof original.legacyPages==='function')return call(original.legacyPages,[chapter||{}]);
+    return [];
+  };
+  target.getFilterList=function(){
+    if(typeof original.legacyFilters==='function')return call(original.legacyFilters,[]);
+    return [];
+  };
 })(
 """
 
@@ -625,6 +940,7 @@ private const val BROWSE_COMMAND_PREFIX: String = "__shinsou_shuyue_browse__:"
 private const val CONTENT_COMMAND_PREFIX: String = "__shinsou_shuyue_content__:"
 private const val FAVORITE_COMMAND_PREFIX: String = "__shinsou_shuyue_favorite__:"
 private const val BROWSE_OPTION_KEY: String = "option"
+private const val BOOKCASE_OPTION_VALUE: String = "bookcase"
 private const val SHUYUE_TEXT_REPRESENTATION_ID: String = "shuyue-inline-text"
 private const val PAGE_SIZE: Int = 100
 private const val MAX_SHUYUE_UNITS: Int = 100_000

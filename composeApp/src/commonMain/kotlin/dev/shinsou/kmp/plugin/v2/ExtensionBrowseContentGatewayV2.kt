@@ -24,7 +24,8 @@ public class ExtensionBrowseContentGatewayV2(
         sourceKey: SourceKey,
         query: String,
         page: Int = 0,
-    ): PagedResultV2<RemotePublicationV2> = requireSource(sourceKey).search(query, page)
+        options: BrowseOptionsV2 = BrowseOptionsV2(),
+    ): PagedResultV2<RemotePublicationV2> = requireSource(sourceKey).search(query, page, options)
 
     public suspend fun latest(
         sourceKey: SourceKey,
@@ -41,6 +42,12 @@ public class ExtensionBrowseContentGatewayV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
     ): RemotePublicationV2 = requireSource(sourceKey).details(remotePublicationId)
+
+    public suspend fun favorite(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        favorite: Boolean,
+    ): Unit = requireSource(sourceKey).favorite(remotePublicationId, favorite)
 
     public suspend fun units(
         sourceKey: SourceKey,

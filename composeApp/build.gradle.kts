@@ -150,6 +150,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.client.encoding)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.ktor.websockets)
             implementation(libs.sqldelight.runtime)
@@ -276,6 +277,12 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
+            // SQLDelight's Desktop SQLite driver uses java.sql.DriverManager at
+            // runtime.  jlink cannot infer this reflective JDBC entry point from
+            // the application bytecode, so explicitly retain the module in the
+            // packaged runtime (otherwise the DMG starts and immediately fails
+            // with NoClassDefFoundError: java/sql/DriverManager).
+            modules("java.sql")
             packageName = "Shinsou X"
             packageVersion = releaseVersion.get()
             description = "Shinsou X manga reader"

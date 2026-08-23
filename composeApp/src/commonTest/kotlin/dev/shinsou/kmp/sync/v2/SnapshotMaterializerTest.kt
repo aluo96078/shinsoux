@@ -490,6 +490,26 @@ class SnapshotMaterializerTest {
     }
 
     @Test
+    fun portableNovelTypographyRoundTripsAcrossDevices() {
+        val source = AppSettings(
+            reader = ReaderSettings(
+                novelFontSizeSp = 24f,
+                novelLineHeightMultiplier = 1.85f,
+                novelMaxWidthDp = 840f,
+            ),
+        )
+        val timestamp = HlcTimestamp(10, 0, "reader-settings-test")
+        val registers = PortableSettingProjector.encode(source)
+            .mapValues { (_, value) -> LwwRegister(value, timestamp) }
+
+        val projected = PortableSettingProjector.apply(AppSettings(), registers)
+
+        assertEquals(24f, projected.reader.novelFontSizeSp)
+        assertEquals(1.85f, projected.reader.novelLineHeightMultiplier)
+        assertEquals(840f, projected.reader.novelMaxWidthDp)
+    }
+
+    @Test
     fun olderRemoteRepositoryCannotClearLocallyTrustedFingerprint() {
         val current = AppSnapshot(
             extensionRepositories = listOf(

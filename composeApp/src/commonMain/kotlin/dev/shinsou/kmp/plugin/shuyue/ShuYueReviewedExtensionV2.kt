@@ -5,6 +5,8 @@ package dev.shinsou.kmp.plugin.shuyue
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.Sha256
+import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNames
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
@@ -13,6 +15,8 @@ import dev.shinsou.kmp.plugin.v2.ExtensionHostFacadeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.UserInteractionScopedExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.SourceLifecycleControlledExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.LoginCredentialsV2
 import dev.shinsou.kmp.plugin.v2.LoginResultV2
 import dev.shinsou.kmp.plugin.v2.PagedResultV2
@@ -262,6 +266,15 @@ public class ShuYueReviewedPluginProfileV2(
     public val baseUrl: String,
     capabilities: Set<ExtensionCapability>,
     requiredPermissions: Set<ShuYueExecutionPermissionV2>,
+    /**
+     * Compatibility-only packages stay in the exact reviewed catalogue so an existing install
+     * can be rehydrated and migrated, but must never be offered as a new source. ShuYue's old
+     * Wenku8 HTML script is the first such package; the maintained relay is a separate identity.
+    */
+    public val legacyCompatibilityOnly: Boolean = false,
+    /** V2-index-only pin; it must never be selected for a legacy index without a digest. */
+    public val v2IndexOnly: Boolean = false,
+    public val systemEvents: PluginSystemEventDeclaration? = null,
 ) {
     public val capabilities: Set<ExtensionCapability> = capabilities.toSet()
     public val requiredPermissions: Set<ShuYueExecutionPermissionV2> = requiredPermissions.toSet()
@@ -318,21 +331,22 @@ public object ShuYueReviewedPluginCatalogV2 {
     public val profiles: List<ShuYueReviewedPluginProfileV2> = listOf(
         profile(
             packageId = "zh.wenku8",
-            version = "1.6.12",
-            versionCode = 30,
-            sha256 = "a77c9b81e4adcd86d6cb3b1126922345a1e69fd56658639188e6cf0e925655c3",
+            version = "1.6.14",
+            versionCode = 32,
+            sha256 = "5536b392476d59000770a15e2f759c3fb5f5d51b551c03ae42182c7eb5610b9e",
             displayName = "輕小說文庫（停止維護）",
             sourceName = "輕小說文庫（停止維護）",
             baseUrl = "https://www.wenku8.net",
             login = true,
             favorite = true,
             browserChallenge = true,
+            legacyCompatibilityOnly = true,
         ),
         profile(
             packageId = "zh.wenku8.api",
-            version = "1.0.2",
-            versionCode = 3,
-            sha256 = "89a9d3236dd7ea1655cad57ddeaca100cc1a8ff2b99acdcd06b8fd69cf13d7ce",
+            version = "1.0.4",
+            versionCode = 5,
+            sha256 = "aaa7875360a52dd3393288bbb4f1e85d38ddd6a42041a0e489d7585db8bb5996",
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
@@ -341,10 +355,23 @@ public object ShuYueReviewedPluginCatalogV2 {
             browserChallenge = false,
         ),
         profile(
+            packageId = "zh.wenku8.api",
+            version = "1.0.4",
+            versionCode = 5,
+            sha256 = "5a9d1ac0d8263629e82332a88b2a7ed4eb6efb857804a8ae6ae946b2eb23b627",
+            displayName = "輕小說文庫",
+            sourceName = "輕小說文庫",
+            baseUrl = "https://wenku8-relay.mewx.org/",
+            login = true,
+            favorite = true,
+            browserChallenge = false,
+            v2IndexOnly = true,
+        ),
+        profile(
             packageId = "zh.biquge.tw",
-            version = "1.0.1",
-            versionCode = 2,
-            sha256 = "2dd28789d8be4d3d5ac88926bc1e143e5b46198b3fa579f46baf510f2591de78",
+            version = "1.0.3",
+            versionCode = 4,
+            sha256 = "74a961995aae9bef40444a819011e3b7702fcce6ce179fbd8e1ff6c733468303",
             displayName = "筆趣閣",
             sourceName = "筆趣閣",
             baseUrl = "https://www.biquge.tw",
@@ -352,10 +379,41 @@ public object ShuYueReviewedPluginCatalogV2 {
             favorite = false,
             browserChallenge = true,
         ),
+        profile(
+            packageId = "zh.biquge.tw",
+            version = "1.0.3",
+            versionCode = 4,
+            sha256 = "9320a3204fc2dbf88a20c74a8a8fff9723536f0cb32a0dc56763db67be96f2d6",
+            displayName = "筆趣閣",
+            sourceName = "筆趣閣",
+            baseUrl = "https://www.biquge.tw",
+            login = false,
+            favorite = false,
+            browserChallenge = true,
+            v2IndexOnly = true,
+        ),
+        profile(
+            packageId = "zh.wenku8",
+            version = "1.6.14",
+            versionCode = 32,
+            sha256 = "a6c1f21f94337249403b8d165d1ebe31e2c7534d62ca2b92fc5bd3f3c5bccfd1",
+            displayName = "輕小說文庫（停止維護）",
+            sourceName = "輕小說文庫（停止維護）",
+            baseUrl = "https://www.wenku8.net",
+            login = true,
+            favorite = true,
+            browserChallenge = true,
+            legacyCompatibilityOnly = true,
+            v2IndexOnly = true,
+        ),
     )
 
     public fun find(identity: ShuYueArtifactIdentityV2): ShuYueReviewedPluginProfileV2? =
         profiles.singleOrNull { it.identity == identity }
+
+    /** Packages safe to display/install from a repository for a new user. */
+    public val installableProfiles: List<ShuYueReviewedPluginProfileV2>
+        get() = profiles.filterNot(ShuYueReviewedPluginProfileV2::legacyCompatibilityOnly)
 
     /**
      * Resolves the opaque source identity stored by ShuYue v1 to the exact reviewed v2 key.
@@ -374,6 +432,27 @@ public object ShuYueReviewedPluginCatalogV2 {
             .singleOrNull()
     }
 
+    /** Resolves repository metadata to the exact reviewed digest when V2 supplies one. */
+    public fun findRepositoryProfile(
+        packageId: String,
+        version: String,
+        versionCode: Int,
+        sha256: String?,
+    ): ShuYueReviewedPluginProfileV2? {
+        val candidates = installableProfiles.filter { profile ->
+            profile.identity.packageId == packageId &&
+                profile.identity.version == version &&
+                profile.identity.versionCode == versionCode
+        }
+        return if (sha256 != null) {
+            candidates.singleOrNull { it.identity.sha256 == sha256 }
+        } else {
+            // Legacy indexes did not carry a digest. Only an explicitly legacy-compatible
+            // record may satisfy one; V2-only pins must never inherit its grants.
+            candidates.singleOrNull { !it.v2IndexOnly }
+        }
+    }
+
     internal fun review(
         identity: ShuYueArtifactIdentityV2,
         sourceIds: List<String>,
@@ -382,10 +461,12 @@ public object ShuYueReviewedPluginCatalogV2 {
         if (!reportedDigestMatches) return ShuYueReviewStatusV2.DIGEST_MISMATCH
         val packageProfiles = profiles.filter { it.identity.packageId == identity.packageId }
         if (packageProfiles.isEmpty()) return ShuYueReviewStatusV2.UNKNOWN_PACKAGE
-        val version = packageProfiles.singleOrNull {
+        val versions = packageProfiles.filter {
             it.identity.version == identity.version && it.identity.versionCode == identity.versionCode
-        } ?: return ShuYueReviewStatusV2.UNREVIEWED_VERSION
-        if (version.identity.sha256 != identity.sha256) return ShuYueReviewStatusV2.DIGEST_MISMATCH
+        }
+        if (versions.isEmpty()) return ShuYueReviewStatusV2.UNREVIEWED_VERSION
+        val version = versions.singleOrNull { it.identity.sha256 == identity.sha256 }
+            ?: return ShuYueReviewStatusV2.DIGEST_MISMATCH
         if (sourceIds != listOf(version.sourceId)) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
         return ShuYueReviewStatusV2.REVIEWED
     }
@@ -401,6 +482,17 @@ public object ShuYueReviewedPluginCatalogV2 {
         login: Boolean,
         favorite: Boolean,
         browserChallenge: Boolean,
+        legacyCompatibilityOnly: Boolean = false,
+        v2IndexOnly: Boolean = false,
+        systemEvents: PluginSystemEventDeclaration? = if (login) {
+            PluginSystemEventDeclaration(
+                minVersion = 1,
+                maxVersion = 1,
+                required = setOf(PluginSystemEventNames.LOGIN_CAPABILITY),
+            )
+        } else {
+            null
+        },
     ): ShuYueReviewedPluginProfileV2 {
         val capabilities = buildSet {
             add(ExtensionCapability.BROWSE)
@@ -432,6 +524,9 @@ public object ShuYueReviewedPluginCatalogV2 {
             baseUrl = baseUrl,
             capabilities = capabilities,
             requiredPermissions = permissions,
+            legacyCompatibilityOnly = legacyCompatibilityOnly,
+            v2IndexOnly = v2IndexOnly,
+            systemEvents = systemEvents,
         )
     }
 }
@@ -441,6 +536,7 @@ public sealed interface ShuYueAdmittedScriptV2 {
     public val identity: ShuYueArtifactIdentityV2
     public val descriptor: ExtensionPackageV2
     public val grantedPermissions: Set<ShuYueExecutionPermissionV2>
+    public val systemEvents: PluginSystemEventDeclaration?
     public fun copyBytes(): ByteArray
 }
 
@@ -476,11 +572,6 @@ public class ShuYueReviewedPluginAdmissionV2(
         require(this.reviewedProfiles.isNotEmpty()) { "Reviewed ShuYue profile catalogue is empty" }
         require(this.reviewedProfiles.map { it.identity }.distinct().size == this.reviewedProfiles.size) {
             "Reviewed ShuYue profile catalogue contains duplicate identities"
-        }
-        require(this.reviewedProfiles.map {
-            Triple(it.identity.packageId, it.identity.version, it.identity.versionCode)
-        }.distinct().size == this.reviewedProfiles.size) {
-            "Reviewed ShuYue profile catalogue contains ambiguous versions"
         }
         this.reviewedProfiles.forEach { it.descriptor.validate() }
     }
@@ -591,10 +682,16 @@ public class ShuYueReviewedPluginAdmissionV2(
         if (!reportedDigestMatches) return ShuYueReviewStatusV2.DIGEST_MISMATCH
         val packageProfiles = reviewedProfiles.filter { it.identity.packageId == identity.packageId }
         if (packageProfiles.isEmpty()) return ShuYueReviewStatusV2.UNKNOWN_PACKAGE
-        val version = packageProfiles.singleOrNull {
+        // A V2 repository may publish multiple reviewed artifacts for the same package/version
+        // (for example a legacy index-compatible body and a V2 body).  The digest is the exact
+        // admission key, so do not reject that legitimate pair with package/version
+        // singleOrNull; select the matching digest after establishing that the version exists.
+        val versions = packageProfiles.filter {
             it.identity.version == identity.version && it.identity.versionCode == identity.versionCode
-        } ?: return ShuYueReviewStatusV2.UNREVIEWED_VERSION
-        if (version.identity.sha256 != identity.sha256) return ShuYueReviewStatusV2.DIGEST_MISMATCH
+        }
+        if (versions.isEmpty()) return ShuYueReviewStatusV2.UNREVIEWED_VERSION
+        val version = versions.singleOrNull { it.identity.sha256 == identity.sha256 }
+            ?: return ShuYueReviewStatusV2.DIGEST_MISMATCH
         if (sourceIds != listOf(version.sourceId)) return ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
         return ShuYueReviewStatusV2.REVIEWED
     }
@@ -617,6 +714,7 @@ public class ShuYueReviewedPluginAdmissionV2(
         override val identity: ShuYueArtifactIdentityV2 = record.identity
         override val descriptor: ExtensionPackageV2 = profile.descriptor
         override val grantedPermissions: Set<ShuYueExecutionPermissionV2> = permissions.toSet()
+        override val systemEvents: PluginSystemEventDeclaration? = profile.systemEvents
         override fun copyBytes(): ByteArray = record.copyBytes()
     }
 }
@@ -625,7 +723,7 @@ public class ShuYueReviewedPluginAdmissionV2(
 private class GuardedRuntime(
     private val delegate: ExtensionPackageRuntimeV2,
     private val authorize: suspend () -> Unit,
-) : CloseableExtensionPackageRuntimeV2 {
+) : CloseableExtensionPackageRuntimeV2, SourceLifecycleControlledExtensionPackageRuntimeV2 {
     private val guardedSources = delegate.descriptor.sources.associate { descriptor ->
         descriptor.sourceKey to GuardedSource(requireNotNull(delegate.source(descriptor.sourceKey)), authorize)
     }
@@ -636,17 +734,47 @@ private class GuardedRuntime(
     override suspend fun close() {
         if (delegate is CloseableExtensionPackageRuntimeV2) delegate.close()
     }
+
+    override suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean {
+        return (delegate as? SourceLifecycleControlledExtensionPackageRuntimeV2)
+            ?.setSourceEnabled(sourceKey, enabled) == true
+    }
 }
 
 private class GuardedSource(
     private val delegate: ExtensionSourceV2,
     private val authorize: suspend () -> Unit,
-) : ExtensionSourceV2 {
+) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2 {
     override val descriptor: SourceDescriptorV2 = delegate.descriptor
 
+    /**
+     * Preserve the host-only interaction scope across the admission/authorization wrapper.
+     *
+     * Reviewed ShuYue sources use this scope to authorize modal system events such as the v2
+     * login prompt.  Dropping it here leaves the event runtime foreground but without an active
+     * user interaction, so a collection request silently falls back to an unauthenticated
+     * network call instead of presenting the login dialog.
+     */
+    override suspend fun <T> withUserInteractionContext(block: suspend () -> T): T {
+        authorize()
+        val scoped = delegate as? UserInteractionScopedExtensionSourceV2
+        return scoped?.withUserInteractionContext(block) ?: block()
+    }
+
+    override fun setHostUiAvailable(available: Boolean) {
+        (delegate as? UserInteractionScopedExtensionSourceV2)?.setHostUiAvailable(available)
+    }
+
     override suspend fun browseOptions(): BrowseOptionsSchemaV2 = guarded { delegate.browseOptions() }
+    override suspend fun getFilterList(): List<dev.shinsou.kmp.plugin.v2.BrowseFilterV2> =
+        guarded { delegate.getFilterList() }
     override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
         guarded { delegate.search(query, page) }
+    override suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> = guarded { delegate.search(query, page, options) }
     override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> = guarded { delegate.latest(page) }
     override suspend fun browse(options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2> =
         guarded { delegate.browse(options, page) }

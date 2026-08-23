@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,7 +36,6 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Restore
-import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,10 +85,13 @@ import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiState
 import dev.shinsou.kmp.sync.v2.SyncSessionStatus
+import dev.aluo.shinsoux.generated.resources.Res
+import dev.aluo.shinsoux.generated.resources.shinsou_icon
 import kotlin.math.roundToInt
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.jetbrains.compose.resources.painterResource
 
 enum class MoreDestination {
     Downloads,
@@ -119,18 +123,6 @@ fun MoreScreen(
         MoreRow(MoreDestination.Statistics, strings.statistics, strings.text("Library and reading insights"), Icons.Outlined.BarChart),
         MoreRow(MoreDestination.Settings, strings.settings, strings.text("Appearance, reader, sources and privacy"), Icons.Outlined.Settings),
         MoreRow(MoreDestination.Backup, strings.backup, lastBackupLabel ?: strings.text("No backup yet"), Icons.Outlined.Backup),
-        MoreRow(
-            MoreDestination.ContentBackupV2,
-            strings.text("Content backup v2"),
-            strings.text("Checksummed bodies, publications, and annotations"),
-            Icons.Outlined.Backup,
-        ),
-        MoreRow(
-            MoreDestination.ShuYueMigration,
-            strings.text("Import from ShuYue"),
-            strings.text("Staged review, script quarantine, and explicit secrets"),
-            Icons.Outlined.Security,
-        ),
         MoreRow(MoreDestination.About, strings.about, strings.text("Version, licenses and project links"), Icons.Outlined.Info),
     )
     Column(modifier.fillMaxSize()) {
@@ -1187,9 +1179,14 @@ fun AboutScreen(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(112.dp),
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("深", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                    }
+                    Image(
+                        painter = painterResource(Res.drawable.shinsou_icon),
+                        contentDescription = "Shinsou X",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(26.dp)),
+                    )
                 }
                 Spacer(Modifier.height(20.dp))
                 Text("Shinsou X", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)

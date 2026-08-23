@@ -10,10 +10,13 @@ import dev.shinsou.kmp.plugin.CatalogueSource
 import dev.shinsou.kmp.plugin.ConfigurableSource
 import dev.shinsou.kmp.plugin.FilterList
 import dev.shinsou.kmp.plugin.LoginSource
+import dev.shinsou.kmp.plugin.MangaStatus
 import dev.shinsou.kmp.plugin.PageRequestMetadata
 import dev.shinsou.kmp.plugin.SChapter
 import dev.shinsou.kmp.plugin.SManga
 import dev.shinsou.kmp.plugin.SourcePreference
+import dev.shinsou.kmp.plugin.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.toPluginFilter
 import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
 import dev.shinsou.kmp.reader.ReaderImageTransform
 
@@ -77,10 +80,26 @@ public class LegacyMangaExtensionSourceV2(
         }
     }
 
-    override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2()
+    override suspend fun getFilterList(): BrowseFilterListV2 =
+        source.getFilterList().map { it.toBrowseFilterV2() }
+
+    override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2(
+        filters = getFilterList(),
+    )
 
     override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
         source.getSearchManga(page, query, emptyList()).toV2Page()
+
+    override suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> =
+        source.getSearchManga(
+            page,
+            query,
+            options.filters.map { it.toPluginFilter() }.ifEmpty { source.getFilterList() },
+        ).toV2Page()
 
     override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> =
         source.getLatestUpdates(page).toV2Page()
@@ -90,15 +109,29 @@ public class LegacyMangaExtensionSourceV2(
         page: Int,
     ): PagedResultV2<RemotePublicationV2> {
         require(options.values.isEmpty()) { "Legacy manga browse does not accept v2 option keys" }
-        return source.getPopularManga(page).toV2Page()
+        return if (options.filters.isEmpty()) {
+            source.getPopularManga(page).toV2Page()
+        } else {
+            source.getSearchManga(
+                page,
+                "",
+                options.filters.map { it.toPluginFilter() },
+            ).toV2Page()
+        }
     }
 
     override suspend fun details(remotePublicationId: String): RemotePublicationV2 {
         val details = source.getMangaDetails(SManga(url = remotePublicationId, title = remotePublicationId))
         return RemotePublicationV2(
             remoteId = remotePublicationId,
-            title = details.title,
+            title = details.title.toBoundedRemoteMetadata().ifBlank { remotePublicationId.toBoundedRemoteMetadata() },
             url = resolveSourceHttpUrl(source.baseUrl, details.url.ifBlank { remotePublicationId }),
+            thumbnailUrl = details.thumbnailUrl?.let { resolveSourceHttpUrl(source.baseUrl, it) },
+            author = details.author.toOptionalBoundedRemoteMetadata(),
+            artist = details.artist.toOptionalBoundedRemoteMetadata(),
+            description = details.description.toOptionalBoundedRemoteMetadata(),
+            genre = details.genre?.mapNotNull { it.toOptionalBoundedRemoteMetadata() }?.takeIf { it.isNotEmpty() },
+            status = details.status.takeIf { it != MangaStatus.UNKNOWN }?.name,
         )
     }
 
@@ -192,8 +225,14 @@ public class LegacyMangaExtensionSourceV2(
 
     private fun SManga.toRemotePublicationV2(): RemotePublicationV2 = RemotePublicationV2(
         remoteId = url,
-        title = title,
+        title = title.toBoundedRemoteMetadata().ifBlank { url.toBoundedRemoteMetadata() },
         url = resolveSourceHttpUrl(source.baseUrl, url),
+        thumbnailUrl = thumbnailUrl?.let { resolveSourceHttpUrl(source.baseUrl, it) },
+        author = author.toOptionalBoundedRemoteMetadata(),
+        artist = artist.toOptionalBoundedRemoteMetadata(),
+        description = description.toOptionalBoundedRemoteMetadata(),
+        genre = genre?.mapNotNull { it.toOptionalBoundedRemoteMetadata() }?.takeIf { it.isNotEmpty() },
+        status = status.takeIf { it != MangaStatus.UNKNOWN }?.name,
     )
 
     private fun SChapter.toRemoteUnitV2(): RemoteUnitV2 = RemoteUnitV2(

@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -16,6 +18,19 @@ import kotlinx.serialization.json.longOrNull
 @Serializable
 public data class RepositoryDocument(
     val meta: RepositoryMeta,
+)
+
+/**
+ * Optional envelope understood by both repository readers. It lets one URL expose old Shinsou
+ * packages and ShuYue packages without making either reader infer a protocol from `index.json`
+ * or a hostname. A plain JSON array remains fully supported for both historical formats.
+ */
+@Serializable
+public data class UnifiedRepositoryDocument(
+    val format: String = "shinsou-unified-v1",
+    val shinsou: List<PluginIndexEntry> = emptyList(),
+    val legacy: List<PluginIndexEntry> = emptyList(),
+    val shuyue: List<dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry> = emptyList(),
 )
 
 @Serializable
@@ -48,6 +63,10 @@ public data class PluginManifest(
     val signature: String,
     val minRuntimeVersion: String? = null,
     val sources: List<SourceIndexEntry>? = null,
+    /** Optional request declaration; grants are still host-reviewed per exact artifact digest. */
+    val systemEvents: PluginSystemEventDeclaration? = null,
+    /** Requested permissions retained for review; never interpreted as grants. */
+    val requestedHostPermissions: Set<PluginHostPermission> = emptySet(),
 )
 
 /** Shinsou JavaScript entry from `index.json`. */
@@ -65,7 +84,23 @@ public data class PluginIndexEntry(
     val sources: List<SourceIndexEntry>? = null,
     /** Optional protocol-v2 digest. Existing repositories omit it. */
     val sha256: String? = null,
+    val byteSize: Int? = null,
     val minRuntimeVersion: String? = null,
+    /** Optional unified-contract type hint. Missing/unknown values resolve to [PluginContentType.BOTH]. */
+    val type: String? = null,
+    /** Alias accepted by newer repositories; [type] remains the canonical wire key. */
+    val contentType: String? = null,
+    /** `shinsou`/`shuyue` marker used only by a unified repository index. */
+    val contract: String? = null,
+    /** Optional V2 sidecar containing the same exact-artifact admission declaration. */
+    val sidecarUrl: String? = null,
+    /** Requested event capabilities; installation does not turn these into grants. */
+    val systemEvents: PluginSystemEventDeclaration? = null,
+    /** Requested host permissions are review input only and never self-authorizing. */
+    val requestedHostPermissions: Set<dev.shinsou.kmp.plugin.events.PluginHostPermission> = emptySet(),
+    val installable: Boolean = true,
+    val referenceOnly: Boolean = false,
+    val legacyCompatibilityOnly: Boolean = false,
 )
 
 /** Mihon/Tachiyomi metadata entry from `index.min.json`. APKs are metadata-only. */
@@ -79,6 +114,9 @@ public data class LegacyExtensionIndexEntry(
     val version: String,
     val nsfw: Int = 0,
     val sources: List<SourceIndexEntry>? = null,
+    val type: String? = null,
+    val contentType: String? = null,
+    val contract: String? = null,
 )
 
 @Serializable
@@ -88,6 +126,8 @@ public data class SourceIndexEntry(
     @Serializable(with = StringOrNumberLongSerializer::class)
     val id: Long,
     val baseUrl: String? = null,
+    val type: String? = null,
+    val contentType: String? = null,
 )
 
 /** Accepts both native Shinsou numeric IDs and Mihon's quoted 64-bit IDs. */
@@ -130,6 +170,7 @@ public data class ExtensionDescriptor(
     val description: String?,
     val state: ExtensionState,
     val installedVersion: String? = null,
+    val contentType: PluginContentType = PluginContentType.BOTH,
 )
 
 @Serializable

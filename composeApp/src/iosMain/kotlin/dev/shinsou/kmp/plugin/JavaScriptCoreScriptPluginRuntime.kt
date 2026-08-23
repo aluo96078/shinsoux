@@ -24,6 +24,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -62,6 +64,8 @@ import platform.JavaScriptCore.kJSPropertyAttributeNone
 import platform.posix.size_t
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Clock
+import dev.shinsou.kmp.plugin.events.PluginEventDisposition
+import dev.shinsou.kmp.plugin.events.PluginEventReceipt
 
 /** JavaScriptCore-backed synchronous plugin runtime for both iOS device and simulator targets. */
 public class JavaScriptCoreScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
@@ -120,6 +124,8 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         private set
     override var supportsLogin: Boolean = false
         private set
+    override var supportsFavorites: Boolean = false
+        private set
     override var headers: Map<String, String> = emptyMap()
         private set
     override val recentLogs: List<String> get() = withLogsLock { logs.toList() }
@@ -157,6 +163,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 baseUrl = selectedSource?.baseUrl ?: metadata.string("baseUrl").orEmpty()
                 supportsLatest = metadata.boolean("supportsLatest")
                 supportsLogin = metadata.boolean("supportsLogin")
+                supportsFavorites = metadata.boolean("supportsFavorites")
                 headers = metadata["headers"].stringMap()
                 if (headers.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotBlank()) {
                     headers = headers + ("Referer" to baseUrl)
@@ -182,6 +189,13 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
 
     override suspend fun getLatestUpdates(page: Int): MangasPage =
         invokeMangasPage("getLatestUpdates", buildJsonArray { add(JsonPrimitive(page)) })
+
+    override suspend fun getFavoriteManga(page: Int): MangasPage =
+        if (hasFunction("getFavoriteManga")) {
+            invokeMangasPage("getFavoriteManga", buildJsonArray { add(JsonPrimitive(page)) })
+        } else {
+            MangasPage(emptyList(), false)
+        }
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
         invokeMangasPage(
@@ -431,6 +445,27 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     JsonPrimitive(response.bodyText())
                 }
 
+                "httpPostBatch" -> {
+                    val urls = arguments.getOrNull(0).stringList()
+                    val bodies = arguments.getOrNull(1).stringList()
+                    val responses = environment.network.postBatch(
+                        sourceId = id,
+                        urls = urls,
+                        bodies = bodies,
+                        headers = arguments.getOrNull(2).stringMap(),
+                        sourceHeaders = headers,
+                        referer = headers.header("Referer"),
+                    )
+                    // The reviewed ShuYue script expects bridge.httpPostBatch to return a JSON
+                    // string and parses it itself. Keep the native bridge value a string rather
+                    // than exposing a platform-specific JavaScript array representation.
+                    JsonPrimitive(
+                        PluginJson.encodeToString(
+                            JsonArray(responses.map { JsonPrimitive(it.bodyText()) }),
+                        ),
+                    )
+                }
+
                 "log" -> {
                     val message = arguments.string(0)
                     appendLog(message)
@@ -454,18 +489,40 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 "clearCredential" -> { environment.storage.clearCredential(id); JsonNull }
                 "hasCredential" -> JsonPrimitive(!environment.storage.getCredential(id)?.username.isNullOrEmpty())
                 "requestLogin" -> JsonPrimitive(
-                    if (!supportsLogin) {
-                        false
-                    } else {
-                        runCatching {
-                            environment.loginRequester.request(
-                                sourceId = id,
-                                sourceName = name,
-                                reason = arguments.string(0).takeIf(String::isNotBlank),
-                            )
-                        }.getOrDefault(false)
-                    },
+                    submitLegacyLoginCompatibility(
+                        environment,
+                        supportsLogin,
+                        arguments.string(0).takeIf(String::isNotBlank),
+                    ),
                 )
+                "requestHostEvent" -> {
+                    val sink = environment.systemEventSink
+                    val boundScope = environment.boundPluginScope
+                    val receipt = if (sink == null || boundScope == null) {
+                        PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.UNSUPPORTED)
+                    } else {
+                        try {
+                            sink.submit(boundScope, arguments.string(0).encodeToByteArray())
+                        } catch (_: Throwable) {
+                            PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
+                        }
+                    }
+                    JsonPrimitive(PluginJson.encodeToString(receipt))
+                }
+                "getHostEventContext" -> environment.currentSystemEventContext()?.let(::JsonPrimitive) ?: JsonNull
+                "getHostEventCapabilities" -> buildJsonObject {
+                    val negotiation = environment.systemEventDeclaration?.let { declaration ->
+                        val gateway = environment.systemEventSink as? dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+                        val boundScope = environment.boundPluginScope
+                        if (gateway != null && boundScope != null) gateway.negotiate(boundScope, declaration)
+                        else environment.systemEventNegotiation
+                    } ?: environment.systemEventNegotiation
+                    put("enabled", negotiation?.enabled == true)
+                    put("protocol", "dev.shinsou.system")
+                    negotiation?.version?.let { put("version", it) } ?: put("version", JsonNull)
+                    put("grantedCapabilities", PluginJson.encodeToJsonElement(negotiation?.grantedCapabilities.orEmpty()))
+                    put("hardLimits", PluginJson.encodeToJsonElement(negotiation?.hardLimits))
+                }
                 "getCookie" -> {
                     val target = Url(arguments.string(1))
                     val now = Clock.System.now().toEpochMilliseconds()
@@ -628,6 +685,9 @@ private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.
 private fun JsonObject.boolean(key: String): Boolean = this[key]?.jsonPrimitive?.booleanOrNull ?: false
 private fun JsonArray.string(index: Int): String = getOrNull(index)?.jsonPrimitive?.contentOrNull.orEmpty()
 private fun JsonArray.long(index: Int): Long = getOrNull(index)?.jsonPrimitive?.longOrNull ?: 0L
+private fun JsonElement?.stringList(): List<String> = (this as? JsonArray)
+    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+    .orEmpty()
 private fun JsonElement?.booleanValue(): Boolean = (this as? JsonPrimitive)?.booleanOrNull ?: false
 private fun JsonElement?.arrayOrEmpty(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())
 private fun JsonElement?.stringMap(): Map<String, String> = (this as? JsonObject)?.mapNotNull { (key, value) ->

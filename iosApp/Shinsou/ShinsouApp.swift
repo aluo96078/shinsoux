@@ -160,10 +160,10 @@ private struct ShinsouRootView: View {
             scenePhase == .active ? 1 : 0
         )
 
-        // Durable preference + reader presentation are the authoritative gates. The mirrored
-        // values remain in the log to expose notification ordering but never disable monitoring.
+        // Keep the audio infrastructure warm from the durable preference, but only intercept
+        // hardware buttons while common code has an active consumer for the presented reader.
         volumeKeyMonitor.setInfrastructureEnabled(configured)
-        volumeKeyMonitor.setListeningEnabled(configured && readerOpen)
+        volumeKeyMonitor.setListeningEnabled(configured && readerOpen && mirroredListening)
     }
 }
 
@@ -551,6 +551,13 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
             delta > 0 ? "up" : "down",
             accepted ? 1 : 0
         )
+
+        // A reader transition can turn monitoring off one native run-loop after this KVO event
+        // was queued. If common code has no consumer, preserve the user's actual volume change.
+        guard accepted else {
+            previousVolume = volume
+            return
+        }
 
         // Reset to the unchanged baseline. The resulting KVO callback has delta ~= 0 and is
         // ignored naturally, matching the original implementation without an extra debounce

@@ -13,6 +13,8 @@ public data class ShuYueReviewedRepositoryPackageV2(
     val isNsfw: Boolean,
     val sourceIds: List<String>,
     val description: String?,
+    val sha256: String? = null,
+    val contentType: dev.shinsou.kmp.plugin.PluginContentType = dev.shinsou.kmp.plugin.PluginContentType.BOTH,
 )
 
 /**
@@ -44,6 +46,8 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
                 isNsfw = entry.nsfw == 1,
                 sourceIds = entry.sources.map(ShuYueRepositorySource::id),
                 description = entry.description,
+                sha256 = entry.sha256,
+                contentType = entry.resolvedContentType,
             )
         }
         packages
@@ -65,6 +69,8 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
                     isNsfw = entry.nsfw == 1,
                     sourceIds = entry.sources.map(ShuYueRepositorySource::id),
                     description = entry.description,
+                    sha256 = entry.sha256,
+                    contentType = entry.resolvedContentType,
                 )
             }
         }
@@ -75,16 +81,37 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
     }
 
     private fun matchesReviewedMetadata(entry: ShuYueRepositoryEntry): Boolean {
-        val profile = ShuYueReviewedPluginCatalogV2.profiles.singleOrNull { candidate ->
-            candidate.identity.packageId == entry.id &&
-                candidate.identity.version == entry.version &&
-                candidate.identity.versionCode == entry.versionCode
-        } ?: return false
-        return entry.sources.map(ShuYueRepositorySource::id) == listOf(profile.sourceId)
+        // Compatibility-only packages remain in the admission catalogue for existing installs,
+        // but a repository refresh must not offer them as new sources.
+        if (!entry.installable || entry.referenceOnly || entry.legacyCompatibilityOnly) return false
+        val profile = ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+            packageId = entry.id,
+            version = entry.version,
+            versionCode = entry.versionCode,
+            sha256 = entry.sha256,
+        ) ?: return false
+        val source = entry.sources.singleOrNull() ?: return false
+        return entry.name == profile.displayName &&
+            entry.lang == profile.languageTag &&
+            source.id == profile.sourceId &&
+            source.name == profile.sourceName &&
+            source.lang == profile.languageTag &&
+            source.baseUrl == profile.baseUrl &&
+            (entry.sha256 == null || entry.sha256 == profile.identity.sha256) &&
+            (entry.systemEvents == null || entry.systemEvents == profile.systemEvents) &&
+            (entry.requestedHostPermissions.isEmpty() || entry.requestedHostPermissions ==
+                if (dev.shinsou.kmp.plugin.v2.ExtensionCapability.LOGIN in profile.capabilities) {
+                    setOf(dev.shinsou.kmp.plugin.events.PluginHostPermission.REQUEST_LOGIN_UI)
+                } else {
+                    emptySet()
+                })
     }
 
     public companion object {
         public const val DEFAULT_REVIEWED_SHUYUE_INDEX_URL: String =
+            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/main/v2/index.json"
+        /** Preserved for existing repository records and legacy-format compatibility tests. */
+        public const val LEGACY_REVIEWED_SHUYUE_INDEX_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/index.json"
         public const val DEFAULT_REVIEWED_SHUYUE_ARTIFACT_ORIGIN: String =
             "https://raw.githubusercontent.com"

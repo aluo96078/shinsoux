@@ -20,6 +20,19 @@ var source = {
   _loginInProgress: false,
   _bookInfoCache: {},
 
+  // ShuYue scopes credentials by source id; older Shinsou bridge methods are
+  // already bound to the current source and accept no argument.
+  credential: function(method) {
+    try {
+      if (typeof bridge === "undefined" || !bridge || typeof bridge[method] !== "function") return "";
+      var getter = bridge[method];
+      var arity = Number(getter.length);
+      return isFinite(arity) && arity <= 0 ? (getter() || "") : (getter(this.id) || "");
+    } catch (ignored) {
+      return "";
+    }
+  },
+
   login: function(username, password) {
     this._loginInProgress = true;
     var first = this.relay("action=login&username=" + this.urlEncode(username) +
@@ -446,9 +459,9 @@ var source = {
 
   relay: function(inner) {
     var response = this.relayRaw(inner);
-    if (this.statusCode(response) === 4 && !this._loginInProgress && bridge.getCredentialUsername && bridge.getCredentialPassword) {
-      var username = bridge.getCredentialUsername(this.id);
-      var password = bridge.getCredentialPassword(this.id);
+    if (this.statusCode(response) === 4 && !this._loginInProgress) {
+      var username = this.credential("getCredentialUsername");
+      var password = this.credential("getCredentialPassword");
       if (username && password) {
         this._loginInProgress = true;
         var loginResponse = this.relayRaw("action=login&username=" + this.urlEncode(username) + "&password=" + this.urlEncode(password));
@@ -506,13 +519,21 @@ var source = {
     var now = new Date().getTime();
     if (now - this._lastLoginRequestAt > 10000) {
       this._lastLoginRequestAt = now;
-      bridge.requestLogin(this.id, reason);
+      this.requestLogin(reason);
     }
     return true;
   },
 
   requestLogin: function(reason) {
-    bridge.requestLogin(this.id, reason);
+    try {
+      if (typeof bridge !== "undefined" && bridge && typeof bridge.requestLogin === "function") {
+        var arity = Number(bridge.requestLogin.length);
+        if (isFinite(arity) && arity <= 1) bridge.requestLogin(reason);
+        else bridge.requestLogin(this.id, reason);
+        return true;
+      }
+    } catch (ignored) {}
+    return false;
   },
 
   languageFlag: function() { return this._language === 0 ? 0 : 1; },
@@ -632,3 +653,139 @@ var source = {
   },
   rotr: function(value, bits) { return (value >>> bits) | (value << (32 - bits)); }
 };
+
+// Legacy Shinsou plugin compatibility.  ShuYue keeps the small
+// search/latest/browse/chapters/chapterText API above, while older Shinsou
+// hosts discover the historical get* methods below.  The adapter is kept in
+// this package (rather than only in a host shim) so the same script can be
+// inspected and executed by either runtime.
+(function installLegacyShinsouContract(target) {
+  function pageNumber(value) {
+    var number = Number(value);
+    return isFinite(number) ? Math.max(1, Math.floor(number) + 1) : 1;
+  }
+
+  function legacyBook(value) {
+    if (!value || typeof value !== "object") return null;
+    var url = String(value.url || "");
+    if (!url) return null;
+    var title = String(value.title || value.name || url);
+    var status = typeof value.status === "number" && isFinite(value.status) ? value.status : 0;
+    return {
+      url: url,
+      title: title,
+      author: value.author || null,
+      artist: value.artist || null,
+      description: value.description || null,
+      genre: value.genre || null,
+      status: status,
+      thumbnailUrl: value.thumbnailUrl || value.thumbnail_url || value.coverImage || value.cover || null,
+      initialized: true
+    };
+  }
+
+  function legacyPage(values, hasNextPage) {
+    var list = Array.isArray(values) ? values : [];
+    var mangas = [];
+    for (var i = 0; i < list.length; i++) {
+      var mapped = legacyBook(list[i]);
+      if (mapped) mangas.push(mapped);
+    }
+    return { mangas: mangas, hasNextPage: hasNextPage === undefined ? mangas.length > 0 : !!hasNextPage };
+  }
+
+  function selectedFilter(filters) {
+    if (!Array.isArray(filters)) return 0;
+    for (var i = 0; i < filters.length; i++) {
+      var filter = filters[i] || {};
+      var values = filter.values;
+      if (Array.isArray(values)) {
+        var state = Number(filter.state);
+        if (isFinite(state)) return Math.max(0, Math.floor(state));
+      }
+      var nested = selectedFilter(filter.filters);
+      if (nested > 0) return nested;
+    }
+    return 0;
+  }
+
+  function legacyFilters() {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var values = ["搜尋"];
+    for (var i = 0; i < options.length; i++) values.push(String(options[i].title || options[i].id || "分類"));
+    return [{ type: "select", name: "分類", values: values, state: 0 }];
+  }
+
+  target.getPopularManga = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getLatestUpdates = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getFavoriteManga = function(page) {
+    return legacyPage(target.browse("bookcase", pageNumber(page)), false);
+  };
+
+  target.getSearchManga = function(page, query, filters) {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var selected = selectedFilter(filters);
+    if (selected > 0 && options[selected - 1]) {
+      return legacyPage(target.browse(options[selected - 1].id, pageNumber(page)));
+    }
+    return legacyPage(target.search(String(query || ""), pageNumber(page)));
+  };
+
+  target.getMangaDetails = function(manga) {
+    var input = manga || {};
+    var aid = typeof target.aidFromText === "function" ? target.aidFromText(input.url) : "";
+    var details = aid && typeof target.bookFromAid === "function" ? target.bookFromAid(aid) : null;
+    return legacyBook(details || input) || legacyBook({ url: String(input.url || ""), title: String(input.title || "") });
+  };
+
+  target.getChapterList = function(manga) {
+    var input = manga || {};
+    var values = typeof target.chapters === "function" ? target.chapters({
+      url: String(input.url || ""),
+      title: String(input.title || "")
+    }) : [];
+    var chapters = [];
+    for (var i = 0; i < values.length; i++) {
+      var value = values[i] || {};
+      var url = String(value.url || "");
+      if (!url) continue;
+      chapters.push({
+        url: url,
+        name: String(value.title || value.name || url),
+        scanlator: null,
+        dateUpload: 0,
+        chapterNumber: typeof value.index === "number" ? value.index : i
+      });
+    }
+    return chapters;
+  };
+
+  // Legacy Shinsou is image-oriented and has no text-page type.  Keep the
+  // chapter text in an extra field for hosts that understand it, while still
+  // returning the historical Page-shaped array to older hosts.
+  target.getPageList = function(chapter) {
+    var input = chapter || {};
+    var text = typeof target.chapterText === "function" ? target.chapterText(input) : "";
+    if (!text) return [];
+    return [{ index: 0, url: String(input.url || ""), imageUrl: null, text: String(text), content: String(text) }];
+  };
+
+  target.getFilterList = legacyFilters;
+
+  target.logout = function() {
+    try {
+      if (typeof bridge !== "undefined" && bridge) {
+        if (typeof bridge.clearCredential === "function") bridge.clearCredential();
+        if (typeof bridge.clearCookies === "function") bridge.clearCookies();
+      }
+    } catch (ignored) {}
+    target._bookInfoCache = {};
+    target._loginInProgress = false;
+  };
+})(source);

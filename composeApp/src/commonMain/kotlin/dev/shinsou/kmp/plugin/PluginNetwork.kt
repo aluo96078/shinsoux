@@ -9,10 +9,16 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.parseServerSetCookieHeader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
+
+internal const val PLUGIN_NETWORK_MAX_BATCH_REQUESTS: Int = 32
 
 public data class PluginHttpRequest(
     val method: String,
@@ -403,6 +409,49 @@ public class PluginNetworkClient(
         referer,
     )
 
+    /**
+     * Executes several POST requests concurrently while retaining the normal source isolation,
+     * cookie, redirect, proxy, user-agent, and per-host rate-limit policies for every request.
+     *
+     * The caller receives responses in the same order as [urls]. At most
+     * [PLUGIN_NETWORK_MAX_BATCH_REQUESTS] requests are in flight at once; larger batches are processed in
+     * ordered chunks so a plugin cannot accidentally create an unbounded request fan-out.
+     * Failures are intentionally propagated as a batch failure. Synchronous plugin bridges can
+     * then fall back to their existing one-request path instead of silently dropping individual
+     * books.
+     */
+    public suspend fun postBatch(
+        sourceId: Long,
+        urls: List<String>,
+        bodies: List<String>,
+        headers: Map<String, String> = emptyMap(),
+        sourceHeaders: Map<String, String> = emptyMap(),
+        referer: String? = null,
+    ): List<PluginHttpResponse> {
+        require(urls.size == bodies.size) { "Batch URL/body count mismatch" }
+        if (urls.isEmpty()) return emptyList()
+
+        return coroutineScope {
+            urls.indices.chunked(PLUGIN_NETWORK_MAX_BATCH_REQUESTS).flatMap { chunk ->
+                chunk.map { index ->
+                    // A runtime invokes this method synchronously on its JavaScript worker. Move
+                    // each transport operation off that worker so the batch can overlap network
+                    // waits without making the JS engine itself re-entrant.
+                    async(Dispatchers.Default) {
+                        post(
+                            sourceId = sourceId,
+                            url = urls[index],
+                            body = bodies[index],
+                            headers = headers,
+                            sourceHeaders = sourceHeaders,
+                            referer = referer,
+                        )
+                    }
+                }.awaitAll()
+            }
+        }
+    }
+
     private fun parseSetCookie(header: String, requestUrl: Url): PluginCookie? {
         val parts = header.split(';').map(String::trim)
         val nameValue = parts.firstOrNull() ?: return null
@@ -505,6 +554,7 @@ public class PluginNetworkClient(
     }
 
     private companion object {
+        /** Maximum number of batch requests that may overlap. */
         const val MAX_REDIRECTS = 10
         val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
         val SAFE_CROSS_ORIGIN_HEADERS = setOf(

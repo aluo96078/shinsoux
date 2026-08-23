@@ -1,3 +1,5 @@
+@file:OptIn(dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi::class)
+
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.domain.model.SourceKey
@@ -14,6 +16,21 @@ import dev.shinsou.kmp.plugin.v2.ExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionRuntimeRegistryV2
 import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.ArtifactBoundExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.SourceLifecycleControlledExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsResolverV2
+import dev.shinsou.kmp.plugin.events.BoundPluginScope
+import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
+import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+import dev.shinsou.kmp.plugin.events.PluginSystemCapabilityNegotiator
+import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
+import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
+import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
+import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
+import dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation
 import dev.shinsou.kmp.plugin.v2.LegacyMangaPackageRuntimeV2
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -167,14 +184,25 @@ public class PluginManager(
     private val verifier: PluginVerifier,
     private val runtimeFactory: ScriptPluginRuntimeFactory,
     private val environment: ScriptPluginEnvironment,
+    private val eventGrantAdmission: KeyValuePluginEventGrantAdmission? = null,
 ) {
     /** Serializes package mutations without blocking readers of the live source/runtime maps. */
     private val packageMutationMutex = Mutex()
     private val lifecycleMutex = Mutex()
+    private val interactionMutex = Mutex()
+    private val interactionCounts = mutableMapOf<String, Int>()
+    private var pluginUiAvailable: Boolean = false
     private val runtimes = mutableMapOf<String, List<ScriptPluginRuntime>>()
     private val sources = mutableMapOf<Long, CatalogueSource>()
     private val sourceOwners = mutableMapOf<Long, String>()
     private val extensionRegistryV2 = ExtensionRuntimeRegistryV2()
+    private val nativeArtifactIdentities = mutableMapOf<String, PluginArtifactIdentity>()
+    private val nativeLifecycleRuntimes = mutableMapOf<String, SourceLifecycleControlledExtensionPackageRuntimeV2>()
+    private val reviewedReloaders = mutableMapOf<String, suspend () -> ExtensionPackageRuntimeV2>()
+    private val eventScopeFactory = BoundPluginScopeFactory()
+    private val eventScopes = mutableMapOf<ScriptPluginRuntime, BoundPluginScope>()
+    private val legacyLoginCompatibilityScopes = mutableSetOf<String>()
+    private var runtimeGeneration: Long = 0
 
     public suspend fun refresh(repositories: List<ExtensionRepository>): List<ExtensionDescriptor> {
         val installed = packageStore.list().associateBy { it.manifest.id }
@@ -228,6 +256,19 @@ public class PluginManager(
                     }
                     result[entry.pkg] = entry.toDescriptor(repository, state, local?.manifest?.version)
                 }
+                is RepositoryIndex.Combined -> index.plugins.forEach { entry ->
+                    val local = installed[entry.id]
+                    val state = when {
+                        local == null -> ExtensionState.AVAILABLE
+                        entry.versionCode > (local.manifest.versionCode
+                            ?: PluginVerifier.versionInt(local.manifest.version)) -> ExtensionState.UPDATE_AVAILABLE
+                        entry.versionCode == (local.manifest.versionCode
+                            ?: PluginVerifier.versionInt(local.manifest.version)) &&
+                            entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
+                        else -> ExtensionState.INSTALLED
+                    }
+                    result[entry.id] = entry.toDescriptor(repository, state, local?.manifest?.version)
+                }
             }
         }
         return result.values.sortedWith(
@@ -240,7 +281,14 @@ public class PluginManager(
         withContext(Dispatchers.Default) {
             packageMutationMutex.withLock {
             PluginVerifier.validateSafeFileComponent(entry.id)
+            require(entry.installable && !entry.referenceOnly && !entry.legacyCompatibilityOnly) {
+                "Plugin '${entry.id}' is migration/reference metadata and cannot be installed"
+            }
+            repositoryClient.verifyPluginV2Sidecar(repository.baseUrl, entry)
             val scriptBytes = repositoryClient.downloadPluginScript(repository.baseUrl, entry.scriptUrl)
+            require(entry.byteSize == null || scriptBytes.size == entry.byteSize) {
+                "Plugin '${entry.id}' artifact size does not match its V2 declaration"
+            }
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()
             val manifest = PluginManifest(
@@ -256,6 +304,8 @@ public class PluginManager(
                 signature = expectedHash ?: actualHash,
                 minRuntimeVersion = entry.minRuntimeVersion,
                 sources = entry.sources,
+                systemEvents = entry.systemEvents,
+                requestedHostPermissions = entry.requestedHostPermissions,
             )
             val verified = verifier.verify(scriptBytes, manifest)
             val stored = StoredPlugin(
@@ -267,6 +317,15 @@ public class PluginManager(
                 ),
                 scriptBytes = scriptBytes,
             )
+            val grantReview = stored.eventGrantReview()
+            val previousStored = packageStore.get(entry.id)
+            val previousReview = previousStored?.eventGrantReview(includeEmpty = true)
+            val nextReview = stored.eventGrantReview(includeEmpty = true)
+            if (previousReview != null && previousReview != nextReview) {
+                eventGrantAdmission?.revoke(previousReview.artifact)
+            }
+            if (grantReview != null) eventGrantAdmission?.hydrate(grantReview)
+            val alreadyGranted = grantReview?.let { eventGrantAdmission?.isGranted(it) } == true
             val candidates = createRuntimeCandidates(stored)
             val compatibilityResult = runtimeCompatibilityResult(manifest, candidates)
             var committed = false
@@ -283,6 +342,7 @@ public class PluginManager(
                     }
                     committed = true
                 }
+                if (grantReview != null && !alreadyGranted) eventGrantAdmission?.stage(grantReview)
             } catch (error: Throwable) {
                 if (!committed) closeRuntimes(candidates)
                 throw error
@@ -342,10 +402,13 @@ public class PluginManager(
 
     public suspend fun uninstall(pluginId: String): Unit = withContext(Dispatchers.Default) {
         packageMutationMutex.withLock {
+            val artifact = packageStore.get(pluginId)?.artifactIdentity()
             currentCoroutineContext().ensureActive()
             withContext(NonCancellable) {
+                if (artifact != null) eventGrantAdmission?.revoke(artifact)
                 packageStore.remove(pluginId)
                 lifecycleMutex.withLock { unloadPlugin(pluginId) }
+                nativeArtifactIdentities.remove(pluginId)
                 extensionRegistryV2.uninstall(pluginId)
             }
         }
@@ -375,6 +438,7 @@ public class PluginManager(
                     }
                     // Revoke every token for this id so stale version/hash grants cannot revive it.
                     verifier.revokeAll(pluginId)
+                    eventGrantAdmission?.revoke(stored.artifactIdentity())
                     // Keep the currently trusted runtime live until every durable revocation step
                     // succeeds. A storage failure can then be retried without a disk/live split.
                     lifecycleMutex.withLock { unloadPlugin(pluginId) }
@@ -395,6 +459,7 @@ public class PluginManager(
             }
 
             val wasTrusted = verifier.isTrusted(stored.manifest, stored.metadata.installedSha256)
+            stored.eventGrantReview()?.let { eventGrantAdmission?.stage(it) }
             verifier.trustInstalled(
                 stored.scriptBytes,
                 stored.manifest,
@@ -453,11 +518,47 @@ public class PluginManager(
     }
 
     public suspend fun installedPlugins(): List<StoredPlugin> = packageStore.list()
+
+    /** Returns the verified exact-digest permission review, if this artifact requested host access. */
+    public suspend fun pendingEventGrantReview(pluginId: String): PluginEventGrantReview? =
+        packageStore.get(pluginId)?.let { stored ->
+            eventGrantAdmission?.pending(stored.artifactIdentity())
+        }
+
+    /** Explicitly approves the complete verified set, then rebuilds the runtime negotiation. */
+    public suspend fun approveEventGrantReview(
+        pluginId: String,
+        permissions: Set<PluginHostPermission>,
+    ): Unit = packageMutationMutex.withLock {
+        val stored = requireNotNull(packageStore.get(pluginId)) { "Extension '$pluginId' is not installed" }
+        val admission = requireNotNull(eventGrantAdmission) { "Plugin event grant admission is unavailable" }
+        admission.approve(stored.artifactIdentity(), permissions)
+        lifecycleMutex.withLock { loadStored(stored) }
+    }
+
+    public suspend fun revokeEventGrants(pluginId: String): Unit = packageMutationMutex.withLock {
+        val stored = packageStore.get(pluginId) ?: return@withLock
+        eventGrantAdmission?.revoke(stored.artifactIdentity())
+        lifecycleMutex.withLock {
+            unloadPlugin(pluginId)
+            loadStored(stored)
+        }
+    }
     public suspend fun catalogueSources(): List<CatalogueSource> = lifecycleMutex.withLock {
         sources.values.toList()
     }
 
     public suspend fun source(sourceId: Long): CatalogueSource? = lifecycleMutex.withLock { sources[sourceId] }
+
+    /** Exact event lookup; a recycled legacy Long can never cross artifact ownership. */
+    public suspend fun exactLegacySource(target: ExactPluginSourceTarget): CatalogueSource? =
+        lifecycleMutex.withLock {
+            val runtime = eventScopes.entries.singleOrNull { (_, scope) ->
+                scope.artifactIdentity == target.artifactIdentity && scope.sourceKey == target.sourceKey
+            }?.key ?: return@withLock null
+            val live = runtimes[target.artifactIdentity.packageId].orEmpty().any { it === runtime }
+            runtime.takeIf { live && it.id == target.sourceKey.legacyLongId }
+        }
 
     /** Materializes the currently live v1 package as an exact-keyed Extension v2 runtime. */
     @OptIn(ExtensionImplementationApi::class)
@@ -482,7 +583,15 @@ public class PluginManager(
         runtime: ExtensionPackageRuntimeV2,
         replace: Boolean = false,
     ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
-        extensionRegistryV2.install(runtime, replace)
+        val facade = extensionRegistryV2.install(runtime, replace)
+        (runtime as? ArtifactBoundExtensionPackageRuntimeV2)?.let {
+            nativeArtifactIdentities[runtime.descriptor.packageId] = it.artifactIdentity
+        }
+        (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let {
+            nativeLifecycleRuntimes[runtime.descriptor.packageId] = it
+        }
+        reviewedReloaders.remove(runtime.descriptor.packageId)
+        facade
     }
 
     /** Admits reviewed ShuYue bytes and atomically publishes their guarded runtime to v2 browse. */
@@ -494,7 +603,17 @@ public class PluginManager(
     ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
         val runtime = admission.createRuntime(quarantineId)
         try {
-            extensionRegistryV2.install(runtime, replace)
+            extensionRegistryV2.install(runtime, replace).also {
+                (runtime as? ArtifactBoundExtensionPackageRuntimeV2)?.let { bound ->
+                    nativeArtifactIdentities[runtime.descriptor.packageId] = bound.artifactIdentity
+                }
+                (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let { controlled ->
+                    nativeLifecycleRuntimes[runtime.descriptor.packageId] = controlled
+                }
+                reviewedReloaders[runtime.descriptor.packageId] = {
+                    admission.createRuntime(quarantineId)
+                }
+            }
         } catch (error: Throwable) {
             if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
             throw error
@@ -506,6 +625,7 @@ public class PluginManager(
         quarantineStore: ShuYueScriptQuarantineStoreV2,
         approvalStore: ShuYueExecutionApprovalStoreV2,
         installationStore: ShuYueReviewedInstallationStoreV2,
+        credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
     ): ShuYueReviewedInstallCoordinatorV2 {
         val admission = productionShuYueReviewedAdmissionV2(
             quarantineStore = quarantineStore,
@@ -513,12 +633,18 @@ public class PluginManager(
             permissionStore = approvalStore,
             runtimeFactory = runtimeFactory,
             environment = environment,
+            credentialsResolver = credentialsResolver,
         )
         return ShuYueReviewedInstallCoordinatorV2(admission, approvalStore, this, installationStore)
     }
 
     public suspend fun uninstallExtensionRuntimeV2(packageId: String): Boolean =
-        packageMutationMutex.withLock { extensionRegistryV2.uninstall(packageId) }
+        packageMutationMutex.withLock {
+            nativeArtifactIdentities.remove(packageId)
+            nativeLifecycleRuntimes.remove(packageId)
+            reviewedReloaders.remove(packageId)
+            extensionRegistryV2.uninstall(packageId)
+        }
 
     /** Host-gated facade for an admitted native runtime or a currently live legacy package. */
     @OptIn(ExtensionImplementationApi::class)
@@ -531,6 +657,169 @@ public class PluginManager(
     public suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? =
         extensionFacadeV2(sourceKey.packageId)?.source(sourceKey)
 
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun exactExtensionSource(target: ExactPluginSourceTarget): HostExtensionSourceV2? =
+        packageMutationMutex.withLock {
+            val packageId = target.sourceKey.packageId
+            val legacy = lifecycleMutex.withLock {
+                val exactRuntime = eventScopes.entries.singleOrNull { (_, scope) ->
+                    scope.artifactIdentity == target.artifactIdentity && scope.sourceKey == target.sourceKey
+                }?.key ?: return@withLock null
+                val live = runtimes[packageId].orEmpty()
+                if (live.none { it === exactRuntime }) return@withLock null
+                val stored = packageStore.get(packageId) ?: return@withLock null
+                LegacyMangaPackageRuntimeV2(
+                    packageId = packageId,
+                    version = stored.manifest.version,
+                    displayName = stored.manifest.name,
+                    sources = live,
+                )
+            }
+            if (legacy != null) return@withLock ExtensionHostFacadeV2(legacy).source(target.sourceKey)
+            if (nativeArtifactIdentities[packageId] != target.artifactIdentity) return@withLock null
+            extensionRegistryV2.packageFacade(packageId)?.source(target.sourceKey)
+        }
+
+    /** Enables modal event permissions only for one foreground UI-triggered source invocation. */
+    public suspend fun <T> withUserInteractionContext(sourceKey: SourceKey, block: suspend () -> T): T {
+        val scopes = lifecycleMutex.withLock {
+            eventScopes.values.filter { it.sourceKey == sourceKey }
+        }
+        // Legacy-backed V2 sources execute the same engine as the v1 UI path, but their opaque
+        // SourceKey otherwise bypasses the old source-id wrapper.  Issue the host context handle
+        // for the exact live scope across the complete detail/units/content call.
+        val gateway = environment.systemEventSink as? PluginSystemEventGateway
+        interactionMutex.withLock {
+            check(pluginUiAvailable) { "Plugin UI interaction is unavailable" }
+            scopes.forEach { scope ->
+                val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
+                interactionCounts[scope.runtimeKey] = next
+                if (next == 1) gateway?.setUserInteractionContext(scope, true)
+            }
+        }
+        return try {
+            extensionSourceV2(sourceKey)?.withUserInteractionContext(block) ?: block()
+        } finally {
+            interactionMutex.withLock {
+                scopes.forEach { scope ->
+                    val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
+                    if (next <= 0) {
+                        interactionCounts.remove(scope.runtimeKey)
+                        gateway?.setUserInteractionContext(scope, false)
+                    } else interactionCounts[scope.runtimeKey] = next
+                }
+            }
+        }
+    }
+
+    /** Legacy UI row counterpart; resolves only the currently bound exact runtime scope. */
+    public suspend fun <T> withUserInteractionContext(sourceId: Long, block: suspend () -> T): T {
+        val scope = lifecycleMutex.withLock {
+            eventScopes.values.singleOrNull { it.sourceKey.legacyLongId == sourceId }
+        } ?: return block()
+        val gateway = environment.systemEventSink as? PluginSystemEventGateway
+        interactionMutex.withLock {
+            check(pluginUiAvailable) { "Plugin UI interaction is unavailable" }
+            val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
+            interactionCounts[scope.runtimeKey] = next
+            if (next == 1) gateway?.setUserInteractionContext(scope, true)
+        }
+        return try {
+            block()
+        } finally {
+            interactionMutex.withLock {
+                val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
+                if (next <= 0) {
+                    interactionCounts.remove(scope.runtimeKey)
+                    gateway?.setUserInteractionContext(scope, false)
+                } else interactionCounts[scope.runtimeKey] = next
+            }
+        }
+    }
+
+    public suspend fun <T> withVisibleEventContext(
+        sourceKey: SourceKey,
+        publicationId: String,
+        unitId: String? = null,
+        block: suspend () -> T,
+    ): T {
+        val scope = lifecycleMutex.withLock {
+            eventScopes.values.singleOrNull { it.sourceKey == sourceKey }
+        }
+        val registry = environment.systemEventContextRegistry
+            ?: (environment.systemEventSink as? PluginSystemEventGateway)?.contextRegistry
+        if (registry == null || scope == null) return block()
+        return registry.withInvocation(
+            scope,
+            dev.shinsou.kmp.plugin.events.PluginEventContextRegistry.VisibleContext(
+                publicationId,
+                unitId,
+            ),
+        ) { block() }
+    }
+
+    public suspend fun setPluginUiAvailable(available: Boolean) {
+        val scopes = lifecycleMutex.withLock { eventScopes.values.toList() }
+        val gateway = environment.systemEventSink as? PluginSystemEventGateway
+        interactionMutex.withLock {
+            pluginUiAvailable = available
+            scopes.forEach { scope ->
+                gateway?.setRuntimeLifecycle(
+                    scope,
+                    if (available) PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED
+                    else PluginRuntimeLifecycle.OPEN_BACKGROUND,
+                )
+                if (!available) interactionCounts.remove(scope.runtimeKey)
+            }
+        }
+        extensionRegistryV2.descriptors().forEach { descriptor ->
+            val facade = extensionRegistryV2.packageFacade(descriptor.packageId) ?: return@forEach
+            descriptor.sources.forEach { sourceDescriptor ->
+                facade.source(sourceDescriptor.sourceKey)?.setHostUiAvailable(available)
+            }
+        }
+    }
+
+    public suspend fun setEventSourceEnabled(sourceKey: SourceKey, enabled: Boolean) {
+        packageMutationMutex.withLock {
+            if (!enabled) {
+                val scopes = lifecycleMutex.withLock {
+                    eventScopes.values.filter { it.sourceKey == sourceKey }
+                }
+                val gateway = environment.systemEventSink as? PluginSystemEventGateway
+                scopes.forEach { gateway?.closeRuntime(it) }
+                nativeLifecycleRuntimes[sourceKey.packageId]?.setSourceEnabled(sourceKey, false)
+                return@withLock
+            }
+            val reloader = reviewedReloaders[sourceKey.packageId]
+            if (reloader != null) {
+                val runtime = reloader()
+                try {
+                    extensionRegistryV2.install(runtime, replace = true)
+                    (runtime as? ArtifactBoundExtensionPackageRuntimeV2)?.let {
+                        nativeArtifactIdentities[sourceKey.packageId] = it.artifactIdentity
+                    }
+                    (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let {
+                        nativeLifecycleRuntimes[sourceKey.packageId] = it
+                    }
+                } catch (error: Throwable) {
+                    if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
+                    throw error
+                }
+                return@withLock
+            }
+            val stored = packageStore.get(sourceKey.packageId) ?: return@withLock
+            lifecycleMutex.withLock { loadStored(stored) }
+        }
+    }
+
+    public suspend fun setEventSourceEnabled(sourceId: Long, enabled: Boolean) {
+        val sourceKey = lifecycleMutex.withLock {
+            eventScopes.values.singleOrNull { it.sourceKey.legacyLongId == sourceId }?.sourceKey
+        } ?: return
+        setEventSourceEnabled(sourceKey, enabled)
+    }
+
     public suspend fun extensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()
 
     public suspend fun close(): Unit = withContext(NonCancellable + Dispatchers.Default) {
@@ -540,6 +829,9 @@ public class PluginManager(
                 sources.clear()
                 sourceOwners.clear()
             }
+            nativeLifecycleRuntimes.clear()
+            reviewedReloaders.clear()
+            nativeArtifactIdentities.clear()
             extensionRegistryV2.close()
         }
     }
@@ -598,6 +890,7 @@ public class PluginManager(
                 trustOnValidatedDigest = false,
             )
         }
+        stored.eventGrantReview()?.let { eventGrantAdmission?.hydrate(it) }
         val candidates = createRuntimeCandidates(stored)
         try {
             replaceRuntimes(stored.manifest.id, candidates)
@@ -617,10 +910,10 @@ public class PluginManager(
         val candidates = mutableListOf<ScriptPluginRuntime>()
         try {
             if (declared.isEmpty()) {
-                candidates += runtimeFactory.create(stored.script, manifest, environment)
+                candidates += createScopedRuntime(stored, null)
             } else {
                 declared.forEach { source ->
-                    candidates += runtimeFactory.createForSource(stored.script, manifest, source, environment)
+                    candidates += createScopedRuntime(stored, source)
                 }
             }
             require(candidates.all { it.pluginId == manifest.id }) {
@@ -636,6 +929,91 @@ public class PluginManager(
             closeRuntimes(candidates)
             throw error
         }
+    }
+
+    private suspend fun createScopedRuntime(
+        stored: StoredPlugin,
+        source: SourceIndexEntry?,
+    ): ScriptPluginRuntime {
+        val manifest = stored.manifest
+        val generation = ++runtimeGeneration
+        val legacyId = source?.id ?: stableSourceId(manifest.id)
+        val scope = eventScopeFactory.bind(
+            artifactIdentity = PluginArtifactIdentity(
+                packageId = manifest.id,
+                version = manifest.version,
+                versionCode = manifest.versionCode ?: PluginVerifier.versionInt(manifest.version),
+                sha256 = stored.metadata.installedSha256,
+            ),
+            sourceKey = SourceKey(
+                packageId = manifest.id,
+                sourceId = legacyId.toString(),
+                legacyLongId = legacyId,
+            ),
+            runtimeInstanceId = "${manifest.id}-$generation",
+            runtimeGeneration = generation,
+        )
+        val negotiated = manifest.systemEvents?.let { declaration ->
+            (environment.systemEventSink as? PluginSystemEventGateway)?.negotiate(scope, declaration)
+                ?: PluginSystemCapabilityNegotiator(supportedCapabilities = emptySet()).negotiate(declaration)
+        }
+        val legacyLoginCompatibility = manifest.systemEvents == null
+        val visibleNegotiation = negotiated ?: PluginSystemEventNegotiation(enabled = false)
+        val scopedEnvironment = environment.copy(
+            // Legacy code receives only the native ingress needed by bridge.requestLogin. Its
+            // capability response remains disabled, and the exact authorizer below grants login
+            // only after the trusted runtime proves it implements LoginSource.
+            systemEventSink = environment.systemEventSink.takeIf {
+                negotiated?.enabled == true || legacyLoginCompatibility
+            },
+            boundPluginScope = scope.takeIf {
+                negotiated?.enabled == true || legacyLoginCompatibility
+            },
+            systemEventNegotiation = visibleNegotiation,
+            systemEventDeclaration = manifest.systemEvents,
+        )
+        val runtime = if (source == null) {
+            runtimeFactory.create(stored.script, manifest, scopedEnvironment)
+        } else {
+            runtimeFactory.createForSource(stored.script, manifest, source, scopedEnvironment)
+        }
+        eventScopes[runtime] = scope
+        (environment.systemEventSink as? PluginSystemEventGateway)?.let { gateway ->
+            if (legacyLoginCompatibility && runtime.supportsLogin) {
+                gateway.grantRuntimePermissions(scope, setOf(PluginHostPermission.REQUEST_LOGIN_UI))
+                legacyLoginCompatibilityScopes += scope.runtimeKey
+            }
+            gateway.openRuntime(scope, PluginEventRuntimeStatus(
+                sourceCapabilities = buildSet {
+                    add("CATALOGUE")
+                    if (runtime.supportsLogin) add("LOGIN")
+                    if (runtime.supportsLatest) add("LATEST")
+                },
+            ))
+        }
+        return runtime
+    }
+
+    private fun StoredPlugin.artifactIdentity(): PluginArtifactIdentity = PluginArtifactIdentity(
+        packageId = manifest.id,
+        version = manifest.version,
+        versionCode = manifest.versionCode ?: PluginVerifier.versionInt(manifest.version),
+        sha256 = metadata.installedSha256,
+    )
+
+    private fun StoredPlugin.eventGrantReview(includeEmpty: Boolean = false): PluginEventGrantReview? {
+        if (!includeEmpty && manifest.requestedHostPermissions.isEmpty()) return null
+        val artifact = artifactIdentity()
+        val declaredSources = manifest.sources.orEmpty()
+        val sourceKeys = if (declaredSources.isEmpty()) {
+            val id = stableSourceId(manifest.id)
+            listOf(SourceKey(packageId = manifest.id, sourceId = id.toString(), legacyLongId = id))
+        } else {
+            declaredSources.map { source ->
+                SourceKey(packageId = manifest.id, sourceId = source.id.toString(), legacyLongId = source.id)
+            }
+        }
+        return PluginEventGrantReview(artifact, sourceKeys, manifest.requestedHostPermissions)
     }
 
     /** Existing install callers receive the single v1 source, or an explicit non-source handle. */
@@ -681,6 +1059,14 @@ public class PluginManager(
 
     /** Runtime teardown must finish even when the operation that made it unreachable is cancelled. */
     private suspend fun closeRuntime(runtime: ScriptPluginRuntime) {
+        eventScopes.remove(runtime)?.let { scope ->
+            (environment.systemEventSink as? PluginSystemEventGateway)?.let { gateway ->
+                gateway.closeRuntime(scope)
+                if (legacyLoginCompatibilityScopes.remove(scope.runtimeKey)) {
+                    gateway.revokeRuntimePermissions(scope)
+                }
+            }
+        }
         withContext(NonCancellable) { runCatching { runtime.close() } }
     }
 
@@ -721,6 +1107,7 @@ public class PluginManager(
         description = description,
         state = state,
         installedVersion = installedVersion,
+        contentType = resolveEntryContentType(type, contentType, sources.orEmpty()),
     )
 
     private fun LegacyExtensionIndexEntry.toDescriptor(
@@ -741,6 +1128,7 @@ public class PluginManager(
         description = null,
         state = state,
         installedVersion = installedVersion,
+        contentType = resolveEntryContentType(type, contentType, sources.orEmpty()),
     )
 }
 

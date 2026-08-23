@@ -256,6 +256,63 @@ class EpubBrowserContractTest {
     }
 
     @Test
+    fun readerPresentationScriptsCoverThreeFlowsAnimationAndShuyueTapZones() {
+        val request = fixture().request
+        val continuous = EpubBrowserConfiguration(
+            readingMode = EpubBrowserReadingMode.CONTINUOUS_VERTICAL,
+            animatePageTransitions = false,
+            fontSizeSp = 22f,
+            lineHeightMultiplier = 1.8f,
+            maxContentWidthDp = 720f,
+        )
+        val rtl = continuous.copy(
+            readingMode = EpubBrowserReadingMode.PAGED_RIGHT_TO_LEFT,
+            animatePageTransitions = true,
+        )
+        val configured = epubBrowserConfigureScript(request, continuous)
+        val instantTurn = epubBrowserNavigationScript(request, continuous, ReaderTapAction.NEXT_PAGE)
+        val animatedTurn = epubBrowserNavigationScript(request, rtl, ReaderTapAction.PREVIOUS_PAGE)
+        val tap = epubBrowserTapScript(request, rtl, 0.15, 0.5)
+        val fixedConfiguration = epubBrowserConfigureScript(
+            fixture(packageLayout = "pre-paginated").request,
+            continuous,
+        )
+
+        assertTrue("CONTINUOUS_VERTICAL" in configured)
+        assertTrue("max-width: 720.0px" in configured)
+        assertTrue("font-size: 22.0px" in configured)
+        assertTrue("line-height: 1.8" in configured)
+        assertTrue("window.__shinsouEpubReaderStyleNode" in configured)
+        assertTrue("style.__shinsouEpubHostOwned===true" in configured)
+        assertFalse("shinsou-epub-reader-style" in configured)
+        assertTrue("shinsouLegacyFixedLayout()" in configured)
+        assertTrue("height\\s*=\\s*" in configured)
+        assertFalse("document.createElement('style')" in fixedConfiguration)
+        assertFalse("font-size: 22.0px" in fixedConfiguration)
+        assertTrue("shinsouTurnPage(1,false)" in instantTurn)
+        assertTrue("shinsouTurnPage(-1,true)" in animatedTurn)
+        assertTrue("x>=0.3&&x<=0.7" in tap)
+        assertTrue("PAGED_RIGHT_TO_LEFT" in tap)
+        assertTrue("node.isContentEditable" in tap)
+
+        assertEquals(
+            EpubBrowserActionResult(
+                outcome = EpubBrowserActionOutcome.NEXT_BOUNDARY,
+                pageIndex = 4,
+                pageCount = 5,
+            ),
+            decodeEpubBrowserActionResult(
+                """{"outcome":"NEXT_BOUNDARY","pageIndex":4,"pageCount":5}""",
+            ),
+        )
+        assertNull(
+            decodeEpubBrowserActionResult(
+                """{"outcome":"MOVED","pageIndex":5,"pageCount":5}""",
+            ),
+        )
+    }
+
+    @Test
     fun resolverSlotStagesPendingCachesAndClosesOnlyAtCommitOrRollback() {
         val fixture = fixture()
         val first = EpubPublicationResourceResolver(fixture.request)
@@ -315,7 +372,7 @@ class EpubBrowserContractTest {
 
         assertTrue("shinsouFixed=false" in epubBrowserViewportScript(reflowableItem.request))
         assertTrue("shinsouFixed=true" in epubBrowserViewportScript(fixedItem.request))
-        assertTrue("shinsouFixed=false" in epubBrowserViewportScript(conflictingItem.request))
+        assertTrue("shinsouFixed=true" in epubBrowserViewportScript(conflictingItem.request))
         assertTrue("shinsouFixed=false" in epubBrowserViewportScript(manifestFallback.request))
         assertTrue("shinsouFixed=true" in epubBrowserViewportScript(explicitItemBeatsManifestFallback.request))
     }

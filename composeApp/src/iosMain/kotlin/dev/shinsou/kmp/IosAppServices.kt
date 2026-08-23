@@ -131,11 +131,11 @@ internal class IosAppServices(
     }
 
     fun emitReaderVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
-        // Gate on the durable preference and the committed reader presentation. The mirrored
-        // monitoring flag is only a notification pulse and can briefly be false while Compose
-        // disposes/recreates effects during cold launch or root recomposition.
+        // A presented Browse reader can intentionally leave platform interception disabled when
+        // it has no consumer for this flow. Never swallow/reset the system volume in that state.
         if (!IosReaderPresentationState.readerOpen) return false
         if (!IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys) return false
+        if (!IosReaderVolumeKeyState.monitoringEnabled) return false
         return readerVolumeKeyChannel.trySend(event).isSuccess
     }
 

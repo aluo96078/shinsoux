@@ -68,6 +68,11 @@ data class LibrarySettings(
 data class ReaderSettings(
     val readingMode: ReadingMode = ReadingMode.PAGER_LTR,
     val orientation: ReaderOrientation = ReaderOrientation.FREE,
+    /** Reflowable novel typography; image readers intentionally ignore these values. */
+    val novelFontSizeSp: Float = 20f,
+    val novelLineHeightMultiplier: Float = 1.72f,
+    /** Maximum measured text width on large windows; phones naturally use their viewport. */
+    val novelMaxWidthDp: Float = 760f,
     val doubleTapToZoom: Boolean = true,
     val animatePageTransitions: Boolean = true,
     val showPageNumber: Boolean = true,
@@ -145,6 +150,14 @@ data class BrowseSettings(
     /** Empty means all languages, matching the original app's first-launch behaviour. */
     val enabledLanguages: Set<String> = emptySet(),
     val pinnedSourceIds: Set<Long> = emptySet(),
+    /**
+     * Stable identities for v2 sources that can be pinned in the browse catalogue.
+     *
+     * Legacy sources continue to use [pinnedSourceIds] for backwards compatibility.  A v2
+     * source's numeric row id is deliberately process-local, so persisting it would make a pin
+     * move to another source after the next refresh or app launch.
+     */
+    val pinnedSourceKeys: Set<String> = emptySet(),
 )
 
 @Serializable

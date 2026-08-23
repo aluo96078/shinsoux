@@ -15,11 +15,11 @@ class ShuYuePinnedRepositoryLoaderTest {
         val indexUrl = "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/index.json"
         val indexBytes = requireNotNull(javaClass.classLoader.getResourceAsStream("shuyue-plugin/index.json"))
             .use { it.readBytes() }
-        assertEquals("b6088b13548d2ec1f59e4a620fbf308ee67e97cf2b8734b2291c6a93725a7631", Sha256.hex(indexBytes))
+        assertEquals("b095b72ce4c59eed722be2dfa91a7729851634aae62a5b3881356c92f84a1090", Sha256.hex(indexBytes))
         val scriptUrls = listOf(
-            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8.js?v=1.6.12",
-            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8-api.js?v=1.0.2",
-            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/biquge-tw.js?v=1.0.1",
+            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8.js?v=1.6.14",
+            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8-api.js?v=1.0.4",
+            "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/biquge-tw.js?v=1.0.3",
         )
         val scriptResponses = scriptUrls.associateWith { url ->
             val resource = "shuyue-plugin/${url.substringAfterLast('/').substringBefore('?')}"
@@ -49,7 +49,7 @@ class ShuYuePinnedRepositoryLoaderTest {
             loaded.entries.map { it.id },
         )
         assertEquals(
-            listOf("wenku8.js?v=1.6.12", "wenku8-api.js?v=1.0.2", "biquge-tw.js?v=1.0.1"),
+            listOf("wenku8.js?v=1.6.14", "wenku8-api.js?v=1.0.4", "biquge-tw.js?v=1.0.3"),
             loaded.entries.map { it.scriptUrl },
         )
         assertEquals(
@@ -58,9 +58,9 @@ class ShuYuePinnedRepositoryLoaderTest {
         )
         assertEquals(
             listOf(
-                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8.js?v=1.6.12",
-                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8-api.js?v=1.0.2",
-                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/biquge-tw.js?v=1.0.1",
+                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8.js?v=1.6.14",
+                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8-api.js?v=1.0.4",
+                "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/biquge-tw.js?v=1.0.3",
             ),
             loaded.entries.map { it.resolvedScriptUrl },
         )
@@ -78,9 +78,9 @@ class ShuYuePinnedRepositoryLoaderTest {
         assertTrue(transport.requests.all { it.allowedArtifactOrigins == setOf(ShuYueOrigin.parse("https://raw.githubusercontent.com")) })
 
         val expectedScriptDigests = mapOf(
-            "wenku8.js" to "a77c9b81e4adcd86d6cb3b1126922345a1e69fd56658639188e6cf0e925655c3",
-            "wenku8-api.js" to "89a9d3236dd7ea1655cad57ddeaca100cc1a8ff2b99acdcd06b8fd69cf13d7ce",
-            "biquge-tw.js" to "2dd28789d8be4d3d5ac88926bc1e143e5b46198b3fa579f46baf510f2591de78",
+            "wenku8.js" to "5536b392476d59000770a15e2f759c3fb5f5d51b551c03ae42182c7eb5610b9e",
+            "wenku8-api.js" to "aaa7875360a52dd3393288bbb4f1e85d38ddd6a42041a0e489d7585db8bb5996",
+            "biquge-tw.js" to "74a961995aae9bef40444a819011e3b7702fcce6ce179fbd8e1ff6c733468303",
         )
         assertEquals(
             mapOf(
@@ -88,7 +88,9 @@ class ShuYuePinnedRepositoryLoaderTest {
                 "zh.wenku8.api" to expectedScriptDigests.getValue("wenku8-api.js"),
                 "zh.biquge.tw" to expectedScriptDigests.getValue("biquge-tw.js"),
             ),
-            ShuYueReviewedPluginCatalogV2.profiles.associate { it.identity.packageId to it.identity.sha256 },
+            ShuYueReviewedPluginCatalogV2.profiles
+                .filterNot { it.v2IndexOnly }
+                .associate { it.identity.packageId to it.identity.sha256 },
         )
         val approvals = InMemoryShuYueExecutionApprovalsV2()
         val admission = ShuYueReviewedPluginAdmissionV2(

@@ -454,6 +454,136 @@ var source = {
   },
 
   log: function(message) {
-    if (bridge.log) bridge.log(this.id, message);
+    try {
+      if (typeof bridge === "undefined" || !bridge || typeof bridge.log !== "function") return;
+      var text = String(message == null ? "" : message);
+      var arity = Number(bridge.log.length);
+      if (isFinite(arity) && arity <= 1) bridge.log(text);
+      else bridge.log(this.id, text);
+    } catch (ignored) {}
   }
 };
+
+// Legacy Shinsou plugin compatibility. Keep the current ShuYue source API
+// intact while exposing the historical get* contract used by old hosts.
+(function installLegacyShinsouContract(target) {
+  function pageNumber(value) {
+    var number = Number(value);
+    return isFinite(number) ? Math.max(1, Math.floor(number) + 1) : 1;
+  }
+
+  function legacyBook(value) {
+    if (!value || typeof value !== "object") return null;
+    var url = String(value.url || "");
+    if (!url) return null;
+    var status = typeof value.status === "number" && isFinite(value.status) ? value.status : 0;
+    return {
+      url: url,
+      title: String(value.title || value.name || url),
+      author: value.author || null,
+      artist: value.artist || null,
+      description: value.description || null,
+      genre: value.genre || null,
+      status: status,
+      thumbnailUrl: value.thumbnailUrl || value.thumbnail_url || value.coverImage || value.cover || null,
+      initialized: true
+    };
+  }
+
+  function legacyPage(values, hasNextPage) {
+    var list = Array.isArray(values) ? values : [];
+    var mangas = [];
+    for (var i = 0; i < list.length; i++) {
+      var mapped = legacyBook(list[i]);
+      if (mapped) mangas.push(mapped);
+    }
+    return { mangas: mangas, hasNextPage: hasNextPage === undefined ? mangas.length > 0 : !!hasNextPage };
+  }
+
+  function selectedFilter(filters) {
+    if (!Array.isArray(filters)) return 0;
+    for (var i = 0; i < filters.length; i++) {
+      var filter = filters[i] || {};
+      if (Array.isArray(filter.values)) {
+        var state = Number(filter.state);
+        if (isFinite(state)) return Math.max(0, Math.floor(state));
+      }
+      var nested = selectedFilter(filter.filters);
+      if (nested > 0) return nested;
+    }
+    return 0;
+  }
+
+  function legacyFilters() {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var values = ["搜尋"];
+    for (var i = 0; i < options.length; i++) values.push(String(options[i].title || options[i].id || "分類"));
+    return [{ type: "select", name: "分類", values: values, state: 0 }];
+  }
+
+  target.getPopularManga = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getLatestUpdates = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getSearchManga = function(page, query, filters) {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var selected = selectedFilter(filters);
+    if (selected > 0 && options[selected - 1]) {
+      return legacyPage(target.browse(options[selected - 1].id, pageNumber(page)));
+    }
+    return legacyPage(target.search(String(query || ""), pageNumber(page)));
+  };
+
+  target.getMangaDetails = function(manga) {
+    var input = manga || {};
+    var aid = typeof target.aidFromText === "function" ? target.aidFromText(input.url) : "";
+    var details = aid && typeof target.bookFromAid === "function" ? target.bookFromAid(aid) : null;
+    return legacyBook(details || input) || legacyBook({ url: String(input.url || ""), title: String(input.title || "") });
+  };
+
+  target.getChapterList = function(manga) {
+    var input = manga || {};
+    var values = typeof target.chapters === "function" ? target.chapters({
+      url: String(input.url || ""),
+      title: String(input.title || "")
+    }) : [];
+    var chapters = [];
+    for (var i = 0; i < values.length; i++) {
+      var value = values[i] || {};
+      var url = String(value.url || "");
+      if (!url) continue;
+      chapters.push({
+        url: url,
+        name: String(value.title || value.name || url),
+        scanlator: null,
+        dateUpload: 0,
+        chapterNumber: typeof value.index === "number" ? value.index : i
+      });
+    }
+    return chapters;
+  };
+
+  // Older Shinsou hosts only know image-oriented Page values. Preserve the
+  // chapter URL and attach text/content for hosts that understand text pages.
+  target.getPageList = function(chapter) {
+    var input = chapter || {};
+    var text = typeof target.chapterText === "function" ? target.chapterText(input) : "";
+    if (!text) return [];
+    return [{ index: 0, url: String(input.url || ""), imageUrl: null, text: String(text), content: String(text) }];
+  };
+
+  target.getFilterList = legacyFilters;
+
+  target.logout = function() {
+    try {
+      if (typeof bridge !== "undefined" && bridge) {
+        if (typeof bridge.clearCredential === "function") bridge.clearCredential();
+        if (typeof bridge.clearCookies === "function") bridge.clearCookies();
+      }
+    } catch (ignored) {}
+  };
+})(source);

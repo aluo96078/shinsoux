@@ -6,6 +6,10 @@ import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.local.LocalImportResult
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
+import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
@@ -34,6 +38,8 @@ import kotlinx.coroutines.flow.map
 
 private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 private val emptySourceLoginRequests = MutableStateFlow<List<SourceLoginRequest>>(emptyList())
+private val emptySourceRefreshInvalidations = MutableStateFlow<Map<SourceKey, Long>>(emptyMap())
+private val emptyLogoutConfirmations = MutableStateFlow<List<PluginLogoutConfirmation>>(emptyList())
 
 /**
  * Platform and extension operations used by the common UI.
@@ -503,6 +509,9 @@ data class SourceLoginRequest(
     val sourceId: Long,
     val sourceName: String,
     val reason: String? = null,
+    val eventId: String? = null,
+    /** Host-bound authority for system-event prompts; absent for legacy imperative requests. */
+    val exactTarget: dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget? = null,
 )
 
 /** Extension/source bridge. Plugin modules adapt their own models to these DTOs. */
@@ -513,7 +522,20 @@ interface BrowseCallbacks {
     val loginRequests: StateFlow<List<SourceLoginRequest>>
         get() = emptySourceLoginRequests
 
+    /** Exact-source generations emitted by admitted plugin refresh events. */
+    val sourceRefreshInvalidations: StateFlow<Map<SourceKey, Long>>
+        get() = emptySourceRefreshInvalidations
+
+    val logoutConfirmations: StateFlow<List<PluginLogoutConfirmation>>
+        get() = emptyLogoutConfirmations
+
+    suspend fun confirmPluginLogout(eventId: String): Boolean = false
+    fun dismissPluginLogout(eventId: String) = Unit
+    fun dismissAllPluginLogouts() = Unit
+    suspend fun setPluginUiAvailable(available: Boolean) = Unit
+
     fun dismissSourceLoginRequest(sourceId: Long) = Unit
+    fun dismissSourceLoginEvent(eventId: String) = Unit
 
     suspend fun refresh() = Unit
 
@@ -540,6 +562,12 @@ interface BrowseCallbacks {
         page: Int = 1,
     ): BrowsePage = browseSource(sourceId = sourceId, page = page)
 
+    /** Loads a legacy source's account-owned collection without using the local library. */
+    suspend fun browseSourceFavorites(
+        sourceId: Long,
+        page: Int = 1,
+    ): BrowsePage = browseSource(sourceId = sourceId, page = page)
+
     /** Exact, capability-gated v2 source; opaque ids are never projected into legacy Long DTOs. */
     suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? = null
 
@@ -555,6 +583,7 @@ interface BrowseCallbacks {
         sourceKey: SourceKey,
         query: String,
         page: Int = 0,
+        options: BrowseOptionsV2 = BrowseOptionsV2(),
     ): PagedResultV2<RemotePublicationV2> =
         throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
 
@@ -569,6 +598,13 @@ interface BrowseCallbacks {
         remotePublicationId: String,
     ): RemotePublicationV2 =
         throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    /** Source-owned favorite/library mutation for v2 publications when the capability exists. */
+    suspend fun favoriteExtensionPublicationV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        favorite: Boolean,
+    ) = Unit
 
     suspend fun extensionUnitsV2(
         sourceKey: SourceKey,
@@ -592,6 +628,18 @@ interface BrowseCallbacks {
         page: Int = 0,
     ): ExtensionPublicationPageV2 =
         throw IllegalStateException("Extension v2 content storage is unavailable")
+
+    /**
+     * Loads units with catalogue metadata already available, avoiding a duplicate details request
+     * before the chapter list can be rendered. Implementations may still refresh full details
+     * independently after the initial page becomes visible.
+     */
+    suspend fun extensionPublicationUnitsPageV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        publication: RemotePublicationV2,
+        page: Int = 0,
+    ): ExtensionPublicationPageV2 = extensionPublicationPageV2(sourceKey, remotePublicationId, page)
 
     /** Acquires one explicitly selected representation into the shared content transaction. */
     suspend fun materializeExtensionContentV2(
@@ -629,6 +677,13 @@ interface BrowseCallbacks {
 
     suspend fun installExtension(extensionId: String) = Unit
 
+    suspend fun pendingPluginEventGrantReview(extensionId: String): PluginEventGrantReview? = null
+
+    suspend fun approvePluginEventGrantReview(
+        extensionId: String,
+        permissions: Set<PluginHostPermission>,
+    ) = Unit
+
     suspend fun uninstallExtension(extensionId: String) = Unit
 
     suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean) = Unit
@@ -637,8 +692,14 @@ interface BrowseCallbacks {
 
     suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>) = Unit
 
-    /** Saves raw credentials, or invokes the plugin login contract when it advertises support. */
+    /** Invokes the advertised login contract and stores credentials only after a successful login. */
     suspend fun saveSourceCredentials(sourceId: Long, username: String, password: String): Boolean = false
+    suspend fun saveSourceEventCredentials(
+        eventId: String,
+        sourceId: Long,
+        username: String,
+        password: String,
+    ): Boolean = saveSourceCredentials(sourceId, username, password)
 
     suspend fun logoutSource(sourceId: Long) = Unit
 
@@ -692,12 +753,20 @@ data class BrowseSource(
     val isNsfw: Boolean = false,
     val supportsLatest: Boolean = true,
     val supportsLogin: Boolean = false,
+    /** The source exposes an account-owned remote collection (for example Wenku8 bookcase). */
+    val supportsFavorites: Boolean = false,
+    /** v2 browse option key used to open the source-owned collection. */
+    val favoriteBrowseOptionKey: String? = null,
+    /** v2 browse option value used to open the source-owned collection. */
+    val favoriteBrowseOptionValue: String = "bookcase",
     val credential: SourceCredential? = null,
     val cookies: List<SourceCookie> = emptyList(),
     val preferences: List<SourcePreference> = emptyList(),
     val filters: List<BrowseFilter> = emptyList(),
     /** Exact v2 authority. [id] is only a process-local UI row key when this is non-null. */
     val sourceKey: SourceKey? = null,
+    /** Resolved from repository metadata; older sources intentionally default to BOTH. */
+    val contentType: PluginContentType = PluginContentType.BOTH,
 ) {
     val identityKey: String get() = sourceKey?.canonicalId ?: "legacy:$id"
 }
@@ -812,6 +881,7 @@ data class BrowseExtension(
     /** Uses exact-digest quarantine and permission review instead of the v1 trust toggle. */
     val reviewedShuYueV2: Boolean = false,
     val description: String? = null,
+    val contentType: PluginContentType = PluginContentType.BOTH,
 )
 
 data class BrowseManga(
@@ -822,6 +892,10 @@ data class BrowseManga(
     /** Headers prepared by the source request pipeline for the cover image. */
     val thumbnailHeaders: Map<String, String> = emptyMap(),
     val author: String? = null,
+    val artist: String? = null,
+    val description: String? = null,
+    val genre: List<String>? = null,
+    val status: String? = null,
     /** Exact v2 authority; legacy consumers must reject this item instead of using [sourceId]. */
     val sourceKey: SourceKey? = null,
     val remotePublicationId: String? = null,

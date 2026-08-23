@@ -38,6 +38,8 @@ import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.PluginLoginRequestCoordinator
+import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
+import dev.shinsou.kmp.plugin.PluginLogoutRequestCoordinator
 import dev.shinsou.kmp.plugin.PluginManager
 import dev.shinsou.kmp.plugin.PluginNetworkClient
 import dev.shinsou.kmp.plugin.PluginNetworkConfiguration
@@ -47,10 +49,28 @@ import dev.shinsou.kmp.plugin.PluginVerifier
 import dev.shinsou.kmp.plugin.RepositoryPluginCoordinator
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
+import dev.shinsou.kmp.plugin.events.PluginDiagnosticPort
+import dev.shinsou.kmp.plugin.events.PluginEventOutcome
+import dev.shinsou.kmp.plugin.events.PluginLoginIntentPort
+import dev.shinsou.kmp.plugin.events.PluginLogoutPort
+import dev.shinsou.kmp.plugin.events.PluginSourceRefreshPort
+import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+import dev.shinsou.kmp.plugin.events.PluginSystemEventHandlerRegistry
+import dev.shinsou.kmp.plugin.events.PluginSystemEventHostPorts
+import dev.shinsou.kmp.plugin.events.registerV1HostHandlers
+import dev.shinsou.kmp.plugin.events.BoundedPluginDiagnosticLog
+import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
+import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
+import dev.shinsou.kmp.plugin.events.PluginEventObserver
+import dev.shinsou.kmp.plugin.events.PluginEventObserverGroup
+import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
 import dev.shinsou.kmp.plugin.shuyue.KtorShuYueRepositoryTransport
 import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
 import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLimits
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
+import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
@@ -194,6 +214,9 @@ public class ShinsouComposition(
             allowedArtifactOrigins = setOf(
                 ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_ARTIFACT_ORIGIN,
             ),
+            // The user may explicitly point the app at the local/LAN ShuYue development server.
+            // Only loopback/private origins are added; public artifacts remain GitHub-pinned.
+            allowLocalArtifactOrigins = true,
         ),
     )
     private val pluginStorage = KeyValuePluginStorage(pluginKeyValueStore)
@@ -201,6 +224,10 @@ public class ShinsouComposition(
     private val repositoryClient = ExtensionRepositoryClient(httpClient)
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
     private val pluginLoginRequests = PluginLoginRequestCoordinator()
+    private val pluginEventUiJob = SupervisorJob()
+    private val pluginLogoutRequests = PluginLogoutRequestCoordinator(
+        CoroutineScope(pluginEventUiJob + Dispatchers.Default),
+    )
     private val networkConfiguration = PluginNetworkConfigurationProvider {
         repository.currentSnapshot.settings.advanced.let { settings ->
             PluginNetworkConfiguration(
@@ -221,7 +248,101 @@ public class ShinsouComposition(
         storage = pluginStorage,
         requestBuilder = requestBuilder,
     )
-    private val pluginManager = PluginManager(
+    private val pluginEventAuthorizer: MutablePluginSystemEventAuthorizer = MutablePluginSystemEventAuthorizer()
+    private val pluginEventContextRegistry: PluginEventContextRegistry = PluginEventContextRegistry()
+    private val pluginEventGrantAdmission = KeyValuePluginEventGrantAdmission(
+        store = pluginKeyValueStore,
+        authorizer = pluginEventAuthorizer,
+    )
+    private val pluginDiagnosticLog = BoundedPluginDiagnosticLog()
+    private val pluginSourceInvalidations = ExactSourceRefreshInvalidations()
+    private val pluginLifecycleObserver = object : PluginEventObserver {
+        override fun onCompleted(report: dev.shinsou.kmp.plugin.events.PluginEventExecutionReport) = Unit
+        override fun onRuntimeClosed(scope: dev.shinsou.kmp.plugin.events.BoundPluginScope) {
+            val target = dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget(
+                scope.artifactIdentity,
+                scope.sourceKey,
+            )
+            pluginSourceInvalidations.clear(target)
+            pluginLoginRequests.clearTarget(target)
+            pluginLogoutRequests.clearSource(target)
+        }
+        override fun onArtifactInvalidated(identity: dev.shinsou.kmp.plugin.events.PluginArtifactIdentity) {
+            pluginLoginRequests.clearArtifact(identity)
+            pluginLogoutRequests.clearArtifact(identity)
+        }
+    }
+    private val pluginEventRegistry: PluginSystemEventHandlerRegistry = PluginSystemEventHandlerRegistry().apply {
+        registerV1HostHandlers(
+            PluginSystemEventHostPorts(
+                login = PluginLoginIntentPort { target, eventId, payload ->
+                    if (pluginLogoutRequests.hasTarget(target)) {
+                        return@PluginLoginIntentPort PluginEventOutcome.Suppressed
+                    }
+                    val sourceKey = target.sourceKey
+                    val legacy = pluginManager.exactLegacySource(target)
+                    val exactV2 = pluginManager.exactExtensionSource(target)
+                    val sourceId = sourceKey.legacyLongId ?: runCatching {
+                        val artifact = target.artifactIdentity
+                        BuiltInShuYueExecutionScopesV2.resolve(
+                            ShuYueArtifactIdentityV2(
+                                artifact.packageId,
+                                artifact.version,
+                                artifact.versionCode,
+                                artifact.sha256,
+                            ),
+                            sourceKey,
+                        )
+                    }.getOrNull() ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
+                    val sourceName = legacy?.name ?: exactV2?.descriptor?.displayName
+                        ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
+                    if (pluginLoginRequests.requestEvent(eventId, target, sourceId, sourceName, payload.fallbackMessage)) {
+                        PluginEventOutcome.Succeeded
+                    } else {
+                        PluginEventOutcome.Suppressed
+                    }
+                },
+                refresh = PluginSourceRefreshPort { target, _, _ ->
+                    val sourceKey = target.sourceKey
+                    // This deliberately checks only the exact live source. It never calls the
+                    // repository/global refresh coordinator.
+                    val exactV2 = pluginManager.exactExtensionSource(target)
+                    val legacy = pluginManager.exactLegacySource(target)
+                    if (exactV2 != null || legacy != null) {
+                        pluginSourceInvalidations.invalidate(target)
+                        PluginEventOutcome.Succeeded
+                    } else PluginEventOutcome.Suppressed
+                },
+                logout = PluginLogoutPort { target, eventId, payload ->
+                    // Logout wins the exact-source modal conflict and expires only that login.
+                    pluginLoginRequests.clearTarget(target)
+                    val sourceKey = target.sourceKey
+                    val exactName = pluginManager.exactExtensionSource(target)?.descriptor?.displayName
+                    val legacyName = pluginManager.exactLegacySource(target)?.name
+                    val sourceName = exactName ?: legacyName
+                        ?: return@PluginLogoutPort PluginEventOutcome.Suppressed
+                    if (pluginLogoutRequests.request(PluginLogoutConfirmation(
+                            eventId = eventId,
+                            target = target,
+                            sourceName = sourceName,
+                            message = payload.fallbackMessage,
+                        ))) PluginEventOutcome.Succeeded else PluginEventOutcome.Suppressed
+                },
+                diagnostic = PluginDiagnosticPort { target, eventId, count, payload ->
+                    // REPORT_DIAGNOSTIC is log-only. User projection additionally requires the
+                    // separate REPORT_USER_MESSAGE exact grant and a host presenter.
+                    pluginDiagnosticLog.report(target, eventId, payload, count)
+                },
+            ),
+        )
+    }
+    private val pluginEventGateway: PluginSystemEventGateway = PluginSystemEventGateway(
+        registry = pluginEventRegistry,
+        authorizer = pluginEventAuthorizer,
+        observer = PluginEventObserverGroup(pluginDiagnosticLog, pluginLifecycleObserver),
+        contextRegistry = pluginEventContextRegistry,
+    )
+    private val pluginManager: PluginManager = PluginManager(
         repositoryClient = repositoryClient,
         packageStore = FilePluginPackageStore(
             fileSystem = fileSystem,
@@ -233,7 +354,10 @@ public class ShinsouComposition(
             network = pluginNetwork,
             storage = pluginStorage,
             loginRequester = pluginLoginRequests,
+            systemEventSink = pluginEventGateway,
+            systemEventContextRegistry = pluginEventContextRegistry,
         ),
+        eventGrantAdmission = pluginEventGrantAdmission,
     )
     private val coordinator = RepositoryPluginCoordinator(
         repository = repository,
@@ -488,6 +612,8 @@ public class ShinsouComposition(
         requestBuilder = requestBuilder,
         portableRepository = repository,
         loginRequestCoordinator = pluginLoginRequests,
+        logoutRequestCoordinator = pluginLogoutRequests,
+        exactSourceRefreshInvalidations = pluginSourceInvalidations,
         extensionContentConsumerV2 = contentFoundation?.let { foundation ->
             ExtensionContentConsumerV2(
                 gateway = ExtensionBrowseContentGatewayV2(
@@ -656,10 +782,18 @@ public class ShinsouComposition(
         val store = contentFoundation?.transactions ?: return
         if (contentOutboxDrainJob?.isActive == true) return
         contentOutboxDrainJob = trackingScope.launch {
-            repeat(MAX_CONTENT_OUTBOX_DRAIN_BATCHES) {
-                val result = runtime.drainContentOutbox(store) ?: return@launch
-                if (result.remaining == 0) return@launch
-                yield()
+            try {
+                repeat(MAX_CONTENT_OUTBOX_DRAIN_BATCHES) {
+                    val result = runtime.drainContentOutbox(store) ?: return@launch
+                    if (result.remaining == 0) return@launch
+                    yield()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Sync persistence is a background concern. A stale/corrupt local shard must not
+                // terminate the process before the library and reader can render; the next
+                // foreground/background edge retries the durable outbox drain.
             }
         }
     }
@@ -865,8 +999,11 @@ public class ShinsouComposition(
         portableRepositoryReconciliationJob?.cancel()
         trackerManager.cancelAll()
         trackingJob.cancelAndJoin()
+        pluginEventUiJob.cancelAndJoin()
         downloads.close()
         pluginManager.close()
+        pluginEventGateway.close()
+        pluginDiagnosticLog.clear()
         if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
         // Stop every mutation producer before flushing and terminating the coalesced writer.
         try {

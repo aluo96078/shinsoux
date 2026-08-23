@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,6 +56,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -109,6 +111,7 @@ import dev.shinsou.kmp.domain.model.ChapterPatch
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.MainSection
+import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaPatch
 import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.download.downloadIdsToRemoveAfterMarkedRead
@@ -116,8 +119,11 @@ import dev.shinsou.kmp.domain.model.shouldAskForCategoriesOnFavorite
 import dev.shinsou.kmp.local.LOCAL_CONTENT_EXTENSIONS
 import dev.shinsou.kmp.local.LOCAL_IMPORTED_DOCUMENT_LIMITS
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
+import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
+import dev.shinsou.kmp.local.encodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.migration.shuyue.ShuYueBackupV1Limits
 import dev.shinsou.kmp.reader.buildReaderChapterNavigation
+import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.reader.ReaderPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerTrackingProgress
@@ -131,6 +137,8 @@ import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
 import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
 import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.extensionPublicationKey
 import dev.shinsou.kmp.tracking.TrackUpdate
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.CoverImage
@@ -303,6 +311,7 @@ private fun ShinsouAppContent(
     var moreNestedBackAvailable by remember { mutableStateOf(false) }
     var browseBackRequest by remember { mutableStateOf(0L) }
     var browseBackAvailable by remember { mutableStateOf(false) }
+    var browseReaderOpen by remember { mutableStateOf(false) }
     var pendingBrowseManga by remember { mutableStateOf<BrowseManga?>(null) }
     var pendingBrowseRequest by remember { mutableStateOf(0L) }
     val backSwipeProgress = remember { Animatable(0f) }
@@ -328,10 +337,20 @@ private fun ShinsouAppContent(
         mutableStateOf(appLockAuthenticationAvailable)
     }
     val completedReaderChapterIds = remember { mutableSetOf<Long>() }
+    val v2ReaderProgressSessions = remember { mutableMapOf<String, String>() }
     val appLifecycle by appServices.appLifecycle.collectAsState()
     val sourceLoginRequests by appServices.browse.loginRequests.collectAsState()
+    val pluginLogoutConfirmations by appServices.browse.logoutConfirmations.collectAsState()
     val pendingSourceLoginRequest = sourceLoginRequests.firstOrNull()
     val lockLifecycleTracker = remember(appServices) { AppLockLifecycleTracker() }
+
+    LaunchedEffect(appLifecycle, unlocked) {
+        val available = appLifecycle == AppLifecycleState.FOREGROUND && unlocked
+        appServices.browse.setPluginUiAvailable(available)
+        if (!available) {
+            appServices.browse.dismissAllPluginLogouts()
+        }
+    }
 
     LaunchedEffect(Unit) { appFocusRequester.requestFocus() }
     LaunchedEffect(snapshot.categories, selectedCategoryId) {
@@ -347,6 +366,162 @@ private fun ShinsouAppContent(
         scope.launch {
             runCatching { block() }.onFailure {
                 snackbar.showSnackbar(it.message ?: strings.text("The operation could not be completed."))
+            }
+        }
+    }
+
+    fun isV2NovelInLocalLibrary(item: BrowseManga): Boolean {
+        val sourceKey = item.sourceKey ?: return false
+        val remoteId = item.remotePublicationId ?: return false
+        val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
+        return repository.currentSnapshot.mangas.any {
+            it.source == LOCAL_SOURCE_ID && it.url == localUrl && it.favorite
+        }
+    }
+
+    suspend fun toggleV2NovelLocalLibrary(
+        item: BrowseManga,
+        publication: RemotePublicationV2,
+        favorite: Boolean,
+    ) {
+        val sourceKey = requireNotNull(item.sourceKey) { "Novel publication is missing its source identity" }
+        val remoteId = requireNotNull(item.remotePublicationId) {
+            "Novel publication is missing its remote identity"
+        }
+        val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
+        val now = Clock.System.now().toEpochMilliseconds()
+        val current = repository.currentSnapshot.mangas.firstOrNull {
+            it.source == LOCAL_SOURCE_ID && it.url == localUrl
+        }
+        if (current == null) {
+            if (!favorite) return
+            repository.upsertManga(
+                Manga(
+                    source = LOCAL_SOURCE_ID,
+                    favorite = true,
+                    dateAdded = now,
+                    url = localUrl,
+                    title = publication.title,
+                    author = publication.author,
+                    artist = publication.artist,
+                    description = publication.description,
+                    genre = publication.genre ?: listOf("Novel"),
+                    thumbnailUrl = publication.thumbnailUrl,
+                    updateStrategy = 1,
+                    initialized = true,
+                    lastModifiedAt = now,
+                    favoriteModifiedAt = now,
+                    version = 1,
+                ),
+            )
+        } else {
+            repository.patchManga(
+                mangaId = current.id,
+                patch = MangaPatch(
+                    favorite = favorite,
+                    title = publication.title,
+                    author = publication.author,
+                    artist = publication.artist,
+                    description = publication.description,
+                    genre = publication.genre,
+                    thumbnailUrl = publication.thumbnailUrl,
+                    initialized = true,
+                ),
+                modifiedAt = now,
+            )
+        }
+    }
+
+    fun recordV2ReaderProgress(title: String, unitTitle: String, locator: ReadingLocator) {
+        if (snapshot.settings.security.incognitoMode) return
+        scope.launch {
+            val readAt = Clock.System.now().toEpochMilliseconds()
+            val completed = (locator.progression ?: 0.0) >= 0.995
+            // Unit ids are only unique inside a publication. Include the publication key so
+            // opening identically named chapters from two extension titles cannot share a draft
+            // session (and consequently suppress one title's history updates).
+            val sessionKey = "${locator.scope.publicationId.value}:${locator.scope.unitId.value}"
+            val progressSessionId = v2ReaderProgressSessions.getOrPut(sessionKey) {
+                runCatching { readerProgressReporter?.newReaderSessionId() }
+                    .getOrNull()
+                    ?: "v2-reader-${sessionKey.hashCode()}"
+            }
+            var reporterFailure: Throwable? = null
+            readerProgressReporter?.let { reporter ->
+                try {
+                    withContext(Dispatchers.Default) {
+                        reporter.recordContentReadingProgress(
+                            locator = locator,
+                            sessionId = progressSessionId,
+                            completed = completed,
+                            historyTouchedAt = readAt,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    reporterFailure = failure
+                }
+            }
+
+            // V2 publications are authoritative in the content database, while the existing
+            // History screen reads the portable Manga/Chapter compatibility view. Materialize a
+            // deterministic source-0 row on the first locator so reading history works even when
+            // the typed sync replica is unavailable or still waiting for a background flush.
+            val publicationUrl = encodeTypedLocalPublicationUrl(locator.scope.publicationId)
+            val current = repository.currentSnapshot
+            val manga = current.mangas.firstOrNull {
+                it.source == LOCAL_SOURCE_ID && it.url == publicationUrl
+            } ?: repository.upsertManga(
+                Manga(
+                    source = LOCAL_SOURCE_ID,
+                    favorite = false,
+                    dateAdded = readAt,
+                    url = publicationUrl,
+                    title = title,
+                    description = "Extension publication",
+                    genre = listOf("Extension"),
+                    updateStrategy = 1,
+                    initialized = true,
+                    lastModifiedAt = readAt,
+                    version = 1,
+                ),
+            )
+            val chapterUrl = encodeTypedLocalChapterUrl(
+                publicationKey = locator.scope.publicationId,
+                acquisitionId = locator.scope.acquisitionId,
+                unitKey = locator.scope.unitId,
+            )
+            val chapter = repository.currentSnapshot.chapters.firstOrNull {
+                it.mangaId == manga.id && it.url == chapterUrl
+            } ?: repository.upsertChapter(
+                Chapter(
+                    mangaId = manga.id,
+                    url = chapterUrl,
+                    name = unitTitle,
+                    chapterNumber = 1.0,
+                    sourceOrder = 0,
+                    dateFetch = readAt,
+                    dateUpload = readAt,
+                    lastModifiedAt = readAt,
+                    version = 1,
+                ),
+            )
+            val pageIndex = when (locator) {
+                is ReadingLocator.Image -> locator.pageIndexHint ?: 0
+                is ReadingLocator.Epub -> locator.spineIndexHint ?: 0
+                is ReadingLocator.Text -> 0
+            }
+            repository.markChapterProgress(
+                chapterId = chapter.id,
+                lastPageRead = pageIndex.coerceAtLeast(0),
+                read = completed,
+                readAt = readAt,
+            )
+            reporterFailure?.let { failure ->
+                snackbar.showSnackbar(
+                    failure.message ?: strings.text("The latest reading position is queued for retry."),
+                )
             }
         }
     }
@@ -608,14 +783,16 @@ private fun ShinsouAppContent(
         previousAppLockAuthenticationAvailable = appLockAuthenticationAvailable
         if (shouldLock) unlocked = false
     }
-    LaunchedEffect(readerSession, snapshot.settings.reader.keepScreenOn) {
-        appServices.setKeepScreenOn(readerSession != null && snapshot.settings.reader.keepScreenOn)
+    val readerOpen = readerSession != null || browseReaderOpen
+    LaunchedEffect(readerOpen, snapshot.settings.reader.keepScreenOn) {
+        appServices.setKeepScreenOn(readerOpen && snapshot.settings.reader.keepScreenOn)
     }
-    LaunchedEffect(readerSession, snapshot.settings.reader.fullscreen) {
-        appServices.setFullscreen(readerSession != null && snapshot.settings.reader.fullscreen)
+    LaunchedEffect(readerOpen, snapshot.settings.reader.fullscreen) {
+        appServices.setFullscreen(readerOpen && snapshot.settings.reader.fullscreen)
     }
-    val readerOpen = readerSession != null
-    val interceptReaderVolumeKeys = readerOpen && snapshot.settings.reader.volumeKeys
+    // Browse-owned readers do not yet receive the platform volume-event flow. Keep native volume
+    // controls available there instead of intercepting and silently dropping the key presses.
+    val interceptReaderVolumeKeys = readerSession != null && snapshot.settings.reader.volumeKeys
     DisposableEffect(appServices, readerOpen) {
         // Publish the reader gate as part of the composition commit.  A launched coroutine leaves
         // a short window where iOS can begin its native edge recognizer after the reader appears.
@@ -744,7 +921,8 @@ private fun ShinsouAppContent(
     val systemBackHandler = rememberUpdatedState {
         when {
             unlocked && pendingSourceLoginRequest != null -> {
-                appServices.browse.dismissSourceLoginRequest(pendingSourceLoginRequest.sourceId)
+                pendingSourceLoginRequest.eventId?.let(appServices.browse::dismissSourceLoginEvent)
+                    ?: appServices.browse.dismissSourceLoginRequest(pendingSourceLoginRequest.sourceId)
                 true
             }
             readerCategoryPickerMangaId != null -> {
@@ -854,7 +1032,7 @@ private fun ShinsouAppContent(
             // ReaderScreen owns focus for hardware page keys. Its loading/error background has no
             // child pointer consumer, so the app-wide blank-tap observer is disabled while open.
             .onUnconsumedBlankTap(
-                enabled = !appServices.prefersDesktopChrome && readerSession == null,
+                enabled = !appServices.prefersDesktopChrome && !readerOpen,
                 onBlankTap = ::dismissMobileInput,
             ),
         color = MaterialTheme.colorScheme.background,
@@ -971,30 +1149,52 @@ private fun ShinsouAppContent(
                             mutate {
                                 val readAt = Clock.System.now().toEpochMilliseconds()
                                 val reporter = readerProgressReporter
+                                var reporterFailure: Throwable? = null
                                 if (reporter != null) {
-                                    val result = withContext(Dispatchers.Default) {
-                                        reporter.recordReadingProgress(
-                                            chapterKey = syncChapterEntityKey(chapter, manga),
-                                            mangaKey = syncMangaEntityKey(manga),
-                                            readingMode = position.readingMode,
-                                            pageIndex = position.pageIndex,
-                                            normalizedOffsetFraction = position.normalizedOffsetFraction,
-                                            sessionId = session.progressSessionId,
-                                            completed = chapter.read || completedNow,
-                                            historyTouchedAt = readAt,
-                                        )
-                                    }
-                                    result.positionRegister?.hlc?.let { reportedHlc ->
-                                        if (readerLastObservedHlc == null || reportedHlc > requireNotNull(readerLastObservedHlc)) {
-                                            readerLastObservedHlc = reportedHlc
+                                    try {
+                                        val result = withContext(Dispatchers.Default) {
+                                            reporter.recordReadingProgress(
+                                                chapterKey = syncChapterEntityKey(chapter, manga),
+                                                mangaKey = syncMangaEntityKey(manga),
+                                                readingMode = position.readingMode,
+                                                pageIndex = position.pageIndex,
+                                                normalizedOffsetFraction = position.normalizedOffsetFraction,
+                                                sessionId = session.progressSessionId,
+                                                completed = chapter.read || completedNow,
+                                                historyTouchedAt = readAt,
+                                            )
                                         }
+                                        result.positionRegister?.hlc?.let { reportedHlc ->
+                                            if (readerLastObservedHlc == null || reportedHlc > requireNotNull(readerLastObservedHlc)) {
+                                                readerLastObservedHlc = reportedHlc
+                                            }
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: Throwable) {
+                                        // A sync outage must not make the local reader lose its
+                                        // history entry. The reporter's durable draft remains
+                                        // retryable; the error is surfaced after the compatibility
+                                        // projection has been committed below.
+                                        reporterFailure = failure
                                     }
-                                } else {
-                                    repository.markChapterProgress(
-                                        chapterId = chapter.id,
-                                        lastPageRead = position.pageIndex,
-                                        read = chapter.read || completedNow,
-                                        readAt = readAt,
+                                }
+                                // The v2 reporter owns the sync replica, but the legacy
+                                // AppSnapshot is still the immediate source used by the History
+                                // screen. Keep that compatibility projection current even when
+                                // sync is enabled. The bridge sees the same values already
+                                // published by the reporter and therefore does not emit a second
+                                // progress event in the normal path; if the reporter is absent or
+                                // temporarily unavailable, the local history remains usable.
+                                repository.markChapterProgress(
+                                    chapterId = chapter.id,
+                                    lastPageRead = position.pageIndex,
+                                    read = chapter.read || completedNow,
+                                    readAt = readAt,
+                                )
+                                reporterFailure?.let { failure ->
+                                    snackbar.showSnackbar(
+                                        failure.message ?: strings.text("The latest reading position is queued for retry."),
                                     )
                                 }
                                 if (completedNow && snapshot.settings.downloads.deleteAfterReading) {
@@ -1083,7 +1283,7 @@ private fun ShinsouAppContent(
                     modifier = Modifier.zIndex(5f),
                     unifiedReaderContent = typedReaderSession?.content,
                     unifiedReaderRenderer = typedReaderSession?.let { typed ->
-                        { _, rendererModifier ->
+                        { _, rendererModifier, renderState, onPageIndexChanged, onReaderTap ->
                             val features = appServices.contentFeatures
                             if (features == null) {
                                 Box(rendererModifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1094,24 +1294,52 @@ private fun ShinsouAppContent(
                                     session = typed,
                                     features = features,
                                     copyText = appServices::copyText,
+                                    settings = renderState.settings,
+                                    requestedPageIndex = renderState.requestedPageIndex,
+                                    pageRequestSerial = renderState.pageRequestSerial,
+                                    navigationAction = renderState.navigationAction,
+                                    navigationRequestKey = renderState.navigationRequestKey,
+                                    readerControlsVisible = renderState.controlsVisible,
+                                    onPageIndexChanged = onPageIndexChanged,
+                                    onReaderTap = onReaderTap,
                                     onLocatorChanged = { locator ->
                                         if (!snapshot.settings.security.incognitoMode) {
                                             typed.content.navigation.indexOf(locator)?.let { index ->
-                                                val completed = index == typed.content.navigation.itemCount - 1
+                                                val completed =
+                                                    index == typed.content.navigation.itemCount - 1 &&
+                                                        (locator.progression ?: 0.0) >= 0.995
                                                 mutate {
                                                     val readAt = Clock.System.now().toEpochMilliseconds()
-                                                    readerProgressReporter?.recordContentReadingProgress(
-                                                        locator = locator,
-                                                        sessionId = session.progressSessionId,
-                                                        completed = completed,
-                                                        historyTouchedAt = readAt,
-                                                    )
+                                                    var reporterFailure: Throwable? = null
+                                                    readerProgressReporter?.let { reporter ->
+                                                        try {
+                                                            withContext(Dispatchers.Default) {
+                                                                reporter.recordContentReadingProgress(
+                                                                    locator = locator,
+                                                                    sessionId = session.progressSessionId,
+                                                                    completed = completed,
+                                                                    historyTouchedAt = readAt,
+                                                                )
+                                                            }
+                                                        } catch (cancelled: CancellationException) {
+                                                            throw cancelled
+                                                        } catch (failure: Throwable) {
+                                                            // Sync readiness/network failures must not prevent the
+                                                            // compatibility history row from being committed below.
+                                                            reporterFailure = failure
+                                                        }
+                                                    }
                                                     repository.markChapterProgress(
                                                         chapterId = chapter.id,
                                                         lastPageRead = index,
                                                         read = chapter.read || completed,
                                                         readAt = readAt,
                                                     )
+                                                    reporterFailure?.let { failure ->
+                                                        snackbar.showSnackbar(
+                                                            failure.message ?: strings.text("The latest reading position is queued for retry."),
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1143,21 +1371,25 @@ private fun ShinsouAppContent(
 
         if (phone) {
             Scaffold(
-                snackbarHost = { SnackbarHost(snackbar) },
+                snackbarHost = {
+                    if (!readerOpen) SnackbarHost(snackbar)
+                },
                 bottomBar = {
-                    NavigationBar {
-                        navigationItems(strings).forEach { item ->
-                            NavigationBarItem(
-                                selected = section == item.section && selectedMangaId == null && moreDestination == null,
-                                onClick = { selectSection(item.section) },
-                                icon = {
-                                    Icon(
-                                        if (section == item.section) item.selectedIcon else item.icon,
-                                        contentDescription = item.label,
-                                    )
-                                },
-                                label = { Text(item.label, maxLines = 1) },
-                            )
+                    if (!browseReaderOpen) {
+                        NavigationBar {
+                            navigationItems(strings).forEach { item ->
+                                NavigationBarItem(
+                                    selected = section == item.section && selectedMangaId == null && moreDestination == null,
+                                    onClick = { selectSection(item.section) },
+                                    icon = {
+                                        Icon(
+                                            if (section == item.section) item.selectedIcon else item.icon,
+                                            contentDescription = item.label,
+                                        )
+                                    },
+                                    label = { Text(item.label, maxLines = 1) },
+                                )
+                            }
                         }
                     }
                 },
@@ -1172,11 +1404,15 @@ private fun ShinsouAppContent(
                     LaunchedEffect(
                         phoneDestination,
                         browseBackAvailable,
+                        browseBackRequest,
                         detailNestedBackAvailable,
                         moreNestedBackAvailable,
                     ) {
                         // A committed gesture has already moved the active surface off-screen.
-                        // Reset only after its route (or deepest nested route) actually changes.
+                        // Reset after its route (or deepest nested route) changes. Browse owns
+                        // nested publication routes, so its availability can remain true when a
+                        // publication closes back to an active source catalogue; the request key
+                        // is the route-change signal in that case.
                         if (backSwipeProgress.value > 0f) backSwipeProgress.snapTo(0f)
                     }
 
@@ -1208,6 +1444,10 @@ private fun ShinsouAppContent(
                             0f
                         },
                         onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
+                        onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
+                        onBrowseReaderProgress = ::recordV2ReaderProgress,
+                        onToggleLocalLibrary = ::toggleV2NovelLocalLibrary,
+                        isLocalLibraryFavorite = ::isV2NovelInLocalLibrary,
                         mutate = ::mutate,
                     )
 
@@ -1330,14 +1570,22 @@ private fun ShinsouAppContent(
             }
         } else {
             Row(Modifier.fillMaxSize()) {
-                DesktopSidebar(
-                    selected = section,
-                    onSelect = ::selectSection,
-                    downloadCount = snapshot.downloadQueue.count { it.state != DownloadState.DOWNLOADED },
-                    modifier = Modifier.width(228.dp).fillMaxHeight(),
-                )
-                VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
-                Box(Modifier.weight(if (splitDetail && selectedMangaId != null) 0.9f else 1f).fillMaxHeight()) {
+                if (!browseReaderOpen) {
+                    DesktopSidebar(
+                        selected = section,
+                        onSelect = ::selectSection,
+                        downloadCount = snapshot.downloadQueue.count { it.state != DownloadState.DOWNLOADED },
+                        modifier = Modifier.width(228.dp).fillMaxHeight(),
+                    )
+                    VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+                }
+                Box(
+                    Modifier
+                        .weight(
+                            if (!browseReaderOpen && splitDetail && selectedMangaId != null) 0.9f else 1f,
+                        )
+                        .fillMaxHeight(),
+                ) {
                     if (moreDestination != null) {
                         MoreDestinationPane(
                             destination = moreDestination!!,
@@ -1388,6 +1636,10 @@ private fun ShinsouAppContent(
                                     0f
                                 },
                                 onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
+                                onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
+                                onBrowseReaderProgress = ::recordV2ReaderProgress,
+                                onToggleLocalLibrary = ::toggleV2NovelLocalLibrary,
+                                isLocalLibraryFavorite = ::isV2NovelInLocalLibrary,
                                 mutate = ::mutate,
                             )
                             if (pendingBrowseManga != null) {
@@ -1432,7 +1684,7 @@ private fun ShinsouAppContent(
                         }
                     }
                 }
-                if (splitDetail && selectedMangaId != null && moreDestination == null) {
+                if (!browseReaderOpen && splitDetail && selectedMangaId != null && moreDestination == null) {
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
                     Surface(
                         modifier = Modifier.weight(1.1f).fillMaxHeight(),
@@ -1458,7 +1710,9 @@ private fun ShinsouAppContent(
                     }
                 }
             }
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(18.dp))
+            if (!readerOpen) {
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(18.dp))
+            }
         }
 
         if (
@@ -1470,6 +1724,39 @@ private fun ShinsouAppContent(
                 request = pendingSourceLoginRequest,
                 callbacks = appServices.browse,
             )
+        }
+
+        if (unlocked && appLifecycle == AppLifecycleState.FOREGROUND) {
+            if (pluginLogoutConfirmations.isNotEmpty()) {
+                val request = pluginLogoutConfirmations.first()
+                var confirming by remember(request.eventId) { mutableStateOf(false) }
+                AlertDialog(
+                    onDismissRequest = { if (!confirming) appServices.browse.dismissPluginLogout(request.eventId) },
+                    title = { Text(strings.text("Logout")) },
+                    text = {
+                        Text(request.message?.takeIf(String::isNotBlank)
+                            ?: strings.text("Log out of {0}?", request.sourceName))
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = !confirming,
+                            onClick = {
+                                confirming = true
+                                scope.launch {
+                                    runCatching { appServices.browse.confirmPluginLogout(request.eventId) }
+                                    confirming = false
+                                }
+                            },
+                        ) { Text(strings.text("Logout")) }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            enabled = !confirming,
+                            onClick = { appServices.browse.dismissPluginLogout(request.eventId) },
+                        ) { Text(strings.cancel) }
+                    },
+                )
+            }
         }
 
         if (!unlocked) {
@@ -1513,11 +1800,26 @@ private fun PendingSourceLoginDialog(
     callbacks: BrowseCallbacks,
 ) {
     val browseSnapshot by callbacks.state.collectAsState()
-    SourceLoginDialog(
-        request = request,
-        source = browseSnapshot.sources.firstOrNull { it.id == request.sourceId },
-        callbacks = callbacks,
-    )
+    val source = request.exactTarget?.sourceKey?.let { exactKey ->
+        browseSnapshot.sources.firstOrNull { it.sourceKey == exactKey }
+            ?: exactKey.legacyLongId?.let { legacyId ->
+                browseSnapshot.sources.firstOrNull { it.sourceKey == null && it.id == legacyId }
+            }
+    } ?: browseSnapshot.sources.firstOrNull { it.id == request.sourceId }
+    if (source?.supportsLogin == true) {
+        SourceLoginDialog(
+            request = request,
+            source = source,
+            callbacks = callbacks,
+        )
+    } else {
+        // A queued request can outlive an uninstall, capability change, or source refresh. Never
+        // turn such a stale request into a credential dialog.
+        LaunchedEffect(request) {
+            request.eventId?.let(callbacks::dismissSourceLoginEvent)
+                ?: callbacks.dismissSourceLoginRequest(request.sourceId)
+        }
+    }
 }
 
 @Composable
@@ -1539,6 +1841,10 @@ private fun SectionPane(
     browseSystemBackRequest: Long,
     browseBackGestureProgress: Float,
     onBrowseBackAvailabilityChanged: (Boolean) -> Unit,
+    onBrowseReaderVisibilityChanged: (Boolean) -> Unit,
+    onBrowseReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit,
+    onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
+    isLocalLibraryFavorite: (BrowseManga) -> Boolean,
     mutate: (suspend () -> Unit) -> Unit,
 ) {
     AnimatedContent(
@@ -1675,6 +1981,7 @@ private fun SectionPane(
                 showNsfw = snapshot.settings.browse.showNsfwSources,
                 enabledLanguages = snapshot.settings.browse.enabledLanguages,
                 pinnedSourceIds = snapshot.settings.browse.pinnedSourceIds,
+                pinnedSourceKeys = snapshot.settings.browse.pinnedSourceKeys,
                 onSourcePinnedChange = { sourceId, pinned ->
                     mutate {
                         repository.updateSettings { settings ->
@@ -1687,12 +1994,34 @@ private fun SectionPane(
                         }
                     }
                 },
+                onSourcePinnedKeyChange = { sourceKey, pinned ->
+                    mutate {
+                        repository.updateSettings { settings ->
+                            val pinnedKeys = if (pinned) {
+                                settings.browse.pinnedSourceKeys + sourceKey
+                            } else {
+                                settings.browse.pinnedSourceKeys - sourceKey
+                            }
+                            settings.copy(browse = settings.browse.copy(pinnedSourceKeys = pinnedKeys))
+                        }
+                    }
+                },
                 onOpenManga = onOpenBrowseManga,
                 contentFeatures = appServices.contentFeatures,
                 copyText = appServices::copyText,
+                readerSettings = snapshot.settings.reader,
+                onReaderSettingsChange = { readerSettings ->
+                    mutate { repository.updateSettings { it.copy(reader = readerSettings) } }
+                },
+                openExternalUrl = appServices::openExternalUrl,
+                shareText = appServices::shareText,
                 systemBackRequest = browseSystemBackRequest,
                 backGestureProgress = browseBackGestureProgress,
                 onBackAvailabilityChanged = onBrowseBackAvailabilityChanged,
+                onReaderVisibilityChanged = onBrowseReaderVisibilityChanged,
+                onReaderProgress = onBrowseReaderProgress,
+                onToggleLocalLibrary = onToggleLocalLibrary,
+                isLocalLibraryFavorite = isLocalLibraryFavorite,
                 onImportDocument = { acceptedExtensions ->
                     appServices.importDocument(
                         acceptedExtensions = acceptedExtensions,

@@ -7,6 +7,7 @@ import dev.shinsou.kmp.ui.BrowsePage
 import dev.shinsou.kmp.ui.BrowseSnapshot
 import dev.shinsou.kmp.ui.BrowseSource
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -188,6 +189,27 @@ class BrowseSearchTest {
 
         assertEquals(listOf(2L, 3L), sections.pinned.map(BrowseSource::id))
         assertEquals(listOf(1L, 4L), sections.regular.map(BrowseSource::id))
+    }
+
+    @Test
+    fun v2SourcesUseStableSourceKeysWhenPartitioningPinnedSources() {
+        val sourceKey = SourceKey(packageId = "test.plugin", sourceId = "novel")
+        val v2Source = BrowseSource(
+            id = Long.MIN_VALUE,
+            name = "Novel source",
+            language = "zh",
+            sourceKey = sourceKey,
+        )
+        val legacySource = BrowseSource(id = 7L, name = "Legacy", language = "zh")
+
+        val sections = browseSourceSections(
+            sources = listOf(v2Source, legacySource),
+            pinnedSourceIds = emptySet(),
+            pinnedSourceKeys = setOf(v2Source.identityKey),
+        )
+
+        assertEquals(listOf(v2Source.identityKey), sections.pinned.map(BrowseSource::identityKey))
+        assertEquals(listOf(legacySource.identityKey), sections.regular.map(BrowseSource::identityKey))
     }
 
     @Test

@@ -2,10 +2,26 @@ package dev.shinsou.kmp.plugin.shuyue
 
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.Sha256
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 
 /** A ShuYue repository can be supplied as an exact index URL or as a repository directory. */
 public sealed interface ShuYueRepositoryLocation {
@@ -68,6 +84,30 @@ public class ShuYueAuthority private constructor(
     }
 }
 
+/**
+ * Local-only artifact policy used by the development repository path. This deliberately accepts
+ * only loopback, RFC1918/link-local addresses and mDNS `.local` names; arbitrary public HTTP
+ * origins never bypass the configured reviewed-origin allowlist.
+ */
+private fun ShuYueOrigin.isLocalNetworkOrigin(): Boolean {
+    val host = authority.host.lowercase()
+    if (host == "localhost" || host.endsWith(".local")) return true
+    if (authority.isIpv6) {
+        return host == "::1" || host.startsWith("fc") || host.startsWith("fd") ||
+            host.startsWith("fe8") || host.startsWith("fe9") ||
+            host.startsWith("fea") || host.startsWith("feb")
+    }
+    val octets = host.split('.').map(String::toIntOrNull)
+    if (octets.size != 4 || octets.any { it == null || it !in 0..255 }) return false
+    val first = octets[0]!!
+    val second = octets[1]!!
+    return first == 0 || first == 10 ||
+        first == 127 ||
+        first == 169 && second == 254 ||
+        first == 172 && second in 16..31 ||
+        first == 192 && second == 168
+}
+
 /** Bounded input policy for repository artifacts and their JSON metadata. */
 public data class ShuYueRepositoryLimits(
     val maxIndexBytes: Long = DEFAULT_MAX_INDEX_BYTES,
@@ -101,10 +141,19 @@ public data class ShuYueRepositoryLimits(
      */
     @Deprecated("Use allowedArtifactOrigins; this never applies to source.baseUrl")
     val allowedOrigins: Set<String> = emptySet(),
+    /**
+     * Allow an explicitly entered loopback/private-network repository origin in addition to
+     * [allowedArtifactOrigins]. This is intended for the local/LAN development server; public
+     * origins remain governed by the explicit allowlist.
+     */
+    val allowLocalArtifactOrigins: Boolean = false,
+    /** Sidecars are metadata-only and have a smaller independent response bound. */
+    val maxSidecarBytes: Long = DEFAULT_MAX_SIDECAR_BYTES,
 ) {
     init {
         require(maxIndexBytes in 1..MAX_HARD_INDEX_BYTES) { "Invalid ShuYue index byte limit" }
         require(maxScriptBytes in 1..MAX_HARD_SCRIPT_BYTES) { "Invalid ShuYue script byte limit" }
+        require(maxSidecarBytes in 1..MAX_HARD_SIDECAR_BYTES) { "Invalid ShuYue sidecar byte limit" }
         require(maxPackages in 1..MAX_HARD_PACKAGES) { "Invalid ShuYue package count limit" }
         require(maxSourcesPerPackage in 1..MAX_HARD_SOURCES_PER_PACKAGE) {
             "Invalid ShuYue source count limit"
@@ -139,6 +188,7 @@ public data class ShuYueRepositoryLimits(
     public companion object {
         public const val DEFAULT_MAX_INDEX_BYTES: Long = 2L * 1024L * 1024L
         public const val DEFAULT_MAX_SCRIPT_BYTES: Long = 8L * 1024L * 1024L
+        public const val DEFAULT_MAX_SIDECAR_BYTES: Long = 512L * 1024L
         public const val DEFAULT_MAX_PACKAGES: Int = 256
         public const val DEFAULT_MAX_SOURCES_PER_PACKAGE: Int = 256
         public const val DEFAULT_MAX_TOTAL_SOURCES: Int = 2_048
@@ -157,6 +207,7 @@ public data class ShuYueRepositoryLimits(
 
         private const val MAX_HARD_INDEX_BYTES: Long = 16L * 1024L * 1024L
         private const val MAX_HARD_SCRIPT_BYTES: Long = 64L * 1024L * 1024L
+        private const val MAX_HARD_SIDECAR_BYTES: Long = 8L * 1024L * 1024L
         private const val MAX_HARD_PACKAGES: Int = 4_096
         private const val MAX_HARD_SOURCES_PER_PACKAGE: Int = 4_096
         private const val MAX_HARD_TOTAL_SOURCES: Int = 16_384
@@ -208,9 +259,38 @@ public data class ShuYueCapabilityHints(
     val supportsFavorites: Boolean = false,
 )
 
+/**
+ * Old Shinsou plugin indexes encode source IDs both as JSON integers and as quoted strings.
+ * Source IDs are opaque to ShuYue, so retain the original integer token instead of coercing it
+ * through a platform-sized number (which could lose precision for a 64-bit ID).
+ */
+public object ShuYueStringOrIntegerIdSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ShuYueStringOrIntegerId", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String {
+        if (decoder !is JsonDecoder) return decoder.decodeString()
+        val primitive = decoder.decodeJsonElement() as? JsonPrimitive
+            ?: throw SerializationException("ShuYue source id must be a string or integer")
+        if (primitive.isString) return primitive.content
+        val raw = primitive.content
+        if (!INTEGER_TOKEN.matches(raw)) {
+            throw SerializationException("ShuYue source id '$raw' is not an integer")
+        }
+        return raw
+    }
+
+    override fun serialize(encoder: Encoder, value: String) {
+        encoder.encodeString(value)
+    }
+
+    private val INTEGER_TOKEN = Regex("-?(0|[1-9][0-9]*)")
+}
+
 /** The legacy index intentionally keeps all IDs as opaque strings. */
 @Serializable
 public data class ShuYueRepositorySource(
+    @Serializable(with = ShuYueStringOrIntegerIdSerializer::class)
     val id: String,
     val name: String,
     val lang: String,
@@ -218,6 +298,8 @@ public data class ShuYueRepositorySource(
     val supportsLogin: Boolean = false,
     val supportsLatest: Boolean = false,
     val supportsFavorites: Boolean = false,
+    val type: String? = null,
+    val contentType: String? = null,
 ) {
     public val capabilities: ShuYueCapabilityHints
         get() = ShuYueCapabilityHints(supportsLogin, supportsLatest, supportsFavorites)
@@ -244,13 +326,39 @@ public data class ShuYueRepositoryEntry(
     val lang: String,
     val nsfw: Int = 0,
     val scriptUrl: String,
+    /** Optional repository artwork; older hosts may safely ignore it. */
+    val iconUrl: String? = null,
     val description: String? = null,
     val sources: List<ShuYueRepositorySource> = emptyList(),
+    val type: String? = null,
+    val contentType: String? = null,
+    /** V2 capability declaration retained for sidecar/admission parity checks. */
+    val capabilities: Set<String> = emptySet(),
+    /** Set only by a unified repository document; it is not a security/trust signal. */
+    val contract: String? = null,
+    /** V2 exact-artifact metadata retained through reviewed admission. */
+    val sha256: String? = null,
+    /** V2 artifact byte count retained for an exact download check. */
+    val byteSize: Int? = null,
+    val sidecarUrl: String? = null,
+    val systemEvents: dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration? = null,
+    val requestedHostPermissions: Set<dev.shinsou.kmp.plugin.events.PluginHostPermission> = emptySet(),
+    val installable: Boolean = true,
+    val referenceOnly: Boolean = false,
+    val legacyCompatibilityOnly: Boolean = false,
     @kotlinx.serialization.Transient
     public val resolvedScriptUrl: String = "",
+    @kotlinx.serialization.Transient
+    public val resolvedSidecarUrl: String = "",
 ) {
     public val sourceKeys: List<SourceKey>
         get() = sources.map { it.sourceKey(id) }
+
+    public val resolvedContentType: dev.shinsou.kmp.plugin.PluginContentType
+        get() = dev.shinsou.kmp.plugin.PluginContentType.resolve(
+            packageType = contentType ?: type,
+            sourceTypes = sources.map { it.contentType ?: it.type },
+        )
 }
 
 /**
@@ -274,6 +382,12 @@ public data class ShuYueScriptQuarantineMetadata(
     val resolvedUrl: String,
     val indexUrl: String,
     val downloadedFinalUrl: String,
+    /** Exact sidecar declaration retained with the inert artifact, when the index supplied one. */
+    val sidecarUrl: String? = null,
+    val resolvedSidecarUrl: String? = null,
+    val sidecarDownloadedFinalUrl: String? = null,
+    val sidecarSha256: String? = null,
+    val sidecarByteSize: Int? = null,
 )
 
 /**
@@ -365,7 +479,16 @@ public class ShuYueRepositoryIndexLoader(
         val resolvedEntries = entries.map { entry ->
             val resolved = resolveRelativeScript(final, entry.scriptUrl)
             requireAllowed(ShuYueUrlParser.parseAbsolute(resolved, "script URL").origin, fetchedOrigins)
-            entry.copy(sources = ReadOnlyListSnapshot(entry.sources), resolvedScriptUrl = resolved)
+            val resolvedSidecar = entry.sidecarUrl?.let { sidecarUrl ->
+                val sidecar = resolveRelativeResource(final, sidecarUrl, "sidecarUrl")
+                requireAllowed(ShuYueUrlParser.parseAbsolute(sidecar, "sidecar URL").origin, fetchedOrigins)
+                sidecar
+            }.orEmpty()
+            entry.copy(
+                sources = ReadOnlyListSnapshot(entry.sources),
+                resolvedScriptUrl = resolved,
+                resolvedSidecarUrl = resolvedSidecar,
+            )
         }
         return LoadedRepositoryIndex(
             requestedIndexUrl = requestUrl,
@@ -392,6 +515,40 @@ public class ShuYueRepositoryIndexLoader(
         val resolved = ShuYueUrlParser.parseAbsolute(resolvedUrl, "script URL")
         val fetchedOrigins = artifactOriginsFor(ShuYueUrlParser.parseAbsolute(index.finalIndexUrl, "final index URL").origin)
         requireAllowed(resolved.origin, fetchedOrigins)
+        val sidecar = matching.sidecarUrl?.let { sidecarReference ->
+            val sidecarUrl = matching.resolvedSidecarUrl.ifEmpty {
+                resolveRelativeResource(
+                    ShuYueUrlParser.parseAbsolute(index.finalIndexUrl, "final index URL"),
+                    sidecarReference,
+                    "sidecarUrl",
+                )
+            }
+            val sidecarAbsolute = ShuYueUrlParser.parseAbsolute(sidecarUrl, "sidecar URL")
+            requireAllowed(sidecarAbsolute.origin, fetchedOrigins)
+            val sidecarResponse = transport.execute(
+                ShuYueRepositoryRequest(
+                    url = sidecarUrl,
+                    maxBytes = limits.maxSidecarBytes,
+                    allowedArtifactOrigins = ReadOnlySetSnapshot(fetchedOrigins),
+                    maxRedirects = limits.maxRedirects,
+                ),
+            )
+            val sidecarFinal = validateResponse(
+                sidecarAbsolute,
+                sidecarResponse,
+                "sidecar",
+                fetchedOrigins,
+                limits.maxSidecarBytes,
+            )
+            verifySidecar(matching, sidecarResponse.body, sidecarUrl)
+            SidecarDownloadMetadata(
+                referenceUrl = sidecarReference,
+                resolvedUrl = sidecarUrl,
+                downloadedFinalUrl = sidecarFinal.url,
+                sha256 = Sha256.hex(sidecarResponse.body),
+                byteSize = sidecarResponse.body.size,
+            )
+        }
         val response = transport.execute(
             ShuYueRepositoryRequest(
                 url = resolvedUrl,
@@ -401,6 +558,22 @@ public class ShuYueRepositoryIndexLoader(
             ),
         )
         val downloaded = validateResponse(resolved, response, "script", fetchedOrigins, limits.maxScriptBytes)
+        matching.byteSize?.let { expected ->
+            if (response.body.size != expected) {
+                throw ShuYueRepositoryException.InvalidMetadata(
+                    "byteSize",
+                    "script size ${response.body.size} does not match indexed size $expected",
+                )
+            }
+        }
+        matching.sha256?.let { expected ->
+            if (Sha256.hex(response.body) != expected) {
+                throw ShuYueRepositoryException.InvalidMetadata(
+                    "sha256",
+                    "script digest does not match indexed digest",
+                )
+            }
+        }
         return LoadedScriptDownload(
             metadata = ShuYueScriptQuarantineMetadata(
                 packageId = matching.id,
@@ -411,13 +584,24 @@ public class ShuYueRepositoryIndexLoader(
                 resolvedUrl = resolvedUrl,
                 indexUrl = index.finalIndexUrl,
                 downloadedFinalUrl = downloaded.url,
+                sidecarUrl = sidecar?.referenceUrl,
+                resolvedSidecarUrl = sidecar?.resolvedUrl,
+                sidecarDownloadedFinalUrl = sidecar?.downloadedFinalUrl,
+                sidecarSha256 = sidecar?.sha256,
+                sidecarByteSize = sidecar?.byteSize,
             ),
             bytes = response.body,
         )
     }
 
-    private fun artifactOriginsFor(requestedOrigin: ShuYueOrigin): Set<ShuYueOrigin> =
-        configuredAllowedOrigins.ifEmpty { ReadOnlySetSnapshot(listOf(requestedOrigin)) }
+    private fun artifactOriginsFor(requestedOrigin: ShuYueOrigin): Set<ShuYueOrigin> {
+        if (configuredAllowedOrigins.isEmpty()) return ReadOnlySetSnapshot(listOf(requestedOrigin))
+        if (requestedOrigin in configuredAllowedOrigins) return configuredAllowedOrigins
+        if (limits.allowLocalArtifactOrigins && requestedOrigin.isLocalNetworkOrigin()) {
+            return ReadOnlySetSnapshot(configuredAllowedOrigins + requestedOrigin)
+        }
+        return configuredAllowedOrigins
+    }
 
     private inner class LoadedRepositoryIndex(
         override val requestedIndexUrl: String,
@@ -450,6 +634,159 @@ public class ShuYueRepositoryIndexLoader(
         override fun copyBytes(): ByteArray = backingBytes.copyOf()
     }
 
+    private data class SidecarDownloadMetadata(
+        val referenceUrl: String,
+        val resolvedUrl: String,
+        val downloadedFinalUrl: String,
+        val sha256: String,
+        val byteSize: Int,
+    )
+
+    /**
+     * Sidecars are declarations, not executable input.  Still, a V2 script is not admitted from
+     * a sidecar-bearing index until the declaration is bound to the exact index entry.  In
+     * particular, a sidecar cannot silently change the digest, source identity, content type, or
+     * host-event request that the index advertised.
+     */
+    private fun verifySidecar(entry: ShuYueRepositoryEntry, body: ByteArray, url: String) {
+        val text = try {
+            body.decodeToString(throwOnInvalidSequence = true)
+        } catch (error: Throwable) {
+            throw ShuYueRepositoryException.InvalidDocument(url, error)
+        }
+        try {
+            ShuYueRepositoryJsonPreflight.scan(text, limits, url)
+            val root = StrictShuYueJson.parseToJsonElement(text) as? JsonObject
+                ?: sidecarInvalid("root", "sidecar must be an object")
+            if (root.requiredString("format") != "shinsou-extension-sidecar-v2") {
+                sidecarInvalid("format", "unsupported sidecar format")
+            }
+            if (root.requiredInt("contractVersion") != 2) {
+                sidecarInvalid("contractVersion", "unsupported sidecar contract")
+            }
+            if (root.optionalString("contract")?.let { it != "shuyue" } == true) {
+                sidecarInvalid("contract", "sidecar contract does not match ShuYue")
+            }
+            if (root.requiredString("packageId") != entry.id) sidecarMismatch("packageId")
+            if (root.requiredString("version") != entry.version) sidecarMismatch("version")
+            if (root.requiredInt("versionCode") != entry.versionCode) sidecarMismatch("versionCode")
+            root.optionalString("name")?.let { if (it != entry.name) sidecarMismatch("name") }
+            root.optionalString("lang")?.let { if (it != entry.lang) sidecarMismatch("lang") }
+            root.optionalBoolean("nsfw")?.let { if (it != (entry.nsfw == 1)) sidecarMismatch("nsfw") }
+            root.optionalBoolean("installable")?.let { if (it != entry.installable) sidecarMismatch("installable") }
+            root.optionalBoolean("referenceOnly")?.let { if (it != entry.referenceOnly) sidecarMismatch("referenceOnly") }
+            root.optionalBoolean("legacyCompatibilityOnly")?.let {
+                if (it != entry.legacyCompatibilityOnly) sidecarMismatch("legacyCompatibilityOnly")
+            }
+
+            val artifact = root.requiredObject("artifact")
+            if (artifact.requiredString("scriptUrl") != entry.scriptUrl) sidecarMismatch("artifact.scriptUrl")
+            val indexedDigest = entry.sha256 ?: sidecarInvalid("artifact.sha256", "index omitted artifact digest")
+            if (artifact.requiredString("sha256") != indexedDigest) sidecarMismatch("artifact.sha256")
+            val indexedSize = entry.byteSize ?: sidecarInvalid("artifact.byteSize", "index omitted artifact size")
+            if (artifact.requiredInt("byteSize") != indexedSize) sidecarMismatch("artifact.byteSize")
+
+            val content = root.requiredObject("content")
+            if (content.requiredInt("contractVersion") != 2) sidecarInvalid("content.contractVersion", "unsupported content contract")
+            val indexedContentType = entry.contentType ?: entry.type
+            indexedContentType?.let { expected ->
+                if (content.requiredString("type") != expected) sidecarMismatch("content.type")
+            }
+
+            if (entry.capabilities.isNotEmpty() && root.requiredStringSet("capabilities") != entry.capabilities) {
+                sidecarMismatch("capabilities")
+            }
+            verifySidecarSources(entry, root.requiredArray("sources"))
+
+            val events = root.requiredObject("systemEvents")
+            val declaration = parseSidecarEvents(events)
+            if (declaration != entry.systemEvents) sidecarMismatch("systemEvents")
+            if (root.requiredStringSet("requestedHostPermissions") != entry.requestedHostPermissions.map { it.name }.toSet()) {
+                sidecarMismatch("requestedHostPermissions")
+            }
+        } catch (error: ShuYueRepositoryException) {
+            throw error
+        } catch (error: Throwable) {
+            throw ShuYueRepositoryException.InvalidMetadata("sidecar", error.message ?: "invalid sidecar")
+        }
+    }
+
+    private fun verifySidecarSources(entry: ShuYueRepositoryEntry, sidecars: JsonArray) {
+        if (sidecars.size != entry.sources.size) sidecarMismatch("sources")
+        entry.sources.forEach { expected ->
+            val matches = sidecars.map { it as? JsonObject ?: sidecarInvalid("sources", "source must be an object") }
+                .filter { it.requiredString("sourceId") == expected.id }
+            if (matches.size != 1) sidecarMismatch("sources")
+            val source = matches.single()
+            val sourceKey = source.requiredObject("sourceKey")
+            if (sourceKey.requiredString("packageId") != entry.id) sidecarMismatch("sources.sourceKey.packageId")
+            if (sourceKey.requiredString("sourceId") != expected.id) sidecarMismatch("sources.sourceKey.sourceId")
+            source.optionalString("name")?.let { if (it != expected.name) sidecarMismatch("sources.name") }
+            source.optionalString("lang")?.let { if (it != expected.lang) sidecarMismatch("sources.lang") }
+            source.optionalString("baseUrl")?.let { if (it != expected.baseUrl) sidecarMismatch("sources.baseUrl") }
+        }
+    }
+
+    private fun parseSidecarEvents(events: JsonObject): dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration {
+        if (events.requiredString("protocol") != dev.shinsou.kmp.plugin.events.PluginSystemEventProtocol.NAME) {
+            sidecarInvalid("systemEvents.protocol", "unsupported event protocol")
+        }
+        return try {
+            dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration(
+                minVersion = events.requiredInt("minVersion"),
+                maxVersion = events.requiredInt("maxVersion"),
+                required = events.requiredStringSet("required"),
+                optional = events.requiredStringSet("optional"),
+            )
+        } catch (error: Throwable) {
+            throw ShuYueRepositoryException.InvalidMetadata("systemEvents", error.message ?: "invalid event declaration")
+        }
+    }
+
+    private fun JsonObject.requiredObject(field: String): JsonObject =
+        requiredElement(field) as? JsonObject ?: sidecarInvalid(field, "must be an object")
+
+    private fun JsonObject.requiredArray(field: String): JsonArray =
+        requiredElement(field) as? JsonArray ?: sidecarInvalid(field, "must be an array")
+
+    private fun JsonObject.requiredInt(field: String): Int {
+        val value = requiredElement(field) as? JsonPrimitive
+            ?: sidecarInvalid(field, "must be an integer")
+        if (value.isString) sidecarInvalid(field, "must be an integer")
+        return value.content.toIntOrNull() ?: sidecarInvalid(field, "must be an integer")
+    }
+
+    private fun JsonObject.optionalString(field: String): String? =
+        this[field]?.takeUnless { it is JsonNull }?.let { value ->
+            val primitive = value as? JsonPrimitive ?: sidecarInvalid(field, "must be a string")
+            if (!primitive.isString) sidecarInvalid(field, "must be a string")
+            primitive.content
+        }
+
+    private fun JsonObject.optionalBoolean(field: String): Boolean? =
+        this[field]?.takeUnless { it is JsonNull }?.let { value ->
+            val primitive = value as? JsonPrimitive ?: sidecarInvalid(field, "must be a boolean")
+            if (primitive.isString || primitive.content !in setOf("true", "false")) {
+                sidecarInvalid(field, "must be a boolean")
+            }
+            primitive.content == "true"
+        }
+
+    private fun JsonObject.requiredStringSet(field: String): Set<String> {
+        val values = requiredArray(field)
+        return values.map { value ->
+            val primitive = value as? JsonPrimitive ?: sidecarInvalid(field, "entries must be strings")
+            if (!primitive.isString) sidecarInvalid(field, "entries must be strings")
+            primitive.content
+        }.toSet()
+    }
+
+    private fun sidecarMismatch(field: String): Nothing =
+        throw ShuYueRepositoryException.InvalidMetadata("sidecar.$field", "sidecar does not match indexed metadata")
+
+    private fun sidecarInvalid(field: String, message: String): Nothing =
+        throw ShuYueRepositoryException.InvalidMetadata("sidecar.$field", message)
+
     private fun resolveBaseIndexUrl(value: String): String {
         val base = ShuYueUrlParser.parseAbsolute(value, "base URL", forbidQuery = true)
         val path = base.path.trimEnd('/').ifEmpty { "" }
@@ -474,11 +811,167 @@ public class ShuYueRepositoryIndexLoader(
             throw ShuYueRepositoryException.InvalidDocument(url, error)
         }
         return try {
-            StrictShuYueJson.decodeFromString(ListSerializer(ShuYueRepositoryEntry.serializer()), text)
+            val root = StrictShuYueJson.parseToJsonElement(text)
+            when {
+                root is JsonArray -> decodeLegacyEntries(root)
+                root is JsonObject && isV2Index(root) -> decodeV2Entries(root)
+                root is JsonObject -> {
+                    val entriesElement = root["shuyue"] ?: root["entries"]
+                        ?: throw SerializationException("ShuYue repository must be an array or unified envelope")
+                    decodeLegacyEntries(entriesElement)
+                }
+                else -> throw SerializationException("ShuYue repository must be an array or unified envelope")
+            }
         } catch (error: SerializationException) {
             throw ShuYueRepositoryException.InvalidDocument(url, error)
         } catch (error: IllegalArgumentException) {
             throw ShuYueRepositoryException.InvalidDocument(url, error)
+        }
+    }
+
+    private fun decodeLegacyEntries(entriesElement: JsonElement): List<ShuYueRepositoryEntry> =
+        StrictShuYueJson.decodeFromJsonElement(
+            ListSerializer(ShuYueRepositoryEntry.serializer()),
+            entriesElement,
+        )
+
+    /** V2 package objects are normalized to the deliberately smaller legacy ShuYue model. */
+    private fun decodeV2Entries(root: JsonObject): List<ShuYueRepositoryEntry> {
+        val packages = root["packages"] as? JsonArray
+            ?: throw SerializationException("V2 repository packages must be an array")
+        return packages.mapNotNull { element ->
+            val packageObject = element.asObject("package")
+            if (packageObject.requiredString("contract") != "shuyue") return@mapNotNull null
+            val capabilities = packageObject.optionalStringArray("capabilities").toSet()
+            val packageContentType = packageObject["contentType"]
+                ?.takeUnless { it is JsonNull }
+                ?: packageObject["type"]?.takeUnless { it is JsonNull }
+            val packageHasContentType = packageObject["contentType"]?.let { it !is JsonNull } == true
+            val normalized = buildJsonObject {
+                put("id", packageObject.requiredElement("id"))
+                put("name", packageObject.requiredElement("name"))
+                put("version", packageObject.requiredElement("version"))
+                put("versionCode", packageObject.requiredElement("versionCode"))
+                put("lang", packageObject.requiredElement("lang"))
+                put("nsfw", JsonPrimitive(if (packageObject.requiredBoolean("nsfw")) 1 else 0))
+                put("scriptUrl", packageObject.requiredElement("scriptUrl"))
+                packageObject.copyIfPresent(this, "iconUrl")
+                packageObject.copyIfPresent(this, "description")
+                packageObject.copyIfPresent(this, "type")
+                packageObject.copyIfPresent(this, "contentType")
+                packageObject.copyIfPresent(this, "capabilities")
+                packageContentType?.let { contentType ->
+                    if (!packageHasContentType) put("contentType", contentType)
+                }
+                put("contract", JsonPrimitive("shuyue"))
+                packageObject.copyIfPresent(this, "sha256")
+                packageObject.copyIfPresent(this, "byteSize")
+                packageObject.copyIfPresent(this, "sidecarUrl")
+                packageObject["systemEvents"]?.takeUnless { it is JsonNull }?.let { declaration ->
+                    put("systemEvents", normalizeSystemEvents(declaration.asObject("systemEvents")))
+                }
+                packageObject.copyIfPresent(this, "requestedHostPermissions")
+                packageObject.copyBooleanIfPresent(this, "installable")
+                packageObject.copyBooleanIfPresent(this, "referenceOnly")
+                packageObject.copyBooleanIfPresent(this, "legacyCompatibilityOnly")
+                put(
+                    "sources",
+                    normalizeV2Sources(
+                        packageObject["sources"] ?: throw SerializationException("V2 package sources are required"),
+                        capabilities,
+                        packageContentType,
+                    ),
+                )
+            }
+            StrictShuYueJson.decodeFromJsonElement(ShuYueRepositoryEntry.serializer(), normalized)
+        }
+    }
+
+    private fun normalizeV2Sources(
+        element: JsonElement,
+        packageCapabilities: Set<String>,
+        packageContentType: JsonElement?,
+    ): JsonArray {
+        val sources = element as? JsonArray
+            ?: throw SerializationException("V2 package sources must be an array")
+        return JsonArray(sources.map { sourceElement ->
+            val source = sourceElement.asObject("source")
+            val sourceHasType = source["type"]?.let { it !is JsonNull } == true
+            val sourceHasContentType = source["contentType"]?.let { it !is JsonNull } == true
+            buildJsonObject {
+                put("id", source.requiredElement("sourceId"))
+                put("name", source.requiredElement("name"))
+                put("lang", source.requiredElement("lang"))
+                put("baseUrl", source.requiredElement("baseUrl"))
+                put("supportsLogin", JsonPrimitive("LOGIN" in packageCapabilities))
+                put("supportsLatest", JsonPrimitive("LATEST" in packageCapabilities))
+                put(
+                    "supportsFavorites",
+                    JsonPrimitive("FAVORITE" in packageCapabilities || "FAVORITES" in packageCapabilities),
+                )
+                source.copyIfPresent(this, "type")
+                source.copyIfPresent(this, "contentType")
+                if (!sourceHasType && !sourceHasContentType) {
+                    packageContentType?.let { put("contentType", it) }
+                }
+            }
+        })
+    }
+
+    private fun normalizeSystemEvents(events: JsonObject): JsonObject = buildJsonObject {
+        put("minVersion", events.requiredElement("minVersion"))
+        put("maxVersion", events.requiredElement("maxVersion"))
+        events["required"]?.takeUnless { it is JsonNull }?.let { put("required", it) }
+        events["optional"]?.takeUnless { it is JsonNull }?.let { put("optional", it) }
+    }
+
+    private fun isV2Index(root: JsonObject): Boolean {
+        val format = root["format"] as? JsonPrimitive
+        val contractVersion = root["contractVersion"] as? JsonPrimitive
+        return format?.content == "shinsou-extension-v2" && contractVersion?.content == "2"
+    }
+
+    private fun JsonElement.asObject(field: String): JsonObject = this as? JsonObject
+        ?: throw SerializationException("V2 $field must be an object")
+
+    private fun JsonObject.requiredElement(field: String): JsonElement = this[field]
+        ?.takeUnless { it is JsonNull }
+        ?: throw SerializationException("V2 $field is required")
+
+    private fun JsonObject.requiredString(field: String): String {
+        val primitive = requiredElement(field) as? JsonPrimitive
+            ?: throw SerializationException("V2 $field must be a string")
+        if (!primitive.isString) throw SerializationException("V2 $field must be a string")
+        return primitive.content
+    }
+
+    private fun JsonObject.requiredBoolean(field: String): Boolean {
+        val primitive = requiredElement(field) as? JsonPrimitive
+            ?: throw SerializationException("V2 $field must be a boolean")
+        if (primitive.isString || (primitive.content != "true" && primitive.content != "false")) {
+            throw SerializationException("V2 $field must be a boolean")
+        }
+        return primitive.content == "true"
+    }
+
+    private fun JsonObject.optionalStringArray(field: String): List<String> {
+        val element = this[field]?.takeUnless { it is JsonNull } ?: return emptyList()
+        val array = element as? JsonArray ?: throw SerializationException("V2 $field must be an array")
+        return array.map { item ->
+            val primitive = item as? JsonPrimitive
+                ?: throw SerializationException("V2 $field entries must be strings")
+            if (!primitive.isString) throw SerializationException("V2 $field entries must be strings")
+            primitive.content
+        }
+    }
+
+    private fun JsonObject.copyIfPresent(target: JsonObjectBuilder, field: String) {
+        this[field]?.takeUnless { it is JsonNull }?.let { target.put(field, it) }
+    }
+
+    private fun JsonObject.copyBooleanIfPresent(target: JsonObjectBuilder, field: String) {
+        this[field]?.takeUnless { it is JsonNull }?.let {
+            target.put(field, JsonPrimitive(requiredBoolean(field)))
         }
     }
 
@@ -494,8 +987,15 @@ public class ShuYueRepositoryIndexLoader(
             validateText(entry.version, "package version", limits.maxPackageVersionBytes)
             validateText(entry.lang, "package lang", limits.maxPackageLangBytes)
             validateText(entry.scriptUrl, "scriptUrl", limits.maxScriptUrlBytes)
+            entry.iconUrl?.let { validateText(it, "iconUrl", limits.maxScriptUrlBytes, allowBlank = true) }
             if (entry.versionCode <= 0) invalidMetadata("versionCode", "must be positive")
             if (entry.nsfw !in 0..1) invalidMetadata("nsfw", "must be 0 or 1")
+            entry.sha256?.let { digest ->
+                if (!SHA256.matches(digest)) invalidMetadata("sha256", "must be lowercase SHA-256")
+            }
+            entry.byteSize?.let { size ->
+                if (size <= 0) invalidMetadata("byteSize", "must be positive")
+            }
             if (!packageIds.add(entry.id)) throw ShuYueRepositoryException.DuplicateIdentity("package:${entry.id}")
             if (entry.sources.isEmpty()) invalidMetadata("sources", "must not be empty")
             if (entry.sources.size > limits.maxSourcesPerPackage) {
@@ -596,7 +1096,11 @@ public class ShuYueRepositoryIndexLoader(
     }
 
     private fun resolveRelativeScript(base: AbsoluteUrl, reference: String): String {
-        validateRelativeScriptReference(reference)
+        return resolveRelativeResource(base, reference, "scriptUrl")
+    }
+
+    private fun resolveRelativeResource(base: AbsoluteUrl, reference: String, field: String): String {
+        validateRelativeResourceReference(reference, field)
         val queryIndex = reference.indexOf('?')
         val referencePath = if (queryIndex < 0) reference else reference.substring(0, queryIndex)
         val query = if (queryIndex < 0) "" else reference.substring(queryIndex + 1)
@@ -605,17 +1109,27 @@ public class ShuYueRepositoryIndexLoader(
     }
 
     private fun validateRelativeScriptReference(reference: String) {
+        validateRelativeResourceReference(reference, "scriptUrl")
+    }
+
+    private fun validateRelativeResourceReference(reference: String, field: String) {
         if (reference.isEmpty() || reference.any { it.isISOControl() || it.isWhitespace() || it == '\\' }) {
-            throw ShuYueRepositoryException.InvalidUrl(reference, "scriptUrl contains an unsafe character")
+            throw ShuYueRepositoryException.InvalidUrl(reference, "$field contains an unsafe character")
         }
         if ('#' in reference || reference.startsWith('/') || reference.startsWith("//") || SCRIPT_SCHEME.containsMatchIn(reference)) {
-            throw ShuYueRepositoryException.InvalidUrl(reference, "scriptUrl must be a relative path without a fragment")
+            throw ShuYueRepositoryException.InvalidUrl(reference, "$field must be a relative path without a fragment")
         }
         val queryIndex = reference.indexOf('?')
         val path = if (queryIndex < 0) reference else reference.substring(0, queryIndex)
-        if (path.isBlank()) throw ShuYueRepositoryException.InvalidUrl(reference, "scriptUrl path is empty")
-        ShuYueUrlParser.validateEncodedPath(path, "scriptUrl", rooted = false)
-        if (queryIndex >= 0) ShuYueUrlParser.validatePercentEncoding(reference.substring(queryIndex + 1), "scriptUrl query", includeDots = false)
+        if (path.isBlank()) throw ShuYueRepositoryException.InvalidUrl(reference, "$field path is empty")
+        ShuYueUrlParser.validateEncodedPath(path, field, rooted = false)
+        if (queryIndex >= 0) {
+            ShuYueUrlParser.validatePercentEncoding(
+                reference.substring(queryIndex + 1),
+                "$field query",
+                includeDots = false,
+            )
+        }
     }
 
     private companion object {
@@ -806,18 +1320,55 @@ internal object ShuYueRepositoryJsonPreflight {
         private var totalSources: Int = 0
 
         fun scan() {
-            skipWhitespace(); expect('['); skipWhitespace()
+            skipWhitespace()
+            when (peek()) {
+                '[' -> parsePackageArray(2)
+                '{' -> parseEnvelope()
+                else -> fail("repository root must be an array or unified envelope")
+            }
+            skipWhitespace()
+            if (index != text.length) fail("trailing JSON content")
+        }
+
+        private fun parsePackageArray(objectDepth: Int) {
+            expect('['); skipWhitespace()
             var packages = 0
             if (peek() != ']') {
                 while (true) {
                     packages++
                     if (packages > limits.maxPackages) throw ShuYueRepositoryException.LimitExceeded("packages", packages.toLong(), limits.maxPackages.toLong())
-                    parseObject(ObjectKind.PACKAGE, 2); skipWhitespace()
+                    parseObject(ObjectKind.PACKAGE, objectDepth); skipWhitespace()
                     if (consume(',')) { skipWhitespace(); continue }; break
                 }
             }
-            expect(']'); skipWhitespace()
-            if (index != text.length) fail("trailing JSON content")
+            expect(']')
+        }
+
+        private fun parseEnvelope() {
+            checkDepth(1); expect('{'); skipWhitespace()
+            val keys = HashSet<String>()
+            var members = 0
+            if (peek() != '}') {
+                while (true) {
+                    members++
+                    if (members > limits.maxJsonObjectMembers) {
+                        throw ShuYueRepositoryException.LimitExceeded(
+                            "JSON object members",
+                            members.toLong(),
+                            limits.maxJsonObjectMembers.toLong(),
+                        )
+                    }
+                    val key = parseString("object key", limits.maxStringBytes).value
+                    if (!keys.add(key)) throw ShuYueRepositoryException.DuplicateJsonKey(key)
+                    skipWhitespace(); expect(':'); skipWhitespace()
+                    if (key == "shuyue" || key == "entries" || key == "packages") parsePackageArray(3)
+                    else parseValue(ObjectKind.GENERIC, key, 2)
+                    skipWhitespace()
+                    if (consume(',')) { skipWhitespace(); continue }
+                    break
+                }
+            }
+            expect('}')
         }
 
         private fun parseObject(kind: ObjectKind, depth: Int) {
@@ -960,3 +1511,5 @@ internal object ShuYueRepositoryJsonPreflight {
         private fun utf8Bytes(codePoint: Int): Int = when { codePoint <= 0x7f -> 1; codePoint <= 0x7ff -> 2; else -> 3 }
     }
 }
+
+private val SHA256: Regex = Regex("[0-9a-f]{64}")

@@ -70,6 +70,8 @@ class ShuYueCompatibilityProjectionCoordinatorTest {
         assertEquals(ThemeMode.DARK, settings.appearance.theme)
         assertTrue(settings.appearance.amoledDark)
         assertEquals("green", settings.appearance.tintColor)
+        assertEquals(20f, settings.reader.novelFontSizeSp)
+        assertEquals(1.7f, settings.reader.novelLineHeightMultiplier)
         assertFalse(settings.reader.keepScreenOn)
         assertTrue(settings.reader.volumeKeys)
         assertFalse(settings.sync.syncOnForeground)

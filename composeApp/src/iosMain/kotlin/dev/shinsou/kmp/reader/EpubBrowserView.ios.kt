@@ -2,25 +2,32 @@ package dev.shinsou.kmp.reader
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
-import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.BetaInteropApi
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.ObjCAction
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
 import platform.Foundation.NSDate
 import platform.Foundation.NSError
 import platform.Foundation.NSHTTPURLResponse
+import platform.Foundation.NSSelectorFromString
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
 import platform.Foundation.create
 import platform.Foundation.timeIntervalSince1970
+import platform.UIKit.UIScrollView
+import platform.UIKit.UIScrollViewDelegateProtocol
+import platform.UIKit.UITapGestureRecognizer
 import platform.WebKit.WKContentRuleListStore
 import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
@@ -32,8 +39,6 @@ import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
 import platform.WebKit.WKWebsiteDataStore
 import platform.WebKit.javaScriptEnabled
-import platform.UIKit.UIScrollView
-import platform.UIKit.UIScrollViewDelegateProtocol
 import platform.darwin.NSObject
 
 @OptIn(ExperimentalForeignApi::class, ExperimentalComposeUiApi::class)
@@ -41,13 +46,18 @@ import platform.darwin.NSObject
 public actual fun EpubBrowserView(
     request: EpubRenderRequest,
     modifier: Modifier,
+    configuration: EpubBrowserConfiguration,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     selectionRequestKey: Long,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit,
     onSelectionChanged: (ReadingRange?) -> Unit,
+    onReaderTap: (ReaderTapAction) -> Unit,
     onError: (String) -> Unit,
 ) {
     val currentLocatorChanged = rememberUpdatedState(onLocatorChanged)
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
+    val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
     val state = remember(request.publicationRootUrl) {
         val documentState = EpubBrowserDocumentState(request)
@@ -56,7 +66,7 @@ public actual fun EpubBrowserView(
             policy = documentState.urlPolicy,
         )
         val schemeHandler = IosEpubSchemeHandler(resolverHolder)
-        val configuration = WKWebViewConfiguration().apply {
+        val webConfiguration = WKWebViewConfiguration().apply {
             websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()
             // Publisher execution stays disabled below and by CSP; the host still needs
             // evaluateJavaScript for an explicit DOM-selection snapshot.
@@ -64,16 +74,29 @@ public actual fun EpubBrowserView(
             defaultWebpagePreferences.allowsContentJavaScript = false
             setURLSchemeHandler(schemeHandler, request.securityPolicy.publicationScheme)
         }
-        val webView = WKWebView(CGRectMake(0.0, 0.0, 0.0, 0.0), configuration).apply {
+        val webView = WKWebView(CGRectMake(0.0, 0.0, 0.0, 0.0), webConfiguration).apply {
             allowsBackForwardNavigationGestures = false
             allowsLinkPreview = false
         }
         val scrollDelegate = IosEpubScrollDelegate(
             webView = webView,
             initialRequest = request,
+            initialConfiguration = configuration,
             canSampleViewport = { documentState.canSampleViewport },
             onLocatorChanged = { locator -> currentLocatorChanged.value.invoke(locator) },
+            onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+            onError = { message -> currentError.value.invoke(message) },
         )
+        val tapHandler = IosEpubTapHandler(webView) { horizontalFraction, verticalFraction ->
+            scrollDelegate.handleTap(horizontalFraction, verticalFraction)
+        }
+        val tapGestureRecognizer = UITapGestureRecognizer(
+            target = tapHandler,
+            action = NSSelectorFromString("handleTap:"),
+        ).apply {
+            cancelsTouchesInView = false
+        }
+        webView.addGestureRecognizer(tapGestureRecognizer)
         val delegate = IosEpubNavigationDelegate(
             allowNavigation = { url ->
                 documentState.navigationRequested(url)?.let { target ->
@@ -101,7 +124,13 @@ public actual fun EpubBrowserView(
                 if (documentState.ownsPendingLoad(generation)) {
                     resolverHolder.rollback()
                     val rollback = checkNotNull(documentState.documentLoadFailed(generation))
-                    scrollDelegate.update(rollback.request)
+                    val visibleUrl = webView.URL?.absoluteString
+                    scrollDelegate.documentLoadFailed(
+                        rollbackRequest = rollback.request,
+                        oldDocumentAvailable = visibleUrl != null &&
+                            epubBrowserUrlWithoutLoadGeneration(visibleUrl) ==
+                            epubBrowserUrlWithoutLoadGeneration(rollback.browserUrl),
+                    )
                     currentError.value.invoke(message)
                 }
             },
@@ -116,6 +145,8 @@ public actual fun EpubBrowserView(
             delegate,
             scrollDelegate,
             documentState,
+            tapHandler,
+            tapGestureRecognizer,
         )
     }
 
@@ -126,23 +157,30 @@ public actual fun EpubBrowserView(
         )
     }
 
+    LaunchedEffect(state, configuration) {
+        state.updateConfiguration(configuration)
+    }
+
+    LaunchedEffect(state, navigationRequestKey, navigationAction) {
+        if (navigationRequestKey > 0L && navigationAction != null) {
+            state.navigate(navigationAction, navigationRequestKey)
+        }
+    }
+
     LaunchedEffect(state, selectionRequestKey) {
         if (selectionRequestKey > 0L) {
             state.captureSelection { range -> currentSelectionChanged.value.invoke(range) }
         }
     }
 
-    UIKitView(
-        factory = { state.webView },
-        modifier = modifier,
-        update = {},
-        onRelease = { released ->
-            released.stopLoading()
-            released.navigationDelegate = null
-            released.scrollView.delegate = null
-            state.close()
-        },
-    )
+    key(state) {
+        UIKitView(
+            factory = { state.webView },
+            modifier = modifier,
+            update = {},
+            onRelease = { state.close() },
+        )
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -151,13 +189,17 @@ private class IosEpubBrowserState(
     val resolverHolder: IosEpubResolverHolder,
     @Suppress("unused") val schemeHandler: IosEpubSchemeHandler,
     val navigationDelegate: IosEpubNavigationDelegate,
-    @Suppress("unused") val scrollDelegate: IosEpubScrollDelegate,
+    val scrollDelegate: IosEpubScrollDelegate,
     val documentState: EpubBrowserDocumentState,
+    private val tapHandler: IosEpubTapHandler,
+    private val tapGestureRecognizer: UITapGestureRecognizer,
 ) {
     private var contentRulesReady: Boolean = false
     private var compilingContentRules: Boolean = false
     private var pendingDocumentUrl: String? = null
     private var pendingError: ((String) -> Unit)? = null
+    private var lastNavigationRequestKey: Long = 0L
+    private var closed: Boolean = false
 
     fun load(request: EpubRenderRequest, onError: (String) -> Unit) {
         webView.stopLoading()
@@ -186,6 +228,17 @@ private class IosEpubBrowserState(
                 onRange(snapshot?.let(request::rangeForSelection))
             }
         }
+    }
+
+    fun updateConfiguration(configuration: EpubBrowserConfiguration) {
+        if (closed) return
+        scrollDelegate.updateConfiguration(configuration)
+    }
+
+    fun navigate(action: ReaderTapAction, requestKey: Long) {
+        if (closed || requestKey == lastNavigationRequestKey) return
+        lastNavigationRequestKey = requestKey
+        scrollDelegate.navigate(action)
     }
 
     private fun compileExternalNetworkBlocker() {
@@ -231,6 +284,15 @@ private class IosEpubBrowserState(
     }
 
     fun close() {
+        if (closed) return
+        closed = true
+        scrollDelegate.flushViewport()
+        scrollDelegate.close()
+        webView.stopLoading()
+        webView.navigationDelegate = null
+        webView.scrollView.delegate = null
+        webView.removeGestureRecognizer(tapGestureRecognizer)
+        tapHandler.close()
         pendingDocumentUrl = null
         pendingError = null
         navigationDelegate.close()
@@ -242,7 +304,13 @@ private class IosEpubBrowserState(
         if (!documentState.ownsPendingLoad(generation)) return
         resolverHolder.rollback()
         val rollback = documentState.documentLoadFailed(generation) ?: return
-        scrollDelegate.update(rollback.request)
+        val visibleUrl = webView.URL?.absoluteString
+        scrollDelegate.documentLoadFailed(
+            rollbackRequest = rollback.request,
+            oldDocumentAvailable = visibleUrl != null &&
+                epubBrowserUrlWithoutLoadGeneration(visibleUrl) ==
+                epubBrowserUrlWithoutLoadGeneration(rollback.browserUrl),
+        )
         pendingDocumentUrl = null
         pendingError?.invoke(message)
     }
@@ -252,8 +320,11 @@ private class IosEpubBrowserState(
 private class IosEpubScrollDelegate(
     private val webView: WKWebView,
     initialRequest: EpubRenderRequest,
+    initialConfiguration: EpubBrowserConfiguration,
     private val canSampleViewport: () -> Boolean,
     private val onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    private val onReaderTap: (ReaderTapAction) -> Unit,
+    private val onError: (String) -> Unit,
 ) : NSObject(), UIScrollViewDelegateProtocol {
     var request: EpubRenderRequest = initialRequest
         private set
@@ -261,10 +332,18 @@ private class IosEpubScrollDelegate(
     private var viewportEvaluationPending: Boolean = false
     private var forceViewportAfterPending: Boolean = false
     private var lastViewportEvaluationAtMillis: Long = 0L
+    private var configuration: EpubBrowserConfiguration = initialConfiguration
+    private var configuredConfiguration: EpubBrowserConfiguration? = null
+    private var documentReady: Boolean = false
+    private var lastViewportSnapshot: EpubBrowserViewportSnapshot? = null
+    private var pendingNavigationAction: ReaderTapAction? = null
+    private var closed: Boolean = false
 
     fun update(request: EpubRenderRequest) {
+        if (closed) return
         if (this.request === request) return
         this.request = request
+        lastViewportSnapshot = null
         locatorEvents.updateRequest(request)
     }
 
@@ -273,25 +352,204 @@ private class IosEpubScrollDelegate(
         browserPublicationRootUrl: String,
         onError: (String) -> Unit,
     ) {
+        if (closed) return
+        documentReady = false
+        configuredConfiguration = null
         webView.evaluateJavaScript(epubBrowserNavigationGuardScript(browserPublicationRootUrl)) { value, error ->
             if (value !is Boolean || !value || error != null) {
                 onError(error?.localizedDescription ?: "The iOS EPUB navigation guard could not start.")
             }
+            configureLoadedDocument(loaded)
         }
-        val script = if (loaded.restoreInitialLocator) {
-            epubBrowserRestoreScript(loaded.target.request)
+    }
+
+    fun documentLoadFailed(
+        rollbackRequest: EpubRenderRequest,
+        oldDocumentAvailable: Boolean,
+    ) {
+        if (closed) return
+        val oldDocumentWasReady = documentReady && configuredConfiguration != null
+        update(rollbackRequest)
+        if (!oldDocumentAvailable || !oldDocumentWasReady) {
+            documentReady = false
+            return
+        }
+        if (configuredConfiguration != configuration) {
+            documentReady = false
+            configureReadyDocument(rollbackRequest)
         } else {
-            epubBrowserViewportScript(loaded.target.request)
+            documentReady = true
+            drainPendingNavigation()
         }
-        evaluateViewport(loaded.target.request, script, force = true)
+    }
+
+    fun updateConfiguration(configuration: EpubBrowserConfiguration) {
+        if (closed) return
+        if (this.configuration == configuration) return
+        this.configuration = configuration
+        if (documentReady && canSampleViewport()) {
+            documentReady = false
+            configureReadyDocument(request)
+        }
+    }
+
+    fun navigate(action: ReaderTapAction) {
+        if (closed) return
+        if (!documentReady || !canSampleViewport()) {
+            pendingNavigationAction = action
+            return
+        }
+        evaluateAction(
+            sampledRequest = request,
+            script = epubBrowserNavigationScript(request, configuration, action),
+        )
+    }
+
+    fun handleTap(horizontalFraction: Double, verticalFraction: Double) {
+        if (closed || !documentReady || !canSampleViewport()) return
+        evaluateAction(
+            sampledRequest = request,
+            script = epubBrowserTapScript(
+                request = request,
+                configuration = configuration,
+                horizontalFraction = horizontalFraction,
+                verticalFraction = verticalFraction,
+            ),
+        )
     }
 
     override fun scrollViewDidScroll(scrollView: UIScrollView) {
         sampleViewport(force = false)
     }
 
+    override fun scrollViewDidEndDragging(scrollView: UIScrollView, willDecelerate: Boolean) {
+        if (!willDecelerate) sampleViewport(force = true)
+    }
+
+    override fun scrollViewDidEndDecelerating(scrollView: UIScrollView) {
+        sampleViewport(force = true)
+    }
+
+    override fun scrollViewDidEndScrollingAnimation(scrollView: UIScrollView) {
+        sampleViewport(force = true)
+    }
+
+    fun flushViewport() {
+        if (closed || !documentReady || !canSampleViewport()) return
+        val viewport = lastViewportSnapshot ?: return sampleViewport(force = true)
+        val progression = currentNativeProgression(viewport)
+        locatorEvents.offerViewport(
+            viewport = viewport.copy(
+                progression = progression,
+                anchorCfi = viewport.anchorCfi.takeIf { progression == viewport.progression },
+            ),
+            nowMillis = currentTimeMillis(),
+            force = true,
+        )?.let(onLocatorChanged)
+    }
+
+    fun close() {
+        closed = true
+        documentReady = false
+        forceViewportAfterPending = false
+        pendingNavigationAction = null
+        configuredConfiguration = null
+        lastViewportSnapshot = null
+    }
+
+    private fun configureLoadedDocument(loaded: EpubBrowserDocumentLoad) {
+        if (closed) return
+        val sampledRequest = loaded.target.request
+        val appliedConfiguration = configuration
+        webView.evaluateJavaScript(
+            epubBrowserConfigureScript(sampledRequest, appliedConfiguration),
+        ) { value, error ->
+            if (closed || request !== sampledRequest || !canSampleViewport()) return@evaluateJavaScript
+            if (error != null || (value as? String)?.let(::decodeEpubBrowserActionResult) == null) {
+                onError(error?.localizedDescription ?: "The iOS EPUB reader layout could not start.")
+                return@evaluateJavaScript
+            }
+            if (configuration != appliedConfiguration) {
+                configureLoadedDocument(loaded)
+                return@evaluateJavaScript
+            }
+            val script = if (loaded.restoreInitialLocator) {
+                epubBrowserRestoreScript(sampledRequest)
+            } else {
+                epubBrowserViewportScript(sampledRequest)
+            }
+            evaluateViewport(sampledRequest, script, force = true) {
+                if (closed || request !== sampledRequest || !canSampleViewport()) {
+                    return@evaluateViewport
+                }
+                if (configuration != appliedConfiguration) {
+                    configureLoadedDocument(loaded)
+                } else {
+                    configuredConfiguration = appliedConfiguration
+                    documentReady = true
+                    drainPendingNavigation()
+                }
+            }
+        }
+    }
+
+    private fun configureReadyDocument(sampledRequest: EpubRenderRequest) {
+        if (closed) return
+        val appliedConfiguration = configuration
+        webView.evaluateJavaScript(
+            epubBrowserConfigureScript(sampledRequest, appliedConfiguration),
+        ) { value, error ->
+            if (closed || request !== sampledRequest || !canSampleViewport()) return@evaluateJavaScript
+            if (error != null || (value as? String)?.let(::decodeEpubBrowserActionResult) == null) {
+                onError(error?.localizedDescription ?: "The iOS EPUB reader layout could not update.")
+                return@evaluateJavaScript
+            }
+            if (configuration != appliedConfiguration) {
+                configureReadyDocument(sampledRequest)
+                return@evaluateJavaScript
+            }
+            evaluateViewport(
+                sampledRequest,
+                epubBrowserViewportScript(sampledRequest),
+                force = true,
+            ) {
+                if (closed || request !== sampledRequest || !canSampleViewport()) {
+                    return@evaluateViewport
+                }
+                if (configuration != appliedConfiguration) {
+                    configureReadyDocument(sampledRequest)
+                } else {
+                    configuredConfiguration = appliedConfiguration
+                    documentReady = true
+                    drainPendingNavigation()
+                }
+            }
+        }
+    }
+
+    private fun drainPendingNavigation() {
+        if (closed || !documentReady || !canSampleViewport()) return
+        val action = pendingNavigationAction ?: return
+        pendingNavigationAction = null
+        navigate(action)
+    }
+
+    private fun evaluateAction(sampledRequest: EpubRenderRequest, script: String) {
+        webView.evaluateJavaScript(script) { value, error ->
+            if (closed || !documentReady || !canSampleViewport() || request !== sampledRequest) {
+                return@evaluateJavaScript
+            }
+            if (error != null) {
+                onError(error.localizedDescription)
+                return@evaluateJavaScript
+            }
+            val result = (value as? String)?.let(::decodeEpubBrowserActionResult) ?: return@evaluateJavaScript
+            result.boundaryAction()?.let(onReaderTap)
+        }
+    }
+
     private fun sampleViewport(force: Boolean) {
-        if (!canSampleViewport()) return
+        if (closed || !documentReady || !canSampleViewport()) return
         val now = currentTimeMillis()
         if (viewportEvaluationPending) {
             forceViewportAfterPending = forceViewportAfterPending || force
@@ -305,13 +563,15 @@ private class IosEpubScrollDelegate(
         sampledRequest: EpubRenderRequest,
         script: String,
         force: Boolean,
+        onComplete: () -> Unit = {},
     ) {
         viewportEvaluationPending = true
         lastViewportEvaluationAtMillis = currentTimeMillis()
         webView.evaluateJavaScript(script) { value, _ ->
             viewportEvaluationPending = false
-            if (canSampleViewport() && request === sampledRequest) {
+            if (!closed && canSampleViewport() && request === sampledRequest) {
                 (value as? String)?.let(::decodeEpubBrowserViewport)?.let { viewport ->
+                    lastViewportSnapshot = viewport
                     locatorEvents.offerViewport(
                         viewport = viewport,
                         nowMillis = currentTimeMillis(),
@@ -319,6 +579,7 @@ private class IosEpubScrollDelegate(
                     )?.let(onLocatorChanged)
                 }
             }
+            onComplete()
             if (forceViewportAfterPending) {
                 forceViewportAfterPending = false
                 sampleViewport(force = true)
@@ -326,8 +587,58 @@ private class IosEpubScrollDelegate(
         }
     }
 
+    private fun currentNativeProgression(viewport: EpubBrowserViewportSnapshot): Double {
+        val contentSize = webView.scrollView.contentSize.useContents { width to height }
+        val boundsSize = webView.scrollView.bounds.useContents { size.width to size.height }
+        val offset = webView.scrollView.contentOffset.useContents { x to y }
+        val range = when (viewport.axis) {
+            EpubBrowserScrollAxis.HORIZONTAL -> contentSize.first - boundsSize.first
+            EpubBrowserScrollAxis.VERTICAL -> contentSize.second - boundsSize.second
+        }.coerceAtLeast(0.0)
+        if (range <= 0.0) return 0.0
+        val physical = when (viewport.axis) {
+            EpubBrowserScrollAxis.HORIZONTAL -> offset.first
+            EpubBrowserScrollAxis.VERTICAL -> offset.second
+        }.coerceIn(0.0, range)
+        val logical = if (
+            viewport.axis == EpubBrowserScrollAxis.HORIZONTAL &&
+            viewport.direction == EpubBrowserScrollDirection.REVERSE
+        ) {
+            range - physical
+        } else {
+            physical
+        }
+        return (logical / range).coerceIn(0.0, 1.0)
+    }
+
     private fun currentTimeMillis(): Long =
         (NSDate().timeIntervalSince1970 * 1_000.0).toLong().coerceAtLeast(0L)
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private class IosEpubTapHandler(
+    webView: WKWebView,
+    onTap: (horizontalFraction: Double, verticalFraction: Double) -> Unit,
+) : NSObject() {
+    private var webView: WKWebView? = webView
+    private var onTap: ((Double, Double) -> Unit)? = onTap
+
+    @ObjCAction
+    fun handleTap(recognizer: UITapGestureRecognizer) {
+        val activeWebView = webView ?: return
+        val bounds = activeWebView.bounds.useContents { size.width to size.height }
+        if (bounds.first <= 0.0 || bounds.second <= 0.0) return
+        val location = recognizer.locationInView(activeWebView).useContents { x to y }
+        onTap?.invoke(
+            (location.first / bounds.first).coerceIn(0.0, 1.0),
+            (location.second / bounds.second).coerceIn(0.0, 1.0),
+        )
+    }
+
+    fun close() {
+        onTap = null
+        webView = null
+    }
 }
 
 private class IosEpubResolverHolder(

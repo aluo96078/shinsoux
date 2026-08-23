@@ -44,6 +44,12 @@ public interface CloseableExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 
     public suspend fun close()
 }
 
+/** Host-only lifecycle seam for native packages with an exact event scope per source. */
+public interface SourceLifecycleControlledExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 {
+    /** Returns true when the requested state was applied by this runtime instance. */
+    public suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean
+}
+
 /**
  * Process-local production registry. Package replacement is explicit, source lookup uses complete
  * [SourceKey] equality, and a malformed package never partially enters the live registry.

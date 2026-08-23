@@ -10,6 +10,193 @@ import kotlin.test.assertTrue
 
 class ShuYueRepositoryIndexLoaderTest {
     @Test
+    fun loadsV2PackagesByContractAndNormalizesReviewedShuYueMetadata() = runTest {
+        val indexUrl = "https://repo.example/v2/index.json"
+        val scriptUrl = "https://repo.example/v2/plugins/novel.js"
+        val sidecarUrl = "https://repo.example/v2/sidecars/novel.json"
+        val script = "reviewed v2 script".encodeToByteArray()
+        val digest = Sha256.hex(script)
+        val body = """
+            {
+              "format":"shinsou-extension-v2",
+              "contractVersion":2,
+              "packages":[
+                {"contract":"shinsou","id":"manga.v2","name":"Manga","version":"1.0.0",
+                 "versionCode":1,"lang":"en","nsfw":true,"scriptUrl":"plugins/manga.js",
+                 "sources":[{"sourceId":9223372036854775807,"name":"Manga","lang":"en","baseUrl":"https://manga.example"}]},
+                {"contract":"shuyue","id":"novel.v2","name":"Novel","version":"2.0.0",
+                 "versionCode":2,"lang":"zh","nsfw":false,"scriptUrl":"plugins/novel.js",
+                 "contentType":"novel","sha256":"$digest","byteSize":${script.size},
+                 "sidecarUrl":"sidecars/novel.json","capabilities":["BROWSE","LATEST","LOGIN","FAVORITE"],
+                 "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,
+                   "required":["command.auth.login.request"],"optional":["event.diagnostic.message.report"]},
+                 "requestedHostPermissions":["REQUEST_LOGIN_UI"],"installable":true,
+                 "referenceOnly":false,"legacyCompatibilityOnly":false,
+                 "unknownV2Key":{"ignored":true},
+                 "sources":[{"sourceId":"opaque:source/9119537447562549661","name":"Novel","lang":"zh",
+                   "baseUrl":"https://novel.example","unknownSourceKey":[1,2,3]}]}
+              ]
+            }
+        """.trimIndent().encodeToByteArray()
+        val sidecar = """
+            {
+              "format":"shinsou-extension-sidecar-v2","contractVersion":2,
+              "packageId":"novel.v2","name":"Novel","version":"2.0.0","versionCode":2,
+              "contract":"shuyue","lang":"zh","nsfw":false,"installable":true,
+              "referenceOnly":false,"legacyCompatibilityOnly":false,
+              "artifact":{"scriptUrl":"plugins/novel.js","sha256":"$digest","byteSize":${script.size}},
+              "content":{"contract":"extension-content-v2","contractVersion":2,"type":"novel","kinds":["PLAIN_TEXT"]},
+              "capabilities":["BROWSE","LATEST","LOGIN","FAVORITE"],
+              "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,
+                "required":["command.auth.login.request"],"optional":["event.diagnostic.message.report"]},
+              "requestedHostPermissions":["REQUEST_LOGIN_UI"],
+              "sources":[{"sourceKey":{"contractVersion":2,"packageId":"novel.v2","sourceId":"opaque:source/9119537447562549661"},
+                "sourceId":"opaque:source/9119537447562549661","name":"Novel","lang":"zh","baseUrl":"https://novel.example"}]
+            }
+        """.trimIndent().encodeToByteArray()
+        val transport = FixtureTransport(
+            mapOf(
+                indexUrl to ok(body, indexUrl),
+                sidecarUrl to ok(sidecar, sidecarUrl),
+                scriptUrl to ok(script, scriptUrl),
+            ),
+        )
+
+        val loader = ShuYueRepositoryIndexLoader(
+            transport,
+            ShuYueRepositoryLimits(allowedArtifactOrigins = setOf("https://repo.example")),
+        )
+        val loaded = loader.load(ShuYueRepositoryLocation.IndexUrl(indexUrl))
+
+        val entry = loaded.entries.single()
+        assertEquals("novel.v2", entry.id)
+        assertEquals("opaque:source/9119537447562549661", entry.sources.single().id)
+        assertEquals(dev.shinsou.kmp.plugin.PluginContentType.NOVEL, entry.resolvedContentType)
+        assertTrue(entry.sources.single().supportsLogin)
+        assertTrue(entry.sources.single().supportsLatest)
+        assertTrue(entry.sources.single().supportsFavorites)
+        assertEquals(digest, entry.sha256)
+        assertEquals(script.size, entry.byteSize)
+        assertEquals("sidecars/novel.json", entry.sidecarUrl)
+        assertEquals(
+            setOf("command.auth.login.request"),
+            entry.systemEvents?.required,
+        )
+        assertEquals(setOf("REQUEST_LOGIN_UI"), entry.requestedHostPermissions.map { it.name }.toSet())
+        assertTrue(entry.installable)
+        assertFalse(entry.referenceOnly)
+        assertFalse(entry.legacyCompatibilityOnly)
+
+        val artifact = loader.downloadScript(loaded, entry)
+        assertEquals(digest, artifact.sha256)
+        assertEquals("sidecars/novel.json", artifact.metadata.sidecarUrl)
+        assertEquals(sidecarUrl, artifact.metadata.resolvedSidecarUrl)
+        assertEquals(sidecarUrl, artifact.metadata.sidecarDownloadedFinalUrl)
+        assertEquals(Sha256.hex(sidecar), artifact.metadata.sidecarSha256)
+        assertEquals(sidecar.size, artifact.metadata.sidecarByteSize)
+    }
+
+    @Test
+    fun v2SidecarMismatchesFailClosedWithoutFetchingScript() = runTest {
+        val mismatches = listOf(
+            "digest" to v2SidecarJson(digest = "f".repeat(64)),
+            "byte size" to v2SidecarJson(byteSize = V2_SCRIPT.size + 1),
+            "source key package" to v2SidecarJson(sourcePackageId = "other.package"),
+            "source key id" to v2SidecarJson(sourceId = "other-source"),
+            "system events" to v2SidecarJson(
+                events = """
+                    {"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,
+                     "required":["command.source.refresh.request"],"optional":[]}
+                """.trimIndent(),
+            ),
+            "requested host permissions" to v2SidecarJson(permissions = listOf("REQUEST_SOURCE_REFRESH")),
+        )
+
+        mismatches.forEach { (label, sidecar) ->
+            val requests = mutableListOf<String>()
+            val transport = v2FixtureTransport(sidecar, requests)
+            val mismatchLoader = loader(transport)
+            val index = mismatchLoader.load(ShuYueRepositoryLocation.IndexUrl(V2_INDEX_URL))
+
+            expectFailure<ShuYueRepositoryException.InvalidMetadata>(label) {
+                mismatchLoader.downloadScript(index, index.entries.single())
+            }
+
+            assertEquals(listOf(V2_INDEX_URL, V2_SIDECAR_URL), requests, label)
+            assertFalse(V2_SCRIPT_URL in requests, label)
+        }
+    }
+
+    @Test
+    fun v2HappyPathFetchesIndexThenSidecarThenScript() = runTest {
+        val requests = mutableListOf<String>()
+        val transport = v2FixtureTransport(v2SidecarJson(), requests)
+        val v2Loader = loader(transport)
+        val index = v2Loader.load(ShuYueRepositoryLocation.IndexUrl(V2_INDEX_URL))
+
+        val artifact = v2Loader.downloadScript(index, index.entries.single())
+
+        assertEquals(V2_SCRIPT.toList(), artifact.copyBytes().toList())
+        assertEquals(
+            listOf(V2_INDEX_URL, V2_SIDECAR_URL, V2_SCRIPT_URL),
+            requests,
+        )
+    }
+
+    @Test
+    fun readsShuyueHalfFromUnifiedEnvelopeWithoutUsingTheUrlName() = runTest {
+        val indexUrl = "https://repo.example/index.json"
+        val body = """
+            {"format":"shinsou-unified-v1","shinsou":[
+              {"id":"manga","name":"Manga","version":"1.0.0","versionCode":1,"lang":"zh",
+               "nsfw":0,"scriptUrl":"manga.js","sources":[{"id":1,"name":"Manga","lang":"zh","baseUrl":"https://manga.example"}]}
+            ],"shuyue":[
+              {"id":"novel","name":"Novel","version":"1.0.0","versionCode":1,"lang":"zh",
+               "nsfw":0,"scriptUrl":"novel.js","type":"novel",
+               "sources":[{"id":"novel-source","name":"Novel","lang":"zh","baseUrl":"https://novel.example","type":"novel"}]}
+            ]}
+        """.trimIndent().encodeToByteArray()
+
+        val loaded = loader(FixtureTransport(mapOf(indexUrl to ok(body, indexUrl))))
+            .load(ShuYueRepositoryLocation.IndexUrl(indexUrl))
+
+        assertEquals(listOf("novel"), loaded.entries.map { it.id })
+        assertEquals(dev.shinsou.kmp.plugin.PluginContentType.NOVEL, loaded.entries.single().resolvedContentType)
+    }
+
+    @Test
+    fun acceptsOptionalRepositoryIconMetadata() = runTest {
+        val indexUrl = "https://repo.example/index.json"
+        val body = """
+            [{"id":"package","name":"Package","version":"1.0.0","versionCode":1,"lang":"zh",
+              "nsfw":0,"scriptUrl":"package.js","iconUrl":null,
+              "sources":[{"id":"source","name":"Source","lang":"zh","baseUrl":"https://source.example"}]}]
+        """.trimIndent().encodeToByteArray()
+
+        val loaded = loader(FixtureTransport(mapOf(indexUrl to ok(body, indexUrl))))
+            .load(ShuYueRepositoryLocation.IndexUrl(indexUrl))
+
+        assertEquals(null, loaded.entries.single().iconUrl)
+    }
+
+    @Test
+    fun acceptsLegacyNumericSourceIdsWithoutLosingOpaqueDigits() = runTest {
+        val indexUrl = "https://repo.example/index.json"
+        val largeId = "9119537447562549661"
+        val body = """
+            [{"id":"package","name":"Package","version":"1.0.0","versionCode":1,"lang":"zh",
+              "nsfw":0,"scriptUrl":"package.js","iconUrl":null,
+              "sources":[{"id":6912170,"name":"Source","lang":"zh","baseUrl":"https://source.example"},
+                         {"id":$largeId,"name":"Large","lang":"zh","baseUrl":"https://large.example"}]}]
+        """.trimIndent().encodeToByteArray()
+
+        val loaded = loader(FixtureTransport(mapOf(indexUrl to ok(body, indexUrl))))
+            .load(ShuYueRepositoryLocation.IndexUrl(indexUrl))
+
+        assertEquals(listOf("6912170", largeId), loaded.entries.single().sources.map { it.id })
+    }
+
+    @Test
     fun indexUrlIsRequestedAsIsAndScriptsUseTheRedirectedIndexDirectory() = runTest {
         val requestUrl = "https://repo.example/custom/index.json?token=keep"
         val finalUrl = "https://cdn.example/releases/index.json?cache=7"
@@ -253,6 +440,39 @@ class ShuYueRepositoryIndexLoaderTest {
             allowedOrigins = setOf("https://repo.example"),
         ).load(ShuYueRepositoryLocation.IndexUrl(indexUrl))
         assertEquals(sourceOrigin, loaded.entries.single().sources.single().runtimeOrigin.value)
+    }
+
+    @Test
+    fun localArtifactPolicyAllowsExplicitLoopbackAndPrivateOriginsOnly() = runTest {
+        val localIndex = "http://192.168.50.134:18080/index.json"
+        val transport = FixtureTransport(mapOf(localIndex to ok(indexJson(), localIndex)))
+        val loaded = ShuYueRepositoryIndexLoader(
+            transport,
+            ShuYueRepositoryLimits(
+                allowedArtifactOrigins = setOf("https://raw.githubusercontent.com"),
+                allowLocalArtifactOrigins = true,
+            ),
+        ).load(ShuYueRepositoryLocation.IndexUrl(localIndex))
+
+        assertEquals("zh.example", loaded.entries.single().id)
+        assertEquals(
+            setOf(
+                ShuYueOrigin.parse("https://raw.githubusercontent.com"),
+                ShuYueOrigin.parse("http://192.168.50.134:18080"),
+            ),
+            transport.requests.single().allowedArtifactOrigins,
+        )
+
+        val publicIndex = "http://public.example/index.json"
+        expectFailure<ShuYueRepositoryException.OriginNotAllowed> {
+            ShuYueRepositoryIndexLoader(
+                FixtureTransport(mapOf(publicIndex to ok(indexJson(), publicIndex))),
+                ShuYueRepositoryLimits(
+                    allowedArtifactOrigins = setOf("https://raw.githubusercontent.com"),
+                    allowLocalArtifactOrigins = true,
+                ),
+            ).load(ShuYueRepositoryLocation.IndexUrl(publicIndex))
+        }
     }
 
     @Test
@@ -525,6 +745,64 @@ class ShuYueRepositoryIndexLoaderTest {
         [${entryJson("zh.example", "opaque-source", scriptUrl, sourceBaseUrl)}]
     """.trimIndent().encodeToByteArray()
 
+    private fun v2FixtureTransport(
+        sidecar: String,
+        requests: MutableList<String>,
+    ): ShuYueRepositoryTransport = object : ShuYueRepositoryTransport {
+        override suspend fun execute(request: ShuYueRepositoryRequest): ShuYueRepositoryResponse {
+            requests += request.url
+            return when (request.url) {
+                V2_INDEX_URL -> ok(v2IndexJson(), V2_INDEX_URL)
+                V2_SIDECAR_URL -> ok(sidecar.encodeToByteArray(), V2_SIDECAR_URL)
+                V2_SCRIPT_URL -> ok(V2_SCRIPT, V2_SCRIPT_URL)
+                else -> error("Unexpected V2 fixture request ${request.url}")
+            }
+        }
+    }
+
+    private fun v2IndexJson(): ByteArray = """
+        {
+          "format":"shinsou-extension-v2",
+          "contractVersion":2,
+          "packages":[
+            {"contract":"shuyue","id":"novel.v2","name":"Novel","version":"2.0.0",
+             "versionCode":2,"lang":"zh","nsfw":false,"scriptUrl":"plugins/novel.js",
+             "sources":[{"sourceId":"opaque-source","name":"Novel","lang":"zh",
+               "baseUrl":"https://novel.example"}],
+             "contentType":"novel","sha256":"$V2_DIGEST","byteSize":${V2_SCRIPT.size},
+             "sidecarUrl":"sidecars/novel.json","capabilities":["BROWSE","LATEST","LOGIN","FAVORITE"],
+             "systemEvents":$V2_EVENTS_JSON,
+             "requestedHostPermissions":["REQUEST_LOGIN_UI"]}
+          ]
+        }
+    """.trimIndent().encodeToByteArray()
+
+    private fun v2SidecarJson(
+        packageId: String = "novel.v2",
+        version: String = "2.0.0",
+        versionCode: Int = 2,
+        digest: String = V2_DIGEST,
+        byteSize: Int = V2_SCRIPT.size,
+        sourcePackageId: String = "novel.v2",
+        sourceId: String = "opaque-source",
+        events: String = V2_EVENTS_JSON,
+        permissions: List<String> = listOf("REQUEST_LOGIN_UI"),
+    ): String = """
+        {
+          "format":"shinsou-extension-sidecar-v2","contractVersion":2,
+          "packageId":"$packageId","version":"$version","versionCode":$versionCode,
+          "contract":"shuyue",
+          "artifact":{"scriptUrl":"plugins/novel.js","sha256":"$digest","byteSize":$byteSize},
+          "content":{"contractVersion":2,"type":"novel"},
+          "capabilities":["BROWSE","LATEST","LOGIN","FAVORITE"],
+          "systemEvents":$events,
+          "requestedHostPermissions":${permissions.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},
+          "sources":[{"sourceId":"$sourceId","sourceKey":{"contractVersion":2,
+            "packageId":"$sourcePackageId","sourceId":"$sourceId"},
+            "name":"Novel","lang":"zh","baseUrl":"https://novel.example"}]
+        }
+    """.trimIndent()
+
     private fun entryJson(
         packageId: String,
         sourceId: String,
@@ -565,5 +843,17 @@ class ShuYueRepositoryIndexLoaderTest {
             requests += request
             return requireNotNull(responses[request.url]) { "Unexpected fixture request: ${request.url}" }
         }
+    }
+
+    private companion object {
+        const val V2_INDEX_URL: String = "https://repo.example/v2/index.json"
+        const val V2_SIDECAR_URL: String = "https://repo.example/v2/sidecars/novel.json"
+        const val V2_SCRIPT_URL: String = "https://repo.example/v2/plugins/novel.js"
+        val V2_SCRIPT: ByteArray = "reviewed v2 script".encodeToByteArray()
+        val V2_DIGEST: String = Sha256.hex(V2_SCRIPT)
+        const val V2_EVENTS_JSON: String =
+            "{\"protocol\":\"dev.shinsou.system\",\"minVersion\":1,\"maxVersion\":1," +
+                "\"required\":[\"command.auth.login.request\"]," +
+                "\"optional\":[\"event.diagnostic.message.report\"]}"
     }
 }

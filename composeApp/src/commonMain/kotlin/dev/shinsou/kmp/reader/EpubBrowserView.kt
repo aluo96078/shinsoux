@@ -13,11 +13,45 @@ import kotlinx.serialization.json.Json
 public expect fun EpubBrowserView(
     request: EpubRenderRequest,
     modifier: Modifier = Modifier,
+    configuration: EpubBrowserConfiguration = EpubBrowserConfiguration(),
+    navigationAction: ReaderTapAction? = null,
+    navigationRequestKey: Long = 0L,
     selectionRequestKey: Long = 0L,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit = {},
     onSelectionChanged: (ReadingRange?) -> Unit = {},
+    onReaderTap: (ReaderTapAction) -> Unit = {},
     onError: (String) -> Unit = {},
 )
+
+/** Reflow and interaction policy shared by the Android, Desktop and iOS EPUB surfaces. */
+@Serializable
+public data class EpubBrowserConfiguration(
+    val readingMode: EpubBrowserReadingMode = EpubBrowserReadingMode.PAGED_LEFT_TO_RIGHT,
+    val animatePageTransitions: Boolean = true,
+    val fontSizeSp: Float = 20f,
+    val lineHeightMultiplier: Float = 1.72f,
+    val maxContentWidthDp: Float = 760f,
+) {
+    init {
+        require(fontSizeSp.isFinite() && fontSizeSp in 12f..40f) {
+            "EPUB font size is outside the supported range"
+        }
+        require(lineHeightMultiplier.isFinite() && lineHeightMultiplier in 1.1f..3f) {
+            "EPUB line height is outside the supported range"
+        }
+        require(maxContentWidthDp.isFinite() && maxContentWidthDp in 420f..1_200f) {
+            "EPUB content width is outside the supported range"
+        }
+    }
+}
+
+@Serializable
+public enum class EpubBrowserReadingMode {
+    PAGED_LEFT_TO_RIGHT,
+    PAGED_RIGHT_TO_LEFT,
+    PAGED_VERTICAL,
+    CONTINUOUS_VERTICAL,
+}
 
 /**
  * Browser-visible URL scope for one renderer surface.
@@ -426,10 +460,52 @@ internal data class EpubBrowserViewportSnapshot(
     }
 }
 
+@Serializable
+internal enum class EpubBrowserActionOutcome {
+    MOVED,
+    PREVIOUS_BOUNDARY,
+    NEXT_BOUNDARY,
+    TOGGLE_CHROME,
+    IGNORED,
+}
+
+/** Result of a host-authored tap, keyboard, wheel or hardware-button page request. */
+@Serializable
+internal data class EpubBrowserActionResult(
+    val outcome: EpubBrowserActionOutcome,
+    val pageIndex: Int,
+    val pageCount: Int,
+) {
+    init {
+        require(pageCount >= 1 && pageCount <= MAX_EPUB_DOCUMENT_PAGE_COUNT) {
+            "EPUB browser page count is invalid"
+        }
+        require(pageIndex in 0 until pageCount) {
+            "EPUB browser page index is invalid"
+        }
+    }
+
+    fun boundaryAction(): ReaderTapAction? = when (outcome) {
+        EpubBrowserActionOutcome.PREVIOUS_BOUNDARY -> ReaderTapAction.PREVIOUS_PAGE
+        EpubBrowserActionOutcome.NEXT_BOUNDARY -> ReaderTapAction.NEXT_PAGE
+        EpubBrowserActionOutcome.TOGGLE_CHROME -> ReaderTapAction.TOGGLE_CHROME
+        EpubBrowserActionOutcome.MOVED,
+        EpubBrowserActionOutcome.IGNORED,
+        -> null
+    }
+}
+
 internal fun decodeEpubBrowserViewport(json: String): EpubBrowserViewportSnapshot? {
     if (json.length > MAX_VIEWPORT_SNAPSHOT_JSON_LENGTH) return null
     return runCatching {
         EpubBrowserContractJson.decodeFromString(EpubBrowserViewportSnapshot.serializer(), json)
+    }.getOrNull()
+}
+
+internal fun decodeEpubBrowserActionResult(json: String): EpubBrowserActionResult? {
+    if (json.length > MAX_ACTION_RESULT_JSON_LENGTH) return null
+    return runCatching {
+        EpubBrowserContractJson.decodeFromString(EpubBrowserActionResult.serializer(), json)
     }.getOrNull()
 }
 
@@ -468,6 +544,156 @@ internal fun epubBrowserRestoreScript(request: EpubRenderRequest): String =
         return JSON.stringify(shinsouSnapshot(shinsouMetrics()));
         """.trimIndent()
     }
+
+/** Applies app-owned reflow without changing fixed-layout publisher documents. */
+internal fun epubBrowserConfigureScript(
+    request: EpubRenderRequest,
+    configuration: EpubBrowserConfiguration,
+): String {
+    val mode = configuration.readingMode.name.toJavaScriptStringLiteral()
+    if (request.browserLayoutHints().fixedLayout == true) {
+        return epubBrowserScript(request) {
+            """
+            window.__shinsouEpubReadingMode=$mode;
+            return shinsouReaderResult('MOVED',shinsouReaderPageState(shinsouMetrics()));
+            """.trimIndent()
+        }
+    }
+    val css = epubBrowserReaderCss(configuration).toJavaScriptStringLiteral()
+    return epubBrowserScript(request) {
+        """
+        window.__shinsouEpubReadingMode=$mode;
+        if(shinsouFixed){
+          return shinsouReaderResult('MOVED',shinsouReaderPageState(shinsouMetrics()));
+        }
+        var before=shinsouMetrics();
+        var style=window.__shinsouEpubReaderStyleNode;
+        var owned=style&&style.ownerDocument===document&&
+          String(style.localName||'').toLowerCase()==='style'&&
+          style.__shinsouEpubHostOwned===true&&
+          (style.isConnected===true||document.documentElement.contains(style));
+        if(!owned){
+          style=document.createElement('style');
+          Object.defineProperty(style,'__shinsouEpubHostOwned',{value:true});
+          (document.head||document.documentElement).appendChild(style);
+          window.__shinsouEpubReaderStyleNode=style;
+        }
+        style.textContent=$css;
+        var after=shinsouMetrics();
+        shinsouSetLogicalScroll(after,before.progression*after.range,false);
+        return shinsouReaderResult('MOVED',shinsouReaderPageState(shinsouMetrics()));
+        """.trimIndent()
+    }
+}
+
+/** One logical page/viewport request used by keys, wheel, tap zones and hardware buttons. */
+internal fun epubBrowserNavigationScript(
+    request: EpubRenderRequest,
+    configuration: EpubBrowserConfiguration,
+    action: ReaderTapAction,
+): String = epubBrowserScript(request) {
+    val mode = configuration.readingMode.name.toJavaScriptStringLiteral()
+    val animate = configuration.animatePageTransitions
+    when (action) {
+        ReaderTapAction.PREVIOUS_PAGE ->
+            "window.__shinsouEpubReadingMode=$mode;return shinsouTurnPage(-1,$animate);"
+        ReaderTapAction.NEXT_PAGE ->
+            "window.__shinsouEpubReadingMode=$mode;return shinsouTurnPage(1,$animate);"
+        ReaderTapAction.TOGGLE_CHROME ->
+            "return shinsouReaderResult('TOGGLE_CHROME',shinsouReaderPageState(shinsouMetrics()));"
+    }
+}
+
+/** ShuYue-style 30% / 40% / 30% zones, while preserving links, controls and text selection. */
+internal fun epubBrowserTapScript(
+    request: EpubRenderRequest,
+    configuration: EpubBrowserConfiguration,
+    horizontalFraction: Double,
+    verticalFraction: Double,
+): String {
+    require(horizontalFraction.isFinite() && horizontalFraction in 0.0..1.0)
+    require(verticalFraction.isFinite() && verticalFraction in 0.0..1.0)
+    val mode = configuration.readingMode.name.toJavaScriptStringLiteral()
+    val animate = configuration.animatePageTransitions
+    return epubBrowserScript(request) {
+        """
+        var m=shinsouMetrics();
+        var state=shinsouReaderPageState(m);
+        var selection=window.getSelection?String(window.getSelection()):'';
+        if(selection.length>0)return shinsouReaderResult('IGNORED',state);
+        var x=$horizontalFraction;
+        var y=$verticalFraction;
+        var node=document.elementFromPoint(
+          Math.max(0,Math.min(window.innerWidth-1,x*window.innerWidth)),
+          Math.max(0,Math.min(window.innerHeight-1,y*window.innerHeight))
+        );
+        while(node&&node!==document){
+          var name=(node.localName||'').toLowerCase();
+          if(name==='a'||name==='area'||name==='button'||name==='input'||name==='textarea'||
+             name==='select'||name==='option'||name==='label'||name==='video'||name==='audio'||
+             name==='details'||name==='summary'||node.isContentEditable){
+            return shinsouReaderResult('IGNORED',state);
+          }
+          node=node.parentNode;
+        }
+        if(x>=0.3&&x<=0.7)return shinsouReaderResult('TOGGLE_CHROME',state);
+        window.__shinsouEpubReadingMode=$mode;
+        var left=x<0.3;
+        var rtl=$mode==='PAGED_RIGHT_TO_LEFT';
+        var delta=(left!==rtl)?-1:1;
+        return shinsouTurnPage(delta,$animate);
+        """.trimIndent()
+    }
+}
+
+private fun epubBrowserReaderCss(configuration: EpubBrowserConfiguration): String {
+    val fontSize = configuration.fontSizeSp
+    val lineHeight = configuration.lineHeightMultiplier
+    val maxWidth = configuration.maxContentWidthDp
+    val shared = """
+        body { font-size: ${fontSize}px !important; line-height: $lineHeight !important; }
+        img, svg, video { max-width: 100% !important; height: auto !important; }
+    """.trimIndent()
+    return when (configuration.readingMode) {
+        EpubBrowserReadingMode.CONTINUOUS_VERTICAL -> """
+            html { min-height: 100% !important; overflow-x: hidden !important;
+              overflow-y: auto !important; scroll-behavior: auto !important; }
+            body { box-sizing: border-box !important; width: 100% !important;
+              max-width: ${maxWidth}px !important; min-height: 100% !important;
+              margin: 0 auto !important;
+              padding: clamp(24px, 4vh, 48px) clamp(22px, 5vw, 72px) !important; }
+            $shared
+        """.trimIndent()
+        EpubBrowserReadingMode.PAGED_VERTICAL -> """
+            html { min-height: 100% !important; overflow-x: hidden !important;
+              overflow-y: auto !important; scroll-behavior: auto !important;
+              scroll-snap-type: y proximity !important; }
+            body { box-sizing: border-box !important; width: 100% !important;
+              max-width: ${maxWidth}px !important; min-height: 100% !important;
+              margin: 0 auto !important;
+              padding: clamp(24px, 4vh, 48px) clamp(22px, 5vw, 72px) !important; }
+            $shared
+        """.trimIndent()
+        EpubBrowserReadingMode.PAGED_LEFT_TO_RIGHT,
+        EpubBrowserReadingMode.PAGED_RIGHT_TO_LEFT,
+        -> """
+            html { --shinsou-epub-side: clamp(22px, 6vw, 64px);
+              --shinsou-epub-gutter: clamp(44px, 12vw, 128px);
+              width: 100% !important; height: 100% !important;
+              overflow-x: auto !important; overflow-y: hidden !important;
+              scroll-behavior: auto !important; }
+            body { box-sizing: border-box !important; width: auto !important;
+              max-width: none !important; height: 100vh !important; max-height: 100vh !important;
+              margin: 0 !important; padding: 32px var(--shinsou-epub-side) !important;
+              column-width: calc(100vw - var(--shinsou-epub-gutter)) !important;
+              column-gap: var(--shinsou-epub-gutter) !important;
+              column-fill: auto !important; }
+            img, svg, video { max-height: calc(100vh - 64px) !important;
+              break-inside: avoid !important; }
+            $shared
+        """.trimIndent()
+    }
+}
 
 /** Selection and viewport progression deliberately share the exact same metric function. */
 internal fun epubBrowserSelectionScript(request: EpubRenderRequest): String =
@@ -529,7 +755,7 @@ internal fun epubBrowserNavigationGuardScript(browserPublicationRootUrl: String)
 }
 
 private data class EpubBrowserLayoutHints(
-    val fixedLayout: Boolean,
+    val fixedLayout: Boolean?,
     val rightToLeft: Boolean,
 )
 
@@ -550,9 +776,9 @@ private fun EpubRenderRequest.browserLayoutHints(): EpubBrowserLayoutHints {
     val packageLayouts = navigation.representation.packageGraph.renditions
         .mapNotNull { rendition -> rendition.layout?.lowercase() }
     val packageFixedLayout = when {
-        packageLayouts.any { it in REFLOWABLE_LAYOUT_VALUES } -> false
         packageLayouts.any { it in FIXED_LAYOUT_VALUES } -> true
-        else -> false
+        packageLayouts.any { it in REFLOWABLE_LAYOUT_VALUES } -> false
+        else -> null
     }
     return EpubBrowserLayoutHints(
         fixedLayout = itemLayoutOverride ?: manifestResourceFallback ?: packageFixedLayout,
@@ -569,8 +795,8 @@ private fun browserFixedLayoutOverride(
         addAll(properties)
     }.map(String::lowercase)
     return when {
-        tokens.any { it in REFLOWABLE_LAYOUT_VALUES || it in REFLOWABLE_LAYOUT_PROPERTIES } -> false
         tokens.any { it in FIXED_LAYOUT_VALUES || it in FIXED_LAYOUT_PROPERTIES } -> true
+        tokens.any { it in REFLOWABLE_LAYOUT_VALUES || it in REFLOWABLE_LAYOUT_PROPERTIES } -> false
         else -> null
     }
 }
@@ -580,11 +806,31 @@ private inline fun epubBrowserScript(
     result: () -> String,
 ): String {
     val hints = request.browserLayoutHints()
+    val fixedLayoutExpression = when (hints.fixedLayout) {
+        true -> "true"
+        false -> "false"
+        null -> "shinsouLegacyFixedLayout()"
+    }
     val packageStep = (request.documentIndex + 1) * 2
     return """
         (function(){
           'use strict';
-          var shinsouFixed=${hints.fixedLayout};
+          function shinsouLegacyFixedLayout(){
+            var root=document.documentElement;
+            if(root&&String(root.localName||'').toLowerCase()==='svg')return true;
+            if(!document.querySelectorAll)return false;
+            var metas=document.querySelectorAll('meta[name]');
+            for(var metaIndex=0;metaIndex<metas.length;metaIndex++){
+              var meta=metas[metaIndex];
+              if(String(meta.getAttribute('name')||'').toLowerCase()!=='viewport')continue;
+              var content=String(meta.getAttribute('content')||'').slice(0,512);
+              var width=/(?:^|[,;\s])width\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:px)?(?:[,;\s]|$)/i.exec(content);
+              var height=/(?:^|[,;\s])height\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:px)?(?:[,;\s]|$)/i.exec(content);
+              if(width&&height&&Number(width[1])>0&&Number(height[1])>0)return true;
+            }
+            return false;
+          }
+          var shinsouFixed=$fixedLayoutExpression;
           var shinsouPageRtl=${hints.rightToLeft};
           var shinsouPackageStep=$packageStep;
           var shinsouMaxAnchorDepth=$MAX_ANCHOR_DOM_DEPTH;
@@ -643,7 +889,59 @@ private inline fun epubBrowserScript(
             return {progression:progression,axis:horizontal?'HORIZONTAL':'VERTICAL',
               direction:rtl?'REVERSE':'FORWARD',writingMode:writing.slice(0,32),
               fixedLayout:shinsouFixed,anchorCfi:shinsouAnchorCfi(horizontal),
-              element:e,range:range,rtl:rtl,rtlType:rtlType};
+              element:e,range:range,logical:logical,rtl:rtl,rtlType:rtlType,
+              viewportWidth:viewportWidth,viewportHeight:viewportHeight};
+          }
+          function shinsouSetLogicalScroll(m,logical,animate){
+            logical=Math.max(0,Math.min(m.range,logical));
+            var normalized=m.rtl?m.range-logical:logical;
+            var raw=normalized;
+            if(m.rtl&&m.rtlType==='negative')raw=normalized-m.range;
+            else if(m.rtl&&m.rtlType==='reverse')raw=m.range-normalized;
+            var left=m.axis==='HORIZONTAL'?raw:(m.element?m.element.scrollLeft:0);
+            var top=m.axis==='VERTICAL'?logical:(m.element?m.element.scrollTop:0);
+            if(animate&&m.element&&typeof m.element.scrollTo==='function'){
+              try{m.element.scrollTo({left:left,top:top,behavior:'smooth'});return;}
+              catch(_){ }
+            }
+            if(m.element){
+              if(m.axis==='HORIZONTAL')m.element.scrollLeft=raw;
+              else m.element.scrollTop=logical;
+            }else if(typeof window.scrollTo==='function'){
+              window.scrollTo(left,top);
+            }
+          }
+          function shinsouReaderPageState(m){
+            var mode=window.__shinsouEpubReadingMode||'CONTINUOUS_VERTICAL';
+            var extent;
+            if(mode==='CONTINUOUS_VERTICAL')extent=Math.max(1,m.viewportHeight*0.88);
+            else if(mode==='PAGED_VERTICAL')extent=Math.max(1,m.viewportHeight);
+            else extent=Math.max(1,m.axis==='HORIZONTAL'?m.viewportWidth:m.viewportHeight);
+            var count=Math.max(1,Math.ceil((m.range+extent)/extent));
+            count=Math.min($MAX_EPUB_DOCUMENT_PAGE_COUNT,count);
+            var index=Math.max(0,Math.min(count-1,Math.round(m.logical/extent)));
+            return {extent:extent,pageIndex:index,pageCount:count,mode:mode};
+          }
+          function shinsouReaderResult(outcome,state){
+            return JSON.stringify({outcome:outcome,pageIndex:state.pageIndex,pageCount:state.pageCount});
+          }
+          function shinsouTurnPage(delta,animate){
+            var m=shinsouMetrics();
+            var state=shinsouReaderPageState(m);
+            if(delta<0&&m.logical<=1)return shinsouReaderResult('PREVIOUS_BOUNDARY',state);
+            if(delta>0&&m.logical>=m.range-1)return shinsouReaderResult('NEXT_BOUNDARY',state);
+            var target;
+            if(state.mode==='CONTINUOUS_VERTICAL'){
+              target=m.logical+(delta*state.extent);
+            }else{
+              target=(state.pageIndex+delta)*state.extent;
+            }
+            shinsouSetLogicalScroll(m,target,animate);
+            var nextIndex=Math.max(0,Math.min(state.pageCount-1,state.pageIndex+delta));
+            return shinsouReaderResult('MOVED',{
+              pageIndex:nextIndex,
+              pageCount:state.pageCount
+            });
           }
           function shinsouAnchorCfi(horizontal){
             if(!window.location.hash||window.location.hash.length<2||
@@ -741,4 +1039,6 @@ private const val MAX_ANCHOR_DOM_DEPTH: Int = 64
 private const val MAX_ANCHOR_CFI_LENGTH: Int = 1_024
 private const val MAX_ANCHOR_FRAGMENT_LENGTH: Int = 1_024
 private const val MAX_VIEWPORT_SNAPSHOT_JSON_LENGTH: Int = 2_048
+private const val MAX_ACTION_RESULT_JSON_LENGTH: Int = 256
+private const val MAX_EPUB_DOCUMENT_PAGE_COUNT: Int = 100_000
 private val ANCHOR_CFI: Regex = Regex("epubcfi\\(/6/[1-9][0-9]*!(?:/[1-9][0-9]*)+\\)")

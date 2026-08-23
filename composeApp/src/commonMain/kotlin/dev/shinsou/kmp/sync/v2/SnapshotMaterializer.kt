@@ -606,6 +606,10 @@ object PortableSettingProjector {
         "library.globalUpdateRestrictions" to SyncValue.StringSetValue(settings.library.globalUpdateRestrictions),
         "library.autoRefreshMetadata" to SyncValue.BooleanValue(settings.library.autoRefreshMetadata),
         "reader.readingMode" to SyncValue.StringValue(settings.reader.readingMode.name),
+        "reader.novelFontSizeSp" to SyncValue.DoubleValue(settings.reader.novelFontSizeSp.toDouble()),
+        "reader.novelLineHeightMultiplier" to
+            SyncValue.DoubleValue(settings.reader.novelLineHeightMultiplier.toDouble()),
+        "reader.novelMaxWidthDp" to SyncValue.DoubleValue(settings.reader.novelMaxWidthDp.toDouble()),
         "reader.doubleTapToZoom" to SyncValue.BooleanValue(settings.reader.doubleTapToZoom),
         "reader.animatePageTransitions" to SyncValue.BooleanValue(settings.reader.animatePageTransitions),
         "reader.showPageNumber" to SyncValue.BooleanValue(settings.reader.showPageNumber),
@@ -697,6 +701,18 @@ object PortableSettingProjector {
                     string("reader.readingMode", local.reader.readingMode.name),
                     ReadingMode.entries,
                 ),
+                novelFontSizeSp = double(
+                    "reader.novelFontSizeSp",
+                    local.reader.novelFontSizeSp.toDouble(),
+                ).toFloat().coerceIn(12f, 36f),
+                novelLineHeightMultiplier = double(
+                    "reader.novelLineHeightMultiplier",
+                    local.reader.novelLineHeightMultiplier.toDouble(),
+                ).toFloat().coerceIn(1.15f, 2.4f),
+                novelMaxWidthDp = double(
+                    "reader.novelMaxWidthDp",
+                    local.reader.novelMaxWidthDp.toDouble(),
+                ).toFloat().coerceIn(480f, 1000f),
                 doubleTapToZoom = boolean("reader.doubleTapToZoom", local.reader.doubleTapToZoom),
                 animatePageTransitions = boolean(
                     "reader.animatePageTransitions",

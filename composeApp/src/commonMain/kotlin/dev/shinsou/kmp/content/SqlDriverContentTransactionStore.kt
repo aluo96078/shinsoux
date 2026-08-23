@@ -112,7 +112,18 @@ public class SqlDriverContentTransactionStore<D : Any>(
         ContentTransactionSchema.create(driver).value
         // WAL is a database property on SQLite.  Do not require it here: Android/iOS may choose
         // a platform-specific journal mode, while the transaction semantics remain identical.
-        driver.execute(null, "PRAGMA journal_mode = WAL", 0).value
+        // journal_mode is a value-returning PRAGMA. NativeSqliteDriver rejects it when it is
+        // sent through execute (which is reserved for non-query statements), while the JDBC
+        // driver happens to tolerate that misuse. Keep the shared initialization portable by
+        // consuming the single result row through executeQuery, as the sync store does.
+        driver.executeQuery(
+            identifier = null,
+            sql = "PRAGMA journal_mode = WAL",
+            mapper = { cursor ->
+                QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
+            },
+            parameters = 0,
+        ).value
         driver.execute(null, "PRAGMA synchronous = FULL", 0).value
         driver.execute(null, "PRAGMA foreign_keys = ON", 0).value
         if (blobParticipant.isRestartSafe) {

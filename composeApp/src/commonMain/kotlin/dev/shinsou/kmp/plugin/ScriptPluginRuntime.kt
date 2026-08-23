@@ -1,5 +1,17 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.plugin.events.BoundPluginScope
+import dev.shinsou.kmp.plugin.events.ScopedPluginSystemEventSink
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation
+import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
+import dev.shinsou.kmp.plugin.events.PluginEventDisposition
+import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
+import dev.shinsou.kmp.plugin.events.PluginSystemEventEnvelope
+import dev.shinsou.kmp.plugin.events.PluginSystemEventKind
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNames
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+
 public fun interface PluginLogger {
     public fun log(pluginId: String, message: String)
 
@@ -28,7 +40,54 @@ public data class ScriptPluginEnvironment(
     val storage: PluginStorage,
     val logger: PluginLogger = PluginLogger.None,
     val loginRequester: PluginLoginRequester = PluginLoginRequester.None,
+    /** Optional v1 system-event ingress shared by Rhino and JavaScriptCore adapters. */
+    val systemEventSink: ScopedPluginSystemEventSink? = null,
+    /** Host-injected scope; transports must never derive this from plugin JSON. */
+    val boundPluginScope: BoundPluginScope? = null,
+    /** Host-owned short-lived ACTIVE_CONTEXT issuer used only during visible V2 invocations. */
+    val systemEventContextRegistry: PluginEventContextRegistry? = null,
+    val systemEventNegotiation: PluginSystemEventNegotiation? = null,
+    val systemEventDeclaration: PluginSystemEventDeclaration? = null,
 )
+
+/** Resolves the current host-issued handle without exposing publication/unit identity. */
+internal fun ScriptPluginEnvironment.currentSystemEventContext(): String? {
+    val scope = boundPluginScope ?: return null
+    // Once the host installs the opaque registry, a missing active invocation must stay missing;
+    // falling back to the legacy scope field would re-enable a predictable long-lived reference.
+    return if (systemEventContextRegistry != null) {
+        systemEventContextRegistry.current(scope)
+    } else {
+        scope.invocationContext
+    }
+}
+
+/** Compatibility shim for legacy `bridge.requestLogin`; it never grants any other capability. */
+internal fun submitLegacyLoginCompatibility(
+    environment: ScriptPluginEnvironment,
+    supportsLogin: Boolean,
+    reason: String?,
+): Boolean {
+    if (!supportsLogin) return false
+    val sink = environment.systemEventSink ?: return false
+    val scope = environment.boundPluginScope ?: return false
+    val envelope = PluginSystemEventEnvelope(
+        protocol = "dev.shinsou.system",
+        version = 1,
+        kind = PluginSystemEventKind.COMMAND,
+        name = PluginSystemEventNames.AUTH_LOGIN_REQUEST,
+        id = "compat-${scope.runtimeGeneration}",
+        payloadVersion = 1,
+        payload = buildJsonObject {
+            reason?.trim()?.takeIf(String::isNotEmpty)?.let { put("fallbackMessage", it) }
+        },
+    )
+    val receipt = runCatching {
+        sink.submit(scope, PluginJson.encodeToString(PluginSystemEventEnvelope.serializer(), envelope).encodeToByteArray())
+    }.getOrNull() ?: return false
+    return receipt.disposition == PluginEventDisposition.ACCEPTED ||
+        receipt.disposition == PluginEventDisposition.DEDUPLICATED
+}
 
 /** Injectable boundary implemented by Rhino on JVM and JavaScriptCore on Apple targets. */
 public interface ScriptPluginRuntime : CatalogueSource, LoginSource, ConfigurableSource {

@@ -17,8 +17,20 @@ var source = {
     "Referer": "https://www.wenku8.net/login.php"
   },
 
+  // ShuYue passes (sourceId, message) to bridge.log, while older Shinsou
+  // hosts expose a one-argument bridge.log(message). Keep diagnostics useful
+  // on both hosts without requiring a new bridge API.
+  log: function(message) {
+    try {
+      if (typeof bridge === "undefined" || !bridge || typeof bridge.log !== "function") return;
+      var text = String(message == null ? "" : message);
+      var arity = Number(bridge.log.length);
+      if (isFinite(arity) && arity <= 1) bridge.log(text);
+      else bridge.log(this.id, text);
+    } catch (ignored) {}
+  },
+
   login: function(username, password) {
-    this.initSession();
     var body = [
       "username=" + encodeURIComponent(username),
       "password=" + encodeURIComponent(password),
@@ -33,14 +45,14 @@ var source = {
     // which made valid Android credentials look like an authentication
     // failure.
     var html = bridge.httpPost(this.baseUrl + "/login.php?do=submit", body, headers);
-    bridge.log(this.id, "Login POST returned " + (html ? html.length + " chars" : "null"));
+    this.log("Login POST returned " + (html ? html.length + " chars" : "null"));
     var response = String(html || "");
     var success = /登录成功|登入成功|登錄成功|logout(?:\.php)?|退出(?:登录|登入|登錄)/i.test(response);
     if (!success && !this.isBlocked(html) && !this.isLoginRequired(html)) {
       success = this.verifyLogin();
     }
     if (!success) {
-      bridge.log(this.id, "Login response did not prove an authenticated session.");
+      this.log("Login response did not prove an authenticated session.");
     } else {
       // A successful login invalidates a previous prompt cooldown. If the
       // next request really receives a login page, it must be allowed to ask
@@ -67,16 +79,16 @@ var source = {
     // cloudflarePage() fall back only for that actual endpoint response.
     var html = this.cloudflarePage(url, this.baseUrl + "/");
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Search blocked. HTML preview: " + (html || "").substring(0, 200));
+      this.log("Search blocked. HTML preview: " + (html || "").substring(0, 200));
       return [];
     }
     if (this.isLoginRequired(html)) {
       this.requestLogin("搜尋需要登入");
-      bridge.log(this.id, "Wenku8 search requires login. Please sign in via source settings.");
+      this.log("Wenku8 search requires login. Please sign in via source settings.");
       return [];
     }
     var results = this.parseBookLinks(html);
-    bridge.log(this.id, "Search parsed " + results.length + " books from " + (html ? html.length : 0) + " chars");
+    this.log("Search parsed " + results.length + " books from " + (html ? html.length : 0) + " chars");
     return results;
   },
 
@@ -101,7 +113,11 @@ var source = {
       { id: "article:1", title: "完結作品", group: "書庫" },
       { id: "bookcase", title: "我的書架", group: "個人" }
     ];
-    return options.concat(this.tagBrowseOptions());
+    // This hook runs while the source catalogue is being opened. Never perform network I/O here:
+    // the legacy implementation fetched the Cloudflare-sensitive tags page synchronously and
+    // could hold the first frame for the full native timeout. The stable taxonomy is enough for
+    // the picker; the selected tag is fetched only after the user explicitly opens it.
+    return options.concat(this.fallbackTagOptions());
   },
 
   browse: function(optionId, page) {
@@ -129,7 +145,7 @@ var source = {
     // do not pay the WebView cost.
     var html = this.cloudflarePage(url, this.baseUrl + "/");
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Wenku8 browse was blocked by Cloudflare.");
+      this.log("Wenku8 browse was blocked by Cloudflare.");
       return [];
     }
     if (this.isLoginRequired(html)) {
@@ -139,12 +155,12 @@ var source = {
           ? "最新列表需要登入"
           : "分類瀏覽需要登入";
       this.requestLogin(reason);
-      bridge.log(this.id, "Wenku8 browse requires login. Please sign in via source settings.");
+      this.log("Wenku8 browse requires login. Please sign in via source settings.");
       return [];
     }
     var results = this.parseBookLinks(html);
     if (!results.length) {
-      bridge.log(this.id, "Wenku8 browse parsed zero books; keeping the result as a parse/network failure, not a login failure.");
+      this.log("Wenku8 browse parsed zero books; keeping the result as a parse/network failure, not a login failure.");
     }
     return results;
   },
@@ -164,11 +180,11 @@ var source = {
       return false;
     }
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Wenku8 favorite request was blocked or empty; keeping it as a source failure.");
+      this.log("Wenku8 favorite request was blocked or empty; keeping it as a source failure.");
       return false;
     }
     var success = /处理成功|處理成功|加入(?:了)?(?:书架|書架)|已经在您的书架|已經在您的書架|收藏成功/i.test(html || "");
-    if (!html) bridge.log(this.id, "Wenku8 favorite returned an empty response; not treating it as a login failure.");
+    if (!html) this.log("Wenku8 favorite returned an empty response; not treating it as a login failure.");
     return success;
   },
 
@@ -225,12 +241,12 @@ var source = {
     if (!html && !allowEmptyFallback) return html;
 
     if (!bridge.webViewGetWithHeaders) {
-      bridge.log(this.id, "Cloudflare response needs browser clearance, but no WebView bridge is available.");
+      this.log("Cloudflare response needs browser clearance, but no WebView bridge is available.");
       return html;
     }
 
     var browserHtml = bridge.webViewGetWithHeaders(url, this.mergeHeaders(headers));
-    bridge.log(this.id, "Cloudflare fallback returned " + (browserHtml ? browserHtml.length + " chars" : "null") + " for " + url.substring(0, 80));
+    this.log("Cloudflare fallback returned " + (browserHtml ? browserHtml.length + " chars" : "null") + " for " + url.substring(0, 80));
     // Keep the original challenge page when the browser fallback fails so the
     // caller can report a source failure instead of parsing an empty value.
     return browserHtml || html;
@@ -246,7 +262,7 @@ var source = {
       return [];
     }
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Wenku8 chapter list was blocked or empty; keeping it as a source failure.");
+      this.log("Wenku8 chapter list was blocked or empty; keeping it as a source failure.");
       return [];
     }
     return this.parseChaptersHtml(html, aid, book.url);
@@ -259,7 +275,7 @@ var source = {
       return "[無法載入章節內容，請嘗試重新登入或稍後再試]";
     }
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Wenku8 chapter content was blocked or empty; keeping it as a source failure.");
+      this.log("Wenku8 chapter content was blocked or empty; keeping it as a source failure.");
       return "[無法載入章節內容，來源暫時無法解析，請稍後再試]";
     }
     var content = this.extractContent(html);
@@ -344,12 +360,12 @@ var source = {
   tagBrowseOptions: function() {
     var html = this.nativePage(this.baseUrl + "/modules/article/tags.php?charset=gbk", this.baseUrl + "/");
     if (this.isBlocked(html)) {
-      bridge.log(this.id, "Wenku8 tags were blocked by Cloudflare.");
+      this.log("Wenku8 tags were blocked by Cloudflare.");
       return this.fallbackTagOptions();
     }
     if (this.isLoginRequired(html)) {
       this.requestLogin("分類需要登入");
-      bridge.log(this.id, "Wenku8 tags require login. Please sign in via source settings.");
+      this.log("Wenku8 tags require login. Please sign in via source settings.");
       return this.fallbackTagOptions();
     }
     var options = [];
@@ -442,15 +458,8 @@ var source = {
     var result = bridge.httpGetWithHeaders
       ? bridge.httpGetWithHeaders(url, headers || {})
       : bridge.httpGet(url);
-    bridge.log(this.id, "HTTP-only returned " + (result ? result.length + " chars" : "null") + " for " + url.substring(0, 80));
+    this.log("HTTP-only returned " + (result ? result.length + " chars" : "null") + " for " + url.substring(0, 80));
     return result;
-  },
-
-  initSession: function() {
-    var h = this.dalvikHeaders("");
-    this.httpOnly(this.baseUrl + "/", h);
-    h["Referer"] = this.baseUrl + "/";
-    this.httpOnly(this.baseUrl + "/login.php", h);
   },
 
   get: function(url, headers) {
@@ -554,12 +563,12 @@ var source = {
     // clearance. It is the only list endpoint allowed to use the fallback.
     var listHtml = this.cloudflarePage(listUrl, this.baseUrl + "/");
     if (this.isBlocked(listHtml)) {
-      bridge.log(this.id, "Wenku8 bookcase was blocked by Cloudflare.");
+      this.log("Wenku8 bookcase was blocked by Cloudflare.");
       return [];
     }
     if (this.isLoginRequired(listHtml)) {
       this.requestLogin("書架需要登入");
-      bridge.log(this.id, "請先登入輕小說文庫帳號以查看書架。");
+      this.log("請先登入輕小說文庫帳號以查看書架。");
       return [];
     }
 
@@ -586,7 +595,7 @@ var source = {
     }
 
     if (!results.length) {
-      bridge.log(this.id, "bookcase debug: classes=" + classes.length + " listLen=" + (listHtml ? listHtml.length : 0));
+      this.log("bookcase debug: classes=" + classes.length + " listLen=" + (listHtml ? listHtml.length : 0));
     }
     return results;
   },
@@ -659,12 +668,21 @@ var source = {
   requestLogin: function(reason) {
     var now = Date.now ? Date.now() : 0;
     if (now - this._lastLoginRequestAt < 10000) {
-      bridge.log(this.id, "Suppressed duplicate login request: " + reason);
+      this.log("Suppressed duplicate login request: " + reason);
       return false;
     }
     this._lastLoginRequestAt = now;
-    bridge.requestLogin(this.id, reason);
-    return true;
+    try {
+      if (typeof bridge !== "undefined" && bridge && typeof bridge.requestLogin === "function") {
+        var arity = Number(bridge.requestLogin.length);
+        if (isFinite(arity) && arity <= 1) bridge.requestLogin(reason);
+        else bridge.requestLogin(this.id, reason);
+        return true;
+      }
+    } catch (ignored) {}
+    // Older Shinsou hosts do not provide a login-dialog callback. Keep the
+    // protected operation safe and let the user sign in from source settings.
+    return false;
   },
 
   isCloudflareResponse: function(html) {
@@ -688,3 +706,132 @@ var source = {
     return hasLoginForm || hasLoginTitle || hasExplicitMessage;
   }
 };
+
+// Legacy Shinsou plugin compatibility. Keep the current ShuYue source API
+// intact while exposing the historical get* contract used by old hosts.
+(function installLegacyShinsouContract(target) {
+  function pageNumber(value) {
+    var number = Number(value);
+    return isFinite(number) ? Math.max(1, Math.floor(number) + 1) : 1;
+  }
+
+  function legacyBook(value) {
+    if (!value || typeof value !== "object") return null;
+    var url = String(value.url || "");
+    if (!url) return null;
+    var status = typeof value.status === "number" && isFinite(value.status) ? value.status : 0;
+    return {
+      url: url,
+      title: String(value.title || value.name || url),
+      author: value.author || null,
+      artist: value.artist || null,
+      description: value.description || null,
+      genre: value.genre || null,
+      status: status,
+      thumbnailUrl: value.thumbnailUrl || value.thumbnail_url || value.coverImage || value.cover || null,
+      initialized: true
+    };
+  }
+
+  function legacyPage(values, hasNextPage) {
+    var list = Array.isArray(values) ? values : [];
+    var mangas = [];
+    for (var i = 0; i < list.length; i++) {
+      var mapped = legacyBook(list[i]);
+      if (mapped) mangas.push(mapped);
+    }
+    return { mangas: mangas, hasNextPage: hasNextPage === undefined ? mangas.length > 0 : !!hasNextPage };
+  }
+
+  function selectedFilter(filters) {
+    if (!Array.isArray(filters)) return 0;
+    for (var i = 0; i < filters.length; i++) {
+      var filter = filters[i] || {};
+      if (Array.isArray(filter.values)) {
+        var state = Number(filter.state);
+        if (isFinite(state)) return Math.max(0, Math.floor(state));
+      }
+      var nested = selectedFilter(filter.filters);
+      if (nested > 0) return nested;
+    }
+    return 0;
+  }
+
+  function legacyFilters() {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var values = ["搜尋"];
+    for (var i = 0; i < options.length; i++) values.push(String(options[i].title || options[i].id || "分類"));
+    return [{ type: "select", name: "分類", values: values, state: 0 }];
+  }
+
+  target.getPopularManga = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getLatestUpdates = function(page) {
+    return legacyPage(target.latest(pageNumber(page)));
+  };
+
+  target.getFavoriteManga = function(page) {
+    return legacyPage(target.browse("bookcase", pageNumber(page)), false);
+  };
+
+  target.getSearchManga = function(page, query, filters) {
+    var options = typeof target.browseOptions === "function" ? target.browseOptions() : [];
+    var selected = selectedFilter(filters);
+    if (selected > 0 && options[selected - 1]) {
+      return legacyPage(target.browse(options[selected - 1].id, pageNumber(page)));
+    }
+    return legacyPage(target.search(String(query || ""), pageNumber(page)));
+  };
+
+  target.getMangaDetails = function(manga) {
+    var input = manga || {};
+    var aid = typeof target.aidFromText === "function" ? target.aidFromText(input.url) : "";
+    var details = aid && typeof target.bookFromAid === "function" ? target.bookFromAid(aid) : null;
+    return legacyBook(details || input) || legacyBook({ url: String(input.url || ""), title: String(input.title || "") });
+  };
+
+  target.getChapterList = function(manga) {
+    var input = manga || {};
+    var values = typeof target.chapters === "function" ? target.chapters({
+      url: String(input.url || ""),
+      title: String(input.title || "")
+    }) : [];
+    var chapters = [];
+    for (var i = 0; i < values.length; i++) {
+      var value = values[i] || {};
+      var url = String(value.url || "");
+      if (!url) continue;
+      chapters.push({
+        url: url,
+        name: String(value.title || value.name || url),
+        scanlator: null,
+        dateUpload: 0,
+        chapterNumber: typeof value.index === "number" ? value.index : i
+      });
+    }
+    return chapters;
+  };
+
+  // Older Shinsou hosts only know image-oriented Page values. Preserve the
+  // chapter URL and attach text/content for hosts that understand text pages.
+  target.getPageList = function(chapter) {
+    var input = chapter || {};
+    var text = typeof target.chapterText === "function" ? target.chapterText(input) : "";
+    if (!text) return [];
+    return [{ index: 0, url: String(input.url || ""), imageUrl: null, text: String(text), content: String(text) }];
+  };
+
+  target.getFilterList = legacyFilters;
+
+  target.logout = function() {
+    try {
+      if (typeof bridge !== "undefined" && bridge) {
+        if (typeof bridge.clearCredential === "function") bridge.clearCredential();
+        if (typeof bridge.clearCookies === "function") bridge.clearCookies();
+      }
+    } catch (ignored) {}
+    target._lastLoginRequestAt = 0;
+  };
+})(source);

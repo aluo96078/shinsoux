@@ -626,7 +626,15 @@ public annotation class ExtensionImplementationApi
 public interface ExtensionSourceV2 {
     public val descriptor: SourceDescriptorV2
     public suspend fun browseOptions(): BrowseOptionsSchemaV2
+    /** Returns the editable source filter tree used by the legacy FilterList contract. */
+    public suspend fun getFilterList(): BrowseFilterListV2 = emptyList()
     public suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2>
+    /** Search with source filters; the two-argument form remains the compatibility default. */
+    public suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> = search(query, page)
     public suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2>
     public suspend fun browse(options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2>
     public suspend fun details(remotePublicationId: String): RemotePublicationV2
@@ -667,14 +675,38 @@ public class ExtensionHostFacadeV2 internal constructor(
     }
 }
 
+/** Optional host-only dynamic policy hook; it is never visible to plugin code. */
+@OptIn(ExtensionImplementationApi::class)
+public interface UserInteractionScopedExtensionSourceV2 {
+    public suspend fun <T> withUserInteractionContext(block: suspend () -> T): T
+    public fun setHostUiAvailable(available: Boolean)
+}
+
+/** Host-only exact artifact authority for native/reviewed event-capable runtimes. */
+public interface ArtifactBoundExtensionPackageRuntimeV2 {
+    public val artifactIdentity: dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+}
+
 @OptIn(ExtensionImplementationApi::class)
 public class HostExtensionSourceV2 internal constructor(
     public val descriptor: SourceDescriptorV2,
     private val implementation: ExtensionSourceV2,
 ) {
+    public suspend fun <T> withUserInteractionContext(block: suspend () -> T): T =
+        (implementation as? UserInteractionScopedExtensionSourceV2)?.withUserInteractionContext(block) ?: block()
+    public fun setHostUiAvailable(available: Boolean) {
+        (implementation as? UserInteractionScopedExtensionSourceV2)?.setHostUiAvailable(available)
+    }
     public suspend fun browseOptions(): BrowseOptionsSchemaV2 {
         requireCapability(ExtensionCapability.BROWSE)
         return implementation.browseOptions().also(::validateBrowseSchema)
+    }
+
+    public suspend fun getFilterList(): BrowseFilterListV2 {
+        requireCapability(ExtensionCapability.BROWSE)
+        return implementation.getFilterList().also { filters ->
+            validateBrowseFilters(filters)
+        }
     }
 
     public suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> {
@@ -682,6 +714,18 @@ public class HostExtensionSourceV2 internal constructor(
         requireQuery(query)
         requirePage(page)
         return implementation.search(query, page).also(::validatePublicationPage)
+    }
+
+    public suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> {
+        requireCapability(ExtensionCapability.SEARCH)
+        requireQuery(query)
+        validateBrowseOptions(options)
+        requirePage(page)
+        return implementation.search(query, page, options).also(::validatePublicationPage)
     }
 
     public suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> {
@@ -848,6 +892,8 @@ public class HostTextChunkStreamV2 internal constructor(
 @Serializable
 public data class BrowseOptionsV2(
     val values: Map<String, String> = emptyMap(),
+    /** Structured source filters projected from the legacy FilterList model. */
+    val filters: List<BrowseFilterV2> = emptyList(),
 ) {
     init { validate() }
 
@@ -857,20 +903,110 @@ public data class BrowseOptionsV2(
             requireSafeIdentifier(key, "Browse option key")
             require(value.length <= MAX_PARAMETER_VALUE_LENGTH && value.none(Char::isISOControl))
         }
+        validateBrowseFilters(filters)
     }
 }
 
 @Serializable
 public data class BrowseOptionsSchemaV2(
     val keys: List<String> = emptyList(),
+    /** Editable source filters, in the same order and shape as the legacy FilterList. */
+    val filters: List<BrowseFilterV2> = emptyList(),
 ) {
     init { validate() }
 
     public fun validate(): Unit {
         require(keys.size <= MAX_PARAMETERS && keys.distinct().size == keys.size)
         keys.forEach { requireSafeIdentifier(it, "Browse option key") }
+        validateBrowseFilters(filters)
     }
 }
+
+/**
+ * Serializable v2 projection of the legacy source FilterList.
+ *
+ * Keeping this model in the contract (instead of leaking the host UI's BrowseFilter type) lets
+ * native and legacy-backed v2 sources expose the same Select/Text/CheckBox/TriState/Group/Sort
+ * controls.  The host converts it to its platform-neutral UI model before rendering.
+ */
+@Serializable
+public sealed interface BrowseFilterV2 {
+    public val name: String
+
+    @Serializable
+    @SerialName("header")
+    public data class Header(override val name: String) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("separator")
+    public data object Separator : BrowseFilterV2 {
+        override val name: String = ""
+    }
+
+    @Serializable
+    @SerialName("select")
+    public data class Select(
+        override val name: String,
+        val values: List<String>,
+        val state: Int,
+    ) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("text")
+    public data class Text(
+        override val name: String,
+        val state: String,
+    ) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("checkBox")
+    public data class CheckBox(
+        override val name: String,
+        val state: Boolean,
+    ) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("triState")
+    public data class TriState(
+        override val name: String,
+        val state: BrowseTriStateV2,
+    ) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("group")
+    public data class Group(
+        override val name: String,
+        val filters: List<BrowseFilterV2>,
+    ) : BrowseFilterV2
+
+    @Serializable
+    @SerialName("sort")
+    public data class Sort(
+        override val name: String,
+        val values: List<String>,
+        val selection: BrowseSortSelectionV2?,
+    ) : BrowseFilterV2
+}
+
+@Serializable
+public enum class BrowseTriStateV2 {
+    IGNORE,
+    INCLUDE,
+    EXCLUDE,
+}
+
+@Serializable
+public data class BrowseSortSelectionV2(
+    val index: Int,
+    val ascending: Boolean,
+)
+
+/** Naming aliases for callers migrating from the v1 Filter/FilterList API. */
+public typealias BrowseFilterListV2 = List<BrowseFilterV2>
+public typealias FilterV2 = BrowseFilterV2
+public typealias FilterListV2 = BrowseFilterListV2
+public typealias TriStateValueV2 = BrowseTriStateV2
+public typealias SortSelectionV2 = BrowseSortSelectionV2
 
 /** Capability predicate used by the host-owned [HostExtensionSourceV2] boundary. */
 public fun SourceDescriptorV2.requireCapability(capability: ExtensionCapability) {
@@ -884,6 +1020,13 @@ public data class RemotePublicationV2(
     val remoteId: String,
     val title: String,
     val url: String? = null,
+    /** Optional catalogue metadata used by the host's native publication detail surface. */
+    val thumbnailUrl: String? = null,
+    val author: String? = null,
+    val artist: String? = null,
+    val description: String? = null,
+    val genre: List<String>? = null,
+    val status: String? = null,
 ) {
     init { validate() }
 
@@ -891,6 +1034,15 @@ public data class RemotePublicationV2(
         requireSafeIdentifier(remoteId, "Remote publication id")
         requirePrintable(title, "Remote publication title")
         url?.let { requireRemoteUri(it, "Remote publication URL") }
+        thumbnailUrl?.let { requireRemoteUri(it, "Remote publication thumbnail URL") }
+        author?.let { requireOptionalPrintable(it, "Remote publication author") }
+        artist?.let { requireOptionalPrintable(it, "Remote publication artist") }
+        description?.let { requireOptionalPrintable(it, "Remote publication description") }
+        genre?.let { values ->
+            require(values.size <= MAX_PARAMETERS) { "Remote publication genre list is too large" }
+            values.forEach { requireOptionalPrintable(it, "Remote publication genre") }
+        }
+        status?.let { requireOptionalPrintable(it, "Remote publication status") }
     }
 }
 
@@ -1060,6 +1212,49 @@ private fun validateBrowseOptions(options: BrowseOptionsV2) {
     options.validate()
 }
 
+private fun validateBrowseFilters(filters: List<BrowseFilterV2>, depth: Int = 0) {
+    require(depth <= MAX_FILTER_DEPTH) { "Browse filter nesting is too deep" }
+    require(filters.size <= MAX_PARAMETERS) { "Browse filter list is too large" }
+    filters.forEach { filter ->
+        if (filter !is BrowseFilterV2.Separator) {
+            requirePrintable(filter.name, "Browse filter name")
+        }
+        when (filter) {
+            is BrowseFilterV2.Header -> Unit
+            BrowseFilterV2.Separator -> Unit
+            is BrowseFilterV2.Select -> {
+                validateFilterValues(filter.values)
+                require(filter.state >= 0 && (filter.state in filter.values.indices || filter.values.isEmpty())) {
+                    "Browse select filter state is outside its values"
+                }
+            }
+            is BrowseFilterV2.Text -> validateFilterState(filter.state, "Browse text filter state")
+            is BrowseFilterV2.CheckBox -> Unit
+            is BrowseFilterV2.TriState -> Unit
+            is BrowseFilterV2.Group -> validateBrowseFilters(filter.filters, depth + 1)
+            is BrowseFilterV2.Sort -> {
+                validateFilterValues(filter.values)
+                filter.selection?.let { selection ->
+                    require(selection.index >= 0 && (selection.index in filter.values.indices || filter.values.isEmpty())) {
+                        "Browse sort filter selection is outside its values"
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun validateFilterValues(values: List<String>) {
+    require(values.size <= MAX_PARAMETERS) { "Browse filter values are too large" }
+    values.forEach { validateFilterState(it, "Browse filter value") }
+}
+
+private fun validateFilterState(value: String, label: String) {
+    require(value.length <= MAX_PARAMETER_VALUE_LENGTH && value.none(Char::isISOControl)) {
+        "$label is outside the bounded limit"
+    }
+}
+
 private fun validatePublicationPage(page: PagedResultV2<RemotePublicationV2>) {
     require(page.items.size <= MAX_PAGE_ITEMS) { "Extension publication page is too large" }
     require(page.items.map(RemotePublicationV2::remoteId).distinct().size == page.items.size) {
@@ -1114,6 +1309,30 @@ private fun requirePrintable(value: String, label: String) {
         "$label must be bounded and printable"
     }
 }
+
+private fun requireOptionalPrintable(value: String, label: String) {
+    require(value.length <= MAX_STRING_LENGTH && value.none(Char::isISOControl)) {
+        "$label must be bounded and printable"
+    }
+}
+
+/**
+ * Normalizes untrusted v1 metadata before it crosses the v2 publication boundary.
+ *
+ * Legacy ShuYue/Shinsou scripts commonly return HTML-derived descriptions containing line
+ * breaks, NULs, or much more text than a compact catalogue card can carry. The v2 contract still
+ * rejects control characters and unbounded strings, so adapters must make that compatibility
+ * conversion explicitly instead of weakening the host-side validator.
+ */
+internal fun String.toBoundedRemoteMetadata(): String = buildString(minOf(length, MAX_STRING_LENGTH)) {
+    for (character in this@toBoundedRemoteMetadata) {
+        append(if (character.isISOControl()) ' ' else character)
+        if (length == MAX_STRING_LENGTH) break
+    }
+}.trim()
+
+internal fun String?.toOptionalBoundedRemoteMetadata(): String? =
+    this?.toBoundedRemoteMetadata()?.takeIf(String::isNotBlank)
 
 private fun requireMediaType(value: String, label: String) {
     require(value.length <= 256 && MEDIA_TYPE_PATTERN.matches(value)) { "$label is invalid" }
@@ -1253,6 +1472,7 @@ private const val MAX_HEADER_VALUE_LENGTH = 1_024
 private const val MAX_HEADERS = 32
 private const val MAX_PARAMETERS = 128
 private const val MAX_PARAMETER_VALUE_LENGTH = 4_096
+private const val MAX_FILTER_DEPTH = 8
 private const val MAX_REQUEST_BODY_BYTES = 8L * 1024L * 1024L
 private const val MAX_RESPONSE_BYTES = 128L * 1024L * 1024L
 private const val MAX_INLINE_TEXT_BYTES = 4L * 1024L * 1024L

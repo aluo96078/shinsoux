@@ -1,6 +1,28 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.events.LoginRequestV1
+import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
+import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
+import dev.shinsou.kmp.plugin.events.PluginEventGrantKey
+import dev.shinsou.kmp.plugin.events.PluginEventOutcome
+import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
+import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
+import dev.shinsou.kmp.plugin.events.PluginSystemEventCodec
+import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
+import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+import dev.shinsou.kmp.plugin.events.PluginSystemEventHandlerRegistry
+import dev.shinsou.kmp.plugin.events.PluginSystemEventKind
+import dev.shinsou.kmp.plugin.events.PluginSystemEventLane
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNames
+import dev.shinsou.kmp.plugin.events.SourceRefreshRequestV1
+import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -137,7 +159,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
     }
 
     @Test
-    fun loginRequestsCarrySourcePayloadAndDefaultRequesterIsANoOp() = runTest {
+    fun directRuntimeCannotUseLegacyLoginRequesterWithoutExactHostAdmission() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
             transport = PluginHttpTransport { error("No network request expected") },
@@ -168,15 +190,9 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             ),
         )
         try {
-            assertEquals("true", runtime.getPopularManga(0).mangas.single().title)
-            assertEquals("true", runtime.getPopularManga(1).mangas.single().title)
-            assertEquals(
-                listOf(
-                    Triple(993L, "Login Source", "Members only"),
-                    Triple(993L, "Login Source", null),
-                ),
-                requests,
-            )
+            assertEquals("false", runtime.getPopularManga(0).mangas.single().title)
+            assertEquals("false", runtime.getPopularManga(1).mangas.single().title)
+            assertEquals(emptyList(), requests)
         } finally {
             runtime.close()
         }
@@ -218,6 +234,88 @@ class JavaScriptCoreScriptPluginRuntimeTest {
         try {
             assertTrue(runtime.getFilterList().isEmpty())
             assertEquals("needle|2", runtime.getSearchManga(2, "needle", emptyList()).mangas.single().title)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun systemEventReceiptAndCapabilitiesMatchTheJvmTransportContract() = runTest {
+        val fixture = javascriptCoreSystemEventFixture()
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_SYSTEM_EVENT_PLUGIN,
+            manifest = fixture.manifest,
+            environment = fixture.environment,
+        )
+        try {
+            assertEquals(
+                "true|1|command.auth.login.request|accepted",
+                runtime.getPopularManga(0).mangas.single().title,
+            )
+            assertTrue(fixture.gateway.awaitIdle())
+            assertEquals(listOf("Members only"), fixture.loginReasons)
+        } finally {
+            runtime.close()
+            fixture.gateway.close()
+        }
+    }
+
+    @Test
+    fun activeContextRefreshUsesHostIssuedHandleOnlyDuringInvocation() = runTest {
+        val fixture = javascriptCoreSystemEventFixture(
+            declaration = PluginSystemEventDeclaration(
+                minVersion = 1,
+                maxVersion = 1,
+                required = setOf(PluginSystemEventNames.REFRESH_CAPABILITY),
+            ),
+            permissions = setOf(PluginHostPermission.REQUEST_SOURCE_REFRESH),
+            sourceCapabilities = setOf("CATALOGUE"),
+        )
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_ACTIVE_CONTEXT_PLUGIN,
+            manifest = fixture.manifest,
+            environment = fixture.environment,
+        )
+        try {
+            val active = fixture.contextRegistry.withInvocation(fixture.scope) {
+                runtime.getPopularManga(0).mangas.single().title
+            }
+            assertEquals("true|accepted", active)
+            assertEquals("false|denied", runtime.getPopularManga(1).mangas.single().title)
+        } finally {
+            runtime.close()
+            fixture.gateway.close()
+        }
+    }
+
+    @Test
+    fun httpPostBatchBridgeReturnsOrderedJsonResponses() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { request ->
+                PluginHttpResponse(200, request.url.substringAfterLast('/').encodeToByteArray())
+            },
+            storage = storage,
+            requestGate = PerHostRequestGate(
+                PluginRateLimitProvider { PluginRateLimit(32, 0) },
+            ),
+        )
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_BATCH_PLUGIN,
+            manifest = PluginManifest(
+                "zh.batch.ios",
+                "Batch iOS",
+                "1.0.0",
+                1,
+                "zh",
+                script = "zh.batch.ios.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Batch", "zh", 994, "https://batch.example")),
+            ),
+            environment = ScriptPluginEnvironment(network, storage),
+        )
+        try {
+            assertEquals("one|two|three", runtime.getPopularManga(0).mangas.single().title)
         } finally {
             runtime.close()
         }
@@ -299,6 +397,24 @@ var sources={
 };
 """
 
+private const val IOS_BATCH_PLUGIN: String = """
+var source={
+  id:'994',
+  baseUrl:'https://batch.example',
+  getPopularManga:function(page){
+    var raw=bridge.httpPostBatch(
+      [this.baseUrl+'/one',this.baseUrl+'/two',this.baseUrl+'/three'],
+      ['body-one','body-two','body-three'],
+      {'Accept':'text/plain'}
+    );
+    var values=JSON.parse(raw||'[]');
+    var manga=SManga.create();
+    manga.url='/batch';manga.title=values.join('|');
+    return new MangasPage([manga],false);
+  }
+};
+"""
+
 private fun cancellableManifest(): PluginManifest = PluginManifest(
     "all.cancel-test",
     "Cancellation Test",
@@ -369,3 +485,146 @@ var source={
   ];}
 };
 """
+
+private const val IOS_SYSTEM_EVENT_PLUGIN: String = """
+var source={
+  baseUrl:'https://source.example',supportsLogin:true,
+  getPopularManga:function(page){
+    var capabilities=bridge.getHostEventCapabilities();
+    var receipt=bridge.system.requestLogin('Members only');
+    var manga=SManga.create();manga.url='/events';
+    manga.title=String(capabilities.enabled)+'|'+String(capabilities.version)+'|'+
+      capabilities.grantedCapabilities.join(',')+'|'+receipt.disposition;
+    return new MangasPage([manga],false);
+  }
+};
+"""
+
+private const val IOS_ACTIVE_CONTEXT_PLUGIN: String = """
+var source={
+  baseUrl:'https://source.example',
+  getPopularManga:function(page){
+    var contextPresent=bridge.getHostEventContext()!==null;
+    var receipt=bridge.system.requestRefresh('ACTIVE_CONTEXT');
+    var manga=SManga.create();manga.url='/active-context';
+    manga.title=String(contextPresent)+'|'+receipt.disposition;
+    return new MangasPage([manga],false);
+  }
+};
+"""
+
+private data class JavaScriptCoreSystemEventFixture(
+    val gateway: PluginSystemEventGateway,
+    val environment: ScriptPluginEnvironment,
+    val manifest: PluginManifest,
+    val loginReasons: MutableList<String?>,
+    val contextRegistry: PluginEventContextRegistry,
+    val scope: dev.shinsou.kmp.plugin.events.BoundPluginScope,
+)
+
+private fun javascriptCoreSystemEventFixture(
+    declaration: PluginSystemEventDeclaration = PluginSystemEventDeclaration(
+        minVersion = 1,
+        maxVersion = 1,
+        required = setOf(PluginSystemEventNames.LOGIN_CAPABILITY),
+        optional = setOf(PluginSystemEventNames.DIAGNOSTIC_CAPABILITY),
+    ),
+    permissions: Set<PluginHostPermission> = setOf(PluginHostPermission.REQUEST_LOGIN_UI),
+    sourceCapabilities: Set<String> = setOf("LOGIN"),
+): JavaScriptCoreSystemEventFixture {
+    val source = SourceKey(2, "jsc.events", "778")
+    val artifact = PluginArtifactIdentity(
+        packageId = source.packageId,
+        version = "1.0.0",
+        versionCode = 1,
+        sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    val scope = BoundPluginScopeFactory().bind(
+        artifactIdentity = artifact,
+        sourceKey = source,
+        runtimeInstanceId = "jsc-events-runtime",
+        runtimeGeneration = 1,
+    )
+    val authorizer = MutablePluginSystemEventAuthorizer()
+    authorizer.grant(
+        PluginEventGrantKey(artifact, source),
+        permissions,
+    )
+    authorizer.setRuntimeStatus(
+        scope,
+        PluginEventRuntimeStatus(
+            lifecycle = PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED,
+            hasUserInteractionContext = true,
+            sourceCapabilities = sourceCapabilities,
+        ),
+    )
+    val loginReasons = mutableListOf<String?>()
+    val codec = PluginSystemEventCodec()
+    val registry = PluginSystemEventHandlerRegistry().also { handlers ->
+        handlers.register(
+            dev.shinsou.kmp.plugin.events.TypedPluginSystemEventHandler<LoginRequestV1>(
+                name = PluginSystemEventNames.AUTH_LOGIN_REQUEST,
+                kind = PluginSystemEventKind.COMMAND,
+                payloadVersion = 1,
+                lane = PluginSystemEventLane.MODAL,
+                requiredPermission = PluginHostPermission.REQUEST_LOGIN_UI,
+                requiredSourceCapability = "LOGIN",
+                decode = { codec.decodePayload(it, LoginRequestV1.serializer()) },
+                execute = { _, payload ->
+                    loginReasons += payload.fallbackMessage
+                    PluginEventOutcome.Succeeded
+                },
+            ),
+        )
+        handlers.register(
+            dev.shinsou.kmp.plugin.events.TypedPluginSystemEventHandler<SourceRefreshRequestV1>(
+                name = PluginSystemEventNames.SOURCE_REFRESH_REQUEST,
+                kind = PluginSystemEventKind.COMMAND,
+                payloadVersion = 1,
+                lane = PluginSystemEventLane.REFRESH,
+                requiredPermission = PluginHostPermission.REQUEST_SOURCE_REFRESH,
+                decode = { codec.decodePayload(it, SourceRefreshRequestV1.serializer()) },
+                execute = { _, _ -> PluginEventOutcome.Succeeded },
+            ),
+        )
+    }
+    val contextRegistry = PluginEventContextRegistry(handleFactory = { "ctx-jsc-test" })
+    val gateway = PluginSystemEventGateway(
+        registry = registry,
+        authorizer = authorizer,
+        codec = codec,
+        contextRegistry = contextRegistry,
+        dispatcherScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    )
+    val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+    val network = PluginNetworkClient(
+        transport = PluginHttpTransport { error("No network request expected") },
+        storage = storage,
+    )
+    val sourceEntry = SourceIndexEntry("JSC events", "all", 778, "https://source.example")
+    return JavaScriptCoreSystemEventFixture(
+        gateway = gateway,
+        environment = ScriptPluginEnvironment(
+            network = network,
+            storage = storage,
+            systemEventSink = gateway,
+            boundPluginScope = scope,
+            systemEventContextRegistry = contextRegistry,
+            systemEventDeclaration = declaration,
+        ),
+        manifest = PluginManifest(
+            id = source.packageId,
+            name = "JSC events",
+            version = artifact.version,
+            versionCode = artifact.versionCode,
+            lang = "all",
+            script = "jsc.events.js",
+            signature = artifact.sha256,
+            sources = listOf(sourceEntry),
+            systemEvents = declaration,
+        ),
+        loginReasons = loginReasons,
+        contextRegistry = contextRegistry,
+        scope = scope,
+    )
+}

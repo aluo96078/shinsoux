@@ -72,18 +72,9 @@ class WorkspacePluginCompatibilityTest {
                 if (pluginId == "zh.bika") {
                     val page = runtime.getPopularManga(0)
                     assertTrue(page.mangas.isEmpty(), "Bika offline fixture should return an empty catalogue")
-                    // This test consumes a separately versioned workspace repository. The published
-                    // Bika fixture predates the optional login callback, while newer workspace copies
-                    // call it. Rhino bridge dispatch itself is covered by a deterministic runtime test.
-                    val expectedLoginRequests = if ("bridge.requestLogin(" in script) {
-                        listOf(Triple<Long, String, String?>(8_123_456L, "哔咔漫画", null))
-                    } else {
-                        emptyList()
-                    }
-                    assertEquals(
-                        expectedLoginRequests,
-                        loginRequests,
-                    )
+                    // A raw compatibility runtime has no host-bound artifact/source admission.
+                    // Even a newer workspace script that calls bridge.requestLogin must fail closed.
+                    assertEquals(emptyList(), loginRequests)
                 }
             } finally {
                 runtime.close()

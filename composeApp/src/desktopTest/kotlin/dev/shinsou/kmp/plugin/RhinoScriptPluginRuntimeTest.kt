@@ -1,9 +1,35 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.events.BoundPluginScope
+import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
+import dev.shinsou.kmp.plugin.events.LoginRequestV1
+import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
+import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+import dev.shinsou.kmp.plugin.events.PluginEventDisposition
+import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
+import dev.shinsou.kmp.plugin.events.PluginEventGrantKey
+import dev.shinsou.kmp.plugin.events.PluginEventOutcome
+import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
+import dev.shinsou.kmp.plugin.events.PluginHostPermission
+import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
+import dev.shinsou.kmp.plugin.events.PluginSystemEventCodec
+import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
+import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+import dev.shinsou.kmp.plugin.events.PluginSystemEventHandlerRegistry
+import dev.shinsou.kmp.plugin.events.PluginSystemEventKind
+import dev.shinsou.kmp.plugin.events.PluginSystemEventLane
+import dev.shinsou.kmp.plugin.events.PluginSystemEventNames
+import dev.shinsou.kmp.plugin.events.SourceRefreshRequestV1
+import dev.shinsou.kmp.plugin.events.TypedPluginSystemEventHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runTest
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -62,7 +88,7 @@ class RhinoScriptPluginRuntimeTest {
     }
 
     @Test
-    fun loginRequestsCarrySourcePayloadAndDefaultRequesterIsANoOp() = runTest {
+    fun directRuntimeCannotUseLegacyLoginRequesterWithoutExactHostAdmission() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
             transport = PluginHttpTransport { error("No network request expected") },
@@ -93,15 +119,9 @@ class RhinoScriptPluginRuntimeTest {
             ),
         )
         try {
-            assertEquals("true", runtime.getPopularManga(0).mangas.single().title)
-            assertEquals("true", runtime.getPopularManga(1).mangas.single().title)
-            assertEquals(
-                listOf(
-                    Triple(779L, "Login Source", "Members only"),
-                    Triple(779L, "Login Source", null),
-                ),
-                requests,
-            )
+            assertEquals("false", runtime.getPopularManga(0).mangas.single().title)
+            assertEquals("false", runtime.getPopularManga(1).mangas.single().title)
+            assertEquals(emptyList(), requests)
         } finally {
             runtime.close()
         }
@@ -143,6 +163,119 @@ class RhinoScriptPluginRuntimeTest {
         try {
             assertTrue(runtime.getFilterList().isEmpty())
             assertEquals("needle|2", runtime.getSearchManga(2, "needle", emptyList()).mangas.single().title)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun systemEventReceiptAndCapabilitiesStayBoundedAndSourceScoped() = runTest {
+        val fixture = rhinoSystemEventFixture()
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_SYSTEM_EVENT_FIXTURE,
+            fixture.manifest,
+            fixture.environment,
+        )
+        try {
+            assertEquals(
+                "true|1|command.auth.login.request|accepted",
+                runtime.getPopularManga(0).mangas.single().title,
+            )
+            assertTrue(fixture.gateway.awaitIdle())
+            assertEquals(listOf<String?>("Members only"), fixture.loginReasons)
+        } finally {
+            runtime.close()
+            fixture.gateway.close()
+        }
+    }
+
+    @Test
+    fun activeContextRefreshUsesHostIssuedHandleOnlyDuringInvocation() = runTest {
+        val fixture = rhinoSystemEventFixture(
+            declaration = PluginSystemEventDeclaration(
+                minVersion = 1,
+                maxVersion = 1,
+                required = setOf(PluginSystemEventNames.REFRESH_CAPABILITY),
+            ),
+            permissions = setOf(PluginHostPermission.REQUEST_SOURCE_REFRESH),
+            sourceCapabilities = setOf("CATALOGUE"),
+        )
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_ACTIVE_CONTEXT_FIXTURE,
+            fixture.manifest,
+            fixture.environment,
+        )
+        try {
+            val active = fixture.contextRegistry.withInvocation(fixture.scope) {
+                runtime.getPopularManga(0).mangas.single().title
+            }
+            assertEquals("true|accepted", active)
+            assertEquals("false|denied", runtime.getPopularManga(1).mangas.single().title)
+        } finally {
+            runtime.close()
+            fixture.gateway.close()
+        }
+    }
+
+    @Test
+    fun classShutterDeniesPackagesJavaRuntimeAndReflectionWithoutBreakingBridge() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { error("No network request expected") },
+            storage = storage,
+        )
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_SANDBOX_ESCAPE_FIXTURE,
+            PluginManifest(
+                id = "rhino.sandbox.escape",
+                name = "Rhino sandbox escape",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "rhino.sandbox.escape.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Sandbox", "all", 778, "https://source.example")),
+            ),
+            ScriptPluginEnvironment(network, storage),
+        )
+        try {
+            assertEquals("true|true|true|true|true|true", runtime.getPopularManga(0).mangas.single().title)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun httpPostBatchBridgeReturnsOrderedJsonResponses() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val requests = CopyOnWriteArrayList<PluginHttpRequest>()
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { request ->
+                requests += request
+                PluginHttpResponse(200, request.url.substringAfterLast('/').encodeToByteArray())
+            },
+            storage = storage,
+            requestGate = PerHostRequestGate(
+                PluginRateLimitProvider { PluginRateLimit(32, 0) },
+            ),
+        )
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_BATCH_FIXTURE,
+            PluginManifest(
+                id = "zh.batch",
+                name = "Batch",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "zh",
+                script = "zh.batch.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Batch", "zh", 779, "https://batch.example")),
+            ),
+            ScriptPluginEnvironment(network, storage),
+        )
+        try {
+            assertEquals("one|two|three", runtime.getPopularManga(0).mangas.single().title)
+            assertEquals(3, requests.size)
         } finally {
             runtime.close()
         }
@@ -281,6 +414,22 @@ private val RHINO_MULTI_SOURCE_FIXTURE = """
     };
 """.trimIndent()
 
+private val RHINO_BATCH_FIXTURE = """
+    var source = {
+      id: '779', baseUrl: 'https://batch.example',
+      getPopularManga: function(page) {
+        var raw = bridge.httpPostBatch(
+          [this.baseUrl + '/one', this.baseUrl + '/two', this.baseUrl + '/three'],
+          ['body-one', 'body-two', 'body-three'],
+          {'Accept':'text/plain'}
+        );
+        var values = JSON.parse(raw || '[]');
+        var manga = SManga.create(); manga.url = '/batch'; manga.title = values.join('|');
+        return new MangasPage([manga], false);
+      }
+    };
+""".trimIndent()
+
 private val RHINO_LOGIN_REQUEST_FIXTURE = """
     var source = {
       baseUrl: 'https://source.example',
@@ -306,6 +455,175 @@ private val RHINO_NO_FILTER_FIXTURE = """
       }
     };
 """.trimIndent()
+
+private val RHINO_SYSTEM_EVENT_FIXTURE = """
+    var source = {
+      baseUrl: 'https://source.example',
+      supportsLogin: true,
+      getPopularManga: function(page) {
+        var capabilities = bridge.getHostEventCapabilities();
+        var receipt = bridge.system.requestLogin('Members only');
+        var manga = SManga.create();
+        manga.url = '/events';
+        manga.title = [String(capabilities.enabled), String(capabilities.version),
+          capabilities.grantedCapabilities.join(','), receipt.disposition].join('|');
+        return new MangasPage([manga], false);
+      }
+    };
+""".trimIndent()
+
+private val RHINO_ACTIVE_CONTEXT_FIXTURE = """
+    var source = {
+      baseUrl: 'https://source.example',
+      getPopularManga: function(page) {
+        var contextPresent = bridge.getHostEventContext() !== null;
+        var receipt = bridge.system.requestRefresh('ACTIVE_CONTEXT');
+        var manga = SManga.create();
+        manga.url = '/active-context';
+        manga.title = [String(contextPresent), receipt.disposition].join('|');
+        return new MangasPage([manga], false);
+      }
+    };
+""".trimIndent()
+
+private val RHINO_SANDBOX_ESCAPE_FIXTURE = """
+    var source = {
+      baseUrl: 'https://source.example',
+      getPopularManga: function(page) {
+        var packagesDenied = false, javaDenied = false, runtimeDenied = false;
+        var getClassDenied = false, forNameDenied = false, bridgeAlive = false;
+        try { packagesDenied = Packages.java.lang.System === undefined; } catch (e) { packagesDenied = true; }
+        try { javaDenied = java.lang.System === undefined; } catch (e) { javaDenied = true; }
+        try { runtimeDenied = java.lang.Runtime === undefined; } catch (e) { runtimeDenied = true; }
+        try { getClassDenied = bridge.getClass() === undefined; } catch (e) { getClassDenied = true; }
+        try {
+          var klass = bridge.getClass();
+          forNameDenied = klass === undefined || klass.forName('java.lang.Runtime') === undefined;
+        } catch (e) { forNameDenied = true; }
+        try { bridgeAlive = bridge.getPreference('missing') === null; } catch (e) { bridgeAlive = false; }
+        var manga = SManga.create();
+        manga.url = '/sandbox';
+        manga.title = [packagesDenied, javaDenied, runtimeDenied, getClassDenied, forNameDenied, bridgeAlive].join('|');
+        return new MangasPage([manga], false);
+      }
+    };
+""".trimIndent()
+
+private data class RhinoSystemEventFixture(
+    val gateway: PluginSystemEventGateway,
+    val environment: ScriptPluginEnvironment,
+    val manifest: PluginManifest,
+    val loginReasons: MutableList<String?>,
+    val contextRegistry: PluginEventContextRegistry,
+    val scope: BoundPluginScope,
+)
+
+private fun rhinoSystemEventFixture(
+    declaration: PluginSystemEventDeclaration = PluginSystemEventDeclaration(
+        minVersion = 1,
+        maxVersion = 1,
+        required = setOf(PluginSystemEventNames.LOGIN_CAPABILITY),
+        optional = setOf(PluginSystemEventNames.DIAGNOSTIC_CAPABILITY),
+    ),
+    permissions: Set<PluginHostPermission> = setOf(PluginHostPermission.REQUEST_LOGIN_UI),
+    sourceCapabilities: Set<String> = setOf("LOGIN"),
+): RhinoSystemEventFixture {
+    val source = SourceKey(2, "rhino.events", "778")
+    val artifact = PluginArtifactIdentity(
+        packageId = source.packageId,
+        version = "1.0.0",
+        versionCode = 1,
+        sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    val scope = BoundPluginScopeFactory().bind(
+        artifactIdentity = artifact,
+        sourceKey = source,
+        runtimeInstanceId = "rhino-events-runtime",
+        runtimeGeneration = 1,
+    )
+    val authorizer = MutablePluginSystemEventAuthorizer()
+    authorizer.grant(
+        PluginEventGrantKey(artifact, source),
+        permissions,
+    )
+    authorizer.setRuntimeStatus(
+        scope,
+        PluginEventRuntimeStatus(
+            lifecycle = PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED,
+            hasUserInteractionContext = true,
+            sourceCapabilities = sourceCapabilities,
+        ),
+    )
+    val loginReasons = mutableListOf<String?>()
+    val codec = PluginSystemEventCodec()
+    val registry = PluginSystemEventHandlerRegistry().also { handlers ->
+        handlers.register(
+            TypedPluginSystemEventHandler<LoginRequestV1>(
+                name = PluginSystemEventNames.AUTH_LOGIN_REQUEST,
+                kind = PluginSystemEventKind.COMMAND,
+                payloadVersion = 1,
+                lane = PluginSystemEventLane.MODAL,
+                requiredPermission = PluginHostPermission.REQUEST_LOGIN_UI,
+                requiredSourceCapability = "LOGIN",
+                decode = { codec.decodePayload(it, LoginRequestV1.serializer()) },
+                execute = { _, payload ->
+                    loginReasons += payload.fallbackMessage
+                    PluginEventOutcome.Succeeded
+                },
+            ),
+        )
+        handlers.register(
+            TypedPluginSystemEventHandler<SourceRefreshRequestV1>(
+                name = PluginSystemEventNames.SOURCE_REFRESH_REQUEST,
+                kind = PluginSystemEventKind.COMMAND,
+                payloadVersion = 1,
+                lane = PluginSystemEventLane.REFRESH,
+                requiredPermission = PluginHostPermission.REQUEST_SOURCE_REFRESH,
+                decode = { codec.decodePayload(it, SourceRefreshRequestV1.serializer()) },
+                execute = { _, _ -> PluginEventOutcome.Succeeded },
+            ),
+        )
+    }
+    val contextRegistry = PluginEventContextRegistry(handleFactory = { "ctx-rhino-test" })
+    val gateway = PluginSystemEventGateway(
+        registry = registry,
+        authorizer = authorizer,
+        codec = codec,
+        contextRegistry = contextRegistry,
+        dispatcherScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    )
+    val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+    val network = PluginNetworkClient(
+        transport = PluginHttpTransport { error("No network request expected") },
+        storage = storage,
+    )
+    val sourceEntry = SourceIndexEntry("Rhino events", "all", 778, "https://source.example")
+    return RhinoSystemEventFixture(
+        gateway = gateway,
+        environment = ScriptPluginEnvironment(
+            network = network,
+            storage = storage,
+            systemEventSink = gateway,
+            boundPluginScope = scope,
+            systemEventContextRegistry = contextRegistry,
+            systemEventDeclaration = declaration,
+        ),
+        manifest = PluginManifest(
+            id = source.packageId,
+            name = "Rhino events",
+            version = artifact.version,
+            versionCode = artifact.versionCode,
+            lang = "all",
+            script = "rhino.events.js",
+            signature = artifact.sha256,
+            sources = listOf(sourceEntry),
+            systemEvents = declaration,
+        ),
+        loginReasons = loginReasons,
+        contextRegistry = contextRegistry,
+        scope = scope,
+    )
+}
 
 private val DOM_FIXTURE = """
     <html><body>

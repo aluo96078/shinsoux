@@ -48,6 +48,14 @@ class ShinsouStringsTest {
     }
 
     @Test
+    fun remoteSourceCollectionLabelIsLocalized() {
+        assertEquals("我的收藏庫", shinsouStringsFor("zh-TW").text("My library"))
+        assertEquals("我的收藏库", shinsouStringsFor("zh-CN").text("My library"))
+        assertEquals("マイライブラリ", shinsouStringsFor("ja-JP").text("My library"))
+        assertEquals("My library", shinsouStringsFor("en-US").text("My library"))
+    }
+
+    @Test
     fun platformSecurityMessagesFollowTheSelectedChineseLocale() {
         val key = "Set up a device passcode, PIN, password, or biometric authentication to use app lock."
         assertEquals(

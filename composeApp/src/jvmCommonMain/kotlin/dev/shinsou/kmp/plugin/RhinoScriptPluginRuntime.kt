@@ -1,14 +1,22 @@
 package dev.shinsou.kmp.plugin
 
 import io.ktor.http.Url
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import dev.shinsou.kmp.plugin.events.PluginEventDisposition
+import dev.shinsou.kmp.plugin.events.PluginEventReceipt
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.mozilla.javascript.Context
+import org.mozilla.javascript.ClassShutter
+import org.mozilla.javascript.BaseFunction
 import org.mozilla.javascript.Function
 import org.mozilla.javascript.NativeArray
 import org.mozilla.javascript.NativeJavaObject
@@ -70,12 +78,17 @@ private class RhinoScriptPluginRuntime private constructor(
         private set
     override var supportsLogin: Boolean = false
         private set
+    override var supportsFavorites: Boolean = false
+        private set
     override var headers: Map<String, String> = emptyMap()
         private set
     override val recentLogs: List<String> get() = logs.toList()
 
     private suspend fun initialize(script: String) = onEngine { context ->
-        scope = context.initStandardObjects()
+        // Do not expose Rhino's Java/package gateways through the default standard-object
+        // bootstrap.  The bridge is the only host surface; ClassShutter remains a second
+        // defense for reflective access once the bridge is installed.
+        scope = context.initSafeStandardObjects()
         bridge = RhinoPluginBridge(
             pluginId = manifest.id,
             sourceId = id,
@@ -84,7 +97,11 @@ private class RhinoScriptPluginRuntime private constructor(
             scopeProvider = { scope },
             logs = logs,
         )
-        ScriptableObject.putProperty(scope, "bridge", Context.javaToJS(bridge, scope))
+        // Do not pass the Kotlin bridge through Rhino's Java reflection adapter.  Besides
+        // making every public method visible, that adapter makes `getClass()` a reflection
+        // escape hatch even when the class shutter denies all Java packages.  The script gets a
+        // native Scriptable facade whose methods are bound directly to the host object.
+        ScriptableObject.putProperty(scope, "bridge", RhinoBridgeScriptable(scope, bridge))
         selectedSource?.let { source ->
             ScriptableObject.putProperty(scope, "__shinsouRequestedSourceId", source.id.toString())
             ScriptableObject.putProperty(scope, "__shinsouRequestedSourceName", source.name)
@@ -100,6 +117,7 @@ private class RhinoScriptPluginRuntime private constructor(
             1,
             null,
         )
+        context.evaluateString(scope, RHINO_SYSTEM_EVENT_BOOTSTRAP, "shinsou-system-events.js", 1, null)
         context.evaluateString(scope, script, manifest.script, 1, null)
         sourceObject = selectSourceObject()
 
@@ -115,6 +133,7 @@ private class RhinoScriptPluginRuntime private constructor(
         }
         supportsLatest = sourceObject.booleanProperty("supportsLatest") ?: false
         supportsLogin = sourceObject.booleanProperty("supportsLogin") ?: false
+        supportsFavorites = sourceObject.booleanProperty("supportsFavorites") ?: false
         bridge.supportsLogin = supportsLogin
         headers = sourceObject.property("headers").toStringMap()
         if (headers.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotEmpty()) {
@@ -158,6 +177,13 @@ private class RhinoScriptPluginRuntime private constructor(
 
     override suspend fun getLatestUpdates(page: Int): MangasPage =
         invokeMangasPage("getLatestUpdates", listOf(page))
+
+    override suspend fun getFavoriteManga(page: Int): MangasPage =
+        if (hasFunction("getFavoriteManga")) {
+            invokeMangasPage("getFavoriteManga", listOf(page))
+        } else {
+            MangasPage(emptyList(), false)
+        }
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
         invokeMangasPage(
@@ -245,6 +271,7 @@ private class RhinoScriptPluginRuntime private constructor(
         try {
             context.optimizationLevel = -1
             context.languageVersion = Context.VERSION_ES6
+            context.setClassShutter(ClassShutter { false })
             block(context)
         } finally {
             Context.exit()
@@ -279,7 +306,7 @@ private class RhinoScriptPluginRuntime private constructor(
     }
 }
 
-/** Public for Rhino reflection; applications should interact through ScriptPluginRuntime. */
+/** Host-side bridge; scripts receive only the native whitelist facade below. */
 public class RhinoPluginBridge internal constructor(
     private val pluginId: String,
     private val sourceId: Long,
@@ -324,6 +351,29 @@ public class RhinoPluginBridge internal constructor(
                 referer = sourceHeaders.header("Referer"),
             ).bodyText()
         }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Returns a JSON string because the reviewed ShuYue script parses the bridge result itself. */
+    public fun httpPostBatch(urls: Any?, bodies: Any?, headers: Any?): Any? = try {
+        val urlList = urls.toStringList()
+        val bodyList = bodies.toStringList()
+        runBlocking {
+            val responses = environment.network.postBatch(
+                sourceId = sourceId,
+                urls = urlList,
+                bodies = bodyList,
+                headers = headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            )
+            PluginJson.encodeToString(JsonArray(responses.map { JsonPrimitive(it.bodyText()) }))
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (_: Throwable) {
         null
     }
@@ -410,17 +460,78 @@ public class RhinoPluginBridge internal constructor(
     public fun requestLogin(): Boolean = requestLogin("")
 
     public fun requestLogin(reason: String?): Boolean {
-        if (!supportsLogin) return false
-        return try {
-            environment.loginRequester.request(
-                sourceId = sourceId,
-                sourceName = sourceName,
-                reason = reason?.takeIf(String::isNotBlank),
-            )
-        } catch (_: Throwable) {
-            false
-        }
+        return submitLegacyLoginCompatibility(environment, supportsLogin, reason)
     }
+
+    /** Single bounded native transport for every negotiated system-v1 message. */
+    public fun requestHostEvent(envelope: String): String {
+        val sink = environment.systemEventSink
+        val boundScope = environment.boundPluginScope
+        val receipt = if (sink == null || boundScope == null) {
+            PluginEventReceipt(
+                messageId = "",
+                disposition = PluginEventDisposition.UNSUPPORTED,
+            )
+        } else {
+            try {
+                sink.submit(boundScope, envelope.encodeToByteArray())
+            } catch (_: Throwable) {
+                PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
+            }
+        }
+        return PluginJson.encodeToString(receipt)
+    }
+
+    /** Returns only the opaque host-issued handle for the current visible V2 invocation. */
+    public fun getHostEventContext(): String? = environment.currentSystemEventContext()
+
+    /** Returns a native JS object rather than a Java Map so Rhino cannot expose map methods. */
+    public fun getHostEventCapabilities(): Scriptable {
+        val context = Context.getCurrentContext()
+            ?: throw IllegalStateException("Host event capabilities require an active Rhino context")
+        val result = context.newObject(scopeProvider())
+        val negotiation = hostEventNegotiation()
+        ScriptableObject.putProperty(result, "enabled", negotiation?.enabled == true)
+        ScriptableObject.putProperty(result, "protocol", "dev.shinsou.system")
+        ScriptableObject.putProperty(result, "version", negotiation?.version ?: null)
+        ScriptableObject.putProperty(
+            result,
+            "grantedCapabilities",
+            context.newArray(
+                scopeProvider(),
+                rhinoObjectArray(negotiation?.grantedCapabilities.orEmpty()),
+            ),
+        )
+        val limits = context.newObject(scopeProvider())
+        negotiation?.hardLimits?.let { hardLimits ->
+            ScriptableObject.putProperty(limits, "maxEnvelopeBytes", hardLimits.maxEnvelopeBytes)
+            ScriptableObject.putProperty(limits, "maxNestingDepth", hardLimits.maxNestingDepth)
+            ScriptableObject.putProperty(limits, "maxReasonBytes", hardLimits.maxReasonBytes)
+            ScriptableObject.putProperty(limits, "maxDiagnosticBytes", hardLimits.maxDiagnosticBytes)
+            ScriptableObject.putProperty(limits, "maxMapEntries", hardLimits.maxMapEntries)
+            ScriptableObject.putProperty(limits, "maxListEntries", hardLimits.maxListEntries)
+            ScriptableObject.putProperty(limits, "maxIdentifierBytes", hardLimits.maxIdentifierBytes)
+            ScriptableObject.putProperty(limits, "maxEventNameBytes", hardLimits.maxEventNameBytes)
+            ScriptableObject.putProperty(limits, "maxPerSourcePending", hardLimits.maxPerSourcePending)
+            ScriptableObject.putProperty(limits, "maxGlobalPending", hardLimits.maxGlobalPending)
+            ScriptableObject.putProperty(limits, "tokenBurst", hardLimits.tokenBurst)
+            ScriptableObject.putProperty(limits, "tokenPerMinute", hardLimits.tokenPerMinute)
+            ScriptableObject.putProperty(limits, "ttlMillis", hardLimits.ttlMillis)
+            ScriptableObject.putProperty(limits, "loginCooldownMillis", hardLimits.loginCooldownMillis)
+            ScriptableObject.putProperty(limits, "diagnosticAggregationMillis", hardLimits.diagnosticAggregationMillis)
+            ScriptableObject.putProperty(limits, "maxDiagnosticAggregations", hardLimits.maxDiagnosticAggregations)
+        }
+        ScriptableObject.putProperty(result, "hardLimits", limits)
+        return result
+    }
+
+    private fun hostEventNegotiation(): dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation? =
+        environment.systemEventDeclaration?.let { declaration ->
+            val gateway = environment.systemEventSink as? dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+            val boundScope = environment.boundPluginScope
+            if (gateway != null && boundScope != null) gateway.negotiate(boundScope, declaration)
+            else environment.systemEventNegotiation
+        } ?: environment.systemEventNegotiation
 
     public fun getCookie(name: String, url: String): String? = runBlocking {
         val target = Url(url)
@@ -476,6 +587,194 @@ public class RhinoPluginBridge internal constructor(
     private fun element(id: Number): Element? = node(id) as? Element
 }
 
+/**
+ * Native Rhino view of [RhinoPluginBridge].
+ *
+ * The Java reflection adapter must not be used here: it exposes inherited methods such as
+ * `getClass()` and lets a script turn an otherwise harmless host object into a reflection
+ * starting point.  Each function below calls the bridge directly from host code and converts
+ * collection results into native Rhino values before returning them to the script.
+ */
+private class RhinoBridgeScriptable(
+    scope: Scriptable,
+    private val bridge: RhinoPluginBridge,
+) : ScriptableObject() {
+    init {
+        setParentScope(scope)
+        setPrototype(ScriptableObject.getObjectPrototype(scope))
+
+        bind("httpGet") { _, _, args -> bridge.httpGet(stringArg(args, 0)) }
+        bind("httpGetWithHeaders") { _, _, args ->
+            bridge.httpGetWithHeaders(stringArg(args, 0), rawArg(args, 1))
+        }
+        bind("httpPost") { _, _, args ->
+            bridge.httpPost(stringArg(args, 0), stringArg(args, 1), rawArg(args, 2))
+        }
+        bind("httpPostBatch") { _, _, args ->
+            bridge.httpPostBatch(rawArg(args, 0), rawArg(args, 1), rawArg(args, 2))
+        }
+
+        bind("htmlParse") { _, _, args -> bridge.htmlParse(stringArg(args, 0)) }
+        bind("htmlParseFragment") { _, _, args ->
+            bridge.htmlParseFragment(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("parseHtml") { _, _, args ->
+            bridge.parseHtml(stringArg(args, 0), stringArg(args, 1))
+        }
+
+        bind("domSelect") { _, _, args -> bridge.domSelect(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domFirst") { _, _, args -> bridge.domFirst(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domText") { _, _, args -> bridge.domText(numberArg(args, 0)) }
+        bind("domOwnText") { _, _, args -> bridge.domOwnText(numberArg(args, 0)) }
+        bind("domHtml") { _, _, args -> bridge.domHtml(numberArg(args, 0)) }
+        bind("domOuterHtml") { _, _, args -> bridge.domOuterHtml(numberArg(args, 0)) }
+        bind("domAttr") { _, _, args -> bridge.domAttr(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domHasAttr") { _, _, args -> bridge.domHasAttr(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domAbsUrl") { _, _, args -> bridge.domAbsUrl(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domTagName") { _, _, args -> bridge.domTagName(numberArg(args, 0)) }
+        bind("domClassName") { _, _, args -> bridge.domClassName(numberArg(args, 0)) }
+        bind("domId") { _, _, args -> bridge.domId(numberArg(args, 0)) }
+        bind("domChildren") { _, _, args -> bridge.domChildren(numberArg(args, 0)) }
+        bind("domParent") { _, _, args -> bridge.domParent(numberArg(args, 0)) }
+        bind("domNextSibling") { _, _, args -> bridge.domNextSibling(numberArg(args, 0)) }
+        bind("domPrevSibling") { _, _, args -> bridge.domPrevSibling(numberArg(args, 0)) }
+        bind("domRemove") { _, _, args -> bridge.domRemove(numberArg(args, 0)) }
+        bind("domRelease") { _, _, args -> bridge.domRelease(numberArg(args, 0)) }
+        bind("domReleaseAll") { _, _, _ -> bridge.domReleaseAll() }
+
+        bind("log") { _, _, args ->
+            if (args.size >= 2) bridge.log(stringArg(args, 0), rawArg(args, 1))
+            else bridge.log(stringArg(args, 0))
+        }
+        bind("getPreference") { _, _, args -> bridge.getPreference(stringArg(args, 0)) }
+        bind("setPreference") { _, _, args ->
+            bridge.setPreference(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("getCredentialUsername") { _, _, _ -> bridge.getCredentialUsername() }
+        bind("getCredentialPassword") { _, _, _ -> bridge.getCredentialPassword() }
+        bind("setCredential") { _, _, args ->
+            bridge.setCredential(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("clearCredential") { _, _, _ -> bridge.clearCredential() }
+        bind("hasCredential") { _, _, _ -> bridge.hasCredential() }
+        bind("requestLogin") { _, _, args ->
+            if (args.isEmpty()) bridge.requestLogin() else bridge.requestLogin(nullableStringArg(args, 0))
+        }
+
+        bind("requestHostEvent") { _, _, args -> bridge.requestHostEvent(stringArg(args, 0)) }
+        bind("getHostEventContext") { _, _, _ -> bridge.getHostEventContext() }
+        bind("getHostEventCapabilities") { _, _, _ -> bridge.getHostEventCapabilities() }
+
+        bind("getCookie") { _, _, args ->
+            bridge.getCookie(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("getCookies") { _, _, args -> bridge.getCookies(stringArg(args, 0)) }
+        bind("setCookie") { _, _, args ->
+            bridge.setCookie(
+                name = stringArg(args, 0),
+                value = stringArg(args, 1),
+                domain = stringArg(args, 2),
+                path = stringArg(args, 3),
+                expirySeconds = numberArg(args, 4),
+            )
+        }
+        bind("deleteCookie") { _, _, args ->
+            bridge.deleteCookie(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("clearCookies") { _, _, _ -> bridge.clearCookies() }
+    }
+
+    override fun getClassName(): String = "ShinsouBridge"
+
+    private fun bind(
+        name: String,
+        handler: (Context, Scriptable, Array<Any?>) -> Any?,
+    ) {
+        val fn = BridgeFunction(handler).also {
+            val parent = getParentScope() ?: this
+            it.setParentScope(parent)
+            it.setPrototype(ScriptableObject.getFunctionPrototype(parent))
+        }
+        ScriptableObject.putProperty(this, name, fn)
+    }
+
+    private class BridgeFunction(
+        private val handler: (Context, Scriptable, Array<Any?>) -> Any?,
+    ) : BaseFunction() {
+        override fun call(
+            context: Context,
+            scope: Scriptable,
+            thisObj: Scriptable,
+            args: Array<Any?>,
+        ): Any? = bridgeResult(context, scope, handler(context, scope, args))
+    }
+}
+
+private fun rawArg(args: Array<Any?>, index: Int): Any? = args.getOrNull(index)
+
+private fun stringArg(args: Array<Any?>, index: Int): String =
+    Context.toString(rawArg(args, index) ?: "")
+
+private fun nullableStringArg(args: Array<Any?>, index: Int): String? =
+    rawArg(args, index)?.takeUnless { it === Undefined.instance }?.let(Context::toString)
+
+private fun numberArg(args: Array<Any?>, index: Int): Number = when (val value = rawArg(args, index)) {
+    is Number -> value
+    null, Undefined.instance -> 0
+    else -> Context.toNumber(value)
+}
+
+private fun bridgeResult(context: Context, scope: Scriptable, value: Any?): Any? = when (value) {
+    null -> null
+    is Unit -> Undefined.instance
+    is Undefined, is Scriptable -> value
+    is Map<*, *> -> context.newObject(scope).also { objectValue ->
+        value.forEach { (key, nested) ->
+            if (key != null) {
+                ScriptableObject.putProperty(objectValue, key.toString(), bridgeResult(context, scope, nested))
+            }
+        }
+    }
+    is Iterable<*> -> context.newArray(
+        scope,
+        rhinoObjectArray(value.map { nested -> bridgeResult(context, scope, nested) }),
+    )
+    is Array<*> -> context.newArray(
+        scope,
+        rhinoObjectArray(value.map { nested -> bridgeResult(context, scope, nested) }),
+    )
+    is IntArray -> context.newArray(scope, rhinoObjectArray(value.map(Int::toDouble)))
+    is LongArray -> context.newArray(scope, rhinoObjectArray(value.map(Long::toDouble)))
+    is DoubleArray -> context.newArray(scope, rhinoObjectArray(value.asIterable()))
+    is FloatArray -> context.newArray(scope, rhinoObjectArray(value.map(Float::toDouble)))
+    is Boolean, is Number, is String -> value
+    // Never return an arbitrary host object through the facade.  The bridge methods above only
+    // use the explicitly handled shapes; stringify an unexpected value instead of creating a
+    // new Java reflection surface.
+    else -> Context.toString(value)
+}
+
+private const val RHINO_SYSTEM_EVENT_BOOTSTRAP: String = """
+(function(){
+  function submit(name,kind,payload,options){
+    options=options||{};
+    var envelope={protocol:'dev.shinsou.system',version:1,kind:String(kind),name:String(name),
+      id:String(options.id||('event-'+Date.now())),payloadVersion:1,payload:payload||{}};
+    if(options.idempotencyKey!=null)envelope.idempotencyKey=String(options.idempotencyKey);
+    if(options.contextRef!=null)envelope.contextRef=String(options.contextRef);
+    var receipt=bridge.requestHostEvent(JSON.stringify(envelope));
+    try{return JSON.parse(String(receipt));}catch(e){return null;}
+  }
+  bridge.system={
+    submit:submit,
+    requestLogin:function(reason){return submit('auth.login.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    requestRefresh:function(scope,contextRef){scope=String(scope||'SELF');if(scope==='ACTIVE_CONTEXT'&&contextRef==null)contextRef=bridge.getHostEventContext();return submit('source.refresh.request','command',{scope:scope,reasonCode:null},{contextRef:contextRef});},
+    requestLogout:function(reason){return submit('auth.logout.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    reportMessage:function(message){return submit('diagnostic.message.report','event',message||{});}
+  };
+})();
+"""
+
 private fun Scriptable.property(name: String): Any? = ScriptableObject.getProperty(this, name)
     .takeUnless { it === Scriptable.NOT_FOUND || it is Undefined }
 
@@ -489,10 +788,13 @@ private fun Any?.toRhino(context: Context, scope: Scriptable): Any? = when (this
             if (key != null) ScriptableObject.putProperty(objectValue, key.toString(), value.toRhino(context, scope))
         }
     }
-    is Iterable<*> -> context.newArray(scope, map { it.toRhino(context, scope) }.toTypedArray())
-    is Array<*> -> context.newArray(scope, map { it.toRhino(context, scope) }.toTypedArray())
+    is Iterable<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
+    is Array<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
     else -> Context.javaToJS(this, scope)
 }
+
+/** Rhino's Object[] overload rejects arrays retaining a Kotlin/JVM component type. */
+private fun rhinoObjectArray(values: Iterable<*>): Array<Any?> = values.map { it }.toTypedArray()
 
 private fun Any?.fromRhino(depth: Int = 0): Any? {
     if (depth > 32) return null
@@ -542,6 +844,7 @@ private fun Any?.toStringAnyMap(): Map<String, Any?>? = when (this) {
 private fun Any?.toAnyList(): List<Any?> = when (this) {
     is List<*> -> this
     is Array<*> -> toList()
+    is NativeArray -> (0 until length.toInt()).map { index -> get(index, this).fromRhino() }
     else -> emptyList()
 }
 

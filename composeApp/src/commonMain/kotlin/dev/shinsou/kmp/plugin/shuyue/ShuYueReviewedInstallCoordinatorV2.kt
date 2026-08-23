@@ -151,6 +151,13 @@ public class ShuYueReviewedInstallCoordinatorV2(
                 require(review.reviewStatus == ShuYueReviewStatusV2.REVIEWED) {
                     "Reviewed ShuYue installation is no longer reviewed"
                 }
+                // Compatibility-only packages remain durable for migration/uninstall, but a
+                // stopped source must never be evaluated again after an app restart.
+                if (ShuYueReviewedPluginCatalogV2.find(installation.identity)?.legacyCompatibilityOnly == true) {
+                    manager.uninstallExtensionRuntimeV2(installation.identity.packageId)
+                    blocked += installation.identity.packageId
+                    return@forEach
+                }
                 manager.installReviewedShuYueRuntimeV2(
                     admission = admission,
                     quarantineId = installation.quarantineId,

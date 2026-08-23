@@ -4,38 +4,38 @@
   "index": {
     "path": "index.json",
     "size": 1809,
-    "sha256": "b6088b13548d2ec1f59e4a620fbf308ee67e97cf2b8734b2291c6a93725a7631"
+    "sha256": "b095b72ce4c59eed722be2dfa91a7729851634aae62a5b3881356c92f84a1090"
   },
   "scripts": [
     {
       "id": "zh.wenku8",
       "path": "wenku8.js",
       "sourceUrl": "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8.js",
-      "scriptUrl": "wenku8.js?v=1.6.12",
-      "version": "1.6.12",
-      "versionCode": 30,
-      "size": 29431,
-      "sha256": "a77c9b81e4adcd86d6cb3b1126922345a1e69fd56658639188e6cf0e925655c3"
+      "scriptUrl": "wenku8.js?v=1.6.14",
+      "version": "1.6.14",
+      "versionCode": 32,
+      "size": 35174,
+      "sha256": "5536b392476d59000770a15e2f759c3fb5f5d51b551c03ae42182c7eb5610b9e"
     },
     {
       "id": "zh.wenku8.api",
       "path": "wenku8-api.js",
       "sourceUrl": "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/wenku8-api.js",
-      "scriptUrl": "wenku8-api.js?v=1.0.2",
-      "version": "1.0.2",
-      "versionCode": 3,
-      "size": 27986,
-      "sha256": "89a9d3236dd7ea1655cad57ddeaca100cc1a8ff2b99acdcd06b8fd69cf13d7ce"
+      "scriptUrl": "wenku8-api.js?v=1.0.4",
+      "version": "1.0.4",
+      "versionCode": 5,
+      "size": 33872,
+      "sha256": "aaa7875360a52dd3393288bbb4f1e85d38ddd6a42041a0e489d7585db8bb5996"
     },
     {
       "id": "zh.biquge.tw",
       "path": "biquge-tw.js",
       "sourceUrl": "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/biquge-tw.js",
-      "scriptUrl": "biquge-tw.js?v=1.0.1",
-      "version": "1.0.1",
-      "versionCode": 2,
-      "size": 17966,
-      "sha256": "2dd28789d8be4d3d5ac88926bc1e143e5b46198b3fa579f46baf510f2591de78"
+      "scriptUrl": "biquge-tw.js?v=1.0.3",
+      "version": "1.0.3",
+      "versionCode": 4,
+      "size": 22880,
+      "sha256": "74a961995aae9bef40444a819011e3b7702fcce6ce179fbd8e1ff6c733468303"
     }
   ]
 }

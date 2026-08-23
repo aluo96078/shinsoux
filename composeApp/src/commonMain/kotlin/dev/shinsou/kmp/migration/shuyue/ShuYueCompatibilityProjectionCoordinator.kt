@@ -465,6 +465,8 @@ private fun applyImportedSettings(
         tintColor = importedTint,
     )
     val reader = current.reader.copy(
+        novelFontSizeSp = imported.fontSizeSp.coerceIn(12f, 36f),
+        novelLineHeightMultiplier = (imported.lineHeightPercent / 100f).coerceIn(1.15f, 2.4f),
         keepScreenOn = imported.keepScreenOn,
         volumeKeys = imported.volumeKeysEnabled,
     )

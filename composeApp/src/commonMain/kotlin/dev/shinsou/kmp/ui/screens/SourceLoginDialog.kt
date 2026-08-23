@@ -50,7 +50,8 @@ internal fun SourceLoginDialog(
     var errorMessage by remember(request) { mutableStateOf<String?>(null) }
 
     fun dismiss() {
-        if (!busy) callbacks.dismissSourceLoginRequest(request.sourceId)
+        if (!busy) request.eventId?.let(callbacks::dismissSourceLoginEvent)
+            ?: callbacks.dismissSourceLoginRequest(request.sourceId)
     }
 
     fun submit() {
@@ -61,15 +62,20 @@ internal fun SourceLoginDialog(
             // Paint the modal and its progress state before the plugin performs synchronous work.
             withFrameNanos { }
             runCatching {
-                callbacks.saveSourceCredentials(request.sourceId, username, password)
+                request.eventId?.let { eventId ->
+                    callbacks.saveSourceEventCredentials(eventId, request.sourceId, username, password)
+                } ?: callbacks.saveSourceCredentials(request.sourceId, username, password)
             }.onSuccess { success ->
                 if (success) {
-                    callbacks.dismissSourceLoginRequest(request.sourceId)
+                    request.eventId?.let(callbacks::dismissSourceLoginEvent)
+                        ?: callbacks.dismissSourceLoginRequest(request.sourceId)
                 } else {
                     errorMessage = strings.text("Login failed. Check your username and password.")
                 }
-            }.onFailure { error ->
-                errorMessage = error.message ?: strings.text("Unable to save credentials")
+            }.onFailure {
+                // Plugin/runtime failures may contain headers, cookies, stack text, or secrets.
+                // Event UI exposes only a stable host-owned message.
+                errorMessage = strings.text("Unable to save credentials")
             }
             busy = false
         }

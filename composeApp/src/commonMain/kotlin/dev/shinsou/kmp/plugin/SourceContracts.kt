@@ -15,12 +15,16 @@ public interface Source {
 
 public interface CatalogueSource : Source {
     public val supportsLatest: Boolean
+    /** Whether the source exposes an account-owned remote collection. */
+    public val supportsFavorites: Boolean get() = false
     public val baseUrl: String
     public val headers: Map<String, String> get() = emptyMap()
 
     public suspend fun getPopularManga(page: Int): MangasPage
     public suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage
     public suspend fun getLatestUpdates(page: Int): MangasPage
+    /** Loads the source-owned collection without mixing it with the host's local library. */
+    public suspend fun getFavoriteManga(page: Int): MangasPage = MangasPage(emptyList(), false)
     public suspend fun getFilterList(): FilterList
 }
 

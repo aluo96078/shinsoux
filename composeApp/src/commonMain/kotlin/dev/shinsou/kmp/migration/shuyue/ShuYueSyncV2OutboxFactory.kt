@@ -191,6 +191,11 @@ public object ShuYueSyncV2OutboxFactory : ShuYueImportOutboxFactory<SyncDraft> {
         ),
         "appearance.amoledDark" to SyncValue.BooleanValue(settings.theme == "OLED"),
         "appearance.tintColor" to SyncValue.StringValue(settings.accentColor.lowercase()),
+        "reader.novelFontSizeSp" to
+            SyncValue.DoubleValue(settings.fontSizeSp.coerceIn(12f, 36f).toDouble()),
+        "reader.novelLineHeightMultiplier" to SyncValue.DoubleValue(
+            (settings.lineHeightPercent / 100.0).coerceIn(1.15, 2.4),
+        ),
         "browse.showNsfwSources" to SyncValue.BooleanValue(settings.showNsfwSources),
     )
 

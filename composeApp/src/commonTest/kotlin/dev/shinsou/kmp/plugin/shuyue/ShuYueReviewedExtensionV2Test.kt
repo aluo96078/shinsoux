@@ -30,6 +30,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class ShuYueReviewedExtensionV2Test {
     @Test
@@ -103,6 +104,43 @@ class ShuYueReviewedExtensionV2Test {
     }
 
     @Test
+    fun duplicatePackageVersionIsAdmittedOnlyForItsExactPinnedDigest() = runTest {
+        val firstBytes = "reviewed v2 body A".encodeToByteArray()
+        val secondBytes = "reviewed v2 body B".encodeToByteArray()
+        val firstProfile = profile(Sha256.hex(firstBytes))
+        val secondProfile = profile(Sha256.hex(secondBytes))
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val factory = RecordingFactory(firstProfile)
+        val admission = ShuYueReviewedPluginAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = factory,
+            reviewedProfiles = listOf(firstProfile, secondProfile),
+        )
+
+        val first = admission.quarantine(candidate(firstBytes))
+        val second = admission.quarantine(candidate(secondBytes))
+        assertEquals(ShuYueReviewStatusV2.REVIEWED, first.reviewStatus)
+        assertEquals(ShuYueReviewStatusV2.REVIEWED, second.reviewStatus)
+        assertEquals(firstProfile.identity, first.identity)
+        assertEquals(secondProfile.identity, second.identity)
+
+        approvals.trust(first.identity)
+        approvals.grant(first.identity, firstProfile.requiredPermissions)
+        approvals.trust(second.identity)
+        approvals.grant(second.identity, secondProfile.requiredPermissions)
+        admission.createRuntime(first.quarantineId)
+        admission.createRuntime(second.quarantineId)
+        assertEquals(2, factory.creations)
+
+        val unknownDigest = admission.quarantine(
+            candidate("reviewed v2 body C".encodeToByteArray()),
+        )
+        assertEquals(ShuYueReviewStatusV2.DIGEST_MISMATCH, unknownDigest.reviewStatus)
+    }
+
+    @Test
     fun admittedFactoryCannotReplaceTheReviewedRuntimeDescriptor() = runTest {
         val script = "reviewed fixture script".encodeToByteArray()
         val profile = profile(Sha256.hex(script))
@@ -132,8 +170,8 @@ class ShuYueReviewedExtensionV2Test {
     @Test
     fun builtInReviewedCataloguePinsWenkuAndBiqugeOpaqueIdsAndDigests() {
         assertEquals(
-            listOf("zh.wenku8", "zh.wenku8.api", "zh.biquge.tw"),
-            ShuYueReviewedPluginCatalogV2.profiles.map { it.identity.packageId },
+            setOf("zh.wenku8", "zh.wenku8.api", "zh.biquge.tw"),
+            ShuYueReviewedPluginCatalogV2.profiles.map { it.identity.packageId }.toSet(),
         )
         ShuYueReviewedPluginCatalogV2.profiles.forEach { profile ->
             assertEquals(profile.identity.packageId, profile.sourceId)
@@ -146,6 +184,37 @@ class ShuYueReviewedExtensionV2Test {
             assertEquals(setOf(ContentKind.PLAIN_TEXT), profile.descriptor.supportedContentKinds)
         }
         assertEquals(null, ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId("unknown.source"))
+        assertEquals(
+            setOf("zh.wenku8.api", "zh.biquge.tw"),
+            ShuYueReviewedPluginCatalogV2.installableProfiles.map { it.identity.packageId }.toSet(),
+        )
+        assertTrue(
+            ShuYueReviewedPluginCatalogV2.profiles.filter { it.identity.packageId == "zh.wenku8" }
+                .all { it.legacyCompatibilityOnly },
+        )
+        assertEquals(
+            "aaa7875360a52dd3393288bbb4f1e85d38ddd6a42041a0e489d7585db8bb5996",
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile("zh.wenku8.api", "1.0.4", 5, null)
+                ?.identity?.sha256,
+        )
+        assertEquals(
+            "5a9d1ac0d8263629e82332a88b2a7ed4eb6efb857804a8ae6ae946b2eb23b627",
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.wenku8.api",
+                "1.0.4",
+                5,
+                "5a9d1ac0d8263629e82332a88b2a7ed4eb6efb857804a8ae6ae946b2eb23b627",
+            )?.identity?.sha256,
+        )
+        assertEquals(
+            null,
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.wenku8.api",
+                "1.0.4",
+                5,
+                "f".repeat(64),
+            ),
+        )
     }
 
     private fun candidate(bytes: ByteArray, reported: String? = Sha256.hex(bytes)): ShuYueScriptCandidateV2 =

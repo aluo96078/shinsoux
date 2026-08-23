@@ -187,6 +187,39 @@ class ExtensionV2ContractsTest {
     }
 
     @Test
+    fun browseFilterSchemaPreservesLegacyControlsAndRejectsInvalidSelections() {
+        val schema = BrowseOptionsSchemaV2(
+            filters = listOf(
+                BrowseFilterV2.Header("分類"),
+                BrowseFilterV2.Select("類型", listOf("全部", "玄幻"), state = 0),
+                BrowseFilterV2.Text("關鍵字", ""),
+                BrowseFilterV2.CheckBox("完結", false),
+                BrowseFilterV2.TriState("標籤", BrowseTriStateV2.IGNORE),
+                BrowseFilterV2.Group(
+                    "進階",
+                    listOf(
+                        BrowseFilterV2.Sort(
+                            "排序",
+                            listOf("更新", "人氣"),
+                            BrowseSortSelectionV2(index = 1, ascending = false),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(6, schema.filters.size)
+        assertEquals(
+            schema.filters,
+            BrowseOptionsV2(filters = schema.filters).filters,
+        )
+        assertFailsWith<IllegalArgumentException> {
+            BrowseOptionsSchemaV2(
+                filters = listOf(BrowseFilterV2.Select("類型", listOf("全部"), state = 2)),
+            )
+        }
+    }
+
+    @Test
     fun epubPayloadRequiresCanonicalArchiveMediaTypeAndResolvableGraph() {
         val sourceKey = SourceKey(2, "example.package", "epub-source")
         val archiveRequest = RemoteRequestPlanV2(

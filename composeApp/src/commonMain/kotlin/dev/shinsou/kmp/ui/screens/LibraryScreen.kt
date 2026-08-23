@@ -78,6 +78,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -263,6 +267,7 @@ fun LibraryScreen(
                     LibraryList(
                         items = visibleItems,
                         selectedIds = selectedMangaIds,
+                        allowLongPressSelection = !compactChrome,
                         onOpen = onOpenManga,
                         onContinue = onContinueReading,
                         onToggleSelection = { id ->
@@ -276,6 +281,7 @@ fun LibraryScreen(
                         displayMode = mode,
                         portraitColumns = settings.portraitColumns,
                         landscapeColumns = settings.landscapeColumns,
+                        allowLongPressSelection = !compactChrome,
                         onOpen = onOpenManga,
                         onContinue = onContinueReading,
                         onToggleSelection = { id ->
@@ -640,6 +646,7 @@ private fun LibraryGrid(
     displayMode: LibraryDisplayMode,
     portraitColumns: Int,
     landscapeColumns: Int,
+    allowLongPressSelection: Boolean,
     onOpen: (Long) -> Unit,
     onContinue: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
@@ -657,13 +664,19 @@ private fun LibraryGrid(
                 val manga = item.libraryManga.manga
                 val selected = manga.id in selectedIds
                 Column(
-                    modifier = Modifier.combinedClickable(
-                        onLongClick = { onToggleSelection(manga.id) },
-                        onClick = {
-                            if (selectedIds.isNotEmpty()) onToggleSelection(manga.id)
-                            else onOpen(manga.id)
-                        },
-                    ),
+                    modifier = Modifier
+                        .librarySecondarySelection(selectedIds) { onToggleSelection(manga.id) }
+                        .combinedClickable(
+                            onLongClick = if (allowLongPressSelection) {
+                                { onToggleSelection(manga.id) }
+                            } else {
+                                null
+                            },
+                            onClick = {
+                                if (selectedIds.isNotEmpty()) onToggleSelection(manga.id)
+                                else onOpen(manga.id)
+                            },
+                        ),
                 ) {
                     Box {
                         CoverImage(
@@ -723,6 +736,7 @@ private fun LibraryGrid(
 private fun LibraryList(
     items: List<LibraryItem>,
     selectedIds: Set<Long>,
+    allowLongPressSelection: Boolean,
     onOpen: (Long) -> Unit,
     onContinue: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
@@ -743,8 +757,13 @@ private fun LibraryList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(background, RoundedCornerShape(12.dp))
+                    .librarySecondarySelection(selectedIds) { onToggleSelection(manga.id) }
                     .combinedClickable(
-                        onLongClick = { onToggleSelection(manga.id) },
+                        onLongClick = if (allowLongPressSelection) {
+                            { onToggleSelection(manga.id) }
+                        } else {
+                            null
+                        },
                         onClick = {
                             if (selectedIds.isNotEmpty()) onToggleSelection(manga.id)
                             else onOpen(manga.id)
@@ -784,6 +803,28 @@ private fun LibraryList(
                     Icon(Icons.Filled.PlayArrow, contentDescription = strings.text("Continue {0}", manga.title))
                 }
             }
+        }
+    }
+}
+
+/**
+ * Mouse/stylus secondary-click selection for library items.
+ *
+ * [combinedClickable] intentionally models touch long-press, but it does not expose a secondary
+ * button action. Consume the secondary press at the initial pointer pass so it cannot also open
+ * the title, then toggle selection. Touch devices simply never produce this button event and keep
+ * their long-press path.
+ */
+private fun Modifier.librarySecondarySelection(
+    selectionState: Set<Long>,
+    onSecondaryClick: () -> Unit,
+): Modifier = pointerInput(selectionState) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+            event.changes.forEach { it.consume() }
+            onSecondaryClick()
         }
     }
 }

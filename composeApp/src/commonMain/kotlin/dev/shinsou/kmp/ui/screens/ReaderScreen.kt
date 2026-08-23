@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,8 +19,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -34,7 +37,10 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
@@ -45,7 +51,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -97,6 +102,7 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.transformations
+import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.ReaderColorFilter
@@ -136,6 +142,15 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+data class UnifiedReaderRenderState(
+    val settings: ReaderSettings,
+    val requestedPageIndex: Int,
+    val pageRequestSerial: Long,
+    val navigationAction: ReaderTapAction?,
+    val navigationRequestKey: Long,
+    val controlsVisible: Boolean,
+)
+
 @Composable
 fun ReaderScreen(
     manga: Manga,
@@ -167,33 +182,83 @@ fun ReaderScreen(
     onChapterSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
     unifiedReaderContent: UnifiedReaderContent? = null,
-    unifiedReaderRenderer: (@Composable (UnifiedReaderContent, Modifier) -> Unit)? = null,
+    unifiedReaderRenderer: (@Composable (
+        UnifiedReaderContent,
+        Modifier,
+        UnifiedReaderRenderState,
+        (Int, Int) -> Unit,
+        (ReaderTapAction) -> Unit,
+    ) -> Unit)? = null,
 ) {
     require((unifiedReaderContent == null) == (unifiedReaderRenderer == null)) {
         "Unified reader content and renderer must be supplied together"
     }
     val strings = LocalShinsouStrings.current
-    var controlsVisible by remember(chapter.id, readerSessionId) { mutableStateOf(true) }
+    val unifiedTextContent = unifiedReaderContent?.representation is ContentRepresentation.PlainText
+    val unifiedEpubContent = unifiedReaderContent?.representation is ContentRepresentation.EpubSpine
+    val unifiedProseContent = unifiedTextContent || unifiedEpubContent
+    var controlsVisible by remember(chapter.id, readerSessionId, unifiedProseContent) {
+        mutableStateOf(!unifiedProseContent)
+    }
     var settingsVisible by remember(readerSessionId) { mutableStateOf(false) }
     var chapterListVisible by remember(readerSessionId) { mutableStateOf(false) }
     var boundaryTransition by remember(chapter.id, readerSessionId) { mutableStateOf<ReaderChapterBoundary?>(null) }
-    var currentPosition by remember(chapter.id, readerSessionId, pages.size) {
+    val unifiedReaderEnabled = unifiedReaderContent != null && unifiedReaderRenderer != null
+    var unifiedReaderPageCount by remember(
+        chapter.id,
+        readerSessionId,
+        unifiedReaderContent?.representation?.representationId,
+    ) { mutableStateOf(unifiedReaderContent?.navigation?.itemCount ?: 0) }
+    val readerPageCount = if (unifiedReaderEnabled) unifiedReaderPageCount else pages.size
+    var unifiedReaderPageIndex by remember(
+        chapter.id,
+        readerSessionId,
+        unifiedReaderContent?.representation?.representationId,
+    ) {
+        mutableStateOf(
+            unifiedReaderContent?.navigation?.indexOf(unifiedReaderContent.initialLocator)
+                ?.coerceIn(0, (unifiedReaderPageCount - 1).coerceAtLeast(0))
+                ?: 0,
+        )
+    }
+    var unifiedReaderPageRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
+    var unifiedReaderNavigationAction by remember(chapter.id, readerSessionId) {
+        mutableStateOf<ReaderTapAction?>(null)
+    }
+    var unifiedReaderNavigationRequestKey by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
+    var currentPosition by remember(chapter.id, readerSessionId) {
         mutableStateOf(
             coerceReaderPosition(
-                position = initialPosition ?: ReaderPosition(
+                position = if (unifiedReaderEnabled) {
+                    ReaderPosition(
+                        readingMode = settings.readingMode,
+                        pageIndex = unifiedReaderPageIndex,
+                    )
+                } else {
+                    initialPosition ?: ReaderPosition(
                     readingMode = settings.readingMode,
-                    pageIndex = chapter.lastPageRead.coerceAtLeast(0),
-                ),
+                        pageIndex = chapter.lastPageRead.coerceAtLeast(0),
+                    )
+                },
                 readingMode = settings.readingMode,
-                pageCount = pages.size,
+                pageCount = readerPageCount,
             ),
         )
     }
     var viewportRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
     val currentPage = currentPosition.pageIndex
-    val unifiedReaderEnabled = unifiedReaderContent != null && unifiedReaderRenderer != null
+    val unifiedTextReader = unifiedReaderEnabled &&
+        unifiedReaderContent?.representation is ContentRepresentation.PlainText
+    val unifiedEpubReader = unifiedReaderEnabled &&
+        unifiedReaderContent?.representation is ContentRepresentation.EpubSpine
+    val unifiedProseReader = unifiedTextReader || unifiedEpubReader
     val focusRequester = remember { FocusRequester() }
+    val heldNavigationKeys = remember(chapter.id, readerSessionId) { mutableSetOf<Key>() }
     val platformContext = LocalPlatformContext.current
+
+    fun currentModeIsContinuous(): Boolean =
+        isContinuousReaderMode(settings.readingMode) ||
+            (unifiedTextReader && isNovelContinuousMode(settings.readingMode))
 
     fun openPreviousChapter() {
         boundaryTransition = null
@@ -207,14 +272,20 @@ fun ReaderScreen(
 
     fun requestPage(index: Int) {
         when {
+            index < 0 && unifiedProseReader -> openPreviousChapter()
             index < 0 -> boundaryTransition = ReaderChapterBoundary.PREVIOUS
-            index >= pages.size -> boundaryTransition = ReaderChapterBoundary.NEXT
-            pages.isNotEmpty() -> {
+            index >= readerPageCount && unifiedProseReader -> openNextChapter()
+            index >= readerPageCount -> boundaryTransition = ReaderChapterBoundary.NEXT
+            readerPageCount > 0 -> {
                 boundaryTransition = null
-                currentPosition = if (isContinuousReaderMode(settings.readingMode)) {
+                if (unifiedReaderEnabled) {
+                    unifiedReaderPageIndex = index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0))
+                    unifiedReaderPageRequestSerial++
+                }
+                currentPosition = if (currentModeIsContinuous()) {
                     ReaderPosition(
                         readingMode = settings.readingMode,
-                        pageIndex = index.coerceIn(0, pages.lastIndex),
+                        pageIndex = index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0)),
                         normalizedOffsetFraction = 0.0,
                         resetEpoch = currentPosition.resetEpoch,
                     )
@@ -222,7 +293,7 @@ fun ReaderScreen(
                     pagedReaderPosition(
                         readingMode = settings.readingMode,
                         logicalPageIndex = index,
-                        pageCount = pages.size,
+                        pageCount = readerPageCount,
                         resetEpoch = currentPosition.resetEpoch,
                     )
                 }
@@ -231,8 +302,17 @@ fun ReaderScreen(
         }
     }
 
+    fun requestUnifiedReaderNavigation(action: ReaderTapAction) {
+        unifiedReaderNavigationAction = action
+        unifiedReaderNavigationRequestKey++
+    }
+
     fun applyExternalPosition(position: ReaderPosition) {
-        currentPosition = coerceReaderPosition(position, settings.readingMode, pages.size)
+        currentPosition = coerceReaderPosition(position, settings.readingMode, readerPageCount)
+        if (unifiedReaderEnabled && readerPageCount > 0) {
+            unifiedReaderPageIndex = currentPosition.pageIndex
+            unifiedReaderPageRequestSerial++
+        }
         boundaryTransition = null
         viewportRequestSerial++
     }
@@ -271,12 +351,16 @@ fun ReaderScreen(
      * keep the in-reader transition card so users can preview the destination chapter.
      */
     fun handleVolumeKey(event: ReaderVolumeKeyEvent) {
-        if (pages.isEmpty()) return
+        if (readerPageCount <= 0) return
 
         val forward = event == ReaderVolumeKeyEvent.VOLUME_DOWN
         val action = if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE
+        if (unifiedEpubReader) {
+            requestUnifiedReaderNavigation(action)
+            return
+        }
         val atBoundary = if (forward) {
-            currentPage >= pages.lastIndex
+            currentPage >= (readerPageCount - 1).coerceAtLeast(0)
         } else {
             currentPage <= 0
         }
@@ -291,17 +375,20 @@ fun ReaderScreen(
     DisposableEffect(settings.keepScreenOn) {
         onDispose { }
     }
-    LaunchedEffect(chapter.id, readerSessionId, initialPosition, pages.size) {
-        initialPosition?.let(::applyExternalPosition)
+    LaunchedEffect(chapter.id, readerSessionId, initialPosition, pages.size, unifiedReaderEnabled) {
+        if (!unifiedReaderEnabled) initialPosition?.let(::applyExternalPosition)
     }
-    LaunchedEffect(chapter.id, readerSessionId, settings.readingMode, pages.size) {
-        currentPosition = coerceReaderPosition(currentPosition, settings.readingMode, pages.size)
+    LaunchedEffect(chapter.id, readerSessionId, settings.readingMode, readerPageCount) {
+        currentPosition = coerceReaderPosition(currentPosition, settings.readingMode, readerPageCount)
         viewportRequestSerial++
     }
     // Modal sheets own a separate focus tree on desktop and iPadOS. Reclaim focus when they close
     // so hardware paging and Escape/back keep working without requiring another pointer click.
     LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled) {
-        if (!unifiedReaderEnabled && !settingsVisible && !chapterListVisible) focusRequester.requestFocus()
+        heldNavigationKeys.clear()
+        if ((!unifiedReaderEnabled || unifiedTextReader) && !settingsVisible && !chapterListVisible) {
+            focusRequester.requestFocus()
+        }
     }
     // ReaderScreen is first composed while the async chapter request still exposes an empty page
     // list. A long-lived collector that captures that first composition keeps calling the stale
@@ -309,7 +396,7 @@ fun ReaderScreen(
     // loaded, which made the feature appear to require an off/on cycle. Keep the collector stable
     // while forwarding every event to the handler from the latest composition instead.
     val currentVolumeKeyHandler by rememberUpdatedState<(ReaderVolumeKeyEvent) -> Unit> { event ->
-        if (unifiedReaderEnabled) return@rememberUpdatedState
+        if (unifiedReaderEnabled && !unifiedProseReader) return@rememberUpdatedState
         val action = readerVolumeKeyAction(
             event = event,
             readerOpen = true,
@@ -374,16 +461,30 @@ fun ReaderScreen(
         modifier
             .fillMaxSize()
             .background(Color.Black)
+            // Compose is hosted edge-to-edge on iOS. Keep both the title bar and the first
+            // paragraph below the Face ID/status-bar safe area.
+            .statusBarsPadding()
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp) {
+                    heldNavigationKeys.remove(event.key)
+                    return@onPreviewKeyEvent false
+                }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (unifiedReaderEnabled && event.key != Key.Escape && event.key != Key.Back &&
+                if (unifiedReaderEnabled && !unifiedTextReader && event.key != Key.Escape && event.key != Key.Back &&
                     event.key != Key.NavigatePrevious
                 ) {
                     // Let the injected text/EPUB surface own navigation keys. The host retains
                     // only the reader-level close/back behavior.
                     return@onPreviewKeyEvent false
+                }
+                val suppressRepeat = when (event.key) {
+                    Key.VolumeDown, Key.VolumeUp -> settings.volumeKeys
+                    else -> isReaderNavigationKey(event.key)
+                }
+                if (suppressRepeat && !heldNavigationKeys.add(event.key)) {
+                    return@onPreviewKeyEvent true
                 }
                 when (event.key) {
                     Key.VolumeDown -> {
@@ -472,18 +573,6 @@ fun ReaderScreen(
                 onOpenWeb = onOpenWeb,
                 modifier = Modifier.align(Alignment.Center),
             )
-            boundaryTransition != null -> ReaderChapterTransitionCard(
-                boundary = boundaryTransition!!,
-                currentChapter = chapter,
-                targetChapter = if (boundaryTransition == ReaderChapterBoundary.PREVIOUS) previousChapter else nextChapter,
-                readingMode = settings.readingMode,
-                onNavigate = {
-                    if (boundaryTransition == ReaderChapterBoundary.PREVIOUS) openPreviousChapter() else openNextChapter()
-                },
-                onReturn = { boundaryTransition = null },
-                onToggleChrome = { controlsVisible = !controlsVisible },
-                modifier = Modifier.fillMaxSize(),
-            )
             unifiedReaderEnabled -> key(
                 chapter.id,
                 readerSessionId,
@@ -492,6 +581,37 @@ fun ReaderScreen(
                 requireNotNull(unifiedReaderRenderer).invoke(
                     requireNotNull(unifiedReaderContent),
                     Modifier.fillMaxSize(),
+                    UnifiedReaderRenderState(
+                        settings = settings,
+                        requestedPageIndex = unifiedReaderPageIndex,
+                        pageRequestSerial = unifiedReaderPageRequestSerial,
+                        navigationAction = unifiedReaderNavigationAction,
+                        navigationRequestKey = unifiedReaderNavigationRequestKey,
+                        controlsVisible = controlsVisible,
+                    ),
+                    { pageIndex, pageCount ->
+                        val safePageCount = pageCount.coerceAtLeast(1)
+                        unifiedReaderPageCount = safePageCount
+                        if (pageIndex in 0 until safePageCount) {
+                            unifiedReaderPageIndex = pageIndex
+                            currentPosition = if (currentModeIsContinuous()) {
+                                ReaderPosition(
+                                    readingMode = settings.readingMode,
+                                    pageIndex = pageIndex,
+                                    normalizedOffsetFraction = 0.0,
+                                    resetEpoch = currentPosition.resetEpoch,
+                                )
+                            } else {
+                                pagedReaderPosition(
+                                    readingMode = settings.readingMode,
+                                    logicalPageIndex = pageIndex,
+                                    pageCount = safePageCount,
+                                    resetEpoch = currentPosition.resetEpoch,
+                                )
+                            }
+                        }
+                    },
+                    ::handlePageAction,
                 )
             }
             else -> key(chapter.id, settings.readingMode) {
@@ -542,14 +662,33 @@ fun ReaderScreen(
             }
         }
 
-        if (settings.showPageNumber && !controlsVisible && pages.isNotEmpty() && boundaryTransition == null) {
+        // Prose readers cross chapters directly and never add a full-screen intermediary.
+        boundaryTransition?.takeUnless { unifiedProseReader }?.let { boundary ->
+            ReaderChapterTransitionCard(
+                boundary = boundary,
+                currentChapter = chapter,
+                targetChapter = if (boundary == ReaderChapterBoundary.PREVIOUS) previousChapter else nextChapter,
+                readingMode = settings.readingMode,
+                onNavigate = {
+                    if (boundary == ReaderChapterBoundary.PREVIOUS) openPreviousChapter() else openNextChapter()
+                },
+                onReturn = { boundaryTransition = null },
+                onToggleChrome = { controlsVisible = !controlsVisible },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        if (
+            settings.showPageNumber && !unifiedProseReader && !controlsVisible &&
+            readerPageCount > 0 && boundaryTransition == null
+        ) {
             Surface(
                 color = Color.Black.copy(alpha = 0.66f),
                 shape = RoundedCornerShape(9.dp),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
             ) {
                 Text(
-                    "${currentPage + 1} / ${pages.size}",
+                    "${currentPage + 1} / $readerPageCount",
                     color = Color.White,
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
@@ -596,8 +735,10 @@ fun ReaderScreen(
             manga = manga,
             chapter = chapter,
             page = currentPage,
-            pageCount = pages.size,
+            pageCount = readerPageCount,
             showPageControls = !unifiedReaderEnabled,
+            minimal = unifiedProseReader,
+            novelToolbar = unifiedTextReader,
             inLibrary = inLibrary,
             hasPreviousChapter = previousChapter != null,
             hasNextChapter = nextChapter != null,
@@ -605,16 +746,24 @@ fun ReaderScreen(
             onOpenWeb = onOpenWeb,
             onPageChange = ::requestPage,
             onFavorite = onToggleFavorite,
-            onPreviousChapter = { boundaryTransition = ReaderChapterBoundary.PREVIOUS },
-            onNextChapter = { boundaryTransition = ReaderChapterBoundary.NEXT },
+            onPreviousChapter = {
+                if (unifiedProseReader) openPreviousChapter()
+                else boundaryTransition = ReaderChapterBoundary.PREVIOUS
+            },
+            onNextChapter = {
+                if (unifiedProseReader) openNextChapter()
+                else boundaryTransition = ReaderChapterBoundary.NEXT
+            },
             onChapterList = { chapterListVisible = true },
             onSettings = { settingsVisible = true },
+            readingMode = settings.readingMode,
         )
     }
 
     if (settingsVisible) {
         ReaderSettingsSheet(
             settings = settings,
+            textContent = unifiedProseReader,
             onChange = onSettingsChange,
             onDismiss = { settingsVisible = false },
         )
@@ -975,6 +1124,8 @@ private fun ReaderControls(
     page: Int,
     pageCount: Int,
     showPageControls: Boolean,
+    minimal: Boolean = false,
+    novelToolbar: Boolean = false,
     inLibrary: Boolean,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
@@ -986,6 +1137,7 @@ private fun ReaderControls(
     onNextChapter: () -> Unit,
     onChapterList: () -> Unit,
     onSettings: () -> Unit,
+    readingMode: ReadingMode,
 ) {
     val strings = LocalShinsouStrings.current
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
@@ -1019,17 +1171,19 @@ private fun ReaderControls(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    onOpenWeb?.let { openWeb ->
-                        IconButton(onClick = openWeb) {
-                            Icon(Icons.Outlined.OpenInNew, strings.text("Open in browser"), tint = Color.White)
+                    if (!minimal) {
+                        onOpenWeb?.let { openWeb ->
+                            IconButton(onClick = openWeb) {
+                                Icon(Icons.Outlined.OpenInNew, strings.text("Open in browser"), tint = Color.White)
+                            }
                         }
-                    }
-                    IconButton(onClick = onFavorite) {
-                        Icon(
-                            if (inLibrary) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                            if (inLibrary) strings.unfavorite else strings.favorite,
-                            tint = if (inLibrary) MaterialTheme.colorScheme.primary else Color.White,
-                        )
+                        IconButton(onClick = onFavorite) {
+                            Icon(
+                                if (inLibrary) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                if (inLibrary) strings.unfavorite else strings.favorite,
+                                tint = if (inLibrary) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
                     }
                     IconButton(onClick = onChapterList) {
                         Icon(Icons.Outlined.MenuBook, strings.text("Chapter list"), tint = Color.White)
@@ -1085,6 +1239,89 @@ private fun ReaderControls(
                     }
                 }
             }
+            if (novelToolbar) NovelBottomToolbar(
+                page = page,
+                pageCount = pageCount,
+                readingMode = readingMode,
+                hasPreviousChapter = hasPreviousChapter,
+                hasNextChapter = hasNextChapter,
+                onPageChange = onPageChange,
+                onChapterList = onChapterList,
+                onSettings = onSettings,
+            )
+        }
+    }
+}
+
+/**
+ * ShuYue-style plain-text novel chrome: a small icon-only action strip that is completely absent
+ * until the reader's centre tap toggles [ReaderControls]. Keeping it separate from the image-reader
+ * slider and EPUB's semantic toolbar avoids introducing a progress bar or duplicate controls.
+ */
+@Composable
+private fun BoxScope.NovelBottomToolbar(
+    page: Int,
+    pageCount: Int,
+    readingMode: ReadingMode,
+    hasPreviousChapter: Boolean,
+    hasNextChapter: Boolean,
+    onPageChange: (Int) -> Unit,
+    onChapterList: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val previousOnLeft = readingMode != ReadingMode.PAGER_RTL
+    val canGoPrevious = page > 0 || hasPreviousChapter
+    val canGoNext = pageCount > 0 && (page < pageCount - 1 || hasNextChapter)
+    val leftAction = if (previousOnLeft) {
+        { onPageChange(page - 1) }
+    } else {
+        { onPageChange(page + 1) }
+    }
+    val rightAction = if (previousOnLeft) {
+        { onPageChange(page + 1) }
+    } else {
+        { onPageChange(page - 1) }
+    }
+    val leftEnabled = if (previousOnLeft) canGoPrevious else canGoNext
+    val rightEnabled = if (previousOnLeft) canGoNext else canGoPrevious
+    Row(
+        Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.92f))
+            .navigationBarsPadding()
+            .padding(horizontal = 34.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        IconButton(onClick = onSettings) {
+            Icon(
+                Icons.Outlined.Brightness4,
+                contentDescription = strings.readerSettings,
+                tint = Color.White,
+            )
+        }
+        IconButton(onClick = onChapterList) {
+            Icon(
+                Icons.Outlined.MenuBook,
+                contentDescription = strings.text("Chapter list"),
+                tint = Color.White,
+            )
+        }
+        IconButton(onClick = leftAction, enabled = leftEnabled) {
+            Icon(
+                Icons.Outlined.KeyboardArrowLeft,
+                contentDescription = strings.text("Previous page"),
+                tint = if (leftEnabled) Color.White else Color.White.copy(alpha = 0.32f),
+            )
+        }
+        IconButton(onClick = rightAction, enabled = rightEnabled) {
+            Icon(
+                Icons.Outlined.KeyboardArrowRight,
+                contentDescription = strings.text("Next page"),
+                tint = if (rightEnabled) Color.White else Color.White.copy(alpha = 0.32f),
+            )
         }
     }
 }
@@ -1126,18 +1363,11 @@ private fun ReaderChapterTransitionCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Icon(
-                if (forward) Icons.Outlined.ArrowForward else Icons.Outlined.ArrowBack,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.7f),
-                modifier = Modifier.size(42.dp),
-            )
             Text(
                 if (forward) strings.text("Finished {0}", currentChapter.name) else strings.text("Beginning of {0}", currentChapter.name),
                 color = Color.White.copy(alpha = 0.66f),
                 style = MaterialTheme.typography.labelLarge,
             )
-            HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
             Text(
                 targetChapter?.name ?: if (forward) strings.text("No next chapter") else strings.text("No previous chapter"),
                 color = if (targetChapter == null) Color.White.copy(alpha = 0.46f) else Color.White,
@@ -1146,12 +1376,15 @@ private fun ReaderChapterTransitionCard(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (targetChapter != null) {
-                Button(onClick = onNavigate) {
-                    Text(if (forward) strings.text("Read next chapter") else strings.text("Read previous chapter"))
-                }
-            }
-            TextButton(onClick = onReturn) { Text(strings.text("Return to chapter"), color = Color.White) }
+            Text(
+                if (targetChapter != null) {
+                    strings.text("Use the page edge to continue")
+                } else {
+                    strings.text("Use the opposite edge to return")
+                },
+                color = Color.White.copy(alpha = 0.5f),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -1265,8 +1498,9 @@ private fun ReaderError(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderSettingsSheet(
+internal fun ReaderSettingsSheet(
     settings: ReaderSettings,
+    textContent: Boolean = false,
     onChange: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1285,16 +1519,30 @@ private fun ReaderSettingsSheet(
                 Spacer(Modifier.height(12.dp))
                 Text(strings.text("Reading mode"), style = MaterialTheme.typography.titleMedium)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    listOf(
-                        ReadingMode.PAGER_LTR to strings.text("Left to right"),
-                        ReadingMode.PAGER_RTL to strings.text("Right to left"),
-                        ReadingMode.PAGER_VERTICAL to strings.text("Vertical paging"),
-                        ReadingMode.WEBTOON to strings.text("Webtoon"),
-                    ).forEach { (mode, label) ->
+                    val modes = if (textContent) {
+                        listOf(
+                            ReadingMode.CONTINUOUS_VERTICAL to strings.text("Scroll down"),
+                            ReadingMode.PAGER_LTR to strings.text("Turn left"),
+                            ReadingMode.PAGER_RTL to strings.text("Turn right"),
+                        )
+                    } else {
+                        listOf(
+                            ReadingMode.PAGER_LTR to strings.text("Left to right"),
+                            ReadingMode.PAGER_RTL to strings.text("Right to left"),
+                            ReadingMode.PAGER_VERTICAL to strings.text("Vertical paging"),
+                            ReadingMode.WEBTOON to strings.text("Webtoon"),
+                        )
+                    }
+                    modes.forEach { (mode, label) ->
                         item(key = mode.name) {
                             FilterChip(
-                                selected = settings.readingMode == mode ||
-                                    (mode == ReadingMode.WEBTOON && settings.readingMode == ReadingMode.CONTINUOUS_VERTICAL),
+                                selected = if (textContent && mode == ReadingMode.CONTINUOUS_VERTICAL) {
+                                    isNovelContinuousMode(settings.readingMode)
+                                } else {
+                                    settings.readingMode == mode ||
+                                        (mode == ReadingMode.WEBTOON &&
+                                            settings.readingMode == ReadingMode.CONTINUOUS_VERTICAL)
+                                },
                                 onClick = { onChange(settings.copy(readingMode = mode)) },
                                 label = { Text(label) },
                                 leadingIcon = {
@@ -1313,10 +1561,65 @@ private fun ReaderSettingsSheet(
                     }
                 }
             }
-            item { ReaderToggle(strings.text("Show page number"), settings.showPageNumber) { onChange(settings.copy(showPageNumber = it)) } }
+            if (textContent) {
+                item {
+                    var fontSize by remember(settings.novelFontSizeSp) {
+                        mutableFloatStateOf(settings.novelFontSizeSp)
+                    }
+                    var lineHeight by remember(settings.novelLineHeightMultiplier) {
+                        mutableFloatStateOf(settings.novelLineHeightMultiplier)
+                    }
+                    var readingWidth by remember(settings.novelMaxWidthDp) {
+                        mutableFloatStateOf(settings.novelMaxWidthDp)
+                    }
+                    Text(strings.text("Novel typography"), style = MaterialTheme.typography.titleMedium)
+                    Text(strings.text("Font size · {0}", fontSize.toInt()))
+                    Slider(
+                        value = fontSize,
+                        onValueChange = { fontSize = it },
+                        onValueChangeFinished = {
+                            if (fontSize != settings.novelFontSizeSp) {
+                                onChange(settings.copy(novelFontSizeSp = fontSize))
+                            }
+                        },
+                        valueRange = 14f..30f,
+                    )
+                    Text(
+                        strings.text(
+                            "Line height · {0}%",
+                            (lineHeight * 100f).toInt(),
+                        ),
+                    )
+                    Slider(
+                        value = lineHeight,
+                        onValueChange = { lineHeight = it },
+                        onValueChangeFinished = {
+                            if (lineHeight != settings.novelLineHeightMultiplier) {
+                                onChange(settings.copy(novelLineHeightMultiplier = lineHeight))
+                            }
+                        },
+                        valueRange = 1.25f..2.2f,
+                    )
+                    Text(strings.text("Reading width · {0}", readingWidth.toInt()))
+                    Slider(
+                        value = readingWidth,
+                        onValueChange = { readingWidth = it },
+                        onValueChangeFinished = {
+                            if (readingWidth != settings.novelMaxWidthDp) {
+                                onChange(settings.copy(novelMaxWidthDp = readingWidth))
+                            }
+                        },
+                        valueRange = 520f..920f,
+                    )
+                }
+            } else {
+                item { ReaderToggle(strings.text("Show page number"), settings.showPageNumber) { onChange(settings.copy(showPageNumber = it)) } }
+            }
             item { ReaderToggle(strings.text("Keep screen on"), settings.keepScreenOn) { onChange(settings.copy(keepScreenOn = it)) } }
             item { ReaderToggle(strings.text("Fullscreen"), settings.fullscreen) { onChange(settings.copy(fullscreen = it)) } }
-            item { ReaderToggle(strings.text("Double-tap to zoom"), settings.doubleTapToZoom) { onChange(settings.copy(doubleTapToZoom = it)) } }
+            if (!textContent) {
+                item { ReaderToggle(strings.text("Double-tap to zoom"), settings.doubleTapToZoom) { onChange(settings.copy(doubleTapToZoom = it)) } }
+            }
             item { ReaderToggle(strings.text("Skip read chapters"), settings.skipReadChapters) { onChange(settings.copy(skipReadChapters = it)) } }
             item { ReaderToggle(strings.text("Skip filtered chapters"), settings.skipFilteredChapters) { onChange(settings.copy(skipFilteredChapters = it)) } }
             item { ReaderToggle(strings.text("Skip duplicate chapters"), settings.skipDuplicateChapters) { onChange(settings.copy(skipDuplicateChapters = it)) } }
@@ -1326,8 +1629,13 @@ private fun ReaderSettingsSheet(
                     onChange(settings.copy(animatePageTransitions = it))
                 }
             }
-            item { ReaderToggle(strings.text("Split tall images"), settings.splitTallImages) { onChange(settings.copy(splitTallImages = it)) } }
-            if (settings.readingMode == ReadingMode.WEBTOON || settings.readingMode == ReadingMode.CONTINUOUS_VERTICAL) {
+            if (!textContent) {
+                item { ReaderToggle(strings.text("Split tall images"), settings.splitTallImages) { onChange(settings.copy(splitTallImages = it)) } }
+            }
+            if (!textContent &&
+                (settings.readingMode == ReadingMode.WEBTOON ||
+                    settings.readingMode == ReadingMode.CONTINUOUS_VERTICAL)
+            ) {
                 item {
                     Text(strings.text("Webtoon side padding · {0}%", settings.webtoonSidePadding.toInt()))
                     Slider(
@@ -1337,7 +1645,7 @@ private fun ReaderSettingsSheet(
                     )
                 }
             }
-            item {
+            if (!textContent) item {
                 Text(strings.text("Color filter"), style = MaterialTheme.typography.titleMedium)
                 ReaderToggle(strings.text("Enable filter"), settings.colorFilter.enabled) {
                     onChange(settings.copy(colorFilter = settings.colorFilter.copy(enabled = it)))
