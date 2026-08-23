@@ -50,18 +50,19 @@ composeApp/build/compose/binaries/main-release/exe/
 
 MSI 與 EXE 必須在 Windows host 建立；macOS 無法交叉產生 Windows installer。
 
-per-user installer 預設把程式放在 `%LOCALAPPDATA%\Programs\Shinsou X`，與下方 `%LOCALAPPDATA%\Shinsou X` 使用者資料目錄分離。這項分離是必要的：升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob。
+per-user installer 預設把程式放在 `%LOCALAPPDATA%\Programs\Shinsou X`，與下方 `%LOCALAPPDATA%\ShinsouXData` 使用者資料目錄分離。資料目錄刻意不以產品顯示名稱開頭，避開 jpackage MSI 解除安裝器的產品目錄清理規則；升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob。
 
 ## 儲存與安全
 
 Windows 資料預設位於：
 
 ```text
-%LOCALAPPDATA%\Shinsou X
+%LOCALAPPDATA%\ShinsouXData
 ```
 
 - `shinsou-state.json` 保存書庫、設定與可攜 snapshot 狀態。
 - `Content` 保存 Local source、擴充套件 package 與下載頁面。
+- 舊版若仍有 `%LOCALAPPDATA%\Shinsou X`，首次啟動會在新目錄不存在時先整體遷移；若新舊目錄同時存在，舊目錄會保留供手動合併，避免覆蓋資料。
 - 敏感 plugin KV 使用 AES-256-GCM；AES master key 經目前 Windows 使用者範圍的 DPAPI 保護後，才寫入 `plugin-secrets.dpapi`。
 - 程式不使用 `CRYPTPROTECT_LOCAL_MACHINE`，因此其他 Windows 使用者及直接複製到另一台電腦的 blob 無法解密。
 - macOS 仍使用既有 `~/Library/Application Support/Shinsou` 與 Keychain，不會因 Windows 支援而搬移現有資料。

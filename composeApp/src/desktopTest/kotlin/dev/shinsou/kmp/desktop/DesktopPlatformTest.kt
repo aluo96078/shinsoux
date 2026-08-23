@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import androidx.compose.ui.input.key.Key
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,7 +60,7 @@ class DesktopPlatformTest {
     }
 
     @Test
-    fun windowsDataRootUsesLocalAppDataAndProductName() {
+    fun windowsDataRootUsesInstallerSafeLocalAppDataDirectory() {
         val localAppData = testPath("windows-local-app-data")
         val root = DesktopAppDirectories.resolveDataRoot(
             platform = DesktopPlatform.WINDOWS,
@@ -67,7 +68,7 @@ class DesktopPlatformTest {
             property = testProperties(userHome = testPath("unused-windows-home").toString()),
         )
 
-        assertEquals(localAppData.resolve("Shinsou X"), root)
+        assertEquals(localAppData.resolve("ShinsouXData"), root)
     }
 
     @Test
@@ -80,9 +81,32 @@ class DesktopPlatformTest {
         )
 
         assertEquals(
-            userHome.resolve("AppData").resolve("Local").resolve("Shinsou X"),
+            userHome.resolve("AppData").resolve("Local").resolve("ShinsouXData"),
             root,
         )
+    }
+
+    @Test
+    fun legacyWindowsDataDirectoryIsMovedOnlyWhenNewDirectoryIsAbsent() {
+        val parent = testPath("windows-migration")
+        parent.toFile().deleteRecursively()
+        val legacy = parent.resolve("Shinsou X")
+        val current = parent.resolve("ShinsouXData")
+        Files.createDirectories(legacy)
+        Files.writeString(legacy.resolve("shinsou-state.json"), "legacy")
+
+        DesktopAppDirectories.migrateLegacyWindowsData(current)
+
+        assertTrue(Files.isRegularFile(current.resolve("shinsou-state.json")))
+        assertFalse(Files.exists(legacy))
+
+        Files.createDirectories(legacy)
+        Files.writeString(legacy.resolve("keep-me.txt"), "legacy")
+        Files.writeString(current.resolve("current.txt"), "current")
+        DesktopAppDirectories.migrateLegacyWindowsData(current)
+
+        assertTrue(Files.isRegularFile(legacy.resolve("keep-me.txt")))
+        assertTrue(Files.isRegularFile(current.resolve("current.txt")))
     }
 
     @Test

@@ -1,9 +1,26 @@
 package dev.shinsou.kmp.desktop
 
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.util.Comparator
 
 internal object DesktopAppDirectories {
-    val dataRoot: Path by lazy { resolveDataRoot(DesktopPlatform.current) }
+    private const val WINDOWS_DATA_DIRECTORY = "ShinsouXData"
+    private const val LEGACY_WINDOWS_DATA_DIRECTORY = "Shinsou X"
+
+    /**
+     * The Windows data directory intentionally does not start with the product's display name.
+     * jpackage's per-user MSI uninstaller treats sibling directories matching that name as
+     * installer-owned and can remove them. Keep the old location as a one-time migration source.
+     */
+    val dataRoot: Path by lazy {
+        resolveDataRoot(DesktopPlatform.current).also { root ->
+            if (DesktopPlatform.current == DesktopPlatform.WINDOWS) {
+                migrateLegacyWindowsData(root)
+            }
+        }
+    }
 
     val contentRoot: Path by lazy { dataRoot.resolve("Content") }
 
@@ -26,7 +43,7 @@ internal object DesktopAppDirectories {
                     ?: userHome?.resolve("AppData")?.resolve("Local")
                     ?: temporaryDirectory
                     ?: Path.of(".")
-                ).resolve("Shinsou X")
+                ).resolve(WINDOWS_DATA_DIRECTORY)
 
             DesktopPlatform.LINUX,
             DesktopPlatform.OTHER,
@@ -37,6 +54,51 @@ internal object DesktopAppDirectories {
                     ?: Path.of(".")
                 ).resolve("Shinsou X")
         }.normalize().toAbsolutePath()
+    }
+
+    /**
+     * Move data created by versions that used `%LOCALAPPDATA%\\Shinsou X` before the Windows
+     * installer cleanup behavior was diagnosed. If the new directory already exists, leave the
+     * legacy directory untouched so a failed or partial migration cannot destroy user data.
+     */
+    internal fun migrateLegacyWindowsData(dataRoot: Path) {
+        val normalizedRoot = dataRoot.toAbsolutePath().normalize()
+        val legacyRoot = normalizedRoot.parent?.resolve(LEGACY_WINDOWS_DATA_DIRECTORY) ?: return
+        if (!Files.isDirectory(legacyRoot) || Files.exists(normalizedRoot)) return
+
+        runCatching {
+            Files.createDirectories(requireNotNull(normalizedRoot.parent))
+            Files.move(legacyRoot, normalizedRoot, StandardCopyOption.ATOMIC_MOVE)
+        }.recoverCatching {
+            // ATOMIC_MOVE is not available across all Windows filesystems. A recursive copy is
+            // still safe because the source remains in place until every file has been copied.
+            copyDirectoryWithoutOverwriting(legacyRoot, normalizedRoot)
+            deleteEmptyDirectoryTree(legacyRoot)
+        }
+    }
+
+    private fun copyDirectoryWithoutOverwriting(source: Path, target: Path) {
+        Files.walk(source).use { paths ->
+            paths.forEach { path ->
+                val relative = source.relativize(path)
+                val destination = target.resolve(relative)
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination)
+                } else if (!Files.exists(destination)) {
+                    Files.copy(path, destination)
+                }
+            }
+        }
+    }
+
+    private fun deleteEmptyDirectoryTree(root: Path) {
+        Files.walk(root).use { paths ->
+            paths.sorted(Comparator.reverseOrder()).forEach { path ->
+                if (Files.isDirectory(path)) {
+                    runCatching { Files.delete(path) }
+                }
+            }
+        }
     }
 
     private fun usablePath(value: String?): Path? = value
