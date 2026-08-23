@@ -120,10 +120,10 @@ class ShinsouRepositoryTest {
             updatedAt = 900,
         )
         val track = repository.upsertTrack(
-            Track(mangaId = manga.id, trackerId = TrackerIds.ANI_LIST, remoteId = 22, title = manga.title),
+            Track(mangaId = manga.id, trackerId = TrackerIds.MY_ANIME_LIST, remoteId = 22, title = manga.title),
         )
         repository.upsertTrackerAccount(
-            TrackerAccountState(TrackerIds.ANI_LIST, loggedIn = true, username = "reader", lastSyncAt = 1_000),
+            TrackerAccountState(TrackerIds.MY_ANIME_LIST, loggedIn = true, username = "reader", lastSyncAt = 1_000),
         )
         repository.updateSettings {
             it.copy(
@@ -355,9 +355,9 @@ class ShinsouRepositoryTest {
     fun libraryItemsExposeBoundTrackersForFiltering() = runTest {
         val repository = ShinsouRepository()
         val manga = repository.upsertManga(Manga(source = 1, favorite = true, url = "/m", title = "M"))
-        repository.upsertTrack(Track(mangaId = manga.id, trackerId = TrackerIds.ANI_LIST))
+        repository.upsertTrack(Track(mangaId = manga.id, trackerId = TrackerIds.MY_ANIME_LIST))
 
-        assertEquals(setOf(TrackerIds.ANI_LIST), repository.libraryItems().single().trackerIds)
+        assertEquals(setOf(TrackerIds.MY_ANIME_LIST), repository.libraryItems().single().trackerIds)
     }
 
     @Test

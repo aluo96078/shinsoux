@@ -18,12 +18,12 @@ class TrackerManagerTest {
     fun queueCoalescesUpdatesAndDispatchesAfterThreeSecondDebounce() = runTest {
         val repository = ShinsouRepository()
         val manga = repository.upsertManga(Manga(source = 1, url = "/m", title = "M"))
-        repository.upsertTrack(Track(mangaId = manga.id, trackerId = TrackerIds.ANI_LIST, remoteId = 10))
+        repository.upsertTrack(Track(mangaId = manga.id, trackerId = TrackerIds.MY_ANIME_LIST, remoteId = 10))
         val adapter = RecordingTrackerAdapter()
         val manager = TrackerManager(listOf(adapter), repository, backgroundScope)
 
-        manager.updateProgress(manga.id, TrackerIds.ANI_LIST, 4.0)
-        manager.updateScore(manga.id, TrackerIds.ANI_LIST, 8.5)
+        manager.updateProgress(manga.id, TrackerIds.MY_ANIME_LIST, 4.0)
+        manager.updateScore(manga.id, TrackerIds.MY_ANIME_LIST, 8.5)
         assertEquals(1, manager.pendingUpdateCount())
 
         advanceTimeBy(2_999)
@@ -40,7 +40,7 @@ class TrackerManagerTest {
     }
 
     private class RecordingTrackerAdapter : TrackerAdapter {
-        override val descriptor = TrackerDescriptor(TrackerIds.ANI_LIST, "Fake")
+        override val descriptor = TrackerDescriptor(TrackerIds.MY_ANIME_LIST, "Fake")
         val updates = mutableListOf<TrackUpdate>()
 
         override suspend fun isAuthenticated(): Boolean = true

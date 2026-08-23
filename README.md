@@ -22,7 +22,7 @@
 - LTR、RTL、直向、Webtoon 等閱讀模式，支援縮放、濾鏡、預取與離線閱讀
 - 可安裝的 JavaScript 來源擴充套件，以及來源登入、Cookie、偏好與網路設定
 - 下載佇列、本地 TXT／ZIP／CBZ／完整 EPUB／圖片匯入、備份還原與端對端加密事件同步
-- AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
+- 多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
 ## ShuYue 風格小說閱讀器
@@ -50,7 +50,7 @@
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
 - 內建 Local source（source `0`）：直接圖片與 TXT／ZIP／CBZ／EPUB；匯入以原子發布的 v2 manifest 拒絕部分或損毀內容
-- AniList 登入／搜尋／綁定／編輯 UI 與 OAuth token 流程；MyAnimeList 因缺少正式 client ID 而明示停用
+- MyAnimeList provider 目前明示停用，待補入正式 client ID 後再開放
 - iOS Widget payload、iCloud Drive snapshot sync，以及 Android／iOS Reader 實體音量鍵接線
 - Browse 啟動時先顯示本地與已安裝來源，再以有界 timeout 背景刷新遠端 repository；不再用全畫面 loading 阻塞瀏覽頁
 
@@ -175,21 +175,6 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - 自動備份是 app-private 原子快照，提供立即建立、列表、損毀標示、還原、刪除與 retention。Android 使用 WorkManager、iOS 使用 BGProcessingTask；實際背景執行時間由作業系統決定，Desktop 則只在 app 存活時以前景 scheduler 檢查。
 - Cloudflare v2 只同步明確 allowlist 的領域 metadata；使用者選擇且 `SYNC_BLOB` 允許的 content body 走隔離、分塊、E2EE 的 R2 body plane。CRDT state、keyring、device directory pin、draft/outbox 與 cursor 留在獨立 sync store，不會塞進 portable `AppSnapshot`。
 - 舊版 iOS iCloud 同步仍使用 `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔快照與 NSFileCoordinator；它不是 record-level CloudKit，也不能與 Cloudflare v2 同時作為寫入端。
-
-## 尚需外部或真機驗證
-
-- AniList 的真實帳號 OAuth、來源網站登入與各站 Cloudflare 行為會受外部服務影響，deterministic tests 不會連這些服務。
-- iOS OAuth callback 目前以貼上 redirect URL／access token 的 UI 流程為主要保底。
-- Android 音量鍵攔截只在 Reader 開啟且設定啟用時生效，會消耗 Down／Up 以避免改變音量；仍需 Android 實機確認各廠牌按鍵與 HUD 行為。
-- iOS 音量鍵事件、系統音量恢復與 HUD 抑制已接線且可編譯，但必須用實體 iPhone 驗證。
-- Android Keystore 與 iOS Keychain 的首次建立、重啟後解密及裝置 access-control 行為仍需簽章／真機 smoke；target compile 不等於 secure store 已在發布環境驗證。
-- 無簽章 Simulator build 無法驗證 App Group、Widget、iCloud entitlement、Keychain sharing 或 iOS 背景排程。
-- macOS／iOS 發布簽章與 Keychain ACL，以及 Windows MSI 安裝／升級／卸載和 DPAPI 重啟解密，仍須各自的已簽章 release artifact 實機驗證。
-- EPUB 的完整 CSS／font／relative-resource 排版、跨 DOM selection、locator 回復與平台 TTS voice 必須再以合法真實 EPUB，分別在 Android、iPhone、macOS 與 Windows 做 smoke；自動 contracts 不能取代 browser engine／語音引擎驗證。
-- Encrypted body sync 的本機 Worker／D1／R2 contracts 已覆蓋 resume、rotation、quota、rewrap、tombstone 與 GC，但仍需真實 Cloudflare D1＋雙 R2、兩台裝置、斷網續傳及額度邊界的端對端演練。
-- Rights gate 與 protection-scheme framework 不等於已取得 DRM 授權；任何受保護格式仍需合法 provider adapter、認證與授權內容 smoke，未知 scheme 會預設拒絕。
-- 三平台文件 picker 的 declared-size／bounded-read 路徑已接；Desktop packaged app 已確認 picker 可開啟與取消，但實際選取檔案及 Android／iOS cloud／stream provider 仍需 smoke。無法提供可靠 size metadata 的 provider 會被安全拒絕。
-- Desktop unsigned packaged app 已確認 sidebar、Menu Bar 導航、Updates Upcoming、Local picker、Backup／Sync、停用的 app-lock／secure-screen 控制與關閉確認。實體鍵盤 accelerator、含資料的 master/detail／Reader、Keychain access prompt／ACL 及 legacy key migration 仍需人工驗證。
 
 ## 使用責任
 

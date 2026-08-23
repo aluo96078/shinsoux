@@ -59,22 +59,6 @@ interface TrackerAuthenticator {
     suspend fun logout()
 }
 
-class AniListAuthenticator(
-    private val tracker: AniListTracker,
-) : TrackerAuthenticator {
-    override val trackerId: Int = tracker.descriptor.id
-
-    override fun authorizationUrl(): String = tracker.authorizationUrl()
-
-    override suspend fun complete(pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken {
-        val token = AniListOAuthCallbackParser.parse(pastedCallbackOrToken, nowEpochMillis)
-        tracker.storeToken(token)
-        return token
-    }
-
-    override suspend fun logout() = tracker.logout()
-}
-
 /**
  * UI-independent tracking use cases shared by Android, iOS and Desktop.
  *

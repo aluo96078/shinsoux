@@ -31,7 +31,6 @@
 | Cloudflare schema v2／encrypted body sync | 已實作 | 已實作 | 已實作 | publication/unit/annotation/blob-ref metadata 走 event/checkpoint；使用者選擇且 `SYNC_BLOB` 允許的 body 走隔離 R2、分塊 AEAD、resume、DEK re-wrap 與 checkpoint-ack GC。真實四平台跨裝置矩陣仍是外部上線 Gate |
 | App-private 自動備份 | 已實作 | 已實作 | 已實作 | 原子快照、due check、retention、損毀標示、立即建立／列表／還原／刪除；WorkManager、BGProcessingTask、Desktop 前景 scheduler |
 | iCloud Drive snapshot sync | 不適用 | 受限 | 不適用 | `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔、NSFileCoordinator、repository CAS 與 deterministic merge；不採用遠端 download queue、保留本機 proxy secret。無 deletion tombstone、非 record-level CloudKit，entitlement 尚需簽章真機驗證 |
-| AniList tracking | 受限 | 受限 | 受限 | OAuth／token、搜尋、綁定、refresh、編輯與登出 UI 已接；真實帳號／外部 API 未納入 deterministic tests，iOS 以 paste callback/token 為主要保底 |
 | MyAnimeList tracking | 未接 | 未接 | 未接 | adapter/test 存在，但原版未提供可用 client ID；UI 明示未配置，不能登入 |
 | App lock／secure screen | 已實作 | 已實作 | 未接 | Android Biometric 與 secure window、iOS LocalAuthentication／privacy cover；手機端會依 passcode／PIN／密碼／biometric 的執行時可用性動態 gate app lock，驗證不可用時忽略 stale enabled 值、恢復可用時重新鎖定；secure screen 仍可用。Desktop capability 明示 unavailable，Settings 停用且 `authenticate` 不會回傳假成功 |
 | 敏感狀態儲存 | 已實作 | 已實作 | 受限 | Android 敏感 KV 使用 Keystore AES-GCM；iOS 使用 Keychain；Desktop 使用 AES-256-GCM，master key 在 macOS 存入 Keychain，在 Windows 以目前使用者範圍 DPAPI 保護且不使用 machine scope。macOS Keychain prompt／簽章後存取／legacy file migration，以及 Windows 安裝版重啟解密與不同使用者 fail-closed 行為仍需各平台 smoke |
@@ -76,9 +75,7 @@ zip cbz epub
 
 ## Tracking 邊界
 
-AniList 是目前唯一在 composition 中啟用的 tracker。Tracking sheet 會開啟外部 authorization URL，接受完整 redirect URL（解析 `#access_token`）或純 token，token 由平台 secure store 保存；登入後可搜尋、綁定、更新與解除本地連結。
-
-MyAnimeList HTTP adapter 與 deterministic tests 已存在，但 composition 刻意把 provider 標成 `configured = false`。在取得合法 client ID、補入安全設定並完成真實 OAuth smoke 前，不應把 MAL 標成可用。
+MyAnimeList HTTP adapter 與 deterministic tests 已存在，但 composition 刻意把 provider 標成 `configured = false`。在取得合法 client ID、補入安全設定並完成登入流程前，不應把 MAL 標成可用。
 
 ## 備份與同步邊界
 
@@ -106,7 +103,7 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 - Android 實體音量鍵攔截／HUD／系統音量不變，以及 iOS 實體音量鍵、HUD、audio-session／使用者音量恢復
 - Android Keystore／iOS Keychain／macOS Keychain／Windows 使用者範圍 DPAPI 的首次建立、legacy plaintext migration、重啟後解密與作業系統 access-control 行為
 - App Group、Widget、Keychain sharing 與 iCloud entitlement
-- AniList 真實 OAuth、來源登入、實際下載或 Cloudflare challenge
+- 來源登入、實際下載或 Cloudflare challenge
 - Android content provider、iOS security-scoped URL，以及 Desktop 實際選取檔案後的 bounded-import 路徑
 - macOS／Windows Desktop 實體鍵盤 accelerator、含資料的 master/detail／Reader，以及 packaged app 的 macOS Keychain prompt／ACL／legacy key migration 與 Windows DPAPI 使用者隔離／fail-closed 行為
 - Windows MSI／EXE 的非管理員安裝、stable-UUID 覆蓋升級、捷徑、開始功能表、DPI、解除安裝與 Authenticode／SmartScreen 行為
@@ -117,6 +114,5 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 - JavaScript runtime 以官方同步式 extension contract 為準；任意第三方 Promise／async／`fetch` 腳本不保證相容。
 - Extension `trusted` 是 hash 綁定的執行 grant，不是作者身分或 repository signing chain 的完整驗證。沒有 repository digest 的現行格式在明確 install／update 時採下載 bytes 的 SHA-256 作 TOFU grant。
 - UI 已有字串 provider，但仍存在不少直接寫在 Compose 中的英文；多語介面尚未達原版完整度。
-- iOS OAuth custom callback 尚未取代 paste fallback 成為全流程自動回呼。
 - macOS Keychain 與 Windows DPAPI 只保護 Desktop 敏感 KV 的 AES master key，不等於 app lock。Desktop app lock／secure screen capability 明示 unavailable；若需要獨立驗證，仍需 LocalAuthentication 或等價桌面安全設計。
 - Bounded picker 仍會在核准上限內建立完整 `ByteArray`，且 size metadata 不可靠的 provider 會安全拒絕；實際 cloud provider 相容性尚需逐平台 smoke。

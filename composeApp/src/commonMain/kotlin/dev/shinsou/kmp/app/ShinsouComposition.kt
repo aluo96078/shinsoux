@@ -75,10 +75,6 @@ import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
-import dev.shinsou.kmp.tracking.AniListAuthenticator
-import dev.shinsou.kmp.tracking.AniListTracker
-import dev.shinsou.kmp.tracking.AniListTrackerConfig
-import dev.shinsou.kmp.tracking.KeyValueTokenStore
 import dev.shinsou.kmp.tracking.TrackerDescriptor
 import dev.shinsou.kmp.tracking.TrackerManager
 import dev.shinsou.kmp.tracking.TrackerManagerAdapter
@@ -516,13 +512,8 @@ public class ShinsouComposition(
                 },
             )
         }
-    private val aniListTracker = AniListTracker(
-        client = httpClient,
-        tokenStore = KeyValueTokenStore(pluginKeyValueStore),
-        config = AniListTrackerConfig(clientId = ANI_LIST_CLIENT_ID),
-    )
     private val trackerManager = TrackerManager(
-        adapters = listOf(aniListTracker),
+        adapters = emptyList(),
         repository = repository,
         scope = trackingScope,
     )
@@ -587,9 +578,8 @@ public class ShinsouComposition(
                 configured = false,
                 configurationMessage = "MyAnimeList client ID 尚未設定，暫時無法登入。",
             ),
-            TrackingProvider(descriptor = aniListTracker.descriptor),
         ),
-        authenticators = listOf(AniListAuthenticator(aniListTracker)),
+        authenticators = emptyList(),
     )
 
     public val downloads: DownloadManager = DownloadManager(
@@ -718,13 +708,6 @@ public class ShinsouComposition(
                             }
                         }
                 }
-            }
-            try {
-                tracking.refreshAuthenticationState(TrackerIds.ANI_LIST)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                // Login can still be retried from the tracking sheet if secure storage is unavailable.
             }
             try {
                 downloads.restoreQueue()
@@ -1048,7 +1031,6 @@ public class ShinsouComposition(
     }
 
     private companion object {
-        const val ANI_LIST_CLIENT_ID = "16329"
         const val PROXY_API_KEY_STORAGE_KEY = "network.proxy.secret"
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4

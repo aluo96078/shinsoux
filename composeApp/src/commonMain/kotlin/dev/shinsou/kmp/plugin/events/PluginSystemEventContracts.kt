@@ -455,6 +455,22 @@ public fun interface PluginSystemEventAuthorizer {
         requiredPermission: PluginHostPermission,
         requiredSourceCapability: String?,
     ): PluginEventAuthorization
+
+    /**
+     * Re-authorizes an event that already passed admission while a user interaction context was
+     * active. The interaction context is intentionally an admission-time fact: the dispatcher is
+     * asynchronous, so the short-lived UI context may end before the queued handler starts. All
+     * other runtime, lifecycle, capability, and exact-grant checks must still be performed.
+     *
+     * Custom authorizers that do not model this distinction retain the fail-closed default by
+     * delegating to [authorize].
+     */
+    public fun authorizeQueuedEvent(
+        scope: BoundPluginScope,
+        requiredPermission: PluginHostPermission,
+        requiredSourceCapability: String?,
+        interactionContextAdmitted: Boolean,
+    ): PluginEventAuthorization = authorize(scope, requiredPermission, requiredSourceCapability)
 }
 
 public object DenyAllPluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
@@ -533,6 +549,30 @@ public class MutablePluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
         scope: BoundPluginScope,
         requiredPermission: PluginHostPermission,
         requiredSourceCapability: String?,
+    ): PluginEventAuthorization = authorizeInternal(
+        scope = scope,
+        requiredPermission = requiredPermission,
+        requiredSourceCapability = requiredSourceCapability,
+        interactionContextAdmitted = false,
+    )
+
+    override fun authorizeQueuedEvent(
+        scope: BoundPluginScope,
+        requiredPermission: PluginHostPermission,
+        requiredSourceCapability: String?,
+        interactionContextAdmitted: Boolean,
+    ): PluginEventAuthorization = authorizeInternal(
+        scope = scope,
+        requiredPermission = requiredPermission,
+        requiredSourceCapability = requiredSourceCapability,
+        interactionContextAdmitted = interactionContextAdmitted,
+    )
+
+    private fun authorizeInternal(
+        scope: BoundPluginScope,
+        requiredPermission: PluginHostPermission,
+        requiredSourceCapability: String?,
+        interactionContextAdmitted: Boolean,
     ): PluginEventAuthorization = lock.withLock {
         if (scope.runtimeKey in revokedRuntimeKeys) {
             return@withLock PluginEventAuthorization(false, PluginEventAuthorizationReason.REVOKED)
@@ -560,7 +600,7 @@ public class MutablePluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
             if (status.lifecycle != PluginRuntimeLifecycle.OPEN_FOREGROUND_UNLOCKED) {
                 return@withLock PluginEventAuthorization(false, PluginEventAuthorizationReason.LIFECYCLE)
             }
-            if (!status.hasUserInteractionContext) {
+            if (!status.hasUserInteractionContext && !interactionContextAdmitted) {
                 return@withLock PluginEventAuthorization(false, PluginEventAuthorizationReason.INTERACTION_REQUIRED)
             }
         }

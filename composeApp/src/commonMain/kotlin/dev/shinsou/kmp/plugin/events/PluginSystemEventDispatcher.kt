@@ -206,6 +206,12 @@ private data class QueuedPluginEvent(
     val receivedAtMillis: Long,
     /** Exact validated event identity delivered to host ports and completion observers. */
     val hostEventId: String,
+    /**
+     * User interaction is admitted synchronously, but the handler runs asynchronously. Preserve
+     * that admission so ending the UI callback's short-lived context cannot cancel accepted modal
+     * work; execution still rechecks all other authorization facts.
+     */
+    val interactionContextAdmitted: Boolean,
 )
 
 private data class TokenBucket(
@@ -398,6 +404,9 @@ public class PluginSystemEventGateway(
                 sourcePendingKey = sourcePendingKey,
                 receivedAtMillis = now,
                 hostEventId = operationRef,
+                interactionContextAdmitted = typedHandler.requiredPermission ==
+                    PluginHostPermission.REQUEST_LOGIN_UI ||
+                    typedHandler.requiredPermission == PluginHostPermission.REQUEST_LOGOUT,
             )
             val sendResult = channelFor(typedHandler.lane).trySend(event)
             if (!sendResult.isSuccess) return@withLock receipt(messageId, PluginEventDisposition.BUSY)
@@ -653,10 +662,11 @@ public class PluginSystemEventGateway(
             event.scope.runtimeKey !in invalidRuntimeKeys &&
             event.scope.artifactIdentity !in invalidArtifactKeys &&
             activeAdmissions.contains(event.admissionKey) &&
-            authorizer.authorize(
+            authorizer.authorizeQueuedEvent(
                 event.scope,
                 event.handler.requiredPermission,
                 event.handler.requiredSourceCapability,
+                event.interactionContextAdmitted,
             ).allowed
     }
 

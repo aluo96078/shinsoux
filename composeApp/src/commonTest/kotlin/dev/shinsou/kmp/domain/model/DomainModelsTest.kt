@@ -57,14 +57,14 @@ class DomainModelsTest {
 
     @Test
     fun libraryFilterCyclesAndDropsDisabledTrackerEntries() {
-        val filter = LibraryFilter().withTrackerFilter(TrackerIds.ANI_LIST, LibraryFilterState.INCLUDE)
+        val filter = LibraryFilter().withTrackerFilter(TrackerIds.MY_ANIME_LIST, LibraryFilterState.INCLUDE)
         assertTrue(filter.hasActiveFilters)
-        assertEquals(LibraryFilterState.INCLUDE, filter.trackerFilter(TrackerIds.ANI_LIST))
+        assertEquals(LibraryFilterState.INCLUDE, filter.trackerFilter(TrackerIds.MY_ANIME_LIST))
         assertEquals(LibraryFilterState.EXCLUDE, LibraryFilterState.INCLUDE.next())
 
-        val cleared = filter.withTrackerFilter(TrackerIds.ANI_LIST, LibraryFilterState.DISABLED)
+        val cleared = filter.withTrackerFilter(TrackerIds.MY_ANIME_LIST, LibraryFilterState.DISABLED)
         assertFalse(cleared.hasActiveFilters)
-        assertFalse(TrackerIds.ANI_LIST in cleared.trackerFilters)
+        assertFalse(TrackerIds.MY_ANIME_LIST in cleared.trackerFilters)
     }
 
     @Test

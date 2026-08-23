@@ -1075,7 +1075,6 @@ private fun LibraryItem.matches(filter: LibraryFilter): Boolean {
 
 private fun trackerName(id: Int): String = when (id) {
     1 -> "MyAnimeList"
-    2 -> "AniList"
     3 -> "Kitsu"
     4 -> "Shikimori"
     5 -> "Bangumi"

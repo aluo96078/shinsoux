@@ -2360,7 +2360,11 @@ private fun MoreDestinationPane(
     LaunchedEffect(systemBackRequest) {
         if (systemBackRequest == handledSystemBackRequest) return@LaunchedEffect
         handledSystemBackRequest = systemBackRequest
-        if (!nestedBackAvailable) onBack()
+        // SettingsScreen owns its detail route and consumes the same request when a
+        // section is open.  Do not let this parent observe the transient state change
+        // and pop the whole More destination in the same frame; that briefly reveals
+        // the parent screen during a return gesture.
+        if (destination != MoreDestination.Settings) onBack()
     }
 
     when (destination) {

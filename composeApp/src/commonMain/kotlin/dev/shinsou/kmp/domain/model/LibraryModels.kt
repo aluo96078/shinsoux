@@ -174,7 +174,6 @@ data class LibraryItem(
 
 object TrackerIds {
     const val MY_ANIME_LIST = 1
-    const val ANI_LIST = 2
     const val KITSU = 3
     const val SHIKIMORI = 4
     const val BANGUMI = 5

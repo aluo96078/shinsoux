@@ -59,6 +59,51 @@ class PluginSystemEventDispatcherTest {
     }
 
     @Test
+    fun admittedLoginStillRunsWhenInteractionContextEndsBeforeWorkerStarts() = runTest {
+        val fixture = fixture(
+            permission = PluginHostPermission.REQUEST_LOGIN_UI,
+            sourceCapability = "LOGIN",
+            lane = PluginSystemEventLane.MODAL,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        var calls = 0
+        fixture.registry.register(
+            TypedPluginSystemEventHandler<LoginRequestV1>(
+                name = PluginSystemEventNames.AUTH_LOGIN_REQUEST,
+                kind = PluginSystemEventKind.COMMAND,
+                payloadVersion = 1,
+                lane = PluginSystemEventLane.MODAL,
+                requiredPermission = PluginHostPermission.REQUEST_LOGIN_UI,
+                requiredSourceCapability = "LOGIN",
+                decode = { fixture.codec.decodePayload(it, LoginRequestV1.serializer()) },
+                execute = { _, _ -> calls++; PluginEventOutcome.Succeeded },
+            ),
+        )
+        val bytes = fixture.codec.encodePayload(
+            kind = PluginSystemEventKind.COMMAND,
+            name = PluginSystemEventNames.AUTH_LOGIN_REQUEST,
+            id = "login-delayed",
+            payload = LoginRequestV1(reasonCode = "AUTH_REQUIRED"),
+            serializer = LoginRequestV1.serializer(),
+        )
+
+        assertEquals(PluginEventDisposition.ACCEPTED, fixture.gateway.submit(fixture.scope, bytes).disposition)
+        // Model the UI callback returning before the asynchronous modal worker gets scheduled.
+        fixture.authorizer.setUserInteractionContext(fixture.scope, false)
+        assertFalse(
+            fixture.authorizer.authorize(
+                fixture.scope,
+                PluginHostPermission.REQUEST_LOGIN_UI,
+                "LOGIN",
+            ).allowed,
+        )
+
+        runCurrent()
+        assertEquals(1, calls)
+        fixture.gateway.close()
+    }
+
+    @Test
     fun unknownEventAndWrongDigestFailClosedWithoutHandlerCall() = runTest {
         val fixture = fixture(
             permission = PluginHostPermission.REPORT_DIAGNOSTIC,

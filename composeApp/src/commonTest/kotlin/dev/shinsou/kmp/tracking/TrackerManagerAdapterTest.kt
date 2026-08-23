@@ -20,28 +20,28 @@ class TrackerManagerAdapterTest {
         val manager = TrackerManager(listOf(tracker), repository, backgroundScope)
         val adapter = TrackerManagerAdapter(manager, repository)
 
-        assertTrue(adapter.isAuthenticated(TrackerIds.ANI_LIST))
-        assertTrue(adapter.refreshAuthenticationState(TrackerIds.ANI_LIST).loggedIn)
-        val result = adapter.search(TrackerIds.ANI_LIST, "remote").single()
-        val bound = adapter.bind(manga.id, TrackerIds.ANI_LIST, result)
+        assertTrue(adapter.isAuthenticated(TrackerIds.MY_ANIME_LIST))
+        assertTrue(adapter.refreshAuthenticationState(TrackerIds.MY_ANIME_LIST).loggedIn)
+        val result = adapter.search(TrackerIds.MY_ANIME_LIST, "remote").single()
+        val bound = adapter.bind(manga.id, TrackerIds.MY_ANIME_LIST, result)
         assertEquals(99L, bound.remoteId)
         assertEquals(bound, repository.tracksForManga(manga.id).single())
 
         val updated = adapter.update(
             manga.id,
-            TrackerIds.ANI_LIST,
+            TrackerIds.MY_ANIME_LIST,
             TrackUpdate(progress = 4.0, status = TrackStatus.READING, score = 8.5),
         )
         assertEquals(4.0, updated.lastChapterRead)
         assertEquals(TrackStatus.READING.rawValue, updated.status)
         assertEquals(8.5, repository.tracksForManga(manga.id).single().score)
 
-        adapter.remove(manga.id, TrackerIds.ANI_LIST)
+        adapter.remove(manga.id, TrackerIds.MY_ANIME_LIST)
         assertTrue(repository.tracksForManga(manga.id).isEmpty())
     }
 
     private class FakeTrackerAdapter : TrackerAdapter {
-        override val descriptor = TrackerDescriptor(TrackerIds.ANI_LIST, "AniList")
+        override val descriptor = TrackerDescriptor(TrackerIds.MY_ANIME_LIST, "MyAnimeList")
 
         override suspend fun isAuthenticated(): Boolean = true
 

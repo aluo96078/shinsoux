@@ -12,6 +12,10 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class TrackingCoordinatorTest {
+    private companion object {
+        const val TEST_TRACKER_ID = 42
+    }
+
     @Test
     fun orchestratesAuthenticationSearchBindUpdateRemoveAndLogout() = runTest {
         FakeAuthenticator.authenticated = false
@@ -20,7 +24,7 @@ class TrackingCoordinatorTest {
         val coordinator = TrackingCoordinator(
             manager = gateway,
             providers = listOf(
-                TrackingProvider(TrackerDescriptor(TrackerIds.ANI_LIST, "AniList")),
+                TrackingProvider(TrackerDescriptor(TEST_TRACKER_ID, "Test tracker")),
                 TrackingProvider(
                     TrackerDescriptor(TrackerIds.MY_ANIME_LIST, "MyAnimeList"),
                     configured = false,
@@ -30,26 +34,26 @@ class TrackingCoordinatorTest {
             authenticators = listOf(authenticator),
         )
 
-        assertFalse(coordinator.isAuthenticated(TrackerIds.ANI_LIST))
-        assertEquals("https://example.test/auth", coordinator.authorizationUrl(TrackerIds.ANI_LIST))
+        assertFalse(coordinator.isAuthenticated(TEST_TRACKER_ID))
+        assertEquals("https://example.test/auth", coordinator.authorizationUrl(TEST_TRACKER_ID))
         assertFailsWith<TrackerAuthenticationException> {
-            coordinator.search(TrackerIds.ANI_LIST, "Blue")
+            coordinator.search(TEST_TRACKER_ID, "Blue")
         }
 
-        val token = coordinator.completeAuthentication(TrackerIds.ANI_LIST, "pasted", 10_000)
+        val token = coordinator.completeAuthentication(TEST_TRACKER_ID, "pasted", 10_000)
         assertEquals("pasted", token.accessToken)
-        assertTrue(coordinator.isAuthenticated(TrackerIds.ANI_LIST))
+        assertTrue(coordinator.isAuthenticated(TEST_TRACKER_ID))
         assertEquals(1, gateway.authenticationRefreshes)
 
-        val result = coordinator.search(TrackerIds.ANI_LIST, "Blue").single()
-        val bound = coordinator.bind(7, TrackerIds.ANI_LIST, result)
+        val result = coordinator.search(TEST_TRACKER_ID, "Blue").single()
+        val bound = coordinator.bind(7, TEST_TRACKER_ID, result)
         assertEquals(42L, bound.remoteId)
-        coordinator.update(7, TrackerIds.ANI_LIST, TrackUpdate(progress = 3.0))
-        coordinator.remove(7, TrackerIds.ANI_LIST)
-        assertEquals(7L to TrackerIds.ANI_LIST, gateway.removed)
+        coordinator.update(7, TEST_TRACKER_ID, TrackUpdate(progress = 3.0))
+        coordinator.remove(7, TEST_TRACKER_ID)
+        assertEquals(7L to TEST_TRACKER_ID, gateway.removed)
 
-        coordinator.logout(TrackerIds.ANI_LIST)
-        assertFalse(coordinator.isAuthenticated(TrackerIds.ANI_LIST))
+        coordinator.logout(TEST_TRACKER_ID)
+        assertFalse(coordinator.isAuthenticated(TEST_TRACKER_ID))
         assertEquals(2, gateway.authenticationRefreshes)
         assertFailsWith<IllegalStateException> {
             coordinator.authorizationUrl(TrackerIds.MY_ANIME_LIST)
@@ -57,7 +61,7 @@ class TrackingCoordinatorTest {
     }
 
     private class FakeAuthenticator : TrackerAuthenticator {
-        override val trackerId: Int = TrackerIds.ANI_LIST
+        override val trackerId: Int = TEST_TRACKER_ID
         override fun authorizationUrl(): String = "https://example.test/auth"
 
         override suspend fun complete(pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken =
@@ -73,7 +77,7 @@ class TrackingCoordinatorTest {
     }
 
     private class FakeGateway : TrackingManagerGateway {
-        override val descriptors = listOf(TrackerDescriptor(TrackerIds.ANI_LIST, "AniList"))
+        override val descriptors = listOf(TrackerDescriptor(TEST_TRACKER_ID, "Test tracker"))
         var authenticationRefreshes = 0
         var removed: Pair<Long, Int>? = null
 

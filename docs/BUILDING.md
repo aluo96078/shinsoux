@@ -51,7 +51,7 @@ npm run smoke
 npm run ops:test
 ```
 
-測試使用 memory filesystem、mock transport 與本地 HTML／script fixture；不會登入 AniList／MAL、不會向正式來源站發 request，也不會真的通過 Cloudflare challenge。
+測試使用 memory filesystem、mock transport 與本地 HTML／script fixture；不會登入第三方帳號、不會向正式來源站發 request，也不會真的通過 Cloudflare challenge。
 
 ### 2. 各 target Kotlin 編譯與 Android APK
 
@@ -161,8 +161,6 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 
 ## 外部服務設定
 
-- AniList client 已配置，共用 Tracking sheet 可開啟 OAuth、接受貼上的 redirect URL／access token，並支援搜尋、綁定、refresh、進度／狀態／分數／日期更新與登出。正式帳號流程仍需用外部網路與帳號 smoke。
-- iOS 目前以貼上 OAuth callback／token 作為可靠保底，不能只靠 custom URL callback 假設登入已完成。
 - 原版 MyAnimeList client ID 是 placeholder；KMP UI 會顯示未配置，未提供正式 client ID 前不能登入 MAL。
 - 正式來源站可能要求登入、Cloudflare、地區條件或 rate limit，不應作為 deterministic CI 健康檢查。
 - DNS over HTTPS toggle 目前只保存設定。沒有為 OkHttp、Darwin 與 CIO 接入可保留原 hostname、TLS SNI 與憑證驗證的 resolver，因此 runtime 不會啟用 DoH。
@@ -183,7 +181,6 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 - Reader 四種 reading mode、章末切換、章節清單、retry、以瀏覽器開啟本章、離線頁面與來源特例；下載完成後執行 Clear completed，確認只隱藏 queue 列且仍可離線閱讀
 - 保存 credentials／cookies／OAuth token／proxy API key 後重啟，確認 Android Keystore 或 iOS Keychain 能解密，且 plaintext legacy copy 已移除
 - 自動備份立即建立／列表／還原／刪除，並觀察 OS 背景排程
-- AniList 真實帳號 OAuth、搜尋、綁定與進度同步
 
 ### Android 真機限定
 
