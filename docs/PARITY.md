@@ -38,7 +38,7 @@
 | Widget | 不適用 | 受限 | 不適用 | App Group payload 與 WidgetKit timeline 已建置；需簽章 provisioning／真機確認 shared container |
 | 自動背景來源更新 | 未接 | 未接 | 未接 | 手動共用 refresh 流程可用；尚未接 Android／iOS OS-managed 來源更新 scheduler |
 | DNS over HTTPS runtime | 未接 | 未接 | 未接 | toggle 只保存設定；尚無跨 OkHttp／Darwin／CIO 且保留 hostname、TLS SNI 與憑證驗證的 resolver |
-| Desktop chrome 與平台安裝包 | 不適用 | 不適用 | 受限 | Compose Desktop sidebar、雙欄、系統 Menu Bar、macOS `⌘`／Windows `Ctrl` 快捷鍵與 close confirmation 已接；macOS 使用 DMG／ICNS，Windows 使用 machine-scoped MSI／EXE／ICO、stable upgrade UUID、目錄選擇、桌面捷徑與開始功能表。MSI 刻意避開 jpackage per-user `RemoveFolderEx` 清理風險，安裝可能需要 UAC 提權。macOS unsigned packaged app 已 smoke 主要導航與關閉流程；Windows installer、DPI、快捷鍵與升級／解除安裝仍需原生 Windows 人工驗證。介面不是原生 AppKit 或 WinUI |
+| Desktop chrome 與平台安裝包 | 不適用 | 不適用 | 受限 | Compose Desktop sidebar、雙欄、系統 Menu Bar、macOS `⌘`／Windows `Ctrl` 快捷鍵與 close confirmation 已接；macOS 使用 DMG／ICNS，Windows 使用 machine-scoped MSI／EXE／ICO、stable upgrade UUID、固定安裝目錄、桌面捷徑與開始功能表。MSI 刻意避開 jpackage per-user `RemoveFolderEx` 清理風險，且不允許把卸載根目錄改為使用者既有資料夾；安裝可能需要 UAC 提權。macOS unsigned packaged app 已 smoke 主要導航與關閉流程；Windows installer、DPI、快捷鍵與升級／解除安裝仍需原生 Windows 人工驗證。介面不是原生 AppKit 或 WinUI |
 
 ## Local source 邊界
 

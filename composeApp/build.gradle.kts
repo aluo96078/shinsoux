@@ -320,7 +320,9 @@ compose.desktop {
                 // The app data root remains per-user and is protected by the user's DPAPI key.
                 perUserInstall = false
                 installationPath = "Shinsou X"
-                dirChooser = true
+                // Never let the jpackage UI replace the fixed install root with a user-selected
+                // existing directory: RemoveFolderEx recursively removes that root on uninstall.
+                dirChooser = false
                 shortcut = true
                 menu = true
                 menuGroup = "Shinsou X"
