@@ -3,7 +3,11 @@ package dev.shinsou.kmp.plugin
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -12,10 +16,8 @@ class OfficialPluginCompatibilityTest {
     @Test
     fun everyOfficialPluginCanInitializeInRhino() = runTest {
         val repository = locateRepository() ?: return@runTest
-        val entries = PluginJson.decodeFromString(
-            ListSerializer(PluginIndexEntry.serializer()),
-            Files.readString(repository.resolve("index.json")),
-        )
+        val root = PluginJson.parseToJsonElement(Files.readString(repository.resolve("index.json"))).jsonObject
+        val entries = root.getValue("packages").jsonArray.map { it.jsonObject }
         assertTrue(entries.isNotEmpty())
 
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
@@ -28,24 +30,26 @@ class OfficialPluginCompatibilityTest {
         )
         val environment = ScriptPluginEnvironment(network, storage)
 
-        entries.forEach { entry ->
-            val localScript = entry.scriptUrl.substringBefore('?').substringBefore('#')
+        entries.forEachIndexed { offset, entry ->
+            val packageId = entry.getValue("id").jsonPrimitive.content
+            val localScript = entry.getValue("scriptUrl").jsonPrimitive.content
+                .substringBefore('?').substringBefore('#')
             val bytes = Files.readAllBytes(repository.resolve(localScript))
             val manifest = PluginManifest(
-                id = entry.id,
-                name = entry.name,
-                version = entry.version,
-                versionCode = entry.versionCode,
-                lang = entry.lang,
-                nsfw = entry.nsfw == 1,
-                script = "${entry.id}.js",
+                id = packageId,
+                name = entry.getValue("name").jsonPrimitive.content,
+                version = entry.getValue("version").jsonPrimitive.content,
+                versionCode = entry.getValue("versionCode").jsonPrimitive.intOrNull ?: 0,
+                lang = entry.getValue("lang").jsonPrimitive.content,
+                nsfw = entry["nsfw"]?.jsonPrimitive?.booleanOrNull == true,
+                script = "$packageId.js",
                 signature = Sha256.hex(bytes),
-                sources = entry.sources,
+                sources = listOf(SourceIndexEntry(packageId, "all", 80_000L + offset, null)),
             )
             val runtime = RhinoScriptPluginRuntimeFactory().create(bytes.decodeToString(), manifest, environment)
             try {
-                assertEquals(entry.sources?.firstOrNull()?.id, runtime.id, entry.id)
-                assertTrue(runtime.name.isNotBlank(), entry.id)
+                assertEquals(packageId, runtime.pluginId, packageId)
+                assertTrue(runtime.name.isNotBlank(), packageId)
             } finally {
                 runtime.close()
             }

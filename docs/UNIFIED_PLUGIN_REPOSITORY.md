@@ -29,7 +29,6 @@ python3 -m http.server 18081 --directory /Users/aluoexpiry/project/shinsou_plugi
 Then add `http://127.0.0.1:18081/merged-shuyue/` (or the Mac's LAN address) in the Extensions
 screen to test the legacy unified-v1 contract. To test the reviewed extension-content-v2
 repository (including the migrated ShuYue Biquge package), add
-`http://127.0.0.1:18081/v2/index.json` instead. The v2 URL is deliberately separate from the
-unified fixture: it serves `v2/plugins/`, `v2/sidecars/`, and the exact migration bindings.
-The fixture copies scripts into isolated `shinsou/` and `shuyue/` paths and does not alter either
-upstream plugin repository.
+`http://127.0.0.1:18081/index.json` instead. The v2 repository now lives at the project root and
+serves `plugins/`, `sidecars/`, and the exact migration bindings. The fixture copies scripts into
+isolated `shinsou/` and `shuyue/` paths and does not alter either upstream plugin repository.

@@ -2,6 +2,11 @@ package dev.shinsou.kmp.plugin
 
 import java.io.File
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -10,9 +15,11 @@ import kotlin.test.assertTrue
 class WorkspacePluginCompatibilityTest {
     @Test
     fun everyRepositoryScriptInitializesInRhino() = runTest {
-        val index = PluginJson.decodeFromString<List<PluginIndexEntry>>(resourceText("index.json"))
-        val indexedScripts = index.associateBy { entry ->
-            entry.scriptUrl.substringBefore('?').substringBefore('#').substringAfterLast('/')
+        val root = PluginJson.parseToJsonElement(resourceText("index.json")).jsonObject
+        val packages = root.getValue("packages").jsonArray.map { it.jsonObject }
+        val indexedScripts = packages.associateBy { entry ->
+            entry.getValue("scriptUrl").jsonPrimitive.content
+                .substringBefore('?').substringBefore('#').substringAfterLast('/')
         }
         val pluginFiles = resourceDirectory("plugins")
             .listFiles()
@@ -21,8 +28,8 @@ class WorkspacePluginCompatibilityTest {
             .map { it.name }
             .sorted()
 
-        assertEquals(14, pluginFiles.size, "The compatibility fixture should cover every repository plugin")
-        assertTrue(index.isNotEmpty())
+        assertEquals(17, pluginFiles.size, "The compatibility fixture should cover every v2 repository plugin")
+        assertTrue(packages.isNotEmpty())
         assertTrue(
             indexedScripts.keys.all(pluginFiles::contains),
             "Every index.json script must be present in the plugins resource directory",
@@ -38,21 +45,19 @@ class WorkspacePluginCompatibilityTest {
         )
         pluginFiles.forEachIndexed { offset, fileName ->
             val entry = indexedScripts[fileName]
-            val pluginId = entry?.id ?: fileName.removeSuffix(".js")
+            val pluginId = entry?.getValue("id")?.jsonPrimitive?.content ?: fileName.removeSuffix(".js")
             val script = resourceText("plugins/$fileName")
             val loginRequests = mutableListOf<Triple<Long, String, String?>>()
             val manifest = PluginManifest(
                 id = pluginId,
-                name = entry?.name ?: pluginId,
-                version = entry?.version ?: "0.0.0",
-                versionCode = entry?.versionCode ?: 0,
-                lang = entry?.lang ?: "all",
-                nsfw = entry?.nsfw == 1,
+                name = entry?.getValue("name")?.jsonPrimitive?.content ?: pluginId,
+                version = entry?.getValue("version")?.jsonPrimitive?.content ?: "0.0.0",
+                versionCode = entry?.getValue("versionCode")?.jsonPrimitive?.intOrNull ?: 0,
+                lang = entry?.getValue("lang")?.jsonPrimitive?.content ?: "all",
+                nsfw = entry?.get("nsfw")?.jsonPrimitive?.booleanOrNull == true,
                 script = fileName,
                 signature = "",
-                sources = entry?.sources ?: listOf(
-                    SourceIndexEntry(pluginId, "all", 80_000L + offset, null),
-                ),
+                sources = listOf(SourceIndexEntry(pluginId, "all", 80_000L + offset, null)),
             )
             val runtime = RhinoScriptPluginRuntimeFactory().create(
                 script,

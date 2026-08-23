@@ -111,7 +111,7 @@ class UnifiedRepositoryBrowseAdapterTest {
 
     @Test
     fun addingV2IndexSkipsOpaqueReferenceOnlyShinsouPackage() = runTest {
-        val indexUrl = "http://127.0.0.1:18081/v2/index.json"
+        val indexUrl = "http://127.0.0.1:18081/index.json"
         val reviewedDigest = "5a9d1ac0d8263629e82332a88b2a7ed4eb6efb857804a8ae6ae946b2eb23b627"
         val body = """
             {
@@ -150,8 +150,8 @@ class UnifiedRepositoryBrowseAdapterTest {
         val storage = KeyValuePluginStorage(keyValues)
         val http = HttpClient(MockEngine { request ->
             when {
-                request.url.encodedPath.endsWith("/v2/index.json") -> respond(body, HttpStatusCode.OK)
-                request.url.encodedPath.endsWith("/v2/repo.json") -> respond(
+                request.url.encodedPath.endsWith("/index.json") -> respond(body, HttpStatusCode.OK)
+                request.url.encodedPath.endsWith("/repo.json") -> respond(
                     """{"meta":{"name":"V2 mixed"}}""",
                     HttpStatusCode.OK,
                 )

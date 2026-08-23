@@ -109,7 +109,7 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
 
     public companion object {
         public const val DEFAULT_REVIEWED_SHUYUE_INDEX_URL: String =
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/main/v2/index.json"
+            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master/index.json"
         /** Preserved for existing repository records and legacy-format compatibility tests. */
         public const val LEGACY_REVIEWED_SHUYUE_INDEX_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/index.json"
