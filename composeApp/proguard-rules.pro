@@ -58,3 +58,15 @@
 # binary name aligned with that service descriptor in packaged DMG/MSI/EXE
 # builds.
 -keep class dev.shinsou.kmp.reader.protocol.EpubUrlStreamHandlerProvider { *; }
+
+# The Compose desktop distribution includes the JavaFX Web module so EPUB
+# pages can be rendered, but WebKit's optional media/editor/control bridges
+# refer to JavaFX modules that are intentionally not shipped in the runtime
+# image.  QRose likewise exposes a couple of optional Compose graphics
+# overloads that vary across the Compose version used by the application.
+# These references are not reached by the reader and ProGuard 7.7 treats them
+# as fatal unless the optional edges are explicitly ignored.
+-dontwarn com.sun.javafx.**
+-dontwarn com.sun.webkit.**
+-dontwarn javafx.scene.web.**
+-dontwarn io.github.alexzhirkevich.qrose.**
