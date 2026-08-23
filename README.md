@@ -11,7 +11,7 @@
 
 | 平台 | 最低目標／產物 | 平台整合 |
 |------|---------------|----------|
-| Android | Android 8.0（API 26）以上；Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
+| Android | Android 8.0（API 26）以上；Debug APK／Release APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
 | iOS／iPadOS | iOS 16 以上；Xcode App＋Widget | Keychain、iCloud Drive、BGTask、WKWebView、Widget |
 | macOS | Compose Desktop App／DMG；目前打包目標為 Apple Silicon | Menu Bar、快捷鍵、系統文件選擇器、macOS Keychain |
 | Windows | Windows 10／11 x64；MSI／EXE | `%LOCALAPPDATA%`、使用者範圍 DPAPI、Ctrl 快捷鍵、原生文件選擇器 |
@@ -25,6 +25,18 @@
 - AniList 追蹤流程、多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
+## ShuYue 風格小說閱讀器
+
+小說閱讀器以 ShuYue 的閱讀操作為基礎，延展到 Android、iOS、macOS 與 Windows 的統一內容層。純文字章節與 EPUB 都保留可恢復的閱讀定位，重新排版或切換裝置後仍能回到接近原位置。
+
+- 閱讀正文時工具列預設隱藏；點擊畫面中央 40% 區域即可顯示／隱藏底部功能欄
+- 左右兩側各 30% 為上一頁／下一頁點擊區，支援水平拖曳、滑鼠滾輪向下翻頁、鍵盤與實體音量鍵
+- 可使用連續向下滾動、LTR、RTL 與垂直翻頁模式；章節邊界可直接進入前一章／下一章
+- 底部欄只保留必要圖示（設定、章節、上一頁、下一頁），正文不插入分割線、進度條或多餘按鈕
+- 「Page turn animation」可在閱讀設定中關閉；關閉後翻頁與定位會直接落位，不等待動畫完成
+- 頂部標題欄與底部工具列遵守 iOS safe area，避開 Face ID 感測區與 Home Indicator；Android／Desktop 也使用相同的內容留白規則
+- 來源 HTML 會先清理常見標籤與 entity，再分頁並保留 UTF-16 offset；正文中的合法圖片標記仍會以 inline image 顯示
+
 ## 已實作範圍
 
 - 圖書館、多分類、搜尋／篩選／排序與批次操作
@@ -34,11 +46,13 @@
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
 - Shinsou X JavaScript extension repository 的安裝、更新、卸載、執行授權、偏好、登入與來源瀏覽；repository 設定納入可攜 snapshot
+- ShuYue v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
 - 內建 Local source（source `0`）：直接圖片與 TXT／ZIP／CBZ／EPUB；匯入以原子發布的 v2 manifest 拒絕部分或損毀內容
 - AniList 登入／搜尋／綁定／編輯 UI 與 OAuth token 流程；MyAnimeList 因缺少正式 client ID 而明示停用
 - iOS Widget payload、iCloud Drive snapshot sync，以及 Android／iOS Reader 實體音量鍵接線
+- Browse 啟動時先顯示本地與已安裝來源，再以有界 timeout 背景刷新遠端 repository；不再用全畫面 loading 阻塞瀏覽頁
 
 ## Cloudflare 端對端加密同步
 
@@ -105,6 +119,9 @@ cd shinsoux
 # Android debug APK
 ./gradlew :composeApp:assembleDebug
 
+# Android release APK（沒有設定 ANDROID_KEYSTORE_* 時會輸出 unsigned APK）
+./gradlew :composeApp:assembleRelease
+
 # iOS Simulator framework 與 tests
 ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
 ./gradlew :composeApp:iosSimulatorArm64Test
@@ -119,6 +136,19 @@ xcodebuild -project Shinsou.xcodeproj \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
 ```
+
+Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
+`composeApp/build/outputs/apk/release/`。正式發布請在 CI 注入 Android keystore，避免把 unsigned APK 當成可升級的正式版本。
+
+Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
+
+```powershell
+.\gradlew.bat :composeApp:packageReleaseMsi
+.\gradlew.bat :composeApp:packageReleaseExe
+```
+
+產物位於 `composeApp/build/compose/binaries/main-release/msi/` 與
+`composeApp/build/compose/binaries/main-release/exe/`。macOS 請使用上面的 `packageDmg` 產生 DMG。
 
 完整環境、打包與驗證層級請見 [建置與驗證](docs/BUILDING.md)。
 
