@@ -127,6 +127,8 @@ jobs:
           $launcher = Join-Path $env:LOCALAPPDATA "Programs\Shinsou X\Shinsou X.exe"
           $dataRoot = Join-Path $env:LOCALAPPDATA "Shinsou X"
           $sentinel = Join-Path $dataRoot "ci-uninstall-preserves-user-data.txt"
+          $externalDataRoot = Join-Path $env:LOCALAPPDATA "Shinsou X CI Data"
+          $externalSentinel = Join-Path $externalDataRoot "ci-uninstall-preserves-external-data.txt"
           $stdout = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stdout.log"
           $stderr = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stderr.log"
           $installed = $false
@@ -144,6 +146,8 @@ jobs:
 
             New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
             Set-Content -LiteralPath $sentinel -Value "The uninstaller must preserve this file."
+            New-Item -ItemType Directory -Path $externalDataRoot -Force | Out-Null
+            Set-Content -LiteralPath $externalSentinel -Value "The uninstaller must preserve this external file."
             $application = Start-Process -FilePath $launcher -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
             Start-Sleep -Seconds 15
@@ -166,9 +170,16 @@ jobs:
               if ($uninstall.ExitCode -ne 0) {
                 throw "MSI uninstall failed with exit code $($uninstall.ExitCode)."
               }
-              if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf)) {
-                throw "MSI uninstall removed the Shinsou X user-data directory."
-              }
+            $dataRootPreserved = Test-Path -LiteralPath $sentinel -PathType Leaf
+            $externalDataPreserved = Test-Path -LiteralPath $externalSentinel -PathType Leaf
+            Write-Output "Product data sentinel preserved: $dataRootPreserved ($dataRoot)"
+            Write-Output "External data sentinel preserved: $externalDataPreserved ($externalDataRoot)"
+            if (-not $dataRootPreserved) {
+              throw "MSI uninstall removed the Shinsou X user-data directory."
+            }
+            if (-not $externalDataPreserved) {
+              throw "MSI uninstall removed the external user-data directory."
+            }
               Write-Output "MSI uninstall preserved the separate user-data directory."
             }
           }
