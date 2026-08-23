@@ -1,2 +1,5 @@
 * text=auto
 *.bat text eol=crlf
+# Pinned ShuYue repository fixtures are verified by exact byte size and SHA-256.
+# Keep their LF bytes unchanged on Windows; CRLF conversion invalidates provenance.
+composeApp/src/desktopTest/resources/shuyue-plugin/** -text
