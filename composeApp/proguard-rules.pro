@@ -66,6 +66,7 @@
 # overloads that vary across the Compose version used by the application.
 # These references are not reached by the reader and ProGuard 7.7 treats them
 # as fatal unless the optional edges are explicitly ignored.
+-dontoptimize
 -dontwarn com.sun.javafx.**
 -dontwarn com.sun.webkit.**
 -dontwarn javafx.scene.web.**
