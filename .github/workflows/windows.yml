@@ -125,9 +125,9 @@ jobs:
         run: |
           $msi = Get-ChildItem "composeApp/build/compose/binaries/main-release/msi/*.msi" -File | Select-Object -First 1
           $launcher = Join-Path $env:LOCALAPPDATA "Programs\Shinsou X\Shinsou X.exe"
-          $dataRoot = Join-Path $env:LOCALAPPDATA "ShinsouXData"
+          $dataRoot = Join-Path $env:APPDATA "ShinsouXData"
           $sentinel = Join-Path $dataRoot "ci-uninstall-preserves-user-data.txt"
-          $externalDataRoot = Join-Path $env:LOCALAPPDATA "ShinsouCiData"
+          $externalDataRoot = Join-Path $env:APPDATA "ShinsouCiData"
           $externalSentinel = Join-Path $externalDataRoot "ci-uninstall-preserves-external-data.txt"
           $stdout = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stdout.log"
           $stderr = Join-Path $env:RUNNER_TEMP "shinsou-x-launch.stderr.log"

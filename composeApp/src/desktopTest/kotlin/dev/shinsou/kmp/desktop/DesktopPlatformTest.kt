@@ -60,19 +60,26 @@ class DesktopPlatformTest {
     }
 
     @Test
-    fun windowsDataRootUsesInstallerSafeLocalAppDataDirectory() {
+    fun windowsDataRootUsesInstallerSafeAppDataDirectory() {
+        val appData = testPath("windows-app-data")
         val localAppData = testPath("windows-local-app-data")
         val root = DesktopAppDirectories.resolveDataRoot(
             platform = DesktopPlatform.WINDOWS,
-            environment = { name -> if (name == "LOCALAPPDATA") localAppData.toString() else null },
+            environment = {
+                when (it) {
+                    "APPDATA" -> appData.toString()
+                    "LOCALAPPDATA" -> localAppData.toString()
+                    else -> null
+                }
+            },
             property = testProperties(userHome = testPath("unused-windows-home").toString()),
         )
 
-        assertEquals(localAppData.resolve("ShinsouXData"), root)
+        assertEquals(appData.resolve("ShinsouXData"), root)
     }
 
     @Test
-    fun windowsDataRootFallsBackToUserLocalDirectory() {
+    fun windowsDataRootFallsBackToUserRoamingDirectory() {
         val userHome = testPath("windows-home")
         val root = DesktopAppDirectories.resolveDataRoot(
             platform = DesktopPlatform.WINDOWS,
@@ -81,8 +88,20 @@ class DesktopPlatformTest {
         )
 
         assertEquals(
-            userHome.resolve("AppData").resolve("Local").resolve("ShinsouXData"),
+            userHome.resolve("AppData").resolve("Roaming").resolve("ShinsouXData"),
             root,
+        )
+    }
+
+    @Test
+    fun legacyWindowsDataRootUsesLocalAppData() {
+        val localAppData = testPath("legacy-windows-local-app-data")
+        assertEquals(
+            localAppData.resolve("Shinsou X"),
+            DesktopAppDirectories.resolveLegacyWindowsDataRoot(
+                environment = { name -> if (name == "LOCALAPPDATA") localAppData.toString() else null },
+                property = testProperties(userHome = testPath("unused-windows-home").toString()),
+            ),
         )
     }
 
@@ -95,7 +114,7 @@ class DesktopPlatformTest {
         Files.createDirectories(legacy)
         Files.writeString(legacy.resolve("shinsou-state.json"), "legacy")
 
-        DesktopAppDirectories.migrateLegacyWindowsData(current)
+        DesktopAppDirectories.migrateLegacyWindowsData(current, legacy)
 
         assertTrue(Files.isRegularFile(current.resolve("shinsou-state.json")))
         assertFalse(Files.exists(legacy))
@@ -103,7 +122,7 @@ class DesktopPlatformTest {
         Files.createDirectories(legacy)
         Files.writeString(legacy.resolve("keep-me.txt"), "legacy")
         Files.writeString(current.resolve("current.txt"), "current")
-        DesktopAppDirectories.migrateLegacyWindowsData(current)
+        DesktopAppDirectories.migrateLegacyWindowsData(current, legacy)
 
         assertTrue(Files.isRegularFile(legacy.resolve("keep-me.txt")))
         assertTrue(Files.isRegularFile(current.resolve("current.txt")))

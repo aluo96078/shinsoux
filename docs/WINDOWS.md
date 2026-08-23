@@ -50,14 +50,14 @@ composeApp/build/compose/binaries/main-release/exe/
 
 MSI 與 EXE 必須在 Windows host 建立；macOS 無法交叉產生 Windows installer。
 
-per-user installer 預設把程式放在 `%LOCALAPPDATA%\Programs\Shinsou X`，與下方 `%LOCALAPPDATA%\ShinsouXData` 使用者資料目錄分離。資料目錄刻意不以產品顯示名稱開頭，避開 jpackage MSI 解除安裝器的產品目錄清理規則；升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob。
+per-user installer 預設把程式放在 `%LOCALAPPDATA%\Programs\Shinsou X`，與下方 `%APPDATA%\ShinsouXData` 使用者資料目錄分離。資料目錄放在 Roaming AppData 且刻意不以產品顯示名稱開頭，避開 jpackage MSI 解除安裝器對 Local AppData 安裝樹的清理規則；升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob。
 
 ## 儲存與安全
 
 Windows 資料預設位於：
 
 ```text
-%LOCALAPPDATA%\ShinsouXData
+%APPDATA%\ShinsouXData
 ```
 
 - `shinsou-state.json` 保存書庫、設定與可攜 snapshot 狀態。
