@@ -307,12 +307,6 @@ public class PluginBrowseAdapter(
         }
         if (reviewedLocation != null) {
             val location = reviewedLocation
-            val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-            if (location == builtIn) {
-                // The maintained source is recoverable: removal hides it locally, while adding
-                // the same GitHub/raw URL again clears this flag and restores the official row.
-                keyValueStore.putString(SHUYUE_BUILTIN_REPOSITORY_DISABLED_KEY, "true")
-            }
             val remaining = readReviewedShuYueRepositoryUrls()
                 .filterNot { it == location }
             writeReviewedShuYueRepositoryUrls(remaining)
@@ -925,8 +919,7 @@ public class PluginBrowseAdapter(
             false
         }
         val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        if (location == builtIn) keyValueStore.remove(SHUYUE_BUILTIN_REPOSITORY_DISABLED_KEY)
-        if (location != builtIn && location !in readReviewedShuYueRepositoryUrls()) {
+        if (location !in readReviewedShuYueRepositoryUrls()) {
             writeReviewedShuYueRepositoryUrls(readReviewedShuYueRepositoryUrls() + location)
         }
         refreshReviewedShuYueRepositories()
@@ -934,7 +927,12 @@ public class PluginBrowseAdapter(
         return reviewedRepositoryRow(location, official = location == builtIn)
     }
 
-    /** Refreshes the built-in maintained ShuYue source plus user-added ShuYue index URLs. */
+    /** Refreshes only user-configured ShuYue index URLs.
+     *
+     * The maintained ShuYue repository is available through the normal add-repository flow, but
+     * it is deliberately not seeded here. A fresh install must not contact or display a remote
+     * source until the user has explicitly configured one.
+     */
     private suspend fun refreshReviewedShuYueRepositories() {
         val loader = reviewedShuYueRepositoryLoaderV2
         if (loader == null) {
@@ -944,11 +942,7 @@ public class PluginBrowseAdapter(
             return
         }
         val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        val builtInEnabled = keyValueStore.getString(SHUYUE_BUILTIN_REPOSITORY_DISABLED_KEY) != "true"
-        val configured = (
-            (if (builtInEnabled) listOf(builtIn) else emptyList()) +
-                readReviewedShuYueRepositoryUrls().filterNot { it == builtIn }
-        ).distinct()
+        val configured = readReviewedShuYueRepositoryUrls().distinct()
         val packages = linkedMapOf<String, ShuYueReviewedRepositoryPackageV2>()
         val owners = linkedMapOf<String, ShuYueReviewedRepositoryCoordinatorV2>()
         var successfulRepositories = 0
@@ -959,7 +953,7 @@ public class PluginBrowseAdapter(
                 val refreshed = coordinator.refresh()
                 successfulRepositories++
                 refreshed.forEach { packageInfo ->
-                    // The built-in source wins when a user repository mirrors the same package.
+                    // The first configured source wins when repositories mirror the same package.
                     if (packageInfo.packageId !in packages) {
                         packages[packageInfo.packageId] = packageInfo
                         owners[packageInfo.packageId] = coordinator
@@ -968,11 +962,10 @@ public class PluginBrowseAdapter(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                // The maintained GitHub source is optional. It can be unavailable (for example,
-                // when the repository branch has moved) while a user-provided LAN repository is
-                // perfectly healthy. Keep refreshing the remaining locations so one failed
-                // source cannot hide working ShuYue packages. The explicit add flow still
-                // surfaces errors for the URL the user entered.
+                // One configured source can be unavailable while another user-provided source is
+                // healthy. Keep refreshing the remaining locations so one failed source cannot
+                // hide working ShuYue packages. The explicit add flow still surfaces errors for
+                // the URL the user entered.
                 if (firstFailure == null) firstFailure = failure
             }
         }
@@ -1741,8 +1734,6 @@ public class PluginBrowseAdapter(
     public companion object {
         private const val SHUYUE_REPOSITORY_ID_PREFIX: String = "shuyue:"
         private const val SHUYUE_REPOSITORY_URLS_KEY: String = "plugin.shuyue.v2.repository-urls"
-        private const val SHUYUE_BUILTIN_REPOSITORY_DISABLED_KEY: String =
-            "plugin.shuyue.v2.builtin-repository-disabled"
         private const val UNIFIED_REPOSITORY_MIGRATION_KEY: String =
             "plugin.repositories.unified-reviewed-migration.v2"
         private const val V2_USERNAME_REFERENCE_PREFIX: String = "shinsou-v2-username-"

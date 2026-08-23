@@ -119,7 +119,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             listOf("zh.biquge.tw", "zh.wenku8.api"),
             callbacks.state.value.extensions.filter { it.reviewedShuYueV2 }.map { it.id }.sorted(),
         )
-        assertTrue(keyValues.getString("plugin.shuyue.v2.repository-urls") == null)
+        assertEquals(REVIEWED_INDEX_URL, keyValues.getString("plugin.shuyue.v2.repository-urls"))
         callbacks.removeRepository(requireNotNull(added).id)
         assertTrue(callbacks.state.value.repositories.none { it.id == added.id })
         assertTrue(callbacks.state.value.extensions.none { it.reviewedShuYueV2 })
@@ -167,6 +167,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             reviewedShuYueRepositoryLocationV2 = ShuYueRepositoryLocation.IndexUrl(REVIEWED_INDEX_URL),
         )
 
+        callbacks.addRepository(REVIEWED_INDEX_URL)
         callbacks.refresh()
         val review = callbacks.stageReviewedShuYuePackageV2("zh.wenku8.api")
         callbacks.approveAndInstallReviewedShuYueV2(
@@ -230,6 +231,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             reviewedShuYueRepositoryLocationV2 = ShuYueRepositoryLocation.IndexUrl(REVIEWED_INDEX_URL),
         )
 
+        callbacks.addRepository(REVIEWED_INDEX_URL)
         callbacks.refresh()
         val reviewed = callbacks.state.value.extensions.filter { it.reviewedShuYueV2 }
         assertEquals(
