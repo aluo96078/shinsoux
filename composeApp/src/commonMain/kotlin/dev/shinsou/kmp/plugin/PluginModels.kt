@@ -5,6 +5,7 @@ import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Transient
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -128,6 +129,13 @@ public data class SourceIndexEntry(
     val baseUrl: String? = null,
     val type: String? = null,
     val contentType: String? = null,
+    /**
+     * Optional v2 canonical identity used when a reviewed source is backed by a legacy engine.
+     * It is process-local metadata: the legacy engine still uses [id] as its host execution
+     * scope, while source selection must compare the script's opaque string id.
+     */
+    @Transient
+    val canonicalSourceId: String? = null,
 )
 
 /** Accepts both native Shinsou numeric IDs and Mihon's quoted 64-bit IDs. */

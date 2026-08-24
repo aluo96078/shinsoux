@@ -19,6 +19,7 @@ import dev.shinsou.kmp.plugin.PluginCredential
 import dev.shinsou.kmp.plugin.PluginVerifier
 import dev.shinsou.kmp.plugin.ConfiguredPluginProxyResolver
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntime
 import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
@@ -260,6 +261,123 @@ class ProductionShuYueReviewedRuntimeV2Test {
         callbacks.uninstallReviewedShuYueV2("zh.biquge.tw")
         assertNull(callbacks.extensionSourceV2(sourceKey))
         assertFalse(callbacks.state.value.extensions.single { it.id == "zh.biquge.tw" }.installed)
+        manager.close()
+    }
+
+    @Test
+    fun reviewedCoordinatorInstallsEveryCanonicalSourceWithIndependentLegacyScopes() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport {
+                PluginHttpResponse(status = 200, body = ByteArray(0))
+            },
+            storage = storage,
+        )
+        val repositoryClient = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
+        )
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = ScriptPluginEnvironment(network, storage),
+        )
+        val bytes = DUAL_SOURCE_REVIEWED_SCRIPT.encodeToByteArray()
+        val profile = ShuYueReviewedPluginProfileV2(
+            identity = ShuYueArtifactIdentityV2(
+                packageId = "test.dual.reviewed",
+                version = "1.0.0",
+                versionCode = 1,
+                sha256 = Sha256.hex(bytes),
+            ),
+            displayName = "Dual reviewed fixture",
+            sourceId = "test.dual.novel",
+            sourceName = "Dual novel",
+            languageTag = "zh",
+            baseUrl = "https://novel.example",
+            capabilities = setOf(
+                dev.shinsou.kmp.plugin.v2.ExtensionCapability.BROWSE,
+                dev.shinsou.kmp.plugin.v2.ExtensionCapability.CONTENT,
+            ),
+            requiredPermissions = setOf(
+                ShuYueExecutionPermissionV2.EXECUTE_SCRIPT,
+                ShuYueExecutionPermissionV2.NETWORK,
+            ),
+            sourceProfiles = listOf(
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = "test.dual.novel",
+                    sourceName = "Dual novel",
+                    languageTag = "zh",
+                    baseUrl = "https://novel.example",
+                ),
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = "test.dual.manga",
+                    sourceName = "Dual manga",
+                    languageTag = "zh",
+                    baseUrl = "https://manga.example",
+                ),
+            ),
+        )
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val resolvedScopes = linkedMapOf<String, Long>()
+        val admission = productionShuYueReviewedAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = ScriptPluginEnvironment(network, storage),
+            reviewedProfiles = listOf(profile),
+            executionScopes = ShuYueExecutionScopeResolverV2 { _, sourceKey ->
+                val scope = when (sourceKey.sourceId) {
+                    "test.dual.novel" -> -9_110_000_000_000_101L
+                    "test.dual.manga" -> -9_110_000_000_000_102L
+                    else -> error("unexpected source ${sourceKey.sourceId}")
+                }
+                resolvedScopes[sourceKey.sourceId] = scope
+                scope
+            },
+        )
+        val coordinator = ShuYueReviewedInstallCoordinatorV2(
+            admission = admission,
+            approvals = approvals,
+            manager = manager,
+        )
+
+        val review = coordinator.stage(
+            ShuYueScriptCandidateV2(
+                packageId = profile.identity.packageId,
+                version = profile.identity.version,
+                versionCode = profile.identity.versionCode,
+                sourceIds = profile.sourceIds,
+                bytes = bytes,
+                provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
+                reportedSha256 = profile.identity.sha256,
+            ),
+        )
+        assertEquals(ShuYueReviewStatusV2.REVIEWED, review.reviewStatus)
+        val facade = coordinator.approveAndInstall(
+            ShuYueReviewedInstallApprovalV2(
+                quarantineId = review.quarantineId,
+                identity = review.identity,
+                grantedPermissions = review.requiredPermissions,
+                userConfirmed = true,
+                replaceInstalledVersion = false,
+            ),
+        )
+
+        val novelKey = SourceKey(2, profile.identity.packageId, "test.dual.novel")
+        val mangaKey = SourceKey(2, profile.identity.packageId, "test.dual.manga")
+        assertNotNull(facade.source(novelKey))
+        assertNotNull(facade.source(mangaKey))
+        assertEquals(
+            mapOf(
+                "test.dual.novel" to -9_110_000_000_000_101L,
+                "test.dual.manga" to -9_110_000_000_000_102L,
+            ),
+            resolvedScopes,
+        )
         manager.close()
     }
 
@@ -1061,6 +1179,14 @@ class ProductionShuYueReviewedRuntimeV2Test {
         const val REVIEWED_ARTIFACT_ORIGIN: String = "https://raw.githubusercontent.com"
         const val REVIEWED_INDEX_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/index.json"
+
+        val DUAL_SOURCE_REVIEWED_SCRIPT: String = """
+            var sources = [
+              { id: "test.dual.novel", name: "Dual novel", lang: "zh", baseUrl: "https://novel.example" },
+              { id: "test.dual.manga", name: "Dual manga", lang: "zh", baseUrl: "https://manga.example" }
+            ];
+            var source = sources[0];
+        """.trimIndent()
     }
 }
 

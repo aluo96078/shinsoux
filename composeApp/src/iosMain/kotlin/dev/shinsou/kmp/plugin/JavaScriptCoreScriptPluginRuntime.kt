@@ -142,8 +142,9 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 installNativeBridgeCallback()
                 evaluate(IOS_JAVASCRIPTCORE_BOOTSTRAP, "shinsou-ios-runtime.js")
                 selectedSource?.let { source ->
+                    val requestedSourceId = source.canonicalSourceId ?: source.id.toString()
                     evaluate(
-                        "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(source.id.toString())};" +
+                        "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(requestedSourceId)};" +
                             "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
                             "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
                             "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};",
@@ -151,9 +152,9 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     )
                 }
                 evaluate(script, manifest.script)
-                val sourceSelectionId: JsonElement = selectedSource?.id?.toString()
-                    ?.let { JsonPrimitive(it) }
-                    ?: JsonNull
+                val sourceSelectionId: JsonElement = selectedSource?.let {
+                    JsonPrimitive(it.canonicalSourceId ?: it.id.toString())
+                } ?: JsonNull
                 evaluate(
                     "__shinsouSelectSource($sourceSelectionId)",
                     "source-selection.js",

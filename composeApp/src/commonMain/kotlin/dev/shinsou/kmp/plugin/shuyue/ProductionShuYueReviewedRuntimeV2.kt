@@ -162,6 +162,7 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     lang = sourceDescriptor.languageTag,
                     id = executionScope,
                     baseUrl = sourceDescriptor.baseUrl,
+                    canonicalSourceId = sourceDescriptor.sourceKey.sourceId,
                 )
                 val manifest = PluginManifest(
                     id = artifact.identity.packageId,

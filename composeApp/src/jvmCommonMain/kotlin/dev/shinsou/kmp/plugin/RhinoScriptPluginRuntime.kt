@@ -103,7 +103,11 @@ private class RhinoScriptPluginRuntime private constructor(
         // native Scriptable facade whose methods are bound directly to the host object.
         ScriptableObject.putProperty(scope, "bridge", RhinoBridgeScriptable(scope, bridge))
         selectedSource?.let { source ->
-            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceId", source.id.toString())
+            ScriptableObject.putProperty(
+                scope,
+                "__shinsouRequestedSourceId",
+                source.canonicalSourceId ?: source.id.toString(),
+            )
             ScriptableObject.putProperty(scope, "__shinsouRequestedSourceName", source.name)
             ScriptableObject.putProperty(scope, "__shinsouRequestedSourceBaseUrl", source.baseUrl.orEmpty())
         }
@@ -149,7 +153,7 @@ private class RhinoScriptPluginRuntime private constructor(
      * requested id; list order is never executable authority.
      */
     private fun selectSourceObject(): Scriptable {
-        val requestedId = selectedSource?.id?.toString()
+        val requestedId = selectedSource?.let { it.canonicalSourceId ?: it.id.toString() }
         val exported = scope.property("sources") as? Scriptable
         if (exported != null && requestedId != null) {
             val matches = exported.ids.mapNotNull { key ->
