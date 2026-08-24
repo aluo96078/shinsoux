@@ -1753,6 +1753,7 @@ private fun ExtensionV2PublicationScreen(
                         publication = displayPublication,
                         supportsFavorite = supportsFavorite,
                         favorite = favorite,
+                        allowUnfavorite = localLibrary,
                         notes = notes,
                         operationMessage = operationMessage,
                         operationFailed = operationFailed,
@@ -1827,6 +1828,7 @@ private fun ExtensionV2PublicationScreen(
                             publication = displayPublication,
                             supportsFavorite = supportsFavorite,
                             favorite = favorite,
+                            allowUnfavorite = localLibrary,
                             notes = notes,
                             operationMessage = operationMessage,
                             operationFailed = operationFailed,
@@ -1931,6 +1933,7 @@ private fun ExtensionV2PublicationInfoPane(
     publication: RemotePublicationV2,
     supportsFavorite: Boolean,
     favorite: Boolean,
+    allowUnfavorite: Boolean,
     notes: String,
     operationMessage: String?,
     operationFailed: Boolean,
@@ -2007,7 +2010,10 @@ private fun ExtensionV2PublicationInfoPane(
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             if (supportsFavorite) {
-                Button(onClick = onToggleFavorite, enabled = !refreshingFromSource) {
+                Button(
+                    onClick = onToggleFavorite,
+                    enabled = !refreshingFromSource && (!favorite || allowUnfavorite),
+                ) {
                     Icon(
                         if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                         contentDescription = null,
