@@ -449,7 +449,7 @@ public object ShuYueReviewedPluginCatalogV2 {
                 packageId = "zh.bilimanga",
                 version = "1.0.0",
                 versionCode = 1,
-                sha256 = "df3e9570ac875ec3990f615f38a96e26517b59c53064031c7c628527867f23c6",
+                sha256 = "11b26d91cb6b174d4e335e4b49abeb9f64aed5133529dcb94614bbf18006340f",
             ),
             displayName = "嗶哩輕小說／漫畫（Linovelib + BiliManga）",
             sourceId = "zh.bilimanga.novel",

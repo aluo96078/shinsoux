@@ -71,8 +71,10 @@ import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLimits
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
 import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
+import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
+import dev.shinsou.kmp.plugin.v2.ExtensionNetworkScopeResolverV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
 import dev.shinsou.kmp.tracking.TrackerDescriptor
@@ -244,6 +246,25 @@ public class ShinsouComposition(
         storage = pluginStorage,
         requestBuilder = requestBuilder,
     )
+    /**
+     * V2 source keys intentionally do not carry the legacy numeric source id. Reviewed ShuYue
+     * packages still execute through the legacy network plane, so map their exact package/source
+     * identity to the fixed host-local scope before a content body is fetched.
+     */
+    private val extensionNetworkScopeResolver = ExtensionNetworkScopeResolverV2 { sourceKey ->
+        sourceKey.legacyLongId ?: ShuYueReviewedPluginCatalogV2.profiles
+            .asSequence()
+            .filter { profile ->
+                profile.identity.packageId == sourceKey.packageId &&
+                    sourceKey.sourceId in profile.sourceIds
+            }
+            .mapNotNull { profile ->
+                runCatching {
+                    BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey)
+                }.getOrNull()
+            }
+            .firstOrNull()
+    }
     private val pluginEventAuthorizer: MutablePluginSystemEventAuthorizer = MutablePluginSystemEventAuthorizer()
     private val pluginEventContextRegistry: PluginEventContextRegistry = PluginEventContextRegistry()
     private val pluginEventGrantAdmission = KeyValuePluginEventGrantAdmission(
@@ -615,7 +636,10 @@ public class ShinsouComposition(
                     durableGrant = foundation.rightsGrants::find,
                     nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
                 ),
-                resourceFetcher = PluginNetworkExtensionResourceFetcherV2(pluginNetwork),
+                resourceFetcher = PluginNetworkExtensionResourceFetcherV2(
+                    network = pluginNetwork,
+                    scopes = extensionNetworkScopeResolver,
+                ),
                 nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
             )
         },

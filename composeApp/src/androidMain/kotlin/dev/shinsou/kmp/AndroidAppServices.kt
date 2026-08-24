@@ -77,6 +77,8 @@ internal class AndroidAppServices(
     private var previousRequestedOrientation: Int? = null
     @Volatile
     private var monitorReaderVolumeKeys: Boolean = false
+    @Volatile
+    private var systemBackHandler: (() -> Boolean)? = null
 
     override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
     override val appLifecycle: StateFlow<AppLifecycleState> = lifecycleState
@@ -207,6 +209,13 @@ internal class AndroidAppServices(
     }
 
     fun shouldInterceptReaderVolumeKeys(): Boolean = monitorReaderVolumeKeys
+
+    override fun setSystemBackHandler(handler: (() -> Boolean)?) {
+        systemBackHandler = handler
+    }
+
+    /** Returns whether the common navigation stack consumed the Android system-back request. */
+    fun dispatchSystemBack(): Boolean = systemBackHandler?.invoke() == true
 
     override fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

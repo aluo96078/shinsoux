@@ -370,7 +370,7 @@ private fun ShinsouAppContent(
         }
     }
 
-    fun isV2NovelInLocalLibrary(item: BrowseManga): Boolean {
+    fun isV2PublicationInLocalLibrary(item: BrowseManga): Boolean {
         val sourceKey = item.sourceKey ?: return false
         val remoteId = item.remotePublicationId ?: return false
         val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
@@ -379,14 +379,14 @@ private fun ShinsouAppContent(
         }
     }
 
-    suspend fun toggleV2NovelLocalLibrary(
+    suspend fun toggleV2PublicationLocalLibrary(
         item: BrowseManga,
         publication: RemotePublicationV2,
         favorite: Boolean,
     ) {
-        val sourceKey = requireNotNull(item.sourceKey) { "Novel publication is missing its source identity" }
+        val sourceKey = requireNotNull(item.sourceKey) { "Publication is missing its source identity" }
         val remoteId = requireNotNull(item.remotePublicationId) {
-            "Novel publication is missing its remote identity"
+            "Publication is missing its remote identity"
         }
         val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
         val now = Clock.System.now().toEpochMilliseconds()
@@ -405,7 +405,7 @@ private fun ShinsouAppContent(
                     author = publication.author,
                     artist = publication.artist,
                     description = publication.description,
-                    genre = publication.genre ?: listOf("Novel"),
+                    genre = publication.genre ?: listOf("Extension"),
                     thumbnailUrl = publication.thumbnailUrl,
                     updateStrategy = 1,
                     initialized = true,
@@ -960,6 +960,10 @@ private fun ShinsouAppContent(
     LaunchedEffect(appServices) {
         appServices.systemBackEvents.collect { systemBackHandler.value() }
     }
+    DisposableEffect(appServices) {
+        appServices.setSystemBackHandler { systemBackHandler.value() }
+        onDispose { appServices.setSystemBackHandler(null) }
+    }
     LaunchedEffect(appServices) {
         appServices.systemBackGestureEvents.collect { event ->
             when (event) {
@@ -1446,8 +1450,8 @@ private fun ShinsouAppContent(
                         onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
                         onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                         onBrowseReaderProgress = ::recordV2ReaderProgress,
-                        onToggleLocalLibrary = ::toggleV2NovelLocalLibrary,
-                        isLocalLibraryFavorite = ::isV2NovelInLocalLibrary,
+                        onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
+                        isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                         mutate = ::mutate,
                     )
 
@@ -1638,8 +1642,8 @@ private fun ShinsouAppContent(
                                 onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
                                 onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                                 onBrowseReaderProgress = ::recordV2ReaderProgress,
-                                onToggleLocalLibrary = ::toggleV2NovelLocalLibrary,
-                                isLocalLibraryFavorite = ::isV2NovelInLocalLibrary,
+                                onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
+                                isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                                 mutate = ::mutate,
                             )
                             if (pendingBrowseManga != null) {

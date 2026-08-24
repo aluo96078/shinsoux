@@ -100,6 +100,13 @@ interface ShinsouAppServices {
         get() = emptyFlow()
 
     /**
+     * Registers the common navigation reducer with a native back dispatcher. Android uses this
+     * to decide whether a system-back press should pop an in-app destination or finish the
+     * activity; other platforms keep the no-op default and continue using [systemBackEvents].
+     */
+    fun setSystemBackHandler(handler: (() -> Boolean)?) = Unit
+
+    /**
      * Interactive system-back gesture updates.  Mobile hosts emit progress while the user's
      * finger is down and a final settle event when the gesture is committed or cancelled.  The
      * common UI can therefore move the current destination with the finger instead of waiting for

@@ -252,7 +252,7 @@ fun BrowseScreen(
     onBackAvailabilityChanged: (Boolean) -> Unit = {},
     onReaderVisibilityChanged: (Boolean) -> Unit = {},
     onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit = { _, _, _ -> },
-    /** App-owned library mutation for novel publications; source favorites remain source-owned. */
+    /** App-owned library mutation for sources without a remote favorite capability. */
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
     isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
     /** Stable v2 source identities corresponding to [BrowseSettings.pinnedSourceKeys]. */
@@ -702,9 +702,13 @@ fun BrowseScreen(
             val source = snapshot.sources.firstOrNull { source ->
                 source.sourceKey == publication.sourceKey
             }
-            val isNovelPublication = source?.contentType == PluginContentType.NOVEL
-            val supportsFavorite = source?.supportsFavorites == true || isNovelPublication
-            val localFavorite = isNovelPublication && isLocalLibraryFavorite(publication)
+            // Sources without a remote favorite capability still need a useful app-level
+            // favorite action. V2 publications use the same typed local-library projection for
+            // novels and image-sequence manga; sources that explicitly implement favorites keep
+            // their source mutation path.
+            val localLibrary = source?.supportsFavorites != true
+            val supportsFavorite = true
+            val localFavorite = localLibrary && isLocalLibraryFavorite(publication)
             BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
@@ -728,7 +732,7 @@ fun BrowseScreen(
                         callbacks = callbacks,
                         item = publication,
                         supportsFavorite = supportsFavorite,
-                        localLibrary = isNovelPublication,
+                        localLibrary = localLibrary,
                         localLibraryFavorite = localFavorite,
                         onToggleLocalLibrary = onToggleLocalLibrary,
                         refreshGeneration = publication.sourceKey?.let(sourceRefreshInvalidations::get) ?: 0L,
@@ -2003,7 +2007,7 @@ private fun ExtensionV2PublicationInfoPane(
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             if (supportsFavorite) {
-                Button(onClick = onToggleFavorite, enabled = !favorite) {
+                Button(onClick = onToggleFavorite, enabled = !refreshingFromSource) {
                     Icon(
                         if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                         contentDescription = null,
@@ -2347,13 +2351,6 @@ private fun ExtensionV2ChapterPane(
                                     Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
                                 }
                             }
-                            Text(
-                                strings.text("Choose a format when this chapter provides more than one."),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
                         }
                         if (unitId in downloadedUnitIds) {
                             Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))

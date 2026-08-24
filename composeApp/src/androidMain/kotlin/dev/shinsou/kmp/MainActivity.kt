@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.OnBackPressedCallback
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -114,6 +115,14 @@ class MainActivity : FragmentActivity() {
                 deviceIdProvider = composition::installationDeviceId,
                 writerAllowed = composition::isLegacySnapshotWriterAllowed,
             ),
+        )
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (!appServices.dispatchSystemBack()) finish()
+                }
+            },
         )
 
         setContent {
