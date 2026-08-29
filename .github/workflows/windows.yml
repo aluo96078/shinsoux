@@ -95,3 +95,20 @@ jobs:
       - name: Compile desktop application
         working-directory: shinsoux
         run: .\gradlew.bat :composeApp:compileKotlinDesktop --stacktrace
+
+      - name: Build release app image
+        working-directory: shinsoux
+        run: .\gradlew.bat :composeApp:createReleaseDistributable --stacktrace
+
+      - name: Verify packaged desktop runtime with Windows Access Bridge
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $applications = @(Get-ChildItem `
+            "composeApp/build/compose/binaries/main-release/app" `
+            -Filter "Shinsou X.exe" -File -Recurse -ErrorAction SilentlyContinue)
+          if ($applications.Count -ne 1) {
+            throw "Expected exactly one release application executable, found $($applications.Count)."
+          }
+          & "scripts/ci/verify_windows_desktop_runtime.ps1" `
+            -ApplicationPath $applications[0].FullName

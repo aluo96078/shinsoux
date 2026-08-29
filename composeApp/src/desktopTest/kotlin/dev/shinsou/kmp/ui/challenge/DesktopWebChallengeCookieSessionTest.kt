@@ -12,10 +12,15 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assume.assumeTrue
 
 class DesktopWebChallengeCookieSessionTest {
     @Test
     fun packagedWkWebViewHelperIsPresentAndNative() {
+        assumeTrue(
+            "The packaged WKWebView helper is a macOS-only artifact",
+            System.getProperty("os.name").contains("Mac", ignoreCase = true),
+        )
         val helper = MacOsWebChallengeHelperLocator().resolve()
 
         assertTrue(Files.isRegularFile(helper), "WKWebView helper is missing")

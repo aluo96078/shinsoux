@@ -140,7 +140,7 @@ xcodebuild -project Shinsou.xcodeproj \
 Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
 `composeApp/build/outputs/apk/release/`。正式發布請在 CI 注入 Android keystore，避免把 unsigned APK 當成可升級的正式版本。
 
-只有已公開的 GitHub Release 才代表有可下載安裝包；repository 內存在 release workflow 或產物設計，不等於目前已發布版本。若 Releases 頁面沒有項目，請依本節自行建置。
+只有已公開的 GitHub Release 才代表有可下載安裝包；repository 內存在 release workflow 或產物設計，不等於目前已發布版本。Beta release 會在 notes 明列實際包含的平台；尚未設定正式簽章時可能不含 Android APK 或 iOS IPA。正式 release 則要求四平台全部完成。若 Releases 頁面沒有項目，請依本節自行建置。
 
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
 

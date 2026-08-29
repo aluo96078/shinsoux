@@ -40,19 +40,10 @@ import kotlin.test.assertTrue
 
 class RhinoScriptPluginRuntimeTest {
     @Test
-    fun biliMangaLoginScriptReturnsSafeFailureThroughRhino() = runTest {
-        val script = requireNotNull(
-            javaClass.classLoader.getResourceAsStream("plugins/zh.bilimanga.js"),
-        ).use { it.readBytes().decodeToString() }
+    fun multiSourceLoginFailuresPreserveMessagesThroughRhino() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport { request ->
-                val body = when {
-                    request.method == "POST" -> "<html><body>Just a moment</body></html>"
-                    else -> "<html><body><form action=\"/login.php?do=submit\"><input type=\"password\"></form></body></html>"
-                }
-                PluginHttpResponse(200, body.encodeToByteArray())
-            },
+            transport = PluginHttpTransport { error("No network request expected") },
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
         )
@@ -83,7 +74,7 @@ class RhinoScriptPluginRuntimeTest {
         )
         for (source in manifest.sources.orEmpty()) {
             val runtime = RhinoScriptPluginRuntimeFactory().createForSource(
-                script,
+                RHINO_MULTI_SOURCE_LOGIN_FAILURE_FIXTURE,
                 manifest,
                 source,
                 ScriptPluginEnvironment(network, storage),
@@ -91,7 +82,10 @@ class RhinoScriptPluginRuntimeTest {
             try {
                 val result = runtime.loginResult("fixture-user", "fixture-password")
                 assertFalse(result.loggedIn)
-                assertTrue(result.errorMessage.orEmpty().isNotBlank())
+                assertEquals(
+                    "${source.canonicalSourceId} login requires a browser challenge",
+                    result.errorMessage,
+                )
             } finally {
                 runtime.close()
             }
@@ -472,6 +466,31 @@ private val RHINO_MULTI_SOURCE_FIXTURE = """
         getPopularManga: function(page) {
           var manga = SManga.create(); manga.url = '/two'; manga.title = 'two|' + baseUrl;
           return new MangasPage([manga], false);
+        }
+      }
+    };
+""".trimIndent()
+
+private val RHINO_MULTI_SOURCE_LOGIN_FAILURE_FIXTURE = """
+    var sources = {
+      'zh.bilimanga.novel': {
+        id: 'zh.bilimanga.novel',
+        supportsLogin: true,
+        login: function() {
+          return {
+            loggedIn: false,
+            errorMessage: 'zh.bilimanga.novel login requires a browser challenge'
+          };
+        }
+      },
+      'zh.bilimanga.manga': {
+        id: 'zh.bilimanga.manga',
+        supportsLogin: true,
+        login: function() {
+          return {
+            loggedIn: false,
+            errorMessage: 'zh.bilimanga.manga login requires a browser challenge'
+          };
         }
       }
     };

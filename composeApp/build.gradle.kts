@@ -350,13 +350,15 @@ compose.desktop {
                 appResourcesRootDir.set(macOsWebChallengeResourcesRoot)
             }
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
-            // SQLDelight and JavaFX WebKit use entry points that jlink cannot infer
-            // from the application bytecode. Keep their JDK modules explicitly;
-            // without the WebKit modules the challenge dialog fails before issuing
-            // a network request and appears to load forever.
+            // SQLDelight, JavaFX WebKit, and Windows Java Access Bridge use entry
+            // points that jlink cannot infer from the application bytecode. Keep
+            // their JDK modules explicitly. Without jdk.accessibility, Windows users
+            // with Access Bridge enabled only see jpackage's "Failed to launch JVM"
+            // dialog before the Compose window can open.
             modules(
                 "java.sql",
                 "java.net.http",
+                "jdk.accessibility",
                 "jdk.jsobject",
                 "jdk.unsupported.desktop",
                 "jdk.xml.dom",

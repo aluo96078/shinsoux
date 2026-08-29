@@ -118,6 +118,7 @@ DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並�
 使用 WiX Toolset 3.x 建立 release MSI／EXE：
 
 ```powershell
+.\gradlew.bat :composeApp:createReleaseDistributable
 .\gradlew.bat :composeApp:packageReleaseMsi
 .\gradlew.bat :composeApp:packageReleaseExe
 ```
@@ -128,6 +129,11 @@ DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並�
 composeApp/build/compose/binaries/main-release/msi/
 composeApp/build/compose/binaries/main-release/exe/
 ```
+
+精簡的 Desktop runtime 明確包含 `jdk.accessibility`。若 Windows 已啟用 Java Access
+Bridge 而 runtime 缺少此模組，AWT 會在視窗出現前終止，jpackage launcher 通常只顯示
+`Failed to launch JVM`。Windows CI 會強制設定 Access Bridge，先啟動 release app image；
+release workflow 再靜默安裝 MSI 並啟動已安裝程式，兩次都必須通過 runtime probe。
 
 Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 upgrade UUID 讓後續版本覆蓋升級而非並存。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 

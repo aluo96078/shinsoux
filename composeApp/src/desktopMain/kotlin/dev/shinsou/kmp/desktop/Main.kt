@@ -35,6 +35,7 @@ import dev.shinsou.kmp.ui.i18n.text
 import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.Frame
+import java.awt.Toolkit
 import java.awt.desktop.AppForegroundEvent
 import java.awt.desktop.AppForegroundListener
 import java.awt.desktop.OpenURIHandler
@@ -42,12 +43,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
+import kotlin.system.exitProcess
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+
+private const val VERIFY_DESKTOP_RUNTIME_ARGUMENT = "--verify-desktop-runtime"
 
 fun main(args: Array<String>) {
     val desktopPlatform = DesktopPlatform.current
     configureDesktopSystemProperties(desktopPlatform)
+    if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
@@ -249,6 +254,20 @@ fun main(args: Array<String>) {
             )
         }
     }
+}
+
+/**
+ * Hidden packaged-runtime probe used by Windows CI. Initializing AWT with Access Bridge forced on
+ * reproduces the otherwise machine-specific startup failure before any application data is read.
+ */
+private fun verifyDesktopRuntimeAndExit(): Nothing {
+    check(ModuleLayer.boot().findModule("jdk.accessibility").isPresent) {
+        "The packaged desktop runtime is missing jdk.accessibility."
+    }
+    Toolkit.getDefaultToolkit()
+    println("Shinsou X desktop runtime verification passed.")
+    System.out.flush()
+    exitProcess(0)
 }
 
 @androidx.compose.runtime.Composable

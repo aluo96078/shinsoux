@@ -97,7 +97,7 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 2. Android `assembleDebug`、macOS／Windows Desktop compile、iOS Simulator compile/link：target API 與 expect/actual 編譯。macOS 的 `desktopTest`／Desktop application task 會先以 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView helper，因此還會驗證 Xcode Command Line Tools、macOS SDK 與 Swift compiler 可用。
 3. `iosSimulatorArm64Test`：共用 tests 與 JavaScriptCore contract。
 4. 無簽章 Xcode Simulator build：SwiftUI host、Widget target 與 Kotlin framework linkage。
-5. 平台原生安裝包：macOS 執行 `packageDmg` 驗證 bundle／DMG；Windows x64 執行 `packageReleaseMsi`／`packageReleaseExe` 驗證 MSI／EXE 與 WiX 設定。
+5. 平台原生安裝包：macOS 執行 `packageDmg` 驗證 bundle／DMG；Windows x64 執行 `packageReleaseMsi`／`packageReleaseExe` 驗證 MSI／EXE 與 WiX 設定，並在強制啟用 Java Access Bridge 時啟動 app image 與 MSI 已安裝程式，確認精簡 runtime 包含 `jdk.accessibility`。
 
 上述項目都不能代替：
 

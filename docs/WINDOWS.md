@@ -37,6 +37,7 @@ cd shinsou_kmp
 建立 release installer：
 
 ```powershell
+.\gradlew.bat :composeApp:createReleaseDistributable
 .\gradlew.bat :composeApp:packageReleaseMsi
 .\gradlew.bat :composeApp:packageReleaseExe
 ```
@@ -49,6 +50,12 @@ composeApp/build/compose/binaries/main-release/exe/
 ```
 
 MSI 與 EXE 必須在 Windows host 建立；macOS 無法交叉產生 Windows installer。
+
+打包設定會把 `jdk.accessibility` 明確加入精簡 runtime。Windows 啟用 Java Access Bridge
+時，AWT 會在啟動階段動態載入此模組；若遺漏，jpackage 只會顯示
+`Failed to launch JVM`，不會顯示底層 `AccessBridge` 錯誤。一般 Windows workflow 會在強制
+啟用 Access Bridge 的條件下執行 release app image；tag release workflow 還會靜默安裝
+MSI，再執行同一項啟動檢查，以防止發布可打包但無法開啟的安裝程式。
 
 machine-scoped installer 固定把程式放在 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，與下方 `%USERPROFILE%\ShinsouXData` 使用者資料目錄分離。固定安裝根目錄可避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；MSI 刻意不採 jpackage per-user 安裝，避免其卸載清理可能觸及使用者 profile。資料目錄位於使用者 profile 根目錄，避開 `%APPDATA%`／`%LOCALAPPDATA%` 樹及程式安裝路徑。升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob；machine-scoped MSI 需要管理員或 UAC 提權。
 
@@ -75,12 +82,13 @@ Windows 資料預設位於：
 
 1. checkout Shinsou X 與相鄰的 `shinsou_plugin`；
 2. 執行 Desktop tests 與 Kotlin compile；
-3. 不建立或上傳 Windows 安裝包。
+3. 建立 release app image，並在強制啟用 Java Access Bridge 時執行啟動檢查；
+4. 不建立或上傳 Windows MSI／EXE。
 
-一般 push／pull request 只做 Windows 編譯與測試。推送 `vMAJOR.MINOR.PATCH` 或
+一般 push／pull request 會做 Windows 編譯、測試與 app image 啟動檢查。推送 `vMAJOR.MINOR.PATCH` 或
 `vMAJOR.MINOR.PATCH-beta.N` tag 觸發的
 `.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android APK、iOS IPA
-及 macOS DMG 一起發布；beta tag 會建立 GitHub prerelease。該流程也會執行 Windows 產物完整性檢查。若需在本機驗證安裝器，仍可依照
+及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。當 Android 或 iOS 的正式簽章設定完全不存在時，beta 可在 release notes 明示後略過該行動平台；正式版本仍要求四平台完整。該流程也會執行 Windows 產物完整性檢查、靜默安裝 MSI，並啟動已安裝程式的 runtime probe。若需在本機驗證安裝器，仍可依照
 上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。
