@@ -581,26 +581,28 @@ jobs:
               -F draft=true \
               --silent
           elif (( ${#release_ids[@]} == 0 )); then
-            create_args=(
-              "$RELEASE_TAG"
-              --verify-tag \
-              --draft \
-              --title "Shinsou X $RELEASE_VERSION" \
-              --notes "Preparing verified release assets."
-            )
-            if [[ "$RELEASE_PRERELEASE" == true ]]; then
-              create_args+=(--prerelease)
-            fi
-            gh release create "${create_args[@]}"
-            release_id="$(
-              gh api --paginate \
-                "/repos/$GH_REPO/releases?per_page=100" \
-                --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id"
+            create_payload="$(
+              jq -n \
+                --arg tag_name "$RELEASE_TAG" \
+                --arg target_commitish "$RELEASE_COMMIT" \
+                --arg name "Shinsou X $RELEASE_VERSION" \
+                --arg body "Preparing verified release assets." \
+                --argjson prerelease "$RELEASE_PRERELEASE" \
+                '{
+                  tag_name: $tag_name,
+                  target_commitish: $target_commitish,
+                  name: $name,
+                  body: $body,
+                  draft: true,
+                  prerelease: $prerelease
+                }'
             )"
-            [[ -n "$release_id" ]] || {
-              echo "Created draft release could not be resolved." >&2
-              exit 1
-            }
+            release_json="$(
+              gh api "/repos/$GH_REPO/releases" \
+                --method POST \
+                --input - <<< "$create_payload"
+            )"
+            release_id="$(jq -er '.id' <<< "$release_json")"
           else
             echo "Expected at most one release for $RELEASE_TAG, found ${#release_ids[@]}." >&2
             exit 1
