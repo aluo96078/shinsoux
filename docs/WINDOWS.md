@@ -53,11 +53,19 @@ MSI 與 EXE 必須在 Windows host 建立；macOS 無法交叉產生 Windows ins
 
 打包設定會把 `jdk.accessibility` 明確加入精簡 runtime。Windows 啟用 Java Access Bridge
 時，AWT 會在啟動階段動態載入此模組；若遺漏，jpackage 只會顯示
-`Failed to launch JVM`，不會顯示底層 `AccessBridge` 錯誤。一般 Windows workflow 會在強制
-啟用 Access Bridge 的條件下執行 release app image；tag release workflow 還會靜默安裝
-MSI，再執行同一項啟動檢查，以防止發布可打包但無法開啟的安裝程式。
+`Failed to launch JVM`，不會顯示底層 `AccessBridge` 錯誤。Release shrinker 也會保留
+`org.sqlite`，避免 JDBC service provider 及 JNI 類別被當成未使用而移除。一般 Windows
+workflow 會在強制啟用 Access Bridge 的條件下，對 release app image 執行 runtime 及完整
+startup probe；tag release workflow 還會靜默安裝 MSI，再執行同一項檢查。完整 probe 使用
+隔離 `%USERPROFILE%`，要求 SQLite database 建立並在 Compose 首幀後寫出隨機 marker，防止
+再次發布只能打包、卻在啟動時顯示 `Failed to launch JVM` 的安裝程式。
 
 machine-scoped installer 固定把程式放在 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，與下方 `%USERPROFILE%\ShinsouXData` 使用者資料目錄分離。固定安裝根目錄可避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；MSI 刻意不採 jpackage per-user 安裝，避免其卸載清理可能觸及使用者 profile。資料目錄位於使用者 profile 根目錄，避開 `%APPDATA%`／`%LOCALAPPDATA%` 樹及程式安裝路徑。升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob；machine-scoped MSI 需要管理員或 UAC 提權。
+
+MSI／EXE 使用 `MAJOR.MINOR.(PATCH × 100 + stage)` 的 Windows package version，其中 beta N
+的 stage 為 N、正式版為 99；例如 beta.4 是 `1.0.4`。穩定 UpgradeCode 配合每版不同的
+ProductCode 才能原地升級。Beta.2／beta.3 曾同時使用 `1.0.0`，導致 beta.3 不被 Windows
+視為升級；beta.4 已改用單調版本，CI 會先安裝公開 beta.3 再驗證舊 ProductCode 被取代。
 
 ## 儲存與安全
 
@@ -82,15 +90,16 @@ Windows 資料預設位於：
 
 1. checkout Shinsou X 與相鄰的 [`shinsou_plugin`](https://github.com/aluo96078/shinsou_plugin)；
 2. 執行 Desktop tests 與 Kotlin compile；
-3. 建立 release app image，並在強制啟用 Java Access Bridge 時執行啟動檢查；
+3. 建立 release app image，並在強制啟用 Java Access Bridge 時執行 SQLite／首幀啟動檢查；
 4. 不建立或上傳 Windows MSI／EXE。
 
 一般 push／pull request 會做 Windows 編譯、測試與 app image 啟動檢查。推送 `vMAJOR.MINOR.PATCH` 或
 `vMAJOR.MINOR.PATCH-beta.N` tag 觸發的
 `.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android debug
 APK 及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。Release workflow 不建置
-iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也會執行 Windows 產物
-完整性檢查、靜默安裝 MSI，並啟動已安裝程式的 runtime probe。若需在本機驗證安裝器，
+iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也會核對 ProductVersion、
+ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；beta.4
+另包含 beta.3 → beta.4 覆蓋升級測試。若需在本機驗證安裝器，
 仍可依照上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。

@@ -22,7 +22,8 @@ MSI／EXE；不建置 iOS App，也不發布 IPA。iOS 必須在 macOS／Xcode �
 公開產物與分發邊界請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用
 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫 package version 與正整數 build
 number；Android 若需顯示 prerelease suffix，可另傳
-`-PreleaseDisplayVersion=X.Y.Z-beta.N`。
+`-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
+`-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
 ## Workspace 佈局
 
@@ -70,9 +71,11 @@ npm run ops:test
 ```
 
 Debug APK 位於 `composeApp/build/outputs/apk/debug/`。Tag workflow 也只發布這類
-debug-signed、`android:debuggable=true` 的測試 APK，不是 production release build；CI 的
-debug key 不保證跨次建置相同，因此可能需要先備份、解除安裝舊版再安裝。需要穩定升級時，
-請自行保存 keystore 並執行 `assembleRelease`。這些命令驗證 expect／actual 與平台 API
+debug-signed、`android:debuggable=true` 的測試 APK，不是 production release build。
+自 beta.4 起，官方 CI 使用 GitHub Actions secret 中固定的公開測試 signer；fingerprint 與
+升級限制見 [發布文件](RELEASING.md)。beta.3 及更舊版本必須先備份並解除安裝一次，beta.4
+之後才可直接覆蓋升級。需要 production identity 時，請自行保存 keystore 並執行
+`assembleRelease`。這些命令驗證 expect／actual 與平台 API
 可編譯，包括各平台 bounded picker、Android volume-key dispatch、iOS Keychain，以及
 Desktop 的 macOS Security.framework／Windows DPAPI JNA binding；不會啟動 Activity、
 文件 provider、Keychain prompt、DPAPI、WebView、WKWebView 或背景 scheduler。
@@ -121,7 +124,7 @@ xcodebuild -project Shinsou.xcodeproj \
 ./gradlew :composeApp:packageDmg
 ```
 
-DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。Gradle 會先以 `xcrun --sdk macosx swiftc` 將 `composeApp/src/desktopMain/swift/ShinsouWebChallenge/main.swift` 編譯成隨 App 封裝的 helper；`run` 與 `desktopTest` 也依賴同一 task。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；打包成功只證明 linkage 與 package 設定，不代表 WKWebView 真實來源 challenge、Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
+DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。Gradle 會先以 `xcrun --sdk macosx swiftc` 將 `composeApp/src/desktopMain/swift/ShinsouWebChallenge/main.swift` 編譯成隨 App 封裝的 helper；`run` 與 `desktopTest` 也依賴同一 task。Release workflow 會掛載 DMG，確認縮減後的 `sqlite-jdbc` 同時包含 `org/sqlite/JDBC.class` 與 service descriptor，再以隔離 home 執行 `--verify-desktop-startup`；只有 SQLite database 建立且 Compose 下一幀寫出隨機 marker 才算通過。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；這項自動檢查仍不代表 WKWebView 真實來源 challenge、Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
 
 在 Windows 11 x64 的 PowerShell／Windows Terminal 執行 Desktop build、test 與 app：
 
@@ -148,10 +151,13 @@ composeApp/build/compose/binaries/main-release/exe/
 
 精簡的 Desktop runtime 明確包含 `jdk.accessibility`。若 Windows 已啟用 Java Access
 Bridge 而 runtime 缺少此模組，AWT 會在視窗出現前終止，jpackage launcher 通常只顯示
-`Failed to launch JVM`。Windows CI 會強制設定 Access Bridge，先啟動 release app image；
-release workflow 再靜默安裝 MSI 並啟動已安裝程式，兩次都必須通過 runtime probe。
+`Failed to launch JVM`。另一個啟動前故障來源是 shrinker 移除由 JDBC service loader／JNI
+間接使用的 Xerial SQLite 類別；release 規則會保留 `org.sqlite`，程式也會明確初始化 driver。
+Windows CI 會強制設定 Access Bridge，對 release app image 執行 runtime 與完整 startup
+probe；release workflow 再靜默安裝 MSI 並對已安裝程式重跑。完整 probe 必須建立
+`%USERPROFILE%\ShinsouXData\SyncV2\local-sync.db` 並寫出首幀隨機 marker。
 
-Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 upgrade UUID 讓後續版本覆蓋升級而非並存。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
+Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 UpgradeCode 與單調的 `MAJOR.MINOR.(PATCH × 100 + stage)` package version 讓後續版本取得新 ProductCode 並覆蓋升級，而不是並存或被判定為相同版本。beta.3 錯誤重用了 `1.0.0`；beta.4 的 release workflow 會先安裝公開 beta.3 MSI，再驗證新 MSI 移除舊 ProductCode。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 
 ## iOS 簽章與 capability
 

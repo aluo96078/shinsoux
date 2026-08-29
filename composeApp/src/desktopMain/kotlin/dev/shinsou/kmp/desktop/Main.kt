@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
@@ -39,8 +40,13 @@ import java.awt.Toolkit
 import java.awt.desktop.AppForegroundEvent
 import java.awt.desktop.AppForegroundListener
 import java.awt.desktop.OpenURIHandler
-import java.util.concurrent.atomic.AtomicBoolean
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
@@ -48,11 +54,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 private const val VERIFY_DESKTOP_RUNTIME_ARGUMENT = "--verify-desktop-runtime"
+private const val VERIFY_DESKTOP_STARTUP_ARGUMENT = "--verify-desktop-startup"
+private const val DESKTOP_PROBE_MARKER_ENVIRONMENT = "SHINSOU_DESKTOP_PROBE_MARKER"
+private const val DESKTOP_PROBE_TOKEN_ENVIRONMENT = "SHINSOU_DESKTOP_PROBE_TOKEN"
 
 fun main(args: Array<String>) {
     val desktopPlatform = DesktopPlatform.current
     configureDesktopSystemProperties(desktopPlatform)
     if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
+    val verifyDesktopStartup = VERIFY_DESKTOP_STARTUP_ARGUMENT in args
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
@@ -163,7 +173,16 @@ fun main(args: Array<String>) {
                 hostFrame = window
                 window.minimumSize = Dimension(900, 600)
             }
-            LaunchedEffect(composition) { composition.start() }
+            LaunchedEffect(composition) {
+                composition.start()
+                if (verifyDesktopStartup) {
+                    // The constructor above has opened and initialized SQLite. Waiting for the
+                    // next frame proves that the packaged Compose UI can render as well.
+                    withFrameNanos { }
+                    writeDesktopProbeMarker(required = true)
+                    closeImmediately()
+                }
+            }
             LaunchedEffect(services, initialDeepLink) {
                 initialDeepLink?.let(services::emitDeepLink)
             }
@@ -265,9 +284,42 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
         "The packaged desktop runtime is missing jdk.accessibility."
     }
     Toolkit.getDefaultToolkit()
+    writeDesktopProbeMarker(required = false)
     println("Shinsou X desktop runtime verification passed.")
     System.out.flush()
     exitProcess(0)
+}
+
+private fun writeDesktopProbeMarker(required: Boolean) {
+    val markerValue = System.getenv(DESKTOP_PROBE_MARKER_ENVIRONMENT)
+    val token = System.getenv(DESKTOP_PROBE_TOKEN_ENVIRONMENT)
+    if (!required && markerValue.isNullOrBlank() && token.isNullOrBlank()) return
+    check(!markerValue.isNullOrBlank() && !token.isNullOrBlank()) {
+        "$DESKTOP_PROBE_MARKER_ENVIRONMENT and $DESKTOP_PROBE_TOKEN_ENVIRONMENT must both be set."
+    }
+    check(token.length <= 1024 && '\n' !in token && '\r' !in token) {
+        "Desktop probe token is invalid."
+    }
+
+    val marker = Path.of(markerValue).toAbsolutePath().normalize()
+    val parent = checkNotNull(marker.parent) { "Desktop probe marker has no parent directory." }
+    Files.createDirectories(parent)
+    val temporary = marker.resolveSibling("${marker.fileName}.${UUID.randomUUID()}.tmp")
+    try {
+        Files.writeString(temporary, token, StandardCharsets.UTF_8)
+        try {
+            Files.move(
+                temporary,
+                marker,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            Files.move(temporary, marker, StandardCopyOption.REPLACE_EXISTING)
+        }
+    } finally {
+        Files.deleteIfExists(temporary)
+    }
 }
 
 @androidx.compose.runtime.Composable

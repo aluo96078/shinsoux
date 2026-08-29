@@ -82,6 +82,10 @@ internal class DesktopSyncInfrastructure(
 
     private fun databaseDriver(): SqlDriver = openDriver ?: run {
         val database = directory.resolve("local-sync.db").toAbsolutePath().normalize()
+        // Release shrinking cannot infer JDBC's service-provider edge. Force initialization
+        // before SQLDelight asks DriverManager for the connection. The release keep rule retains
+        // this runtime-only class and its native bridge.
+        Class.forName("org.sqlite.JDBC")
         JdbcSqliteDriver("jdbc:sqlite:$database").also { openDriver = it }
     }
 }

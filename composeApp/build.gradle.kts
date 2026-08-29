@@ -14,6 +14,7 @@ plugins {
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
 val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse(releaseVersion)
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse(releaseVersion)
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
@@ -32,6 +33,20 @@ val androidReleaseSigningValues = listOf(
     androidReleaseKeyPassword,
 )
 val androidReleaseSigningConfigured = androidReleaseSigningValues.all { !it.isNullOrBlank() }
+
+val androidPublicDebugStoreFile = providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH").orNull
+val androidPublicDebugStorePassword =
+    providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEYSTORE_PASSWORD").orNull
+val androidPublicDebugKeyAlias = providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEY_ALIAS").orNull
+val androidPublicDebugKeyPassword =
+    providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEY_PASSWORD").orNull
+val androidPublicDebugSigningValues = listOf(
+    androidPublicDebugStoreFile,
+    androidPublicDebugStorePassword,
+    androidPublicDebugKeyAlias,
+    androidPublicDebugKeyPassword,
+)
+val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
 val macOsBuildArchitecture = System.getProperty("os.arch").lowercase().let { architecture ->
@@ -108,6 +123,13 @@ val javafxPlatformClassifier = run {
 check(androidReleaseSigningValues.none { !it.isNullOrBlank() } || androidReleaseSigningConfigured) {
     "Android release signing is only enabled when ANDROID_KEYSTORE_PATH, " +
         "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD are all set."
+}
+check(
+    androidPublicDebugSigningValues.none { !it.isNullOrBlank() } || androidPublicDebugSigningConfigured,
+) {
+    "Android public debug signing is only enabled when ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH, " +
+        "ANDROID_PUBLIC_DEBUG_KEYSTORE_PASSWORD, ANDROID_PUBLIC_DEBUG_KEY_ALIAS, and " +
+        "ANDROID_PUBLIC_DEBUG_KEY_PASSWORD are all set."
 }
 
 // Android local unit tests execute Android bytecode on the host JVM. The
@@ -295,6 +317,14 @@ android {
     }
 
     signingConfigs {
+        if (androidPublicDebugSigningConfigured) {
+            create("publicDebug") {
+                storeFile = file(requireNotNull(androidPublicDebugStoreFile))
+                storePassword = requireNotNull(androidPublicDebugStorePassword)
+                keyAlias = requireNotNull(androidPublicDebugKeyAlias)
+                keyPassword = requireNotNull(androidPublicDebugKeyPassword)
+            }
+        }
         if (androidReleaseSigningConfigured) {
             create("release") {
                 storeFile = file(requireNotNull(androidReleaseStoreFile))
@@ -306,6 +336,11 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            if (androidPublicDebugSigningConfigured) {
+                signingConfig = signingConfigs.getByName("publicDebug")
+            }
+        }
         getByName("release") {
             if (androidReleaseSigningConfigured) {
                 signingConfig = signingConfigs.getByName("release")
@@ -392,6 +427,11 @@ compose.desktop {
                 }
             }
             windows {
+                // Windows Installer accepts only MAJOR.MINOR.BUILD. Use the monotonic,
+                // prerelease-aware value derived from the release tag instead of dropping the
+                // beta suffix and accidentally reusing the previous ProductCode/ProductVersion.
+                msiPackageVersion = windowsPackageVersion.get()
+                exePackageVersion = windowsPackageVersion.get()
                 // Keep this UUID stable across releases so MSI/EXE upgrades replace
                 // an existing Shinsou X installation instead of installing side-by-side.
                 upgradeUuid = "1E4B4C87-A9D7-4C41-9270-401E627717A9"

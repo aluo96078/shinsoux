@@ -13,8 +13,8 @@ minor="${BASH_REMATCH[2]}"
 patch="${BASH_REMATCH[3]}"
 beta_number="${BASH_REMATCH[5]:-}"
 
-if (( 10#$major > 81 || 10#$minor > 255 || 10#$patch > 999 )); then
-  echo "Unsupported release version: major <= 81, minor <= 255, and patch <= 999 are required." >&2
+if (( 10#$major > 81 || 10#$minor > 255 || 10#$patch > 654 )); then
+  echo "Unsupported release version: major <= 81, minor <= 255, and patch <= 654 are required." >&2
   exit 1
 fi
 if (( 10#$major == 0 && 10#$minor == 0 && 10#$patch == 0 )); then
@@ -34,6 +34,8 @@ if [[ -n "$beta_number" ]]; then
 fi
 
 package_version="$major.$minor.$patch"
+windows_build=$((10#$patch * 100 + stage))
+windows_package_version="$major.$minor.$windows_build"
 version="${tag#v}"
 version_code=$(((((10#$major * 256) + 10#$minor) * 1000 + 10#$patch) * 100 + stage))
 if (( version_code <= 0 || version_code > 2100000000 )); then
@@ -45,6 +47,7 @@ outputs=(
   "tag=$tag"
   "version=$version"
   "package_version=$package_version"
+  "windows_package_version=$windows_package_version"
   "version_code=$version_code"
   "prerelease=$prerelease"
 )

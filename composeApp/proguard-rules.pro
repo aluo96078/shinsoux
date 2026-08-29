@@ -52,6 +52,12 @@
 # the application's own HTTP client.
 -keep class io.ktor.client.engine.cio.CIOEngineContainer { *; }
 
+# Xerial registers its JDBC implementation through META-INF/services/java.sql.Driver. ProGuard
+# preserves that resource but cannot infer the provider class edge, so beta.3 shipped an empty
+# provider JAR and failed before the first window with "No suitable driver found". Keep the full
+# driver because its native bridge also uses reflection and JNI after registration.
+-keep class org.sqlite.** { *; }
+
 # JavaFX WebKit resolves the private EPUB URL scheme exclusively through the
 # META-INF/services/java.net.spi.URLStreamHandlerProvider entry.  There is no
 # direct Kotlin reference for the shrinker to follow, so keep the provider's

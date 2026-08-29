@@ -21,6 +21,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       package_version: ${{ steps.version.outputs.package_version }}
+      windows_package_version: ${{ steps.version.outputs.windows_package_version }}
       version_code: ${{ steps.version.outputs.version_code }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
@@ -43,6 +44,10 @@ jobs:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
+      ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64 }}
+      ANDROID_PUBLIC_DEBUG_KEYSTORE_PASSWORD: android
+      ANDROID_PUBLIC_DEBUG_KEY_ALIAS: shinsou-public-debug
+      ANDROID_PUBLIC_DEBUG_KEY_PASSWORD: android
     steps:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
@@ -65,6 +70,18 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore fixed public debug signing key
+        shell: bash
+        run: |
+          [[ -n "$ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64" ]] || {
+            echo "::error title=Missing Android signing key::ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64 is not configured."
+            exit 1
+          }
+          keystore="$RUNNER_TEMP/shinsou-public-debug.jks"
+          printf '%s' "$ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
 
       - name: Build debug APK
         shell: bash
@@ -95,6 +112,15 @@ jobs:
             exit 1
           }
           "$apksigner" verify --verbose --print-certs "${apks[0]}"
+          expected_signer="2773a26348f63bf9486c449d7362e086320c0a8963a4c1778ceb288ccaf2df5a"
+          actual_signer="$(
+            "$apksigner" verify --print-certs "${apks[0]}" |
+              sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          )"
+          [[ "$actual_signer" == "$expected_signer" ]] || {
+            echo "::error title=Unexpected APK signer::Found $actual_signer; expected $expected_signer."
+            exit 1
+          }
 
           command -v apkanalyzer > /dev/null || {
             echo "::error title=Missing apkanalyzer::Android SDK apkanalyzer is not available."
@@ -188,6 +214,86 @@ jobs:
           }
           hdiutil verify "${dmgs[0]}"
 
+          mount_dir="$(mktemp -d "$RUNNER_TEMP/shinsou-dmg-mount.XXXXXX")"
+          probe_root="$(mktemp -d "$RUNNER_TEMP/shinsou-dmg-probe.XXXXXX")"
+          mounted=false
+          probe_pid=""
+          cleanup() {
+            if [[ -n "$probe_pid" ]] && kill -0 "$probe_pid" 2>/dev/null; then
+              kill "$probe_pid" 2>/dev/null || true
+              wait "$probe_pid" 2>/dev/null || true
+            fi
+            if [[ "$mounted" == true ]]; then
+              hdiutil detach "$mount_dir" -force >/dev/null 2>&1 || true
+            fi
+            rm -rf -- "$mount_dir" "$probe_root"
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "${dmgs[0]}" -readonly -nobrowse -mountpoint "$mount_dir"
+          mounted=true
+          applications=("$mount_dir"/*.app/Contents/MacOS/"Shinsou X")
+          if (( ${#applications[@]} != 1 )) || [[ ! -x "${applications[0]}" ]]; then
+            echo "::error title=Unexpected DMG application::Expected one executable, found ${#applications[@]}."
+            exit 1
+          fi
+
+          sqlite_jars=("$mount_dir"/*.app/Contents/app/sqlite-jdbc-*.jar)
+          if (( ${#sqlite_jars[@]} != 1 )); then
+            echo "::error title=Unexpected SQLite runtime::Expected one sqlite-jdbc JAR, found ${#sqlite_jars[@]}."
+            exit 1
+          fi
+          unzip -Z1 "${sqlite_jars[0]}" | grep -Fx 'org/sqlite/JDBC.class'
+          unzip -Z1 "${sqlite_jars[0]}" | grep -Fx 'META-INF/services/java.sql.Driver'
+
+          probe_home="$probe_root/home"
+          marker="$probe_root/completed.marker"
+          stdout_log="$probe_root/stdout.log"
+          stderr_log="$probe_root/stderr.log"
+          token="$(uuidgen | tr -d '-')"
+          mkdir -p "$probe_home"
+          HOME="$probe_home" \
+            JAVA_TOOL_OPTIONS="-Duser.home=$probe_home" \
+            SHINSOU_DESKTOP_PROBE_MARKER="$marker" \
+            SHINSOU_DESKTOP_PROBE_TOKEN="$token" \
+            "${applications[0]}" --verify-desktop-startup \
+            >"$stdout_log" 2>"$stderr_log" &
+          probe_pid=$!
+
+          probe_exited=false
+          probe_status=0
+          for _ in {1..180}; do
+            if ! kill -0 "$probe_pid" 2>/dev/null; then
+              if wait "$probe_pid"; then
+                probe_status=0
+              else
+                probe_status=$?
+              fi
+              probe_pid=""
+              probe_exited=true
+              break
+            fi
+            sleep 0.5
+          done
+          cat "$stdout_log" || true
+          cat "$stderr_log" >&2 || true
+          if [[ "$probe_exited" != true ]]; then
+            echo "::error title=DMG startup timed out::The packaged app did not exit within 90 seconds."
+            exit 1
+          fi
+          if (( probe_status != 0 )); then
+            echo "::error title=DMG startup failed::The packaged app exited with status $probe_status."
+            exit 1
+          fi
+          [[ -f "$marker" ]] && [[ "$(<"$marker")" == "$token" ]] || {
+            echo "::error title=DMG startup marker missing::The packaged app did not reach its first rendered frame."
+            exit 1
+          }
+          [[ -f "$probe_home/Library/Application Support/Shinsou/SyncV2/local-sync.db" ]] || {
+            echo "::error title=DMG SQLite startup failed::The packaged app did not initialize its SQLite database."
+            exit 1
+          }
+
           case "$(uname -m)" in
             arm64) architecture=arm64 ;;
             x86_64) architecture=x64 ;;
@@ -218,6 +324,7 @@ jobs:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
+      WINDOWS_PACKAGE_VERSION: ${{ needs.metadata.outputs.windows_package_version }}
     steps:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
@@ -255,6 +362,7 @@ jobs:
             :composeApp:packageReleaseMsi `
             :composeApp:packageReleaseExe `
             "-PreleaseVersion=$env:RELEASE_PACKAGE_VERSION" `
+            "-PwindowsPackageVersion=$env:WINDOWS_PACKAGE_VERSION" `
             "-PreleaseVersionCode=$env:RELEASE_VERSION_CODE" `
             --stacktrace
 
@@ -269,6 +377,111 @@ jobs:
           }
           & "scripts/ci/verify_windows_desktop_runtime.ps1" `
             -ApplicationPath $applications[0].FullName
+
+      - name: Verify MSI identity and package version
+        shell: pwsh
+        run: |
+          $msis = @(Get-ChildItem `
+            "composeApp/build/compose/binaries/main-release/msi/*.msi" `
+            -File -ErrorAction SilentlyContinue)
+          if ($msis.Count -ne 1) {
+            throw "Expected exactly one MSI for identity verification, found $($msis.Count)."
+          }
+
+          function Get-MsiProperty {
+            param(
+              [Parameter(Mandatory = $true)] [string]$Path,
+              [Parameter(Mandatory = $true)] [string]$Name
+            )
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $database = $installer.GetType().InvokeMember(
+              "OpenDatabase",
+              "InvokeMethod",
+              $null,
+              $installer,
+              @($Path, 0)
+            )
+            $query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$Name'"
+            $view = $database.GetType().InvokeMember(
+              "OpenView",
+              "InvokeMethod",
+              $null,
+              $database,
+              @($query)
+            )
+            $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null) | Out-Null
+            $record = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)
+            if ($null -eq $record) {
+              throw "MSI property $Name does not exist."
+            }
+            return [string]$record.GetType().InvokeMember(
+              "StringData",
+              "GetProperty",
+              $null,
+              $record,
+              1
+            )
+          }
+
+          $productVersion = Get-MsiProperty -Path $msis[0].FullName -Name "ProductVersion"
+          $productCode = Get-MsiProperty -Path $msis[0].FullName -Name "ProductCode"
+          $upgradeCode = Get-MsiProperty -Path $msis[0].FullName -Name "UpgradeCode"
+          if ($productVersion -cne $env:WINDOWS_PACKAGE_VERSION) {
+            throw "MSI ProductVersion is $productVersion; expected $env:WINDOWS_PACKAGE_VERSION."
+          }
+          $beta3ProductCode = "{C69CAFF8-4EA3-3D4D-AF7A-C62057150FE9}"
+          if ($productCode -ieq $beta3ProductCode) {
+            throw "MSI ProductCode still matches beta.3: $productCode."
+          }
+          $expectedUpgradeCode = "{1E4B4C87-A9D7-4C41-9270-401E627717A9}"
+          if ($upgradeCode -ine $expectedUpgradeCode) {
+            throw "MSI UpgradeCode is $upgradeCode; expected $expectedUpgradeCode."
+          }
+          "CURRENT_MSI_PRODUCT_CODE=$productCode" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Verified MSI ProductVersion $productVersion, ProductCode $productCode, and UpgradeCode $upgradeCode."
+
+      - name: Install beta.3 upgrade baseline
+        if: needs.metadata.outputs.tag == 'v1.0.0-beta.4'
+        shell: pwsh
+        run: |
+          $baseline = Join-Path $env:RUNNER_TEMP "Shinsou-X-1.0.0-beta.3-windows-x64.msi"
+          Invoke-WebRequest `
+            -Uri "https://github.com/aluo96078/shinsoux/releases/download/v1.0.0-beta.3/Shinsou-X-1.0.0-beta.3-windows-x64.msi" `
+            -OutFile $baseline
+          $expectedHash = "9f6092c5af59a1787e80ebe35e090cc5610c55679046e26c239e4a4d2997dbfb"
+          $actualHash = (Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -cne $expectedHash) {
+            throw "beta.3 MSI SHA-256 is $actualHash; expected $expectedHash."
+          }
+
+          $installLog = Join-Path $env:RUNNER_TEMP "shinsou-beta3-msi-install.log"
+          $arguments = "/i `"$baseline`" /qn /norestart /L*v `"$installLog`""
+          $process = Start-Process `
+            -FilePath "$env:SystemRoot\System32\msiexec.exe" `
+            -ArgumentList $arguments `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            if (Test-Path -LiteralPath $installLog) {
+              Get-Content -LiteralPath $installLog -Tail 500
+            }
+            throw "beta.3 MSI installation failed with exit code $($process.ExitCode)."
+          }
+
+          $baselineProductCode = "{C69CAFF8-4EA3-3D4D-AF7A-C62057150FE9}"
+          "BASELINE_MSI_PRODUCT_CODE=$baselineProductCode" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $windowsInstaller = New-Object -ComObject WindowsInstaller.Installer
+          $baselineState = $windowsInstaller.GetType().InvokeMember(
+            "ProductState",
+            "GetProperty",
+            $null,
+            $windowsInstaller,
+            @($baselineProductCode)
+          )
+          if ([int]$baselineState -ne 5) {
+            throw "beta.3 MSI product state is $baselineState; expected 5 (installed)."
+          }
+          Write-Host "Installed beta.3 as the upgrade baseline."
 
       - name: Install MSI and verify installed application
         shell: pwsh
@@ -292,6 +505,25 @@ jobs:
               Get-Content -LiteralPath $installLog -Tail 500
             }
             throw "MSI installation failed with exit code $($installer.ExitCode)."
+          }
+
+          function Test-MsiProductInstalled([string]$ProductCode) {
+            $windowsInstaller = New-Object -ComObject WindowsInstaller.Installer
+            $state = $windowsInstaller.GetType().InvokeMember(
+              "ProductState",
+              "GetProperty",
+              $null,
+              $windowsInstaller,
+              @($ProductCode)
+            )
+            return [int]$state -eq 5
+          }
+          if (-not (Test-MsiProductInstalled $env:CURRENT_MSI_PRODUCT_CODE)) {
+            throw "Current MSI product $env:CURRENT_MSI_PRODUCT_CODE is not installed."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:BASELINE_MSI_PRODUCT_CODE) -and
+              (Test-MsiProductInstalled $env:BASELINE_MSI_PRODUCT_CODE)) {
+            throw "MSI upgrade left beta.3 product $env:BASELINE_MSI_PRODUCT_CODE installed."
           }
 
           $installedApplication = Join-Path $env:ProgramFiles "Shinsou X\Shinsou X.exe"
@@ -424,6 +656,11 @@ jobs:
               "- iOS: no IPA is published. Build from source on macOS with Xcode: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md"
 
             printf '\n%s\n' "Verify every download with SHA256SUMS.txt."
+            if [[ "$RELEASE_VERSION" == 1.0.0-beta.4 ]]; then
+              printf '%s\n' \
+                "Android note: beta.3 and older APKs used different ephemeral signatures. Back up, uninstall once, then install beta.4; future public debug APKs use a fixed test signer." \
+                "Desktop note: beta.4 restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version."
+            fi
           } > release-notes.md
 
       - name: Publish verified release

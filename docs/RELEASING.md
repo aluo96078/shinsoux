@@ -18,7 +18,7 @@ git push origin v1.1.0-beta.1
 ```
 
 正式版本必須是三段純數字；beta 序號 `N` 限 `1..98`。為同時符合 MSI 與 Android 的
-單調 build number，major 不得超過 81、minor 不得超過 255、patch 不得超過 999，且不可
+單調 build number，major 不得超過 81、minor 不得超過 255、patch 不得超過 654，且不可
 使用 `v0.0.0`。Android `versionName` 與產物名稱使用完整顯示版本；Desktop
 `packageVersion` 使用不含 beta suffix 的三段 package version。
 
@@ -33,6 +33,18 @@ stage = beta N 時為 N；正式版為 99
 
 因此同一 package version 的 `beta.1…beta.98` 都小於正式版，下一個 patch 的 beta 又大於
 前一個正式版。Tag 必須按此順序遞增，不能發布較新版後再發布較小版本或 beta 序號。
+
+Windows Installer 只能使用 `MAJOR.MINOR.BUILD`，因此 MSI／EXE 使用另一個單調版本：
+
+```text
+windows build = PATCH × 100 + stage
+windows package version = MAJOR.MINOR.windows build
+```
+
+例如 `v1.0.0-beta.4` 是 `1.0.4`，`v1.0.0` 是 `1.0.99`，而
+`v1.0.1-beta.1` 是 `1.0.101`。這也是 patch 上限為 654 的原因：Windows 的 BUILD 不得超過
+65535。穩定的 UpgradeCode 配合每個 package version 產生的新 ProductCode，讓 MSI 能辨識
+並取代舊版；不可讓兩個公開 tag 重用相同 Windows package version。
 
 ## 發布產物
 
@@ -57,10 +69,18 @@ Actions artifact；GitHub Release assets 是長期下載來源。Android、macOS
 tag 對應的 `versionName`／`versionCode`，以及 `android:debuggable=true`。它是方便測試的
 debug build，不是使用正式 keystore 簽章的 production release APK。
 
-GitHub-hosted runner 使用自動建立的 debug keystore；該 key 不保證在不同 workflow run
-之間保持相同。若新舊 APK 的 signer 不同，Android 會拒絕覆蓋安裝。更新前應先在 App 內
-建立備份，必要時解除安裝舊版再安裝。需要穩定原地升級或正式商店／企業分發時，請自行
-建立並安全保存 release keystore，再於自己的受控環境執行：
+自 `v1.0.0-beta.4` 起，官方 workflow 從 repository secret 還原專用的固定公開測試 key，
+並拒絕 signer SHA-256 不符合下列 fingerprint 的 APK：
+
+```text
+27:73:A2:63:48:F6:3B:F9:48:6C:44:9D:73:62:E0:86:
+32:0C:0A:89:63:A4:C1:77:8C:EB:28:8C:CA:F2:DF:5A
+```
+
+這把 key 只提供 beta 測試 APK 的連續覆蓋升級，不是 production identity。Beta.3 及更舊的
+APK 由 GitHub-hosted runner 臨時產生不同 signer；升到 beta.4 前必須先在 App 內備份、
+解除安裝舊版一次，再安裝 beta.4。beta.4 之後的官方 debug APK 可直接升級。正式商店／
+企業分發仍應自行建立並安全保存 release keystore，再於自己的受控環境執行：
 
 ```bash
 export ANDROID_KEYSTORE_PATH=/absolute/path/to/release.jks
@@ -74,8 +94,8 @@ export ANDROID_KEY_PASSWORD='...'
   -PreleaseVersionCode=25600099
 ```
 
-不得提交 keystore 或密碼。專案的公開 Release workflow 不讀取 Android signing secrets，
-也不會把自行建置的 release APK 加入官方 Release。
+不得提交 keystore 或密碼。官方測試 keystore 只存在 GitHub Actions secret，repository 中
+沒有私鑰；自行建置的 release APK 不會加入官方 Release。
 
 ## iOS：不發布 IPA，必須自行建置
 
@@ -119,8 +139,16 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
 
 - DMG 目前尚未 Developer ID 簽章與 Apple notarize，macOS Gatekeeper 可能警告。
 - MSI／EXE 目前尚未 Authenticode 簽章，Windows SmartScreen 可能顯示未知發行者。
-- Windows producer 會先在 Java Access Bridge 啟用條件下驗證 app image，再靜默安裝 MSI
-  並驗證已安裝的 launcher/runtime；任一步無法啟動都不會發布 Release。
+- macOS producer 會掛載 DMG，檢查縮減後的 SQLite JDBC provider，使用隔離資料目錄啟動
+  其中的 App，並要求 SQLite 初始化及 Compose 首幀 marker 完成。
+- Windows producer 會在 Java Access Bridge 啟用條件下，對 app image 與安裝後程式執行
+  同樣的 SQLite／首幀 marker probe；`v1.0.0-beta.4` 還會先安裝公開 beta.3 MSI，再驗證
+  beta.4 真正取代舊 ProductCode。任一步無法啟動或升級都不會發布 Release。
+
+Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
+會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；
+同時 beta.2／beta.3 重用了 `1.0.0`，無法形成 MSI 升級。Beta.4 同時修復 runtime 保留規則
+與 Windows package version，以上述完整啟動及覆蓋安裝檢查防止回歸。
 
 發布正式或 beta tag 前，應先確認 master 的一般 Windows workflow 與本機／CI 測試皆
 通過。Release job 以 draft 聚合產物，核對實際 asset 清單後才公開；重跑同一 tag 時會先
