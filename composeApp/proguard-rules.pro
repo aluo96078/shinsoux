@@ -5,6 +5,16 @@
 -keepclassmembers class com.sun.jna.** { *; }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,Exceptions
 
+# java.lang.Enum.valueOf resolves the synthetic values() method reflectively.
+# Release shrinking retained directly called valueOf() methods but removed
+# values(), making persisted enum decoding fail only in packaged DMG/MSI/EXE
+# builds. Keep the standard enum API for application enums used by durable
+# storage and repository parsing.
+-keepclassmembers enum dev.shinsou.kmp.** {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
 # JNA derives the native symbol name from the Java method name.  ProGuard's
 # default Kotlin optimisation renamed these methods with `$<hash>` suffixes,
 # so Security.framework could no longer resolve SecKeychain* when an

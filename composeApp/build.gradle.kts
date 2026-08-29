@@ -12,15 +12,15 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse(releaseVersion)
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse(releaseVersion)
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.1")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.101")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(1)
+    .orElse(25600101)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull

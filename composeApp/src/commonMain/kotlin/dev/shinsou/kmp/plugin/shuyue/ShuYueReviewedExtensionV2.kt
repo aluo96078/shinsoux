@@ -1149,6 +1149,8 @@ public fun interface ShuYueReviewedRuntimeFactoryV2 {
 
 public sealed class ShuYueAdmissionException(message: String) : IllegalStateException(message) {
     public class MissingQuarantine : ShuYueAdmissionException("ShuYue script is not in quarantine")
+    public class CorruptQuarantine :
+        ShuYueAdmissionException("Stored ShuYue quarantine could not be decoded safely.")
     public class NotReviewed(public val status: ShuYueReviewStatusV2) :
         ShuYueAdmissionException("ShuYue script is not reviewed: $status")
     public class DigestChanged : ShuYueAdmissionException("ShuYue quarantine digest changed")

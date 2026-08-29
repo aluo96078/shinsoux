@@ -142,9 +142,11 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
 - macOS producer 會掛載 DMG，檢查縮減後的 SQLite JDBC provider，使用隔離資料目錄啟動
   其中的 App，並要求 SQLite 初始化及 Compose 首幀 marker 完成。
 - Windows producer 會在 Java Access Bridge 啟用條件下，對 app image 與安裝後程式執行
-  同樣的 SQLite／首幀 marker probe；beta.4／beta.5 會先安裝公開 beta.3 MSI，正式
-  `v1.0.0` 則會先安裝公開 beta.5 MSI，再驗證新 ProductCode 真正取代舊版。任一步無法
-  啟動或升級都不會發布 Release。
+  同樣的 SQLite／首幀 marker probe；runtime probe 也會在經 ProGuard 縮減後執行 ShuYue
+  隔離資料與權限的寫入／重讀，防止僅發生於正式封裝的安全狀態解碼故障。beta.4／beta.5
+  會先安裝公開 beta.3 MSI，正式 `v1.0.0` 會先安裝公開 beta.5 MSI，`v1.0.1-beta.1`
+  則會先安裝公開 `v1.0.0` MSI，再驗證新 ProductCode 真正取代舊版。任一步無法啟動或
+  升級都不會發布 Release。
 
 Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
 會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；

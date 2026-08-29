@@ -6,8 +6,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KeyValueShuYueReviewedStoreV2Test {
@@ -69,7 +69,39 @@ class KeyValueShuYueReviewedStoreV2Test {
             newValue = "0".repeat(64),
         )
 
-        assertNull(KeyValueShuYueReviewedStoreV2(backing).get(record.quarantineId))
+        val failure = assertFailsWith<ShuYueAdmissionException.CorruptQuarantine> {
+            KeyValueShuYueReviewedStoreV2(backing).get(record.quarantineId)
+        }
+        assertEquals("Stored ShuYue quarantine could not be decoded safely.", failure.message)
+    }
+
+    @Test
+    fun unknownDurableQuarantineEnumsFailClosedWithSafeDiagnostic() = runTest {
+        val backing = RecordingKeyValueStore()
+        val bytes = "reviewed script".encodeToByteArray()
+        val record = ShuYueQuarantinedScriptV2(
+            quarantineId = "unknown-enum-quarantine",
+            identity = identity(bytes, versionCode = 2),
+            sourceIds = listOf("fixture-source"),
+            bytes = bytes,
+            provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
+            stagedReviewStatus = ShuYueReviewStatusV2.REVIEWED,
+        )
+        val store = KeyValueShuYueReviewedStoreV2(backing)
+        store.put(record)
+        val key = "plugin.shuyue.v2.quarantine.${Sha256.hex(record.quarantineId.encodeToByteArray())}"
+        val encoded = requireNotNull(backing.values[key])
+
+        listOf(
+            "\"provenance\":\"REVIEWED_REPOSITORY\"" to "\"provenance\":\"UNTRUSTED_IMPORT\"",
+            "\"reviewStatus\":\"REVIEWED\"" to "\"reviewStatus\":\"UNSAFE_STATUS\"",
+        ).forEach { (knownValue, unknownValue) ->
+            backing.values[key] = encoded.replace(knownValue, unknownValue)
+            val failure = assertFailsWith<ShuYueAdmissionException.CorruptQuarantine> {
+                KeyValueShuYueReviewedStoreV2(backing).get(record.quarantineId)
+            }
+            assertEquals("Stored ShuYue quarantine could not be decoded safely.", failure.message)
+        }
     }
 
     private fun identity(bytes: ByteArray, versionCode: Int): ShuYueArtifactIdentityV2 =

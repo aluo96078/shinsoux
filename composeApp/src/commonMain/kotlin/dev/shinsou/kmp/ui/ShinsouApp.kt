@@ -2448,7 +2448,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.0"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.1"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(

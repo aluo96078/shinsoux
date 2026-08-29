@@ -25,6 +25,11 @@ number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
+目前原始碼中的預設版本為 `1.0.1-beta.1`：Android `versionName` 與應用內顯示使用完整
+beta 版本，Android `versionCode`／iOS build number 為 `25600101`，Desktop／iOS 的
+package／marketing version 為 `1.0.1`，Windows installer package version 為
+`1.0.101`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
+
 ## Workspace 佈局
 
 官方擴充套件 compatibility fixture 取自相鄰的
@@ -156,7 +161,9 @@ Bridge 而 runtime 缺少此模組，AWT 會在視窗出現前終止，jpackage 
 Windows CI 會強制設定 Access Bridge，對 release app image 執行 runtime 與完整 startup
 probe；release workflow 再靜默安裝 MSI 並對已安裝程式重跑。完整 probe 必須建立
 `%USERPROFILE%\ShinsouXData\SyncV2\local-sync.db`、渲染 Compose 首幀、寫出隨機 marker，
-並確認執行中的原生視窗已載入品牌 icon 且沒有額外的 Windows menu bar。
+並確認執行中的原生視窗已載入品牌 icon 且沒有額外的 Windows menu bar。Runtime probe
+另會從縮減後 JAR 執行 ShuYue 隔離資料與權限的 durable round-trip，防止 ProGuard 導致
+正式包無法安裝已審核插件。
 
 Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 UpgradeCode 與單調的 `MAJOR.MINOR.(PATCH × 100 + stage)` package version 讓後續版本取得新 ProductCode 並覆蓋升級，而不是並存或被判定為相同版本。beta.3 錯誤重用了 `1.0.0`；修復版的 release workflow 會先安裝公開 beta.3 MSI，再驗證新 MSI 移除舊 ProductCode。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 

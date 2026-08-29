@@ -211,7 +211,11 @@ public class KeyValueShuYueReviewedStoreV2(
 
     override suspend fun get(quarantineId: String): ShuYueQuarantinedScriptV2? = mutex.withLock {
         val encoded = keyValueStore.getString(quarantineKey(quarantineId)) ?: return@withLock null
-        decode(encoded)?.takeIf { it.quarantineId == quarantineId }
+        val decoded = decode(encoded)
+        if (decoded.quarantineId != quarantineId) {
+            throw ShuYueAdmissionException.CorruptQuarantine()
+        }
+        decoded
     }
 
     override suspend fun approve(
@@ -248,7 +252,7 @@ public class KeyValueShuYueReviewedStoreV2(
         ) ?: return@withLock emptySet()
         runCatching {
             json.decodeFromString(ListSerializer(String.serializer()), encoded)
-                .map(ShuYueExecutionPermissionV2::valueOf)
+                .map(::decodeExecutionPermission)
                 .toSet()
         }.getOrDefault(emptySet())
     }
@@ -307,25 +311,57 @@ public class KeyValueShuYueReviewedStoreV2(
         ),
     )
 
-    private fun decode(encoded: String): ShuYueQuarantinedScriptV2? = runCatching {
-        val stored = json.decodeFromString(StoredQuarantineV2.serializer(), encoded)
-        val bytes = stored.scriptHex.hexToBytes()
-        val identity = ShuYueArtifactIdentityV2(
-            stored.packageId,
-            stored.version,
-            stored.versionCode,
-            stored.sha256,
-        )
-        require(Sha256.hex(bytes) == identity.sha256) { "Durable ShuYue quarantine digest changed" }
-        ShuYueQuarantinedScriptV2(
-            quarantineId = stored.quarantineId,
-            identity = identity,
-            sourceIds = stored.sourceIds,
-            bytes = bytes,
-            provenance = ShuYueScriptProvenanceV2.valueOf(stored.provenance),
-            stagedReviewStatus = ShuYueReviewStatusV2.valueOf(stored.reviewStatus),
-        )
-    }.getOrNull()
+    private fun decode(encoded: String): ShuYueQuarantinedScriptV2 {
+        return try {
+            val stored = json.decodeFromString(StoredQuarantineV2.serializer(), encoded)
+            val bytes = stored.scriptHex.hexToBytes()
+            val identity = ShuYueArtifactIdentityV2(
+                stored.packageId,
+                stored.version,
+                stored.versionCode,
+                stored.sha256,
+            )
+            require(Sha256.hex(bytes) == identity.sha256) { "Durable ShuYue quarantine digest changed" }
+            ShuYueQuarantinedScriptV2(
+                quarantineId = stored.quarantineId,
+                identity = identity,
+                sourceIds = stored.sourceIds,
+                bytes = bytes,
+                provenance = decodeProvenance(stored.provenance),
+                stagedReviewStatus = decodeReviewStatus(stored.reviewStatus),
+            )
+        } catch (_: Exception) {
+            // Quarantined bytes and parser diagnostics are deliberately not returned to the UI.
+            // A damaged record remains fail-closed, but is distinct from a genuinely absent one.
+            throw ShuYueAdmissionException.CorruptQuarantine()
+        }
+    }
+
+    private fun decodeExecutionPermission(encoded: String): ShuYueExecutionPermissionV2 = when (encoded) {
+        "EXECUTE_SCRIPT" -> ShuYueExecutionPermissionV2.EXECUTE_SCRIPT
+        "NETWORK" -> ShuYueExecutionPermissionV2.NETWORK
+        "COOKIE_STORAGE" -> ShuYueExecutionPermissionV2.COOKIE_STORAGE
+        "CREDENTIAL_ACCESS" -> ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS
+        "LOGIN_PROMPT" -> ShuYueExecutionPermissionV2.LOGIN_PROMPT
+        "FAVORITE_MUTATION" -> ShuYueExecutionPermissionV2.FAVORITE_MUTATION
+        "BROWSER_CHALLENGE" -> ShuYueExecutionPermissionV2.BROWSER_CHALLENGE
+        else -> throw IllegalArgumentException("Unknown durable ShuYue execution permission")
+    }
+
+    private fun decodeProvenance(encoded: String): ShuYueScriptProvenanceV2 = when (encoded) {
+        "REVIEWED_REPOSITORY" -> ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY
+        "LEGACY_BACKUP" -> ShuYueScriptProvenanceV2.LEGACY_BACKUP
+        else -> throw IllegalArgumentException("Unknown durable ShuYue provenance")
+    }
+
+    private fun decodeReviewStatus(encoded: String): ShuYueReviewStatusV2 = when (encoded) {
+        "REVIEWED" -> ShuYueReviewStatusV2.REVIEWED
+        "UNKNOWN_PACKAGE" -> ShuYueReviewStatusV2.UNKNOWN_PACKAGE
+        "UNREVIEWED_VERSION" -> ShuYueReviewStatusV2.UNREVIEWED_VERSION
+        "DIGEST_MISMATCH" -> ShuYueReviewStatusV2.DIGEST_MISMATCH
+        "SOURCE_ID_MISMATCH" -> ShuYueReviewStatusV2.SOURCE_ID_MISMATCH
+        else -> throw IllegalArgumentException("Unknown durable ShuYue review status")
+    }
 
     private fun quarantineKey(quarantineId: String): String =
         "$QUARANTINE_PREFIX.${Sha256.hex(quarantineId.encodeToByteArray())}"
