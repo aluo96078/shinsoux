@@ -87,9 +87,11 @@ Windows 資料預設位於：
 
 一般 push／pull request 會做 Windows 編譯、測試與 app image 啟動檢查。推送 `vMAJOR.MINOR.PATCH` 或
 `vMAJOR.MINOR.PATCH-beta.N` tag 觸發的
-`.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android APK、iOS IPA
-及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。當 Android 或 iOS 的正式簽章設定完全不存在時，beta 可在 release notes 明示後略過該行動平台；正式版本仍要求四平台完整。該流程也會執行 Windows 產物完整性檢查、靜默安裝 MSI，並啟動已安裝程式的 runtime probe。若需在本機驗證安裝器，仍可依照
-上方的 WiX 建置命令手動產生。
+`.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android debug
+APK 及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。Release workflow 不建置
+iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也會執行 Windows 產物
+完整性檢查、靜默安裝 MSI，並啟動已安裝程式的 runtime probe。若需在本機驗證安裝器，
+仍可依照上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。
 

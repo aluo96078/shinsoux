@@ -11,8 +11,8 @@
 
 | 平台 | 最低目標／產物 | 平台整合 |
 |------|---------------|----------|
-| Android | Android 8.0（API 26）以上；Debug APK／Release APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
-| iOS／iPadOS | iOS 16 以上；Xcode App＋Widget | Keychain、iCloud Drive、BGTask、WKWebView、Widget |
+| Android | Android 8.0（API 26）以上；GitHub Release 提供測試用 Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
+| iOS／iPadOS | iOS 16 以上；僅提供原始碼，需在 macOS／Xcode 自行建置 App＋Widget | Keychain、iCloud Drive、BGTask、WKWebView、Widget |
 | macOS | Compose Desktop App／DMG；目前打包目標為 Apple Silicon | Menu Bar、快捷鍵、系統文件選擇器、macOS Keychain |
 | Windows | Windows 10／11 x64；MSI／EXE | `%USERPROFILE%` 資料根目錄、使用者範圍 DPAPI、Ctrl 快捷鍵、原生文件選擇器 |
 
@@ -119,9 +119,6 @@ cd shinsoux
 # Android debug APK
 ./gradlew :composeApp:assembleDebug
 
-# Android release APK（沒有設定 ANDROID_KEYSTORE_* 時會輸出 unsigned APK）
-./gradlew :composeApp:assembleRelease
-
 # iOS Simulator framework 與 tests
 ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
 ./gradlew :composeApp:iosSimulatorArm64Test
@@ -138,9 +135,20 @@ xcodebuild -project Shinsou.xcodeproj \
 ```
 
 Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
-`composeApp/build/outputs/apk/release/`。正式發布請在 CI 注入 Android keystore，避免把 unsigned APK 當成可升級的正式版本。
+`composeApp/build/outputs/apk/release/`。專案的 GitHub Release 固定發布
+`Shinsou-X-<version>-android-debug.apk`：它使用 debug key 簽章、保留
+`android:debuggable=true`，只供測試，不是 production release build。CI runner 產生的 debug
+key 不保證跨版本相同，因此新 APK 可能無法覆蓋安裝舊 APK；請先在 App 內建立備份，必要時解除安裝舊版再安裝。若要長期分發及原地升級，必須自行保存 keystore 並建置 release APK。
+自行簽署 release APK 的環境變數與命令見 [GitHub Actions 發布](docs/RELEASING.md)。
 
-只有已公開的 GitHub Release 才代表有可下載安裝包；repository 內存在 release workflow 或產物設計，不等於目前已發布版本。Beta release 會在 notes 明列實際包含的平台；尚未設定正式簽章時可能不含 Android APK 或 iOS IPA。正式 release 則要求四平台全部完成。若 Releases 頁面沒有項目，請依本節自行建置。
+GitHub Release 不建置或發布 iOS IPA。iOS 使用者／維護者必須在 macOS 安裝完整 Xcode
+與 XcodeGen，執行上方 Simulator 命令，或以 `open iosApp/Shinsou.xcodeproj` 在 Xcode
+選擇自己的 Development Team 後建置實機版本。真機、Archive、Ad Hoc、TestFlight 與 App
+Store 分發所需的憑證、profiles、entitlements 與 Apple Developer 會籍均由自行建置者負責。
+
+只有已公開的 GitHub Release 才代表有可下載的 Android／Desktop 安裝包；repository 內存在
+workflow 或產物設計，不等於目前已發布版本。每個 tag release 固定包含 Android debug APK、
+macOS DMG 與 Windows MSI／EXE，不包含 iOS IPA。若 Releases 頁面沒有項目，請依本節自行建置。
 
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
 
@@ -157,7 +165,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 ## 文件與相關專案
 
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
-- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、APK／IPA／DMG／MSI／EXE 與簽章 secrets
+- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android debug APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
 - [插件系統事件接口架構](docs/PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：production V1 handler、exact-artifact grant、安全邊界與尚未接通的保留能力

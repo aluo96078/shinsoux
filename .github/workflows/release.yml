@@ -35,43 +35,21 @@ jobs:
         run: bash scripts/ci/parse_release_tag.sh "$GITHUB_REF_NAME"
 
   android:
-    name: Android release APK
+    name: Android debug APK
     needs: metadata
     runs-on: ubuntu-latest
-    environment: release
     timeout-minutes: 45
-    outputs:
-      available: ${{ steps.signing.outputs.available }}
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
-      RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Check Android signing configuration
-        id: signing
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          bash scripts/ci/check_release_signing.sh \
-            Android \
-            "$RELEASE_PRERELEASE" \
-            ANDROID_KEYSTORE_BASE64 \
-            ANDROID_KEYSTORE_PASSWORD \
-            ANDROID_KEY_ALIAS \
-            ANDROID_KEY_PASSWORD
-
       - name: Set up JDK 17
-        if: steps.signing.outputs.available == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -79,61 +57,31 @@ jobs:
           architecture: x64
 
       - name: Set up Android SDK
-        if: steps.signing.outputs.available == 'true'
         uses: android-actions/setup-android@v3
 
       - name: Install required Android SDK packages
-        if: steps.signing.outputs.available == 'true'
         shell: bash
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Set up Gradle
-        if: steps.signing.outputs.available == 'true'
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Import Android signing key
-        if: steps.signing.outputs.available == 'true'
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          missing=()
-          [[ -n "$ANDROID_KEYSTORE_BASE64" ]] || missing+=(ANDROID_KEYSTORE_BASE64)
-          [[ -n "$ANDROID_KEYSTORE_PASSWORD" ]] || missing+=(ANDROID_KEYSTORE_PASSWORD)
-          [[ -n "$ANDROID_KEY_ALIAS" ]] || missing+=(ANDROID_KEY_ALIAS)
-          [[ -n "$ANDROID_KEY_PASSWORD" ]] || missing+=(ANDROID_KEY_PASSWORD)
-          if (( ${#missing[@]} > 0 )); then
-            echo "::error title=Missing Android signing secrets::Configure the release environment secrets: ${missing[*]}."
-            exit 1
-          fi
-
-          keystore_path="$RUNNER_TEMP/shinsou-release.jks"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
-          [[ -s "$keystore_path" ]] || {
-            echo "::error title=Invalid Android keystore::Decoded keystore is empty."
-            exit 1
-          }
-          chmod 600 "$keystore_path"
-          echo "ANDROID_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
-
-      - name: Build signed release APK
-        if: steps.signing.outputs.available == 'true'
+      - name: Build debug APK
         shell: bash
         run: |
-          ./gradlew :composeApp:assembleRelease \
+          ./gradlew :composeApp:assembleDebug \
             -PreleaseVersion="$RELEASE_PACKAGE_VERSION" \
             -PreleaseDisplayVersion="$RELEASE_VERSION" \
             -PreleaseVersionCode="$RELEASE_VERSION_CODE" \
             --stacktrace
 
-      - name: Verify and stage APK
-        if: steps.signing.outputs.available == 'true'
+      - name: Verify and stage debug APK
         shell: bash
         run: |
           shopt -s nullglob
-          apks=(composeApp/build/outputs/apk/release/*.apk)
+          apks=(composeApp/build/outputs/apk/debug/*.apk)
           if (( ${#apks[@]} != 1 )); then
-            echo "::error title=Unexpected APK output::Expected exactly one release APK, found ${#apks[@]}."
+            echo "::error title=Unexpected APK output::Expected exactly one debug APK, found ${#apks[@]}."
             exit 1
           fi
           [[ -s "${apks[0]}" ]] || {
@@ -148,94 +96,41 @@ jobs:
           }
           "$apksigner" verify --verbose --print-certs "${apks[0]}"
 
+          command -v apkanalyzer > /dev/null || {
+            echo "::error title=Missing apkanalyzer::Android SDK apkanalyzer is not available."
+            exit 1
+          }
+          actual_debuggable="$(apkanalyzer manifest debuggable "${apks[0]}")"
+          actual_application_id="$(apkanalyzer manifest application-id "${apks[0]}")"
+          actual_version_name="$(apkanalyzer manifest version-name "${apks[0]}")"
+          actual_version_code="$(apkanalyzer manifest version-code "${apks[0]}")"
+          [[ "$actual_debuggable" == true ]] || {
+            echo "::error title=APK is not debuggable::Expected android:debuggable=true."
+            exit 1
+          }
+          [[ "$actual_application_id" == dev.aluo.shinsoux ]] || {
+            echo "::error title=Unexpected application ID::Found $actual_application_id."
+            exit 1
+          }
+          [[ "$actual_version_name" == "$RELEASE_VERSION" ]] || {
+            echo "::error title=Unexpected version name::Found $actual_version_name; expected $RELEASE_VERSION."
+            exit 1
+          }
+          [[ "$actual_version_code" == "$RELEASE_VERSION_CODE" ]] || {
+            echo "::error title=Unexpected version code::Found $actual_version_code; expected $RELEASE_VERSION_CODE."
+            exit 1
+          }
+
           mkdir -p build/release/android
-          output="build/release/android/Shinsou-X-$RELEASE_VERSION-android.apk"
+          output="build/release/android/Shinsou-X-$RELEASE_VERSION-android-debug.apk"
           cp "${apks[0]}" "$output"
           sha256sum "$output"
 
       - name: Upload APK workflow artifact
-        if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-android
           path: build/release/android/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-  ios:
-    name: iOS App Store IPA
-    needs: metadata
-    runs-on: macos-15
-    environment: release
-    timeout-minutes: 60
-    outputs:
-      available: ${{ steps.signing.outputs.available }}
-    env:
-      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
-      RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
-      RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
-      IOS_TEAM_ID: 5UKY38ZLK6
-    steps:
-      - name: Check out Shinsou X
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Check iOS signing configuration
-        id: signing
-        shell: bash
-        env:
-          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
-          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
-          IOS_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_APP_PROVISIONING_PROFILE_BASE64 }}
-          IOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
-        run: |
-          bash scripts/ci/check_release_signing.sh \
-            iOS \
-            "$RELEASE_PRERELEASE" \
-            IOS_DISTRIBUTION_CERTIFICATE_BASE64 \
-            IOS_DISTRIBUTION_CERTIFICATE_PASSWORD \
-            IOS_APP_PROVISIONING_PROFILE_BASE64 \
-            IOS_WIDGET_PROVISIONING_PROFILE_BASE64
-
-      - name: Set up JDK 17
-        if: steps.signing.outputs.available == 'true'
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK for the shared Gradle module
-        if: steps.signing.outputs.available == 'true'
-        uses: android-actions/setup-android@v3
-
-      - name: Install required Android SDK packages
-        if: steps.signing.outputs.available == 'true'
-        shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Set up Gradle
-        if: steps.signing.outputs.available == 'true'
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Archive and export signed IPA
-        if: steps.signing.outputs.available == 'true'
-        shell: bash
-        env:
-          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
-          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
-          IOS_APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_APP_PROVISIONING_PROFILE_BASE64 }}
-          IOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
-          OUTPUT_DIR: ${{ github.workspace }}/build/release/ios
-        run: bash scripts/ci/build_ios_ipa.sh
-
-      - name: Upload IPA workflow artifact
-        if: steps.signing.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-ios
-          path: build/release/ios/*.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -443,7 +338,6 @@ jobs:
     needs:
       - metadata
       - android
-      - ios
       - macos
       - windows
     if: >-
@@ -451,7 +345,6 @@ jobs:
         always() &&
         needs.metadata.result == 'success' &&
         needs.android.result == 'success' &&
-        needs.ios.result == 'success' &&
         needs.macos.result == 'success' &&
         needs.windows.result == 'success'
       }}
@@ -466,8 +359,6 @@ jobs:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
       RELEASE_COMMIT: ${{ github.sha }}
-      ANDROID_AVAILABLE: ${{ needs.android.outputs.available }}
-      IOS_AVAILABLE: ${{ needs.ios.outputs.available }}
     steps:
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
@@ -486,18 +377,12 @@ jobs:
           msis=(release-assets/*.msi)
           exes=(release-assets/*.exe)
 
-          expected_apks=0
-          expected_ipas=0
-          [[ "$ANDROID_AVAILABLE" == true ]] && expected_apks=1
-          [[ "$IOS_AVAILABLE" == true ]] && expected_ipas=1
-
-          if [[ "$RELEASE_PRERELEASE" != true ]]; then
-            [[ "$ANDROID_AVAILABLE" == true ]] || { echo "A formal release requires Android." >&2; exit 1; }
-            [[ "$IOS_AVAILABLE" == true ]] || { echo "A formal release requires iOS." >&2; exit 1; }
-          fi
-
-          [[ ${#apks[@]} -eq $expected_apks ]] || { echo "Expected $expected_apks APK, found ${#apks[@]}." >&2; exit 1; }
-          [[ ${#ipas[@]} -eq $expected_ipas ]] || { echo "Expected $expected_ipas IPA, found ${#ipas[@]}." >&2; exit 1; }
+          [[ ${#apks[@]} -eq 1 ]] || { echo "Expected one Android debug APK, found ${#apks[@]}." >&2; exit 1; }
+          [[ "${apks[0]##*/}" == "Shinsou-X-$RELEASE_VERSION-android-debug.apk" ]] || {
+            echo "Unexpected Android APK name: ${apks[0]##*/}." >&2
+            exit 1
+          }
+          [[ ${#ipas[@]} -eq 0 ]] || { echo "Expected no iOS IPA, found ${#ipas[@]}." >&2; exit 1; }
           [[ ${#dmgs[@]} -eq 1 ]] || { echo "Expected one DMG, found ${#dmgs[@]}." >&2; exit 1; }
           [[ ${#msis[@]} -eq 1 ]] || { echo "Expected one MSI, found ${#msis[@]}." >&2; exit 1; }
           [[ ${#exes[@]} -eq 1 ]] || { echo "Expected one EXE, found ${#exes[@]}." >&2; exit 1; }
@@ -529,21 +414,14 @@ jobs:
             printf '%s\n\n%s\n' \
               "Shinsou X $RELEASE_VERSION release." \
               "Included platforms:"
-            [[ "$ANDROID_AVAILABLE" == true ]] && printf '%s\n' \
-              "- Android: release-key-signed APK."
-            [[ "$IOS_AVAILABLE" == true ]] && printf '%s\n' \
-              "- iOS: App Store Connect distribution IPA; it is not a direct sideload package."
             printf '%s\n' \
+              "- Android: debug-signed APK for testing; it is not a production-signed release build." \
               "- macOS: DMG (not notarized; Gatekeeper may warn)." \
               "- Windows: MSI and EXE (not Authenticode-signed; SmartScreen may warn)."
 
-            if [[ "$ANDROID_AVAILABLE" != true || "$IOS_AVAILABLE" != true ]]; then
-              printf '\n%s\n' "Omitted from this beta:"
-              [[ "$ANDROID_AVAILABLE" == true ]] || printf '%s\n' \
-                "- Android: formal release signing secrets are not configured."
-              [[ "$IOS_AVAILABLE" == true ]] || printf '%s\n' \
-                "- iOS: App Store distribution credentials are not configured. A paid Apple Developer membership, distribution certificate, and App Store profiles are required."
-            fi
+            printf '\n%s\n%s\n' \
+              "Not distributed:" \
+              "- iOS: no IPA is published. Build from source on macOS with Xcode: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md"
 
             printf '\n%s\n' "Verify every download with SHA256SUMS.txt."
           } > release-notes.md
