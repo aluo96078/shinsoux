@@ -80,7 +80,7 @@ Windows 資料預設位於：
 
 `.github/workflows/windows.yml` 會在 Windows x64 runner：
 
-1. checkout Shinsou X 與相鄰的 `shinsou_plugin`；
+1. checkout Shinsou X 與相鄰的 [`shinsou_plugin`](https://github.com/aluo96078/shinsou_plugin)；
 2. 執行 Desktop tests 與 Kotlin compile；
 3. 建立 release app image，並在強制啟用 Java Access Bridge 時執行啟動檢查；
 4. 不建立或上傳 Windows MSI／EXE。

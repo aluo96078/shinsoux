@@ -3,9 +3,9 @@
 **Shinsou X** 是一款本機優先、可擴充的跨平台漫畫書庫與閱讀器，也是原生 iOS 專案 [Shinsou](https://github.com/aluo96078/shinsou) 的正式後繼版本。它以 Kotlin Multiplatform 與 Compose Multiplatform 建構，讓 Android、iOS、macOS 與 Windows 共用核心資料、來源擴充套件、下載、備份與主要介面，同時保留各平台的安全儲存與系統整合。
 
 > [!IMPORTANT]
-> **Shinsou X 是目前唯一持續開發的版本。** 舊版 Shinsou（Swift／SwiftUI）已停止開發，只保留作為歷史參考。新功能、問題修復與文件更新都會在本專案進行。
+> **Shinsou X 是目前唯一持續開發的版本。** 舊版 [Shinsou](https://github.com/aluo96078/shinsou)（Swift／SwiftUI）已停止開發，只保留作為歷史參考。新功能、問題修復與文件更新都會在本專案進行。
 
-目前程式已涵蓋原版的主要使用流程，macOS 版另提供貼近桌面習慣的 sidebar、雙欄 detail、系統 Menu Bar 與快捷鍵。專案仍在持續驗證與收斂階段；「可編譯」或「已有 deterministic test」不代表所有真機、帳號及第三方來源網站都已完成驗證，詳細狀態請見 [功能對齊狀態](docs/PARITY.md)。
+目前程式已涵蓋 [舊版 Shinsou](https://github.com/aluo96078/shinsou) 的主要使用流程，macOS 版另提供貼近桌面習慣的 sidebar、雙欄 detail、系統 Menu Bar 與快捷鍵。專案仍在持續驗證與收斂階段；「可編譯」或「已有 deterministic test」不代表所有真機、帳號及第三方來源網站都已完成驗證，詳細狀態請見 [功能對齊狀態](docs/PARITY.md)。
 
 ## 平台
 
@@ -25,9 +25,9 @@
 - 多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
 
-## ShuYue 風格小說閱讀器
+## [ShuYue](https://github.com/aluo96078/shuyue) 風格小說閱讀器
 
-小說閱讀器以 ShuYue 的閱讀操作為基礎，延展到 Android、iOS、macOS 與 Windows 的統一內容層。純文字章節與 EPUB 都保留可恢復的閱讀定位，重新排版或切換裝置後仍能回到接近原位置。
+小說閱讀器以 [ShuYue](https://github.com/aluo96078/shuyue) 的閱讀操作為基礎，延展到 Android、iOS、macOS 與 Windows 的統一內容層。純文字章節與 EPUB 都保留可恢復的閱讀定位，重新排版或切換裝置後仍能回到接近原位置。
 
 - 閱讀正文時工具列預設隱藏；點擊畫面中央 40% 區域即可顯示／隱藏底部功能欄
 - 左右兩側各 30% 為上一頁／下一頁點擊區；共用操作包含水平拖曳，Desktop 另支援滑鼠滾輪與鍵盤，實體音量鍵翻頁只在 Android／iOS 提供
@@ -46,7 +46,7 @@
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
 - Shinsou X JavaScript extension repository 的安裝、更新、卸載、執行授權、偏好、登入與來源瀏覽；repository 設定納入可攜 snapshot
-- ShuYue v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
+- [ShuYue](https://github.com/aluo96078/shuyue) v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
 - 內建 Local source（source `0`）：直接圖片與 TXT／ZIP／CBZ／EPUB；匯入以原子發布的 v2 manifest 拒絕部分或損毀內容
@@ -172,6 +172,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - [跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)：事件模型、E2EE、配對、checkpoint、Recovery、quota 與驗收 Gate
 - [Cloudflare Sync Worker](syncWorker/README.md)：本機測試、部署、D1/R2 bindings 與 API
 - [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin)：Shinsou X JavaScript 擴充套件儲存庫
+- [ShuYue](https://github.com/aluo96078/shuyue)：原小說閱讀器專案
 - [Shinsou（停止開發）](https://github.com/aluo96078/shinsou)：舊 Swift／SwiftUI 版本的歷史封存
 
 ## 資料與安全邊界

@@ -2,13 +2,13 @@
 
 - 狀態：Accepted
 - 日期：2026-08-21
-- 適用專案：Shinsou X KMP、Shinsou extension repository、ShuYue migration
+- 適用專案：[Shinsou X KMP](https://github.com/aluo96078/shinsoux)、[Shinsou extension repository](https://github.com/aluo96078/shinsou_plugin)、[ShuYue](https://github.com/aluo96078/shuyue) migration
 - 決策範圍：M0 contracts/foundation；後續 reader、search、TTS、annotation、DRM 與 blob sync 必須遵守
 
 ## 背景
 
 Shinsou X 現有領域模型、extension contract 與 Reader 以漫畫為中心：`Manga`、`Chapter`、
-`SManga`、`SChapter` 與 `Page` 都假設章節的主要內容是圖片序列。ShuYue 則以 `Book`、
+`SManga`、`SChapter` 與 `Page` 都假設章節的主要內容是圖片序列。[ShuYue](https://github.com/aluo96078/shuyue) 則以 `Book`、
 內嵌全文的 `Chapter.text` 與字元 offset 為中心，並有另一套字串 source ID 與小說 plugin
 contract。
 
@@ -22,7 +22,7 @@ contract。
   `zh.wenku8`、`zh.wenku8.api` 等 opaque string。把字串 hash 成 `Long` 會引入碰撞，且無法
   建立可稽核的跨裝置 identity。
 - Shinsou X extension manifest 可列多個 sources，但目前 executable runtime 只使用第一個
-  source。ShuYue 與 Shinsou 的 v1 script 也使用互不相容的 content methods。
+  source。[ShuYue](https://github.com/aluo96078/shuyue) 與舊版 [Shinsou](https://github.com/aluo96078/shinsou) 的 v1 script 也使用互不相容的 content methods。
 - 現有 Cloudflare v2 sync 有可重用的 E2EE event/checkpoint/control plane，但明確排除 Local、
   download 與 EPUB bytes；R2 目前只有 checkpoint plane。
 - ShuYue backup v1 把書籍正文、plugin script、帳密與 cookies 放在同一份未加密 JSON。
@@ -176,7 +176,7 @@ EpubPackagePayload      // package/resource acquisition plan
 - Plugin 不能回傳可任意讀取的本機 path，也不能自行寫 app-private storage。
 - Host network policy、cookie、credential、redirect、body limit 與 cancellation 仍是唯一 transport
   authority。
-- v1 Shinsou manga script 與 legacy ShuYue novel script 必須透過隔離 adapter 轉為 v2 payload；
+- 舊版 [Shinsou](https://github.com/aluo96078/shinsou) v1 manga script 與 legacy [ShuYue](https://github.com/aluo96078/shuyue) novel script 必須透過隔離 adapter 轉為 v2 payload；
   新 runtime 不得再使用 `manifest.sources.firstOrNull()` 作 executable source contract。
 
 ## Storage 與 blob contract
@@ -362,7 +362,7 @@ M0 不建立上述 endpoint、migration 或新 wire mutation。當 body plane �
 `CROSS_PLATFORM_SYNC_ARCHITECTURE.md` 中「R2 只保存 checkpoint」與「Local/EPUB bytes 預設
 不同步」必須以版本化 scope amendment 更新，並提高 schema/min-reader/min-writer gate。
 
-## ShuYue backup/plugin migration safety
+## [ShuYue](https://github.com/aluo96078/shuyue) backup/plugin migration safety
 
 Migration pipeline 固定為：
 

@@ -26,7 +26,8 @@ number；Android 若需顯示 prerelease suffix，可另傳
 
 ## Workspace 佈局
 
-官方擴充套件 compatibility fixture 取自相鄰的 `shinsou_plugin`：
+官方擴充套件 compatibility fixture 取自相鄰的
+[`shinsou_plugin`](https://github.com/aluo96078/shinsou_plugin)：
 
 ```text
 project/
@@ -45,7 +46,7 @@ project/
 ./gradlew :composeApp:desktopTest --rerun-tasks
 ```
 
-這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／ShuYue transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
+這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／[ShuYue](https://github.com/aluo96078/shuyue) transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
 
 Cloudflare Worker 的協定、雙 R2 bucket 與維運工具另需執行：
 
@@ -188,7 +189,7 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 
 ## 外部服務設定
 
-- 原版 MyAnimeList client ID 是 placeholder；KMP UI 會顯示未配置，未提供正式 client ID 前不能登入 MAL。
+- [舊版 Shinsou](https://github.com/aluo96078/shinsou) 的 MyAnimeList client ID 是 placeholder；KMP UI 會顯示未配置，未提供正式 client ID 前不能登入 MAL。
 - 正式來源站可能要求登入、Cloudflare、地區條件或 rate limit，不應作為 deterministic CI 健康檢查。
 - DNS over HTTPS toggle 目前只保存設定。沒有為 OkHttp、Darwin 與 CIO 接入可保留原 hostname、TLS SNI 與憑證驗證的 resolver，因此 runtime 不會啟用 DoH。
 

@@ -2,7 +2,7 @@
 
 - 狀態：Partially implemented（production V1 gateway 與四個 handler 已接通）
 - 日期：2026-08-22；實作狀態更新：2026-08-29
-- 適用範圍：Shinsou X KMP、Shinsou JavaScript plugins、reviewed ShuYue plugins
+- 適用範圍：[Shinsou X KMP](https://github.com/aluo96078/shinsoux)、[Shinsou JavaScript plugins](https://github.com/aluo96078/shinsou_plugin)、reviewed [ShuYue plugins](https://github.com/aluo96078/shuyue_plugin)
 - 本文件範圍：事件契約、安全邊界、宿主策略、目前 production 接線與尚未完成項目
 
 ## 目前 production 狀態
@@ -535,9 +535,9 @@ Host UI policy：
 - 登入畫面不把已保存 password 回填到一般 UI state；
 - 錯誤訊息明確帶可信 source label，不得看起來像 Shinsou 核心警告。
 
-## Shinsou／ShuYue 相容策略
+## [Shinsou](https://github.com/aluo96078/shinsou)／[ShuYue](https://github.com/aluo96078/shuyue) 相容策略
 
-### Legacy Shinsou
+### Legacy [Shinsou](https://github.com/aluo96078/shinsou)
 
 - 保留現有 `bridge.requestLogin(reason): Boolean`；
 - compatibility mapping：`accepted`／`deduplicated` -> `true`，其他 disposition -> `false`；
@@ -548,7 +548,7 @@ Host UI policy：
 - 官方套件可在確認舊 client 解碼行為後，使用新 sidecar/manifest declaration 漸進 opt in；
 - legacy `Long sourceId` 只作 runtime adapter 的 lossless projection，gateway identity 使用完整 scope。
 
-### Reviewed ShuYue
+### Reviewed [ShuYue](https://github.com/aluo96078/shuyue)
 
 - `LOGIN_PROMPT` 映射為 `REQUEST_LOGIN_UI`；
 - `BROWSER_CHALLENGE` 未來只映射 `REQUEST_BROWSER_CHALLENGE`；

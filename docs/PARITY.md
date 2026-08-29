@@ -27,11 +27,11 @@
 | 官方 extension fixture | 已實作 | 受限 | 已實作 | Desktop test 在 Rhino 初始化 workspace 官方腳本；iOS test 驗證同步 JavaScriptCore contract，但未逐一執行全部 workspace 腳本 |
 | 手動 cookie 與檔案匯入 | 已實作 | 已實作 | 已實作 | 手動編輯及 Netscape `cookies.txt`／JSON；1 MiB、500 筆上限，驗證 domain/path/expiry／字元。picker 先驗 declared size 再 bounded read；macOS Desktop file picker 已做 packaged-app 開啟／取消 smoke，Windows Desktop 及 Android／iOS provider 仍需各平台驗證 |
 | Cloudflare／Web challenge | 已實作 | 已實作 | 受限 | Android WebView 先清 cookie jar 再 seed；iOS 使用 non-persistent WKWebView；兩者擷取後再次驗證。macOS Desktop 使用獨立原生 non-persistent WKWebView 視窗，可擷取該隔離 session 的 cookie／真實 User-Agent，並在來源帳密已保存時只對同源頁面與同源 form 自動登入。Windows Desktop 只開外部瀏覽器，無法自動讀取或匯入外部 cookie |
-| 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | legacy BackupEnvelope 與 checksummed Content Backup v2 並存；v2 同時保存 publication graph 與 body-free metadata／aliases／migration ledgers，可選擇納入 rights 允許的 immutable body，metadata-only restore 不宣告缺失 body 已存在。ShuYue v1 先 staging/report/quarantine，再以 shared transaction 匯入；secrets 只經明確 consent 進平台安全儲存 |
+| 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | legacy BackupEnvelope 與 checksummed Content Backup v2 並存；v2 同時保存 publication graph 與 body-free metadata／aliases／migration ledgers，可選擇納入 rights 允許的 immutable body，metadata-only restore 不宣告缺失 body 已存在。[ShuYue](https://github.com/aluo96078/shuyue) v1 先 staging/report/quarantine，再以 shared transaction 匯入；secrets 只經明確 consent 進平台安全儲存 |
 | Cloudflare schema v2／encrypted body sync | 已實作 | 已實作 | 已實作 | publication/unit/annotation/blob-ref metadata 走 event/checkpoint；使用者選擇且 `SYNC_BLOB` 允許的 body 走隔離 R2、分塊 AEAD、resume、DEK re-wrap 與 checkpoint-ack GC。真實四平台跨裝置矩陣仍是外部上線 Gate |
 | App-private 自動備份 | 已實作 | 已實作 | 已實作 | 原子快照、due check、retention、損毀標示、立即建立／列表／還原／刪除；WorkManager、BGProcessingTask、Desktop 前景 scheduler |
 | iCloud Drive snapshot sync | 不適用 | 受限 | 不適用 | `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔、NSFileCoordinator、repository CAS 與 deterministic merge；不採用遠端 download queue、保留本機 proxy secret。無 deletion tombstone、非 record-level CloudKit，entitlement 尚需簽章真機驗證 |
-| MyAnimeList tracking | 未接 | 未接 | 未接 | adapter/test 存在，但原版未提供可用 client ID；UI 明示未配置，不能登入 |
+| MyAnimeList tracking | 未接 | 未接 | 未接 | adapter/test 存在，但 [舊版 Shinsou](https://github.com/aluo96078/shinsou) 未提供可用 client ID；UI 明示未配置，不能登入 |
 | App lock／secure screen | 已實作 | 已實作 | 未接 | Android Biometric 與 secure window、iOS LocalAuthentication／privacy cover；手機端會依 passcode／PIN／密碼／biometric 的執行時可用性動態 gate app lock，驗證不可用時忽略 stale enabled 值、恢復可用時重新鎖定；secure screen 仍可用。Desktop capability 明示 unavailable，Settings 停用且 `authenticate` 不會回傳假成功 |
 | 敏感狀態儲存 | 已實作 | 已實作 | 受限 | Android 敏感 KV 使用 Keystore AES-GCM；iOS 使用 Keychain；Desktop 使用 AES-256-GCM，master key 在 macOS 存入 Keychain，在 Windows 以目前使用者範圍 DPAPI 保護且不使用 machine scope。macOS Keychain prompt／簽章後存取／legacy file migration，以及 Windows 安裝版重啟解密與不同使用者 fail-closed 行為仍需各平台 smoke |
 | App deep links | 已實作 | 已實作 | 受限 | Android intent 與 iOS `shinsou://` custom URL 可導向 manga／chapter／section／settings；目前 parser 不接受 HTTPS universal link。Desktop 主要是 Menu Bar 產生的 app 內導航事件 |
@@ -87,7 +87,7 @@ MyAnimeList HTTP adapter 與 deterministic tests 已存在，但 composition 刻
 - Download completion manifest、Local v2 manifest 與 page bytes 都是裝置本機檔案。Clear completed 只把完成 queue row 設為 `visibleInQueue=false`，因此不會讓 Reader 或下載徽章失去完成狀態。
 - Automatic backup 是每台裝置的 app-private recoverable 檔案；Android／iOS 的 OS scheduler 不保證精確執行時間，Desktop 只在 app 存活時檢查。
 - iCloud 只在 iOS 提供 transport。流程是 pull 單檔、decode、deterministic merge、以 repository revision CAS 寫回本地，再原子 replace 遠端單檔。Resolver 不重映射或採用遠端 `downloadQueue`，合併結果保留本機 queue；備份 restore 同樣保留並清理本機 dangling rows。
-- 此模型沒有 CloudKit record、subscription、push notification、逐筆 server conflict 或 deletion tombstone。包含 extension repository 在內的 key-based merge 可能讓 stale replica 在衝突時帶回已刪除 record，因此不能描述為原版 record-level CloudKit 的等價實作。
+- 此模型沒有 CloudKit record、subscription、push notification、逐筆 server conflict 或 deletion tombstone。包含 extension repository 在內的 key-based merge 可能讓 stale replica 在衝突時帶回已刪除 record，因此不能描述為 [舊版 Shinsou](https://github.com/aluo96078/shinsou) record-level CloudKit 的等價實作。
 
 ## 驗證層級
 
@@ -115,6 +115,6 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 - DoH toggle 不會改變 runtime。直接改寫目的 IP 並覆寫 `Host` 會破壞 HTTPS SNI／憑證語義，因此未複製不安全行為。
 - JavaScript runtime 以官方同步式 extension contract 為準；任意第三方 Promise／async／`fetch` 腳本不保證相容。
 - Extension execution trust token 綁定 `pluginId + versionCode + SHA-256`，不是作者身分或 repository signing chain 的完整驗證；system-event grant 則另以 `packageId + version + versionCode + SHA-256` 及 exact `SourceKey` 核准。沒有 repository digest 的現行格式在明確 install／update 時採下載 bytes 的 SHA-256 作 TOFU execution grant。
-- UI 已有字串 provider，但仍存在不少直接寫在 Compose 中的英文；多語介面尚未達原版完整度。
+- UI 已有字串 provider，但仍存在不少直接寫在 Compose 中的英文；多語介面尚未達 [舊版 Shinsou](https://github.com/aluo96078/shinsou) 完整度。
 - macOS Keychain 與 Windows DPAPI 只保護 Desktop 敏感 KV 的 AES master key，不等於 app lock。Desktop app lock／secure screen capability 明示 unavailable；若需要獨立驗證，仍需 LocalAuthentication 或等價桌面安全設計。
 - Bounded picker 仍會在核准上限內建立完整 `ByteArray`，且 size metadata 不可靠的 provider 會安全拒絕；實際 cloud provider 相容性尚需逐平台 smoke。

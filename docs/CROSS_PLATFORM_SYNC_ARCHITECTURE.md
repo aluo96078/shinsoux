@@ -1064,7 +1064,7 @@ Cloudflare 免費額度適合私人、家庭與小群組，不應用來承諾公
 - Publication／Acquisition／Unit／Manifest／annotation／unified progress schema v2 mutations
 - shared SQLite content transaction、durable metadata outbox 與 exact blob-job journal
 - R2 resumable encrypted chunk upload/download、DEK re-wrap、tombstone ack 與 GC
-- Backup v2 與 ShuYue transactional import 只經同一 content transaction／v2 outbox 進入同步
+- Backup v2 與 [ShuYue](https://github.com/aluo96078/shuyue) transactional import 只經同一 content transaction／v2 outbox 進入同步
 - body scheduler 每 slice 一個 blob，且永遠排在 reader progress 與 metadata 後
 
 完成條件：body 不進 event/checkpoint；upload 每個 crash boundary 可重播；舊 epoch envelope 可由
