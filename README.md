@@ -1,6 +1,6 @@
 # Shinsou X
 
-[官方網站](https://shinsoux.com)
+[官方網站](https://shinsoux.com) · [產品下載](https://github.com/aluo96078/shinsoux/releases)
 
 **Shinsou X** 是一款本機優先、可擴充的跨平台漫畫書庫與閱讀器，也是原生 iOS 專案 [Shinsou](https://github.com/aluo96078/shinsou) 的正式後繼版本。它以 Kotlin Multiplatform 與 Compose Multiplatform 建構，讓 Android、iOS、macOS 與 Windows 共用核心資料、來源擴充套件、下載、備份與主要介面，同時保留各平台的安全儲存與系統整合。
 
@@ -166,7 +166,8 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 
 ## 文件與相關專案
 
-- [Shinsou X 官網](https://shinsoux.com)：產品介紹、下載與使用文件
+- [Shinsou X 官網](https://shinsoux.com)：產品介紹與使用文件
+- [產品下載](https://github.com/aluo96078/shinsoux/releases)：Android debug APK、macOS DMG 與 Windows MSI／EXE
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
 - [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android debug APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
