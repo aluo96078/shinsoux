@@ -72,8 +72,8 @@ npm run ops:test
 
 Debug APK 位於 `composeApp/build/outputs/apk/debug/`。Tag workflow 也只發布這類
 debug-signed、`android:debuggable=true` 的測試 APK，不是 production release build。
-自 beta.4 起，官方 CI 使用 GitHub Actions secret 中固定的公開測試 signer；fingerprint 與
-升級限制見 [發布文件](RELEASING.md)。beta.3 及更舊版本必須先備份並解除安裝一次，beta.4
+自 beta.5 起，官方 CI 使用 GitHub Actions secret 中固定的公開測試 signer；fingerprint 與
+升級限制見 [發布文件](RELEASING.md)。beta.3 及更舊版本必須先備份並解除安裝一次，beta.5
 之後才可直接覆蓋升級。需要 production identity 時，請自行保存 keystore 並執行
 `assembleRelease`。這些命令驗證 expect／actual 與平台 API
 可編譯，包括各平台 bounded picker、Android volume-key dispatch、iOS Keychain，以及
@@ -157,7 +157,7 @@ Windows CI 會強制設定 Access Bridge，對 release app image 執行 runtime 
 probe；release workflow 再靜默安裝 MSI 並對已安裝程式重跑。完整 probe 必須建立
 `%USERPROFILE%\ShinsouXData\SyncV2\local-sync.db` 並寫出首幀隨機 marker。
 
-Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 UpgradeCode 與單調的 `MAJOR.MINOR.(PATCH × 100 + stage)` package version 讓後續版本取得新 ProductCode 並覆蓋升級，而不是並存或被判定為相同版本。beta.3 錯誤重用了 `1.0.0`；beta.4 的 release workflow 會先安裝公開 beta.3 MSI，再驗證新 MSI 移除舊 ProductCode。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
+Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 UpgradeCode 與單調的 `MAJOR.MINOR.(PATCH × 100 + stage)` package version 讓後續版本取得新 ProductCode 並覆蓋升級，而不是並存或被判定為相同版本。beta.3 錯誤重用了 `1.0.0`；修復版的 release workflow 會先安裝公開 beta.3 MSI，再驗證新 MSI 移除舊 ProductCode。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 
 ## iOS 簽章與 capability
 

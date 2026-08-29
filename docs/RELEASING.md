@@ -69,7 +69,7 @@ Actions artifact；GitHub Release assets 是長期下載來源。Android、macOS
 tag 對應的 `versionName`／`versionCode`，以及 `android:debuggable=true`。它是方便測試的
 debug build，不是使用正式 keystore 簽章的 production release APK。
 
-自 `v1.0.0-beta.4` 起，官方 workflow 從 repository secret 還原專用的固定公開測試 key，
+自 `v1.0.0-beta.5` 起，官方 workflow 從 repository secret 還原專用的固定公開測試 key，
 並拒絕 signer SHA-256 不符合下列 fingerprint 的 APK：
 
 ```text
@@ -78,8 +78,8 @@ debug build，不是使用正式 keystore 簽章的 production release APK。
 ```
 
 這把 key 只提供 beta 測試 APK 的連續覆蓋升級，不是 production identity。Beta.3 及更舊的
-APK 由 GitHub-hosted runner 臨時產生不同 signer；升到 beta.4 前必須先在 App 內備份、
-解除安裝舊版一次，再安裝 beta.4。beta.4 之後的官方 debug APK 可直接升級。正式商店／
+APK 由 GitHub-hosted runner 臨時產生不同 signer；升到 beta.5 前必須先在 App 內備份、
+解除安裝舊版一次，再安裝 beta.5。beta.5 之後的官方 debug APK 可直接升級。正式商店／
 企業分發仍應自行建立並安全保存 release keystore，再於自己的受控環境執行：
 
 ```bash
@@ -142,13 +142,15 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
 - macOS producer 會掛載 DMG，檢查縮減後的 SQLite JDBC provider，使用隔離資料目錄啟動
   其中的 App，並要求 SQLite 初始化及 Compose 首幀 marker 完成。
 - Windows producer 會在 Java Access Bridge 啟用條件下，對 app image 與安裝後程式執行
-  同樣的 SQLite／首幀 marker probe；`v1.0.0-beta.4` 還會先安裝公開 beta.3 MSI，再驗證
-  beta.4 真正取代舊 ProductCode。任一步無法啟動或升級都不會發布 Release。
+  同樣的 SQLite／首幀 marker probe；第一個修復版還會先安裝公開 beta.3 MSI，再驗證新
+  ProductCode 真正取代舊版。任一步無法啟動或升級都不會發布 Release。
 
 Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
 會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；
-同時 beta.2／beta.3 重用了 `1.0.0`，無法形成 MSI 升級。Beta.4 同時修復 runtime 保留規則
-與 Windows package version，以上述完整啟動及覆蓋安裝檢查防止回歸。
+同時 beta.2／beta.3 重用了 `1.0.0`，無法形成 MSI 升級。修復版同時修正 runtime 保留規則
+與 Windows package version，以上述完整啟動及覆蓋安裝檢查防止回歸。Beta.4 的 CI 已
+通過 macOS／Windows 修復驗證，但因 Android 驗證器輸出格式差異而未發布；beta.5 才是
+第一個公開包含這些修復的 Release。
 
 發布正式或 beta tag 前，應先確認 master 的一般 Windows workflow 與本機／CI 測試皆
 通過。Release job 以 draft 聚合產物，核對實際 asset 清單後才公開；重跑同一 tag 時會先

@@ -65,7 +65,7 @@ machine-scoped installer 固定把程式放在 `%ProgramFiles%\Shinsou X`，不�
 MSI／EXE 使用 `MAJOR.MINOR.(PATCH × 100 + stage)` 的 Windows package version，其中 beta N
 的 stage 為 N、正式版為 99；例如 beta.4 是 `1.0.4`。穩定 UpgradeCode 配合每版不同的
 ProductCode 才能原地升級。Beta.2／beta.3 曾同時使用 `1.0.0`，導致 beta.3 不被 Windows
-視為升級；beta.4 已改用單調版本，CI 會先安裝公開 beta.3 再驗證舊 ProductCode 被取代。
+視為升級；修復版已改用單調版本，CI 會先安裝公開 beta.3 再驗證舊 ProductCode 被取代。
 
 ## 儲存與安全
 
@@ -98,8 +98,8 @@ Windows 資料預設位於：
 `.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android debug
 APK 及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。Release workflow 不建置
 iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也會核對 ProductVersion、
-ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；beta.4
-另包含 beta.3 → beta.4 覆蓋升級測試。若需在本機驗證安裝器，
+ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；第一個
+修復版另包含從公開 beta.3 覆蓋升級的測試。若需在本機驗證安裝器，
 仍可依照上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。

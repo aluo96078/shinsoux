@@ -115,7 +115,9 @@ jobs:
           expected_signer="2773a26348f63bf9486c449d7362e086320c0a8963a4c1778ceb288ccaf2df5a"
           actual_signer="$(
             "$apksigner" verify --print-certs "${apks[0]}" |
-              sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+              sed -n -E \
+                's/^(Signer #[0-9]+|V[0-9.]+ Signer:)[[:space:]]+certificate SHA-256 digest: //p' |
+              sort -u
           )"
           [[ "$actual_signer" == "$expected_signer" ]] || {
             echo "::error title=Unexpected APK signer::Found $actual_signer; expected $expected_signer."
@@ -441,7 +443,7 @@ jobs:
           Write-Host "Verified MSI ProductVersion $productVersion, ProductCode $productCode, and UpgradeCode $upgradeCode."
 
       - name: Install beta.3 upgrade baseline
-        if: needs.metadata.outputs.tag == 'v1.0.0-beta.4'
+        if: needs.metadata.outputs.tag == 'v1.0.0-beta.4' || needs.metadata.outputs.tag == 'v1.0.0-beta.5'
         shell: pwsh
         run: |
           $baseline = Join-Path $env:RUNNER_TEMP "Shinsou-X-1.0.0-beta.3-windows-x64.msi"
@@ -656,10 +658,10 @@ jobs:
               "- iOS: no IPA is published. Build from source on macOS with Xcode: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md"
 
             printf '\n%s\n' "Verify every download with SHA256SUMS.txt."
-            if [[ "$RELEASE_VERSION" == 1.0.0-beta.4 ]]; then
+            if [[ "$RELEASE_VERSION" == 1.0.0-beta.4 || "$RELEASE_VERSION" == 1.0.0-beta.5 ]]; then
               printf '%s\n' \
-                "Android note: beta.3 and older APKs used different ephemeral signatures. Back up, uninstall once, then install beta.4; future public debug APKs use a fixed test signer." \
-                "Desktop note: beta.4 restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version."
+                "Android note: beta.3 and older APKs used different ephemeral signatures. Back up, uninstall once, then install this release; future public debug APKs use a fixed test signer." \
+                "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version."
             fi
           } > release-notes.md
 
