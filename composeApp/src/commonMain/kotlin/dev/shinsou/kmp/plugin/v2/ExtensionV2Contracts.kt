@@ -682,6 +682,19 @@ public interface UserInteractionScopedExtensionSourceV2 {
     public fun setHostUiAvailable(available: Boolean)
 }
 
+/**
+ * Optional implementation hints for browser-bound anti-bot challenges.
+ *
+ * Cookies remain host-owned and no arbitrary source headers cross into the embedded browser
+ * surface. Implementations may select an HTTP(S) URL on the source's exact origin because some
+ * providers challenge only protected member endpoints rather than their public home page.
+ */
+@ExtensionImplementationApi
+public interface WebChallengeUserAgentSourceV2 {
+    public val webChallengeUserAgent: String?
+    public val webChallengeUrl: String? get() = null
+}
+
 /** Host-only exact artifact authority for native/reviewed event-capable runtimes. */
 public interface ArtifactBoundExtensionPackageRuntimeV2 {
     public val artifactIdentity: dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
@@ -696,6 +709,22 @@ public class HostExtensionSourceV2 internal constructor(
         (implementation as? UserInteractionScopedExtensionSourceV2)?.withUserInteractionContext(block) ?: block()
     public fun setHostUiAvailable(available: Boolean) {
         (implementation as? UserInteractionScopedExtensionSourceV2)?.setHostUiAvailable(available)
+    }
+    public fun webChallengeUserAgent(): String? {
+        val userAgent = (implementation as? WebChallengeUserAgentSourceV2)
+            ?.webChallengeUserAgent
+            ?: return null
+        require(userAgent.isNotBlank()) { "Web challenge User-Agent must not be blank" }
+        requireHeaderHint("User-Agent", userAgent)
+        return userAgent
+    }
+    public fun webChallengeUrl(): String? {
+        val url = (implementation as? WebChallengeUserAgentSourceV2)
+            ?.webChallengeUrl
+            ?: return null
+        require(url.isNotBlank()) { "Web challenge URL must not be blank" }
+        requireRemoteUri(url, "Web challenge URL")
+        return url
     }
     public suspend fun browseOptions(): BrowseOptionsSchemaV2 {
         requireCapability(ExtensionCapability.BROWSE)
@@ -1075,7 +1104,18 @@ public data class LoginCredentialsV2(
 }
 
 @Serializable
-public data class LoginResultV2(val loggedIn: Boolean)
+public data class LoginResultV2(
+    val loggedIn: Boolean,
+    val errorMessage: String? = null,
+) {
+    init {
+        errorMessage?.let { message ->
+            require(message.length <= 512 && message.none(Char::isISOControl)) {
+                "Login error message must be bounded and printable"
+            }
+        }
+    }
+}
 
 @Serializable
 public data class PreferenceV2(

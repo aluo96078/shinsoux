@@ -253,7 +253,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 runtime.getPopularManga(0).mangas.single().title,
             )
             assertTrue(fixture.gateway.awaitIdle())
-            assertEquals(listOf("Members only"), fixture.loginReasons)
+            assertEquals(listOf<String?>("Members only"), fixture.loginReasons)
         } finally {
             runtime.close()
             fixture.gateway.close()
@@ -362,6 +362,10 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             assertTrue(runtime.supportsLatest)
             assertTrue(runtime.supportsLogin)
 
+            val failedLogin = runtime.loginResult("alice", "wrong")
+            assertFalse(failedLogin.loggedIn)
+            assertEquals("帳號或密碼錯誤", failedLogin.errorMessage)
+            assertEquals(null, storage.getCredential(991))
             assertTrue(runtime.login("alice", "secret"))
             val popular = runtime.getPopularManga(0)
             assertEquals("One|alice", popular.mangas.single().title)
@@ -462,7 +466,7 @@ private const val IOS_CONTRACT_PLUGIN: String = """
 var source={
   baseUrl:'https://source.example',supportsLatest:true,supportsLogin:true,
   headers:{'X-iOS':'yes'},
-  login:function(username,password){if(password!=='secret')return false;bridge.setPreference('name',username);return true;},
+  login:function(username,password){if(password!=='secret')return {loggedIn:false,errorMessage:'帳號或密碼錯誤'};bridge.setPreference('name',username);return {loggedIn:true};},
   logout:function(){bridge.clearCookies();},
   getPopularManga:function(page){
     var doc=Jsoup.parse(bridge.httpGet(this.baseUrl+'/popular'),'https://source.example');

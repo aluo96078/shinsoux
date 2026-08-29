@@ -689,24 +689,37 @@ public class PluginManager(
         // SourceKey otherwise bypasses the old source-id wrapper.  Issue the host context handle
         // for the exact live scope across the complete detail/units/content call.
         val gateway = environment.systemEventSink as? PluginSystemEventGateway
-        interactionMutex.withLock {
-            check(pluginUiAvailable) { "Plugin UI interaction is unavailable" }
-            scopes.forEach { scope ->
-                val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
-                interactionCounts[scope.runtimeKey] = next
-                if (next == 1) gateway?.setUserInteractionContext(scope, true)
+        val interactionGranted = interactionMutex.withLock {
+            if (!pluginUiAvailable) {
+                false
+            } else {
+                scopes.forEach { scope ->
+                    val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
+                    interactionCounts[scope.runtimeKey] = next
+                    if (next == 1) gateway?.setUserInteractionContext(scope, true)
+                }
+                true
             }
         }
         return try {
-            extensionSourceV2(sourceKey)?.withUserInteractionContext(block) ?: block()
+            // UI availability gates only modal host-event authority. The source operation itself
+            // must still run after an already-started user action if a desktop foreground event is
+            // delayed or the app moves to the background while network authentication is active.
+            if (interactionGranted) {
+                extensionSourceV2(sourceKey)?.withUserInteractionContext(block) ?: block()
+            } else {
+                block()
+            }
         } finally {
-            interactionMutex.withLock {
-                scopes.forEach { scope ->
-                    val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
-                    if (next <= 0) {
-                        interactionCounts.remove(scope.runtimeKey)
-                        gateway?.setUserInteractionContext(scope, false)
-                    } else interactionCounts[scope.runtimeKey] = next
+            if (interactionGranted) {
+                interactionMutex.withLock {
+                    scopes.forEach { scope ->
+                        val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
+                        if (next <= 0) {
+                            interactionCounts.remove(scope.runtimeKey)
+                            gateway?.setUserInteractionContext(scope, false)
+                        } else interactionCounts[scope.runtimeKey] = next
+                    }
                 }
             }
         }
@@ -718,21 +731,27 @@ public class PluginManager(
             eventScopes.values.singleOrNull { it.sourceKey.legacyLongId == sourceId }
         } ?: return block()
         val gateway = environment.systemEventSink as? PluginSystemEventGateway
-        interactionMutex.withLock {
-            check(pluginUiAvailable) { "Plugin UI interaction is unavailable" }
-            val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
-            interactionCounts[scope.runtimeKey] = next
-            if (next == 1) gateway?.setUserInteractionContext(scope, true)
+        val interactionGranted = interactionMutex.withLock {
+            if (!pluginUiAvailable) {
+                false
+            } else {
+                val next = (interactionCounts[scope.runtimeKey] ?: 0) + 1
+                interactionCounts[scope.runtimeKey] = next
+                if (next == 1) gateway?.setUserInteractionContext(scope, true)
+                true
+            }
         }
         return try {
             block()
         } finally {
-            interactionMutex.withLock {
-                val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
-                if (next <= 0) {
-                    interactionCounts.remove(scope.runtimeKey)
-                    gateway?.setUserInteractionContext(scope, false)
-                } else interactionCounts[scope.runtimeKey] = next
+            if (interactionGranted) {
+                interactionMutex.withLock {
+                    val next = (interactionCounts[scope.runtimeKey] ?: 1) - 1
+                    if (next <= 0) {
+                        interactionCounts.remove(scope.runtimeKey)
+                        gateway?.setUserInteractionContext(scope, false)
+                    } else interactionCounts[scope.runtimeKey] = next
+                }
             }
         }
     }

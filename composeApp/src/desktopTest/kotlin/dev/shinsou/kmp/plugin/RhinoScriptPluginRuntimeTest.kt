@@ -40,6 +40,65 @@ import kotlin.test.assertTrue
 
 class RhinoScriptPluginRuntimeTest {
     @Test
+    fun biliMangaLoginScriptReturnsSafeFailureThroughRhino() = runTest {
+        val script = requireNotNull(
+            javaClass.classLoader.getResourceAsStream("plugins/zh.bilimanga.js"),
+        ).use { it.readBytes().decodeToString() }
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { request ->
+                val body = when {
+                    request.method == "POST" -> "<html><body>Just a moment</body></html>"
+                    else -> "<html><body><form action=\"/login.php?do=submit\"><input type=\"password\"></form></body></html>"
+                }
+                PluginHttpResponse(200, body.encodeToByteArray())
+            },
+            storage = storage,
+            requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+        )
+        val manifest = PluginManifest(
+            id = "zh.bilimanga",
+            name = "Bili probe",
+            version = "1.5.5",
+            versionCode = 11,
+            lang = "zh",
+            script = "zh.bilimanga.js",
+            signature = "",
+            sources = listOf(
+                SourceIndexEntry(
+                    name = "Novel probe",
+                    lang = "zh",
+                    id = -9_110_000_000_000_004L,
+                    baseUrl = "https://tw.linovelib.com",
+                    canonicalSourceId = "zh.bilimanga.novel",
+                ),
+                SourceIndexEntry(
+                    name = "Manga probe",
+                    lang = "zh",
+                    id = -9_110_000_000_000_005L,
+                    baseUrl = "https://www.bilimanga.net",
+                    canonicalSourceId = "zh.bilimanga.manga",
+                ),
+            ),
+        )
+        for (source in manifest.sources.orEmpty()) {
+            val runtime = RhinoScriptPluginRuntimeFactory().createForSource(
+                script,
+                manifest,
+                source,
+                ScriptPluginEnvironment(network, storage),
+            )
+            try {
+                val result = runtime.loginResult("fixture-user", "fixture-password")
+                assertFalse(result.loggedIn)
+                assertTrue(result.errorMessage.orEmpty().isNotBlank())
+            } finally {
+                runtime.close()
+            }
+        }
+    }
+
+    @Test
     fun multiSourcePackageSelectsExactExportedSourceInsteadOfListPosition() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
@@ -320,6 +379,10 @@ class RhinoScriptPluginRuntimeTest {
             assertTrue(runtime.supportsLogin)
             assertEquals("yes", runtime.headers["X-Source"])
 
+            val failedLogin = runtime.loginResult("alice", "wrong")
+            assertFalse(failedLogin.loggedIn)
+            assertEquals("帳號或密碼錯誤", failedLogin.errorMessage)
+            assertNull(storage.getCredential(777))
             assertTrue(runtime.login("alice", "secret"))
             assertEquals(PluginCredential("alice", "secret"), storage.getCredential(777))
             val popular = runtime.getPopularManga(0).mangas.single()
@@ -646,10 +709,10 @@ private val RHINO_FIXTURE = """
       supportsLogin: true,
       headers: {'X-Source':'yes', 'Referer':'https://source.example/'},
       login: function(username, password) {
-        if (password !== 'secret') return false;
+        if (password !== 'secret') return {loggedIn:false,errorMessage:'帳號或密碼錯誤'};
         bridge.setPreference('display-name', username);
         bridge.setCookie('session', 'abc', '.source.example', '/', 0);
-        return true;
+        return {loggedIn:true};
       },
       logout: function() { bridge.clearCookies(); },
       getPopularManga: function(page) {

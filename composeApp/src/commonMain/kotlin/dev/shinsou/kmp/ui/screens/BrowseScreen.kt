@@ -134,6 +134,7 @@ import dev.shinsou.kmp.ui.BrowseTriState
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.MigrationCandidate
 import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.ui.SourceCredential
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.TypedReaderContentSession
@@ -230,6 +231,61 @@ internal class CatalogueJobController {
     }
 }
 
+/**
+ * Owns the browse overlay stack so a child publication cannot outlive the source/search surface
+ * that opened it. Desktop keeps parent surfaces mounted beside publication details, which makes
+ * it especially important that dismissing a parent also dismisses its child.
+ */
+internal data class BrowseOverlayState(
+    val activeSource: BrowseSource? = null,
+    val globalSearchVisible: Boolean = false,
+    val activeV2Publication: BrowseManga? = null,
+    val activeV2Reader: Boolean = false,
+) {
+    val hasOverlay: Boolean
+        get() = activeSource != null || globalSearchVisible || activeV2Publication != null
+
+    fun openSource(source: BrowseSource): BrowseOverlayState = copy(
+        activeSource = source,
+        globalSearchVisible = false,
+        activeV2Publication = null,
+        activeV2Reader = false,
+    )
+
+    fun openGlobalSearch(): BrowseOverlayState = copy(
+        activeSource = null,
+        globalSearchVisible = true,
+        activeV2Publication = null,
+        activeV2Reader = false,
+    )
+
+    fun openPublication(publication: BrowseManga): BrowseOverlayState = copy(
+        activeV2Publication = publication,
+        activeV2Reader = false,
+    )
+
+    fun setReaderVisible(visible: Boolean): BrowseOverlayState = copy(activeV2Reader = visible)
+
+    fun closePublication(): BrowseOverlayState = copy(
+        activeV2Publication = null,
+        activeV2Reader = false,
+    )
+
+    fun closeSource(): BrowseOverlayState = copy(
+        activeSource = null,
+        activeV2Publication = null,
+        activeV2Reader = false,
+    )
+
+    fun closeGlobalSearch(): BrowseOverlayState = copy(
+        globalSearchVisible = false,
+        activeV2Publication = null,
+        activeV2Reader = false,
+    )
+
+    fun closeAll(): BrowseOverlayState = BrowseOverlayState()
+}
+
 @Composable
 fun BrowseScreen(
     callbacks: BrowseCallbacks,
@@ -265,10 +321,7 @@ fun BrowseScreen(
     val scope = rememberCoroutineScope()
     var section by remember { mutableStateOf(initialSection) }
     var query by remember { mutableStateOf("") }
-    var activeSource by remember { mutableStateOf<BrowseSource?>(null) }
-    var globalSearchVisible by remember { mutableStateOf(false) }
-    var activeV2Publication by remember { mutableStateOf<BrowseManga?>(null) }
-    var activeV2Reader by remember { mutableStateOf(false) }
+    var overlays by remember { mutableStateOf(BrowseOverlayState()) }
     // A reader is owned by ExtensionV2PublicationScreen. Keep a monotonically increasing
     // request so a system back gesture can ask that child to dispose its materialized session
     // before the parent changes the layout back to the publication detail pane.
@@ -285,7 +338,7 @@ fun BrowseScreen(
     var reviewedInstallBusyId by remember { mutableStateOf<String?>(null) }
     var handledSystemBackRequest by remember { mutableStateOf(systemBackRequest) }
     val operationSnackbar = remember { SnackbarHostState() }
-    val hasBrowseOverlay = activeSource != null || globalSearchVisible || activeV2Publication != null
+    val hasBrowseOverlay = overlays.hasOverlay
     val currentBackAvailabilityCallback = rememberUpdatedState(onBackAvailabilityChanged)
     val currentReaderVisibilityCallback = rememberUpdatedState(onReaderVisibilityChanged)
 
@@ -328,15 +381,15 @@ fun BrowseScreen(
         if (systemBackRequest != handledSystemBackRequest) {
             handledSystemBackRequest = systemBackRequest
             when {
-                activeV2Reader -> {
+                overlays.activeV2Reader -> {
                     v2ReaderBackRequest += 1
                 }
-                activeV2Publication != null -> activeV2Publication = null
-                activeSource != null -> {
+                overlays.activeV2Publication != null -> overlays = overlays.closePublication()
+                overlays.activeSource != null -> {
                     cancelCatalogueLoad()
-                    activeSource = null
+                    overlays = overlays.closeSource()
                 }
-                globalSearchVisible -> globalSearchVisible = false
+                overlays.globalSearchVisible -> overlays = overlays.closeGlobalSearch()
             }
         }
     }
@@ -380,8 +433,7 @@ fun BrowseScreen(
 
     fun openManga(item: BrowseManga) {
         if (item.sourceKey != null) {
-            activeV2Publication = item
-            activeV2Reader = false
+            overlays = overlays.openPublication(item)
             return
         }
         // Let the app route to an immediate loading preview. Resolving source metadata can be
@@ -508,7 +560,12 @@ fun BrowseScreen(
                 },
                 actions = {
                     if (section == BrowseSection.Sources) {
-                        IconButton(onClick = { globalSearchVisible = true }) {
+                        IconButton(
+                            onClick = {
+                                cancelCatalogueLoad()
+                                overlays = overlays.openGlobalSearch()
+                            },
+                        ) {
                             Icon(Icons.Outlined.Search, contentDescription = strings.text("Search all sources"))
                         }
                     }
@@ -532,6 +589,9 @@ fun BrowseScreen(
                     FilterChip(
                         selected = section == option,
                         onClick = {
+                            cancelCatalogueLoad()
+                            overlays = overlays.closeAll()
+                            currentReaderVisibilityCallback.value(false)
                             section = option
                             query = ""
                         },
@@ -572,7 +632,7 @@ fun BrowseScreen(
                     callbacks = callbacks,
                     onImportDocument = onImportDocument,
                     onOpen = { source ->
-                        activeSource = source
+                        overlays = overlays.openSource(source)
                         page = BrowsePage()
                         cataloguePageNumber = 1
                         loadCatalogue(
@@ -635,7 +695,7 @@ fun BrowseScreen(
             }
         }
 
-        if (globalSearchVisible) {
+        if (overlays.globalSearchVisible) {
             Surface(
                 color = MaterialTheme.colorScheme.background,
                 modifier = Modifier
@@ -651,13 +711,13 @@ fun BrowseScreen(
                             (showNsfw || !it.isNsfw) &&
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages)
                     },
-                    onBack = { globalSearchVisible = false },
+                    onBack = { overlays = overlays.closeGlobalSearch() },
                     onOpenManga = ::openManga,
                 )
             }
         }
 
-        activeSource?.let { source ->
+        overlays.activeSource?.let { source ->
             Surface(
                 color = MaterialTheme.colorScheme.background,
                 modifier = Modifier
@@ -675,15 +735,16 @@ fun BrowseScreen(
                     error = catalogueError,
                     onBack = {
                         cancelCatalogueLoad()
-                        activeSource = null
+                        overlays = overlays.closeSource()
+                        currentReaderVisibilityCallback.value(false)
                     },
                     onBrowse = { search, mode, filters ->
-                        activeSource?.let {
+                        overlays.activeSource?.let {
                             loadCatalogue(it, search, mode, filters, requestedPage = 1, append = false)
                         }
                     },
                     onLoadMore = { search, mode, filters ->
-                        activeSource?.let {
+                        overlays.activeSource?.let {
                             loadCatalogue(
                                 it,
                                 search,
@@ -698,7 +759,7 @@ fun BrowseScreen(
                 )
             }
         }
-        activeV2Publication?.let { publication ->
+        overlays.activeV2Publication?.let { publication ->
             val source = snapshot.sources.firstOrNull { source ->
                 source.sourceKey == publication.sourceKey
             }
@@ -719,7 +780,7 @@ fun BrowseScreen(
                 // Keep the catalogue mounted on desktop, exactly like the legacy manga detail
                 // pane. Mobile still receives a full-screen destination so the chapter list can
                 // scroll naturally without squeezing the source grid.
-                val detailModifier = if (maxWidth >= 900.dp && !activeV2Reader) {
+                val detailModifier = if (maxWidth >= 900.dp && !overlays.activeV2Reader) {
                     Modifier.fillMaxHeight().fillMaxWidth(0.68f).align(Alignment.CenterEnd)
                 } else {
                     Modifier.fillMaxSize()
@@ -743,21 +804,20 @@ fun BrowseScreen(
                         onOpenExternalUrl = openExternalUrl,
                         onShareText = shareText,
                         onReaderVisibilityChanged = { visible ->
-                            activeV2Reader = visible
+                            overlays = overlays.setReaderVisible(visible)
                             currentReaderVisibilityCallback.value(visible)
                         },
                         onReaderProgress = onReaderProgress,
                         readerBackRequest = v2ReaderBackRequest,
                         onBack = {
-                            activeV2Reader = false
+                            overlays = overlays.closePublication()
                             currentReaderVisibilityCallback.value(false)
-                            activeV2Publication = null
                         },
                     )
                 }
             }
         }
-        if (!activeV2Reader) {
+        if (!overlays.activeV2Reader) {
             SnackbarHost(
                 hostState = operationSnackbar,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(18.dp),
@@ -1413,7 +1473,7 @@ private fun ExtensionV2PublicationScreen(
     var bookmarkedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var chapterFilter by remember(item.identityKey) { mutableStateOf(ExtensionChapterFilter.ALL) }
-    var descending by remember(item.identityKey) { mutableStateOf(true) }
+    var reverseWebsiteOrder by remember(item.identityKey) { mutableStateOf(false) }
 
     // Catalogue metadata is already available when the user taps a result. Use it as the
     // immediate detail hint so chapters do not wait for a second metadata roundtrip.
@@ -1789,7 +1849,7 @@ private fun ExtensionV2PublicationScreen(
                         bookmarkedUnitIds = bookmarkedUnitIds,
                         downloadedUnitIds = downloadedUnitIds,
                         chapterFilter = chapterFilter,
-                        descending = descending,
+                        reverseWebsiteOrder = reverseWebsiteOrder,
                         loading = loading,
                         loadingMore = loadingMore,
                         loadError = loadError,
@@ -1813,7 +1873,7 @@ private fun ExtensionV2PublicationScreen(
                             operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
                         },
                         onFilterChange = { chapterFilter = it },
-                        onToggleSortDirection = { descending = !descending },
+                        onToggleWebsiteOrder = { reverseWebsiteOrder = !reverseWebsiteOrder },
                         scrollable = true,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
@@ -1865,7 +1925,7 @@ private fun ExtensionV2PublicationScreen(
                             bookmarkedUnitIds = bookmarkedUnitIds,
                             downloadedUnitIds = downloadedUnitIds,
                             chapterFilter = chapterFilter,
-                            descending = descending,
+                            reverseWebsiteOrder = reverseWebsiteOrder,
                             loading = loading,
                             loadingMore = loadingMore,
                             loadError = loadError,
@@ -1889,7 +1949,7 @@ private fun ExtensionV2PublicationScreen(
                                 operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
                             },
                             onFilterChange = { chapterFilter = it },
-                            onToggleSortDirection = { descending = !descending },
+                            onToggleWebsiteOrder = { reverseWebsiteOrder = !reverseWebsiteOrder },
                             scrollable = false,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -2139,7 +2199,7 @@ private fun ExtensionV2ChapterPane(
     bookmarkedUnitIds: Set<String>,
     downloadedUnitIds: Set<String>,
     chapterFilter: ExtensionChapterFilter,
-    descending: Boolean,
+    reverseWebsiteOrder: Boolean,
     loading: Boolean,
     loadingMore: Boolean,
     loadError: String?,
@@ -2156,14 +2216,21 @@ private fun ExtensionV2ChapterPane(
     onBookmarkStateChange: (Set<String>, Boolean) -> Unit,
     onDeleteDownloads: (Set<String>) -> Unit,
     onFilterChange: (ExtensionChapterFilter) -> Unit,
-    onToggleSortDirection: () -> Unit,
+    onToggleWebsiteOrder: () -> Unit,
     scrollable: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalShinsouStrings.current
     var sortMenuVisible by remember { mutableStateOf(false) }
-    val visibleUnits = remember(units, readUnitIds, bookmarkedUnitIds, downloadedUnitIds, chapterFilter, descending) {
-        units.asSequence()
+    val visibleUnits = remember(
+        units,
+        readUnitIds,
+        bookmarkedUnitIds,
+        downloadedUnitIds,
+        chapterFilter,
+        reverseWebsiteOrder,
+    ) {
+        val filtered = units.asSequence()
             .filter { selection ->
                 when (chapterFilter) {
                     ExtensionChapterFilter.ALL -> true
@@ -2173,14 +2240,8 @@ private fun ExtensionV2ChapterPane(
                     ExtensionChapterFilter.DOWNLOADED -> selection.unit.remoteId in downloadedUnitIds
                 }
             }
-            .sortedWith(
-                if (descending) {
-                    compareByDescending<ExtensionUnitSelectionV2> { it.unit.title.lowercase() }
-                } else {
-                    compareBy<ExtensionUnitSelectionV2> { it.unit.title.lowercase() }
-                },
-            )
             .toList()
+        websiteOrderedItems(filtered, reverseWebsiteOrder)
     }
     val selectedVisible = visibleUnits.filter { it.unit.remoteId in selectedUnitIds }
     val markSelectedRead = selectedVisible.isEmpty() || selectedVisible.any { it.unit.remoteId !in readUnitIds }
@@ -2240,9 +2301,14 @@ private fun ExtensionV2ChapterPane(
                     }
                     DropdownMenu(sortMenuVisible, onDismissRequest = { sortMenuVisible = false }) {
                         DropdownMenuItem(
-                            text = { Text(if (descending) strings.text("Descending") else strings.text("Ascending")) },
+                            text = {
+                                Text(
+                                    if (reverseWebsiteOrder) strings.text("Reverse website order")
+                                    else strings.text("Website order"),
+                                )
+                            },
                             onClick = {
-                                onToggleSortDirection()
+                                onToggleWebsiteOrder()
                                 sortMenuVisible = false
                             },
                         )
@@ -2638,7 +2704,7 @@ private fun SourceListRow(
     val legacyActions = source.sourceKey == null
     val settingsSections = sourceSettingsSections(source)
     val settingsAvailable = legacyActions || settingsSections.credentials ||
-        settingsSections.preferences || source.cookies.isNotEmpty()
+        settingsSections.preferences || source.baseUrl.isNotBlank()
     Surface(
         onClick = { if (source.enabled) onOpen(source) },
         shape = RoundedCornerShape(12.dp),
@@ -2774,9 +2840,14 @@ private fun SourceSettingsDialog(
     var values by remember(source.id, source.preferences) {
         mutableStateOf(source.preferences.associate { it.key to it.value })
     }
-    var username by remember(source.id) { mutableStateOf(source.credential?.username.orEmpty()) }
-    var password by remember(source.id) { mutableStateOf(source.credential?.password.orEmpty()) }
+    var credential by remember(source.id) { mutableStateOf<SourceCredential?>(null) }
+    var sourceCookies by remember(source.id) { mutableStateOf(emptyList<SourceCookie>()) }
+    var secretsLoading by remember(source.id) { mutableStateOf(true) }
+    var secretsError by remember(source.id) { mutableStateOf<String?>(null) }
+    var username by remember(source.id) { mutableStateOf("") }
+    var password by remember(source.id) { mutableStateOf("") }
     var loginBusy by remember(source.id) { mutableStateOf(false) }
+    var loginMessage by remember(source.id) { mutableStateOf<String?>(null) }
     var loginError by remember(source.id) { mutableStateOf<String?>(null) }
     var cookieName by remember(source.id) { mutableStateOf("") }
     var cookieValue by remember(source.id) { mutableStateOf("") }
@@ -2786,6 +2857,25 @@ private fun SourceSettingsDialog(
     var challengeMessage by remember(source.id) { mutableStateOf<String?>(null) }
     var cookieImportBusy by remember(source.id) { mutableStateOf(false) }
     var cookieImportMessage by remember(source.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(source.id) {
+        secretsLoading = true
+        secretsError = null
+        runCatching { callbacks.loadSourceSecrets(source.id) }
+            .onSuccess { result ->
+                credential = result.secrets.credential
+                sourceCookies = result.secrets.cookies
+                username = result.secrets.credential?.username.orEmpty()
+                password = result.secrets.credential?.password.orEmpty()
+                secretsError = result.failureStage?.let { stage ->
+                    strings.text(sourceLoginFailureMessageKey(stage))
+                }
+            }
+            .onFailure {
+                secretsError = strings.text("Unable to read credentials from secure storage.")
+            }
+        secretsLoading = false
+    }
 
     AlertDialog(
         modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
@@ -2797,11 +2887,32 @@ private fun SourceSettingsDialog(
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                             Text(strings.text("Credentials"), style = MaterialTheme.typography.titleMedium)
+                            if (secretsLoading) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                ) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Text(
+                                        strings.text("Preparing…"),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            secretsError?.let { message ->
+                                Text(
+                                    message,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it },
                                 label = { Text(strings.text("Username")) },
                                 singleLine = true,
+                                enabled = !secretsLoading && !loginBusy,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             OutlinedTextField(
@@ -2809,6 +2920,7 @@ private fun SourceSettingsDialog(
                                 onValueChange = { password = it },
                                 label = { Text(strings.text("Password")) },
                                 singleLine = true,
+                                enabled = !secretsLoading && !loginBusy,
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -2816,36 +2928,65 @@ private fun SourceSettingsDialog(
                                 Button(
                                     onClick = {
                                         loginBusy = true
+                                        loginMessage = null
                                         loginError = null
                                         scope.launch {
                                             withFrameNanos { }
                                             runCatching {
-                                                callbacks.saveSourceCredentials(source.id, username, password)
-                                            }.onSuccess { success ->
-                                                if (!success) loginError = strings.text("Login failed. Check your username and password.")
-                                            }.onFailure { error ->
-                                                loginError = error.message ?: strings.text("Unable to save credentials")
+                                                callbacks.saveSourceCredentialsResult(source.id, username, password)
+                                            }.onSuccess { result ->
+                                                val feedback = sourceLoginFeedback(
+                                                    result = result,
+                                                    successMessage = strings.text("Login successful."),
+                                                    fallbackErrorMessage = strings.text(
+                                                        "Login failed. Check your username and password.",
+                                                    ),
+                                                    failureMessage = { stage ->
+                                                        strings.text(sourceLoginFailureMessageKey(stage))
+                                                    },
+                                                )
+                                                loginMessage = feedback.successMessage
+                                                loginError = feedback.errorMessage
+                                                if (result.succeeded) {
+                                                    credential = SourceCredential(username, password)
+                                                }
+                                            }.onFailure {
+                                                // Never expose raw runtime/transport errors because they may
+                                                // contain headers, cookies, stack text, or credentials.
+                                                loginError = strings.text("The login operation failed unexpectedly.")
                                             }
                                             loginBusy = false
                                         }
                                     },
-                                    enabled = username.isNotBlank() && password.isNotEmpty() && !loginBusy,
+                                    enabled = username.isNotBlank() && password.isNotEmpty() &&
+                                        !secretsLoading && !loginBusy,
                                 ) {
                                     Text(strings.text("Login"))
                                 }
-                                if (source.credential != null) {
+                                if (credential != null) {
                                     OutlinedButton(
                                         onClick = {
                                             scope.launch {
                                                 withFrameNanos { }
                                                 runCatching { callbacks.logoutSource(source.id) }
-                                                    .onFailure { loginError = it.message }
-                                                username = ""
-                                                password = ""
+                                                    .onSuccess {
+                                                        credential = null
+                                                        loginMessage = null
+                                                        username = ""
+                                                        password = ""
+                                                    }
+                                                    .onFailure {
+                                                        loginError = strings.text(
+                                                            "The login operation failed unexpectedly.",
+                                                        )
+                                                    }
                                             }
                                         },
                                     ) { Text(strings.text("Logout")) }
                                 }
+                            }
+                            loginMessage?.let {
+                                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                             }
                             loginError?.let {
                                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -2926,7 +3067,13 @@ private fun SourceSettingsDialog(
                                     challengeMessage = null
                                     scope.launch {
                                         withFrameNanos { }
-                                        runCatching { callbacks.sourceWebChallenge(source.id) }
+                                        runCatching {
+                                            callbacks.sourceWebChallenge(
+                                                sourceId = source.id,
+                                                username = username,
+                                                password = password,
+                                            )
+                                        }
                                             .onSuccess { request ->
                                                 if (request == null) {
                                                     challengeMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
@@ -2940,13 +3087,15 @@ private fun SourceSettingsDialog(
                                         challengeBusy = false
                                     }
                                 },
-                                enabled = !challengeBusy,
+                                enabled = !challengeBusy && !secretsLoading,
                             ) {
                                 Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
                                 Text(if (challengeBusy) strings.text("Preparing…") else strings.text("Web challenge / Cloudflare"))
                             }
                             Text(
-                                strings.text("Uses the source's exact User-Agent and imports only cookies valid for its domain and path."),
+                                strings.text(
+                                    "Uses a browser-compatible User-Agent. If credentials are filled above, the isolated same-origin browser fills and submits the website login form automatically; only cookies valid for the source domain and path are imported.",
+                                ),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -2963,15 +3112,21 @@ private fun SourceSettingsDialog(
                                                 strings.text("Cookie file is larger than 1 MiB.")
                                             }
                                             val content = document.contents.decodeToString(throwOnInvalidSequence = true)
-                                            val imported = CookieFileParser.parse(content, source.baseUrl)
-                                            require(imported.isNotEmpty()) {
+                                            val importedCookies = CookieFileParser.parse(content, source.baseUrl)
+                                            require(importedCookies.isNotEmpty()) {
                                                 strings.text("No valid cookies for {0} were found.", defaultCookieDomain(source.baseUrl).trimStart('.'))
                                             }
-                                            imported.forEach { cookie -> callbacks.setSourceCookie(source.id, cookie) }
-                                            imported.size
-                                        }.onSuccess { importedCount ->
-                                            if (importedCount != null) {
-                                                cookieImportMessage = strings.text("Imported {0} cookie(s).", importedCount)
+                                            importedCookies.forEach { cookie -> callbacks.setSourceCookie(source.id, cookie) }
+                                            importedCookies
+                                        }.onSuccess { importedCookies ->
+                                            if (importedCookies != null) {
+                                                sourceCookies = importedCookies.fold(sourceCookies) { saved, cookie ->
+                                                    saved.upsert(cookie)
+                                                }
+                                                cookieImportMessage = strings.text(
+                                                    "Imported {0} cookie(s).",
+                                                    importedCookies.size,
+                                                )
                                             }
                                         }.onFailure { error ->
                                             cookieImportMessage = strings.text("Error: {0}", error.message ?: strings.text("unable to import cookies"))
@@ -3008,13 +3163,13 @@ private fun SourceSettingsDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
-                            if (source.cookies.isEmpty()) {
+                            if (!secretsLoading && sourceCookies.isEmpty()) {
                                 Text(strings.text("No cookies saved"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
                     items(
-                        source.cookies,
+                        sourceCookies,
                         key = { "cookie:${it.domain}:${it.path}:${it.name}" },
                     ) { cookie ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3031,7 +3186,16 @@ private fun SourceSettingsDialog(
                             IconButton(
                                 onClick = {
                                     scope.launch {
-                                        callbacks.deleteSourceCookie(source.id, cookie.name, cookie.domain)
+                                        runCatching {
+                                            callbacks.deleteSourceCookie(source.id, cookie.name, cookie.domain)
+                                        }.onSuccess {
+                                            sourceCookies = sourceCookies.filterNot { saved ->
+                                                saved.name == cookie.name &&
+                                                    saved.domain.equals(cookie.domain, ignoreCase = true)
+                                            }
+                                        }.onFailure {
+                                            cookieImportMessage = strings.text("Error: {0}", strings.text("unable to save browser cookies"))
+                                        }
                                     }
                                 },
                             ) { Icon(Icons.Outlined.Delete, strings.delete) }
@@ -3064,19 +3228,37 @@ private fun SourceSettingsDialog(
                                 OutlinedButton(
                                     onClick = {
                                         scope.launch {
-                                            callbacks.setSourceCookie(
-                                                source.id,
-                                                SourceCookie(cookieName, cookieValue, cookieDomain),
-                                            )
-                                            cookieName = ""
-                                            cookieValue = ""
+                                            val added = SourceCookie(cookieName, cookieValue, cookieDomain)
+                                            runCatching { callbacks.setSourceCookie(source.id, added) }
+                                                .onSuccess {
+                                                    sourceCookies = sourceCookies.upsert(added)
+                                                    cookieName = ""
+                                                    cookieValue = ""
+                                                }
+                                                .onFailure {
+                                                    cookieImportMessage = strings.text(
+                                                        "Error: {0}",
+                                                        strings.text("unable to save browser cookies"),
+                                                    )
+                                                }
                                         }
                                     },
                                     enabled = cookieName.isNotBlank() && cookieValue.isNotEmpty() && cookieDomain.isNotBlank(),
                                 ) { Text(strings.text("Add cookie")) }
-                                if (source.cookies.isNotEmpty()) {
+                                if (sourceCookies.isNotEmpty()) {
                                     TextButton(
-                                        onClick = { scope.launch { callbacks.clearSourceCookies(source.id) } },
+                                        onClick = {
+                                            scope.launch {
+                                                runCatching { callbacks.clearSourceCookies(source.id) }
+                                                    .onSuccess { sourceCookies = emptyList() }
+                                                    .onFailure {
+                                                        cookieImportMessage = strings.text(
+                                                            "Error: {0}",
+                                                            strings.text("unable to save browser cookies"),
+                                                        )
+                                                    }
+                                            }
+                                        },
                                     ) { Text(strings.text("Clear cookies")) }
                                 }
                             }
@@ -3100,13 +3282,18 @@ private fun SourceSettingsDialog(
     challengeRequest?.let { request ->
         SourceWebChallengeDialog(
             request = request,
-            onImport = { cookies ->
+            onImport = { importedSession ->
                 scope.launch {
                     challengeBusy = true
                     runCatching {
-                        cookies.forEach { cookie -> callbacks.setSourceCookie(source.id, cookie) }
+                        callbacks.importSourceWebChallengeSession(
+                            sourceId = source.id,
+                            cookies = importedSession.cookies,
+                            userAgent = importedSession.userAgent,
+                        )
                     }.onSuccess {
-                        challengeMessage = strings.text("Imported {0} cookie(s).", cookies.size)
+                        sourceCookies = importedSession.cookies.fold(sourceCookies) { saved, cookie -> saved.upsert(cookie) }
+                        challengeMessage = strings.text("Imported {0} cookie(s).", importedSession.cookies.size)
                         challengeRequest = null
                     }.onFailure { error ->
                         challengeMessage = strings.text(
@@ -3124,6 +3311,13 @@ private fun SourceSettingsDialog(
         )
     }
 }
+
+private fun List<SourceCookie>.upsert(cookie: SourceCookie): List<SourceCookie> =
+    filterNot { saved ->
+        saved.name == cookie.name &&
+            saved.domain.equals(cookie.domain, ignoreCase = true) &&
+            saved.path == cookie.path
+    } + cookie
 
 private fun defaultCookieDomain(baseUrl: String): String {
     val host = baseUrl.substringAfter("://", "").substringBefore('/').substringBefore(':')

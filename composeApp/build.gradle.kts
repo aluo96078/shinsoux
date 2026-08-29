@@ -13,6 +13,7 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.0")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse(releaseVersion)
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
@@ -31,6 +32,60 @@ val androidReleaseSigningValues = listOf(
     androidReleaseKeyPassword,
 )
 val androidReleaseSigningConfigured = androidReleaseSigningValues.all { !it.isNullOrBlank() }
+
+val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+val macOsBuildArchitecture = System.getProperty("os.arch").lowercase().let { architecture ->
+    if (architecture.contains("aarch64") || architecture.contains("arm64")) "arm64" else "x86_64"
+}
+val macOsWebChallengeResourcesRoot = layout.buildDirectory.dir("generated/desktopAppResources")
+val macOsWebChallengeHelper = macOsWebChallengeResourcesRoot.map {
+    it.dir("macos").file("shinsou-web-challenge")
+}
+val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
+    // Keep task actions free of build-script closures so Gradle can serialize the configuration
+    // cache. swiftc creates an executable output; the packaged app still copies it to a private
+    // directory and restores owner-execute permission before launch.
+    val prepareOutputDirectory = tasks.register<Exec>("prepareMacOsWebChallengeHelperOutput") {
+        commandLine(
+            "/bin/mkdir",
+            "-p",
+            macOsWebChallengeHelper.get().asFile.parentFile.absolutePath,
+        )
+    }
+    tasks.register<Exec>("compileMacOsWebChallengeHelper") {
+        group = "build"
+        description = "Builds the native macOS WKWebView challenge helper"
+        dependsOn(prepareOutputDirectory)
+
+        val sourcePath = layout.projectDirectory
+            .file("src/desktopMain/swift/ShinsouWebChallenge/main.swift")
+            .asFile.absolutePath
+        val outputPath = macOsWebChallengeHelper.get().asFile.absolutePath
+        inputs.file(sourcePath)
+        outputs.file(macOsWebChallengeHelper)
+
+        commandLine(
+            "xcrun",
+            "--sdk",
+            "macosx",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "-Osize",
+            "-target",
+            "$macOsBuildArchitecture-apple-macosx12.0",
+            "-framework",
+            "AppKit",
+            "-framework",
+            "WebKit",
+            sourcePath,
+            "-o",
+            outputPath,
+        )
+    }
+} else {
+    null
+}
 
 // JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
 // artifacts use the build host classifier; release CI already builds DMG and MSI on their native
@@ -101,6 +156,11 @@ val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
 tasks.configureEach {
     if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
         dependsOn(prepareAndroidUnitTestLibsodiumResources)
+    }
+    if (compileMacOsWebChallengeHelper != null &&
+        name in setOf("desktopTest", "prepareAppResources")
+    ) {
+        dependsOn(compileMacOsWebChallengeHelper)
     }
 }
 
@@ -209,6 +269,8 @@ kotlin {
                 implementation(libs.sqldelight.sqlite.driver)
                 implementation("org.openjfx:javafx-base:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
                 implementation("org.openjfx:javafx-graphics:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation("org.openjfx:javafx-controls:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation("org.openjfx:javafx-media:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
                 implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
                 implementation("org.openjfx:javafx-swing:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
             }
@@ -229,7 +291,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = releaseVersionCode.get()
-        versionName = releaseVersion.get()
+        versionName = releaseDisplayVersion.get()
     }
 
     signingConfigs {
@@ -264,6 +326,10 @@ compose.desktop {
     application {
         mainClass = "dev.shinsou.kmp.desktop.MainKt"
 
+        if (compileMacOsWebChallengeHelper != null) {
+            dependsOn("compileMacOsWebChallengeHelper")
+        }
+
         // JNA's Native class is accessed by JNI and reflection.  Keep its
         // methods intact in the release distribution so the macOS Keychain
         // adapter can initialize before the Compose window is shown.
@@ -276,13 +342,25 @@ compose.desktop {
         }
 
         nativeDistributions {
+            if (isMacOsBuildHost) {
+                // Compose places OS-specific children of this directory in
+                // `compose.application.resources.dir`. The Kotlin host copies the signed helper
+                // to a private executable temporary directory before launch because jpackage
+                // intentionally installs application resources without executable permissions.
+                appResourcesRootDir.set(macOsWebChallengeResourcesRoot)
+            }
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
-            // SQLDelight's Desktop SQLite driver uses java.sql.DriverManager at
-            // runtime.  jlink cannot infer this reflective JDBC entry point from
-            // the application bytecode, so explicitly retain the module in the
-            // packaged runtime (otherwise the DMG starts and immediately fails
-            // with NoClassDefFoundError: java/sql/DriverManager).
-            modules("java.sql")
+            // SQLDelight and JavaFX WebKit use entry points that jlink cannot infer
+            // from the application bytecode. Keep their JDK modules explicitly;
+            // without the WebKit modules the challenge dialog fails before issuing
+            // a network request and appears to load forever.
+            modules(
+                "java.sql",
+                "java.net.http",
+                "jdk.jsobject",
+                "jdk.unsupported.desktop",
+                "jdk.xml.dom",
+            )
             packageName = "Shinsou X"
             packageVersion = releaseVersion.get()
             description = "Shinsou X manga reader"

@@ -4,6 +4,7 @@ set -euo pipefail
 
 required_environment=(
   RELEASE_VERSION
+  RELEASE_PACKAGE_VERSION
   RELEASE_VERSION_CODE
   IOS_TEAM_ID
   IOS_DISTRIBUTION_CERTIFICATE_BASE64
@@ -25,15 +26,30 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$ ]]; then
-  echo "Invalid release version: $RELEASE_VERSION" >&2
+if [[ ! "$RELEASE_PACKAGE_VERSION" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$ ]]; then
+  echo "Invalid release package version: $RELEASE_PACKAGE_VERSION" >&2
   exit 1
 fi
 release_major="${BASH_REMATCH[1]}"
 release_minor="${BASH_REMATCH[2]}"
 release_patch="${BASH_REMATCH[3]}"
-if (( 10#$release_major > 255 || 10#$release_minor > 255 || 10#$release_patch > 999 )); then
-  echo "Release version components exceed the supported range: $RELEASE_VERSION" >&2
+if (( 10#$release_major > 81 || 10#$release_minor > 255 || 10#$release_patch > 999 )); then
+  echo "Release package version components exceed the supported range: $RELEASE_PACKAGE_VERSION" >&2
+  exit 1
+fi
+
+release_stage=99
+if [[ "$RELEASE_VERSION" == "$RELEASE_PACKAGE_VERSION" ]]; then
+  :
+elif [[ "$RELEASE_VERSION" =~ ^${RELEASE_PACKAGE_VERSION//./\.}-beta\.([1-9][0-9]?)$ ]]; then
+  beta_number="${BASH_REMATCH[1]}"
+  if (( 10#$beta_number > 98 )); then
+    echo "Invalid beta release version: $RELEASE_VERSION" >&2
+    exit 1
+  fi
+  release_stage=$((10#$beta_number))
+else
+  echo "Release display version $RELEASE_VERSION does not match package version $RELEASE_PACKAGE_VERSION." >&2
   exit 1
 fi
 
@@ -41,7 +57,7 @@ if [[ ! "$RELEASE_VERSION_CODE" =~ ^[1-9][0-9]*$ ]]; then
   echo "Invalid release version code: $RELEASE_VERSION_CODE" >&2
   exit 1
 fi
-expected_version_code=$((10#$release_major * 1000000 + 10#$release_minor * 1000 + 10#$release_patch))
+expected_version_code=$(((((10#$release_major * 256) + 10#$release_minor) * 1000 + 10#$release_patch) * 100 + release_stage))
 if [[ "$RELEASE_VERSION_CODE" != "$expected_version_code" ]]; then
   echo "Release version code is $RELEASE_VERSION_CODE, expected $expected_version_code." >&2
   exit 1
@@ -260,7 +276,7 @@ xcodebuild \
   -sdk iphoneos \
   -destination 'generic/platform=iOS' \
   -archivePath "$archive_path" \
-  MARKETING_VERSION="$RELEASE_VERSION" \
+  MARKETING_VERSION="$RELEASE_PACKAGE_VERSION" \
   CURRENT_PROJECT_VERSION="$RELEASE_VERSION_CODE" \
   DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
   CODE_SIGN_STYLE=Manual \
@@ -314,8 +330,8 @@ if [[ "$actual_bundle_identifier" != "dev.aluo.shinsoux" ]]; then
   echo "IPA bundle identifier is $actual_bundle_identifier, expected dev.aluo.shinsoux." >&2
   exit 1
 fi
-if [[ "$actual_version" != "$RELEASE_VERSION" || "$actual_build" != "$RELEASE_VERSION_CODE" ]]; then
-  echo "IPA version is $actual_version ($actual_build), expected $RELEASE_VERSION ($RELEASE_VERSION_CODE)." >&2
+if [[ "$actual_version" != "$RELEASE_PACKAGE_VERSION" || "$actual_build" != "$RELEASE_VERSION_CODE" ]]; then
+  echo "IPA version is $actual_version ($actual_build), expected $RELEASE_PACKAGE_VERSION ($RELEASE_VERSION_CODE)." >&2
   exit 1
 fi
 
@@ -332,8 +348,8 @@ if [[ "$widget_bundle_identifier" != "dev.aluo.shinsoux.widget" ]]; then
   echo "Widget bundle identifier is $widget_bundle_identifier, expected dev.aluo.shinsoux.widget." >&2
   exit 1
 fi
-if [[ "$widget_version" != "$RELEASE_VERSION" || "$widget_build" != "$RELEASE_VERSION_CODE" ]]; then
-  echo "Widget version is $widget_version ($widget_build), expected $RELEASE_VERSION ($RELEASE_VERSION_CODE)." >&2
+if [[ "$widget_version" != "$RELEASE_PACKAGE_VERSION" || "$widget_build" != "$RELEASE_VERSION_CODE" ]]; then
+  echo "Widget version is $widget_version ($widget_build), expected $RELEASE_PACKAGE_VERSION ($RELEASE_VERSION_CODE)." >&2
   exit 1
 fi
 

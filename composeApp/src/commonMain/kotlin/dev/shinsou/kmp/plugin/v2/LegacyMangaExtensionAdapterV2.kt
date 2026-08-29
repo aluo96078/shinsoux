@@ -10,6 +10,7 @@ import dev.shinsou.kmp.plugin.CatalogueSource
 import dev.shinsou.kmp.plugin.ConfigurableSource
 import dev.shinsou.kmp.plugin.FilterList
 import dev.shinsou.kmp.plugin.LoginSource
+import dev.shinsou.kmp.plugin.LoginAttemptResult
 import dev.shinsou.kmp.plugin.MangaStatus
 import dev.shinsou.kmp.plugin.PageRequestMetadata
 import dev.shinsou.kmp.plugin.SChapter
@@ -47,7 +48,7 @@ public class LegacyMangaExtensionSourceV2(
     additionalRepresentations: Iterable<UnitContentRepresentationProviderV2> = emptyList(),
     private val imageProgression: ImageProgression = ImageProgression.RIGHT_TO_LEFT,
     private val imageLayout: ImageLayout = ImageLayout.PAGE,
-) : ExtensionSourceV2 {
+) : ExtensionSourceV2, WebChallengeUserAgentSourceV2 {
     private val extraProviders = additionalRepresentations.toList()
     private val contentResolver = MultiRepresentationContentResolverV2(
         listOf(LegacyImageRepresentationProvider()) + extraProviders,
@@ -79,6 +80,14 @@ public class LegacyMangaExtensionSourceV2(
             "Additional representations and their declared content kinds must be supplied together"
         }
     }
+
+    override val webChallengeUserAgent: String?
+        get() = source.headers.entries
+            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+            ?.value
+
+    override val webChallengeUrl: String?
+        get() = source.webChallengeUrl
 
     override suspend fun getFilterList(): BrowseFilterListV2 =
         source.getFilterList().map { it.toBrowseFilterV2() }
@@ -168,7 +177,8 @@ public class LegacyMangaExtensionSourceV2(
     override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
         val loginSource = source as? LoginSource ?: return LoginResultV2(false)
         val resolved = credentialsResolver?.resolve(credentials) ?: return LoginResultV2(false)
-        return LoginResultV2(loginSource.login(resolved.username, resolved.password))
+        val result = loginSource.loginResult(resolved.username, resolved.password)
+        return LoginResultV2(result.loggedIn, result.errorMessage?.boundedLoginError())
     }
 
     override suspend fun logout() {
@@ -241,6 +251,9 @@ public class LegacyMangaExtensionSourceV2(
         url = resolveSourceHttpUrl(source.baseUrl, url),
     )
 }
+
+private fun String.boundedLoginError(): String? =
+    filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
 
 /** Builds one v2 package over every live source of an existing Shinsou v1 plugin. */
 public class LegacyMangaPackageRuntimeV2(

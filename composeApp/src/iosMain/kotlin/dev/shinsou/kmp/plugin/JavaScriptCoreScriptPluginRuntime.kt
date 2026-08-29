@@ -128,6 +128,8 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         private set
     override var headers: Map<String, String> = emptyMap()
         private set
+    override var webChallengeUrl: String? = null
+        private set
     override val recentLogs: List<String> get() = withLogsLock { logs.toList() }
 
     private suspend fun initialize(script: String): Unit = mutex.withLock {
@@ -169,6 +171,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 if (headers.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotBlank()) {
                     headers = headers + ("Referer" to baseUrl)
                 }
+                webChallengeUrl = metadata.string("webChallengeUrl")?.toString()?.takeIf(String::isNotBlank)
                 evaluate("globalThis.baseUrl=${JsonPrimitive(baseUrl)};", "base-url.js")
             }
         } catch (error: Throwable) {
@@ -246,14 +249,17 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
             .mapNotNull { (it as? JsonObject)?.toSourcePreference() }
     }
 
-    override suspend fun login(username: String, password: String): Boolean {
-        if (!supportsLogin) return false
-        val success = invoke(
+    override suspend fun login(username: String, password: String): Boolean =
+        loginResult(username, password).loggedIn
+
+    override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
+        if (!supportsLogin) return LoginAttemptResult(false)
+        val result = invoke(
             "login",
             JsonArray(listOf(JsonPrimitive(username), JsonPrimitive(password))),
-        ).booleanValue()
-        if (success) environment.storage.setCredential(id, PluginCredential(username, password))
-        return success
+        ).toLoginAttemptResult()
+        if (result.loggedIn) environment.storage.setCredential(id, PluginCredential(username, password))
+        return result
     }
 
     override suspend fun logout() {
@@ -690,6 +696,23 @@ private fun JsonElement?.stringList(): List<String> = (this as? JsonArray)
     ?.mapNotNull { it.jsonPrimitive.contentOrNull }
     .orEmpty()
 private fun JsonElement?.booleanValue(): Boolean = (this as? JsonPrimitive)?.booleanOrNull ?: false
+
+private fun JsonElement?.toLoginAttemptResult(): LoginAttemptResult {
+    val objectValue = this as? JsonObject
+    if (objectValue != null) {
+        return LoginAttemptResult(
+            loggedIn = objectValue.boolean("loggedIn"),
+            errorMessage = objectValue.string("errorMessage")
+                ?.filterNot(Char::isISOControl)
+                ?.trim()
+                ?.take(512)
+                ?.takeIf(String::isNotBlank),
+        )
+    }
+    // Older scripts returned a bare Boolean. Keep accepting that shape while new scripts may
+    // return { loggedIn, errorMessage }.
+    return LoginAttemptResult(loggedIn = booleanValue())
+}
 private fun JsonElement?.arrayOrEmpty(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())
 private fun JsonElement?.stringMap(): Map<String, String> = (this as? JsonObject)?.mapNotNull { (key, value) ->
     value.jsonPrimitive.contentOrNull?.let { key to it }

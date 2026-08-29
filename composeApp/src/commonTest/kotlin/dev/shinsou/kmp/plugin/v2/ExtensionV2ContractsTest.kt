@@ -187,6 +187,56 @@ class ExtensionV2ContractsTest {
     }
 
     @Test
+    fun hostLoginFacadePreservesStructuredFailureMessage() = runTest {
+        val sourceKey = SourceKey(2, "example.login", "example.login")
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "Login fixture",
+            languageTag = "en",
+            supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+        )
+        val implementation = object : ExtensionSourceV2 {
+            override val descriptor: SourceDescriptorV2 = descriptor
+            override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2()
+            override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
+                PagedResultV2(emptyList(), false)
+            override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> =
+                PagedResultV2(emptyList(), false)
+            override suspend fun browse(options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2> =
+                PagedResultV2(emptyList(), false)
+            override suspend fun details(remotePublicationId: String): RemotePublicationV2 =
+                RemotePublicationV2(remotePublicationId, "Fixture")
+            override suspend fun units(remotePublicationId: String, page: Int): PagedResultV2<RemoteUnitV2> =
+                PagedResultV2(emptyList(), false)
+            override suspend fun content(remotePublicationId: String, remoteUnitId: String): UnitContentResultV2 =
+                error("not used")
+            override suspend fun openTextStream(streamId: String): TextChunkStreamV2 = error("not used")
+            override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 =
+                LoginResultV2(false, "帳號或密碼錯誤")
+            override suspend fun logout(): Unit = Unit
+            override suspend fun preferences(): List<PreferenceV2> = emptyList()
+            override suspend fun favorite(remotePublicationId: String, favorite: Boolean): Unit = Unit
+        }
+        val runtime = ImmutableExtensionPackageRuntimeV2(
+            ExtensionPackageV2(
+                contractVersion = 2,
+                packageId = sourceKey.packageId,
+                version = "1.0.0",
+                displayName = "Login fixture",
+                sources = listOf(descriptor),
+            ),
+            listOf(implementation),
+        )
+        val result = requireNotNull(ExtensionHostFacadeV2(runtime).source(sourceKey)).login(
+            LoginCredentialsV2("username-ref", "password-ref"),
+        )
+
+        assertFalse(result.loggedIn)
+        assertEquals("帳號或密碼錯誤", result.errorMessage)
+    }
+
+    @Test
     fun browseFilterSchemaPreservesLegacyControlsAndRejectsInvalidSelections() {
         val schema = BrowseOptionsSchemaV2(
             filters = listOf(

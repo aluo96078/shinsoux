@@ -5,6 +5,12 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.PointerByReference
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Uses Security.framework directly so key material never appears in process arguments, shell
@@ -14,21 +20,78 @@ internal class MacOsKeychainMasterKeyStore(
     private val keychain: MacOsKeychainApi = JnaMacOsKeychainApi(),
     private val service: String = DEFAULT_SERVICE,
     private val account: String = DEFAULT_ACCOUNT,
+    private val operationTimeoutMillis: Long = DEFAULT_OPERATION_TIMEOUT_MILLIS,
+    private val executor: ExecutorService = newKeychainExecutor(),
 ) : DesktopMasterKeyStore {
+    private val pendingReadLock = Any()
+    private var pendingRead: Future<ByteArray?>? = null
+
     init {
         require(service.isNotBlank() && account.isNotBlank()) { "Keychain identity cannot be blank." }
+        require(operationTimeoutMillis > 0) { "Keychain timeout must be positive." }
     }
 
-    override fun read(): ByteArray? = keychain.readPassword(service, account)
+    override fun read(): ByteArray? {
+        val future = synchronized(pendingReadLock) {
+            pendingRead?.takeUnless { it.isCancelled }
+                ?: executor.submit<ByteArray?> { keychain.readPassword(service, account) }
+                    .also { pendingRead = it }
+        }
+        return try {
+            awaitKeychainCall("read", future)
+        } finally {
+            if (future.isDone) {
+                synchronized(pendingReadLock) {
+                    if (pendingRead === future) pendingRead = null
+                }
+            }
+        }
+    }
 
     override fun write(value: ByteArray) {
         require(value.isNotEmpty()) { "Refusing to store an empty desktop master key." }
-        keychain.upsertPassword(service, account, value)
+        val future = executor.submit<Unit> {
+            val isolatedValue = value.copyOf()
+            try {
+                keychain.upsertPassword(service, account, isolatedValue)
+            } finally {
+                isolatedValue.fill(0)
+            }
+        }
+        awaitKeychainCall("write", future)
+    }
+
+    private fun <T> awaitKeychainCall(operation: String, future: Future<T>): T {
+        return try {
+            future.get(operationTimeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (timeout: TimeoutException) {
+            // Keychain Services may be synchronously waiting for SecurityAgent. Interrupting that
+            // native call is unreliable and discards a successful authorization that arrives just
+            // after the UI timeout. Keep the single read alive so a retry can consume its result.
+            throw IllegalStateException(
+                "macOS Keychain $operation timed out. Complete any pending Keychain access prompt, then try again.",
+                timeout,
+            )
+        } catch (interrupted: InterruptedException) {
+            future.cancel(true)
+            Thread.currentThread().interrupt()
+            throw IllegalStateException("macOS Keychain $operation was interrupted.", interrupted)
+        } catch (failure: ExecutionException) {
+            val cause = failure.cause ?: failure
+            if (cause is RuntimeException) throw cause
+            if (cause is Error) throw cause
+            throw IllegalStateException("macOS Keychain $operation failed.", cause)
+        }
     }
 
     companion object {
         internal const val DEFAULT_SERVICE = "dev.aluo.shinsoux.desktop.plugin-secrets"
         internal const val DEFAULT_ACCOUNT = "master-key-v1"
+        internal const val DEFAULT_OPERATION_TIMEOUT_MILLIS: Long = 8_000L
+
+        private fun newKeychainExecutor(): ExecutorService = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "shinsou-macos-keychain").apply { isDaemon = true }
+        }
     }
 }
 

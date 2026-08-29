@@ -1,15 +1,29 @@
 # GitHub Actions 發布
 
-推送格式為 `vMAJOR.MINOR.PATCH` 的 tag 會觸發 `.github/workflows/release.yml`。流程分別在 Linux、macOS 與 Windows runner 建置，所有平台成功後才會發布同一個 GitHub Release；任一平台失敗都不會發布不完整的產物。
+推送格式為 `vMAJOR.MINOR.PATCH` 或 `vMAJOR.MINOR.PATCH-beta.N` 的 tag 會觸發 `.github/workflows/release.yml`。流程分別在 Linux、macOS 與 Windows runner 建置，所有平台成功後才會發布同一個 GitHub Release；任一平台失敗都不會發布不完整的產物。Beta tag 會建立 GitHub prerelease，且不會標記為 Latest。
 
 例如：
 
 ```bash
 git tag -a v1.0.0 -m "Shinsou X 1.0.0"
 git push origin v1.0.0
+
+# Beta prerelease
+git tag -a v1.1.0-beta.1 -m "Shinsou X 1.1.0 beta 1"
+git push origin v1.1.0-beta.1
 ```
 
-版本必須是三段純數字。為同時符合 MSI 與跨商店的單調 build number，major／minor 不得超過 255，patch 不得超過 999，且不可使用 `v0.0.0`。Tag 的版本會同時寫入 Android `versionName`、iOS `CFBundleShortVersionString` 與 Desktop `packageVersion`；`MAJOR × 1,000,000 + MINOR × 1,000 + PATCH` 則作為 Android `versionCode` 與 iOS `CFBundleVersion`。因此後續正式 tag 必須依語意版本遞增，不能在發布較新版後再發布較小的版本號。
+正式版本必須是三段純數字；beta 序號 `N` 限 `1..98`。為同時符合 MSI、Apple 與跨商店的單調 build number，major 不得超過 81、minor 不得超過 255、patch 不得超過 999，且不可使用 `v0.0.0`。Android `versionName` 與產物名稱使用完整顯示版本；iOS `CFBundleShortVersionString` 與 Desktop `packageVersion` 使用不含 beta suffix 的三段 package version。
+
+Android `versionCode` 與 iOS `CFBundleVersion` 使用以下公式：
+
+```text
+ordinal = ((MAJOR × 256 + MINOR) × 1000 + PATCH)
+build = ordinal × 100 + stage
+stage = beta N 時為 N；正式版為 99
+```
+
+因此同一 package version 的 `beta.1…beta.98` 都小於正式版，下一個 patch 的 beta 又大於前一個正式版。Tag 必須按此順序遞增，不能發布較新版後再發布較小版本或 beta 序號。
 
 ## 發布產物
 
@@ -63,4 +77,4 @@ base64 -i widget.mobileprovision | tr -d '\n'
 - DMG 目前尚未 Developer ID 簽章與 Apple notarize，macOS Gatekeeper 可能警告。
 - MSI／EXE 目前尚未 Authenticode 簽章，Windows SmartScreen 可能顯示未知發行者。
 
-發布正式 tag 前，應先確認 master 的一般 Windows workflow 與本機／CI 測試皆通過。若 tag workflow 因 signing 或建置失敗，修正後可重新執行同一個 workflow run；release job 會以 draft 聚合產物，最後一步才公開，並可安全覆蓋同名 assets。
+發布正式或 beta tag 前，應先確認 master 的一般 Windows workflow 與本機／CI 測試皆通過。若 tag workflow 因 signing 或建置失敗，修正後可重新執行同一個 workflow run；release job 會以 draft 聚合產物，最後一步才公開，並可安全覆蓋同名 assets。

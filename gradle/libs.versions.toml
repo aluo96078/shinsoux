@@ -21,7 +21,7 @@ sqldelight = "2.1.0"
 libsodium = "0.9.5"
 qrose = "1.0.1"
 google-code-scanner = "16.1.0"
-javafx = "21.0.7"
+javafx = "21.0.12"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }

@@ -30,7 +30,7 @@
 小說閱讀器以 ShuYue 的閱讀操作為基礎，延展到 Android、iOS、macOS 與 Windows 的統一內容層。純文字章節與 EPUB 都保留可恢復的閱讀定位，重新排版或切換裝置後仍能回到接近原位置。
 
 - 閱讀正文時工具列預設隱藏；點擊畫面中央 40% 區域即可顯示／隱藏底部功能欄
-- 左右兩側各 30% 為上一頁／下一頁點擊區，支援水平拖曳、滑鼠滾輪向下翻頁、鍵盤與實體音量鍵
+- 左右兩側各 30% 為上一頁／下一頁點擊區；共用操作包含水平拖曳，Desktop 另支援滑鼠滾輪與鍵盤，實體音量鍵翻頁只在 Android／iOS 提供
 - 可使用連續向下滾動、LTR、RTL 與垂直翻頁模式；章節邊界可直接進入前一章／下一章
 - 底部欄只保留必要圖示（設定、章節、上一頁、下一頁），正文不插入分割線、進度條或多餘按鈕
 - 「Page turn animation」可在閱讀設定中關閉；關閉後翻頁與定位會直接落位，不等待動畫完成
@@ -73,10 +73,10 @@ JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Browse、Re
 - Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 的官方腳本並在 Rhino 初始化；這不會連正式來源網站。
 - iOS Simulator test 覆蓋 JavaScriptCore 的同步 extension contract；任意第三方 Promise／async／`fetch` 腳本不保證相容。
 - `AppSnapshot.extensionRepositories` 是可攜的 repository source of truth。升級時只會一次性遷移舊 KV 清單；之後 add／remove／default、備份還原與同步結果都會精確鏡像回 KV，不會再把 stale KV 無條件 union 回 snapshot。
-- Extension 的 `trusted` 狀態是 `{id}:{version}:{SHA-256}` 的執行授權，不代表 repository 作者身分已由 PKI 驗證。撤銷會立即卸載 runtime、保留 package 供重新授權或卸載；啟動時不會只因 bytes 仍符合 manifest digest 就重建已撤銷的授權。
+- Extension 的 execution trust token 綁定 `{pluginId}:{versionCode}:{SHA-256}`，不代表 repository 作者身分已由 PKI 驗證。System-event grant 另以完整的 `(packageId, version, versionCode, SHA-256, SourceKey)` artifact／來源身分核准，不能與 execution token 混為一談。撤銷會立即卸載 runtime、保留 package 供重新授權或卸載；啟動時不會只因 bytes 仍符合 manifest digest 就重建已撤銷的授權。
 - Source settings 可手動管理 cookie，或匯入 Netscape `cookies.txt`／常見 JSON 匯出。匯入器限制 1 MiB／500 筆，並驗證來源 domain、path、expiry 與 cookie 字元；平台 picker 會在配置完整 ByteArray 前先檢查 declared size。
 - Plugin HTTP redirect 由共用層逐 hop 處理：限制 hop 數、拒絕 HTTPS 降級、跨 origin 丟棄 credentials／自訂秘密 header，並依新目標重新選 cookie。`Set-Cookie` 支援 `Max-Age`／`Expires`、精確 path 刪除與保守 suffix 防護；這套 suffix 規則不是完整 Public Suffix List。
-- Android 以 WebView、iOS 以 non-persistent WKWebView 完成 Cloudflare／Web challenge 後擷取並驗證 cookie。Desktop 只能開預設瀏覽器；外部瀏覽器 cookie 不會自動匯入，需使用檔案匯入或手動輸入。
+- Android 以 WebView、iOS 以 non-persistent WKWebView 完成 Cloudflare／Web challenge 後擷取並驗證 cookie。macOS Desktop 會開啟獨立原生、non-persistent WKWebView 視窗，擷取該隔離 session 的 cookie 與真實 User-Agent；若 challenge request 明確屬於某來源且該來源已保存帳密，Host 只會在同源頁面、同源 form action 下填入並提交，帳密經 helper stdin 傳送而不放入 command line。Windows Desktop 只開外部瀏覽器，無法讀取或自動匯入 Safari／Chrome／Edge 的既有 cookie；可改用 `cookies.txt`／JSON 匯入或手動輸入。
 - DNS over HTTPS 設定目前只會保存，不會改變 runtime DNS。專案刻意不採「直接連 IP 再覆寫 Host」的作法，因其無法安全保留 HTTPS SNI／憑證語義。
 
 ## Desktop
@@ -102,7 +102,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 ## 開始使用與建置
 
-需求：JDK 17、Android SDK Platform 36；iOS 與 DMG 建置需在 macOS 執行，MSI／EXE 需在 Windows 與 WiX Toolset 3.x 環境執行。iOS 另需 Xcode、XcodeGen 與適用的 Apple 開發簽章設定。公開 fork 需將 `iosApp/project.yml` 中的 Development Team 換成自己的團隊。
+需求：JDK 17、Android SDK Platform 36；macOS Desktop 的 `run`、`desktopTest`、資源準備與 DMG 會透過 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView helper，因此也需要可用的 Xcode Command Line Tools、macOS SDK 與 Swift compiler。iOS 另需完整 Xcode、XcodeGen 與適用的 Apple 開發簽章設定；MSI／EXE 需在 Windows 與 WiX Toolset 3.x 環境執行。公開 fork 需將 `iosApp/project.yml` 中的 Development Team 換成自己的團隊。
 
 ```bash
 # 取得原始碼
@@ -140,6 +140,8 @@ xcodebuild -project Shinsou.xcodeproj \
 Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
 `composeApp/build/outputs/apk/release/`。正式發布請在 CI 注入 Android keystore，避免把 unsigned APK 當成可升級的正式版本。
 
+只有已公開的 GitHub Release 才代表有可下載安裝包；repository 內存在 release workflow 或產物設計，不等於目前已發布版本。若 Releases 頁面沒有項目，請依本節自行建置。
+
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
 
 ```powershell
@@ -155,9 +157,10 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 ## 文件與相關專案
 
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
-- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` tag、APK／IPA／DMG／MSI／EXE 與簽章 secrets
+- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、APK／IPA／DMG／MSI／EXE 與簽章 secrets
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
+- [插件系統事件接口架構](docs/PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：production V1 handler、exact-artifact grant、安全邊界與尚未接通的保留能力
 - [跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)：事件模型、E2EE、配對、checkpoint、Recovery、quota 與驗收 Gate
 - [Cloudflare Sync Worker](syncWorker/README.md)：本機測試、部署、D1/R2 bindings 與 API
 - [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin)：Shinsou X JavaScript 擴充套件儲存庫

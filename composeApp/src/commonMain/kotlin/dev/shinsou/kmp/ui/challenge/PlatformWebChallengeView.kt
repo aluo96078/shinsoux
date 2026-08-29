@@ -5,13 +5,18 @@ import androidx.compose.ui.Modifier
 import dev.shinsou.kmp.ui.SourceCookie
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 
-/** Platform WebView surface. Desktop provides a no-op actual and uses the explicit fallback UI. */
+internal data class WebChallengeCapture(
+    val cookies: List<SourceCookie>,
+    val userAgent: String,
+)
+
+/** Platform WebView surface backed by an isolated, non-persistent browser session. */
 @Composable
 internal expect fun PlatformWebChallengeView(
     request: SourceWebChallengeRequest,
     captureRequest: Int,
     onPageLoaded: () -> Unit,
-    onCookiesCaptured: (List<SourceCookie>) -> Unit,
+    onSessionCaptured: (WebChallengeCapture) -> Unit,
     onError: (String) -> Unit,
     modifier: Modifier = Modifier,
 )

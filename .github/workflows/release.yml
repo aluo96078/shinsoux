@@ -20,34 +20,19 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
+      package_version: ${{ steps.version.outputs.package_version }}
       version_code: ${{ steps.version.outputs.version_code }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      - name: Check out Shinsou X
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Parse version
         id: version
         shell: bash
-        run: |
-          tag="$GITHUB_REF_NAME"
-          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$ ]]; then
-            echo "::error title=Invalid release tag::Expected vMAJOR.MINOR.PATCH, got $tag."
-            exit 1
-          fi
-
-          major="${BASH_REMATCH[1]}"
-          minor="${BASH_REMATCH[2]}"
-          patch="${BASH_REMATCH[3]}"
-          if (( 10#$major > 255 || 10#$minor > 255 || 10#$patch > 999 )); then
-            echo "::error title=Unsupported release version::Release versions require major/minor <= 255 and patch <= 999."
-            exit 1
-          fi
-          version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
-          if (( version_code <= 0 || version_code > 2100000000 )); then
-            echo "::error title=Unsupported application version code::$version_code is outside the Android versionCode range."
-            exit 1
-          fi
-
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
-          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/parse_release_tag.sh "$GITHUB_REF_NAME"
 
   android:
     name: Android release APK
@@ -57,6 +42,7 @@ jobs:
     timeout-minutes: 45
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -112,7 +98,8 @@ jobs:
         shell: bash
         run: |
           ./gradlew :composeApp:assembleRelease \
-            -PreleaseVersion="$RELEASE_VERSION" \
+            -PreleaseVersion="$RELEASE_PACKAGE_VERSION" \
+            -PreleaseDisplayVersion="$RELEASE_VERSION" \
             -PreleaseVersionCode="$RELEASE_VERSION_CODE" \
             --stacktrace
 
@@ -158,6 +145,7 @@ jobs:
     timeout-minutes: 60
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
       IOS_TEAM_ID: 5UKY38ZLK6
     steps:
@@ -207,6 +195,7 @@ jobs:
     timeout-minutes: 60
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
     steps:
       - name: Check out Shinsou X
@@ -234,7 +223,7 @@ jobs:
         shell: bash
         run: |
           ./gradlew :composeApp:packageReleaseDmg \
-            -PreleaseVersion="$RELEASE_VERSION" \
+            -PreleaseVersion="$RELEASE_PACKAGE_VERSION" \
             -PreleaseVersionCode="$RELEASE_VERSION_CODE" \
             --stacktrace
 
@@ -281,6 +270,7 @@ jobs:
     timeout-minutes: 60
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
       RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
     steps:
       - name: Check out Shinsou X
@@ -317,7 +307,7 @@ jobs:
           .\gradlew.bat `
             :composeApp:packageReleaseMsi `
             :composeApp:packageReleaseExe `
-            "-PreleaseVersion=$env:RELEASE_VERSION" `
+            "-PreleaseVersion=$env:RELEASE_PACKAGE_VERSION" `
             "-PreleaseVersionCode=$env:RELEASE_VERSION_CODE" `
             --stacktrace
 
@@ -373,6 +363,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
       RELEASE_COMMIT: ${{ github.sha }}
     steps:
       - name: Download all release artifacts
@@ -411,6 +402,13 @@ jobs:
       - name: Prepare release notes
         shell: bash
         run: |
+          if [[ "$RELEASE_PRERELEASE" == true ]]; then
+            printf '%s\n\n' \
+              "This is a beta prerelease for validation. Back up your library before installing it." \
+              > release-notes.md
+          else
+            : > release-notes.md
+          fi
           printf '%s\n' \
             "Shinsou X $RELEASE_VERSION multi-platform release." \
             "" \
@@ -419,7 +417,7 @@ jobs:
             "- macOS DMG is currently not notarized." \
             "- Windows MSI and EXE are currently not Authenticode-signed, so SmartScreen may warn." \
             "- Verify downloads with SHA256SUMS.txt." \
-            > release-notes.md
+            >> release-notes.md
 
       - name: Publish complete release
         shell: bash
@@ -454,11 +452,17 @@ jobs:
               -F draft=true \
               --silent
           elif (( ${#release_ids[@]} == 0 )); then
-            gh release create "$RELEASE_TAG" \
+            create_args=(
+              "$RELEASE_TAG"
               --verify-tag \
               --draft \
               --title "Shinsou X $RELEASE_VERSION" \
               --notes "Preparing verified release assets."
+            )
+            if [[ "$RELEASE_PRERELEASE" == true ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh release create "${create_args[@]}"
             release_id="$(
               gh api --paginate \
                 "/repos/$GH_REPO/releases?per_page=100" \
@@ -495,7 +499,14 @@ jobs:
             "$RUNNER_TEMP/expected-release-assets.txt" \
             "$RUNNER_TEMP/actual-release-assets.txt"
 
-          gh release edit "$RELEASE_TAG" \
-            --draft=false \
-            --title "Shinsou X $RELEASE_VERSION" \
+          edit_args=(
+            "$RELEASE_TAG"
+            --draft=false
+            --prerelease="$RELEASE_PRERELEASE"
+            --title "Shinsou X $RELEASE_VERSION"
             --notes-file release-notes.md
+          )
+          if [[ "$RELEASE_PRERELEASE" == true ]]; then
+            edit_args+=(--latest=false)
+          fi
+          gh release edit "${edit_args[@]}"

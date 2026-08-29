@@ -26,7 +26,7 @@
 | Extension repository 可攜狀態 | 已實作 | 已實作 | 已實作 | `AppSnapshot.extensionRepositories` 是 source of truth；舊 KV 只做一次性遷移，之後 add／remove／default 及 restore／sync 結果會精確覆蓋 KV mirror，不會 union stale KV |
 | 官方 extension fixture | 已實作 | 受限 | 已實作 | Desktop test 在 Rhino 初始化 workspace 官方腳本；iOS test 驗證同步 JavaScriptCore contract，但未逐一執行全部 workspace 腳本 |
 | 手動 cookie 與檔案匯入 | 已實作 | 已實作 | 已實作 | 手動編輯及 Netscape `cookies.txt`／JSON；1 MiB、500 筆上限，驗證 domain/path/expiry／字元。picker 先驗 declared size 再 bounded read；macOS Desktop file picker 已做 packaged-app 開啟／取消 smoke，Windows Desktop 及 Android／iOS provider 仍需各平台驗證 |
-| Cloudflare／Web challenge | 已實作 | 已實作 | 受限 | Android WebView 先清 cookie jar 再 seed；iOS 使用 non-persistent WKWebView；兩者擷取後再次驗證。Desktop 只開外部瀏覽器，外部 cookie 不會自動匯入 |
+| Cloudflare／Web challenge | 已實作 | 已實作 | 受限 | Android WebView 先清 cookie jar 再 seed；iOS 使用 non-persistent WKWebView；兩者擷取後再次驗證。macOS Desktop 使用獨立原生 non-persistent WKWebView 視窗，可擷取該隔離 session 的 cookie／真實 User-Agent，並在來源帳密已保存時只對同源頁面與同源 form 自動登入。Windows Desktop 只開外部瀏覽器，無法自動讀取或匯入外部 cookie |
 | 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | legacy BackupEnvelope 與 checksummed Content Backup v2 並存；v2 同時保存 publication graph 與 body-free metadata／aliases／migration ledgers，可選擇納入 rights 允許的 immutable body，metadata-only restore 不宣告缺失 body 已存在。ShuYue v1 先 staging/report/quarantine，再以 shared transaction 匯入；secrets 只經明確 consent 進平台安全儲存 |
 | Cloudflare schema v2／encrypted body sync | 已實作 | 已實作 | 已實作 | publication/unit/annotation/blob-ref metadata 走 event/checkpoint；使用者選擇且 `SYNC_BLOB` 允許的 body 走隔離 R2、分塊 AEAD、resume、DEK re-wrap 與 checkpoint-ack GC。真實四平台跨裝置矩陣仍是外部上線 Gate |
 | App-private 自動備份 | 已實作 | 已實作 | 已實作 | 原子快照、due check、retention、損毀標示、立即建立／列表／還原／刪除；WorkManager、BGProcessingTask、Desktop 前景 scheduler |
@@ -70,7 +70,9 @@ zip cbz epub
 - Domain 防護拒絕單 label、常見 multi-label country suffix 與明顯無效 domain。這是保守 suffix 規則，不是完整 Mozilla Public Suffix List；不可據此宣稱涵蓋所有 registry suffix。
 - Android WebView cookie API 無法回傳完整 attribute，因此 challenge 擷取值會縮限為當前 host/path，再經共用 validator；它不是可攜的完整瀏覽器 cookie database。
 - iOS WKWebView 使用 non-persistent data store，challenge cookies 只有通過 domain/path/expiry/Secure 驗證後才寫回 source storage。
-- Desktop 沒有可安全與 source jar 共用的內嵌瀏覽器。開啟 Safari／Chrome 不會讓 Shinsou 讀取該瀏覽器 cookie；可改用 `cookies.txt`／JSON 匯入或手動輸入。
+- macOS Desktop challenge 使用獨立原生 non-persistent WKWebView 視窗，不與 Compose／Skiko 共用 rendering surface，也不讀取 Safari／Chrome cookie database。Host 可 seed 來源 cookie，完成後擷取該隔離 session 的 cookie 與真實 User-Agent，再經共用 validator 寫回來源 storage。
+- macOS 自動登入只在 challenge request 明確綁定來源且該來源已保存帳密時啟用；帳密經 helper stdin 傳送，不放入 command line，頁面 origin 與 form action 都必須與初始 challenge origin 相同。這不代表任意登入頁、跨 origin SSO 或 CAPTCHA 一定可自動完成。
+- Windows Desktop 只開外部瀏覽器，Shinsou 無法讀取 Edge／Chrome／Firefox 的 cookie；可改用 `cookies.txt`／JSON 匯入或手動輸入。
 - 真實 Cloudflare 頁面、CAPTCHA 與來源站策略會隨外部服務改變，local tests 只驗證隔離、seed、capture 與 cookie trust boundary。
 
 ## Tracking 邊界
@@ -92,7 +94,7 @@ MyAnimeList HTTP adapter 與 deterministic tests 已存在，但 composition 刻
 Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重新執行 [BUILDING.md](BUILDING.md) 的完整命令矩陣。
 
 1. `desktopTest`：common／Desktop deterministic tests、本地 mock transport、Local ZIP、cookie parser、backup/sync、Reader／plugin fixture；在 Windows runner 另會執行 native DPAPI round-trip。
-2. Android `assembleDebug`、macOS／Windows Desktop compile、iOS Simulator compile/link：target API 與 expect/actual 編譯。
+2. Android `assembleDebug`、macOS／Windows Desktop compile、iOS Simulator compile/link：target API 與 expect/actual 編譯。macOS 的 `desktopTest`／Desktop application task 會先以 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView helper，因此還會驗證 Xcode Command Line Tools、macOS SDK 與 Swift compiler 可用。
 3. `iosSimulatorArm64Test`：共用 tests 與 JavaScriptCore contract。
 4. 無簽章 Xcode Simulator build：SwiftUI host、Widget target 與 Kotlin framework linkage。
 5. 平台原生安裝包：macOS 執行 `packageDmg` 驗證 bundle／DMG；Windows x64 執行 `packageReleaseMsi`／`packageReleaseExe` 驗證 MSI／EXE 與 WiX 設定。
@@ -112,7 +114,7 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 
 - DoH toggle 不會改變 runtime。直接改寫目的 IP 並覆寫 `Host` 會破壞 HTTPS SNI／憑證語義，因此未複製不安全行為。
 - JavaScript runtime 以官方同步式 extension contract 為準；任意第三方 Promise／async／`fetch` 腳本不保證相容。
-- Extension `trusted` 是 hash 綁定的執行 grant，不是作者身分或 repository signing chain 的完整驗證。沒有 repository digest 的現行格式在明確 install／update 時採下載 bytes 的 SHA-256 作 TOFU grant。
+- Extension execution trust token 綁定 `pluginId + versionCode + SHA-256`，不是作者身分或 repository signing chain 的完整驗證；system-event grant 則另以 `packageId + version + versionCode + SHA-256` 及 exact `SourceKey` 核准。沒有 repository digest 的現行格式在明確 install／update 時採下載 bytes 的 SHA-256 作 TOFU execution grant。
 - UI 已有字串 provider，但仍存在不少直接寫在 Compose 中的英文；多語介面尚未達原版完整度。
 - macOS Keychain 與 Windows DPAPI 只保護 Desktop 敏感 KV 的 AES master key，不等於 app lock。Desktop app lock／secure screen capability 明示 unavailable；若需要獨立驗證，仍需 LocalAuthentication 或等價桌面安全設計。
 - Bounded picker 仍會在核准上限內建立完整 `ByteArray`，且 size metadata 不可靠的 provider 會安全拒絕；實際 cloud provider 相容性尚需逐平台 smoke。

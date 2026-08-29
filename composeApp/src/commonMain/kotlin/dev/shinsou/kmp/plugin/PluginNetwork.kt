@@ -241,7 +241,13 @@ public class PluginRequestBuilder(
         val headers = linkedMapOf<String, String>()
         headers.putAll(sourceHeaders)
         request.headers.forEach { (name, value) -> putHeader(headers, name, value) }
-        if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+        val browserBoundUserAgent = storage.getWebChallengeUserAgent(sourceId)
+            ?.let(::normalizePluginUserAgent)
+        if (browserBoundUserAgent != null) {
+            // Cloudflare binds clearance to the browser's real UA. Once a verified browser
+            // session is imported, it must take priority over plugin and request header hints.
+            putHeader(headers, "User-Agent", browserBoundUserAgent)
+        } else if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
             headers["User-Agent"] = userAgents.userAgent(target.host)
         }
         if (!referer.isNullOrBlank() && headers.keys.none { it.equals("Referer", ignoreCase = true) }) {
@@ -252,10 +258,25 @@ public class PluginRequestBuilder(
             .filter { it.matches(target, nowEpochMillis()) }
             .sortedWith(compareByDescending<PluginCookie> { it.path.length }.thenBy { it.name })
         if (matching.isNotEmpty()) {
-            val cookieHeader = matching.joinToString("; ") { "${it.name}=${it.value}" }
             val existingKey = headers.keys.firstOrNull { it.equals("Cookie", ignoreCase = true) }
-            if (existingKey == null) headers["Cookie"] = cookieHeader
-            else headers[existingKey] = headers.getValue(existingKey) + "; " + cookieHeader
+            val existingValue = existingKey?.let(headers::getValue).orEmpty()
+            val explicitCookieNames = existingValue.split(';').mapNotNullTo(hashSetOf()) { pair ->
+                val separator = pair.indexOf('=')
+                if (separator <= 0) return@mapNotNullTo null
+                pair.substring(0, separator).trim().takeIf(::isValidCookieName)
+            }
+            // Explicit source/request cookies take precedence over the persisted jar. Keep
+            // same-name jar cookies on different paths when no explicit value was supplied,
+            // because RFC cookie ordering permits those entries to coexist.
+            val cookieHeader = matching
+                .filterNot { it.name in explicitCookieNames }
+                .joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookieHeader.isNotEmpty()) {
+                if (existingKey == null) headers["Cookie"] = cookieHeader
+                else headers[existingKey] = listOf(existingValue, cookieHeader)
+                    .filter(String::isNotBlank)
+                    .joinToString("; ")
+            }
         }
 
         val proxy = proxyResolver.route(sourceId, request.url)
@@ -271,6 +292,12 @@ public class PluginRequestBuilder(
         headers[name] = value
     }
 }
+
+internal fun normalizePluginUserAgent(value: String?): String? = value
+    ?.trim()
+    ?.takeIf { candidate ->
+        candidate.isNotEmpty() && candidate.length <= 512 && candidate.none { it.code in 0..31 || it.code == 127 }
+    }
 
 public class KtorPluginHttpTransport(private val client: HttpClient) : PluginHttpTransport {
     override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse {

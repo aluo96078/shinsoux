@@ -2,6 +2,7 @@ package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.plugin.PluginCookie
 import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,6 +10,25 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SourceWebChallengeCookiesTest {
+    @Test
+    fun requiredChallengeCookieIsNeverSeededIntoAnIsolatedBrowser() {
+        val seeded = webChallengeSeedCookies(
+            SourceWebChallengeRequest(
+                sourceId = 1L,
+                sourceName = "Fixture",
+                url = "https://www.bilimanga.net/login.php",
+                userAgent = "fixture",
+                cookies = listOf(
+                    SourceCookie("cf_clearance", "stale", ".bilimanga.net", hostOnly = false),
+                    SourceCookie("member_session", "keep", ".bilimanga.net", hostOnly = false),
+                ),
+                requiredCookieName = "cf_clearance",
+            ),
+        )
+
+        assertEquals(listOf("member_session"), seeded.map(SourceCookie::name))
+    }
+
     @Test
     fun androidCookieHeaderParsingIsDeterministicAndOriginBound() {
         val parsed = parseWebViewCookieHeader(
@@ -92,5 +112,12 @@ class SourceWebChallengeCookiesTest {
         assertTrue(domain.matches(Url("https://sub.example.com/reader/page"), 0L))
         assertFalse(domain.matches(Url("https://sub.example.com/readership"), 0L))
         assertFalse(domain.matches(Url("http://sub.example.com/reader/page"), 0L))
+    }
+
+    @Test
+    fun browserUserAgentNormalizationRejectsControlCharactersAndOversizedValues() {
+        assertEquals("Native WebKit/1.0", normalizeWebChallengeUserAgent("  Native WebKit/1.0  "))
+        assertEquals(null, normalizeWebChallengeUserAgent("bad\nagent"))
+        assertEquals(null, normalizeWebChallengeUserAgent("x".repeat(513)))
     }
 }

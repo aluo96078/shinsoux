@@ -76,6 +76,88 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
+    fun productionReviewedAdapterPreservesRuntimeLoginFailureMessage() = runTest {
+        val script = """
+            var source = {
+              id: "fixture.login",
+              name: "Login fixture",
+              lang: "en",
+              baseUrl: "https://fixture.example",
+              supportsLogin: true,
+              login: function(username, password) {
+                return { loggedIn: false, errorMessage: "帳號或密碼錯誤" };
+              }
+            };
+        """.trimIndent()
+        val bytes = script.encodeToByteArray()
+        val identity = ShuYueArtifactIdentityV2(
+            packageId = "fixture.login",
+            version = "1.0.0",
+            versionCode = 1,
+            sha256 = Sha256.hex(bytes),
+        )
+        val profile = ShuYueReviewedPluginProfileV2(
+            identity = identity,
+            displayName = "Login fixture",
+            sourceId = "fixture.login",
+            sourceName = "Login fixture",
+            languageTag = "en",
+            baseUrl = "https://fixture.example",
+            capabilities = setOf(dev.shinsou.kmp.plugin.v2.ExtensionCapability.LOGIN),
+            requiredPermissions = setOf(
+                ShuYueExecutionPermissionV2.EXECUTE_SCRIPT,
+                ShuYueExecutionPermissionV2.NETWORK,
+                ShuYueExecutionPermissionV2.COOKIE_STORAGE,
+                ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS,
+                ShuYueExecutionPermissionV2.LOGIN_PROMPT,
+            ),
+        )
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val environment = ScriptPluginEnvironment(
+            network = PluginNetworkClient(
+                transport = PluginHttpTransport { error("No network request expected") },
+                storage = storage,
+            ),
+            storage = storage,
+        )
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val admission = productionShuYueReviewedAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = environment,
+            credentialsResolver = LegacyLoginCredentialsResolverV2 {
+                LegacyLoginCredentialsV2("alice", "wrong")
+            },
+            executionScopes = ShuYueExecutionScopeResolverV2 { _, _ -> -9_110_000_000_000_099L },
+            reviewedProfiles = listOf(profile),
+        )
+        val staged = admission.quarantine(
+            ShuYueScriptCandidateV2(
+                packageId = identity.packageId,
+                version = identity.version,
+                versionCode = identity.versionCode,
+                sourceIds = listOf("fixture.login"),
+                bytes = bytes,
+                provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
+                reportedSha256 = identity.sha256,
+            ),
+        )
+        approvals.approve(identity, profile.requiredPermissions)
+        val runtime = admission.createRuntime(staged.quarantineId)
+
+        try {
+            val source = requireNotNull(runtime.source(SourceKey(2, "fixture.login", "fixture.login")))
+            val result = source.login(LoginCredentialsV2("username-ref", "password-ref"))
+            assertFalse(result.loggedIn)
+            assertEquals("帳號或密碼錯誤", result.errorMessage)
+        } finally {
+            (runtime as? dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2)?.close()
+        }
+    }
+
+    @Test
     fun addingShuYueGitHubBaseUsesReviewedIndexInsteadOfLegacyRepoJson() = runTest {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)

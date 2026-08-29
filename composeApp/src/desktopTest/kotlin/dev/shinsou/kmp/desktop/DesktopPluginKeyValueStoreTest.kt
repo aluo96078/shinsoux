@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
+import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.test.runTest
@@ -16,6 +17,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.measureTime
 
 class DesktopPluginKeyValueStoreTest {
     @Test
@@ -124,6 +126,56 @@ class DesktopPluginKeyValueStoreTest {
         assertEquals("master-key-v1", api.account)
         assertContentEquals(key, api.value)
         assertContentEquals(key, store.read())
+    }
+
+    @Test
+    fun keychainAdapterBoundsAStuckNativeReadAndRecoversAfterAuthorizationCompletes() {
+        val executor = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "test-keychain-timeout").apply { isDaemon = true }
+        }
+        val release = java.util.concurrent.CountDownLatch(1)
+        val readCalls = java.util.concurrent.atomic.AtomicInteger()
+        val expected = ByteArray(32) { (it + 11).toByte() }
+        val api = object : MacOsKeychainApi {
+            override fun readPassword(service: String, account: String): ByteArray? {
+                readCalls.incrementAndGet()
+                release.await()
+                return expected.copyOf()
+            }
+
+            override fun upsertPassword(service: String, account: String, value: ByteArray) = Unit
+        }
+        val store = MacOsKeychainMasterKeyStore(
+            keychain = api,
+            operationTimeoutMillis = 50,
+            executor = executor,
+        )
+
+        try {
+            repeat(2) {
+                val elapsed = measureTime {
+                    val failure = assertFailsWith<IllegalStateException> { store.read() }
+                    assertTrue(failure.message.orEmpty().contains("timed out"))
+                }
+                assertTrue(elapsed.inWholeMilliseconds < 500)
+            }
+
+            release.countDown()
+            val elapsed = measureTime {
+                assertContentEquals(expected, store.read())
+            }
+            assertTrue(elapsed.inWholeMilliseconds < 500)
+            assertEquals(1, readCalls.get())
+
+            val subsequent = measureTime {
+                assertContentEquals(expected, store.read())
+            }
+            assertTrue(subsequent.inWholeMilliseconds < 500)
+            assertEquals(2, readCalls.get())
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
+        }
     }
 
     @Test

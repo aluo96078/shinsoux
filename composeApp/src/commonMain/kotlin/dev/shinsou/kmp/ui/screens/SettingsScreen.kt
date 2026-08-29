@@ -92,6 +92,7 @@ import dev.shinsou.kmp.sync.v2.SyncAdminQuota
 import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ShinsouAppServices
+import dev.shinsou.kmp.ui.shouldShowReaderVolumeKeySetting
 import dev.shinsou.kmp.ui.components.HairlineDivider
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -570,7 +571,9 @@ private fun ReaderSettingsPane(settings: AppSettings, onChange: (AppSettings) ->
         item { ToggleSetting(strings.text("Skip filtered chapters"), strings.text("Apply Manga Detail filters while moving between chapters"), settings.reader.skipFilteredChapters) { onChange(settings.copy(reader = settings.reader.copy(skipFilteredChapters = it))) } }
         item { ToggleSetting(strings.text("Skip duplicate chapters"), strings.text("Skip alternate copies with the same chapter number"), settings.reader.skipDuplicateChapters) { onChange(settings.copy(reader = settings.reader.copy(skipDuplicateChapters = it))) } }
         item { ToggleSetting(strings.text("Split tall images"), null, settings.reader.splitTallImages) { onChange(settings.copy(reader = settings.reader.copy(splitTallImages = it))) } }
-        item { ToggleSetting(strings.text("Volume keys"), strings.text("Use hardware volume keys to turn pages"), settings.reader.volumeKeys) { onChange(settings.copy(reader = settings.reader.copy(volumeKeys = it))) } }
+        if (shouldShowReaderVolumeKeySetting()) {
+            item { ToggleSetting(strings.text("Volume keys"), strings.text("Use hardware volume keys to turn pages"), settings.reader.volumeKeys) { onChange(settings.copy(reader = settings.reader.copy(volumeKeys = it))) } }
+        }
     }
 }
 

@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,14 +41,28 @@ internal fun SourceLoginDialog(
 ) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
-    var username by remember(request.sourceId, source?.credential?.username) {
-        mutableStateOf(source?.credential?.username.orEmpty())
-    }
-    var password by remember(request.sourceId, source?.credential?.password) {
-        mutableStateOf(source?.credential?.password.orEmpty())
-    }
+    var username by remember(request) { mutableStateOf("") }
+    var password by remember(request) { mutableStateOf("") }
+    var secretsLoading by remember(request) { mutableStateOf(true) }
     var busy by remember(request) { mutableStateOf(false) }
     var errorMessage by remember(request) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(request) {
+        secretsLoading = true
+        errorMessage = null
+        runCatching { callbacks.loadSourceSecrets(request.sourceId) }
+            .onSuccess { result ->
+                username = result.secrets.credential?.username.orEmpty()
+                password = result.secrets.credential?.password.orEmpty()
+                errorMessage = result.failureStage?.let { stage ->
+                    strings.text(sourceLoginFailureMessageKey(stage))
+                }
+            }
+            .onFailure {
+                errorMessage = strings.text("Unable to read credentials from secure storage.")
+            }
+        secretsLoading = false
+    }
 
     fun dismiss() {
         if (!busy) request.eventId?.let(callbacks::dismissSourceLoginEvent)
@@ -55,7 +70,7 @@ internal fun SourceLoginDialog(
     }
 
     fun submit() {
-        if (busy || username.isBlank() || password.isEmpty()) return
+        if (busy || secretsLoading || username.isBlank() || password.isEmpty()) return
         busy = true
         errorMessage = null
         scope.launch {
@@ -63,19 +78,25 @@ internal fun SourceLoginDialog(
             withFrameNanos { }
             runCatching {
                 request.eventId?.let { eventId ->
-                    callbacks.saveSourceEventCredentials(eventId, request.sourceId, username, password)
-                } ?: callbacks.saveSourceCredentials(request.sourceId, username, password)
-            }.onSuccess { success ->
-                if (success) {
+                    callbacks.saveSourceEventCredentialsResult(eventId, request.sourceId, username, password)
+                } ?: callbacks.saveSourceCredentialsResult(request.sourceId, username, password)
+            }.onSuccess { result ->
+                val feedback = sourceLoginFeedback(
+                    result = result,
+                    successMessage = strings.text("Login successful."),
+                    fallbackErrorMessage = strings.text("Login failed. Check your username and password."),
+                    failureMessage = { stage -> strings.text(sourceLoginFailureMessageKey(stage)) },
+                )
+                if (result.succeeded) {
                     request.eventId?.let(callbacks::dismissSourceLoginEvent)
                         ?: callbacks.dismissSourceLoginRequest(request.sourceId)
                 } else {
-                    errorMessage = strings.text("Login failed. Check your username and password.")
+                    errorMessage = feedback.errorMessage
                 }
             }.onFailure {
                 // Plugin/runtime failures may contain headers, cookies, stack text, or secrets.
                 // Event UI exposes only a stable host-owned message.
-                errorMessage = strings.text("Unable to save credentials")
+                errorMessage = strings.text("The login operation failed unexpectedly.")
             }
             busy = false
         }
@@ -91,12 +112,18 @@ internal fun SourceLoginDialog(
                     request.reason?.takeIf(String::isNotBlank)
                         ?: strings.text("Sign in to {0} to continue using this source.", request.sourceName),
                 )
+                if (secretsLoading) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(strings.text("Preparing…"))
+                    }
+                }
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text(strings.text("Username")) },
                     singleLine = true,
-                    enabled = !busy,
+                    enabled = !busy && !secretsLoading,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -104,7 +131,7 @@ internal fun SourceLoginDialog(
                     onValueChange = { password = it },
                     label = { Text(strings.text("Password")) },
                     singleLine = true,
-                    enabled = !busy,
+                    enabled = !busy && !secretsLoading,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -116,7 +143,7 @@ internal fun SourceLoginDialog(
         confirmButton = {
             Button(
                 onClick = ::submit,
-                enabled = username.isNotBlank() && password.isNotEmpty() && !busy,
+                enabled = username.isNotBlank() && password.isNotEmpty() && !busy && !secretsLoading,
             ) {
                 Row(horizontalArrangement = Arrangement.Center) {
                     if (busy) {

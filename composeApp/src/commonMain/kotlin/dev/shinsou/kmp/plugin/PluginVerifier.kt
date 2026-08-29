@@ -17,7 +17,7 @@ public data class VerifiedPlugin(
 )
 
 /**
- * SHA-256 integrity verification plus the original `{id}:{version}:{hash}` execution grant.
+ * SHA-256 integrity verification plus the `{pluginId}:{versionCode}:{hash}` execution grant.
  *
  * A matching manifest digest proves only that the persisted bytes still match the package that
  * was installed. It is not, by itself, permission to execute those bytes after the user revokes

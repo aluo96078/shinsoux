@@ -58,6 +58,11 @@ public interface PluginStorage {
         deleteCookie(sourceId, name, domain)
     }
     public suspend fun clearCookies(sourceId: Long)
+
+    /** UA captured with browser-bound anti-bot cookies; never shared across source scopes. */
+    public suspend fun getWebChallengeUserAgent(sourceId: Long): String? = null
+    public suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) = Unit
+    public suspend fun clearWebChallengeUserAgent(sourceId: Long) = Unit
 }
 
 /** Adapter point for DataStore, NSUserDefaults, Keychain, or an encrypted desktop store. */
@@ -191,7 +196,23 @@ public class KeyValuePluginStorage(
 
     override suspend fun clearCookies(sourceId: Long): Unit = mutex.withLock {
         keyValueStore.remove(cookieKey(sourceId))
+        keyValueStore.remove(webChallengeUserAgentKey(sourceId))
         cookieCache[sourceId] = emptyList()
+    }
+
+    override suspend fun getWebChallengeUserAgent(sourceId: Long): String? =
+        keyValueStore.getString(webChallengeUserAgentKey(sourceId))
+            ?.let(::normalizePluginUserAgent)
+
+    override suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) {
+        keyValueStore.putString(
+            webChallengeUserAgentKey(sourceId),
+            requireNotNull(normalizePluginUserAgent(userAgent)) { "Invalid web challenge User-Agent" },
+        )
+    }
+
+    override suspend fun clearWebChallengeUserAgent(sourceId: Long) {
+        keyValueStore.remove(webChallengeUserAgentKey(sourceId))
     }
 
     /** Cookies are read for every image request; decode each source jar only once per process. */
@@ -228,6 +249,8 @@ public class KeyValuePluginStorage(
     }
 
     private fun cookieKey(sourceId: Long): String = "source.$sourceId.cookies"
+    private fun webChallengeUserAgentKey(sourceId: Long): String =
+        "source.$sourceId.webChallenge.userAgent"
 }
 
 internal const val MAX_COOKIES_PER_SOURCE: Int = 500

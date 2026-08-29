@@ -40,7 +40,7 @@ import dev.shinsou.kmp.ui.i18n.text
 @Composable
 internal fun SourceWebChallengeDialog(
     request: SourceWebChallengeRequest,
-    onImport: (List<SourceCookie>) -> Unit,
+    onImport: (WebChallengeCapture) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -63,15 +63,20 @@ internal fun SourceWebChallengeDialog(
 @Composable
 private fun EmbeddedChallenge(
     request: SourceWebChallengeRequest,
-    onImport: (List<SourceCookie>) -> Unit,
+    onImport: (WebChallengeCapture) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     var captureRequest by remember(request) { mutableIntStateOf(0) }
     var loading by remember(request) { mutableStateOf(true) }
     var capturing by remember(request) { mutableStateOf(false) }
+    var errorVisible by remember(request) { mutableStateOf(false) }
     var message by remember(request) {
-        mutableStateOf(strings.text("Complete the verification in the browser, then import its cookies."))
+        mutableStateOf(
+            strings.text(
+                "Complete verification and sign in to the website in this browser, then import its cookies.",
+            ),
+        )
     }
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -89,7 +94,7 @@ private fun EmbeddedChallenge(
         Text(
             message,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-            color = if (message.startsWith("Error:")) {
+            color = if (errorVisible) {
                 MaterialTheme.colorScheme.error
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -102,20 +107,37 @@ private fun EmbeddedChallenge(
                 captureRequest = captureRequest,
                 onPageLoaded = {
                     loading = false
-                    message = strings.text("Verification page loaded. Complete it, then choose Import cookies.")
+                    errorVisible = false
+                    message = strings.text(
+                        "Verification page loaded. Complete verification and website sign-in here, then choose Import cookies.",
+                    )
                 },
-                onCookiesCaptured = { captured ->
+                onSessionCaptured = { captured ->
                     capturing = false
-                    val safe = normalizeWebChallengeCookies(request.url, captured)
+                    val safe = normalizeWebChallengeCookies(request.url, captured.cookies)
+                    val userAgent = normalizeWebChallengeUserAgent(captured.userAgent)
                     if (safe.isEmpty()) {
+                        errorVisible = true
                         message = strings.text("Error: no usable cookies were found for this source. Complete the challenge and try again.")
+                    } else if (userAgent == null) {
+                        errorVisible = true
+                        message = strings.text("Error: the browser User-Agent could not be read. Keep this browser open and try again.")
+                    } else if (request.requiredCookieName != null &&
+                        safe.none { it.name.equals(request.requiredCookieName, ignoreCase = true) }
+                    ) {
+                        errorVisible = true
+                        message = strings.text(
+                            "Error: Cloudflare verification is not complete because {0} is missing. Keep this browser open, complete verification and website sign-in, then try again.",
+                            request.requiredCookieName,
+                        )
                     } else {
-                        onImport(safe)
+                        onImport(WebChallengeCapture(cookies = safe, userAgent = userAgent))
                     }
                 },
                 onError = { error ->
                     loading = false
                     capturing = false
+                    errorVisible = true
                     message = strings.text("Error: {0}", error)
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -129,6 +151,7 @@ private fun EmbeddedChallenge(
             Button(
                 onClick = {
                     capturing = true
+                    errorVisible = false
                     message = strings.text("Reading cookies from the isolated browser session…")
                     captureRequest += 1
                 },

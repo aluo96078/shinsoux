@@ -46,6 +46,10 @@ import dev.shinsou.kmp.ui.MigrationCandidate
 import dev.shinsou.kmp.ui.ReaderChapter
 import dev.shinsou.kmp.ui.ReaderPage
 import dev.shinsou.kmp.ui.SourceLoginRequest
+import dev.shinsou.kmp.ui.SourceLoginFailureStage
+import dev.shinsou.kmp.ui.SourceLoginResult
+import dev.shinsou.kmp.ui.SourceSecrets
+import dev.shinsou.kmp.ui.SourceSecretsResult
 import dev.shinsou.kmp.ui.SourceCookie as BrowseSourceCookie
 import dev.shinsou.kmp.ui.SourceCredential as BrowseSourceCredential
 import dev.shinsou.kmp.ui.SourcePreference as BrowseSourcePreference
@@ -60,13 +64,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.TimeoutCancellationException
 
 /** Startup/refresh discovery must never leave the browse surface behind a dead network host. */
 private const val BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS: Long = 8_000L
 
+/** Cooperative bound layered over the desktop protected-store caller timeout. */
+private const val SOURCE_SECRET_ACCESS_TIMEOUT_MILLIS: Long = 12_000L
+
 /** Stable v2 option key used by account-owned collection views (ShuYue bookcase). */
 internal const val DEFAULT_FAVORITE_BROWSE_OPTION_KEY: String = "option"
+
+/** Internal wrapper carrying only a stable stage to the UI boundary; its cause is never rendered. */
+internal class SourceLoginStageException(
+    val stage: SourceLoginFailureStage,
+    cause: Throwable,
+) : RuntimeException(cause)
 
 public fun interface PluginMangaResolver {
     public suspend fun resolve(manga: BrowseManga): Long?
@@ -187,19 +202,29 @@ public class PluginBrowseAdapter(
         sourceId: Long,
         username: String,
         password: String,
-    ): Boolean {
-        val request = loginRequestCoordinator.event(eventId) ?: return false
-        val target = request.exactTarget ?: return false
-        if (request.sourceId != sourceId) return false
-        val success = saveSourceCredentialsInternal(sourceId, username, password, dismissLegacy = false)
-        if (success) {
+    ): Boolean = saveSourceEventCredentialsResult(eventId, sourceId, username, password).succeeded
+
+    override suspend fun saveSourceEventCredentialsResult(
+        eventId: String,
+        sourceId: Long,
+        username: String,
+        password: String,
+    ): SourceLoginResult = try {
+        val request = loginRequestCoordinator.event(eventId) ?: return SourceLoginResult(false)
+        val target = request.exactTarget ?: return SourceLoginResult(false)
+        if (request.sourceId != sourceId) return SourceLoginResult(false)
+        val result = saveSourceCredentialsInternal(sourceId, username, password, dismissLegacy = false)
+        if (result.succeeded) {
             keyValueStore.putString(
                 ExactPluginSessionOwnership.ownerKey(sourceId),
                 ExactPluginSessionOwnership.targetKey(target),
             )
+            exactSourceRefreshInvalidations.invalidate(target)
             loginRequestCoordinator.dismissEvent(eventId)
         }
-        return success
+        return result
+    } catch (failure: SourceLoginStageException) {
+        SourceLoginResult(false, failureStage = failure.stage)
     }
 
     private suspend fun exactSessionStorageId(request: PluginLogoutConfirmation): Long? {
@@ -683,50 +708,173 @@ public class PluginBrowseAdapter(
         sourceId: Long,
         username: String,
         password: String,
-    ): Boolean = saveSourceCredentialsInternal(sourceId, username, password, dismissLegacy = true)
+    ): Boolean = saveSourceCredentialsResult(sourceId, username, password).succeeded
+
+    override suspend fun loadSourceSecrets(sourceId: Long): SourceSecretsResult = try {
+        val v2Scope = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+            requireV2SourceScope(sourceId)
+        }
+        val storageId = v2Scope?.second ?: sourceId
+        val supportsLogin = if (v2Scope != null) {
+            val source = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+                requireNotNull(manager.extensionSourceV2(v2Scope.first)) {
+                    "Unknown extension v2 source: ${v2Scope.first.canonicalId}"
+                }
+            }
+            ExtensionCapability.LOGIN in source.descriptor.capabilities
+        } else {
+            val source = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+                manager.source(sourceId) ?: throw IllegalArgumentException("Unknown source: $sourceId")
+            }
+            (source as? LoginSource)?.supportsLogin == true
+        }
+        val credential = if (supportsLogin) {
+            secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
+                pluginStorage.getCredential(storageId)
+            }
+        } else {
+            null
+        }
+        val cookies = secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
+            pluginStorage.getCookies(storageId)
+        }
+        SourceSecretsResult(
+            secrets = SourceSecrets(
+                credential = credential?.let { BrowseSourceCredential(it.username, it.password) },
+                cookies = cookies.map(::toBrowseCookie),
+            ),
+        )
+    } catch (failure: SourceLoginStageException) {
+        SourceSecretsResult(failureStage = failure.stage)
+    }
+
+    override suspend fun saveSourceCredentialsResult(
+        sourceId: Long,
+        username: String,
+        password: String,
+    ): SourceLoginResult = try {
+        saveSourceCredentialsInternal(sourceId, username, password, dismissLegacy = true)
+    } catch (failure: SourceLoginStageException) {
+        SourceLoginResult(false, failureStage = failure.stage)
+    }
 
     private suspend fun saveSourceCredentialsInternal(
         sourceId: Long,
         username: String,
         password: String,
         dismissLegacy: Boolean,
-    ): Boolean = operationMutex.withLock {
+    ): SourceLoginResult = operationMutex.withLock {
         require(username.isNotBlank()) { "Username cannot be blank" }
-        val v2Scope = requireV2SourceScope(sourceId)
-        val success = if (v2Scope != null) {
-            val (sourceKey, storageId) = v2Scope
-            val source = requireNotNull(manager.extensionSourceV2(sourceKey)) {
-                "Unknown extension v2 source: ${sourceKey.canonicalId}"
-            }
-            check(ExtensionCapability.LOGIN in source.descriptor.capabilities) {
-                "Source does not implement the login contract: ${sourceKey.canonicalId}"
-            }
-            val previous = pluginStorage.getCredential(storageId)
-            pluginStorage.setCredential(storageId, PluginCredential(username, password))
-            val loggedIn = manager.withUserInteractionContext(sourceKey) {
-                source.login(v2LoginCredentials(storageId)).loggedIn
-            }
-            if (!loggedIn) {
-                if (previous == null) pluginStorage.clearCredential(storageId)
-                else pluginStorage.setCredential(storageId, previous)
-            }
-            loggedIn
-        } else {
-            val source = manager.source(sourceId) ?: throw IllegalArgumentException("Unknown source: $sourceId")
-            val loginSource = (source as? LoginSource)?.takeIf { it.supportsLogin }
-                ?: error("Source does not implement the login contract: $sourceId")
-            manager.withUserInteractionContext(sourceId) { loginSource.login(username, password) }
+        val v2Scope = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+            requireV2SourceScope(sourceId)
         }
-        if (success) {
+        val result = if (v2Scope != null) {
+            val (sourceKey, storageId) = v2Scope
+            val source = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+                requireNotNull(manager.extensionSourceV2(sourceKey)) {
+                    "Unknown extension v2 source: ${sourceKey.canonicalId}"
+                }
+            }
+            loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+                check(ExtensionCapability.LOGIN in source.descriptor.capabilities) {
+                    "Source does not implement the login contract: ${sourceKey.canonicalId}"
+                }
+            }
+            val previous = secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
+                pluginStorage.getCredential(storageId)
+            }
+            secureStorageStage(SourceLoginFailureStage.WRITE_CREDENTIALS) {
+                pluginStorage.setCredential(storageId, PluginCredential(username, password))
+            }
+            val loginResult = try {
+                loginStage(SourceLoginFailureStage.AUTHENTICATE) {
+                    manager.withUserInteractionContext(sourceKey) {
+                        source.login(v2LoginCredentials(storageId))
+                    }
+                }
+            } catch (failure: SourceLoginStageException) {
+                restoreCredential(storageId, previous, failure)
+                throw failure
+            }
+            if (!loginResult.loggedIn) {
+                restoreCredential(storageId, previous)
+            }
+            SourceLoginResult(loginResult.loggedIn, loginResult.errorMessage)
+        } else {
+            val loginSource = loginStage(SourceLoginFailureStage.PREPARE_SOURCE) {
+                val source = manager.source(sourceId)
+                    ?: throw IllegalArgumentException("Unknown source: $sourceId")
+                (source as? LoginSource)?.takeIf { it.supportsLogin }
+                    ?: error("Source does not implement the login contract: $sourceId")
+            }
+            val loginResult = loginStage(SourceLoginFailureStage.AUTHENTICATE) {
+                manager.withUserInteractionContext(sourceId) {
+                    loginSource.loginResult(username, password)
+                }
+            }
+            SourceLoginResult(loginResult.loggedIn, loginResult.errorMessage?.boundedLoginError())
+        }
+        if (result.succeeded) {
             val storageId = v2Scope?.second ?: sourceId
             // v2 login needs the credential in storage before the call; v1 stores it only after
             // success. Both paths converge here so the settings projection stays consistent.
-            if (v2Scope == null) pluginStorage.setCredential(storageId, PluginCredential(username, password))
+            if (v2Scope == null) secureStorageStage(SourceLoginFailureStage.WRITE_CREDENTIALS) {
+                pluginStorage.setCredential(storageId, PluginCredential(username, password))
+            }
             if (dismissLegacy) loginRequestCoordinator.dismiss(sourceId)
         }
-        rebuildSnapshot(errorMessage = null)
-        success
+        loginStage(SourceLoginFailureStage.REFRESH_SOURCE_STATE) {
+            rebuildSnapshot(errorMessage = null)
+        }
+        result
     }
+
+    private suspend fun restoreCredential(
+        storageId: Long,
+        previous: PluginCredential?,
+        originalFailure: SourceLoginStageException? = null,
+    ) {
+        try {
+            secureStorageStage(SourceLoginFailureStage.RESTORE_CREDENTIALS) {
+                if (previous == null) pluginStorage.clearCredential(storageId)
+                else pluginStorage.setCredential(storageId, previous)
+            }
+        } catch (restoreFailure: SourceLoginStageException) {
+            originalFailure?.let(restoreFailure::addSuppressed)
+            throw restoreFailure
+        }
+    }
+
+    private suspend inline fun <T> loginStage(
+        stage: SourceLoginFailureStage,
+        crossinline block: suspend () -> T,
+    ): T = try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: SourceLoginStageException) {
+        throw failure
+    } catch (failure: Throwable) {
+        throw SourceLoginStageException(stage, failure)
+    }
+
+    private suspend inline fun <T> secureStorageStage(
+        stage: SourceLoginFailureStage,
+        crossinline block: suspend () -> T,
+    ): T = try {
+        withTimeout(SOURCE_SECRET_ACCESS_TIMEOUT_MILLIS) { block() }
+    } catch (timeout: TimeoutCancellationException) {
+        throw SourceLoginStageException(stage, timeout)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: SourceLoginStageException) {
+        throw failure
+    } catch (failure: Throwable) {
+        throw SourceLoginStageException(stage, failure)
+    }
+
+    private fun String.boundedLoginError(): String? =
+        filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
 
     override suspend fun logoutSource(sourceId: Long): Unit = operationMutex.withLock {
         val v2Scope = requireV2SourceScope(sourceId)
@@ -770,6 +918,40 @@ public class PluginBrowseAdapter(
             rebuildSnapshot(errorMessage = null)
         }
 
+    override suspend fun importSourceWebChallengeSession(
+        sourceId: Long,
+        cookies: List<BrowseSourceCookie>,
+        userAgent: String,
+    ): Unit = operationMutex.withLock {
+        val storageId = requireV2SourceScope(sourceId)?.second ?: run {
+            check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
+            sourceId
+        }
+        val safeUserAgent = requireNotNull(normalizePluginUserAgent(userAgent)) {
+            "Invalid browser User-Agent"
+        }
+        require(cookies.isNotEmpty()) { "No browser cookies were supplied" }
+        cookies.forEach { cookie ->
+            require(cookie.name.isNotBlank()) { "Cookie name cannot be blank" }
+            require(cookie.domain.isNotBlank()) { "Cookie domain cannot be blank" }
+            pluginStorage.setCookie(
+                storageId,
+                PluginCookie(
+                    name = cookie.name,
+                    value = cookie.value,
+                    domain = cookie.domain,
+                    path = cookie.path.ifBlank { "/" },
+                    expiresAtEpochMillis = cookie.expiresAtEpochMillis,
+                    secure = cookie.secure,
+                    httpOnly = cookie.httpOnly,
+                    hostOnly = cookie.hostOnly,
+                ),
+            )
+        }
+        pluginStorage.setWebChallengeUserAgent(storageId, safeUserAgent)
+        rebuildSnapshot(errorMessage = null)
+    }
+
     override suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String): Unit =
         operationMutex.withLock {
             val storageId = requireV2SourceScope(sourceId)?.second ?: run {
@@ -789,37 +971,103 @@ public class PluginBrowseAdapter(
         rebuildSnapshot(errorMessage = null)
     }
 
-    override suspend fun sourceWebChallenge(sourceId: Long): SourceWebChallengeRequest? {
+    override suspend fun sourceWebChallenge(
+        sourceId: Long,
+        username: String?,
+        password: String?,
+    ): SourceWebChallengeRequest? {
         val v2Scope = requireV2SourceScope(sourceId)
         val storageId = v2Scope?.second ?: sourceId
         val sourceName: String
         val baseUrl: String
+        val challengeUrl: String
+        val sourceHeaders: Map<String, String>
+        val referer: String?
+        val supportsLogin: Boolean
         if (v2Scope != null) {
             val source = requireNotNull(manager.extensionSourceV2(v2Scope.first)) {
                 "Unknown extension v2 source: ${v2Scope.first.canonicalId}"
             }
             sourceName = source.descriptor.displayName
             baseUrl = source.descriptor.baseUrl.orEmpty()
+            challengeUrl = source.webChallengeUrl() ?: baseUrl
+            // A previously imported browser-bound UA stays paired with its cookie jar. On macOS
+            // the native helper intentionally starts without a custom UA and captures WebKit's
+            // actual value; other platforms can still seed their source-provided browser hint.
+            sourceHeaders = pluginStorage.getWebChallengeUserAgent(storageId)
+                ?.let(::normalizePluginUserAgent)
+                ?.let { mapOf("User-Agent" to it) }
+                ?: source.webChallengeUserAgent()
+                ?.let { mapOf("User-Agent" to it) }
+                .orEmpty()
+            referer = baseUrl
+            supportsLogin = ExtensionCapability.LOGIN in source.descriptor.capabilities
         } else {
             val source = manager.source(sourceId) ?: throw IllegalArgumentException("Unknown source: $sourceId")
             sourceName = source.name
             baseUrl = source.baseUrl
+            challengeUrl = source.webChallengeUrl ?: baseUrl
+            sourceHeaders = source.headers
+            referer = source.headers.header("Referer") ?: source.baseUrl
+            supportsLogin = (source as? LoginSource)?.supportsLogin == true
         }
-        val target = runCatching { Url(baseUrl.trim()) }.getOrNull() ?: return null
+        val sourceOrigin = runCatching { Url(baseUrl.trim()) }.getOrNull() ?: return null
+        val target = runCatching { Url(challengeUrl.trim()) }.getOrNull() ?: return null
         if (target.protocol.name !in setOf("http", "https") || target.host.isBlank()) return null
-        val built = requestBuilder.build(storageId, PluginHttpRequest("GET", target.toString()))
+        require(target.sameOrigin(sourceOrigin)) {
+            "Web challenge URL must use the source's exact origin"
+        }
+        val built = requestBuilder.build(
+            sourceId = storageId,
+            request = PluginHttpRequest("GET", target.toString()),
+            sourceHeaders = sourceHeaders,
+            referer = referer,
+        )
         val userAgent = built.transportRequest.headers.entries
             .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
             ?.value
             .orEmpty()
+        // This method is called only from the explicit Web challenge action. Decrypt credentials
+        // on demand here; catalogue discovery and ordinary snapshot refreshes never receive them.
+        val hasSuppliedCredentialFields = username != null || password != null
+        val suppliedCredential = username
+            ?.takeIf(String::isNotBlank)
+            ?.let { suppliedUsername ->
+                password
+                    ?.takeIf(String::isNotEmpty)
+                    ?.let { suppliedPassword -> PluginCredential(suppliedUsername, suppliedPassword) }
+            }
+        val credential = if (supportsLogin) {
+            if (hasSuppliedCredentialFields) {
+                suppliedCredential
+            } else {
+                pluginStorage.getCredential(storageId)
+                    ?.takeIf { it.username.isNotBlank() && it.password.isNotEmpty() }
+            }
+        } else {
+            null
+        }
         return SourceWebChallengeRequest(
             sourceId = sourceId,
             sourceName = sourceName,
             url = target.toString(),
             userAgent = userAgent,
             cookies = pluginStorage.getCookies(storageId).map(::toBrowseCookie),
+            requiredCookieName = "cf_clearance".takeIf {
+                v2Scope?.first?.let(::requiresCloudflareClearance) == true
+            },
+            username = credential?.username,
+            password = credential?.password,
         )
     }
+
+    private fun requiresCloudflareClearance(sourceKey: SourceKey): Boolean =
+        sourceKey.packageId == "zh.bilimanga" && sourceKey.sourceId == "zh.bilimanga.manga"
+
+    private fun Url.sameOrigin(other: Url): Boolean =
+        protocol.name.equals(other.protocol.name, ignoreCase = true) &&
+            host.equals(other.host, ignoreCase = true) &&
+            port == other.port
 
     private suspend fun refreshLocked(addDefaultRepository: Boolean = true): Unit =
         withContext(Dispatchers.Default) {
@@ -1280,7 +1528,6 @@ public class PluginBrowseAdapter(
             val projected = reused ?: run {
             val descriptor = sourceDescriptors[source.id]
             val supportsLogin = (source as? LoginSource)?.supportsLogin == true
-            val credential = if (supportsLogin) pluginStorage.getCredential(source.id) else null
             val filters = try {
                 source.getFilterList().map { it.toBrowseFilter() }
             } catch (cancelled: CancellationException) {
@@ -1313,19 +1560,13 @@ public class PluginBrowseAdapter(
                 supportsLatest = source.supportsLatest,
                 supportsLogin = supportsLogin,
                 supportsFavorites = source.supportsFavorites,
-                credential = credential?.let { BrowseSourceCredential(it.username, it.password) },
-                cookies = pluginStorage.getCookies(source.id).map { cookie ->
-                    BrowseSourceCookie(
-                        name = cookie.name,
-                        value = cookie.value,
-                        domain = cookie.domain,
-                        path = cookie.path,
-                        expiresAtEpochMillis = cookie.expiresAtEpochMillis,
-                        secure = cookie.secure,
-                        httpOnly = cookie.httpOnly,
-                        hostOnly = cookie.hostOnly,
-                    )
-                },
+                // Credentials and cookies are intentionally not decrypted while rebuilding the
+                // public source catalogue. Desktop protected storage may need interactive OS
+                // authorization; making that part of startup used to hold the complete browse
+                // refresh mutex indefinitely. Secret state is accessed only by explicit login,
+                // cookie-management, challenge, and network operations.
+                credential = null,
+                cookies = emptyList(),
                 preferences = preferences,
                 filters = filters,
                 contentType = descriptor?.contentType ?: PluginContentType.BOTH,
@@ -1349,11 +1590,6 @@ public class PluginBrowseAdapter(
                     val storageId = v2StorageSourceId(sourceKey)
                     val hostSource = manager.extensionSourceV2(sourceKey)
                     val supportsLogin = ExtensionCapability.LOGIN in descriptor.capabilities
-                    val credential = if (supportsLogin) {
-                        storageId?.let { pluginStorage.getCredential(it) }
-                    } else {
-                        null
-                    }
                     val preferences = buildList {
                         storageId?.let { add(networkProxyPreference(it)) }
                         if (hostSource != null && ExtensionCapability.PREFERENCES in descriptor.capabilities) {
@@ -1369,7 +1605,6 @@ public class PluginBrowseAdapter(
                             }
                         }
                     }
-                    val cookies = storageId?.let { pluginStorage.getCookies(it) }.orEmpty()
                     val filters = if (hostSource != null && ExtensionCapability.BROWSE in descriptor.capabilities) {
                         try {
                             hostSource.browseOptions().filters.map { it.toBrowseFilter() }
@@ -1398,8 +1633,10 @@ public class PluginBrowseAdapter(
                             } else {
                                 null
                             },
-                            credential = credential?.let { BrowseSourceCredential(it.username, it.password) },
-                            cookies = cookies.map(::toBrowseCookie),
+                            // See the legacy-source projection above. Never make repository/source
+                            // discovery depend on unlocking protected credential storage.
+                            credential = null,
+                            cookies = emptyList(),
                             preferences = preferences,
                             filters = filters,
                             sourceKey = sourceKey,

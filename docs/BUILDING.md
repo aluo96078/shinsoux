@@ -6,7 +6,8 @@
 
 - JDK 17（Desktop 安裝包需使用包含 `jpackage` 的完整 JDK）
 - Android SDK Platform 36、Build Tools 與 platform-tools
-- macOS：iOS、iOS Simulator 與 DMG 建置必須；另需 Xcode（專案 deployment target 為 iOS 16）及 XcodeGen
+- macOS Desktop：`run`、`desktopTest`、資源準備與 DMG 會使用 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView challenge helper，因此需要 Xcode Command Line Tools、可用的 macOS SDK 與 Swift compiler
+- iOS／iOS Simulator：需完整 Xcode（專案 deployment target 為 iOS 16）及 XcodeGen
 - Windows 11 x64：Windows Desktop 執行與 MSI／EXE 的權威建置環境
 - WiX Toolset 3.x：Compose Desktop／`jpackage` 建立 Windows MSI／EXE 時需要；`candle.exe` 與 `light.exe` 必須可由 `PATH` 找到
 
@@ -16,7 +17,7 @@
 
 Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 
-建立正式 tag 時，多平台安裝包由 GitHub Actions 統一產生；版本格式、產物與 signing secrets 請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫預設版本，其中 version code 必須是正整數。
+建立正式或 beta tag 時，多平台安裝包由 GitHub Actions 統一產生；版本格式、產物與 signing secrets 請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫 package version 與正整數 build number；Android 若需顯示 prerelease suffix，可另傳 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。
 
 ## Workspace 佈局
 
@@ -39,7 +40,7 @@ project/
 ./gradlew :composeApp:desktopTest --rerun-tasks
 ```
 
-這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／ShuYue transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。
+這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／ShuYue transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
 
 Cloudflare Worker 的協定、雙 R2 bucket 與維運工具另需執行：
 
@@ -104,7 +105,7 @@ xcodebuild -project Shinsou.xcodeproj \
 ./gradlew :composeApp:packageDmg
 ```
 
-DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；打包成功只證明 linkage 與 package 設定，不代表 Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
+DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。Gradle 會先以 `xcrun --sdk macosx swiftc` 將 `composeApp/src/desktopMain/swift/ShinsouWebChallenge/main.swift` 編譯成隨 App 封裝的 helper；`run` 與 `desktopTest` 也依賴同一 task。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；打包成功只證明 linkage 與 package 設定，不代表 WKWebView 真實來源 challenge、Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
 
 在 Windows 11 x64 的 PowerShell／Windows Terminal 執行 Desktop build、test 與 app：
 
@@ -201,7 +202,9 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 - 最小化、一般關閉與 Alt+F4 關閉確認
 - Updates Upcoming、Local import、Reader 鍵盤／章節切換
 - Settings 的 Backup／Sync 說明、More 模式切換與 Browse pinned sources
-- Cloudflare fallback 只開外部瀏覽器，且不誤報已匯入外部 cookie
+- macOS Web challenge 開啟獨立 non-persistent WKWebView 視窗；確認 seed cookie、擷取後的 cookie／真實 User-Agent 只寫回該來源，關閉後不保留可供其他 challenge 共用的 WebKit session
+- macOS 只有在 challenge request 明確帶入該來源已保存帳密時，才會於同源頁面與同源 form action 自動填入並提交；跨 origin 頁面／form 必須拒絕，帳密不可出現在 process command line、log 或錯誤訊息
+- macOS challenge 不會讀取 Safari／Chrome 的 cookie database；Windows fallback 只開外部瀏覽器，且不誤報已匯入 Edge／Chrome 等外部 cookie
 - macOS 首次保存敏感來源資料時確認 Keychain 存取；若有舊 `plugin-secrets.key`，確認只有在 Keychain 回讀與既有 AES-GCM 密文驗證都成功後才移除舊檔
 - Security settings 中 App lock／Secure screen 顯示 unavailable 且不可切換；Desktop 不應以固定成功的假驗證繞過 capability gate
 

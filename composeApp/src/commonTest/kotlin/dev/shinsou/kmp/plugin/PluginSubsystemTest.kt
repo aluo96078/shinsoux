@@ -1,5 +1,24 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.plugin.v2.ExtensionCapability
+import dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi
+import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
+import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
+import dev.shinsou.kmp.plugin.v2.ImmutableExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.LoginCredentialsV2
+import dev.shinsou.kmp.plugin.v2.LoginResultV2
+import dev.shinsou.kmp.plugin.v2.PagedResultV2
+import dev.shinsou.kmp.plugin.v2.PreferenceV2
+import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import dev.shinsou.kmp.plugin.v2.SourceDescriptorV2
+import dev.shinsou.kmp.plugin.v2.TextChunkStreamV2
+import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import dev.shinsou.kmp.plugin.v2.WebChallengeUserAgentSourceV2
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -18,6 +37,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@OptIn(ExtensionImplementationApi::class)
 class PluginSubsystemTest {
     @Test
     fun repositoryFormatsDecodeStringAndNumericIds() {
@@ -304,6 +324,40 @@ class PluginSubsystemTest {
     }
 
     @Test
+    fun browserBoundUserAgentOverridesPluginAndRequestHintsUntilCookiesAreCleared() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        storage.setCookie(7, PluginCookie("cf_clearance", "verified", ".example.com"))
+        storage.setWebChallengeUserAgent(7, "  WKWebView Native/1.0  ")
+        val builder = PluginRequestBuilder(
+            storage,
+            userAgents = PluginUserAgentProvider { "fallback-agent" },
+        )
+
+        val verified = builder.build(
+            sourceId = 7,
+            request = PluginHttpRequest(
+                "GET",
+                "https://www.example.com/login",
+                headers = mapOf("user-agent" to "request-agent"),
+            ),
+            sourceHeaders = mapOf("User-Agent" to "plugin-agent"),
+        )
+        assertEquals(
+            "WKWebView Native/1.0",
+            verified.transportRequest.headers.entries.single { it.key.equals("User-Agent", true) }.value,
+        )
+
+        storage.clearCookies(7)
+        assertNull(storage.getWebChallengeUserAgent(7))
+        val cleared = builder.build(
+            sourceId = 7,
+            request = PluginHttpRequest("GET", "https://www.example.com/login"),
+            sourceHeaders = mapOf("User-Agent" to "plugin-agent"),
+        )
+        assertEquals("plugin-agent", cleared.transportRequest.headers["User-Agent"])
+    }
+
+    @Test
     fun pageFragmentSeparatesHeadersFromDescrambleMetadata() {
         val parsed = PageRequestMetadata.parse(
             "https://img.example/a.jpg#Referer=https%3A%2F%2Fsite.example%2F&" +
@@ -335,7 +389,12 @@ class PluginSubsystemTest {
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         }
-        val kv = InMemoryPluginKeyValueStore()
+        val persisted = InMemoryPluginKeyValueStore()
+        KeyValuePluginStorage(persisted).apply {
+            setCredential(101L, PluginCredential("saved-user", "saved-password"))
+            setCookie(101L, PluginCookie("saved-session", "saved-cookie", ".first.example"))
+        }
+        val kv = CountingPluginKeyValueStore(persisted)
         val storage = KeyValuePluginStorage(kv)
         val trust = KeyValuePluginTrustStore(kv)
         val runtimeFactory = RecordingRuntimeFactory()
@@ -378,6 +437,9 @@ class PluginSubsystemTest {
         assertEquals(1, second.filterListRequests, "the new runtime must still build complete settings")
         assertEquals(1, second.preferenceDefinitionRequests)
         assertEquals(setOf(101L, 202L), browse.state.value.sources.map { it.id }.toSet())
+        assertEquals(0, kv.reads["source.101.credential.username"] ?: 0)
+        assertEquals(0, kv.reads["source.101.credential.password"] ?: 0)
+        assertEquals(0, kv.reads["source.101.cookies"] ?: 0)
     }
 
     @Test
@@ -434,10 +496,308 @@ class PluginSubsystemTest {
         val source = browse.state.value.sources.single()
         assertFalse(source.supportsLogin)
         assertNull(source.credential, "stale secrets must not enter the UI snapshot")
-        assertFailsWith<IllegalStateException> {
-            browse.saveSourceCredentials(source.id, "new-user", "new-password")
-        }
+        val rejected = browse.saveSourceCredentialsResult(source.id, "new-user", "new-password")
+        assertFalse(rejected.succeeded)
+        assertEquals(
+            dev.shinsou.kmp.ui.SourceLoginFailureStage.PREPARE_SOURCE,
+            rejected.failureStage,
+        )
         assertEquals(staleCredential, storage.getCredential(404L), "unsupported writes must be rejected")
+    }
+
+    @Test
+    fun uiAdapterPreservesV2LoginFailureMessageAndRestoresCredentialState() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey(2, "zh.bilimanga", "zh.bilimanga.novel")
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "嗶哩輕小說（Linovelib）",
+            languageTag = "zh",
+            supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://tw.linovelib.com",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.5.0",
+                    displayName = "嗶哩輕小說／漫畫",
+                    sources = listOf(descriptor),
+                ),
+                listOf(
+                    FailingLoginExtensionSource(
+                        descriptor = descriptor,
+                        webChallengeUserAgent = "reviewed-source-agent",
+                        webChallengeUrl = "https://tw.linovelib.com/login.php",
+                    ),
+                ),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+            requestBuilder = PluginRequestBuilder(
+                storage,
+                userAgents = PluginUserAgentProvider { "challenge-fallback-agent" },
+            ),
+        )
+
+        try {
+            browse.setPluginUiAvailable(true)
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            storage.setCredential(
+                -9_110_000_000_000_004L,
+                PluginCredential("stored-user", "stored-password"),
+            )
+            val challenge = assertNotNull(browse.sourceWebChallenge(source.id))
+            assertEquals("reviewed-source-agent", challenge.userAgent)
+            assertEquals("https://tw.linovelib.com/login.php", challenge.url)
+            assertEquals("stored-user", challenge.username)
+            assertEquals("stored-password", challenge.password)
+            val editedChallenge = assertNotNull(
+                browse.sourceWebChallenge(source.id, "edited-user", "edited-password"),
+            )
+            assertEquals("edited-user", editedChallenge.username)
+            assertEquals("edited-password", editedChallenge.password)
+            val blankChallenge = assertNotNull(browse.sourceWebChallenge(source.id, "", ""))
+            assertNull(blankChallenge.username)
+            assertNull(blankChallenge.password)
+            storage.clearCredential(-9_110_000_000_000_004L)
+            val result = browse.saveSourceCredentialsResult(source.id, "alice", "wrong")
+
+            assertFalse(result.succeeded)
+            assertEquals("帳號或密碼錯誤", result.errorMessage)
+            assertNull(storage.getCredential(-9_110_000_000_000_004L))
+        } finally {
+            manager.close()
+            http.close()
+        }
+    }
+
+    @Test
+    fun uiAdapterRunsV2LoginWithoutGrantingModalAuthorityWhenUiIsUnavailable() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey(2, "zh.bilimanga", "zh.bilimanga.novel")
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "UI state fixture",
+            languageTag = "en",
+            supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://fixture.example",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.0.0",
+                    displayName = "UI state fixture",
+                    sources = listOf(descriptor),
+                ),
+                listOf(FailingLoginExtensionSource(descriptor, null)),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+        )
+
+        try {
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            val result = browse.saveSourceCredentialsResult(source.id, "alice", "wrong")
+
+            assertFalse(result.succeeded)
+            assertEquals("帳號或密碼錯誤", result.errorMessage)
+            assertNull(result.failureStage)
+            assertNull(storage.getCredential(-9_110_000_000_000_004L))
+        } finally {
+            manager.close()
+            http.close()
+        }
+    }
+
+    @Test
+    fun uiAdapterRequiresCloudflareCookieByStableBiliMangaSourceIdentity() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey(2, "zh.bilimanga", "zh.bilimanga.manga")
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "嗶哩漫畫（本地化名稱）",
+            languageTag = "zh",
+            supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://www.bilimanga.net",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.5.3",
+                    displayName = "嗶哩輕小說／漫畫",
+                    sources = listOf(descriptor),
+                ),
+                listOf(
+                    FailingLoginExtensionSource(
+                        descriptor = descriptor,
+                        webChallengeUserAgent = "reviewed-source-agent",
+                        webChallengeUrl = "https://www.bilimanga.net/login.php",
+                    ),
+                ),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+        )
+
+        try {
+            browse.setPluginUiAvailable(true)
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            val challenge = assertNotNull(browse.sourceWebChallenge(source.id))
+
+            assertEquals("cf_clearance", challenge.requiredCookieName)
+            assertEquals("https://www.bilimanga.net/login.php", challenge.url)
+        } finally {
+            manager.close()
+            http.close()
+        }
+    }
+
+    @Test
+    fun uiAdapterRejectsCrossOriginV2WebChallengeUrl() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey(2, "example.challenge", "example.challenge")
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "Challenge fixture",
+            languageTag = "en",
+            supportedContentKinds = setOf(ContentKind.PLAIN_TEXT),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://source.example",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.0.0",
+                    displayName = "Challenge fixture",
+                    sources = listOf(descriptor),
+                ),
+                listOf(
+                    FailingLoginExtensionSource(
+                        descriptor = descriptor,
+                        webChallengeUserAgent = "fixture-agent",
+                        webChallengeUrl = "https://evil.example/login.php",
+                    ),
+                ),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+        )
+
+        try {
+            browse.setPluginUiAvailable(true)
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            assertFailsWith<IllegalArgumentException> { browse.sourceWebChallenge(source.id) }
+        } finally {
+            manager.close()
+            http.close()
+        }
     }
 
     @Test
@@ -463,7 +823,9 @@ class PluginSubsystemTest {
         val kv = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(kv)
         val trust = KeyValuePluginTrustStore(kv)
-        val runtimeFactory = RecordingRuntimeFactory()
+        val runtimeFactory = RecordingRuntimeFactory(
+            sourceHeaders = mapOf("User-Agent" to "source-specific-agent"),
+        )
         val loginRequests = PluginLoginRequestCoordinator()
         val repositoryClient = ExtensionRepositoryClient(HttpClient(engine), cacheToken = { 1L })
         val manager = PluginManager(
@@ -519,7 +881,7 @@ class PluginSubsystemTest {
         )
         val emptyChallenge = assertNotNull(browse.sourceWebChallenge(123))
         assertEquals("https://source.example", emptyChallenge.url.trimEnd('/'))
-        assertEquals("challenge-agent", emptyChallenge.userAgent)
+        assertEquals("source-specific-agent", emptyChallenge.userAgent)
         assertTrue(emptyChallenge.cookies.isEmpty())
 
         browse.saveSourcePreferences(123, mapOf("language" to "en", "show_nsfw" to "true"))
@@ -531,12 +893,15 @@ class PluginSubsystemTest {
             listOf(SourceLoginRequest(123, "Test Source", "Account required")),
             browse.loginRequests.value,
         )
-        assertFalse(browse.saveSourceCredentials(123, "alice", "wrong"))
+        val failedLogin = browse.saveSourceCredentialsResult(123, "alice", "wrong")
+        assertFalse(failedLogin.succeeded)
+        assertEquals("帳號或密碼錯誤", failedLogin.errorMessage)
         assertEquals(null, storage.getCredential(123))
         assertEquals(1, browse.loginRequests.value.size)
         assertTrue(browse.saveSourceCredentials(123, "alice", "secret"))
         assertEquals(PluginCredential("alice", "secret"), storage.getCredential(123))
-        assertEquals("alice", browse.state.value.sources.single().credential?.username)
+        assertNull(browse.state.value.sources.single().credential)
+        assertEquals("alice", browse.loadSourceSecrets(123).secrets.credential?.username)
         assertTrue(browse.loginRequests.value.isEmpty())
         assertTrue(loginRequests.request(123, "Test Source", null))
         browse.dismissSourceLoginRequest(123)
@@ -567,7 +932,8 @@ class PluginSubsystemTest {
             123,
             dev.shinsou.kmp.ui.SourceCookie("session", "abc", ".images.example"),
         )
-        assertEquals("session", browse.state.value.sources.single().cookies.single().name)
+        assertTrue(browse.state.value.sources.single().cookies.isEmpty())
+        assertEquals("session", browse.loadSourceSecrets(123).secrets.cookies.single().name)
         val content = PluginContentAdapter(
             manager = manager,
             chapterResolver = PluginReaderChapterResolver { _, _ ->
@@ -581,22 +947,22 @@ class PluginSubsystemTest {
         assertEquals("https://source.example/chapter/1", reader.referer)
         assertEquals("https://source.example/", page.headers["Referer"])
         assertEquals("session=abc", page.headers["Cookie"])
-        assertEquals("fixture-agent", page.headers["User-Agent"])
+        assertEquals("source-specific-agent", page.headers["User-Agent"])
 
         browse.deleteSourceCookie(123, "session", ".images.example")
-        assertTrue(browse.state.value.sources.single().cookies.isEmpty())
+        assertTrue(browse.loadSourceSecrets(123).secrets.cookies.isEmpty())
         browse.setSourceCookie(123, dev.shinsou.kmp.ui.SourceCookie("one", "1", ".source.example"))
         browse.setSourceCookie(123, dev.shinsou.kmp.ui.SourceCookie("two", "2", ".source.example"))
         val populatedChallenge = assertNotNull(browse.sourceWebChallenge(123))
         assertEquals(listOf("one", "two"), populatedChallenge.cookies.map { it.name })
         assertTrue(populatedChallenge.cookies.all { !it.hostOnly })
         browse.clearSourceCookies(123)
-        assertTrue(browse.state.value.sources.single().cookies.isEmpty())
+        assertTrue(browse.loadSourceSecrets(123).secrets.cookies.isEmpty())
 
         browse.logoutSource(123)
         assertTrue(runtimeFactory.runtime?.loggedOut == true)
         assertEquals(null, storage.getCredential(123))
-        assertEquals(null, browse.state.value.sources.single().credential)
+        assertEquals(null, browse.loadSourceSecrets(123).secrets.credential)
 
         browse.setSourceEnabled(123, false)
         assertFalse(browse.state.value.sources.single().enabled)
@@ -621,6 +987,7 @@ class PluginSubsystemTest {
 
 private class RecordingRuntimeFactory(
     private val supportsLogin: Boolean = true,
+    private val sourceHeaders: Map<String, String> = emptyMap(),
 ) : ScriptPluginRuntimeFactory {
     var runtime: RecordingRuntime? = null
     val createdPluginIds = mutableListOf<String>()
@@ -630,7 +997,7 @@ private class RecordingRuntimeFactory(
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = RecordingRuntime(manifest, supportsLogin).also {
+    ): ScriptPluginRuntime = RecordingRuntime(manifest, supportsLogin, sourceHeaders).also {
         runtime = it
         createdPluginIds += manifest.id
         runtimes[manifest.id] = it
@@ -640,6 +1007,7 @@ private class RecordingRuntimeFactory(
 private class RecordingRuntime(
     manifest: PluginManifest,
     override val supportsLogin: Boolean,
+    override val headers: Map<String, String>,
 ) : ScriptPluginRuntime {
     private val source = requireNotNull(manifest.sources?.firstOrNull())
     var popularPage: Int? = null
@@ -656,7 +1024,6 @@ private class RecordingRuntime(
     override val name: String = source.name
     override val lang: String = source.lang
     override val baseUrl: String = source.baseUrl.orEmpty()
-    override val headers: Map<String, String> = emptyMap()
     override val supportsLatest: Boolean = true
     override val recentLogs: List<String> = emptyList()
 
@@ -708,12 +1075,43 @@ private class RecordingRuntime(
     )
     override suspend fun login(username: String, password: String): Boolean =
         username == "alice" && password == "secret"
+    override suspend fun loginResult(username: String, password: String): LoginAttemptResult =
+        LoginAttemptResult(
+            loggedIn = login(username, password),
+            errorMessage = if (password == "secret") null else "帳號或密碼錯誤",
+        )
     override suspend fun logout() {
         loggedOut = true
     }
     override suspend fun close() {
         closed = true
     }
+}
+
+@OptIn(ExtensionImplementationApi::class)
+private class FailingLoginExtensionSource(
+    override val descriptor: SourceDescriptorV2,
+    override val webChallengeUserAgent: String?,
+    override val webChallengeUrl: String? = null,
+) : ExtensionSourceV2, WebChallengeUserAgentSourceV2 {
+    override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2()
+    override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
+        PagedResultV2(emptyList(), false)
+    override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> = PagedResultV2(emptyList(), false)
+    override suspend fun browse(options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2> =
+        PagedResultV2(emptyList(), false)
+    override suspend fun details(remotePublicationId: String): RemotePublicationV2 =
+        RemotePublicationV2(remotePublicationId, "Fixture")
+    override suspend fun units(remotePublicationId: String, page: Int): PagedResultV2<RemoteUnitV2> =
+        PagedResultV2(emptyList(), false)
+    override suspend fun content(remotePublicationId: String, remoteUnitId: String): UnitContentResultV2 =
+        error("not used")
+    override suspend fun openTextStream(streamId: String): TextChunkStreamV2 = error("not used")
+    override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 =
+        LoginResultV2(false, "帳號或密碼錯誤")
+    override suspend fun logout(): Unit = Unit
+    override suspend fun preferences(): List<PreferenceV2> = emptyList()
+    override suspend fun favorite(remotePublicationId: String, favorite: Boolean): Unit = Unit
 }
 
 private fun testPluginManager(

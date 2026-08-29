@@ -521,6 +521,38 @@ data class SourceLoginRequest(
     val exactTarget: dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget? = null,
 )
 
+/** Stable failure boundary for a host-managed source login; no raw exception text is exposed. */
+enum class SourceLoginFailureStage {
+    PREPARE_SOURCE,
+    READ_CREDENTIALS,
+    WRITE_CREDENTIALS,
+    AUTHENTICATE,
+    RESTORE_CREDENTIALS,
+    REFRESH_SOURCE_STATE,
+    UNKNOWN,
+}
+
+/** Result of a host-managed source login, including an optional safe source error. */
+data class SourceLoginResult(
+    val succeeded: Boolean,
+    val errorMessage: String? = null,
+    val failureStage: SourceLoginFailureStage? = null,
+)
+
+/** Secret source settings loaded only while an explicit account/settings surface is open. */
+data class SourceSecrets(
+    val credential: SourceCredential? = null,
+    val cookies: List<SourceCookie> = emptyList(),
+)
+
+/** Typed secure-storage result; raw platform/runtime exceptions never cross into the UI. */
+data class SourceSecretsResult(
+    val secrets: SourceSecrets = SourceSecrets(),
+    val failureStage: SourceLoginFailureStage? = null,
+) {
+    val succeeded: Boolean get() = failureStage == null
+}
+
 /** Extension/source bridge. Plugin modules adapt their own models to these DTOs. */
 interface BrowseCallbacks {
     val state: StateFlow<BrowseSnapshot>
@@ -701,6 +733,29 @@ interface BrowseCallbacks {
 
     /** Invokes the advertised login contract and stores credentials only after a successful login. */
     suspend fun saveSourceCredentials(sourceId: Long, username: String, password: String): Boolean = false
+    suspend fun saveSourceCredentialsResult(
+        sourceId: Long,
+        username: String,
+        password: String,
+    ): SourceLoginResult = try {
+        SourceLoginResult(saveSourceCredentials(sourceId, username, password))
+    } catch (_: Throwable) {
+        // Runtime exceptions may contain transport details or secrets; the UI uses its stable
+        // generic fallback when a source does not provide an explicit safe failure message.
+        SourceLoginResult(false, failureStage = SourceLoginFailureStage.UNKNOWN)
+    }
+    suspend fun saveSourceEventCredentialsResult(
+        eventId: String,
+        sourceId: Long,
+        username: String,
+        password: String,
+    ): SourceLoginResult = try {
+        SourceLoginResult(saveSourceEventCredentials(eventId, sourceId, username, password))
+    } catch (_: Throwable) {
+        // Runtime exceptions may contain transport details or secrets; the UI uses its stable
+        // generic fallback when a source does not provide an explicit safe failure message.
+        SourceLoginResult(false, failureStage = SourceLoginFailureStage.UNKNOWN)
+    }
     suspend fun saveSourceEventCredentials(
         eventId: String,
         sourceId: Long,
@@ -708,19 +763,39 @@ interface BrowseCallbacks {
         password: String,
     ): Boolean = saveSourceCredentials(sourceId, username, password)
 
+    /**
+     * Decrypts one source's private settings on demand. Catalogue refresh and source discovery
+     * must never call this method because protected storage may require interactive OS access.
+     */
+    suspend fun loadSourceSecrets(sourceId: Long): SourceSecretsResult = SourceSecretsResult()
+
     suspend fun logoutSource(sourceId: Long) = Unit
 
     suspend fun setSourceCookie(sourceId: Long, cookie: SourceCookie) = Unit
+
+    /** Persists one isolated browser session and its browser-bound User-Agent together. */
+    suspend fun importSourceWebChallengeSession(
+        sourceId: Long,
+        cookies: List<SourceCookie>,
+        userAgent: String,
+    ) {
+        cookies.forEach { cookie -> setSourceCookie(sourceId, cookie) }
+    }
 
     suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String) = Unit
 
     suspend fun clearSourceCookies(sourceId: Long) = Unit
 
     /**
-     * Builds the browser challenge request with the exact source URL, network user agent, and
-     * source-isolated cookies used by Browse/Reader/Download.
+     * Builds the browser challenge request with the exact source URL and source-isolated cookies.
+     * A platform browser may need its native User-Agent to complete anti-bot verification; the
+     * actual value captured with the resulting cookies is then reused by Browse/Reader/Download.
      */
-    suspend fun sourceWebChallenge(sourceId: Long): SourceWebChallengeRequest? = null
+    suspend fun sourceWebChallenge(
+        sourceId: Long,
+        username: String? = null,
+        password: String? = null,
+    ): SourceWebChallengeRequest? = null
 
     companion object {
         private val emptyState = MutableStateFlow(BrowseSnapshot())
@@ -855,7 +930,18 @@ data class SourceWebChallengeRequest(
     val url: String,
     val userAgent: String,
     val cookies: List<SourceCookie> = emptyList(),
-)
+    /** Cookie name that proves the requested anti-bot challenge completed, when one is required. */
+    val requiredCookieName: String? = null,
+    /** Credentials are supplied only for an explicit, source-scoped browser login request. */
+    val username: String? = null,
+    val password: String? = null,
+) {
+    /** Prevent accidental logging of URLs, cookies, browser fingerprints, or credentials. */
+    override fun toString(): String =
+        "SourceWebChallengeRequest(sourceId=$sourceId, sourceName=$sourceName, " +
+            "cookieCount=${cookies.size}, requiresChallengeCookie=${requiredCookieName != null}, " +
+            "hasCredentials=${!username.isNullOrBlank() && !password.isNullOrEmpty()})"
+}
 
 data class SourcePreference(
     val key: String,

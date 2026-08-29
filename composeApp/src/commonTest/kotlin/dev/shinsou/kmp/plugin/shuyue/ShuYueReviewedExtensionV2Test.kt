@@ -30,6 +30,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ShuYueReviewedExtensionV2Test {
@@ -218,6 +219,64 @@ class ShuYueReviewedExtensionV2Test {
                 5,
                 "f".repeat(64),
             ),
+        )
+        val biliProfiles = ShuYueReviewedPluginCatalogV2.profiles
+            .filter { it.identity.packageId == "zh.bilimanga" }
+            .sortedBy { it.identity.versionCode }
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), biliProfiles.map { it.identity.versionCode })
+        val currentBili = requireNotNull(
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.bilimanga",
+                "1.5.2",
+                8,
+                "961c4ee367bba45035825f38dc64fefad5431ddfbc548afd04025c4adaf40a99",
+            ),
+        )
+        assertTrue(ExtensionCapability.LOGIN in currentBili.capabilities)
+        assertTrue(ShuYueExecutionPermissionV2.COOKIE_STORAGE in currentBili.requiredPermissions)
+        assertTrue(ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS in currentBili.requiredPermissions)
+        assertTrue(ShuYueExecutionPermissionV2.LOGIN_PROMPT in currentBili.requiredPermissions)
+        assertTrue(ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in currentBili.requiredPermissions)
+        val challengeBili = requireNotNull(
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.bilimanga",
+                "1.5.3",
+                9,
+                "be9855b88606ee13187b4236bfb04b01dacabbd2db35b3686aef61897f5cb63b",
+            ),
+        )
+        assertEquals(
+            "https://www.bilimanga.net/login.php",
+            challengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.manga" }.webChallengeUrl,
+        )
+        assertNull(challengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.novel" }.webChallengeUrl)
+        val currentChallengeBili = requireNotNull(
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.bilimanga",
+                "1.5.4",
+                10,
+                "949464e17bb9478c07a8ae03aee76ca81afe4bb57d574a3098735bb236850ee1",
+            ),
+        )
+        assertEquals(
+            "https://tw.linovelib.com/login.php",
+            currentChallengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.novel" }.webChallengeUrl,
+        )
+        assertEquals(
+            "https://www.bilimanga.net/login.php",
+            currentChallengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.manga" }.webChallengeUrl,
+        )
+        val browserSessionBili = requireNotNull(
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.bilimanga",
+                "1.5.5",
+                11,
+                "c2481811290f18ce91d8274c76081faa04f1ca29b091f0205e842c37a0d1f0e8",
+            ),
+        )
+        assertEquals(
+            setOf("zh.bilimanga.novel", "zh.bilimanga.manga"),
+            browserSessionBili.sourceProfiles.map { it.sourceId }.toSet(),
         )
     }
 

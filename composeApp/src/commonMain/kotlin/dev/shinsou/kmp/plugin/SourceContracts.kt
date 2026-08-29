@@ -19,6 +19,8 @@ public interface CatalogueSource : Source {
     public val supportsFavorites: Boolean get() = false
     public val baseUrl: String
     public val headers: Map<String, String> get() = emptyMap()
+    /** Optional protected, same-origin endpoint used to mint browser-bound anti-bot cookies. */
+    public val webChallengeUrl: String? get() = null
 
     public suspend fun getPopularManga(page: Int): MangasPage
     public suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage
@@ -31,8 +33,20 @@ public interface CatalogueSource : Source {
 public interface LoginSource {
     public val supportsLogin: Boolean
     public suspend fun login(username: String, password: String): Boolean
+    /**
+     * Executes login while preserving a bounded, source-approved failure message for the host UI.
+     * Existing sources only implement [login], so the default keeps the legacy contract intact.
+     */
+    public suspend fun loginResult(username: String, password: String): LoginAttemptResult =
+        LoginAttemptResult(login(username, password))
     public suspend fun logout()
 }
+
+/** The only login response details that may cross from a source into host UI. */
+public data class LoginAttemptResult(
+    val loggedIn: Boolean,
+    val errorMessage: String? = null,
+)
 
 /** A source that describes settings rendered and persisted by the host application. */
 public interface ConfigurableSource : Source {

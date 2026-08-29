@@ -30,13 +30,13 @@ internal actual fun PlatformWebChallengeView(
     request: SourceWebChallengeRequest,
     captureRequest: Int,
     onPageLoaded: () -> Unit,
-    onCookiesCaptured: (List<SourceCookie>) -> Unit,
+    onSessionCaptured: (WebChallengeCapture) -> Unit,
     onError: (String) -> Unit,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
     val currentPageLoaded = rememberUpdatedState(onPageLoaded)
-    val currentCookiesCaptured = rememberUpdatedState(onCookiesCaptured)
+    val currentSessionCaptured = rememberUpdatedState(onSessionCaptured)
     val currentError = rememberUpdatedState(onError)
     val state = remember(request) {
         val cookieManager = CookieManager.getInstance().apply { setAcceptCookie(true) }
@@ -59,15 +59,10 @@ internal actual fun PlatformWebChallengeView(
     }
 
     LaunchedEffect(state, request) {
-        val initial = normalizeWebChallengeCookies(request.url, request.cookies)
+        val initial = webChallengeSeedCookies(request)
         state.webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
                 currentPageLoaded.value.invoke()
-                val cookies = state.cookies(request.url)
-                if (!state.autoReported && cookies.any { it.name == "cf_clearance" }) {
-                    state.autoReported = true
-                    currentCookiesCaptured.value.invoke(cookies)
-                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, navigation: WebResourceRequest): Boolean {
@@ -98,7 +93,9 @@ internal actual fun PlatformWebChallengeView(
         if (captureRequest > 0) {
             state.cookieManager.flush()
             val cookies = state.cookies(request.url)
-            currentCookiesCaptured.value.invoke(cookies)
+            currentSessionCaptured.value.invoke(
+                WebChallengeCapture(cookies = cookies, userAgent = state.webView.settings.userAgentString.orEmpty()),
+            )
         }
     }
 
@@ -118,7 +115,6 @@ private class AndroidChallengeState(
     val webView: WebView,
     val cookieManager: CookieManager,
 ) {
-    var autoReported: Boolean = false
     private var released: Boolean = false
 
     fun cookies(requestUrl: String): List<SourceCookie> =

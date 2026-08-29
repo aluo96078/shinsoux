@@ -55,6 +55,7 @@ import dev.shinsou.kmp.plugin.v2.TextPayloadSourceV2
 import dev.shinsou.kmp.plugin.v2.UnitContentPayload
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.plugin.v2.SourceLifecycleControlledExtensionPackageRuntimeV2
+import dev.shinsou.kmp.plugin.v2.WebChallengeUserAgentSourceV2
 import dev.shinsou.kmp.plugin.v2.toBoundedRemoteMetadata
 import dev.shinsou.kmp.plugin.v2.toOptionalBoundedRemoteMetadata
 import kotlinx.serialization.builtins.serializer
@@ -107,6 +108,7 @@ public fun productionShuYueReviewedAdmissionV2(
         environment = environment,
         credentialsResolver = credentialsResolver,
         executionScopes = executionScopes,
+        reviewedProfiles = reviewedProfiles,
     ),
     reviewedProfiles = reviewedProfiles,
 )
@@ -123,8 +125,17 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
     private val environment: ScriptPluginEnvironment,
     private val credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
     private val executionScopes: ShuYueExecutionScopeResolverV2 = BuiltInShuYueExecutionScopesV2,
+    reviewedProfiles: List<ShuYueReviewedPluginProfileV2> = ShuYueReviewedPluginCatalogV2.profiles,
 ) : ShuYueReviewedRuntimeFactoryV2 {
+    private val reviewedProfiles: List<ShuYueReviewedPluginProfileV2> = reviewedProfiles.toList()
     private var nextEventRuntimeGeneration: Long = 0
+
+    init {
+        require(this.reviewedProfiles.isNotEmpty()) { "Reviewed ShuYue profile catalogue is empty" }
+        require(this.reviewedProfiles.map { it.identity }.distinct().size == this.reviewedProfiles.size) {
+            "Reviewed ShuYue profile catalogue contains duplicate identities"
+        }
+    }
 
     override suspend fun create(artifact: ShuYueAdmittedScriptV2): CloseableExtensionPackageRuntimeV2 {
         require(ShuYueExecutionPermissionV2.EXECUTE_SCRIPT in artifact.grantedPermissions) {
@@ -135,6 +146,8 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
         }
         val descriptor = artifact.descriptor
         descriptor.validate()
+        val reviewedProfile = reviewedProfiles.singleOrNull { it.identity == artifact.identity }
+            ?: error("Reviewed ShuYue runtime lacks an exact admitted profile")
         val eventGateway = environment.systemEventSink as? PluginSystemEventGateway
         val eventContextRegistry = environment.systemEventContextRegistry ?: eventGateway?.contextRegistry
         val filteredStorage = CapabilityFilteredShuYueStorage(
@@ -206,6 +219,9 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     val source = ProductionShuYueSourceV2(
                         descriptor = sourceDescriptor,
                         runtime = runtime,
+                        reviewedWebChallengeUrl = reviewedProfile.sourceProfiles
+                            .single { it.sourceId == sourceDescriptor.sourceKey.sourceId }
+                            .webChallengeUrl,
                         credentialsResolver = credentialsResolver,
                         eventBinding = eventBinding,
                         hasStoredCredentials = { filteredStorage.getCredential(executionScope) != null },
@@ -350,17 +366,26 @@ private data class ReviewedEventBinding(
 private class ProductionShuYueSourceV2(
     override val descriptor: SourceDescriptorV2,
     private val runtime: ScriptPluginRuntime,
+    private val reviewedWebChallengeUrl: String?,
     private val credentialsResolver: LegacyLoginCredentialsResolverV2?,
     private val eventBinding: ReviewedEventBinding?,
     private val hasStoredCredentials: suspend () -> Boolean,
     private val requestLogin: (String?) -> Boolean,
-) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2 {
+) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2, WebChallengeUserAgentSourceV2 {
     private val interactionMutex = Mutex()
     /** Serializes context-bearing engine calls so a later invocation cannot replace its handle. */
     private val invocationMutex = Mutex()
     private var interactionCount = 0
     private val sourceStateLock = SynchronousLock()
     private var sourceEnabled: Boolean = true
+
+    override val webChallengeUserAgent: String?
+        get() = runtime.headers.entries
+            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+            ?.value
+
+    override val webChallengeUrl: String?
+        get() = reviewedWebChallengeUrl ?: runtime.webChallengeUrl
 
     override suspend fun <T> withUserInteractionContext(block: suspend () -> T): T {
         interactionMutex.withLock {
@@ -648,7 +673,8 @@ private class ProductionShuYueSourceV2(
     override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
         ensureSourceEnabled()
         val resolved = credentialsResolver?.resolve(credentials) ?: return LoginResultV2(false)
-        return LoginResultV2(runtime.login(resolved.username, resolved.password))
+        val result = runtime.loginResult(resolved.username, resolved.password)
+        return LoginResultV2(result.loggedIn, result.errorMessage?.boundedLoginError())
     }
 
     override suspend fun logout(): Unit = ensureSourceEnabled().let { runtime.logout() }
@@ -732,6 +758,9 @@ private class ProductionShuYueSourceV2(
         }
     }
 }
+
+private fun String.boundedLoginError(): String? =
+    filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
 
 private data class PendingShuYueTextStream(
     val text: String,
@@ -875,6 +904,17 @@ private class CapabilityFilteredShuYueStorage(
 
     override suspend fun clearCookies(sourceId: Long) {
         if (cookiesAllowed) delegate.clearCookies(sourceId)
+    }
+
+    override suspend fun getWebChallengeUserAgent(sourceId: Long): String? =
+        if (cookiesAllowed) delegate.getWebChallengeUserAgent(sourceId) else null
+
+    override suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) {
+        if (cookiesAllowed) delegate.setWebChallengeUserAgent(sourceId, userAgent)
+    }
+
+    override suspend fun clearWebChallengeUserAgent(sourceId: Long) {
+        if (cookiesAllowed) delegate.clearWebChallengeUserAgent(sourceId)
     }
 }
 

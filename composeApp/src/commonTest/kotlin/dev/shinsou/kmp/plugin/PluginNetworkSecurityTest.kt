@@ -194,6 +194,24 @@ class PluginNetworkSecurityTest {
         assertEquals("sid=account; sid=root", assertNotNull(captured).headers["Cookie"])
     }
 
+    @Test
+    fun explicitCookieNameOverridesThePersistedJarWithoutDuplication() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        storage.setCookie(12, PluginCookie("night", "stored", "cookie.example"))
+        storage.setCookie(12, PluginCookie("cf_clearance", "clearance", "cookie.example"))
+
+        val built = PluginRequestBuilder(storage).build(
+            sourceId = 12,
+            request = PluginHttpRequest(
+                method = "GET",
+                url = "https://cookie.example/reader",
+                headers = mapOf("Cookie" to "night=1"),
+            ),
+        )
+
+        assertEquals("night=1; cf_clearance=clearance", built.transportRequest.headers["Cookie"])
+    }
+
     private fun client(
         storage: PluginStorage,
         now: Long = 1_000L,

@@ -82,6 +82,8 @@ private class RhinoScriptPluginRuntime private constructor(
         private set
     override var headers: Map<String, String> = emptyMap()
         private set
+    override var webChallengeUrl: String? = null
+        private set
     override val recentLogs: List<String> get() = logs.toList()
 
     private suspend fun initialize(script: String) = onEngine { context ->
@@ -144,6 +146,7 @@ private class RhinoScriptPluginRuntime private constructor(
             headers = headers + ("Referer" to baseUrl)
         }
         bridge.sourceHeaders = headers
+        webChallengeUrl = sourceObject.stringProperty("webChallengeUrl")?.takeIf(String::isNotBlank)
         ScriptableObject.putProperty(scope, "baseUrl", baseUrl)
     }
 
@@ -231,11 +234,15 @@ private class RhinoScriptPluginRuntime private constructor(
         return value.toAnyList().mapNotNull { it.toStringAnyMap()?.toSourcePreference() }
     }
 
-    override suspend fun login(username: String, password: String): Boolean {
-        if (!supportsLogin) return false
-        val success = invoke("login", listOf(username, password)).toBooleanValue()
-        if (success) environment.storage.setCredential(id, PluginCredential(username, password))
-        return success
+    override suspend fun login(username: String, password: String): Boolean =
+        loginResult(username, password).loggedIn
+
+    override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
+        if (!supportsLogin) return LoginAttemptResult(false)
+        val raw = invoke("login", listOf(username, password))
+        val result = raw.toLoginAttemptResult()
+        if (result.loggedIn) environment.storage.setCredential(id, PluginCredential(username, password))
+        return result
     }
 
     override suspend fun logout() {
@@ -858,6 +865,25 @@ private fun Any?.toBooleanValue(): Boolean = when (this) {
     is String -> equals("true", ignoreCase = true) || this == "1"
     else -> false
 }
+
+private fun Any?.toLoginAttemptResult(): LoginAttemptResult {
+    val result = toStringAnyMap()
+    if (result != null) {
+        return LoginAttemptResult(
+            loggedIn = result["loggedIn"].toBooleanValue(),
+            errorMessage = result["errorMessage"].toSafeLoginError(),
+        )
+    }
+    // Older scripts returned a bare Boolean. Keep accepting that shape while new scripts may
+    // return { loggedIn, errorMessage }.
+    return LoginAttemptResult(loggedIn = toBooleanValue())
+}
+
+private fun Any?.toSafeLoginError(): String? = (this as? String)
+    ?.filterNot(Char::isISOControl)
+    ?.trim()
+    ?.take(512)
+    ?.takeIf(String::isNotBlank)
 
 private fun Any?.toIntValue(default: Int = 0): Int = when (this) {
     is Number -> toInt()

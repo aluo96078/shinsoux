@@ -792,7 +792,8 @@ private fun ShinsouAppContent(
     }
     // Browse-owned readers do not yet receive the platform volume-event flow. Keep native volume
     // controls available there instead of intercepting and silently dropping the key presses.
-    val interceptReaderVolumeKeys = readerSession != null && snapshot.settings.reader.volumeKeys
+    val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(snapshot.settings.reader.volumeKeys)
+    val interceptReaderVolumeKeys = readerSession != null && effectiveVolumeKeysEnabled
     DisposableEffect(appServices, readerOpen) {
         // Publish the reader gate as part of the composition commit.  A launched coroutine leaves
         // a short window where iOS can begin its native edge recognizer after the reader appears.
@@ -812,10 +813,10 @@ private fun ShinsouAppContent(
     LaunchedEffect(appServices, readerOpen, snapshot.settings.reader.orientation) {
         if (readerOpen) appServices.setReaderOrientation(snapshot.settings.reader.orientation)
     }
-    DisposableEffect(appServices, snapshot.settings.reader.volumeKeys) {
+    DisposableEffect(appServices, effectiveVolumeKeysEnabled) {
         // Match the original iOS implementation: prepare AVAudioSession, silent playback, and
         // MPVolumeView as soon as the preference is enabled, before the reader starts listening.
-        appServices.setReaderVolumeKeyInfrastructureEnabled(snapshot.settings.reader.volumeKeys)
+        appServices.setReaderVolumeKeyInfrastructureEnabled(effectiveVolumeKeysEnabled)
         onDispose { appServices.setReaderVolumeKeyInfrastructureEnabled(false) }
     }
     DisposableEffect(appServices, interceptReaderVolumeKeys) {

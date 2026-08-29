@@ -42,12 +42,12 @@ internal actual fun PlatformWebChallengeView(
     request: SourceWebChallengeRequest,
     captureRequest: Int,
     onPageLoaded: () -> Unit,
-    onCookiesCaptured: (List<SourceCookie>) -> Unit,
+    onSessionCaptured: (WebChallengeCapture) -> Unit,
     onError: (String) -> Unit,
     modifier: Modifier,
 ) {
     val currentPageLoaded = rememberUpdatedState(onPageLoaded)
-    val currentCookiesCaptured = rememberUpdatedState(onCookiesCaptured)
+    val currentSessionCaptured = rememberUpdatedState(onSessionCaptured)
     val currentError = rememberUpdatedState(onError)
     val state = remember(request) {
         val configuration = WKWebViewConfiguration().apply {
@@ -61,12 +61,6 @@ internal actual fun PlatformWebChallengeView(
         val delegate = IosChallengeNavigationDelegate(
             onLoaded = {
                 currentPageLoaded.value.invoke()
-                challengeState.capture(request.url) { cookies ->
-                    if (!challengeState.autoReported && cookies.any { it.name == "cf_clearance" }) {
-                        challengeState.autoReported = true
-                        currentCookiesCaptured.value.invoke(cookies)
-                    }
-                }
             },
             onError = { currentError.value.invoke(it) },
         )
@@ -82,7 +76,11 @@ internal actual fun PlatformWebChallengeView(
     LaunchedEffect(state, captureRequest) {
         if (captureRequest > 0) {
             state.capture(request.url) { cookies ->
-                currentCookiesCaptured.value.invoke(cookies)
+                state.webView.evaluateJavaScript("navigator.userAgent") { value, _ ->
+                    currentSessionCaptured.value.invoke(
+                        WebChallengeCapture(cookies = cookies, userAgent = value as? String ?: ""),
+                    )
+                }
             }
         }
     }
@@ -101,7 +99,6 @@ internal actual fun PlatformWebChallengeView(
 @OptIn(ExperimentalForeignApi::class)
 private class IosChallengeState(val webView: WKWebView) {
     var delegate: IosChallengeNavigationDelegate? = null
-    var autoReported: Boolean = false
 
     fun load(request: SourceWebChallengeRequest, onError: (String) -> Unit) {
         val url = NSURL.URLWithString(request.url)
@@ -110,10 +107,9 @@ private class IosChallengeState(val webView: WKWebView) {
             return
         }
         val cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-        val nativeCookies = normalizeWebChallengeCookies(request.url, request.cookies)
+        val nativeCookies = webChallengeSeedCookies(request)
             .mapNotNull(SourceCookie::toNativeCookie)
         fun open() {
-            autoReported = false
             webView.loadRequest(NSURLRequest.requestWithURL(url))
         }
         if (nativeCookies.isEmpty()) {

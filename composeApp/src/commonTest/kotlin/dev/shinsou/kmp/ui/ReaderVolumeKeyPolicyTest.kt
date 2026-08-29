@@ -3,7 +3,9 @@ package dev.shinsou.kmp.ui
 import dev.shinsou.kmp.reader.ReaderTapAction
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ReaderVolumeKeyPolicyTest {
     @Test
@@ -25,5 +27,14 @@ class ReaderVolumeKeyPolicyTest {
             assertNull(readerVolumeKeyAction(event, readerOpen = true, volumeKeysEnabled = false))
             assertNull(readerVolumeKeyAction(event, readerOpen = false, volumeKeysEnabled = false))
         }
+    }
+
+    @Test
+    fun platformCapabilityControlsSettingVisibilityAndActivation() {
+        assertTrue(shouldShowReaderVolumeKeySetting(platformSupported = true))
+        assertFalse(shouldShowReaderVolumeKeySetting(platformSupported = false))
+        assertTrue(effectiveReaderVolumeKeysEnabled(configured = true, platformSupported = true))
+        assertFalse(effectiveReaderVolumeKeysEnabled(configured = false, platformSupported = true))
+        assertFalse(effectiveReaderVolumeKeysEnabled(configured = true, platformSupported = false))
     }
 }

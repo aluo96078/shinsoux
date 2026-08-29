@@ -118,6 +118,8 @@ import dev.shinsou.kmp.reader.pagedReaderPosition
 import dev.shinsou.kmp.reader.readerLogicalPageIndex
 import dev.shinsou.kmp.reader.readerPhysicalPageIndex
 import dev.shinsou.kmp.reader.readerPrefetchIndices
+import dev.shinsou.kmp.ui.effectiveReaderVolumeKeysEnabled
+import dev.shinsou.kmp.ui.shouldShowReaderVolumeKeySetting
 import dev.shinsou.kmp.reader.readerTapAction
 import dev.shinsou.kmp.reader.restoredReaderPageOffsetPixels
 import dev.shinsou.kmp.reader.toCoilTransformation
@@ -194,6 +196,7 @@ fun ReaderScreen(
         "Unified reader content and renderer must be supplied together"
     }
     val strings = LocalShinsouStrings.current
+    val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(settings.volumeKeys)
     val unifiedTextContent = unifiedReaderContent?.representation is ContentRepresentation.PlainText
     val unifiedEpubContent = unifiedReaderContent?.representation is ContentRepresentation.EpubSpine
     val unifiedProseContent = unifiedTextContent || unifiedEpubContent
@@ -400,7 +403,7 @@ fun ReaderScreen(
         val action = readerVolumeKeyAction(
             event = event,
             readerOpen = true,
-            volumeKeysEnabled = settings.volumeKeys,
+            volumeKeysEnabled = effectiveVolumeKeysEnabled,
         )
         if (action != null) {
             val pageBefore = currentPage
@@ -480,7 +483,7 @@ fun ReaderScreen(
                     return@onPreviewKeyEvent false
                 }
                 val suppressRepeat = when (event.key) {
-                    Key.VolumeDown, Key.VolumeUp -> settings.volumeKeys
+                    Key.VolumeDown, Key.VolumeUp -> effectiveVolumeKeysEnabled
                     else -> isReaderNavigationKey(event.key)
                 }
                 if (suppressRepeat && !heldNavigationKeys.add(event.key)) {
@@ -491,14 +494,14 @@ fun ReaderScreen(
                         readerVolumeKeyAction(
                             event = ReaderVolumeKeyEvent.VOLUME_DOWN,
                             readerOpen = true,
-                            volumeKeysEnabled = settings.volumeKeys,
+                            volumeKeysEnabled = effectiveVolumeKeysEnabled,
                         )?.let { handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_DOWN) } != null
                     }
                     Key.VolumeUp -> {
                         readerVolumeKeyAction(
                             event = ReaderVolumeKeyEvent.VOLUME_UP,
                             readerOpen = true,
-                            volumeKeysEnabled = settings.volumeKeys,
+                            volumeKeysEnabled = effectiveVolumeKeysEnabled,
                         )?.let { handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_UP) } != null
                     }
                     Key.DirectionRight, Key.NumPadDirectionRight, Key.Spacebar, Key.PageDown, Key.NumPadPageDown -> {
@@ -1623,7 +1626,9 @@ internal fun ReaderSettingsSheet(
             item { ReaderToggle(strings.text("Skip read chapters"), settings.skipReadChapters) { onChange(settings.copy(skipReadChapters = it)) } }
             item { ReaderToggle(strings.text("Skip filtered chapters"), settings.skipFilteredChapters) { onChange(settings.copy(skipFilteredChapters = it)) } }
             item { ReaderToggle(strings.text("Skip duplicate chapters"), settings.skipDuplicateChapters) { onChange(settings.copy(skipDuplicateChapters = it)) } }
-            item { ReaderToggle(strings.text("Volume keys"), settings.volumeKeys) { onChange(settings.copy(volumeKeys = it)) } }
+            if (shouldShowReaderVolumeKeySetting()) {
+                item { ReaderToggle(strings.text("Volume keys"), settings.volumeKeys) { onChange(settings.copy(volumeKeys = it)) } }
+            }
             item {
                 ReaderToggle(strings.text("Page turn animation"), settings.animatePageTransitions) {
                     onChange(settings.copy(animatePageTransitions = it))

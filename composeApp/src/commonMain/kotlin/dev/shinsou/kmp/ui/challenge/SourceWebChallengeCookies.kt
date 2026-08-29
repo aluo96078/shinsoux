@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import io.ktor.http.Url
 import kotlin.time.Clock
 
@@ -68,7 +69,12 @@ internal fun normalizeWebChallengeCookies(
         if (!domainMatches) return@forEach
 
         val path = cookie.path.ifBlank { "/" }
-        if (!path.startsWith('/') || path.any(::isCookieControl) || !cookiePathMatches(requestPath, path)) {
+        // A challenge may redirect from /login.php to /. Capture against the original origin,
+        // while retaining any same-origin cookie whose path is usable by at least one of those
+        // locations. This keeps site-wide cf_clearance and member-session cookies without widening
+        // their domain or path.
+        val pathMatchesChallenge = cookiePathMatches(requestPath, path) || cookiePathMatches("/", path)
+        if (!path.startsWith('/') || path.any(::isCookieControl) || !pathMatchesChallenge) {
             return@forEach
         }
         val safeCookie = cookie.copy(
@@ -79,6 +85,25 @@ internal fun normalizeWebChallengeCookies(
     }
     return normalized.values.toList()
 }
+
+/**
+ * Seeds an isolated browser without reusing the cookie that this challenge is expected to mint.
+ * In particular, an old browser-bound cf_clearance must not make a new session look verified.
+ */
+internal fun webChallengeSeedCookies(
+    request: SourceWebChallengeRequest,
+    nowEpochMillis: Long = Clock.System.now().toEpochMilliseconds(),
+): List<SourceCookie> =
+    normalizeWebChallengeCookies(request.url, request.cookies, nowEpochMillis).filterNot { cookie ->
+        request.requiredCookieName?.let { required ->
+            cookie.name.equals(required, ignoreCase = true)
+        } == true
+    }
+
+/** Rejects header injection and unbounded native/browser values before persistence. */
+internal fun normalizeWebChallengeUserAgent(value: String?): String? = value
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() && it.length <= 512 && it.none(::isCookieControl) }
 
 internal fun cookiePathMatches(requestPath: String, cookiePath: String): Boolean =
     requestPath == cookiePath ||

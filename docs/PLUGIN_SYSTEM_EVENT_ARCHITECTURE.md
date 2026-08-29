@@ -1,9 +1,34 @@
 # 插件系統事件接口架構
 
-- 狀態：Proposed
-- 日期：2026-08-22
+- 狀態：Partially implemented（production V1 gateway 與四個 handler 已接通）
+- 日期：2026-08-22；實作狀態更新：2026-08-29
 - 適用範圍：Shinsou X KMP、Shinsou JavaScript plugins、reviewed ShuYue plugins
-- 本文件範圍：事件契約、安全邊界、宿主策略與落地順序；尚未接通生產執行流程
+- 本文件範圍：事件契約、安全邊界、宿主策略、目前 production 接線與尚未完成項目
+
+## 目前 production 狀態
+
+Production composition 已建立 `PluginSystemEventGateway`，將它注入 `PluginManager`／runtime，並由
+host code 註冊下列四個 V1 handler：
+
+- `auth.login.request`：送入 exact-source login coordinator；
+- `source.refresh.request`：只 invalidates exact live source，不呼叫 repository／global refresh；
+- `auth.logout.request`：由 Host 顯示確認並清理 exact session owner；
+- `diagnostic.message.report`：只寫入 bounded diagnostic log，不直接投影成使用者訊息。
+
+Exact-artifact event grant 會持久化並在 runtime 啟動時 hydrate；grant identity 是
+`packageId + version + versionCode + SHA-256 + SourceKey`。JVM Rhino 與 iOS JavaScriptCore 都接入同一
+wire／gateway 契約，既有 `requestLogin` 保留 compatibility path。
+
+目前仍未完成或刻意保留：
+
+- `REPORT_USER_MESSAGE`：沒有 production safe presenter，admission 會明確拒絕；
+- `REQUEST_BROWSER_CHALLENGE`：目前只有 permission enum／設計保留，沒有 system-event handler；App
+  本身的來源 Web challenge UI 不等於 Plugin 已能透過此事件呼叫它；
+- pull-based result mailbox 與 browser-challenge 的 opaque session／credential handle；
+- 本文件後段列出的其餘 runtime 加固與完整外部／平台 smoke gate。
+
+因此下文同時包含「已落地的 V1 契約」與「保留設計」。看到 future／候選／落地階段時，不應解讀
+成目前可由 Plugin 使用的 production capability。
 
 ## 決策摘要
 
@@ -21,12 +46,13 @@ runtime 邊界補上不可偽造的插件身份，依序執行 schema 驗證、�
 所有請求都必須立即返回 admission receipt。`accepted` 只代表成功入列，不代表登入、刷新或
 登出已完成。事件處理不能等待 UI，也不能在原本的插件呼叫堆疊中重新呼叫插件。
 
-既有 `bridge.requestLogin(reason)` 保留，但內部改為新事件的 compatibility shim。舊插件不因
-新接口而自動取得刷新、登出或顯示錯誤的權限。
+既有 `bridge.requestLogin(reason)` 保留為 compatibility path：具 negotiated system-event binding 的
+runtime 會映射到新登入事件；沒有新 declaration／binding 的 legacy package 仍走既有 bounded login
+requester。舊插件不因新接口而自動取得刷新、登出或顯示錯誤的權限。
 
-## 背景與現況
+## 背景與原始問題
 
-目前登入請求的主流程是：
+導入 system-event gateway 前，登入請求的主流程是：
 
 ```text
 plugin bridge.requestLogin(reason)
@@ -394,8 +420,8 @@ effective permission =
 | `REQUEST_SOURCE_REFRESH` | `source.refresh.request` | live exact source |
 | `REQUEST_LOGOUT` | `auth.logout.request` | source `LOGIN`、host confirmation policy |
 | `REPORT_DIAGNOSTIC` | `diagnostic.message.report` | 只允許 bounded structured diagnostic |
-| `REPORT_USER_MESSAGE` | diagnostic 的 UI projection | 同時已有 `REPORT_DIAGNOSTIC`；host 仍可 suppress/aggregate |
-| `REQUEST_BROWSER_CHALLENGE` | future web challenge | exact reviewed grant、平台隔離能力 |
+| `REPORT_USER_MESSAGE` | 保留：diagnostic 的 UI projection | production admission 目前拒絕；需 safe presenter，且仍可 suppress/aggregate |
+| `REQUEST_BROWSER_CHALLENGE` | 保留：future web challenge | 目前無 production handler；未來仍需 exact reviewed grant、平台隔離能力 |
 
 Grant key 至少包含：
 
@@ -553,14 +579,20 @@ Host UI policy：
    內部 seed/capture cookies。
 4. Android Web challenge 使用全域 `CookieManager`，需要真正的 per-source 隔離，不能讓一個插件
    清除或讀取其他 WebView session。
-5. Rhino runtime 尚未確認 `ClassShutter`／host-class denylist。必須增加 sandbox escape 測試與
-   host class 封鎖；否則只能聲明新 event API 沒有暴露 UI/core，不能聲明整個 JVM runtime 安全。
+5. Rhino runtime 已安裝 deny-all `ClassShutter`，讓 JavaScript 無法看見 host classes；仍需維持
+   sandbox escape／host-class regression tests，且不能只憑此一層就宣稱整個 JVM runtime 絕對安全。
 6. `PluginBrowseAdapter` 的單一 `operationMutex` 讓登入、登出、repository refresh 與設定互相阻塞。
    新 dispatcher 不得持有該 mutex 等待 UI/plugin；domain handler 應拆成 exact-source serial actors。
 7. Raw `Throwable.message` 目前在部分 UI 路徑直接顯示。插件事件必須走安全 code/fallback renderer，
    不能重用這條 raw error path。
 
-## 落地階段
+## 落地階段與目前進度
+
+下列 E0～E6 是原始拆解，不是每一階段都已完成。Production 已落地 V1 wire／codec、gateway、
+exact-artifact admission、四個 host handler、runtime lifecycle invalidation、Rhino／JavaScriptCore bridge
+與主要 deterministic tests；`REPORT_USER_MESSAGE` presenter、browser-challenge event、result mailbox 與
+部分 runtime／外部 smoke 加固仍未完成。原始階段條目保留作追蹤用途，請以上方「目前 production
+狀態」與實際程式碼為準；條目中的 imperative wording 不代表該項目前一定尚未開始。
 
 ### E0：契約與測試骨架
 
@@ -639,9 +671,11 @@ Host UI policy：
 - UI consumer exception 不會取消其他來源事件；
 - accessibility/i18n 使用 host-owned title/action/source label。
 
-## 完成條件
+## 完成條件（尚未全部達成）
 
-系統事件接口只有在下列條件同時成立時才算完成，而不是僅新增幾個 bridge 方法：
+系統事件接口只有在下列條件同時成立時才算完整完成，而不是僅新增幾個 bridge 方法。目前四個 V1
+handler 已進 production，但 user-message projection、browser-challenge event 與部分加固仍使整體狀態
+維持 partially implemented：
 
 - 四個 V1 訊息走同一 wire transport 與 common codec；
 - runtime 注入 exact scope，插件無法指定或偽造 identity/target；
