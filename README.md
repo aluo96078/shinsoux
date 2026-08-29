@@ -139,8 +139,10 @@ xcodebuild -project Shinsou.xcodeproj \
 Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
 `composeApp/build/outputs/apk/release/`。專案的 GitHub Release 固定發布
 `Shinsou-X-<version>-android-debug.apk`：它使用 debug key 簽章、保留
-`android:debuggable=true`，只供測試，不是 production release build。CI runner 產生的 debug
-key 不保證跨版本相同，因此新 APK 可能無法覆蓋安裝舊 APK；請先在 App 內建立備份，必要時解除安裝舊版再安裝。若要長期分發及原地升級，必須自行保存 keystore 並建置 release APK。
+`android:debuggable=true`，只供測試，不是 production release build。自 `v1.0.0-beta.5` 起，
+官方 CI 使用固定的公開測試 signer，因此後續官方 debug APK 可以覆蓋升級；beta.3 及更舊版本
+使用不同的臨時 signer，升級前必須先在 App 內建立備份、解除安裝舊版一次，再安裝 beta.5。
+正式分發仍必須自行安全保存 keystore 並建置 release APK。
 自行簽署 release APK 的環境變數與命令見 [GitHub Actions 發布](docs/RELEASING.md)。
 
 GitHub Release 不建置或發布 iOS IPA。iOS 使用者／維護者必須在 macOS 安裝完整 Xcode

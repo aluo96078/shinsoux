@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -22,13 +23,71 @@ class DesktopPlatformTest {
     fun primaryShortcutUsesCommandOnMacAndControlOnWindows() {
         assertTrue(DesktopPlatform.MAC_OS.usesCommandShortcuts)
         assertFalse(DesktopPlatform.MAC_OS.usesControlShortcuts)
+        assertTrue(DesktopPlatform.MAC_OS.usesNativeMenuBar)
 
         assertFalse(DesktopPlatform.WINDOWS.usesCommandShortcuts)
         assertTrue(DesktopPlatform.WINDOWS.usesControlShortcuts)
+        assertFalse(DesktopPlatform.WINDOWS.usesNativeMenuBar)
 
         // Construct both shortcuts as an integration check against Compose's desktop API.
         DesktopPlatform.MAC_OS.primaryShortcut(Key.Q)
         DesktopPlatform.WINDOWS.primaryShortcut(Key.Q)
+    }
+
+    @Test
+    fun windowsShortcutsRemainAvailableWithoutNativeMenuBar() {
+        val expectedActions = mapOf(
+            Key.One to DesktopShortcutAction.OPEN_LIBRARY,
+            Key.Two to DesktopShortcutAction.OPEN_UPDATES,
+            Key.Three to DesktopShortcutAction.OPEN_HISTORY,
+            Key.Four to DesktopShortcutAction.OPEN_BROWSE,
+            Key.Five to DesktopShortcutAction.OPEN_MORE,
+            Key.Comma to DesktopShortcutAction.OPEN_SETTINGS,
+            Key.M to DesktopShortcutAction.MINIMIZE,
+            Key.Q to DesktopShortcutAction.QUIT,
+        )
+
+        expectedActions.forEach { (key, expectedAction) ->
+            assertEquals(
+                expectedAction,
+                desktopShortcutAction(
+                    platform = DesktopPlatform.WINDOWS,
+                    key = key,
+                    type = KeyEventType.KeyDown,
+                    ctrlPressed = true,
+                    metaPressed = false,
+                    altPressed = false,
+                    shiftPressed = false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun desktopShortcutRouterRejectsMenuOwnedAndModifiedEvents() {
+        fun resolve(
+            platform: DesktopPlatform = DesktopPlatform.WINDOWS,
+            type: KeyEventType = KeyEventType.KeyDown,
+            ctrlPressed: Boolean = true,
+            metaPressed: Boolean = false,
+            altPressed: Boolean = false,
+            shiftPressed: Boolean = false,
+        ) = desktopShortcutAction(
+            platform = platform,
+            key = Key.Q,
+            type = type,
+            ctrlPressed = ctrlPressed,
+            metaPressed = metaPressed,
+            altPressed = altPressed,
+            shiftPressed = shiftPressed,
+        )
+
+        assertEquals(null, resolve(platform = DesktopPlatform.MAC_OS))
+        assertEquals(null, resolve(type = KeyEventType.KeyUp))
+        assertEquals(null, resolve(ctrlPressed = false))
+        assertEquals(null, resolve(metaPressed = true))
+        assertEquals(null, resolve(altPressed = true))
+        assertEquals(null, resolve(shiftPressed = true))
     }
 
     @Test

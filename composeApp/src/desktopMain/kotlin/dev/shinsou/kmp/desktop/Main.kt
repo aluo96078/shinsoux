@@ -11,11 +11,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import dev.aluo.shinsoux.generated.resources.Res
+import dev.aluo.shinsoux.generated.resources.shinsou_icon
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.backup.ForegroundAutoBackupScheduler
@@ -52,6 +60,7 @@ import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.jetbrains.compose.resources.painterResource
 
 private const val VERIFY_DESKTOP_RUNTIME_ARGUMENT = "--verify-desktop-runtime"
 private const val VERIFY_DESKTOP_STARTUP_ARGUMENT = "--verify-desktop-startup"
@@ -164,10 +173,37 @@ fun main(args: Array<String>) {
         }
 
         val state = rememberWindowState(width = 1280.dp, height = 820.dp)
+        val applicationIcon = painterResource(Res.drawable.shinsou_icon)
         Window(
             onCloseRequest = ::requestClose,
             title = "Shinsou X",
+            icon = applicationIcon,
             state = state,
+            onPreviewKeyEvent = { event ->
+                val action = desktopShortcutAction(
+                    platform = desktopPlatform,
+                    key = event.key,
+                    type = event.type,
+                    ctrlPressed = event.isCtrlPressed,
+                    metaPressed = event.isMetaPressed,
+                    altPressed = event.isAltPressed,
+                    shiftPressed = event.isShiftPressed,
+                ) ?: return@Window false
+
+                when (action) {
+                    DesktopShortcutAction.OPEN_LIBRARY -> services.openSection(DeepLinkSection.Library)
+                    DesktopShortcutAction.OPEN_UPDATES -> services.openSection(DeepLinkSection.Updates)
+                    DesktopShortcutAction.OPEN_HISTORY -> services.openSection(DeepLinkSection.History)
+                    DesktopShortcutAction.OPEN_BROWSE -> services.openSection(DeepLinkSection.Browse)
+                    DesktopShortcutAction.OPEN_MORE -> services.openSection(DeepLinkSection.More)
+                    DesktopShortcutAction.OPEN_SETTINGS -> services.openSettings()
+                    DesktopShortcutAction.MINIMIZE -> hostFrame?.let { frame ->
+                        frame.extendedState = frame.extendedState or Frame.ICONIFIED
+                    }
+                    DesktopShortcutAction.QUIT -> requestClose()
+                }
+                true
+            },
         ) {
             SideEffect {
                 hostFrame = window
@@ -179,6 +215,9 @@ fun main(args: Array<String>) {
                     // The constructor above has opened and initialized SQLite. Waiting for the
                     // next frame proves that the packaged Compose UI can render as well.
                     withFrameNanos { }
+                    if (desktopPlatform == DesktopPlatform.WINDOWS) {
+                        verifyWindowsWindowChrome(window)
+                    }
                     writeDesktopProbeMarker(required = true)
                     closeImmediately()
                 }
@@ -231,36 +270,38 @@ fun main(args: Array<String>) {
                 }
             }
 
-            MenuBar {
-                Menu(strings.text("Shinsou X")) {
-                    Item(strings.text("About Shinsou X"), onClick = { services.openSection(DeepLinkSection.More) })
-                    Separator()
-                    Item(
-                        strings.text("Settings…"),
-                        shortcut = desktopPlatform.primaryShortcut(Key.Comma),
-                        onClick = services::openSettings,
-                    )
-                    Separator()
-                    Item(
-                        strings.text("Quit Shinsou X"),
-                        shortcut = desktopPlatform.primaryShortcut(Key.Q),
-                        onClick = ::requestClose,
-                    )
-                }
-                Menu(strings.text("Go")) {
-                    navigationItem(strings.library, Key.One, DeepLinkSection.Library, desktopPlatform, services)
-                    navigationItem(strings.updates, Key.Two, DeepLinkSection.Updates, desktopPlatform, services)
-                    navigationItem(strings.history, Key.Three, DeepLinkSection.History, desktopPlatform, services)
-                    navigationItem(strings.browse, Key.Four, DeepLinkSection.Browse, desktopPlatform, services)
-                    navigationItem(strings.more, Key.Five, DeepLinkSection.More, desktopPlatform, services)
-                }
-                Menu(strings.text("Window")) {
-                    Item(strings.text("Center window"), onClick = { window.setLocationRelativeTo(null) })
-                    Item(
-                        strings.text("Minimize"),
-                        shortcut = desktopPlatform.primaryShortcut(Key.M),
-                        onClick = { window.isMinimized = true },
-                    )
+            if (desktopPlatform.usesNativeMenuBar) {
+                MenuBar {
+                    Menu(strings.text("Shinsou X")) {
+                        Item(strings.text("About Shinsou X"), onClick = { services.openSection(DeepLinkSection.More) })
+                        Separator()
+                        Item(
+                            strings.text("Settings…"),
+                            shortcut = desktopPlatform.primaryShortcut(Key.Comma),
+                            onClick = services::openSettings,
+                        )
+                        Separator()
+                        Item(
+                            strings.text("Quit Shinsou X"),
+                            shortcut = desktopPlatform.primaryShortcut(Key.Q),
+                            onClick = ::requestClose,
+                        )
+                    }
+                    Menu(strings.text("Go")) {
+                        navigationItem(strings.library, Key.One, DeepLinkSection.Library, desktopPlatform, services)
+                        navigationItem(strings.updates, Key.Two, DeepLinkSection.Updates, desktopPlatform, services)
+                        navigationItem(strings.history, Key.Three, DeepLinkSection.History, desktopPlatform, services)
+                        navigationItem(strings.browse, Key.Four, DeepLinkSection.Browse, desktopPlatform, services)
+                        navigationItem(strings.more, Key.Five, DeepLinkSection.More, desktopPlatform, services)
+                    }
+                    Menu(strings.text("Window")) {
+                        Item(strings.text("Center window"), onClick = { window.setLocationRelativeTo(null) })
+                        Item(
+                            strings.text("Minimize"),
+                            shortcut = desktopPlatform.primaryShortcut(Key.M),
+                            onClick = { window.isMinimized = true },
+                        )
+                    }
                 }
             }
 
@@ -272,6 +313,15 @@ fun main(args: Array<String>) {
                 interactionReady = syncBoundaryReady,
             )
         }
+    }
+}
+
+private fun verifyWindowsWindowChrome(window: javax.swing.JFrame) {
+    check(window.iconImages.any { image -> image.getWidth(null) > 0 && image.getHeight(null) > 0 }) {
+        "The Windows window does not have a rendered application icon."
+    }
+    check(window.jMenuBar == null) {
+        "The Windows window unexpectedly contains a native menu bar."
     }
 }
 
