@@ -220,6 +220,23 @@ class ShuYueReviewedExtensionV2Test {
                 "f".repeat(64),
             ),
         )
+        val wenkuApiProfiles = ShuYueReviewedPluginCatalogV2.profiles
+            .filter { it.identity.packageId == "zh.wenku8.api" }
+        assertTrue(wenkuApiProfiles.all { ExtensionCapability.FAVORITE !in it.capabilities })
+        assertTrue(
+            wenkuApiProfiles.all {
+                ShuYueExecutionPermissionV2.FAVORITE_MUTATION !in it.requiredPermissions
+            },
+        )
+        assertEquals(
+            "75e67a5937b9a93956f71e1f97f8738fbdabce6b7e7090c90779479e32cae56c",
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.wenku8.api",
+                "1.0.5",
+                6,
+                "75e67a5937b9a93956f71e1f97f8738fbdabce6b7e7090c90779479e32cae56c",
+            )?.identity?.sha256,
+        )
         val biliProfiles = ShuYueReviewedPluginCatalogV2.profiles
             .filter { it.identity.packageId == "zh.bilimanga" }
             .sortedBy { it.identity.versionCode }

@@ -94,7 +94,7 @@ class SnapshotSyncController(
     private val repository: ShinsouRepository,
     private val transport: SnapshotSyncTransport,
     private val deviceId: String,
-    private val appVersion: String = "1.0.1-beta.1",
+    private val appVersion: String = "1.0.1-beta.2",
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val deviceIdProvider: (suspend () -> String)? = null,
     private val writerAllowed: suspend () -> Boolean = { true },

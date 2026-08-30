@@ -12,6 +12,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionCapability
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.exactExtensionLibraryRecoveryMatchV2
 import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
 import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsResolverV2
 import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsV2
@@ -470,6 +471,51 @@ public class PluginBrowseAdapter(
                 extensionGatewayV2.details(sourceKey, remotePublicationId)
             }
         }
+    }
+
+    override fun extensionLibraryBindingV2(
+        publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? =
+        extensionContentConsumerV2?.extensionLibraryBinding(publicationKey)
+
+    override suspend fun recoverExtensionLibraryBindingV2(
+        publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
+        title: String,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? = withContext(Dispatchers.Default) {
+        if (title.isBlank()) return@withContext null
+        val descriptors = manager.extensionDescriptorsV2()
+            .flatMap { descriptor -> descriptor.sources }
+            .filter { descriptor -> ExtensionCapability.SEARCH in descriptor.capabilities }
+            // UUID-only local favorites were emitted by the beta app path only for reviewed
+            // ShuYue extensions. Keep repair bounded to that package family so unrelated future
+            // extensions are never queried for a legacy row they could not have created.
+            .filter { descriptor -> descriptor.sourceKey.packageId in LEGACY_LOCAL_LIBRARY_PACKAGE_IDS }
+        val candidates = buildList {
+            for (descriptor in descriptors) {
+                val enabled = keyValueStore.getString(sourceEnabledV2Key(descriptor.sourceKey))
+                    ?.toBooleanStrictOrNull() ?: true
+                if (enabled) add(descriptor)
+            }
+        }.sortedBy { descriptor -> descriptor.sourceKey.canonicalId }
+        var recovered: dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? = null
+        for (descriptor in candidates) {
+            val page = runCatching {
+                manager.withUserInteractionContext(descriptor.sourceKey) {
+                    extensionGatewayV2.search(descriptor.sourceKey, title, page = 0)
+                }
+            }.getOrNull() ?: continue
+            exactExtensionLibraryRecoveryMatchV2(
+                publicationKey = publicationKey,
+                sourceKey = descriptor.sourceKey,
+                publications = page.items,
+            )?.let { match ->
+                check(recovered == null || recovered == match) {
+                    "Legacy extension library identity resolves to multiple sources"
+                }
+                recovered = match
+            }
+        }
+        recovered
     }
 
     override suspend fun favoriteExtensionPublicationV2(
@@ -1989,6 +2035,11 @@ public class PluginBrowseAdapter(
                 }.toSet()
         private const val PORTABLE_REPOSITORY_MIGRATION_KEY: String =
             "plugin.repositories.portable-migration.v1"
+        private val LEGACY_LOCAL_LIBRARY_PACKAGE_IDS: Set<String> = setOf(
+            "zh.bilimanga",
+            "zh.biquge.tw",
+            "zh.wenku8.api",
+        )
 
         private const val LEGACY_BUNDLED_REPOSITORY_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/master"

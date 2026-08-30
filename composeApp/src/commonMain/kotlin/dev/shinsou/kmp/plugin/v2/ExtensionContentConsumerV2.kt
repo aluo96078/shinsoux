@@ -232,6 +232,27 @@ public class ExtensionContentConsumerV2(
 ) {
     private val ownerToken: Any = Any()
 
+    /**
+     * Recovers an old UUID-only local-library row after at least one unit was materialized.
+     * New favorites persist a reversible binding directly and do not need this graph fallback.
+     */
+    public fun extensionLibraryBinding(publicationKey: PublicationKey): ExtensionLibraryBindingV2? {
+        val publication = foundation.publications.find(publicationKey) ?: return null
+        val bindings = publication.acquisitions.mapNotNull { acquisition ->
+            (acquisition.origin as? AcquisitionOrigin.ExtensionSource)?.sourceBinding
+        }.distinct()
+        val binding = bindings.singleOrNull()
+            ?.takeIf { it.entityKind == RemoteEntityKind.PUBLICATION }
+            ?: return null
+        return runCatching {
+            ExtensionLibraryBindingV2(
+                publicationKey = publication.key,
+                sourceKey = binding.sourceKey,
+                remotePublicationId = binding.remoteId,
+            )
+        }.getOrNull()
+    }
+
     public suspend fun publicationPage(
         sourceKey: SourceKey,
         remotePublicationId: String,

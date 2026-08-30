@@ -15,6 +15,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
+import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.sync.v2.SyncDraft
 import dev.shinsou.kmp.ui.ImportedDocument
 import java.nio.file.Files
@@ -186,6 +187,39 @@ class LegacyPublicationStartupMigrationTest {
                     .migrate(repairedRepository.currentSnapshot).status,
             )
             assertEquals(1, foundation.publications.all().size)
+            driver.close()
+        }
+    }
+
+    @Test
+    fun reversibleExtensionLibraryRowsAreNotMigratedAsLegacyLocalPublications() {
+        withDatabase { path ->
+            val driver = driver(path)
+            val foundation = foundation(driver)
+            val sourceKey = dev.shinsou.kmp.domain.model.SourceKey(
+                packageId = "zh.bilimanga",
+                sourceId = "zh.bilimanga.novel",
+            )
+            val snapshot = AppSnapshot(
+                mangas = listOf(
+                    Manga(
+                        id = 10,
+                        source = 0,
+                        favorite = true,
+                        url = encodeExtensionLibraryPublicationUrl(
+                            sourceKey,
+                            "https://tw.linovelib.com/novel/42.html",
+                        ),
+                        title = "Extension favorite",
+                    ),
+                ),
+            ).validate()
+
+            assertEquals(
+                LegacyPublicationMigrationStatus.UP_TO_DATE,
+                LegacyPublicationStartupMigration(foundation).migrate(snapshot).status,
+            )
+            assertTrue(foundation.publications.all().isEmpty())
             driver.close()
         }
     }

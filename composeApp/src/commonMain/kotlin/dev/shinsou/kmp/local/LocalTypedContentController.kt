@@ -533,6 +533,14 @@ internal class LocalTypedContentController(
 internal fun isTypedLocalCompatibilityUrl(value: String): Boolean =
     value.startsWith(TYPED_LOCAL_URL_PREFIX)
 
+/** Returns the publication identity only for the publication-scoped compatibility URL. */
+internal fun decodeTypedLocalPublicationUrl(value: String): PublicationKey? {
+    if (!value.startsWith(TYPED_LOCAL_URL_PREFIX)) return null
+    val encoded = value.removePrefix(TYPED_LOCAL_URL_PREFIX)
+    if ('/' in encoded) return null
+    return runCatching { PublicationKey(encoded) }.getOrNull()
+}
+
 /**
  * Stable compatibility identity for one authoritative typed unit. The scheme name remains
  * historical: the referenced acquisition may be local or extension-backed, and [load] resolves

@@ -101,6 +101,7 @@ import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
+import dev.shinsou.kmp.ui.LibraryContentType
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
@@ -109,6 +110,7 @@ import kotlin.math.absoluteValue
 @Composable
 fun LibraryScreen(
     items: List<LibraryItem>,
+    contentTypes: Map<Long, LibraryContentType> = emptyMap(),
     categories: List<Category>,
     settings: LibrarySettings,
     selectedCategoryId: Long,
@@ -266,6 +268,7 @@ fun LibraryScreen(
                 if (mode == LibraryDisplayMode.LIST) {
                     LibraryList(
                         items = visibleItems,
+                        contentTypes = contentTypes,
                         selectedIds = selectedMangaIds,
                         allowLongPressSelection = !compactChrome,
                         onOpen = onOpenManga,
@@ -277,6 +280,7 @@ fun LibraryScreen(
                 } else {
                     LibraryGrid(
                         items = visibleItems,
+                        contentTypes = contentTypes,
                         selectedIds = selectedMangaIds,
                         displayMode = mode,
                         portraitColumns = settings.portraitColumns,
@@ -642,6 +646,7 @@ private fun CategoryManagementDialog(
 @Composable
 private fun LibraryGrid(
     items: List<LibraryItem>,
+    contentTypes: Map<Long, LibraryContentType>,
     selectedIds: Set<Long>,
     displayMode: LibraryDisplayMode,
     portraitColumns: Int,
@@ -684,6 +689,10 @@ private fun LibraryGrid(
                             url = manga.thumbnailUrl,
                             selected = selected,
                             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                        )
+                        LibraryContentTypeBadge(
+                            type = contentTypes[manga.id] ?: LibraryContentType.UNKNOWN,
+                            modifier = Modifier.align(Alignment.TopStart).padding(7.dp),
                         )
                         MangaBadges(
                             unread = item.libraryManga.unreadCount,
@@ -735,6 +744,7 @@ private fun LibraryGrid(
 @Composable
 private fun LibraryList(
     items: List<LibraryItem>,
+    contentTypes: Map<Long, LibraryContentType>,
     selectedIds: Set<Long>,
     allowLongPressSelection: Boolean,
     onOpen: (Long) -> Unit,
@@ -780,12 +790,19 @@ private fun LibraryList(
                     modifier = Modifier.width(48.dp).aspectRatio(2f / 3f),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        manga.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        LibraryContentTypeBadge(contentTypes[manga.id] ?: LibraryContentType.UNKNOWN)
+                        Text(
+                            manga.title,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
                         buildString {
                             append("${item.libraryManga.totalChapters} ${strings.text("chapters")}")
@@ -842,6 +859,46 @@ private fun MangaBadges(
         if (downloads > 0) {
             MiniBadge(text = downloads.toString(), icon = Icons.Outlined.Download)
         }
+    }
+}
+
+@Composable
+private fun LibraryContentTypeBadge(
+    type: LibraryContentType,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalShinsouStrings.current
+    val label = when (type) {
+        LibraryContentType.MANGA -> strings.text("Manga")
+        LibraryContentType.NOVEL -> strings.text("Novel")
+        LibraryContentType.MIXED -> strings.text("Mixed")
+        LibraryContentType.UNKNOWN -> strings.text("Unknown type")
+    }
+    Surface(
+        modifier = modifier,
+        color = when (type) {
+            LibraryContentType.MANGA -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.94f)
+            LibraryContentType.NOVEL -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.94f)
+            LibraryContentType.MIXED -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f)
+            LibraryContentType.UNKNOWN -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f)
+        },
+        contentColor = when (type) {
+            LibraryContentType.MANGA -> MaterialTheme.colorScheme.onTertiaryContainer
+            LibraryContentType.NOVEL -> MaterialTheme.colorScheme.onSecondaryContainer
+            LibraryContentType.MIXED -> MaterialTheme.colorScheme.onPrimaryContainer
+            LibraryContentType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        shape = RoundedCornerShape(7.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

@@ -4,6 +4,9 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import dev.shinsou.kmp.local.decodeTypedLocalPublicationUrl
+import dev.shinsou.kmp.local.encodeTypedLocalPublicationUrl
 
 class ExtensionPublicationIdentityTest {
     @Test
@@ -19,5 +22,17 @@ class ExtensionPublicationIdentityTest {
             same,
             extensionPublicationKey(source.copy(packageId = "zh.wenku8.api"), "12345"),
         )
+    }
+
+    @Test
+    fun legacyTypedPublicationUrlCanRecoverItsPortableKey() {
+        val key = extensionPublicationKey(
+            SourceKey(packageId = "zh.bilimanga", sourceId = "linovelib"),
+            "book:123",
+        )
+
+        assertEquals(key, decodeTypedLocalPublicationUrl(encodeTypedLocalPublicationUrl(key)))
+        assertNull(decodeTypedLocalPublicationUrl("local://typed/v1/${key.value}/chapter"))
+        assertNull(decodeTypedLocalPublicationUrl("local://typed/v1/not-a-uuid"))
     }
 }

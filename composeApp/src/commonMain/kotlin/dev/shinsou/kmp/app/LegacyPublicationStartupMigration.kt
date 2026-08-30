@@ -21,6 +21,7 @@ import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.local.isTypedLocalCompatibilityUrl
 import dev.shinsou.kmp.plugin.Sha256
+import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.sync.v2.SyncDraft
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -220,7 +221,10 @@ private fun List<ContentAliasMutation>.distinctExactAliases(): List<ContentAlias
 
 private fun AppSnapshot.legacyProjectionSource(): LegacyProjectionSourceV1 {
     val typedMangaIds = mangas
-        .filter { isTypedLocalCompatibilityUrl(it.url) }
+        .filter {
+            isTypedLocalCompatibilityUrl(it.url) ||
+                decodeExtensionLibraryPublicationUrl(it.url) != null
+        }
         .mapTo(hashSetOf(), Manga::id)
         .apply {
             chapters

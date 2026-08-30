@@ -267,8 +267,8 @@ class ProductionShuYueReviewedRuntimeV2Test {
             it.sourceKey == SourceKey(2, "zh.wenku8.api", "zh.wenku8.api")
         }
         assertTrue(source.supportsLogin)
-        assertTrue(source.supportsFavorites)
-        assertEquals("option", source.favoriteBrowseOptionKey)
+        assertFalse(source.supportsFavorites)
+        assertNull(source.favoriteBrowseOptionKey)
         assertTrue(source.preferences.any { it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE })
         assertTrue(callbacks.saveSourceCredentials(source.id, "alice", "secret"))
         val scope = BuiltInShuYueExecutionScopesV2.resolve(
@@ -674,7 +674,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8ApiExecutesBrowseDetailUnitsContentLoginAndFavorite() = runTest {
+    fun reviewedWenku8ApiExecutesBrowseDetailUnitsAndContentButRejectsRemoteFavorite() = runTest {
         val innerRequests = mutableListOf<String>()
         val favoriteRequests = mutableListOf<PluginHttpRequest>()
         val fixture = installedReviewedSource(
@@ -713,8 +713,10 @@ class ProductionShuYueReviewedRuntimeV2Test {
             fixture.source.login(LoginCredentialsV2("username-ref", "password-ref")).loggedIn,
         )
         assertStoredLoginAndCookie(fixture, "wenku8-relay.mewx.org")
-        fixture.source.favorite(publication.remoteId, favorite = true)
-        assertEquals("wenku-session=abc", favoriteRequests.single().headers["Cookie"])
+        assertFailsWith<IllegalArgumentException> {
+            fixture.source.favorite(publication.remoteId, favorite = true)
+        }
+        assertTrue(favoriteRequests.isEmpty())
         assertEquals(
             listOf(
                 "action=articlelist&sort=lastupdate&page=1",
@@ -723,7 +725,6 @@ class ProductionShuYueReviewedRuntimeV2Test {
                 "action=book&do=list&aid=123&t=1",
                 "action=book&do=text&aid=123&cid=456&t=1",
                 "action=login&username=alice&password=secret",
-                "action=bookcase&do=add&aid=123",
             ),
             innerRequests,
         )

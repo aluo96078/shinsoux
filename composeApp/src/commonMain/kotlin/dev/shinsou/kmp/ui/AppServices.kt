@@ -3,6 +3,7 @@ package dev.shinsou.kmp.ui
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
+import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.local.LocalImportResult
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
@@ -11,6 +12,7 @@ import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
+import dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
 import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
@@ -637,6 +639,20 @@ interface BrowseCallbacks {
         remotePublicationId: String,
     ): RemotePublicationV2 =
         throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
+
+    /** Recovers the exact extension authority for a legacy UUID-only local-library row. */
+    fun extensionLibraryBindingV2(
+        publicationKey: PublicationKey,
+    ): ExtensionLibraryBindingV2? = null
+
+    /**
+     * Best-effort repair for beta-era UUID-only extension favorites. Implementations must return
+     * a binding only after the deterministic publication UUID matches an authoritative search row.
+     */
+    suspend fun recoverExtensionLibraryBindingV2(
+        publicationKey: PublicationKey,
+        title: String,
+    ): ExtensionLibraryBindingV2? = null
 
     /** Source-owned favorite/library mutation for v2 publications when the capability exists. */
     suspend fun favoriteExtensionPublicationV2(

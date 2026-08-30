@@ -206,7 +206,25 @@ fun shinsouStringsFor(language: String): ShinsouStrings {
     }
 }
 
-private val EnglishStrings = ShinsouStrings()
+private val EnglishStrings = ShinsouStrings(
+    translations = mapOf(
+        "Manga" to "Manga",
+        "Novel" to "Novel",
+        "Mixed" to "Mixed",
+        "Unknown type" to "Unknown",
+    ),
+)
+
+private val LibraryContentTypeTranslations = mapOf(
+    "zh-TW" to mapOf("Manga" to "漫畫", "Novel" to "小說", "Mixed" to "混合", "Unknown type" to "未知"),
+    "zh-CN" to mapOf("Manga" to "漫画", "Novel" to "小说", "Mixed" to "混合", "Unknown type" to "未知"),
+    "ja" to mapOf("Manga" to "マンガ", "Novel" to "小説", "Mixed" to "混合", "Unknown type" to "不明"),
+    "ko" to mapOf("Manga" to "만화", "Novel" to "소설", "Mixed" to "혼합", "Unknown type" to "알 수 없음"),
+    "fr" to mapOf("Manga" to "Manga", "Novel" to "Roman", "Mixed" to "Mixte", "Unknown type" to "Type inconnu"),
+    "de" to mapOf("Manga" to "Manga", "Novel" to "Roman", "Mixed" to "Gemischt", "Unknown type" to "Unbekannt"),
+    "es" to mapOf("Manga" to "Manga", "Novel" to "Novela", "Mixed" to "Mixto", "Unknown type" to "Desconocido"),
+    "pt" to mapOf("Manga" to "Mangá", "Novel" to "Romance", "Mixed" to "Misto", "Unknown type" to "Desconhecido"),
+)
 
 /** Additional copy for settings, tracking, and platform screens. */
 private val TraditionalAdditionalTranslations = mapOf(
@@ -375,6 +393,10 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Download chapters from a title to read them offline." to "從作品下載章節即可離線閱讀。",
     "Download all chapters" to "下載全部章節",
     "Unable to open this title." to "無法開啟此作品。",
+    "Unable to recover this legacy extension favorite. Remove it and add the title again from its source." to
+        "無法還原這筆舊版擴充套件收藏。請移除後，再從原來源重新加入作品。",
+    "The title opened, but its repaired extension identity could not be saved." to
+        "作品已開啟，但無法儲存修復後的擴充套件識別資料。",
     "Download-only mode" to "僅下載模式",
     "Edit notes" to "編輯備註",
     "Enable snapshot sync" to "啟用快照同步",
@@ -454,8 +476,8 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Saved for platforms with a hostname-aware DNS resolver; direct IP rewriting cannot preserve TLS SNI safely" to "僅儲存給支援主機名稱感知 DNS 解析器的平台；直接改寫 IP 無法安全保留 TLS SNI",
     "Score (0–10)" to "評分（0–10）",
     "Selected categories only" to "僅選取的分類",
-    "Shinsou X · version 1.0.1-beta.1" to "Shinsou X · 版本 1.0.1-beta.1",
-    "Shinsou X 1.0" to "Shinsou X 1.0",
+    "Shinsou X · version 1.0.1-beta.2" to "Shinsou X · 版本 1.0.1-beta.2",
+    "Shinsou X 1.0.1-beta.2" to "Shinsou X 1.0.1-beta.2",
     "Shinsou X is a local-first manga library and reader. It does not operate an analytics or advertising service." to "Shinsou X 是以本機優先的漫畫書庫與閱讀器，不會執行分析或廣告服務。",
     "Show NSFW sources" to "顯示 NSFW 來源",
     "Show page number" to "顯示頁碼",
@@ -2771,7 +2793,7 @@ private val TraditionalChineseStrings = EnglishStrings.copy(
     pageTurnAnimation = "翻頁動畫", pageTurnAnimationDescription = "切換頁面時顯示動畫",
     clearFilters = "清除篩選", noMatches = "沒有符合項目", libraryEmpty = "書庫是空的",
     noUpdates = "沒有最近更新", noHistory = "沒有閱讀歷史", createBackup = "建立備份", restoreBackup = "還原備份",
-    translations = TraditionalLongTranslations + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
+    translations = TraditionalLongTranslations + LibraryContentTypeTranslations.getValue("zh-TW") + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
         TraditionalReviewedExtensionTranslations,
 )
 
@@ -2791,7 +2813,7 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     pageTurnAnimation = "翻页动画", pageTurnAnimationDescription = "切换页面时显示动画",
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
     // Explicit Simplified wording wins over the character-converted Traditional fallback.
-    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + SimplifiedReaderTranslations +
+    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + LibraryContentTypeTranslations.getValue("zh-CN") + SimplifiedReaderTranslations +
         SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations,
 )
 
@@ -2813,7 +2835,7 @@ private val JapaneseStrings = EnglishStrings.copy(
     pageTurnAnimationDescription = "ページを切り替えるときにアニメーションを表示",
     noUpdates = "最近の更新はありません", noHistory = "閲覧履歴はありません", createBackup = "バックアップを作成",
     restoreBackup = "バックアップを復元",
-    translations = JapaneseSyncTranslations + JapaneseReaderTranslations + JapanesePortabilityTranslations +
+    translations = JapaneseSyncTranslations + LibraryContentTypeTranslations.getValue("ja") + JapaneseReaderTranslations + JapanesePortabilityTranslations +
         JapaneseReviewedExtensionTranslations,
 )
 
@@ -2833,7 +2855,7 @@ private val KoreanStrings = EnglishStrings.copy(
     pageTurnAnimation = "페이지 전환 애니메이션", pageTurnAnimationDescription = "페이지를 전환할 때 애니메이션 표시",
     noMatches = "검색 결과 없음", libraryEmpty = "라이브러리가 비어 있습니다", noUpdates = "최근 업데이트 없음",
     noHistory = "읽기 기록 없음", createBackup = "백업 만들기", restoreBackup = "백업 복원",
-    translations = KoreanSyncTranslations + KoreanReaderTranslations + KoreanPortabilityTranslations +
+    translations = KoreanSyncTranslations + LibraryContentTypeTranslations.getValue("ko") + KoreanReaderTranslations + KoreanPortabilityTranslations +
         KoreanReviewedExtensionTranslations,
 )
 
@@ -2855,7 +2877,7 @@ private val FrenchStrings = EnglishStrings.copy(
     pageTurnAnimationDescription = "Animer la transition entre les pages",
     noMatches = "Aucun résultat", libraryEmpty = "Votre bibliothèque est vide", noUpdates = "Aucune mise à jour récente",
     noHistory = "Aucun historique", createBackup = "Créer une sauvegarde", restoreBackup = "Restaurer une sauvegarde",
-    translations = FrenchSyncTranslations + FrenchReaderTranslations + FrenchPortabilityTranslations +
+    translations = FrenchSyncTranslations + LibraryContentTypeTranslations.getValue("fr") + FrenchReaderTranslations + FrenchPortabilityTranslations +
         FrenchReviewedExtensionTranslations,
 )
 
@@ -2877,7 +2899,7 @@ private val GermanStrings = EnglishStrings.copy(
     pageTurnAnimationDescription = "Übergänge zwischen Seiten animieren",
     noUpdates = "Keine neuen Updates", noHistory = "Kein Leseverlauf", createBackup = "Backup erstellen",
     restoreBackup = "Backup wiederherstellen",
-    translations = GermanSyncTranslations + GermanICloudSyncTranslations + GermanReaderTranslations +
+    translations = GermanSyncTranslations + GermanICloudSyncTranslations + LibraryContentTypeTranslations.getValue("de") + GermanReaderTranslations +
         GermanPortabilityTranslations + GermanReviewedExtensionTranslations,
 )
 
@@ -2899,7 +2921,7 @@ private val SpanishStrings = EnglishStrings.copy(
     pageTurnAnimationDescription = "Animar la transición entre páginas",
     noUpdates = "No hay actualizaciones recientes", noHistory = "No hay historial de lectura", createBackup = "Crear copia",
     restoreBackup = "Restaurar copia",
-    translations = SpanishSyncTranslations + SpanishICloudSyncTranslations + SpanishReaderTranslations +
+    translations = SpanishSyncTranslations + SpanishICloudSyncTranslations + LibraryContentTypeTranslations.getValue("es") + SpanishReaderTranslations +
         SpanishPortabilityTranslations + SpanishReviewedExtensionTranslations,
 )
 
@@ -2921,6 +2943,6 @@ private val PortugueseStrings = EnglishStrings.copy(
     pageTurnAnimationDescription = "Animar a transição entre páginas",
     libraryEmpty = "Sua biblioteca está vazia", noUpdates = "Nenhuma atualização recente", noHistory = "Nenhum histórico de leitura",
     createBackup = "Criar backup", restoreBackup = "Restaurar backup",
-    translations = PortugueseSyncTranslations + PortugueseICloudSyncTranslations + PortugueseReaderTranslations +
+    translations = PortugueseSyncTranslations + PortugueseICloudSyncTranslations + LibraryContentTypeTranslations.getValue("pt") + PortugueseReaderTranslations +
         PortuguesePortabilityTranslations + PortugueseReviewedExtensionTranslations,
 )

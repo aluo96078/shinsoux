@@ -32,6 +32,34 @@ import kotlin.test.assertTrue
 
 class ExtensionContentConsumerV2Test {
     @Test
+    fun reversibleLibraryBindingReloadsTheLiveExtensionUnitPage() = runTest {
+        withFoundation { foundation ->
+            val source = FixtureSource(payloads = { remoteUnitId ->
+                listOf(inlinePayload("primary", remoteUnitId, "body"))
+            })
+            val consumer = consumer(foundation, source)
+            val binding = ExtensionLibraryBindingV2(
+                publicationKey = extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID),
+                sourceKey = SOURCE_KEY,
+                remotePublicationId = PUBLICATION_ID,
+            )
+
+            val page = consumer.publicationPage(
+                sourceKey = binding.sourceKey,
+                remotePublicationId = binding.remotePublicationId,
+            )
+
+            assertEquals(
+                binding.publicationKey,
+                extensionPublicationKey(page.sourceKey, page.publication.remoteId),
+            )
+            assertEquals(listOf(UNIT_ID), page.units.map { it.unit.remoteId })
+            assertEquals(listOf(SOURCE_KEY, SOURCE_KEY), source.requestedSourceKeys)
+            assertEquals(listOf(PUBLICATION_ID, PUBLICATION_ID), source.requestedPublicationIds)
+        }
+    }
+
+    @Test
     fun exactHostSelectionCommitsInlineTextBindingsRightsBlobAndOutboxAtomically() = runTest {
         withFoundation { foundation ->
             val source = FixtureSource(payloads = { remoteUnitId ->
@@ -70,9 +98,13 @@ class ExtensionContentConsumerV2Test {
             val representation = assertIs<ContentRepresentation.PlainText>(
                 unit.manifestRevisions.single().representations.single(),
             )
+            val libraryBinding = assertNotNull(consumer.extensionLibraryBinding(publication.key))
 
             assertEquals(SOURCE_KEY, origin.sourceBinding.sourceKey)
             assertEquals(PUBLICATION_ID, origin.sourceBinding.remoteId)
+            assertEquals(publication.key, libraryBinding.publicationKey)
+            assertEquals(SOURCE_KEY, libraryBinding.sourceKey)
+            assertEquals(PUBLICATION_ID, libraryBinding.remotePublicationId)
             assertEquals(SOURCE_KEY, assertNotNull(unit.sourceBinding).sourceKey)
             assertEquals(UNIT_ID, unit.sourceBinding?.remoteId)
             assertEquals(

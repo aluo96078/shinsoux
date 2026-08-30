@@ -138,6 +138,9 @@ import dev.shinsou.kmp.ui.SourceCredential
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.TypedReaderContentSession
+import dev.shinsou.kmp.ui.ExtensionFavoriteDestination
+import dev.shinsou.kmp.ui.extensionFavoriteDestination
+import dev.shinsou.kmp.ui.mutateExtensionFavorite
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.ReaderSettings
@@ -308,7 +311,7 @@ fun BrowseScreen(
     onBackAvailabilityChanged: (Boolean) -> Unit = {},
     onReaderVisibilityChanged: (Boolean) -> Unit = {},
     onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit = { _, _, _ -> },
-    /** App-owned library mutation for sources without a remote favorite capability. */
+    /** App-owned library mutation for every extension v2 publication. */
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
     isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
     /** Stable v2 source identities corresponding to [BrowseSettings.pinnedSourceKeys]. */
@@ -322,7 +325,7 @@ fun BrowseScreen(
     var section by remember { mutableStateOf(initialSection) }
     var query by remember { mutableStateOf("") }
     var overlays by remember { mutableStateOf(BrowseOverlayState()) }
-    // A reader is owned by ExtensionV2PublicationScreen. Keep a monotonically increasing
+    // A reader is owned by ExtensionV2PublicationPane. Keep a monotonically increasing
     // request so a system back gesture can ask that child to dispose its materialized session
     // before the parent changes the layout back to the publication detail pane.
     var v2ReaderBackRequest by remember { mutableStateOf(0L) }
@@ -384,7 +387,10 @@ fun BrowseScreen(
                 overlays.activeV2Reader -> {
                     v2ReaderBackRequest += 1
                 }
-                overlays.activeV2Publication != null -> overlays = overlays.closePublication()
+                overlays.activeV2Publication != null -> {
+                    overlays = overlays.closePublication()
+                    currentReaderVisibilityCallback.value(false)
+                }
                 overlays.activeSource != null -> {
                     cancelCatalogueLoad()
                     overlays = overlays.closeSource()
@@ -763,11 +769,11 @@ fun BrowseScreen(
             val source = snapshot.sources.firstOrNull { source ->
                 source.sourceKey == publication.sourceKey
             }
-            // Sources without a remote favorite capability still need a useful app-level
-            // favorite action. V2 publications use the same typed local-library projection for
-            // novels and image-sequence manga; sources that explicitly implement favorites keep
-            // their source mutation path.
-            val localLibrary = source?.supportsFavorites != true
+            // Sources without an explicit account-favorite capability use the app-owned library.
+            // The two mutation boundaries stay disjoint so a local bookmark cannot leak into a
+            // website account.
+            val favoriteDestination = extensionFavoriteDestination(source?.supportsFavorites)
+            val localLibrary = favoriteDestination == ExtensionFavoriteDestination.LOCAL_LIBRARY
             val supportsFavorite = true
             val localFavorite = localLibrary && isLocalLibraryFavorite(publication)
             BoxWithConstraints(
@@ -789,10 +795,11 @@ fun BrowseScreen(
                     color = MaterialTheme.colorScheme.background,
                     modifier = detailModifier,
                 ) {
-                    ExtensionV2PublicationScreen(
+                    ExtensionV2PublicationPane(
                         callbacks = callbacks,
                         item = publication,
                         supportsFavorite = supportsFavorite,
+                        favoriteDestination = favoriteDestination,
                         localLibrary = localLibrary,
                         localLibraryFavorite = localFavorite,
                         onToggleLocalLibrary = onToggleLocalLibrary,
@@ -1413,10 +1420,11 @@ private fun ExtensionNovelReaderShell(
 /** Exact-keyed native extension path; host-issued selections remain the only content authority. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExtensionV2PublicationScreen(
+internal fun ExtensionV2PublicationPane(
     callbacks: BrowseCallbacks,
     item: BrowseManga,
     supportsFavorite: Boolean,
+    favoriteDestination: ExtensionFavoriteDestination,
     localLibrary: Boolean,
     localLibraryFavorite: Boolean,
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
@@ -1777,15 +1785,19 @@ private fun ExtensionV2PublicationScreen(
             withFrameNanos { }
             try {
                 withContext(Dispatchers.Default) {
-                    if (localLibrary) {
-                        onToggleLocalLibrary(
-                            item,
-                            refreshedPublication ?: publicationPage?.publication ?: cataloguePublication,
-                            next,
-                        )
-                    } else {
-                        callbacks.favoriteExtensionPublicationV2(sourceKey, remotePublicationId, next)
-                    }
+                    mutateExtensionFavorite(
+                        destination = favoriteDestination,
+                        localMutation = {
+                            onToggleLocalLibrary(
+                                item,
+                                refreshedPublication ?: publicationPage?.publication ?: cataloguePublication,
+                                next,
+                            )
+                        },
+                        sourceMutation = {
+                            callbacks.favoriteExtensionPublicationV2(sourceKey, remotePublicationId, next)
+                        },
+                    )
                 }
                 favorite = next
                 operationMessage = if (next) {

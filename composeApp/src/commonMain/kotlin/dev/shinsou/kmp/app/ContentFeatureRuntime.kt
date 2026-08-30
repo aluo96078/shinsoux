@@ -3,6 +3,7 @@ package dev.shinsou.kmp.app
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.annotation.RightsEnforcedAnnotationService
 import dev.shinsou.kmp.content.ContentFoundationRuntime
+import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.HostContentOperationGate
 import dev.shinsou.kmp.content.access.RightsEnforcedContentOperations
@@ -68,6 +69,20 @@ public class ContentFeatureRuntime(
     onAnnotationMutationCommitted: () -> Unit = {},
     onRightsInvalidated: () -> Unit = {},
 ) {
+    /** Read-only format metadata used by library chrome; bodies remain lazy and unopened. */
+    public fun publicationContentKinds(
+        publicationKeys: Set<PublicationKey>,
+    ): Map<PublicationKey, Set<ContentKind>> {
+        if (publicationKeys.isEmpty()) return emptyMap()
+        return foundation.publications.all().asSequence()
+            .filter { it.key in publicationKeys }
+            .associate { publication ->
+                publication.key to publication.units.flatMapTo(linkedSetOf()) { unit ->
+                    unit.latestManifest?.representations.orEmpty().map { it.kind }
+                }
+            }
+    }
+
     private val speechEngine = platformTextToSpeechEngine ?: UnavailablePlatformTextToSpeechEngine()
 
     public val operationGate: HostContentOperationGate = HostContentOperationGate(

@@ -121,6 +121,7 @@ import dev.shinsou.kmp.local.LOCAL_IMPORTED_DOCUMENT_LIMITS
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import dev.shinsou.kmp.local.encodeTypedLocalPublicationUrl
+import dev.shinsou.kmp.local.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.migration.shuyue.ShuYueBackupV1Limits
 import dev.shinsou.kmp.reader.buildReaderChapterNavigation
 import dev.shinsou.kmp.reader.ReadingLocator
@@ -138,6 +139,9 @@ import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
 import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
 import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2
+import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.plugin.v2.extensionPublicationKey
 import dev.shinsou.kmp.tracking.TrackUpdate
 import dev.shinsou.kmp.ui.components.EmptyState
@@ -154,6 +158,7 @@ import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
 import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
 import dev.shinsou.kmp.ui.screens.DownloadsScreen
+import dev.shinsou.kmp.ui.screens.ExtensionV2PublicationPane
 import dev.shinsou.kmp.ui.screens.HistoryScreen
 import dev.shinsou.kmp.ui.screens.LibraryScreen
 import dev.shinsou.kmp.ui.screens.MangaDetailScreen
@@ -313,6 +318,10 @@ private fun ShinsouAppContent(
     var browseBackAvailable by remember { mutableStateOf(false) }
     var browseReaderOpen by remember { mutableStateOf(false) }
     var pendingBrowseManga by remember { mutableStateOf<BrowseManga?>(null) }
+    var localLibraryPublication by remember { mutableStateOf<BrowseManga?>(null) }
+    var localLibraryReaderBackRequest by remember { mutableStateOf(0L) }
+    var recoveringLocalLibraryMangaId by remember { mutableStateOf<Long?>(null) }
+    var localLibraryRecoveryRequest by remember { mutableStateOf(0L) }
     var pendingBrowseRequest by remember { mutableStateOf(0L) }
     val backSwipeProgress = remember { Animatable(0f) }
     var selectedCategoryId by remember { mutableStateOf(ALL_LIBRARY_CATEGORY_ID) }
@@ -340,6 +349,7 @@ private fun ShinsouAppContent(
     val v2ReaderProgressSessions = remember { mutableMapOf<String, String>() }
     val appLifecycle by appServices.appLifecycle.collectAsState()
     val sourceLoginRequests by appServices.browse.loginRequests.collectAsState()
+    val sourceRefreshInvalidations by appServices.browse.sourceRefreshInvalidations.collectAsState()
     val pluginLogoutConfirmations by appServices.browse.logoutConfirmations.collectAsState()
     val pendingSourceLoginRequest = sourceLoginRequests.firstOrNull()
     val lockLifecycleTracker = remember(appServices) { AppLockLifecycleTracker() }
@@ -373,9 +383,12 @@ private fun ShinsouAppContent(
     fun isV2PublicationInLocalLibrary(item: BrowseManga): Boolean {
         val sourceKey = item.sourceKey ?: return false
         val remoteId = item.remotePublicationId ?: return false
-        val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
+        val publicationKey = extensionPublicationKey(sourceKey, remoteId)
         return repository.currentSnapshot.mangas.any {
-            it.source == LOCAL_SOURCE_ID && it.url == localUrl && it.favorite
+            it.source == LOCAL_SOURCE_ID &&
+                (decodeExtensionLibraryPublicationUrl(it.url)?.publicationKey == publicationKey ||
+                    decodeTypedLocalPublicationUrl(it.url) == publicationKey) &&
+                it.favorite
         }
     }
 
@@ -388,10 +401,13 @@ private fun ShinsouAppContent(
         val remoteId = requireNotNull(item.remotePublicationId) {
             "Publication is missing its remote identity"
         }
-        val localUrl = encodeTypedLocalPublicationUrl(extensionPublicationKey(sourceKey, remoteId))
+        val publicationKey = extensionPublicationKey(sourceKey, remoteId)
+        val localUrl = encodeExtensionLibraryPublicationUrl(sourceKey, remoteId)
         val now = Clock.System.now().toEpochMilliseconds()
         val current = repository.currentSnapshot.mangas.firstOrNull {
-            it.source == LOCAL_SOURCE_ID && it.url == localUrl
+            it.source == LOCAL_SOURCE_ID &&
+                (decodeExtensionLibraryPublicationUrl(it.url)?.publicationKey == publicationKey ||
+                    decodeTypedLocalPublicationUrl(it.url) == publicationKey)
         }
         if (current == null) {
             if (!favorite) return
@@ -415,20 +431,160 @@ private fun ShinsouAppContent(
                 ),
             )
         } else {
-            repository.patchManga(
-                mangaId = current.id,
-                patch = MangaPatch(
+            repository.updateManga(current.id) { stored ->
+                val favoriteChanged = favorite != stored.favorite
+                val modifiedAt = maxOf(
+                    now,
+                    stored.lastModifiedAt,
+                    stored.favoriteModifiedAt ?: Long.MIN_VALUE,
+                )
+                stored.copy(
+                    url = localUrl,
                     favorite = favorite,
                     title = publication.title,
-                    author = publication.author,
-                    artist = publication.artist,
-                    description = publication.description,
-                    genre = publication.genre,
-                    thumbnailUrl = publication.thumbnailUrl,
+                    author = publication.author ?: stored.author,
+                    artist = publication.artist ?: stored.artist,
+                    description = publication.description ?: stored.description,
+                    genre = publication.genre ?: stored.genre,
+                    thumbnailUrl = publication.thumbnailUrl ?: stored.thumbnailUrl,
                     initialized = true,
-                ),
-                modifiedAt = now,
+                    lastModifiedAt = if (favoriteChanged) modifiedAt else now,
+                    favoriteModifiedAt = if (favoriteChanged) modifiedAt else stored.favoriteModifiedAt,
+                    version = stored.version + 1,
+                )
+            }
+        }
+    }
+
+    fun ExtensionLibraryBindingV2.toBrowseManga(manga: Manga): BrowseManga = BrowseManga(
+        sourceId = sourceKey.legacyLongId ?: Long.MIN_VALUE,
+        url = "",
+        title = manga.title,
+        thumbnailUrl = manga.thumbnailUrl,
+        author = manga.author,
+        artist = manga.artist,
+        description = manga.description,
+        genre = manga.genre,
+        sourceKey = sourceKey,
+        remotePublicationId = remotePublicationId,
+    )
+
+    fun openLocalExtensionManga(manga: Manga): Boolean {
+        return when (
+            val route = localLibraryExtensionRoute(
+                manga = manga,
+                hasLocalChapters = repository.currentSnapshot.chapters.any { it.mangaId == manga.id },
+                legacyBinding = appServices.browse::extensionLibraryBindingV2,
             )
+        ) {
+            LocalLibraryExtensionRoute.LocalDetail -> false
+            is LocalLibraryExtensionRoute.Open -> {
+                section = localLibraryExtensionHostSection(section)
+                if (route.migrateLegacyUrl) {
+                    mutate {
+                        repository.updateManga(manga.id) { stored ->
+                            stored.copy(
+                                url = encodeExtensionLibraryPublicationUrl(
+                                    route.binding.sourceKey,
+                                    route.binding.remotePublicationId,
+                                ),
+                            )
+                        }
+                    }
+                }
+                selectedMangaId = null
+                moreDestination = null
+                localLibraryReaderBackRequest = 0L
+                localLibraryPublication = route.binding.toBrowseManga(manga)
+                true
+            }
+            is LocalLibraryExtensionRoute.RecoverLegacy -> {
+                val hostSection = localLibraryExtensionHostSection(section)
+                // UUID-only beta rows cannot be reversed directly. Search enabled v2 sources and
+                // accept only a candidate whose deterministic publication UUID is an exact match.
+                // The request token prevents a cancelled recovery from navigating after Back.
+                val request = localLibraryRecoveryRequest + 1
+                localLibraryRecoveryRequest = request
+                recoveringLocalLibraryMangaId = manga.id
+                scope.launch {
+                    try {
+                        val searched = appServices.browse.recoverExtensionLibraryBindingV2(
+                            route.publicationKey,
+                            manga.title,
+                        )
+                        if (
+                            localLibraryRecoveryRequest != request ||
+                            recoveringLocalLibraryMangaId != manga.id
+                        ) {
+                            return@launch
+                        }
+                        if (searched == null) {
+                            recoveringLocalLibraryMangaId = null
+                            snackbar.showSnackbar(
+                                strings.text(
+                                    "Unable to recover this legacy extension favorite. Remove it and add the title again from its source.",
+                                ),
+                            )
+                            return@launch
+                        }
+                        if (
+                            localLibraryRecoveryRequest != request ||
+                            recoveringLocalLibraryMangaId != manga.id
+                        ) {
+                            return@launch
+                        }
+                        val repaired = runCatching {
+                            repository.updateManga(manga.id) { stored ->
+                                stored.copy(
+                                    url = encodeExtensionLibraryPublicationUrl(
+                                        searched.sourceKey,
+                                        searched.remotePublicationId,
+                                    ),
+                                )
+                            }
+                        }
+                        if (
+                            localLibraryRecoveryRequest != request ||
+                            recoveringLocalLibraryMangaId != manga.id
+                        ) {
+                            return@launch
+                        }
+                        section = hostSection
+                        selectedMangaId = null
+                        moreDestination = null
+                        localLibraryReaderBackRequest = 0L
+                        localLibraryPublication = searched.toBrowseManga(repository.manga(manga.id) ?: manga)
+                        recoveringLocalLibraryMangaId = null
+                        repaired.exceptionOrNull()?.let {
+                            snackbar.showSnackbar(
+                                strings.text("The title opened, but its repaired extension identity could not be saved."),
+                            )
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        if (
+                            localLibraryRecoveryRequest == request &&
+                            recoveringLocalLibraryMangaId == manga.id
+                        ) {
+                            recoveringLocalLibraryMangaId = null
+                            snackbar.showSnackbar(
+                                error.message ?: strings.text(
+                                    "Unable to recover this legacy extension favorite. Remove it and add the title again from its source.",
+                                ),
+                            )
+                        }
+                    } finally {
+                        if (
+                            localLibraryRecoveryRequest == request &&
+                            recoveringLocalLibraryMangaId == manga.id
+                        ) {
+                            recoveringLocalLibraryMangaId = null
+                        }
+                    }
+                }
+                true
+            }
         }
     }
 
@@ -471,7 +627,9 @@ private fun ShinsouAppContent(
             val publicationUrl = encodeTypedLocalPublicationUrl(locator.scope.publicationId)
             val current = repository.currentSnapshot
             val manga = current.mangas.firstOrNull {
-                it.source == LOCAL_SOURCE_ID && it.url == publicationUrl
+                it.source == LOCAL_SOURCE_ID &&
+                    (it.url == publicationUrl ||
+                        decodeExtensionLibraryPublicationUrl(it.url)?.publicationKey == locator.scope.publicationId)
             } ?: repository.upsertManga(
                 Manga(
                     source = LOCAL_SOURCE_ID,
@@ -536,6 +694,12 @@ private fun ShinsouAppContent(
 
     fun selectSection(next: MainSection) {
         dismissMobileInput()
+        if (recoveringLocalLibraryMangaId != null) {
+            localLibraryRecoveryRequest++
+            recoveringLocalLibraryMangaId = null
+        }
+        localLibraryPublication = null
+        browseReaderOpen = false
         section = next
         selectedMangaId = null
         moreDestination = null
@@ -553,7 +717,11 @@ private fun ShinsouAppContent(
         // The resolver persists the manga before returning, but the Compose snapshot can still
         // be one frame behind.  Guarding against the old snapshot drops the first click and makes
         // users click the same card twice.  DetailPane will render as the state flow catches up.
+        val manga = repository.currentSnapshot.mangas.firstOrNull { it.id == mangaId }
         dismissMobileInput()
+        if (manga != null && openLocalExtensionManga(manga)) return
+        localLibraryPublication = null
+        browseReaderOpen = false
         pendingBrowseRequest++
         pendingBrowseManga = null
         selectedMangaId = mangaId
@@ -571,6 +739,8 @@ private fun ShinsouAppContent(
         // perfectly normal tap feel like it was ignored.
         if (pendingBrowseManga != null) return
         dismissMobileInput()
+        localLibraryPublication = null
+        browseReaderOpen = false
         pendingBrowseManga = item
         val request = pendingBrowseRequest + 1
         pendingBrowseRequest = request
@@ -580,6 +750,8 @@ private fun ShinsouAppContent(
 
     fun openMore(destination: MoreDestination) {
         dismissMobileInput()
+        localLibraryPublication = null
+        browseReaderOpen = false
         moreBackRequest = 0L
         moreNestedBackAvailable = false
         moreDestination = destination
@@ -587,6 +759,22 @@ private fun ShinsouAppContent(
     }
 
     fun closeRemovedLibraryTitles(mangaIds: Set<Long>) {
+        val openExtensionKey = localLibraryPublication?.let { item ->
+            val sourceKey = item.sourceKey ?: return@let null
+            val remoteId = item.remotePublicationId ?: return@let null
+            extensionPublicationKey(sourceKey, remoteId)
+        }
+        if (
+            openExtensionKey != null &&
+            repository.currentSnapshot.mangas.any { manga ->
+                manga.id in mangaIds &&
+                    (decodeExtensionLibraryPublicationUrl(manga.url)?.publicationKey == openExtensionKey ||
+                        decodeTypedLocalPublicationUrl(manga.url) == openExtensionKey)
+            }
+        ) {
+            localLibraryPublication = null
+            browseReaderOpen = false
+        }
         if (selectedMangaId in mangaIds) {
             selectedMangaId = null
             selectedChapterIds = emptySet()
@@ -934,6 +1122,19 @@ private fun ShinsouAppContent(
                 readerBackRequest++
                 true
             }
+            localLibraryPublication != null && browseReaderOpen -> {
+                localLibraryReaderBackRequest++
+                true
+            }
+            localLibraryPublication != null -> {
+                localLibraryPublication = null
+                true
+            }
+            recoveringLocalLibraryMangaId != null -> {
+                localLibraryRecoveryRequest++
+                recoveringLocalLibraryMangaId = null
+                true
+            }
             selectedMangaId != null -> {
                 detailBackRequest++
                 true
@@ -977,6 +1178,8 @@ private fun ShinsouAppContent(
                 is SystemBackGestureEvent.Settled -> {
                     val gestureMovesVisiblePage = when {
                         pendingSourceLoginRequest != null -> false
+                        recoveringLocalLibraryMangaId != null -> true
+                        localLibraryPublication != null && !browseReaderOpen -> true
                         pendingBrowseManga != null -> true
                         selectedMangaId != null -> !detailNestedBackAvailable
                         // Settings supplies its own horizontally sliding child when nested; all
@@ -1401,6 +1604,12 @@ private fun ShinsouAppContent(
             ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
                     val phoneDestination = when {
+                        recoveringLocalLibraryMangaId != null -> PhoneDestination.Recovering(
+                            recoveringLocalLibraryMangaId!!,
+                        )
+                        localLibraryPublication != null -> PhoneDestination.LocalExtension(
+                            localLibraryPublication!!,
+                        )
                         pendingBrowseManga != null -> PhoneDestination.Pending(pendingBrowseManga!!)
                         selectedMangaId != null -> PhoneDestination.Manga(selectedMangaId!!)
                         moreDestination != null -> PhoneDestination.More(moreDestination!!)
@@ -1495,6 +1704,8 @@ private fun ShinsouAppContent(
                     ) { destination ->
                         val edgeOffset = when (destination) {
                             PhoneDestination.Section -> 0f
+                            is PhoneDestination.Recovering -> backSwipeProgress.value
+                            is PhoneDestination.LocalExtension -> backSwipeProgress.value
                             is PhoneDestination.Pending -> backSwipeProgress.value
                             is PhoneDestination.Manga -> {
                                 if (detailNestedBackAvailable) 0f else backSwipeProgress.value
@@ -1520,6 +1731,50 @@ private fun ShinsouAppContent(
                                     contentColor = MaterialTheme.colorScheme.onBackground,
                                 ) {
                                     when (destination) {
+                                        is PhoneDestination.Recovering -> repository.currentSnapshot.mangas
+                                            .firstOrNull { it.id == destination.id }
+                                            ?.let { recovering ->
+                                                PendingMangaDetailPane(
+                                                    item = BrowseManga(
+                                                        sourceId = LOCAL_SOURCE_ID,
+                                                        url = recovering.url,
+                                                        title = recovering.title,
+                                                        thumbnailUrl = recovering.thumbnailUrl,
+                                                    ),
+                                                    onBack = {
+                                                        localLibraryRecoveryRequest++
+                                                        recoveringLocalLibraryMangaId = null
+                                                    },
+                                                )
+                                            }
+                                        is PhoneDestination.LocalExtension -> ExtensionV2PublicationPane(
+                                            callbacks = appServices.browse,
+                                            item = destination.item,
+                                            supportsFavorite = true,
+                                            favoriteDestination = ExtensionFavoriteDestination.LOCAL_LIBRARY,
+                                            localLibrary = true,
+                                            localLibraryFavorite = isV2PublicationInLocalLibrary(destination.item),
+                                            onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
+                                            refreshGeneration = destination.item.sourceKey
+                                                ?.let(sourceRefreshInvalidations::get) ?: 0L,
+                                            contentFeatures = appServices.contentFeatures,
+                                            copyText = appServices::copyText,
+                                            readerSettings = snapshot.settings.reader,
+                                            onReaderSettingsChange = { readerSettings ->
+                                                mutate {
+                                                    repository.updateSettings { it.copy(reader = readerSettings) }
+                                                }
+                                            },
+                                            onOpenExternalUrl = appServices::openExternalUrl,
+                                            onShareText = appServices::shareText,
+                                            onReaderVisibilityChanged = { browseReaderOpen = it },
+                                            onReaderProgress = ::recordV2ReaderProgress,
+                                            readerBackRequest = localLibraryReaderBackRequest,
+                                            onBack = {
+                                                browseReaderOpen = false
+                                                localLibraryPublication = null
+                                            },
+                                        )
                                         is PhoneDestination.Pending -> PendingMangaDetailPane(
                                             item = destination.item,
                                             onBack = {
@@ -1584,12 +1839,27 @@ private fun ShinsouAppContent(
                     )
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
                 }
-                Box(
+                val mainContentModifier = if (
+                    localLibraryPublication != null && (browseReaderOpen || !splitDetail)
+                ) {
+                    Modifier.width(0.dp).fillMaxHeight()
+                } else {
                     Modifier
                         .weight(
-                            if (!browseReaderOpen && splitDetail && selectedMangaId != null) 0.9f else 1f,
+                            if (
+                                !browseReaderOpen &&
+                                splitDetail &&
+                                (selectedMangaId != null || localLibraryPublication != null)
+                            ) {
+                                0.9f
+                            } else {
+                                1f
+                            },
                         )
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
+                }
+                Box(
+                    mainContentModifier,
                 ) {
                     if (moreDestination != null) {
                         MoreDestinationPane(
@@ -1661,6 +1931,29 @@ private fun ShinsouAppContent(
                                         },
                                     )
                                 }
+                            } else if (recoveringLocalLibraryMangaId != null) {
+                                repository.currentSnapshot.mangas
+                                    .firstOrNull { it.id == recoveringLocalLibraryMangaId }
+                                    ?.let { recovering ->
+                                        Surface(
+                                            modifier = Modifier.fillMaxSize(),
+                                            color = MaterialTheme.colorScheme.background,
+                                            contentColor = MaterialTheme.colorScheme.onBackground,
+                                        ) {
+                                            PendingMangaDetailPane(
+                                                item = BrowseManga(
+                                                    sourceId = LOCAL_SOURCE_ID,
+                                                    url = recovering.url,
+                                                    title = recovering.title,
+                                                    thumbnailUrl = recovering.thumbnailUrl,
+                                                ),
+                                                onBack = {
+                                                    localLibraryRecoveryRequest++
+                                                    recoveringLocalLibraryMangaId = null
+                                                },
+                                            )
+                                        }
+                                    }
                             } else if (selectedMangaId != null && !splitDetail) {
                                 Surface(
                                     modifier = Modifier.fillMaxSize(),
@@ -1689,7 +1982,47 @@ private fun ShinsouAppContent(
                         }
                     }
                 }
-                if (!browseReaderOpen && splitDetail && selectedMangaId != null && moreDestination == null) {
+                if (localLibraryPublication != null && moreDestination == null) {
+                    if (!browseReaderOpen && splitDetail) {
+                        VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .weight(if (!browseReaderOpen && splitDetail) 1.1f else 1f)
+                            .fillMaxHeight(),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    ) {
+                        val publication = localLibraryPublication!!
+                        ExtensionV2PublicationPane(
+                            callbacks = appServices.browse,
+                            item = publication,
+                            supportsFavorite = true,
+                            favoriteDestination = ExtensionFavoriteDestination.LOCAL_LIBRARY,
+                            localLibrary = true,
+                            localLibraryFavorite = isV2PublicationInLocalLibrary(publication),
+                            onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
+                            refreshGeneration = publication.sourceKey
+                                ?.let(sourceRefreshInvalidations::get) ?: 0L,
+                            contentFeatures = appServices.contentFeatures,
+                            copyText = appServices::copyText,
+                            readerSettings = snapshot.settings.reader,
+                            onReaderSettingsChange = { readerSettings ->
+                                mutate {
+                                    repository.updateSettings { it.copy(reader = readerSettings) }
+                                }
+                            },
+                            onOpenExternalUrl = appServices::openExternalUrl,
+                            onShareText = appServices::shareText,
+                            onReaderVisibilityChanged = { browseReaderOpen = it },
+                            onReaderProgress = ::recordV2ReaderProgress,
+                            readerBackRequest = localLibraryReaderBackRequest,
+                            onBack = {
+                                browseReaderOpen = false
+                                localLibraryPublication = null
+                            },
+                        )
+                    }
+                } else if (!browseReaderOpen && splitDetail && selectedMangaId != null && moreDestination == null) {
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
                     Surface(
                         modifier = Modifier.weight(1.1f).fillMaxHeight(),
@@ -1863,6 +2196,17 @@ private fun SectionPane(
     ) { current ->
         when (current) {
             MainSection.LIBRARY -> {
+                val browseSnapshot by appServices.browse.state.collectAsState()
+                val extensionSourceTypes = remember(browseSnapshot.sources) {
+                    browseSnapshot.sources.mapNotNull { source ->
+                        source.sourceKey?.let { it to source.contentType }
+                    }.toMap()
+                }
+                val legacySourceTypes = remember(browseSnapshot.sources) {
+                    browseSnapshot.sources.asSequence()
+                        .filter { it.sourceKey == null }
+                        .associate { it.id to it.contentType }
+                }
                 val libraryItems = remember(snapshot.revision) {
                     repository.libraryItems().let { items ->
                         if (snapshot.settings.library.downloadOnly) items.filter { it.downloadCount > 0 } else items
@@ -1875,8 +2219,37 @@ private fun SectionPane(
                 val continueReadingItem = continueReadingChapter?.let { latestChapter ->
                     libraryItems.firstOrNull { it.libraryManga.manga.id == latestChapter.mangaId }
                 }
+                val typedPublicationKeys = remember(libraryItems) {
+                    libraryItems.mapNotNullTo(linkedSetOf()) { item ->
+                        decodeTypedLocalPublicationUrl(item.libraryManga.manga.url)
+                    }
+                }
+                val typedPublicationKinds = remember(
+                    snapshot.revision,
+                    typedPublicationKeys,
+                    appServices.contentFeatures,
+                ) {
+                    appServices.contentFeatures?.publicationContentKinds(typedPublicationKeys).orEmpty()
+                }
                 LibraryScreen(
                     items = libraryItems,
+                    contentTypes = remember(
+                        snapshot.revision,
+                        libraryItems,
+                        extensionSourceTypes,
+                        legacySourceTypes,
+                        typedPublicationKinds,
+                    ) {
+                        libraryItems.associate { item ->
+                            item.id to libraryContentType(
+                                manga = item.libraryManga.manga,
+                                extensionSourceTypes = extensionSourceTypes,
+                                legacySourceTypes = legacySourceTypes,
+                                legacyExtensionBinding = appServices.browse::extensionLibraryBindingV2,
+                                typedPublicationKinds = typedPublicationKinds::get,
+                            )
+                        }
+                    },
                     categories = snapshot.categories.sortedBy { it.sort },
                     settings = snapshot.settings.library,
                     selectedCategoryId = selectedCategoryId,
@@ -2448,7 +2821,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.1"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.2"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -2788,7 +3161,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0"),
+                strings.text("Shinsou X 1.0.1-beta.2"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),
@@ -2806,6 +3179,8 @@ private data class NavigationItem(
 
 private sealed interface PhoneDestination {
     data object Section : PhoneDestination
+    data class Recovering(val id: Long) : PhoneDestination
+    data class LocalExtension(val item: BrowseManga) : PhoneDestination
     data class Pending(val item: BrowseManga) : PhoneDestination
     data class Manga(val id: Long) : PhoneDestination
     data class More(val destination: MoreDestination) : PhoneDestination

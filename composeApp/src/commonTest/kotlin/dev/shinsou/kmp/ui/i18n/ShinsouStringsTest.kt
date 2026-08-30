@@ -7,6 +7,18 @@ import kotlin.test.assertTrue
 
 class ShinsouStringsTest {
     @Test
+    fun libraryContentTypeBadgesAreLocalized() {
+        val keys = listOf("Manga", "Novel", "Mixed", "Unknown type")
+        listOf("en-US", "zh-TW", "zh-CN", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-BR").forEach { locale ->
+            keys.forEach { key ->
+                assertTrue(key in shinsouStringsFor(locale).translations, "$locale did not localize '$key'")
+            }
+        }
+        assertEquals("漫畫", shinsouStringsFor("zh-TW").text("Manga"))
+        assertEquals("小說", shinsouStringsFor("zh-TW").text("Novel"))
+    }
+
+    @Test
     fun localeTagsKeepTraditionalAndSimplifiedChineseSeparate() {
         assertEquals("書庫", shinsouStringsFor("zh-TW").library)
         assertEquals("書庫", shinsouStringsFor("zh-Hant").library)
@@ -37,6 +49,20 @@ class ShinsouStringsTest {
         assertEquals("没有章节", simplified.text("No chapters"))
         assertEquals("已閱讀 3/12 章 · 25%", traditional.text("{0} of {1} chapters read · {2}%", 3, 12, 25))
         assertEquals("已阅读 3/12 章 · 25%", simplified.text("{0} of {1} chapters read · {2}%", 3, 12, 25))
+    }
+
+    @Test
+    fun legacyExtensionFavoriteRecoveryFailureIsActionableInChinese() {
+        val key = "Unable to recover this legacy extension favorite. Remove it and add the title again from its source."
+        val persistenceKey = "The title opened, but its repaired extension identity could not be saved."
+
+        assertEquals(
+            "無法還原這筆舊版擴充套件收藏。請移除後，再從原來源重新加入作品。",
+            shinsouStringsFor("zh-TW").text(key),
+        )
+        assertFalse(shinsouStringsFor("zh-CN").text(key) == key)
+        assertFalse(shinsouStringsFor("zh-TW").text(persistenceKey) == persistenceKey)
+        assertFalse(shinsouStringsFor("zh-CN").text(persistenceKey) == persistenceKey)
     }
 
     @Test
