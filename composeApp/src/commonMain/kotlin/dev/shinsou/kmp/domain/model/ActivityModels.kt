@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.domain.model
 
+import dev.shinsou.kmp.reader.ReadingLocator
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -8,6 +9,10 @@ data class History(
     val chapterId: Long,
     val lastRead: Long = 0,
     val timeRead: Long = 0,
+    /** Device-local semantic cursor used to restore reflowable text and EPUB documents exactly. */
+    val lastLocator: ReadingLocator? = null,
+    /** Visual page count paired with Chapter.lastPageRead for this rendition/document. */
+    val lastPageCount: Int? = null,
 )
 
 @Serializable

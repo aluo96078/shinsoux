@@ -212,6 +212,31 @@ class PluginNetworkSecurityTest {
         assertEquals("night=1; cf_clearance=clearance", built.transportRequest.headers["Cookie"])
     }
 
+    @Test
+    fun requestBuilderNeverForwardsUriFragmentsToTransportOrProxy() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        var routedTarget: String? = null
+        val builder = PluginRequestBuilder(
+            storage = storage,
+            proxyResolver = PluginProxyResolver { _, targetUrl ->
+                routedTarget = targetUrl
+                PluginProxyRoute("https://proxy.example/fetch")
+            },
+        )
+
+        val built = builder.build(
+            sourceId = 5,
+            request = PluginHttpRequest(
+                "GET",
+                "https://images.example/page.jpg?token=one#Referer=https%3A%2F%2Fsite.example%2F",
+            ),
+        )
+
+        assertEquals("https://images.example/page.jpg?token=one", built.originalUrl.toString())
+        assertEquals("https://images.example/page.jpg?token=one", routedTarget)
+        assertEquals("https://proxy.example/fetch", built.transportRequest.url)
+    }
+
     private fun client(
         storage: PluginStorage,
         now: Long = 1_000L,

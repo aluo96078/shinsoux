@@ -51,11 +51,13 @@ public actual fun EpubBrowserView(
     navigationRequestKey: Long,
     selectionRequestKey: Long,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    onViewportChanged: (ReadingLocator.Epub, pageIndex: Int, pageCount: Int) -> Unit,
     onSelectionChanged: (ReadingRange?) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onError: (String) -> Unit,
 ) {
     val currentLocatorChanged = rememberUpdatedState(onLocatorChanged)
+    val currentViewportChanged = rememberUpdatedState(onViewportChanged)
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
     val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
@@ -84,6 +86,9 @@ public actual fun EpubBrowserView(
             initialConfiguration = configuration,
             canSampleViewport = { documentState.canSampleViewport },
             onLocatorChanged = { locator -> currentLocatorChanged.value.invoke(locator) },
+            onViewportChanged = { locator, pageIndex, pageCount ->
+                currentViewportChanged.value.invoke(locator, pageIndex, pageCount)
+            },
             onReaderTap = { action -> currentReaderTap.value.invoke(action) },
             onError = { message -> currentError.value.invoke(message) },
         )
@@ -323,6 +328,7 @@ private class IosEpubScrollDelegate(
     initialConfiguration: EpubBrowserConfiguration,
     private val canSampleViewport: () -> Boolean,
     private val onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    private val onViewportChanged: (ReadingLocator.Epub, Int, Int) -> Unit,
     private val onReaderTap: (ReaderTapAction) -> Unit,
     private val onError: (String) -> Unit,
 ) : NSObject(), UIScrollViewDelegateProtocol {
@@ -576,7 +582,10 @@ private class IosEpubScrollDelegate(
                         viewport = viewport,
                         nowMillis = currentTimeMillis(),
                         force = force,
-                    )?.let(onLocatorChanged)
+                    )?.let { locator ->
+                        onLocatorChanged(locator)
+                        onViewportChanged(locator, viewport.pageIndex, viewport.pageCount)
+                    }
                 }
             }
             onComplete()

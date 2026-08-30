@@ -14,6 +14,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.PortableCategoryId
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.domain.model.TrackerAccountState
+import dev.shinsou.kmp.reader.validate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -106,6 +107,15 @@ data class AppSnapshot(
         histories.forEach { history ->
             ensure(history.chapterId in chapterById) { "History ${history.id} refers to missing chapter ${history.chapterId}" }
             ensure(history.timeRead >= 0) { "History ${history.id} has negative reading time" }
+            ensure(history.lastPageCount == null || history.lastPageCount > 0) {
+                "History ${history.id} has an invalid reader page count"
+            }
+            ensure(history.lastPageCount == null || chapterById[history.chapterId]!!.lastPageRead < history.lastPageCount) {
+                "History ${history.id} has a page outside its reader page count"
+            }
+            ensure(history.lastLocator == null || runCatching { history.lastLocator.validate() }.isSuccess) {
+                "History ${history.id} has an invalid reading locator"
+            }
         }
         updates.forEach { update ->
             val chapter = chapterById[update.chapterId]

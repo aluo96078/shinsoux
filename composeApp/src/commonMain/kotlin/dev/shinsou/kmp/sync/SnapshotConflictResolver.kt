@@ -53,7 +53,7 @@ data class SnapshotMergeResult(
  * Merges two complete replicas. Records absent on one side are retained because snapshots do not
  * yet carry deletion tombstones. Conflicting fields use deterministic LWW, except:
  * - chapter.read is logical OR;
- * - chapter.lastPageRead is max;
+ * - chapter.lastPageRead follows the newest matching history timestamp when available;
  * - track.lastChapterRead is max.
  */
 object SnapshotConflictResolver {
@@ -77,6 +77,8 @@ object SnapshotConflictResolver {
         val remoteSnapshot = aligned.snapshot
         val remoteWinsReplica = remoteWins(local, remote)
         val conflicts = mutableListOf<MergeConflict>()
+        val localHistoryByChapter = local.snapshot.histories.associateBy(History::chapterId)
+        val remoteHistoryByChapter = remoteSnapshot.histories.associateBy(History::chapterId)
 
         val mangas = mergeByKey(local.snapshot.mangas, remoteSnapshot.mangas, Manga::id) { left, right ->
             val remoteWins = mangaRemoteWins(left, right, remoteWinsReplica)
@@ -85,19 +87,32 @@ object SnapshotConflictResolver {
         }
 
         val chapters = mergeByKey(local.snapshot.chapters, remoteSnapshot.chapters, Chapter::id) { left, right ->
-            val remoteWins = chapterRemoteWins(left, right, remoteWinsReplica)
-            val winner = if (remoteWins) right else left
-            val merged = winner.copy(
+            val metadataRemoteWins = chapterRemoteWins(left, right, remoteWinsReplica)
+            val localHistory = localHistoryByChapter[left.id]
+            val remoteHistory = remoteHistoryByChapter[right.id]
+            val pageRemoteWins = when {
+                localHistory == null && remoteHistory == null -> metadataRemoteWins
+                localHistory?.lastRead != remoteHistory?.lastRead ->
+                    (remoteHistory?.lastRead ?: Long.MIN_VALUE) >
+                        (localHistory?.lastRead ?: Long.MIN_VALUE)
+                else -> remoteWinsReplica
+            }
+            val metadataWinner = if (metadataRemoteWins) right else left
+            val pageWinner = if (pageRemoteWins) right else left
+            val merged = metadataWinner.copy(
                 read = left.read || right.read,
-                lastPageRead = maxOf(left.lastPageRead, right.lastPageRead),
+                // Reading position is a cursor, not a monotonic counter: returning to an earlier
+                // page is a valid final position. Its history timestamp owns only this field.
+                lastPageRead = pageWinner.lastPageRead,
             )
             if (left != right) {
                 val special = left.read != right.read || left.lastPageRead != right.lastPageRead
                 conflicts += MergeConflict(
                     entity = "chapter",
                     key = left.id.toString(),
-                    winner = if (special) ConflictWinner.MERGED else if (remoteWins) ConflictWinner.REMOTE else ConflictWinner.LOCAL,
-                    resolution = if (special) "read=OR,lastPageRead=max,remaining=LWW" else "last-write-wins",
+                    winner = if (special) ConflictWinner.MERGED
+                    else if (metadataRemoteWins) ConflictWinner.REMOTE else ConflictWinner.LOCAL,
+                    resolution = if (special) "read=OR,lastPageRead=LWW,remaining=LWW" else "last-write-wins",
                 )
             }
             merged
@@ -115,6 +130,16 @@ object SnapshotConflictResolver {
             }
             recordConflict(conflicts, "history", left.chapterId, left, right, remoteWins)
             if (remoteWins) right else left
+        }
+        val compatibleHistories = histories.map { history ->
+            val chapter = chapters.firstOrNull { it.id == history.chapterId }
+            if (history.lastPageCount == null || chapter == null || chapter.lastPageRead < history.lastPageCount) {
+                history
+            } else {
+                // A count is only a rendition hint. Preserve the newest cursor and discard an
+                // incompatible hint instead of resetting the user's reading position.
+                history.copy(lastPageCount = null)
+            }
         }
 
         val tracks = mergeByKey(local.snapshot.tracks, remoteSnapshot.tracks, { it.mangaId to it.trackerId }) { left, right ->
@@ -183,7 +208,7 @@ object SnapshotConflictResolver {
             chapters = chapters,
             categories = categories,
             mangaCategories = links,
-            histories = histories,
+            histories = compatibleHistories,
             updates = updates,
             // Queue rows and their downloaded bytes are device-local runtime state. Importing a
             // remote queue would advertise files that do not exist here and could start its work.

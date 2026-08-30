@@ -11,6 +11,7 @@ import dev.shinsou.kmp.domain.model.DownloadSettings
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.GeneralSettings
+import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.LibraryDisplayMode
 import dev.shinsou.kmp.domain.model.LibrarySettings
 import dev.shinsou.kmp.domain.model.LibraryUpdate
@@ -155,6 +156,58 @@ class SnapshotMaterializerTest {
         assertEquals("old-fingerprint", result.repositoryTrustConfirmations.single().trustedFingerprint)
         assertEquals("new-fingerprint", result.repositoryTrustConfirmations.single().proposedFingerprint)
         snapshot.validate()
+    }
+
+    @Test
+    fun olderRemoteProgressCannotReplaceANewerDeviceLocalVisualPage() {
+        val localManga = Manga(
+            id = 1,
+            source = 9,
+            favorite = true,
+            url = "https://source.example/manga/one",
+            title = "Title",
+        )
+        val localChapter = Chapter(
+            id = 10,
+            mangaId = 1,
+            url = "https://source.example/chapter/one",
+            name = "Chapter",
+            lastPageRead = 8,
+        )
+        val current = AppSnapshot(
+            mangas = listOf(localManga),
+            chapters = listOf(localChapter),
+            histories = listOf(
+                History(id = 10, chapterId = 10, lastRead = 2_000, lastPageCount = 12),
+            ),
+        ).validate()
+        var state = SyncState()
+        listOf(
+            operation("manga", 1, SyncMutationFactory.libraryEntry(mangaKey, localManga)),
+            operation("chapter", 2, SyncMutationFactory.chapter(chapterKey, mangaKey, localChapter)),
+            operation(
+                "progress",
+                3,
+                ReadingProgressSet(
+                    chapterKey,
+                    mangaKey,
+                    ReaderPosition(ReadingMode.PAGER_LTR, 3),
+                    readState = false,
+                    historyTouchedAt = 1_000,
+                    sessionId = "remote-reader",
+                ),
+            ),
+        ).forEach { state = SyncReducer.reduce(state, it) }
+        val identity = SyncIdentityMap()
+            .bind(mangaKey, 1)
+            .bind(chapterKey, 10)
+
+        val projected = SnapshotMaterializer.materialize(state, current, identity).snapshot
+
+        assertEquals(8, projected.chapters.single().lastPageRead)
+        assertEquals(2_000, projected.histories.single().lastRead)
+        assertEquals(12, projected.histories.single().lastPageCount)
+        projected.validate()
     }
 
     @Test

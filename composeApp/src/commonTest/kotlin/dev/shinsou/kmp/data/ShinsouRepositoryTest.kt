@@ -13,11 +13,15 @@ import dev.shinsou.kmp.domain.model.LibraryUpdate
 import dev.shinsou.kmp.domain.model.LibrarySettings
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaPatch
+import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SecuritySettings
 import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.domain.model.TrackerAccountState
 import dev.shinsou.kmp.domain.model.TrackerIds
+import dev.shinsou.kmp.domain.model.UnitKey
+import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.reader.ReadingScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -83,6 +87,7 @@ class ShinsouRepositoryTest {
 
         assertEquals(category.id, repository.categoriesForManga(manga.id).single().id)
         assertEquals(7, repository.chapter(chapter.id)?.lastPageRead)
+        assertEquals(7, repository.history().single().chapter.lastPageRead)
         assertEquals(40, repository.history().single().timeRead)
         assertEquals(1, repository.library().single().totalChapters)
         assertTrue(repository.snapshot.value.revision >= 6)
@@ -101,6 +106,81 @@ class ShinsouRepositoryTest {
 
         assertTrue(repository.chapter(chapter.id)?.read == true)
         assertEquals(8, repository.chapter(chapter.id)?.lastPageRead)
+    }
+
+    @Test
+    fun delayedOlderReaderProgressCannotOverwriteTheFinalPage() = runTest {
+        val repository = ShinsouRepository()
+        val manga = repository.upsertManga(Manga(source = 10, url = "/manga", title = "Shinsou"))
+        val chapter = repository.upsertChapter(
+            Chapter(mangaId = manga.id, url = "/chapter/1", name = "Chapter 1"),
+        )
+
+        repository.markChapterProgress(chapter.id, lastPageRead = 7, read = false, readAt = 2_000)
+        repository.markChapterProgress(chapter.id, lastPageRead = 3, read = false, readAt = 1_000)
+
+        assertEquals(7, repository.chapter(chapter.id)?.lastPageRead)
+        assertEquals(2_000, repository.history().single().lastRead)
+    }
+
+    @Test
+    fun exactLocatorPersistsWithVisualPageAndStaleWritesCannotReplaceIt() = runTest {
+        val repository = ShinsouRepository()
+        val manga = repository.upsertManga(Manga(source = 10, url = "/manga", title = "Shinsou"))
+        val chapter = repository.upsertChapter(
+            Chapter(mangaId = manga.id, url = "/chapter/1", name = "Chapter 1"),
+        )
+        val newer = testTextLocator(offset = 700)
+        val older = testTextLocator(offset = 300)
+
+        repository.markChapterProgress(
+            chapter.id,
+            lastPageRead = 7,
+            read = false,
+            readAt = 2_000,
+            lastLocator = newer,
+        )
+        repository.markChapterProgress(
+            chapter.id,
+            lastPageRead = 3,
+            read = false,
+            readAt = 1_000,
+            lastLocator = older,
+        )
+
+        assertEquals(7, repository.chapter(chapter.id)?.lastPageRead)
+        assertEquals(newer, repository.currentSnapshot.histories.single().lastLocator)
+        assertEquals(newer, ShinsouRepository.decodeSnapshot(repository.exportSnapshot()).histories.single().lastLocator)
+    }
+
+    @Test
+    fun newerPageClearsAnIncompatibleOldRenditionPageCount() = runTest {
+        val repository = ShinsouRepository()
+        val manga = repository.upsertManga(Manga(source = 10, url = "/manga", title = "Shinsou"))
+        val chapter = repository.upsertChapter(
+            Chapter(mangaId = manga.id, url = "/chapter/1", name = "Chapter 1"),
+        )
+        val locator = testTextLocator(offset = 300)
+        repository.markChapterProgress(
+            chapter.id,
+            lastPageRead = 3,
+            read = false,
+            readAt = 1_000,
+            lastLocator = locator,
+            lastPageCount = 5,
+        )
+
+        repository.markChapterProgress(
+            chapter.id,
+            lastPageRead = 7,
+            read = false,
+            readAt = 2_000,
+        )
+
+        assertEquals(7, repository.chapter(chapter.id)?.lastPageRead)
+        assertEquals(locator, repository.currentSnapshot.histories.single().lastLocator)
+        assertNull(repository.currentSnapshot.histories.single().lastPageCount)
+        repository.currentSnapshot.validate()
     }
 
     @Test
@@ -567,5 +647,22 @@ class ShinsouRepositoryTest {
         assertFailsWith<SnapshotValidationException> {
             AppSnapshot(revision = Long.MAX_VALUE).validate()
         }
+    }
+
+    private fun testTextLocator(offset: Int): ReadingLocator.Text {
+        val publication = PublicationKey("11111111-1111-4111-8111-111111111111")
+        return ReadingLocator.Text(
+            schemaVersion = 1,
+            scope = ReadingScope(
+                schemaVersion = 1,
+                publicationId = publication,
+                acquisitionId = "22222222-2222-4222-8222-222222222222",
+                unitId = UnitKey(publication, "33333333-3333-4333-8333-333333333333"),
+                contentRevision = 1,
+            ),
+            resourceId = "body",
+            blockId = "paragraph-1",
+            offset = offset,
+        )
     }
 }

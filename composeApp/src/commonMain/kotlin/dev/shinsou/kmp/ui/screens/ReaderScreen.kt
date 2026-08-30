@@ -184,6 +184,8 @@ fun ReaderScreen(
     onChapterSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
     unifiedReaderContent: UnifiedReaderContent? = null,
+    unifiedReaderInitialPageIndex: Int? = null,
+    unifiedReaderInitialPageCount: Int? = null,
     unifiedReaderRenderer: (@Composable (
         UnifiedReaderContent,
         Modifier,
@@ -195,6 +197,15 @@ fun ReaderScreen(
     require((unifiedReaderContent == null) == (unifiedReaderRenderer == null)) {
         "Unified reader content and renderer must be supplied together"
     }
+    require(unifiedReaderInitialPageIndex == null || unifiedReaderInitialPageIndex >= 0) {
+        "Unified reader initial page index must be non-negative"
+    }
+    require(unifiedReaderInitialPageCount == null || unifiedReaderInitialPageCount > 0) {
+        "Unified reader initial page count must be positive"
+    }
+    require(unifiedReaderInitialPageCount == null || unifiedReaderInitialPageIndex == null ||
+        unifiedReaderInitialPageIndex < unifiedReaderInitialPageCount
+    ) { "Unified reader initial page must be inside its page count" }
     val strings = LocalShinsouStrings.current
     val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(settings.volumeKeys)
     val unifiedTextContent = unifiedReaderContent?.representation is ContentRepresentation.PlainText
@@ -211,15 +222,31 @@ fun ReaderScreen(
         chapter.id,
         readerSessionId,
         unifiedReaderContent?.representation?.representationId,
-    ) { mutableStateOf(unifiedReaderContent?.navigation?.itemCount ?: 0) }
+        unifiedReaderInitialPageIndex,
+        unifiedReaderInitialPageCount,
+    ) {
+        mutableStateOf(
+            when (unifiedReaderContent?.representation) {
+                is ContentRepresentation.ImageSequence -> unifiedReaderContent.navigation.itemCount
+                is ContentRepresentation.PlainText,
+                is ContentRepresentation.EpubSpine,
+                -> unifiedReaderInitialPageCount
+                    ?: unifiedReaderInitialPageIndex?.plus(1)
+                    ?: 1
+                null -> 0
+            }.coerceAtLeast(0),
+        )
+    }
     val readerPageCount = if (unifiedReaderEnabled) unifiedReaderPageCount else pages.size
     var unifiedReaderPageIndex by remember(
         chapter.id,
         readerSessionId,
         unifiedReaderContent?.representation?.representationId,
+        unifiedReaderInitialPageIndex,
     ) {
         mutableStateOf(
-            unifiedReaderContent?.navigation?.indexOf(unifiedReaderContent.initialLocator)
+            (unifiedReaderInitialPageIndex
+                ?: unifiedReaderContent?.navigation?.indexOf(unifiedReaderContent.initialLocator))
                 ?.coerceIn(0, (unifiedReaderPageCount - 1).coerceAtLeast(0))
                 ?: 0,
         )
@@ -263,14 +290,26 @@ fun ReaderScreen(
         isContinuousReaderMode(settings.readingMode) ||
             (unifiedTextReader && isNovelContinuousMode(settings.readingMode))
 
+    fun commitCurrentPosition() {
+        if (positionReportingEnabled && !loading && readerPageCount > 0) {
+            onPositionChanged(currentPosition)
+        }
+    }
+
     fun openPreviousChapter() {
         boundaryTransition = null
-        if (previousChapter != null) onPreviousChapter()
+        if (previousChapter != null) {
+            commitCurrentPosition()
+            onPreviousChapter()
+        }
     }
 
     fun openNextChapter() {
         boundaryTransition = null
-        if (nextChapter != null) onNextChapter()
+        if (nextChapter != null) {
+            commitCurrentPosition()
+            onNextChapter()
+        }
     }
 
     fun requestPage(index: Int) {
@@ -343,7 +382,10 @@ fun ReaderScreen(
             chapterListVisible -> chapterListVisible = false
             settingsVisible -> settingsVisible = false
             boundaryTransition != null -> boundaryTransition = null
-            else -> onClose()
+            else -> {
+                commitCurrentPosition()
+                onClose()
+            }
         }
         return true
     }
@@ -658,7 +700,12 @@ fun ReaderScreen(
                     position = currentPosition,
                     viewportRequestSerial = viewportRequestSerial,
                     settings = settings,
-                    onPositionChanged = { currentPosition = it },
+                    // Keep the in-memory cursor current on every viewport sample so an immediate
+                    // close commits the actual final page, even before the settled-write debounce.
+                    onPositionObserved = { currentPosition = it },
+                    onPositionSettled = { settled ->
+                        if (positionReportingEnabled && !loading) onPositionChanged(settled)
+                    },
                     onTap = ::handlePageAction,
                 )
             }
@@ -745,7 +792,7 @@ fun ReaderScreen(
             inLibrary = inLibrary,
             hasPreviousChapter = previousChapter != null,
             hasNextChapter = nextChapter != null,
-            onClose = onClose,
+            onClose = { handleReaderBack() },
             onOpenWeb = onOpenWeb,
             onPageChange = ::requestPage,
             onFavorite = onToggleFavorite,
@@ -777,7 +824,10 @@ fun ReaderScreen(
             currentChapterId = chapter.id,
             onSelect = { chapterId ->
                 chapterListVisible = false
-                if (chapterId != chapter.id) onChapterSelected(chapterId)
+                if (chapterId != chapter.id) {
+                    commitCurrentPosition()
+                    onChapterSelected(chapterId)
+                }
             },
             onDismiss = { chapterListVisible = false },
         )
@@ -865,9 +915,12 @@ private fun ReaderWebtoon(
     position: ReaderPosition,
     viewportRequestSerial: Long,
     settings: ReaderSettings,
-    onPositionChanged: (ReaderPosition) -> Unit,
+    onPositionObserved: (ReaderPosition) -> Unit,
+    onPositionSettled: (ReaderPosition) -> Unit,
     onTap: (ReaderTapAction) -> Unit,
 ) {
+    val latestOnPositionObserved by rememberUpdatedState(onPositionObserved)
+    val latestOnPositionSettled by rememberUpdatedState(onPositionSettled)
     val safePosition = coerceReaderPosition(position, settings.readingMode, pages.size)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(
         initialFirstVisibleItemIndex = safePosition.pageIndex,
@@ -913,8 +966,12 @@ private fun ReaderWebtoon(
                 )
             }
             .distinctUntilChanged()
+            .map { observed ->
+                latestOnPositionObserved(observed)
+                observed
+            }
             .debounce(500)
-            .collect(onPositionChanged)
+            .collect(latestOnPositionSettled)
     }
     LazyColumn(
         state = listState,

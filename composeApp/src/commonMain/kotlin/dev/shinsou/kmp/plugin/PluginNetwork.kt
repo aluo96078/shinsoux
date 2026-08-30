@@ -237,7 +237,11 @@ public class PluginRequestBuilder(
         sourceHeaders: Map<String, String> = emptyMap(),
         referer: String? = null,
     ): BuiltPluginRequest {
-        val target = Url(request.url)
+        // Fragments are client-side identifiers and never belong on an HTTP request target.
+        // Legacy image metadata is decoded by its content adapter before this final boundary;
+        // stripping here is defense in depth for every direct JS/network call and redirect.
+        val target = Url(request.url.substringBefore('#'))
+        val targetUrl = target.toString()
         val headers = linkedMapOf<String, String>()
         headers.putAll(sourceHeaders)
         request.headers.forEach { (name, value) -> putHeader(headers, name, value) }
@@ -279,11 +283,11 @@ public class PluginRequestBuilder(
             }
         }
 
-        val proxy = proxyResolver.route(sourceId, request.url)
+        val proxy = proxyResolver.route(sourceId, targetUrl)
         proxy?.headers?.forEach { (name, value) -> putHeader(headers, name, value) }
         return BuiltPluginRequest(
             originalUrl = target,
-            transportRequest = request.copy(url = proxy?.url ?: request.url, headers = headers),
+            transportRequest = request.copy(url = proxy?.url ?: targetUrl, headers = headers),
         )
     }
 

@@ -158,6 +158,106 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
+    fun reviewedImageContentDecodesLegacyFragmentIntoV2RequestHeaders() = runTest {
+        val script = """
+            var source = {
+              id: "fixture.images",
+              name: "Image fixture",
+              lang: "en",
+              baseUrl: "https://manga.example",
+              headers: {
+                "Accept": "image/avif,image/webp,*/*",
+                "User-Agent": "Source Agent/1.0",
+                "Cookie": "must-not-cross-v2"
+              },
+              getPageList: function(chapter) {
+                return [{
+                  index: 0,
+                  url: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0",
+                  imageUrl: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0"
+                }];
+              }
+            };
+        """.trimIndent()
+        val bytes = script.encodeToByteArray()
+        val identity = ShuYueArtifactIdentityV2(
+            packageId = "fixture.images",
+            version = "1.0.0",
+            versionCode = 1,
+            sha256 = Sha256.hex(bytes),
+        )
+        val profile = ShuYueReviewedPluginProfileV2(
+            identity = identity,
+            displayName = "Image fixture",
+            sourceId = "fixture.images",
+            sourceName = "Image fixture",
+            languageTag = "en",
+            baseUrl = "https://manga.example",
+            capabilities = setOf(dev.shinsou.kmp.plugin.v2.ExtensionCapability.CONTENT),
+            requiredPermissions = setOf(
+                ShuYueExecutionPermissionV2.EXECUTE_SCRIPT,
+                ShuYueExecutionPermissionV2.NETWORK,
+            ),
+            sourceProfiles = listOf(
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = "fixture.images",
+                    sourceName = "Image fixture",
+                    languageTag = "en",
+                    baseUrl = "https://manga.example",
+                    supportedContentKinds = setOf(dev.shinsou.kmp.content.ContentKind.IMAGE_SEQUENCE),
+                ),
+            ),
+        )
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val environment = ScriptPluginEnvironment(
+            network = PluginNetworkClient(
+                transport = PluginHttpTransport { error("No network request expected") },
+                storage = storage,
+            ),
+            storage = storage,
+        )
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val admission = productionShuYueReviewedAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = environment,
+            executionScopes = ShuYueExecutionScopeResolverV2 { _, _ -> 42L },
+            reviewedProfiles = listOf(profile),
+        )
+        val staged = admission.quarantine(
+            ShuYueScriptCandidateV2(
+                packageId = identity.packageId,
+                version = identity.version,
+                versionCode = identity.versionCode,
+                sourceIds = profile.sourceIds,
+                bytes = bytes,
+                provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
+                reportedSha256 = identity.sha256,
+            ),
+        )
+        approvals.approve(identity, profile.requiredPermissions)
+        val runtime = admission.createRuntime(staged.quarantineId)
+
+        try {
+            val sourceKey = SourceKey(2, identity.packageId, "fixture.images")
+            val source = requireNotNull(runtime.source(sourceKey))
+            val payload = assertIs<UnitContentPayload.ImageSequence>(
+                source.content("publication", "chapter").representations.single(),
+            )
+            val request = payload.pages.single().request
+            assertEquals("https://cdn.example/page.jpg", request.effectiveUri)
+            assertEquals("https://manga.example/read/1", request.headerHints["Referer"])
+            assertEquals("Page Agent/2.0", request.headerHints["User-Agent"])
+            assertEquals("image/avif,image/webp,*/*", request.headerHints["Accept"])
+            assertFalse(request.headerHints.keys.any { it.equals("Cookie", ignoreCase = true) })
+        } finally {
+            (runtime as? dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2)?.close()
+        }
+    }
+
+    @Test
     fun addingShuYueGitHubBaseUsesReviewedIndexInsteadOfLegacyRepoJson() = runTest {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)

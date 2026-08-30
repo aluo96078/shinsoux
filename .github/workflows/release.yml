@@ -448,7 +448,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.0-beta.5' ||
           needs.metadata.outputs.tag == 'v1.0.0' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.1' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.2'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.2' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.3'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -467,6 +468,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.1"
             $expectedHash = "c657180975070f1a4b93084d5bd834404db3049ef83f660f795dda783dbf611d"
             $baselineProductCode = "{25DB634E-B73F-3BE7-92DA-2F2A73109CC4}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.3") {
+            $baselineVersion = "1.0.1-beta.2"
+            $expectedHash = "3c41e90ec8c407f9a7a9e815da56277538668471a0bdd8f193cc4e9d9c2f9a42"
+            $baselineProductCode = "{370B6BB6-1112-3D36-A780-D144FF2496DD}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -687,7 +692,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.0-beta.5 ||
                   "$RELEASE_VERSION" == 1.0.0 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.1 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.2 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.2 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.3 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -699,6 +705,11 @@ jobs:
             if [[ "$RELEASE_VERSION" == 1.0.1-beta.2 ]]; then
               printf '%s\n' \
                 "Library note: this beta keeps extension favorites in the local library, restores their source-backed chapter lists, opens them without leaving the library, and labels titles as manga or novel from authoritative source metadata."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.3 ]]; then
+              printf '%s\n' \
+                "Reader note: this beta preserves page-level reading progress across extension manga and novels, restores EPUB positions, and fixes manga controls, paging direction, long-image sizing, and backward navigation." \
+                "Extension note: login requests now explain macOS Keychain password prompts; local Apple Development builds can retain Keychain authorization across updates when signed with the same certificate. Public DMGs remain unnotarized and ad-hoc signed until Developer ID credentials are configured."
             fi
           } > release-notes.md
 

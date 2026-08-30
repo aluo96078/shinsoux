@@ -146,6 +146,7 @@ import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.ui.ReaderProgressPosition
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
@@ -310,7 +311,14 @@ fun BrowseScreen(
     backGestureProgress: Float = 0f,
     onBackAvailabilityChanged: (Boolean) -> Unit = {},
     onReaderVisibilityChanged: (Boolean) -> Unit = {},
-    onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit = { _, _, _ -> },
+    onReaderProgress: (
+        title: String,
+        unitTitle: String,
+        locator: ReadingLocator,
+        pageIndex: Int,
+        pageCount: Int?,
+    ) -> Unit = { _, _, _, _, _ -> },
+    onReaderProgressFlushed: suspend () -> Unit = {},
     /** App-owned library mutation for every extension v2 publication. */
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
     isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
@@ -815,6 +823,7 @@ fun BrowseScreen(
                             currentReaderVisibilityCallback.value(visible)
                         },
                         onReaderProgress = onReaderProgress,
+                        onReaderProgressFlushed = onReaderProgressFlushed,
                         readerBackRequest = v2ReaderBackRequest,
                         onBack = {
                             overlays = overlays.closePublication()
@@ -1139,6 +1148,10 @@ private data class PendingExtensionRepresentationSelection(
     val openReader: Boolean,
 )
 
+private class LatestExtensionReaderProgress {
+    var position: ReaderProgressPosition? = null
+}
+
 private enum class ExtensionChapterFilter {
     ALL,
     UNREAD,
@@ -1147,6 +1160,7 @@ private enum class ExtensionChapterFilter {
     DOWNLOADED,
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtensionNovelReaderShell(
     title: String,
@@ -1156,37 +1170,107 @@ private fun ExtensionNovelReaderShell(
     busy: Boolean,
     onBack: () -> Unit,
     onOpenUnit: (ExtensionUnitSelectionV2) -> Unit,
-    onChapterList: () -> Unit,
     session: TypedReaderContentSession,
     features: ContentFeatureRuntime,
     copyText: (label: String, text: String) -> Boolean,
     readerSettings: ReaderSettings,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
     onCompleted: () -> Unit,
-    onReaderProgress: (ReadingLocator) -> Unit,
+    onReaderProgress: (ReaderProgressPosition) -> Unit,
+    onReaderProgressFlushed: suspend () -> Unit,
+    systemBackRequest: Long,
 ) {
     val strings = LocalShinsouStrings.current
+    val scope = rememberCoroutineScope()
     val hasCurrent = activeUnitIndex in units.indices
+    val textContent = session.content.representation is ContentRepresentation.PlainText ||
+        session.content.representation is ContentRepresentation.EpubSpine
     val epubReader = session.content.representation is ContentRepresentation.EpubSpine
-    val initialPage = session.content.navigation.indexOf(session.content.initialLocator) ?: 0
+    val imageReader = session.content.representation is ContentRepresentation.ImageSequence
+    val initialPage = session.initialVisualPageIndex
+        ?: session.content.navigation.indexOf(session.content.initialLocator)
+        ?: 0
     var controlsVisible by remember(session) { mutableStateOf(false) }
     var settingsVisible by remember(session) { mutableStateOf(false) }
-    var currentPage by remember(session) { mutableStateOf(if (epubReader) initialPage else 0) }
+    var chapterListVisible by remember(session) { mutableStateOf(false) }
+    var progressTransitionInFlight by remember(session) { mutableStateOf(false) }
+    var handledSystemBackRequest by remember(session) { mutableStateOf(systemBackRequest) }
+    var currentPage by remember(session) { mutableStateOf(initialPage) }
     var pageCount by remember(session) {
-        mutableStateOf(if (epubReader) session.content.navigation.itemCount.coerceAtLeast(1) else 1)
+        mutableStateOf(
+            when {
+                imageReader -> session.content.navigation.itemCount.coerceAtLeast(1)
+                else -> session.initialVisualPageCount ?: initialPage.plus(1).coerceAtLeast(1)
+            },
+        )
     }
-    var requestedPage by remember(session) { mutableStateOf(if (epubReader) initialPage else 0) }
+    var requestedPage by remember(session) { mutableStateOf(initialPage) }
     var pageRequestSerial by remember(session) { mutableStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
     val heldNavigationKeys = remember(session) { mutableSetOf<Key>() }
+    val latestProgress = remember(session) {
+        LatestExtensionReaderProgress().apply {
+            position = ReaderProgressPosition(
+                session.content.initialLocator,
+                initialPage.coerceAtLeast(0),
+                session.initialVisualPageCount,
+            )
+        }
+    }
+    val currentProgressCallback by rememberUpdatedState(onReaderProgress)
+
+    fun commitLatestProgress() {
+        latestProgress.position?.let(currentProgressCallback)
+    }
+
+    fun closeReader() {
+        if (progressTransitionInFlight) return
+        progressTransitionInFlight = true
+        commitLatestProgress()
+        // Keep the surface mounted until the app-owned local progress lane confirms that the
+        // final locator/page pair is durable. This also covers fast Escape/back close sequences.
+        scope.launch {
+            try {
+                onReaderProgressFlushed()
+                onBack()
+            } finally {
+                progressTransitionInFlight = false
+            }
+        }
+    }
+
+    fun openUnitAfterProgressFlush(selection: ExtensionUnitSelectionV2) {
+        if (progressTransitionInFlight || busy) return
+        progressTransitionInFlight = true
+        commitLatestProgress()
+        scope.launch {
+            try {
+                onReaderProgressFlushed()
+                onOpenUnit(selection)
+            } finally {
+                progressTransitionInFlight = false
+            }
+        }
+    }
+
+    fun handleReaderBack() {
+        when {
+            chapterListVisible -> chapterListVisible = false
+            settingsVisible -> settingsVisible = false
+            else -> closeReader()
+        }
+    }
 
     fun requestPage(index: Int) {
         when {
-            index < 0 && hasCurrent && activeUnitIndex > 0 && !busy ->
-                onOpenUnit(units[activeUnitIndex - 1])
-            index >= pageCount && hasCurrent && activeUnitIndex + 1 < units.size && !busy ->
-                onOpenUnit(units[activeUnitIndex + 1])
+            index < 0 && hasCurrent && activeUnitIndex > 0 && !busy -> {
+                openUnitAfterProgressFlush(units[activeUnitIndex - 1])
+            }
+            index >= pageCount && hasCurrent && activeUnitIndex + 1 < units.size && !busy -> {
+                openUnitAfterProgressFlush(units[activeUnitIndex + 1])
+            }
             index in 0 until pageCount -> {
+                currentPage = index
                 requestedPage = index
                 pageRequestSerial++
             }
@@ -1204,6 +1288,14 @@ private fun ExtensionNovelReaderShell(
     LaunchedEffect(session, settingsVisible) {
         heldNavigationKeys.clear()
         if (!settingsVisible && !epubReader) focusRequester.requestFocus()
+    }
+
+    LaunchedEffect(systemBackRequest) {
+        if (systemBackRequest == 0L || systemBackRequest == handledSystemBackRequest) {
+            return@LaunchedEffect
+        }
+        handledSystemBackRequest = systemBackRequest
+        handleReaderBack()
     }
 
     Box(
@@ -1280,7 +1372,7 @@ private fun ExtensionNovelReaderShell(
                         true
                     }
                     Key.Escape, Key.Back, Key.NavigatePrevious -> {
-                        onBack()
+                        handleReaderBack()
                         true
                     }
                     else -> false
@@ -1297,10 +1389,21 @@ private fun ExtensionNovelReaderShell(
             readerControlsVisible = controlsVisible,
             onPageIndexChanged = { index, count ->
                 currentPage = index
+                requestedPage = index
                 pageCount = count.coerceAtLeast(1)
+                latestProgress.position = latestProgress.position?.copy(
+                    pageIndex = index.coerceAtLeast(0),
+                    pageCount = count.coerceAtLeast(1),
+                )
             },
-            onLocatorChanged = { locator ->
-                onReaderProgress(locator)
+            onLocatorChanged = { locator, pageIndex, documentPageCount ->
+                val position = ReaderProgressPosition(
+                    locator,
+                    pageIndex.coerceAtLeast(0),
+                    documentPageCount,
+                )
+                latestProgress.position = position
+                onReaderProgress(position)
                 val navigation = session.content.navigation
                 if (navigation.indexOf(locator) == navigation.itemCount - 1 &&
                     (locator.progression ?: 0.0) >= 0.995
@@ -1322,7 +1425,7 @@ private fun ExtensionNovelReaderShell(
                     Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = ::closeReader) {
                         Icon(Icons.Outlined.ArrowBack, strings.text("Close reader"))
                     }
                     Column(Modifier.weight(1f)) {
@@ -1335,7 +1438,7 @@ private fun ExtensionNovelReaderShell(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconButton(onClick = onChapterList, enabled = units.isNotEmpty()) {
+                    IconButton(onClick = { chapterListVisible = true }, enabled = units.isNotEmpty()) {
                         Icon(Icons.Outlined.MenuBook, strings.chapters)
                     }
                     IconButton(onClick = { settingsVisible = true }) {
@@ -1381,7 +1484,7 @@ private fun ExtensionNovelReaderShell(
                             tint = Color.White,
                         )
                     }
-                    IconButton(onClick = onChapterList, enabled = units.isNotEmpty()) {
+                    IconButton(onClick = { chapterListVisible = true }, enabled = units.isNotEmpty()) {
                         Icon(
                             Icons.Outlined.MenuBook,
                             contentDescription = strings.chapters,
@@ -1410,10 +1513,42 @@ private fun ExtensionNovelReaderShell(
     if (settingsVisible) {
         ReaderSettingsSheet(
             settings = readerSettings,
-            textContent = true,
+            textContent = textContent,
             onChange = onReaderSettingsChange,
             onDismiss = { settingsVisible = false },
         )
+    }
+    if (chapterListVisible) {
+        ModalBottomSheet(onDismissRequest = { chapterListVisible = false }) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                Text(
+                    strings.chapters,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
+                )
+                LazyColumn(Modifier.fillMaxWidth()) {
+                    items(units, key = { it.unit.remoteId }) { selection ->
+                        val selected = selection.unit.remoteId ==
+                            units.getOrNull(activeUnitIndex)?.unit?.remoteId
+                        TextButton(
+                            onClick = {
+                                chapterListVisible = false
+                                if (!selected) openUnitAfterProgressFlush(selection)
+                            },
+                            enabled = !progressTransitionInFlight && !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                selection.unit.title,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1436,7 +1571,14 @@ internal fun ExtensionV2PublicationPane(
     onOpenExternalUrl: (String) -> Unit,
     onShareText: (String, String) -> Unit,
     onReaderVisibilityChanged: (Boolean) -> Unit,
-    onReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit,
+    onReaderProgress: (
+        title: String,
+        unitTitle: String,
+        locator: ReadingLocator,
+        pageIndex: Int,
+        pageCount: Int?,
+    ) -> Unit,
+    onReaderProgressFlushed: suspend () -> Unit,
     readerBackRequest: Long = 0L,
     onBack: () -> Unit,
 ) {
@@ -1465,10 +1607,6 @@ internal fun ExtensionV2PublicationPane(
         mutableStateOf<dev.shinsou.kmp.ui.TypedReaderContentSession?>(null)
     }
     var readerUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
-    var chapterListVisible by remember(item.identityKey) { mutableStateOf(false) }
-    var handledReaderBackRequest by remember(item.identityKey) {
-        mutableStateOf(readerBackRequest)
-    }
     var pendingRepresentation by remember(item.identityKey) {
         mutableStateOf<PendingExtensionRepresentationSelection?>(null)
     }
@@ -1557,14 +1695,6 @@ internal fun ExtensionV2PublicationPane(
     LaunchedEffect(openedReader) {
         if (openedReader != null) onReaderVisibilityChanged(true)
     }
-    LaunchedEffect(readerBackRequest) {
-        if (readerBackRequest == 0L || readerBackRequest == handledReaderBackRequest) return@LaunchedEffect
-        handledReaderBackRequest = readerBackRequest
-        chapterListVisible = false
-        readerSession = null
-        readerUnitId = null
-        onReaderVisibilityChanged(false)
-    }
     if (openedReader != null && contentFeatures != null) {
         ExtensionNovelReaderShell(
             title = publicationPage?.publication?.title ?: item.title,
@@ -1579,7 +1709,6 @@ internal fun ExtensionV2PublicationPane(
                 onReaderVisibilityChanged(false)
             },
             onOpenUnit = { selection -> materialize(selection, openReader = true) },
-            onChapterList = { chapterListVisible = true },
             session = openedReader,
             features = contentFeatures,
             copyText = copyText,
@@ -1588,46 +1717,20 @@ internal fun ExtensionV2PublicationPane(
             onCompleted = {
                 readerUnitId?.let { unitId -> readUnitIds = readUnitIds + unitId }
             },
-            onReaderProgress = { locator ->
+            onReaderProgress = { position ->
                 val publicationTitle = publicationPage?.publication?.title ?: item.title
                 val unitTitle = units.getOrNull(activeUnitIndex)?.unit?.title ?: item.title
-                // Start the hand-off synchronously so a rapid reader close/navigation cannot
-                // cancel the child coroutine before it queues the app-owned history write.
-                scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    onReaderProgress(publicationTitle, unitTitle, locator)
-                }
+                onReaderProgress(
+                    publicationTitle,
+                    unitTitle,
+                    position.locator,
+                    position.pageIndex,
+                    position.pageCount,
+                )
             },
+            onReaderProgressFlushed = onReaderProgressFlushed,
+            systemBackRequest = readerBackRequest,
         )
-        if (chapterListVisible) {
-            ModalBottomSheet(onDismissRequest = { chapterListVisible = false }) {
-                Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-                    Text(
-                        strings.chapters,
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
-                    )
-                    LazyColumn(Modifier.fillMaxWidth()) {
-                        items(units, key = { it.unit.remoteId }) { selection ->
-                            val selected = selection.unit.remoteId == readerUnitId
-                            TextButton(
-                                onClick = {
-                                    chapterListVisible = false
-                                    if (!selected) materialize(selection, openReader = true)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    selection.unit.title,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = if (selected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
         return
     }
 

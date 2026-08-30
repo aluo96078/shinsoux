@@ -25,10 +25,10 @@ number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
-目前原始碼中的預設版本為 `1.0.1-beta.2`：Android `versionName` 與應用內顯示使用完整
-beta 版本，Android `versionCode`／iOS build number 為 `25600102`，Desktop／iOS 的
+目前原始碼中的預設版本為 `1.0.1-beta.3`：Android `versionName` 與應用內顯示使用完整
+beta 版本，Android `versionCode`／iOS build number 為 `25600103`，Desktop／iOS 的
 package／marketing version 為 `1.0.1`，Windows installer package version 為
-`1.0.102`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
+`1.0.103`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
 
 ## Workspace 佈局
 
@@ -130,6 +130,30 @@ xcodebuild -project Shinsou.xcodeproj \
 ```
 
 DMG 由 Compose Desktop 設定產生，bundle id 為 `dev.aluo.shinsoux`，並使用 `composeApp/src/desktopMain/resources/shinsou.icns`。Gradle 會先以 `xcrun --sdk macosx swiftc` 將 `composeApp/src/desktopMain/swift/ShinsouWebChallenge/main.swift` 編譯成隨 App 封裝的 helper；`run` 與 `desktopTest` 也依賴同一 task。Release workflow 會掛載 DMG，確認縮減後的 `sqlite-jdbc` 同時包含 `org/sqlite/JDBC.class` 與 service descriptor，再以隔離 home 執行 `--verify-desktop-startup`；只有 SQLite database 建立且 Compose 下一幀寫出隨機 marker 才算通過。macOS Desktop 透過 JNA 直接呼叫 Security.framework Keychain；這項自動檢查仍不代表 WKWebView 真實來源 challenge、Keychain access prompt、簽章後存取或 legacy key migration 已人工檢查。
+
+macOS Keychain 的「永遠允許」依賴 App 的 designated requirement。未設定憑證時，Compose
+只能建立 ad-hoc 簽章；其 requirement 是每次建置都會改變的 `cdhash`，因此更新後必須重新
+輸入 Mac 密碼。開發機可把固定憑證的完整名稱放在使用者層級的
+`~/.gradle/gradle.properties`（該檔不可提交）。不能只填 SHA-1 指紋：
+
+```properties
+shinsouMacOsSigningIdentity=<完整 Apple Development 或 Developer ID Application 名稱>
+# 只有憑證不在預設 login keychain 時才需要：
+# shinsouMacOsSigningKeychain=/absolute/path/to/build.keychain-db
+```
+
+CI 可改用 `SHINSOU_MACOS_SIGNING_IDENTITY` 與選用的
+`SHINSOU_MACOS_SIGNING_KEYCHAIN`。Compose Desktop 內建 signer 只支援 Developer ID／Mac
+App Store identity；設定 Apple Development 時，Gradle 會在 `createDistributable` 或
+`createReleaseDistributable` 產生 App 後，透過 `scripts/sign_macos_app.sh` 保留 JVM
+entitlements 並覆上固定開發簽章。由於 jpackage 在包裝 DMG 時會再次改成 ad-hoc 簽章，
+`scripts/sign_macos_dmg.sh` 會在最終映像內再次簽署並驗證後才原子替換 Gradle 產物。這只
+適合安裝在開發機的本機測試版；公開 DMG 應使用同一個長期保存的 Developer ID
+Application 憑證並完成 notarization。
+
+第一次從 ad-hoc 版切換到固定簽章版時，既有 Keychain 項目仍會再要求一次授權；按下
+「永遠允許」後，同一簽章身分與 bundle id 的後續更新不應再次詢問。更換憑證或退回 ad-hoc
+簽章都會再次觸發授權。不得把 Keychain ACL 放寬為允許所有程式存取。
 
 在 Windows 11 x64 的 PowerShell／Windows Terminal 執行 Desktop build、test 與 app：
 

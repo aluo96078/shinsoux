@@ -21,7 +21,9 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -274,10 +276,12 @@ internal fun NovelReaderSurface(
     navigation: PlainTextNavigation,
     initialLocator: ReadingLocator,
     settings: ReaderSettings,
+    initialVisualPageIndex: Int?,
+    initialVisualPageCount: Int?,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
     onPageChanged: (pageIndex: Int, pageCount: Int) -> Unit,
-    onLocatorChanged: (ReadingLocator) -> Unit,
+    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -323,7 +327,21 @@ internal fun NovelReaderSurface(
             page.sourceStartUtf16 <= currentSourcePosition.offsetUtf16
         }
             .coerceAtLeast(0)
-        val initialPage = locatorPage
+        // Consume a saved visual page only for this first pagination. Reflows recreate the keyed
+        // reader from currentSourcePosition and keep the stable source position instead.
+        var initialVisualPageConsumed by remember(canonicalText, initialLocator) {
+            mutableStateOf(false)
+        }
+        val restoredVisualPage = initialVisualPageIndex
+            ?.takeIf { initialVisualPageCount == null || initialVisualPageCount == pages.size }
+            ?.takeUnless { initialVisualPageConsumed }
+        val initialPage = (restoredVisualPage ?: locatorPage).coerceIn(pages.indices)
+        if (restoredVisualPage != null) {
+            SideEffect {
+                currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, initialPage)
+                initialVisualPageConsumed = true
+            }
+        }
         val initialPageOffsetFraction = pages[initialPage].let { page ->
             val sourceLength = page.sourceEndUtf16 - page.sourceStartUtf16
             if (sourceLength <= 0) 0.0 else {
@@ -365,17 +383,15 @@ internal fun NovelReaderSurface(
                         )
                     },
                     onViewportChanged = { viewport ->
-                        onPageChanged(
-                            if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex,
-                            pages.size,
-                        )
+                        val pageIndex = if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex
+                        onPageChanged(pageIndex, pages.size)
                         val sourceOffset = novelViewportSourceOffset(
                             source = canonicalText,
                             pages = pages,
                             viewport = viewport,
                         )
                         currentSourcePosition.offsetUtf16 = sourceOffset
-                        onLocatorChanged(navigation.locatorForOffset(sourceOffset))
+                        onLocatorChanged(navigation.locatorForOffset(sourceOffset), pageIndex, pages.size)
                     },
                     onTapAction = onTapAction,
                 )
@@ -404,12 +420,12 @@ private fun reportNovelPage(
     pages: List<NovelVisualPage>,
     navigation: PlainTextNavigation,
     onPageChanged: (Int, Int) -> Unit,
-    onLocatorChanged: (ReadingLocator) -> Unit,
+    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
 ) {
     if (index !in pages.indices) return
     onPageChanged(index, pages.size)
     val sourceOffset = novelPagedSourceOffset(pages, index)
-    onLocatorChanged(navigation.locatorForOffset(sourceOffset))
+    onLocatorChanged(navigation.locatorForOffset(sourceOffset), index, pages.size)
 }
 
 internal fun novelPagedSourceOffset(pages: List<NovelVisualPage>, pageIndex: Int): Int {
@@ -587,11 +603,15 @@ private fun PagedNovelReader(
     if (!settings.animatePageTransitions) {
         var pageIndex by remember(pages, initialPage) { mutableIntStateOf(initialPage) }
         val initialPageRequestSerial = remember { pageRequestSerial }
+        val latestOnPageChanged by rememberUpdatedState(onPageChanged)
         LaunchedEffect(pageRequestSerial, pages.size) {
             if (pageRequestSerial == initialPageRequestSerial) return@LaunchedEffect
             requestedPageIndex?.let { pageIndex = it.coerceIn(pages.indices) }
         }
         LaunchedEffect(pageIndex, pages.size) { onPageChanged(pageIndex) }
+        DisposableEffect(pages) {
+            onDispose { latestOnPageChanged(pageIndex) }
+        }
         NovelPage(
             page = pages[pageIndex],
             columnWidth = columnWidth,
@@ -611,6 +631,13 @@ private fun PagedNovelReader(
     ) { pages.size }
     val initialPageRequestSerial = remember { pageRequestSerial }
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
+    DisposableEffect(pagerState, pages.size, settings.readingMode) {
+        onDispose {
+            latestOnPageChanged(
+                readerLogicalPageIndex(pagerState.currentPage, pages.size, settings.readingMode),
+            )
+        }
+    }
     LaunchedEffect(pageRequestSerial, pages.size, settings.readingMode) {
         if (pageRequestSerial == initialPageRequestSerial) return@LaunchedEffect
         val logicalTarget = requestedPageIndex?.coerceIn(pages.indices) ?: return@LaunchedEffect

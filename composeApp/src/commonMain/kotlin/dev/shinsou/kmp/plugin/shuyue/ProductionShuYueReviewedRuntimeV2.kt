@@ -7,6 +7,7 @@ import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.PageRequestMetadata
 import dev.shinsou.kmp.plugin.PluginCookie
 import dev.shinsou.kmp.plugin.PluginCredential
 import dev.shinsou.kmp.plugin.PluginLoginRequester
@@ -38,6 +39,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionPackageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceV2
 import dev.shinsou.kmp.plugin.v2.HttpMethodV2
 import dev.shinsou.kmp.plugin.v2.ImagePageV2
+import dev.shinsou.kmp.plugin.v2.ImageTransformPlanV2
 import dev.shinsou.kmp.plugin.v2.RemoteRequestPlanV2
 import dev.shinsou.kmp.plugin.v2.UserInteractionScopedExtensionSourceV2
 import dev.shinsou.kmp.plugin.v2.ArtifactBoundExtensionPackageRuntimeV2
@@ -58,6 +60,7 @@ import dev.shinsou.kmp.plugin.v2.SourceLifecycleControlledExtensionPackageRuntim
 import dev.shinsou.kmp.plugin.v2.WebChallengeUserAgentSourceV2
 import dev.shinsou.kmp.plugin.v2.toBoundedRemoteMetadata
 import dev.shinsou.kmp.plugin.v2.toOptionalBoundedRemoteMetadata
+import dev.shinsou.kmp.reader.ReaderImageTransform
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.sync.Mutex
@@ -523,16 +526,22 @@ private class ProductionShuYueSourceV2(
                     "Reviewed ShuYue image source returned too many pages"
                 }
                 val imagePages = pages.mapIndexed { index, page ->
-                    val imageUrl = page.imageUrl?.takeIf(String::isNotBlank)
+                    val encodedImageUrl = page.imageUrl?.takeIf(String::isNotBlank)
                         ?: page.url.takeIf(String::isNotBlank)
                         ?: throw IllegalArgumentException("Reviewed ShuYue image page has no URL")
+                    val metadata = PageRequestMetadata.parse(encodedImageUrl)
+                    val imageUrl = requireNotNull(
+                        resolveSourceHttpUrl(descriptor.baseUrl, metadata.cleanUrl),
+                    ) { "Reviewed ShuYue image page has no safe HTTP(S) URL" }
                     ImagePageV2(
                         resourceId = "page-$index",
                         request = RemoteRequestPlanV2(
                             method = HttpMethodV2.GET,
-                            url = resolveSourceHttpUrl(descriptor.baseUrl, imageUrl),
+                            url = imageUrl,
+                            headerHints = reviewedImageHeaderHints(runtime.headers, metadata.headers),
                         ),
                         mediaType = imageMediaType(imageUrl),
+                        transform = metadata.imageTransform(runtime.id)?.toReviewedV2(),
                     )
                 }
                 return@withActiveInvocationContext UnitContentResultV2(
@@ -761,6 +770,33 @@ private class ProductionShuYueSourceV2(
 
 private fun String.boundedLoginError(): String? =
     filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
+
+/** Preserves the reviewed legacy image-header convention without widening the v2 header policy. */
+private fun reviewedImageHeaderHints(
+    sourceHeaders: Map<String, String>,
+    pageHeaders: Map<String, String>,
+): Map<String, String> {
+    val hints = linkedMapOf<String, String>()
+    (sourceHeaders + pageHeaders).forEach { (name, value) ->
+        val normalizedName = name.lowercase()
+        if (
+            normalizedName in REVIEWED_IMAGE_SAFE_HEADER_HINTS &&
+            value.length <= 1_024 &&
+            value.none(Char::isISOControl)
+        ) {
+            hints.keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let(hints::remove)
+            hints[name] = value
+        }
+    }
+    return hints
+}
+
+private fun ReaderImageTransform.toReviewedV2(): ImageTransformPlanV2 = when (this) {
+    is ReaderImageTransform.ReverseVerticalSegments -> ImageTransformPlanV2(
+        transformId = "reverse-vertical-segments",
+        parameters = mapOf("segmentCount" to segmentCount.toString()),
+    )
+}
 
 private data class PendingShuYueTextStream(
     val text: String,
@@ -1085,3 +1121,12 @@ private const val SHUYUE_TEXT_CHUNK_BYTES: Int = 64 * 1024
 private const val MAX_SHUYUE_TEXT_STREAM_BYTES: Long = 512L * 1024L * 1024L
 private const val MAX_RESERVED_SHUYUE_TEXT_STREAMS: Int = 8
 private const val MAX_RESERVED_SHUYUE_TEXT_BYTES: Long = MAX_SHUYUE_TEXT_STREAM_BYTES
+private val REVIEWED_IMAGE_SAFE_HEADER_HINTS: Set<String> = setOf(
+    "accept",
+    "accept-language",
+    "content-type",
+    "referer",
+    "user-agent",
+    "origin",
+    "x-requested-with",
+)

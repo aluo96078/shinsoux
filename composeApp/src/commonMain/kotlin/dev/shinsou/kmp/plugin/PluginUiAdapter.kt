@@ -57,6 +57,7 @@ import dev.shinsou.kmp.ui.SourcePreference as BrowseSourcePreference
 import dev.shinsou.kmp.ui.SourcePreferenceKind
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.TypedReaderContentSession
+import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import io.ktor.http.Url
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -606,10 +607,26 @@ public class PluginBrowseAdapter(
         val readable = requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.open(materialization)
+        val localChapterUrl = encodeTypedLocalChapterUrl(
+            publicationKey = materialization.publicationKey,
+            acquisitionId = materialization.acquisitionId,
+            unitKey = materialization.unitKey,
+        )
+        val localSnapshot = portableRepository?.currentSnapshot
+        val localChapter = localSnapshot?.chapters?.firstOrNull { it.url == localChapterUrl }
+        val localLocator = localChapter?.let { chapter ->
+            localSnapshot.histories.firstOrNull { it.chapterId == chapter.id }?.lastLocator
+        }?.takeIf { locator -> readable.content.navigation.indexOf(locator) != null }
         TypedReaderContentSession(
-            content = readable.content,
+            content = readable.content.copy(
+                initialLocator = localLocator ?: readable.content.initialLocator,
+            ),
             canonicalText = readable.canonicalText,
             access = readable.access,
+            initialVisualPageIndex = localChapter?.lastPageRead,
+            initialVisualPageCount = localChapter?.let { chapter ->
+                localSnapshot.histories.firstOrNull { it.chapterId == chapter.id }?.lastPageCount
+            },
         )
     }
 

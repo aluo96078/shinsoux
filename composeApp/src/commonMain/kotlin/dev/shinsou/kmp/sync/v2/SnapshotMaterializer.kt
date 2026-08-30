@@ -226,14 +226,39 @@ object SnapshotMaterializer {
                 )
                 return@forEach
             }
+            val localHistory = currentDeviceSnapshot.histories.firstOrNull { it.chapterId == chapter.id }
+            val remoteLastRead = progress.historyTouchedAt?.value?.takeIf { it > 0 }
+            val keepNewerLocalVisualPage = localHistory != null &&
+                (remoteLastRead == null || localHistory.lastRead > remoteLastRead)
             val updated = chapter.copy(
                 read = progress.readState?.value ?: false,
-                lastPageRead = progress.position?.position?.pageIndex ?: 0,
+                lastPageRead = if (keepNewerLocalVisualPage) {
+                    currentDeviceSnapshot.chapters.firstOrNull { it.id == chapter.id }
+                        ?.lastPageRead
+                        ?: progress.position?.position?.pageIndex
+                        ?: 0
+                } else {
+                    progress.position?.position?.pageIndex ?: 0
+                },
                 lastModifiedAt = maxOf(chapter.lastModifiedAt, progress.latestMillis()),
             )
             chapterByKey[chapterKey] = updated
-            progress.historyTouchedAt?.value?.takeIf { it > 0 }?.let { lastRead ->
-                histories += History(id = updated.id, chapterId = updated.id, lastRead = lastRead, timeRead = 0)
+            remoteLastRead?.let { lastRead ->
+                histories += History(
+                    id = updated.id,
+                    chapterId = updated.id,
+                    lastRead = if (keepNewerLocalVisualPage) {
+                        requireNotNull(localHistory).lastRead
+                    } else {
+                        lastRead
+                    },
+                    timeRead = 0,
+                    // Legacy progress sync carries only a visual page. Never erase the exact typed
+                    // cursor retained on this device when rebuilding its compatibility snapshot.
+                    lastLocator = localHistory?.lastLocator,
+                    lastPageCount = localHistory?.lastPageCount
+                        ?.takeIf { updated.lastPageRead in 0 until it },
+                )
             }
         }
 

@@ -57,6 +57,21 @@ class ReaderPositionMappingTest {
     }
 
     @Test
+    fun persistedPageSurvivesAnInitiallyEmptyAsyncChapter() {
+        val persisted = ReaderPosition(ReadingMode.PAGER_LTR, pageIndex = 7)
+
+        val beforeLoad = coerceReaderPosition(persisted, ReadingMode.PAGER_LTR, pageCount = 0)
+        val afterLoad = coerceReaderPosition(beforeLoad, ReadingMode.PAGER_LTR, pageCount = 20)
+
+        assertEquals(7, beforeLoad.pageIndex)
+        assertEquals(7, afterLoad.pageIndex)
+        assertEquals(
+            4,
+            coerceReaderPosition(beforeLoad, ReadingMode.PAGER_LTR, pageCount = 5).pageIndex,
+        )
+    }
+
+    @Test
     fun remotePositionRestoresInitiallyButNeverForcesAnOpenReader() {
         val initial = register(page = 5, wallMillis = 10, sessionId = "other")
         assertEquals(

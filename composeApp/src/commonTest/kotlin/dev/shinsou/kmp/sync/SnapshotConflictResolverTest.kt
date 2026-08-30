@@ -7,6 +7,7 @@ import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
+import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaCategory
 import dev.shinsou.kmp.domain.model.ThemeMode
@@ -36,6 +37,7 @@ class SnapshotConflictResolverTest {
                     lastModifiedAt = 100,
                 ),
             ),
+            histories = listOf(History(id = 10, chapterId = 10, lastRead = 100)),
             mangaCategories = listOf(MangaCategory(1, Category.Default.id)),
             tracks = listOf(Track(id = 1, mangaId = 1, trackerId = 2, title = "Local track", lastChapterRead = 12.0)),
         )
@@ -51,6 +53,7 @@ class SnapshotConflictResolverTest {
                     lastModifiedAt = 200,
                 ),
             ),
+            histories = listOf(History(id = 10, chapterId = 10, lastRead = 200)),
             tracks = listOf(local.tracks.single().copy(id = 2, title = "Remote track", lastChapterRead = 5.0)),
         )
 
@@ -65,12 +68,54 @@ class SnapshotConflictResolverTest {
         assertEquals(ThemeMode.DARK, result.snapshot.settings.appearance.theme)
         assertEquals("Remote chapter", chapter.name)
         assertTrue(chapter.read)
-        assertEquals(8, chapter.lastPageRead)
+        assertEquals(3, chapter.lastPageRead)
         assertEquals("Remote track", track.title)
         assertEquals(12.0, track.lastChapterRead)
         assertTrue(result.conflicts.any { it.entity == "chapter" && it.winner == ConflictWinner.MERGED })
         assertTrue(result.conflicts.any { it.entity == "track" && it.winner == ConflictWinner.MERGED })
         result.snapshot.validate()
+    }
+
+    @Test
+    fun newerReadingCursorDoesNotReplaceNewerChapterMetadata() {
+        val local = AppSnapshot(
+            mangas = listOf(Manga(id = 1, source = 1, url = "/m", title = "Title")),
+            chapters = listOf(
+                Chapter(
+                    id = 10,
+                    mangaId = 1,
+                    url = "/c",
+                    name = "Older metadata",
+                    lastPageRead = 7,
+                    lastModifiedAt = 100,
+                ),
+            ),
+            histories = listOf(History(id = 10, chapterId = 10, lastRead = 300)),
+        )
+        val remote = AppSnapshot(
+            mangas = listOf(Manga(id = 1, source = 1, url = "/m", title = "Title")),
+            chapters = listOf(
+                Chapter(
+                    id = 10,
+                    mangaId = 1,
+                    url = "/c",
+                    name = "Newer metadata",
+                    lastPageRead = 2,
+                    lastModifiedAt = 200,
+                ),
+            ),
+            histories = listOf(History(id = 10, chapterId = 10, lastRead = 200)),
+        )
+
+        val merged = SnapshotConflictResolver.merge(
+            local = SnapshotReplica(local, modifiedAt = 300, deviceId = "local"),
+            remote = SnapshotReplica(remote, modifiedAt = 200, deviceId = "remote"),
+        ).snapshot
+
+        assertEquals("Newer metadata", merged.chapters.single().name)
+        assertEquals(7, merged.chapters.single().lastPageRead)
+        assertEquals(300, merged.histories.single().lastRead)
+        merged.validate()
     }
 
     @Test

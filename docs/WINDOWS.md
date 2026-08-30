@@ -103,7 +103,8 @@ iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也
 ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；第一個
 修復版另包含從公開 beta.3 覆蓋升級的測試，正式 `v1.0.0` 也必須通過從公開 beta.5
 覆蓋升級的測試；`v1.0.1-beta.1` 必須通過從公開 `v1.0.0` 覆蓋升級的測試，
-`v1.0.1-beta.2` 則必須通過從公開 `v1.0.1-beta.1` 覆蓋升級的測試。若需在本機驗證安裝器，
+`v1.0.1-beta.2` 必須通過從公開 `v1.0.1-beta.1` 覆蓋升級的測試，`v1.0.1-beta.3` 則必須
+通過從公開 `v1.0.1-beta.2` 覆蓋升級的測試。若需在本機驗證安裝器，
 仍可依照上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。

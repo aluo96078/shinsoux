@@ -137,7 +137,11 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
 
 ## Desktop 分發邊界
 
-- DMG 目前尚未 Developer ID 簽章與 Apple notarize，macOS Gatekeeper 可能警告。
+- DMG workflow 目前尚未配置 Developer ID 與 notarization secrets，因此 GitHub 產物仍可能
+  觸發 Gatekeeper 警告，也無法讓 Keychain 的「永遠允許」跨每次 ad-hoc 建置持續生效。
+  正式配置時必須長期沿用同一個 Developer ID Application identity，透過
+  `SHINSOU_MACOS_SIGNING_IDENTITY`（以及自訂 keychain 時的
+  `SHINSOU_MACOS_SIGNING_KEYCHAIN`）交給 Gradle，且不得把憑證或密碼提交到 repository。
 - MSI／EXE 目前尚未 Authenticode 簽章，Windows SmartScreen 可能顯示未知發行者。
 - macOS producer 會掛載 DMG，檢查縮減後的 SQLite JDBC provider，使用隔離資料目錄啟動
   其中的 App，並要求 SQLite 初始化及 Compose 首幀 marker 完成。
@@ -145,8 +149,9 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
   同樣的 SQLite／首幀 marker probe；runtime probe 也會在經 ProGuard 縮減後執行 ShuYue
   隔離資料與權限的寫入／重讀，防止僅發生於正式封裝的安全狀態解碼故障。beta.4／beta.5
   會先安裝公開 beta.3 MSI，正式 `v1.0.0` 會先安裝公開 beta.5 MSI，`v1.0.1-beta.1`
-  會先安裝公開 `v1.0.0` MSI，而 `v1.0.1-beta.2` 會先安裝公開 `v1.0.1-beta.1` MSI，
-  再驗證新 ProductCode 真正取代舊版。任一步無法啟動或升級都不會發布 Release。
+  會先安裝公開 `v1.0.0` MSI，`v1.0.1-beta.2` 會先安裝公開 `v1.0.1-beta.1` MSI，
+  而 `v1.0.1-beta.3` 會先安裝公開 `v1.0.1-beta.2` MSI，再驗證新 ProductCode 真正取代
+  舊版。任一步無法啟動或升級都不會發布 Release。
 
 Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
 會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；

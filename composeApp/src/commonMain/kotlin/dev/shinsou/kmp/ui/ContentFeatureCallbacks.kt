@@ -9,6 +9,13 @@ public class TypedReaderContentSession(
     public val content: UnifiedReaderContent,
     canonicalText: String? = null,
     public val access: ContentAccessRequest,
+    /**
+     * Rendition-specific page restored from local history. A text locator remains the durable,
+     * reflow-safe position; the reader consumes this hint only for its first visual pagination.
+     */
+    public val initialVisualPageIndex: Int? = null,
+    /** Page count paired with the restored visual page under the saved rendition/document. */
+    public val initialVisualPageCount: Int? = null,
 ) {
     private val retainedCanonicalText: String? = canonicalText
 
@@ -16,6 +23,15 @@ public class TypedReaderContentSession(
         get() = retainedCanonicalText
 
     init {
+        require(initialVisualPageIndex == null || initialVisualPageIndex >= 0) {
+            "Initial reader page index must be non-negative"
+        }
+        require(initialVisualPageCount == null || initialVisualPageCount > 0) {
+            "Initial reader page count must be positive"
+        }
+        require(initialVisualPageCount == null || initialVisualPageIndex == null ||
+            initialVisualPageIndex < initialVisualPageCount
+        ) { "Initial reader page must be inside its document" }
         val reading = content.navigation.scope
         val rights = access.scope
         require(rights.publicationId == reading.publicationId &&
@@ -40,5 +56,7 @@ public class TypedReaderContentSession(
     }
 
     override fun toString(): String =
-        "TypedReaderContentSession(kind=${content.representation.kind}, canonicalText=<redacted>)"
+        "TypedReaderContentSession(kind=${content.representation.kind}, " +
+            "initialVisualPageIndex=$initialVisualPageIndex, " +
+            "initialVisualPageCount=$initialVisualPageCount, canonicalText=<redacted>)"
 }

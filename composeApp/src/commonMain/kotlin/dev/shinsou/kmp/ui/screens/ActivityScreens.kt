@@ -67,6 +67,7 @@ import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
+import dev.shinsou.kmp.ui.historyPositionLabel
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
@@ -529,7 +530,7 @@ fun HistoryScreen(
                 items(filtered, key = { it.chapter.id }) { item ->
                     ActivityRow(
                         title = item.manga.title,
-                        subtitle = item.chapter.name,
+                        subtitle = historyPositionLabel(item.chapter, strings),
                         detail = relativeTime(item.lastRead, strings),
                         coverUrl = item.manga.thumbnailUrl,
                         onClick = { onOpenManga(item.manga.id) },

@@ -54,7 +54,10 @@ fun coerceReaderPosition(
     pageCount: Int,
 ): ReaderPosition = ReaderPosition(
     readingMode = readingMode,
-    pageIndex = if (pageCount <= 0) 0 else position.pageIndex.coerceIn(0, pageCount - 1),
+    // Reader pages arrive asynchronously. Preserve the persisted logical page while the count is
+    // unknown; otherwise the first empty composition destroys it before the real list is loaded.
+    pageIndex = if (pageCount <= 0) position.pageIndex.coerceAtLeast(0)
+    else position.pageIndex.coerceIn(0, pageCount - 1),
     normalizedOffsetFraction = if (isContinuousReaderMode(readingMode)) {
         position.normalizedOffsetFraction.coerceIn(0.0, 1.0)
     } else {

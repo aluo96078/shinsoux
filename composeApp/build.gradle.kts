@@ -13,14 +13,14 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.2")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.102")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.3")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.103")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600102)
+    .orElse(25600103)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
@@ -49,6 +49,35 @@ val androidPublicDebugSigningValues = listOf(
 val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
+    .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_IDENTITY"))
+    .orNull
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+val macOsLocalDevelopmentSigningIdentity = macOsSigningIdentity?.takeIf {
+    it.startsWith("Apple Development:")
+}
+val macOsComposeSigningIdentity = macOsSigningIdentity?.takeUnless {
+    it.startsWith("Apple Development:")
+}
+val macOsSigningKeychain = providers.gradleProperty("shinsouMacOsSigningKeychain")
+    .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_KEYCHAIN"))
+    .orNull
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+check(macOsSigningKeychain == null || macOsSigningIdentity != null) {
+    "A macOS signing keychain requires shinsouMacOsSigningIdentity or " +
+        "SHINSOU_MACOS_SIGNING_IDENTITY."
+}
+check(
+    macOsSigningIdentity == null ||
+        macOsSigningIdentity.startsWith("Apple Development:") ||
+        macOsSigningIdentity.startsWith("Developer ID Application:") ||
+        macOsSigningIdentity.startsWith("3rd Party Mac Developer Application:"),
+) {
+    "Unsupported macOS signing identity '$macOsSigningIdentity'. Use the full Apple Development, " +
+        "Developer ID Application, or 3rd Party Mac Developer Application certificate name."
+}
 val macOsBuildArchitecture = System.getProperty("os.arch").lowercase().let { architecture ->
     if (architecture.contains("aarch64") || architecture.contains("arm64")) "arm64" else "x86_64"
 }
@@ -408,6 +437,18 @@ compose.desktop {
                 dockName = "Shinsou X"
                 setDockNameSameAsPackageName = true
                 iconFile.set(project.file("src/desktopMain/resources/shinsou.icns"))
+                if (macOsComposeSigningIdentity != null) {
+                    // A stable signing identity gives Keychain a stable designated requirement.
+                    // Ad-hoc signatures are tied to each build's cdhash, so "Always Allow" is
+                    // forgotten after every update even when the bundle ID is unchanged. Compose
+                    // handles Developer ID certificates here. Its signer hard-codes that prefix,
+                    // so local Apple Development builds are signed by the tasks below instead.
+                    signing {
+                        sign.set(true)
+                        identity.set(macOsComposeSigningIdentity)
+                        macOsSigningKeychain?.let(keychain::set)
+                    }
+                }
                 infoPlist {
                     extraKeysRawXml = """
                         <key>CFBundleDisplayName</key>
@@ -449,5 +490,105 @@ compose.desktop {
                 iconFile.set(project.file("src/desktopMain/resources/shinsou.ico"))
             }
         }
+    }
+}
+
+if (isMacOsBuildHost && macOsLocalDevelopmentSigningIdentity != null) {
+    val signingScript = rootProject.layout.projectDirectory.file("scripts/sign_macos_app.sh")
+    val defaultEntitlements = layout.buildDirectory.file(
+        "compose/default-resources/${libs.versions.compose.get()}/default-entitlements.plist",
+    )
+
+    fun registerLocalDevelopmentSigner(
+        taskName: String,
+        createTaskName: String,
+        appDirectory: String,
+    ) = tasks.register<Exec>(taskName) {
+        group = "compose desktop"
+        description = "Signs the macOS app image with the configured Apple Development identity"
+
+        // The create task also finalizes with this signer, while DMG/run tasks depend on it.
+        // This ordering keeps the app signed when create* is called directly and guarantees that
+        // jpackage receives the signed app image when it creates a DMG.
+        mustRunAfter(createTaskName)
+        outputs.upToDateWhen { false }
+
+        commandLine(
+            "/bin/bash",
+            signingScript.asFile.absolutePath,
+            layout.buildDirectory.dir(appDirectory).get().asFile.absolutePath,
+            macOsLocalDevelopmentSigningIdentity,
+            defaultEntitlements.get().asFile.absolutePath,
+            macOsSigningKeychain.orEmpty(),
+        )
+    }
+
+    val signMacOsDistributable = registerLocalDevelopmentSigner(
+        taskName = "signMacOsDistributable",
+        createTaskName = "createDistributable",
+        appDirectory = "compose/binaries/main/app/Shinsou X.app",
+    )
+    val signMacOsReleaseDistributable = registerLocalDevelopmentSigner(
+        taskName = "signMacOsReleaseDistributable",
+        createTaskName = "createReleaseDistributable",
+        appDirectory = "compose/binaries/main-release/app/Shinsou X.app",
+    )
+    val signingDmgScript = rootProject.layout.projectDirectory.file("scripts/sign_macos_dmg.sh")
+
+    fun registerLocalDevelopmentDmgSigner(
+        taskName: String,
+        packageTaskName: String,
+        dmgDirectory: String,
+    ) = tasks.register<Exec>(taskName) {
+        group = "compose desktop"
+        description = "Re-signs the packaged DMG app with the configured Apple Development identity"
+
+        // jpackage replaces the certificate signature on an app image with an ad-hoc signature
+        // while wrapping it in a DMG. Run once more against the app inside the final image.
+        mustRunAfter(packageTaskName)
+        outputs.upToDateWhen { false }
+
+        commandLine(
+            "/bin/bash",
+            signingDmgScript.asFile.absolutePath,
+            layout.buildDirectory.file(
+                "$dmgDirectory/Shinsou X-${releaseVersion.get()}.dmg",
+            ).get().asFile.absolutePath,
+            macOsLocalDevelopmentSigningIdentity,
+            defaultEntitlements.get().asFile.absolutePath,
+            macOsSigningKeychain.orEmpty(),
+        )
+    }
+
+    val signMacOsDmg = registerLocalDevelopmentDmgSigner(
+        taskName = "signMacOsDmg",
+        packageTaskName = "packageDmg",
+        dmgDirectory = "compose/binaries/main/dmg",
+    )
+    val signMacOsReleaseDmg = registerLocalDevelopmentDmgSigner(
+        taskName = "signMacOsReleaseDmg",
+        packageTaskName = "packageReleaseDmg",
+        dmgDirectory = "compose/binaries/main-release/dmg",
+    )
+
+    tasks.matching { it.name == "createDistributable" }.configureEach {
+        finalizedBy(signMacOsDistributable)
+    }
+    tasks.matching { it.name == "createReleaseDistributable" }.configureEach {
+        finalizedBy(signMacOsReleaseDistributable)
+    }
+    tasks.matching { it.name == "packageDmg" }.configureEach {
+        dependsOn(signMacOsDistributable)
+        finalizedBy(signMacOsDmg)
+    }
+    tasks.matching { it.name == "packageReleaseDmg" }.configureEach {
+        dependsOn(signMacOsReleaseDistributable)
+        finalizedBy(signMacOsReleaseDmg)
+    }
+    tasks.matching { it.name == "runDistributable" }.configureEach {
+        dependsOn(signMacOsDistributable)
+    }
+    tasks.matching { it.name == "runReleaseDistributable" }.configureEach {
+        dependsOn(signMacOsReleaseDistributable)
     }
 }

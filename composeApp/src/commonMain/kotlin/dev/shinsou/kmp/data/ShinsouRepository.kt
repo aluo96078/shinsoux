@@ -21,6 +21,7 @@ import dev.shinsou.kmp.domain.model.TrackerAccountState
 import dev.shinsou.kmp.domain.model.UpdateItem
 import dev.shinsou.kmp.domain.model.applying
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
+import dev.shinsou.kmp.reader.ReadingLocator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -546,23 +547,55 @@ class ShinsouRepository(
         read: Boolean,
         readAt: Long,
         timeRead: Long = 0,
+        lastLocator: ReadingLocator? = null,
+        lastPageCount: Int? = null,
     ): Chapter = mutate { state ->
         val chapterIndex = state.chapters.indexOfFirst { it.id == chapterId }
         if (chapterIndex < 0) missing("Chapter", chapterId)
-        if (lastPageRead < 0 || timeRead < 0) throw RepositoryConstraintException("Reading progress cannot be negative")
+        if (lastPageRead < 0 || timeRead < 0 || lastPageCount != null && lastPageCount <= lastPageRead) {
+            throw RepositoryConstraintException("Reading progress cannot be negative or outside its page count")
+        }
         val currentChapter = state.chapters[chapterIndex]
+        val historyIndex = state.histories.indexOfFirst { it.chapterId == chapterId }
+        val currentHistory = state.histories.getOrNull(historyIndex)
+        // A page callback records its observation time before any reporter or disk work. If an
+        // older suspended callback resumes later, preserve the newer local page/history instead
+        // of letting coroutine completion order rewrite the user's final position.
+        val stale = currentHistory != null && readAt < currentHistory.lastRead
         // Reader progress is monotonic with respect to completion. Moving back a page after
         // reaching the end (or a late coroutine write) must not silently mark a chapter unread;
         // explicit unread actions continue to use patchChapter.
-        val updatedChapter = currentChapter.copy(lastPageRead = lastPageRead, read = currentChapter.read || read)
-        val historyIndex = state.histories.indexOfFirst { it.chapterId == chapterId }
+        val updatedChapter = currentChapter.copy(
+            lastPageRead = if (stale) currentChapter.lastPageRead else lastPageRead,
+            read = currentChapter.read || read,
+        )
         val history = if (historyIndex >= 0) {
-            state.histories[historyIndex].copy(
-                lastRead = readAt,
-                timeRead = accumulatedReadingTime(state.histories[historyIndex].timeRead, timeRead),
+            requireNotNull(currentHistory).copy(
+                lastRead = if (stale) currentHistory.lastRead else readAt,
+                timeRead = if (stale) {
+                    currentHistory.timeRead
+                } else {
+                    accumulatedReadingTime(currentHistory.timeRead, timeRead)
+                },
+                lastLocator = if (stale) currentHistory.lastLocator else lastLocator ?: currentHistory.lastLocator,
+                // A renderer can report its page before the freshly reflowed page count. Keep an
+                // older count only while it still contains the new page; otherwise clear the
+                // stale rendition hint instead of rejecting the newer position at validation.
+                lastPageCount = if (stale) {
+                    currentHistory.lastPageCount
+                } else {
+                    lastPageCount ?: currentHistory.lastPageCount?.takeIf { lastPageRead < it }
+                },
             )
         } else {
-            History(nextId(state.histories.map { it.id }), chapterId, readAt, timeRead)
+            History(
+                id = nextId(state.histories.map { it.id }),
+                chapterId = chapterId,
+                lastRead = readAt,
+                timeRead = timeRead,
+                lastLocator = lastLocator,
+                lastPageCount = lastPageCount,
+            )
         }
         val histories = state.histories.toMutableList().apply {
             if (historyIndex >= 0) this[historyIndex] = history else add(history)

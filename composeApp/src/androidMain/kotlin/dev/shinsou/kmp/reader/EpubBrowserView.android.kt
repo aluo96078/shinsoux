@@ -37,12 +37,14 @@ public actual fun EpubBrowserView(
     navigationRequestKey: Long,
     selectionRequestKey: Long,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    onViewportChanged: (ReadingLocator.Epub, pageIndex: Int, pageCount: Int) -> Unit,
     onSelectionChanged: (ReadingRange?) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val currentLocatorChanged = rememberUpdatedState(onLocatorChanged)
+    val currentViewportChanged = rememberUpdatedState(onViewportChanged)
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
     val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
@@ -77,7 +79,14 @@ public actual fun EpubBrowserView(
             removeJavascriptInterface("accessibilityTraversal")
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
         }
-        AndroidEpubBrowserState(webView, request, configuration).also { browserState ->
+        AndroidEpubBrowserState(
+            webView = webView,
+            initialRequest = request,
+            initialConfiguration = configuration,
+            onViewportChanged = { locator, pageIndex, pageCount ->
+                currentViewportChanged.value.invoke(locator, pageIndex, pageCount)
+            },
+        ).also { browserState ->
             val tapDetector = GestureDetector(
                 context,
                 object : GestureDetector.SimpleOnGestureListener() {
@@ -270,6 +279,7 @@ private class AndroidEpubBrowserState(
     val webView: WebView,
     initialRequest: EpubRenderRequest,
     initialConfiguration: EpubBrowserConfiguration,
+    private val onViewportChanged: (ReadingLocator.Epub, Int, Int) -> Unit,
 ) {
     private val documentState = EpubBrowserDocumentState(initialRequest)
     private val resolverSlot = EpubBrowserResolverSlot(EpubPublicationResourceResolver(initialRequest))
@@ -635,7 +645,10 @@ private class AndroidEpubBrowserState(
                         viewport = snapshot,
                         nowMillis = SystemClock.uptimeMillis(),
                         force = force,
-                    )?.let(onLocator)
+                    )?.let { locator ->
+                        onLocator(locator)
+                        onViewportChanged(locator, snapshot.pageIndex, snapshot.pageCount)
+                    }
                 }
             }
             onComplete()

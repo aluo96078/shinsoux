@@ -180,6 +180,7 @@ import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
@@ -347,6 +348,33 @@ private fun ShinsouAppContent(
     }
     val completedReaderChapterIds = remember { mutableSetOf<Long>() }
     val v2ReaderProgressSessions = remember { mutableMapOf<String, String>() }
+    val readerProgressObservationClock = remember { ReaderProgressObservationClock() }
+    val readerLocalProgressCoordinator = remember(repository, snackbar, strings) {
+        ReaderLocalProgressCoordinator(
+            repository = repository,
+            onFailure = { failure ->
+                snackbar.showSnackbar(
+                    failure.message ?: strings.text("The latest reading position could not be saved."),
+                )
+            },
+        )
+    }
+    val v2ReaderProgressCoordinator = remember(
+        repository,
+        readerProgressReporter,
+        snackbar,
+        strings,
+    ) {
+        V2ReaderProgressCoordinator(
+            repository = repository,
+            reporter = readerProgressReporter,
+            onReporterFailure = { failure ->
+                snackbar.showSnackbar(
+                    failure.message ?: strings.text("The latest reading position is queued for retry."),
+                )
+            },
+        )
+    }
     val appLifecycle by appServices.appLifecycle.collectAsState()
     val sourceLoginRequests by appServices.browse.loginRequests.collectAsState()
     val sourceRefreshInvalidations by appServices.browse.sourceRefreshInvalidations.collectAsState()
@@ -360,6 +388,22 @@ private fun ShinsouAppContent(
         if (!available) {
             appServices.browse.dismissAllPluginLogouts()
         }
+    }
+
+    LaunchedEffect(v2ReaderProgressCoordinator) {
+        v2ReaderProgressCoordinator.run()
+    }
+
+    LaunchedEffect(readerLocalProgressCoordinator) {
+        readerLocalProgressCoordinator.run()
+    }
+
+    LaunchedEffect(appLifecycle, v2ReaderProgressCoordinator) {
+        if (appLifecycle == AppLifecycleState.FOREGROUND) return@LaunchedEffect
+        // The extension reader callback is intentionally non-blocking. Before the process can be
+        // suspended, place a barrier behind every queued local event and force its snapshot write.
+        runCatching { readerLocalProgressCoordinator.flushLocal() }
+        runCatching { v2ReaderProgressCoordinator.flushLocal() }
     }
 
     LaunchedEffect(Unit) { appFocusRequester.requestFocus() }
@@ -588,100 +632,31 @@ private fun ShinsouAppContent(
         }
     }
 
-    fun recordV2ReaderProgress(title: String, unitTitle: String, locator: ReadingLocator) {
+    fun recordV2ReaderProgress(
+        title: String,
+        unitTitle: String,
+        locator: ReadingLocator,
+        pageIndex: Int,
+        pageCount: Int?,
+    ) {
         if (snapshot.settings.security.incognitoMode) return
-        scope.launch {
-            val readAt = Clock.System.now().toEpochMilliseconds()
-            val completed = (locator.progression ?: 0.0) >= 0.995
-            // Unit ids are only unique inside a publication. Include the publication key so
-            // opening identically named chapters from two extension titles cannot share a draft
-            // session (and consequently suppress one title's history updates).
-            val sessionKey = "${locator.scope.publicationId.value}:${locator.scope.unitId.value}"
-            val progressSessionId = v2ReaderProgressSessions.getOrPut(sessionKey) {
-                runCatching { readerProgressReporter?.newReaderSessionId() }
-                    .getOrNull()
-                    ?: "v2-reader-${sessionKey.hashCode()}"
-            }
-            var reporterFailure: Throwable? = null
-            readerProgressReporter?.let { reporter ->
-                try {
-                    withContext(Dispatchers.Default) {
-                        reporter.recordContentReadingProgress(
-                            locator = locator,
-                            sessionId = progressSessionId,
-                            completed = completed,
-                            historyTouchedAt = readAt,
-                        )
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    reporterFailure = failure
-                }
-            }
-
-            // V2 publications are authoritative in the content database, while the existing
-            // History screen reads the portable Manga/Chapter compatibility view. Materialize a
-            // deterministic source-0 row on the first locator so reading history works even when
-            // the typed sync replica is unavailable or still waiting for a background flush.
-            val publicationUrl = encodeTypedLocalPublicationUrl(locator.scope.publicationId)
-            val current = repository.currentSnapshot
-            val manga = current.mangas.firstOrNull {
-                it.source == LOCAL_SOURCE_ID &&
-                    (it.url == publicationUrl ||
-                        decodeExtensionLibraryPublicationUrl(it.url)?.publicationKey == locator.scope.publicationId)
-            } ?: repository.upsertManga(
-                Manga(
-                    source = LOCAL_SOURCE_ID,
-                    favorite = false,
-                    dateAdded = readAt,
-                    url = publicationUrl,
-                    title = title,
-                    description = "Extension publication",
-                    genre = listOf("Extension"),
-                    updateStrategy = 1,
-                    initialized = true,
-                    lastModifiedAt = readAt,
-                    version = 1,
-                ),
-            )
-            val chapterUrl = encodeTypedLocalChapterUrl(
-                publicationKey = locator.scope.publicationId,
-                acquisitionId = locator.scope.acquisitionId,
-                unitKey = locator.scope.unitId,
-            )
-            val chapter = repository.currentSnapshot.chapters.firstOrNull {
-                it.mangaId == manga.id && it.url == chapterUrl
-            } ?: repository.upsertChapter(
-                Chapter(
-                    mangaId = manga.id,
-                    url = chapterUrl,
-                    name = unitTitle,
-                    chapterNumber = 1.0,
-                    sourceOrder = 0,
-                    dateFetch = readAt,
-                    dateUpload = readAt,
-                    lastModifiedAt = readAt,
-                    version = 1,
-                ),
-            )
-            val pageIndex = when (locator) {
-                is ReadingLocator.Image -> locator.pageIndexHint ?: 0
-                is ReadingLocator.Epub -> locator.spineIndexHint ?: 0
-                is ReadingLocator.Text -> 0
-            }
-            repository.markChapterProgress(
-                chapterId = chapter.id,
-                lastPageRead = pageIndex.coerceAtLeast(0),
-                read = completed,
-                readAt = readAt,
-            )
-            reporterFailure?.let { failure ->
-                snackbar.showSnackbar(
-                    failure.message ?: strings.text("The latest reading position is queued for retry."),
-                )
-            }
+        val sessionKey = "${locator.scope.publicationId.value}:${locator.scope.unitId.value}"
+        val progressSessionId = v2ReaderProgressSessions.getOrPut(sessionKey) {
+            runCatching { readerProgressReporter?.newReaderSessionId() }
+                .getOrNull()
+                ?: "v2-reader-${sessionKey.hashCode()}"
         }
+        v2ReaderProgressCoordinator.enqueue(
+            V2ReaderProgressEvent(
+                title = title,
+                unitTitle = unitTitle,
+                locator = locator,
+                pageIndex = pageIndex.coerceAtLeast(0),
+                pageCount = pageCount,
+                progressSessionId = progressSessionId,
+                readAt = readerProgressObservationClock.next(Clock.System.now().toEpochMilliseconds()),
+            ),
+        )
     }
 
     fun dismissMobileInput() {
@@ -823,17 +798,19 @@ private fun ShinsouAppContent(
         } else {
             null
         }
-        val reporter = readerProgressReporter
-        if (reporter == null) {
-            resetReaderPositionState()
-            readerSession = target
-            return
-        }
         readerTransitionInFlight = true
         scope.launch {
+            runCatching { readerLocalProgressCoordinator.flushLocal() }
+                .onFailure { failure ->
+                    snackbar.showSnackbar(
+                        failure.message ?: strings.text("The latest reading position could not be saved."),
+                    )
+                }
             runCatching {
-                withContext(Dispatchers.Default) {
-                    reporter.flushReaderSession(closing.progressSessionId)
+                readerProgressReporter?.let { reporter ->
+                    withContext(Dispatchers.Default) {
+                        reporter.flushReaderSession(closing.progressSessionId)
+                    }
                 }
             }
                 .onFailure { failure ->
@@ -902,18 +879,27 @@ private fun ShinsouAppContent(
                         ) { true },
                     )
                     val navigation = typed.content.navigation
-                    val localIndex = repository.chapter(session.chapterId)?.lastPageRead
-                        ?.coerceIn(0, navigation.itemCount - 1)
-                        ?: 0
-                    val localLocator = navigation.locatorAt(localIndex)
-                    val remoteLocator = readerProgressReporter
+                    val localVisualPageIndex = repository.chapter(session.chapterId)?.lastPageRead
+                        ?.coerceAtLeast(0)
+                    val localHistory = repository.currentSnapshot.histories
+                        .firstOrNull { it.chapterId == session.chapterId }
+                    val localLocator = localHistory?.lastLocator
+                        ?.takeIf { navigation.indexOf(it) != null }
+                    val remoteLocatorRegister = readerProgressReporter
                         ?.currentContentReadingLocator(ContentProgressKeyV2.from(typed.content.initialLocator))
+                    val localHistoryTouchedAt = localHistory?.lastRead ?: Long.MIN_VALUE
+                    val remoteLocator = remoteLocatorRegister
+                        ?.takeIf { it.hlc.millis > localHistoryTouchedAt }
                         ?.value
                         ?.takeIf { navigation.indexOf(it) != null }
                     TypedReaderContentSession(
-                        content = typed.content.copy(initialLocator = remoteLocator ?: localLocator),
+                        content = typed.content.copy(
+                            initialLocator = remoteLocator ?: localLocator ?: typed.content.initialLocator,
+                        ),
                         canonicalText = typed.canonicalText,
                         access = typed.access,
+                        initialVisualPageIndex = localVisualPageIndex,
+                        initialVisualPageCount = localHistory?.lastPageCount,
                     )
                 }
                 if (restored == null) loaded else loaded.copy(typedSession = restored)
@@ -1278,16 +1264,21 @@ private fun ShinsouAppContent(
                             reporter.currentReadingPosition(syncChapterEntityKey(chapter, manga))
                         }.getOrNull()
                     }
+                    val localHistoryTouchedAt = repository.currentSnapshot.histories
+                        .firstOrNull { it.chapterId == chapter.id }
+                        ?.lastRead
+                        ?: Long.MIN_VALUE
+                    val applicableIncoming = incoming?.takeIf { it.hlc.millis > localHistoryTouchedAt }
                     when (
                         readerPositionUpdateDecision(
                             initialized = initialized,
                             activeSessionId = session.progressSessionId,
                             lastObservedHlc = observedHlc,
-                            incoming = incoming,
+                            incoming = applicableIncoming,
                         )
                     ) {
                         ReaderPositionUpdateDecision.RESTORE_ON_OPEN -> {
-                            readerInitialPosition = incoming?.position
+                            readerInitialPosition = applicableIncoming?.position
                             readerRemotePosition = null
                         }
                         ReaderPositionUpdateDecision.OFFER_APPLY -> {
@@ -1295,9 +1286,9 @@ private fun ShinsouAppContent(
                         }
                         ReaderPositionUpdateDecision.IGNORE -> {
                             if (
-                                incoming != null &&
-                                incoming.sessionId == session.progressSessionId &&
-                                (observedHlc == null || incoming.hlc > observedHlc)
+                                applicableIncoming != null &&
+                                applicableIncoming.sessionId == session.progressSessionId &&
+                                (observedHlc == null || applicableIncoming.hlc > observedHlc)
                             ) {
                                 readerRemotePosition = null
                             }
@@ -1305,7 +1296,7 @@ private fun ShinsouAppContent(
                     }
                     if (!initialized) {
                         readerPositionInitializedFor = session
-                        readerInitialPosition = incoming?.position
+                        readerInitialPosition = applicableIncoming?.position
                         readerLastObservedHlc = incoming?.hlc
                         readerRemotePosition = null
                     } else if (
@@ -1350,12 +1341,23 @@ private fun ShinsouAppContent(
                     },
                     onPositionChanged = { position ->
                         if (!snapshot.settings.security.incognitoMode) {
+                            val readAt = readerProgressObservationClock.next(
+                                Clock.System.now().toEpochMilliseconds(),
+                            )
                             val completedNow = activeReaderChapter.pages.isNotEmpty() &&
                                 position.pageIndex == activeReaderChapter.pages.lastIndex &&
                                 !chapter.read &&
                                 completedReaderChapterIds.add(chapter.id)
+                            readerLocalProgressCoordinator.enqueue(
+                                ReaderLocalProgressEvent(
+                                    chapterId = chapter.id,
+                                    pageIndex = position.pageIndex,
+                                    read = chapter.read || completedNow,
+                                    readAt = readAt,
+                                    pageCount = activeReaderChapter.pages.size.takeIf { it > 0 },
+                                ),
+                            )
                             mutate {
-                                val readAt = Clock.System.now().toEpochMilliseconds()
                                 val reporter = readerProgressReporter
                                 var reporterFailure: Throwable? = null
                                 if (reporter != null) {
@@ -1387,19 +1389,6 @@ private fun ShinsouAppContent(
                                         reporterFailure = failure
                                     }
                                 }
-                                // The v2 reporter owns the sync replica, but the legacy
-                                // AppSnapshot is still the immediate source used by the History
-                                // screen. Keep that compatibility projection current even when
-                                // sync is enabled. The bridge sees the same values already
-                                // published by the reporter and therefore does not emit a second
-                                // progress event in the normal path; if the reporter is absent or
-                                // temporarily unavailable, the local history remains usable.
-                                repository.markChapterProgress(
-                                    chapterId = chapter.id,
-                                    lastPageRead = position.pageIndex,
-                                    read = chapter.read || completedNow,
-                                    readAt = readAt,
-                                )
                                 reporterFailure?.let { failure ->
                                     snackbar.showSnackbar(
                                         failure.message ?: strings.text("The latest reading position is queued for retry."),
@@ -1453,14 +1442,7 @@ private fun ShinsouAppContent(
                         mutate {
                             val updated = repository.toggleMangaFavorite(manga.id)
                             if (!updated.favorite) {
-                                readerProgressReporter?.let { reporter ->
-                                    withContext(Dispatchers.Default) {
-                                        reporter.flushReaderSession(session.progressSessionId)
-                                    }
-                                }
                                 readerCategoryPickerMangaId = null
-                                resetReaderPositionState()
-                                readerSession = null
                                 selectedMangaId = null
                                 selectedChapterIds = emptySet()
                                 removeDownloadsForMangas(
@@ -1468,6 +1450,7 @@ private fun ShinsouAppContent(
                                     queue = snapshot.downloadQueue,
                                     mangaIds = setOf(manga.id),
                                 )
+                                transitionReader()
                             } else {
                                 val current = repository.currentSnapshot
                                 if (
@@ -1490,6 +1473,8 @@ private fun ShinsouAppContent(
                     onChapterSelected = { chapterId -> transitionReader(manga.id, chapterId) },
                     modifier = Modifier.zIndex(5f),
                     unifiedReaderContent = typedReaderSession?.content,
+                    unifiedReaderInitialPageIndex = typedReaderSession?.initialVisualPageIndex,
+                    unifiedReaderInitialPageCount = typedReaderSession?.initialVisualPageCount,
                     unifiedReaderRenderer = typedReaderSession?.let { typed ->
                         { _, rendererModifier, renderState, onPageIndexChanged, onReaderTap ->
                             val features = appServices.contentFeatures
@@ -1510,14 +1495,26 @@ private fun ShinsouAppContent(
                                     readerControlsVisible = renderState.controlsVisible,
                                     onPageIndexChanged = onPageIndexChanged,
                                     onReaderTap = onReaderTap,
-                                    onLocatorChanged = { locator ->
+                                    onLocatorChanged = { locator, pageIndex, pageCount ->
                                         if (!snapshot.settings.security.incognitoMode) {
-                                            typed.content.navigation.indexOf(locator)?.let { index ->
+                                            typed.content.navigation.indexOf(locator)?.let { semanticIndex ->
+                                                val readAt = readerProgressObservationClock.next(
+                                                    Clock.System.now().toEpochMilliseconds(),
+                                                )
                                                 val completed =
-                                                    index == typed.content.navigation.itemCount - 1 &&
+                                                    semanticIndex == typed.content.navigation.itemCount - 1 &&
                                                         (locator.progression ?: 0.0) >= 0.995
+                                                readerLocalProgressCoordinator.enqueue(
+                                                    ReaderLocalProgressEvent(
+                                                        chapterId = chapter.id,
+                                                        pageIndex = pageIndex.coerceAtLeast(0),
+                                                        read = chapter.read || completed,
+                                                        readAt = readAt,
+                                                        locator = locator,
+                                                        pageCount = pageCount,
+                                                    ),
+                                                )
                                                 mutate {
-                                                    val readAt = Clock.System.now().toEpochMilliseconds()
                                                     var reporterFailure: Throwable? = null
                                                     readerProgressReporter?.let { reporter ->
                                                         try {
@@ -1537,12 +1534,6 @@ private fun ShinsouAppContent(
                                                             reporterFailure = failure
                                                         }
                                                     }
-                                                    repository.markChapterProgress(
-                                                        chapterId = chapter.id,
-                                                        lastPageRead = index,
-                                                        read = chapter.read || completed,
-                                                        readAt = readAt,
-                                                    )
                                                     reporterFailure?.let { failure ->
                                                         snackbar.showSnackbar(
                                                             failure.message ?: strings.text("The latest reading position is queued for retry."),
@@ -1660,6 +1651,7 @@ private fun ShinsouAppContent(
                         onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
                         onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                         onBrowseReaderProgress = ::recordV2ReaderProgress,
+                        onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
                         onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                         isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                         mutate = ::mutate,
@@ -1769,6 +1761,7 @@ private fun ShinsouAppContent(
                                             onShareText = appServices::shareText,
                                             onReaderVisibilityChanged = { browseReaderOpen = it },
                                             onReaderProgress = ::recordV2ReaderProgress,
+                                            onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
                                             readerBackRequest = localLibraryReaderBackRequest,
                                             onBack = {
                                                 browseReaderOpen = false
@@ -1913,6 +1906,7 @@ private fun ShinsouAppContent(
                                 onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
                                 onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                                 onBrowseReaderProgress = ::recordV2ReaderProgress,
+                                onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
                                 onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                                 isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                                 mutate = ::mutate,
@@ -2015,6 +2009,7 @@ private fun ShinsouAppContent(
                             onShareText = appServices::shareText,
                             onReaderVisibilityChanged = { browseReaderOpen = it },
                             onReaderProgress = ::recordV2ReaderProgress,
+                            onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
                             readerBackRequest = localLibraryReaderBackRequest,
                             onBack = {
                                 browseReaderOpen = false
@@ -2180,7 +2175,14 @@ private fun SectionPane(
     browseBackGestureProgress: Float,
     onBrowseBackAvailabilityChanged: (Boolean) -> Unit,
     onBrowseReaderVisibilityChanged: (Boolean) -> Unit,
-    onBrowseReaderProgress: suspend (title: String, unitTitle: String, locator: ReadingLocator) -> Unit,
+    onBrowseReaderProgress: (
+        title: String,
+        unitTitle: String,
+        locator: ReadingLocator,
+        pageIndex: Int,
+        pageCount: Int?,
+    ) -> Unit,
+    onBrowseReaderProgressFlushed: suspend () -> Unit,
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
     isLocalLibraryFavorite: (BrowseManga) -> Boolean,
     mutate: (suspend () -> Unit) -> Unit,
@@ -2398,6 +2400,7 @@ private fun SectionPane(
                 onBackAvailabilityChanged = onBrowseBackAvailabilityChanged,
                 onReaderVisibilityChanged = onBrowseReaderVisibilityChanged,
                 onReaderProgress = onBrowseReaderProgress,
+                onReaderProgressFlushed = onBrowseReaderProgressFlushed,
                 onToggleLocalLibrary = onToggleLocalLibrary,
                 isLocalLibraryFavorite = isLocalLibraryFavorite,
                 onImportDocument = { acceptedExtensions ->
@@ -2821,7 +2824,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.2"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.3"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3161,7 +3164,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.2"),
+                strings.text("Shinsou X 1.0.1-beta.3"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),
@@ -3199,6 +3202,247 @@ private data class ReaderSession(
     val chapterId: Long,
     val progressSessionId: String,
 )
+
+internal data class ReaderLocalProgressEvent(
+    val chapterId: Long,
+    val pageIndex: Int,
+    val read: Boolean,
+    val readAt: Long,
+    val locator: ReadingLocator? = null,
+    val pageCount: Int? = null,
+) {
+    init {
+        require(chapterId >= 0) { "Reader chapter id must be non-negative" }
+        require(pageIndex >= 0) { "Reader page index must be non-negative" }
+        require(readAt >= 0) { "Reader history time must be non-negative" }
+        require(pageCount == null || pageCount > pageIndex) {
+            "Reader page must be inside its page count"
+        }
+    }
+}
+
+/** Serializes local reader writes so closing or changing chapters can await an exact disk barrier. */
+internal class ReaderLocalProgressCoordinator(
+    private val repository: ShinsouRepository,
+    private val onFailure: suspend (Throwable) -> Unit = {},
+) {
+    private sealed interface Command {
+        data class Progress(val event: ReaderLocalProgressEvent) : Command
+        data class Flush(val completion: kotlinx.coroutines.CompletableDeferred<Unit>) : Command
+    }
+
+    private val commands = Channel<Command>(Channel.UNLIMITED)
+
+    fun enqueue(event: ReaderLocalProgressEvent) {
+        commands.trySend(Command.Progress(event)).getOrThrow()
+    }
+
+    suspend fun flushLocal() {
+        val completion = kotlinx.coroutines.CompletableDeferred<Unit>()
+        commands.send(Command.Flush(completion))
+        completion.await()
+    }
+
+    suspend fun run() {
+        for (command in commands) {
+            when (command) {
+                is Command.Progress -> {
+                    try {
+                        commit(command.event)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        onFailure(failure)
+                    }
+                }
+                is Command.Flush -> {
+                    try {
+                        repository.flushPersistence()
+                        command.completion.complete(Unit)
+                    } catch (failure: Throwable) {
+                        command.completion.completeExceptionally(failure)
+                    }
+                }
+            }
+        }
+    }
+
+    internal suspend fun commit(event: ReaderLocalProgressEvent) {
+        repository.markChapterProgress(
+            chapterId = event.chapterId,
+            lastPageRead = event.pageIndex,
+            read = event.read,
+            readAt = event.readAt,
+            lastLocator = event.locator,
+            lastPageCount = event.pageCount,
+        )
+    }
+}
+
+internal data class V2ReaderProgressEvent(
+    val title: String,
+    val unitTitle: String,
+    val locator: ReadingLocator,
+    val pageIndex: Int,
+    val pageCount: Int? = null,
+    val progressSessionId: String,
+    val readAt: Long,
+) {
+    init {
+        require(pageIndex >= 0) { "Reader page index must be non-negative" }
+        require(pageCount == null || pageCount > pageIndex) { "Reader page must be inside its page count" }
+        require(readAt >= 0) { "Reader history time must be non-negative" }
+        require(progressSessionId.isNotBlank()) { "Reader progress session id must not be blank" }
+    }
+}
+
+/**
+ * App-owned progress lanes for extension readers. Local compatibility writes preserve every
+ * observation in order; typed sync reporting runs separately so it cannot delay local resume.
+ */
+internal class V2ReaderProgressCoordinator(
+    private val repository: ShinsouRepository,
+    private val reporter: ReaderProgressReporter?,
+    private val onReporterFailure: suspend (Throwable) -> Unit = {},
+) {
+    private sealed interface LocalCommand {
+        data class Progress(val event: V2ReaderProgressEvent) : LocalCommand
+        data class Flush(val completion: kotlinx.coroutines.CompletableDeferred<Unit>) : LocalCommand
+    }
+
+    private val events = Channel<LocalCommand>(Channel.UNLIMITED)
+    private val reporterEvents = Channel<V2ReaderProgressEvent>(Channel.UNLIMITED)
+    private val lastCommittedAtByUnit = mutableMapOf<String, Long>()
+
+    fun enqueue(event: V2ReaderProgressEvent) {
+        events.trySend(LocalCommand.Progress(event)).getOrThrow()
+    }
+
+    /** Waits until every previously observed local progress event is committed and on disk. */
+    suspend fun flushLocal() {
+        val completion = kotlinx.coroutines.CompletableDeferred<Unit>()
+        events.send(LocalCommand.Flush(completion))
+        completion.await()
+    }
+
+    suspend fun run() {
+        kotlinx.coroutines.coroutineScope {
+            launch {
+                for (command in events) {
+                    when (command) {
+                        is LocalCommand.Progress -> {
+                            if (commitLocal(command.event)) reporterEvents.send(command.event)
+                        }
+                        is LocalCommand.Flush -> {
+                            try {
+                                repository.flushPersistence()
+                                command.completion.complete(Unit)
+                            } catch (failure: Throwable) {
+                                command.completion.completeExceptionally(failure)
+                            }
+                        }
+                    }
+                }
+            }
+            launch {
+                for (event in reporterEvents) report(event)
+            }
+        }
+    }
+
+    internal suspend fun commit(event: V2ReaderProgressEvent) {
+        if (commitLocal(event)) report(event)
+    }
+
+    internal suspend fun commitLocal(event: V2ReaderProgressEvent): Boolean {
+        val unitKey = event.locator.scope.let { scope ->
+            "${scope.publicationId.value}:${scope.acquisitionId}:${scope.unitId.value}"
+        }
+        val scope = event.locator.scope
+        val chapterUrl = encodeTypedLocalChapterUrl(
+            publicationKey = scope.publicationId,
+            acquisitionId = scope.acquisitionId,
+            unitKey = scope.unitId,
+        )
+        val initialSnapshot = repository.currentSnapshot
+        val persistedChapterId = initialSnapshot.chapters.firstOrNull { chapter ->
+            chapter.url == chapterUrl
+        }?.id
+        val persistedReadAt = initialSnapshot.histories.firstOrNull { history ->
+            history.chapterId == persistedChapterId
+        }?.lastRead
+        val previousReadAt = maxOf(lastCommittedAtByUnit[unitKey] ?: 0L, persistedReadAt ?: 0L)
+        if (event.readAt < previousReadAt) return false
+
+        val completed = (event.locator.progression ?: 0.0) >= 0.995
+        val publicationUrl = encodeTypedLocalPublicationUrl(scope.publicationId)
+        val current = repository.currentSnapshot
+        val manga = current.mangas.firstOrNull {
+            it.source == LOCAL_SOURCE_ID &&
+                (it.url == publicationUrl ||
+                    decodeExtensionLibraryPublicationUrl(it.url)?.publicationKey == scope.publicationId)
+        } ?: repository.upsertManga(
+            Manga(
+                source = LOCAL_SOURCE_ID,
+                favorite = false,
+                dateAdded = event.readAt,
+                url = publicationUrl,
+                title = event.title,
+                description = "Extension publication",
+                genre = listOf("Extension"),
+                updateStrategy = 1,
+                initialized = true,
+                lastModifiedAt = event.readAt,
+                version = 1,
+            ),
+        )
+        val chapter = repository.currentSnapshot.chapters.firstOrNull {
+            it.mangaId == manga.id && it.url == chapterUrl
+        } ?: repository.upsertChapter(
+            Chapter(
+                mangaId = manga.id,
+                url = chapterUrl,
+                name = event.unitTitle,
+                chapterNumber = 1.0,
+                sourceOrder = 0,
+                dateFetch = event.readAt,
+                dateUpload = event.readAt,
+                lastModifiedAt = event.readAt,
+                version = 1,
+            ),
+        )
+        repository.markChapterProgress(
+            chapterId = chapter.id,
+            lastPageRead = event.pageIndex,
+            read = completed,
+            readAt = event.readAt,
+            lastLocator = event.locator,
+            lastPageCount = event.pageCount,
+        )
+        lastCommittedAtByUnit[unitKey] = event.readAt
+        return true
+    }
+
+    private suspend fun report(event: V2ReaderProgressEvent) {
+        val completed = (event.locator.progression ?: 0.0) >= 0.995
+        reporter?.let { progressReporter ->
+            try {
+                withContext(Dispatchers.Default) {
+                    progressReporter.recordContentReadingProgress(
+                        locator = event.locator,
+                        sessionId = event.progressSessionId,
+                        completed = completed,
+                        historyTouchedAt = event.readAt,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                onReporterFailure(failure)
+            }
+        }
+    }
+}
 
 internal fun latestHistoryChapter(
     snapshot: AppSnapshot,

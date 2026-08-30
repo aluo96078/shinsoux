@@ -199,6 +199,8 @@ class EpubBrowserContractTest {
         assertTrue("vertical-" in viewport)
         assertTrue("HORIZONTAL" in viewport)
         assertTrue("shinsouAnchorCfi" in viewport)
+        assertTrue("pageIndex:state.pageIndex" in viewport)
+        assertTrue("pageCount:state.pageCount" in viewport)
         assertTrue("depth>shinsouMaxAnchorDepth" in viewport)
         assertTrue("window.location.hash.length>shinsouMaxFragmentLength" in viewport)
         assertTrue("cfi.length<=shinsouMaxAnchorCfiLength" in viewport)
@@ -215,9 +217,11 @@ class EpubBrowserContractTest {
                 direction = EpubBrowserScrollDirection.REVERSE,
                 writingMode = "vertical-rl",
                 fixedLayout = true,
+                pageIndex = 4,
+                pageCount = 10,
             ),
             decodeEpubBrowserViewport(
-                """{"progression":0.5,"axis":"HORIZONTAL","direction":"REVERSE","writingMode":"vertical-rl","fixedLayout":true}""",
+                """{"progression":0.5,"axis":"HORIZONTAL","direction":"REVERSE","writingMode":"vertical-rl","fixedLayout":true,"pageIndex":4,"pageCount":10}""",
             ),
         )
         assertNull(

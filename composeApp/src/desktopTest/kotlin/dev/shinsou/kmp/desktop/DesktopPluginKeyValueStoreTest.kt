@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
+import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
@@ -117,7 +119,10 @@ class DesktopPluginKeyValueStoreTest {
     @Test
     fun keychainAdapterUsesStableIdentityAndRawKeyBytes() {
         val api = FakeKeychainApi()
-        val store = MacOsKeychainMasterKeyStore(api)
+        val store = MacOsKeychainMasterKeyStore(
+            keychain = api,
+            accessReason = "Explain the protected extension sign-in lookup.",
+        )
         val key = ByteArray(32) { (255 - it).toByte() }
 
         store.write(key)
@@ -126,6 +131,56 @@ class DesktopPluginKeyValueStoreTest {
         assertEquals("master-key-v1", api.account)
         assertContentEquals(key, api.value)
         assertContentEquals(key, store.read())
+        assertEquals("Explain the protected extension sign-in lookup.", api.accessReason)
+    }
+
+    @Test
+    fun keychainAccessReasonExplainsPurposeWithoutLeakingInternalIdentity() {
+        val traditionalChinese = localizedMacOsKeychainAccessReason(
+            purpose = MacOsKeychainPurpose.EXTENSION_SIGN_IN,
+            locale = Locale.forLanguageTag("zh-TW"),
+        )
+        val english = localizedMacOsKeychainAccessReason(
+            purpose = MacOsKeychainPurpose.EXTENSION_SIGN_IN,
+            locale = Locale.US,
+        )
+
+        assertTrue(traditionalChinese.contains("登入資料"))
+        assertTrue(traditionalChinese.contains("macOS"))
+        assertTrue(english.contains("extension sign-in details"))
+        assertTrue(english.contains("macOS"))
+        listOf(traditionalChinese, english).forEach { reason ->
+            assertFalse(reason.contains(MacOsKeychainMasterKeyStore.DEFAULT_SERVICE))
+            assertFalse(reason.contains(MacOsKeychainMasterKeyStore.DEFAULT_ACCOUNT))
+        }
+    }
+
+    @Test
+    fun keychainPreflightExplainsTheUpcomingSystemPasswordWindow() {
+        val traditionalChinese = localizedMacOsKeychainAccessExplanation(
+            purpose = MacOsKeychainPurpose.EXTENSION_SIGN_IN,
+            locale = Locale.forLanguageTag("zh-TW"),
+        )
+        val simplifiedChinese = localizedMacOsKeychainAccessExplanation(
+            purpose = MacOsKeychainPurpose.EXTENSION_SIGN_IN,
+            locale = Locale.forLanguageTag("zh-CN"),
+        )
+        val english = localizedMacOsKeychainAccessExplanation(
+            purpose = MacOsKeychainPurpose.EXTENSION_SIGN_IN,
+            locale = Locale.US,
+        )
+
+        assertTrue(traditionalChinese.title.contains("為何"))
+        assertTrue(traditionalChinese.message.contains("下一個系統視窗"))
+        assertTrue(traditionalChinese.message.contains("Shinsou X 不會取得或保存"))
+        assertTrue(simplifiedChinese.message.contains("下一个系统窗口"))
+        assertTrue(english.message.contains("next system window"))
+        listOf(traditionalChinese, simplifiedChinese, english).forEach { explanation ->
+            assertTrue(explanation.continueLabel.isNotBlank())
+            assertTrue(explanation.cancelLabel.isNotBlank())
+            assertFalse(explanation.message.contains(MacOsKeychainMasterKeyStore.DEFAULT_SERVICE))
+            assertFalse(explanation.message.contains(MacOsKeychainMasterKeyStore.DEFAULT_ACCOUNT))
+        }
     }
 
     @Test
@@ -137,7 +192,11 @@ class DesktopPluginKeyValueStoreTest {
         val readCalls = java.util.concurrent.atomic.AtomicInteger()
         val expected = ByteArray(32) { (it + 11).toByte() }
         val api = object : MacOsKeychainApi {
-            override fun readPassword(service: String, account: String): ByteArray? {
+            override fun readPassword(
+                service: String,
+                account: String,
+                accessReason: String,
+            ): ByteArray? {
                 readCalls.incrementAndGet()
                 release.await()
                 return expected.copyOf()
@@ -184,11 +243,24 @@ class DesktopPluginKeyValueStoreTest {
 
         val security = NativeLibrary.getInstance("/System/Library/Frameworks/Security.framework/Security")
         listOf(
+            "SecItemCopyMatching",
             "SecKeychainFindGenericPassword",
             "SecKeychainAddGenericPassword",
             "SecKeychainItemModifyAttributesAndData",
-            "SecKeychainItemFreeContent",
         ).forEach { symbol -> assertNotNull(security.getFunction(symbol)) }
+    }
+
+    @Test
+    fun modernKeychainQueryHandlesMissingItemWithoutShowingAuthorizationUi() {
+        if (DesktopPlatform.current != DesktopPlatform.MAC_OS) return
+
+        val result = JnaMacOsKeychainApi().readPassword(
+            service = "dev.aluo.shinsoux.desktop.test-missing-${UUID.randomUUID()}",
+            account = "missing",
+            accessReason = "Automated test lookup for a deliberately missing item.",
+        )
+
+        assertEquals(null, result)
     }
 
     @Test
@@ -258,11 +330,17 @@ class DesktopPluginKeyValueStoreTest {
     private class FakeKeychainApi : MacOsKeychainApi {
         var service: String? = null
         var account: String? = null
+        var accessReason: String? = null
         var value: ByteArray? = null
 
-        override fun readPassword(service: String, account: String): ByteArray? {
+        override fun readPassword(
+            service: String,
+            account: String,
+            accessReason: String,
+        ): ByteArray? {
             this.service = service
             this.account = account
+            this.accessReason = accessReason
             return value?.copyOf()
         }
 

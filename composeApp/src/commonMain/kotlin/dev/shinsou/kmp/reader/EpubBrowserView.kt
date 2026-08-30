@@ -18,6 +18,7 @@ public expect fun EpubBrowserView(
     navigationRequestKey: Long = 0L,
     selectionRequestKey: Long = 0L,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit = {},
+    onViewportChanged: (ReadingLocator.Epub, pageIndex: Int, pageCount: Int) -> Unit = { _, _, _ -> },
     onSelectionChanged: (ReadingRange?) -> Unit = {},
     onReaderTap: (ReaderTapAction) -> Unit = {},
     onError: (String) -> Unit = {},
@@ -444,6 +445,9 @@ internal data class EpubBrowserViewportSnapshot(
     val writingMode: String,
     val fixedLayout: Boolean,
     val anchorCfi: String? = null,
+    /** Zero-based visual page within this spine document under the current rendition. */
+    val pageIndex: Int = 0,
+    val pageCount: Int = 1,
 ) {
     init {
         require(progression.isFinite() && progression in 0.0..1.0) {
@@ -456,6 +460,9 @@ internal data class EpubBrowserViewportSnapshot(
             (anchorCfi.length <= MAX_ANCHOR_CFI_LENGTH && ANCHOR_CFI.matches(anchorCfi))
         ) {
             "EPUB browser anchor CFI is invalid"
+        }
+        require(pageCount in 1..MAX_EPUB_DOCUMENT_PAGE_COUNT && pageIndex in 0 until pageCount) {
+            "EPUB browser visual page is invalid"
         }
     }
 }
@@ -975,9 +982,10 @@ private inline fun epubBrowserScript(
             return cfi.length<=shinsouMaxAnchorCfiLength?cfi:null;
           }
           function shinsouSnapshot(metrics){
+            var state=shinsouReaderPageState(metrics);
             return {progression:metrics.progression,axis:metrics.axis,direction:metrics.direction,
               writingMode:metrics.writingMode,fixedLayout:metrics.fixedLayout,
-              anchorCfi:metrics.anchorCfi};
+              anchorCfi:metrics.anchorCfi,pageIndex:state.pageIndex,pageCount:state.pageCount};
           }
           ${result()}
         })()

@@ -35,11 +35,13 @@ public actual fun EpubBrowserView(
     navigationRequestKey: Long,
     selectionRequestKey: Long,
     onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    onViewportChanged: (ReadingLocator.Epub, pageIndex: Int, pageCount: Int) -> Unit,
     onSelectionChanged: (ReadingRange?) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onError: (String) -> Unit,
 ) {
     val currentLocatorChanged = rememberUpdatedState(onLocatorChanged)
+    val currentViewportChanged = rememberUpdatedState(onViewportChanged)
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
     val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
@@ -49,6 +51,11 @@ public actual fun EpubBrowserView(
             initialConfiguration = configuration,
             onLocatorChanged = { locator ->
                 SwingUtilities.invokeLater { currentLocatorChanged.value.invoke(locator) }
+            },
+            onViewportChanged = { locator, pageIndex, pageCount ->
+                SwingUtilities.invokeLater {
+                    currentViewportChanged.value.invoke(locator, pageIndex, pageCount)
+                }
             },
             onReaderTap = { action ->
                 SwingUtilities.invokeLater { currentReaderTap.value.invoke(action) }
@@ -95,6 +102,7 @@ private class DesktopEpubBrowserState(
     initialRequest: EpubRenderRequest,
     initialConfiguration: EpubBrowserConfiguration,
     private val onLocatorChanged: (ReadingLocator.Epub) -> Unit,
+    private val onViewportChanged: (ReadingLocator.Epub, Int, Int) -> Unit,
     private val onReaderTap: (ReaderTapAction) -> Unit,
     private val onError: (String) -> Unit,
 ) {
@@ -546,7 +554,10 @@ private class DesktopEpubBrowserState(
             viewport = viewport,
             nowMillis = nowMillis,
             force = force,
-        )?.let(onLocatorChanged)
+        )?.let { locator ->
+            onLocatorChanged(locator)
+            onViewportChanged(locator, viewport.pageIndex, viewport.pageCount)
+        }
     }
 
     fun close() {
