@@ -112,7 +112,9 @@ internal interface MacOsKeychainApi {
     fun upsertPassword(service: String, account: String, value: ByteArray)
 }
 
-internal class JnaMacOsKeychainApi : MacOsKeychainApi {
+internal class JnaMacOsKeychainApi(
+    private val accessConfirmation: (MacOsKeychainPurpose) -> Boolean = MacOsKeychainAccessExplainer::confirm,
+) : MacOsKeychainApi {
     private val security: SecurityFramework
     private val coreFoundation: CoreFoundationFramework
     private val securityLibrary: NativeLibrary
@@ -131,10 +133,23 @@ internal class JnaMacOsKeychainApi : MacOsKeychainApi {
     override fun readPassword(service: String, account: String, accessReason: String): ByteArray? {
         require(accessReason.isNotBlank()) { "Keychain access reason cannot be blank." }
         if (!passwordItemExists(service, account)) return null
-        val purpose = keychainPurposeFor(service)
-        if (!MacOsKeychainAccessExplainer.confirm(purpose)) {
-            throw MacOsKeychainAccessCanceledException()
-        }
+        return readMacOsKeychainPassword(
+            silentRead = { copyPassword(service, account, accessReason, allowAuthenticationUi = false) },
+            confirmInteractiveAccess = { accessConfirmation(keychainPurposeFor(service)) },
+            interactiveRead = { copyPassword(service, account, accessReason, allowAuthenticationUi = true) },
+        )
+    }
+
+    /**
+     * Tries without UI first. A previously authorized item is returned immediately, so the app's
+     * purpose explanation appears only when Security.framework says interaction is actually needed.
+     */
+    private fun copyPassword(
+        service: String,
+        account: String,
+        accessReason: String,
+        allowAuthenticationUi: Boolean,
+    ): MacOsKeychainReadAttempt {
         val serviceValue = createString(service)
         val accountValue = createString(account)
         val reasonValue = createString(accessReason)
@@ -176,9 +191,20 @@ internal class JnaMacOsKeychainApi : MacOsKeychainApi {
                 securityConstant("kSecUseOperationPrompt"),
                 reasonValue,
             )
+            coreFoundation.CFDictionarySetValue(
+                query,
+                securityConstant("kSecUseAuthenticationUI"),
+                securityConstant(
+                    if (allowAuthenticationUi) "kSecUseAuthenticationUIAllow"
+                    else "kSecUseAuthenticationUIFail",
+                ),
+            )
 
             val status = security.SecItemCopyMatching(query, result)
-            if (status == ERR_SEC_ITEM_NOT_FOUND) return null
+            if (status == ERR_SEC_ITEM_NOT_FOUND) return MacOsKeychainReadAttempt.Missing
+            if (!allowAuthenticationUi && status in INTERACTION_REQUIRED_STATUSES) {
+                return MacOsKeychainReadAttempt.AuthenticationRequired
+            }
             checkStatus(status, "read")
 
             val data = checkNotNull(result.value) { "macOS Keychain returned no password data." }
@@ -190,7 +216,7 @@ internal class JnaMacOsKeychainApi : MacOsKeychainApi {
             val bytes = checkNotNull(coreFoundation.CFDataGetBytePtr(data)) {
                 "macOS Keychain returned empty password storage."
             }
-            bytes.getByteArray(0, length.toInt())
+            MacOsKeychainReadAttempt.Value(bytes.getByteArray(0, length.toInt()))
         } finally {
             result.value?.let(coreFoundation::CFRelease)
             coreFoundation.CFRelease(query)
@@ -367,9 +393,44 @@ internal class JnaMacOsKeychainApi : MacOsKeychainApi {
         const val SECURITY_FRAMEWORK = "/System/Library/Frameworks/Security.framework/Security"
         const val CORE_FOUNDATION_FRAMEWORK = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
         const val CF_STRING_ENCODING_UTF_8 = 0x08000100
-        const val ERR_SEC_SUCCESS = 0
-        const val ERR_SEC_ITEM_NOT_FOUND = -25300
+        internal const val ERR_SEC_SUCCESS = 0
+        internal const val ERR_SEC_ITEM_NOT_FOUND = -25300
+        internal const val ERR_SEC_INTERACTION_NOT_ALLOWED = -25308
+        internal const val ERR_SEC_INTERACTION_REQUIRED = -25315
         const val MAX_KEYCHAIN_VALUE_BYTES: Long = 4 * 1024
+        val INTERACTION_REQUIRED_STATUSES = setOf(
+            ERR_SEC_INTERACTION_NOT_ALLOWED,
+            ERR_SEC_INTERACTION_REQUIRED,
+        )
+    }
+}
+
+internal sealed interface MacOsKeychainReadAttempt {
+    data class Value(val bytes: ByteArray) : MacOsKeychainReadAttempt
+
+    data object Missing : MacOsKeychainReadAttempt
+
+    data object AuthenticationRequired : MacOsKeychainReadAttempt
+}
+
+internal fun readMacOsKeychainPassword(
+    silentRead: () -> MacOsKeychainReadAttempt,
+    confirmInteractiveAccess: () -> Boolean,
+    interactiveRead: () -> MacOsKeychainReadAttempt,
+): ByteArray? {
+    return when (val silent = silentRead()) {
+        is MacOsKeychainReadAttempt.Value -> silent.bytes
+        MacOsKeychainReadAttempt.Missing -> null
+        MacOsKeychainReadAttempt.AuthenticationRequired -> {
+            if (!confirmInteractiveAccess()) throw MacOsKeychainAccessCanceledException()
+            when (val interactive = interactiveRead()) {
+                is MacOsKeychainReadAttempt.Value -> interactive.bytes
+                MacOsKeychainReadAttempt.Missing -> null
+                MacOsKeychainReadAttempt.AuthenticationRequired -> error(
+                    "macOS Keychain still requires authentication after interactive access was allowed.",
+                )
+            }
+        }
     }
 }
 

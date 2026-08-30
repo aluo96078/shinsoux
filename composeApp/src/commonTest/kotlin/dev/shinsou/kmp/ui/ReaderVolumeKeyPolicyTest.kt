@@ -37,4 +37,36 @@ class ReaderVolumeKeyPolicyTest {
         assertFalse(effectiveReaderVolumeKeysEnabled(configured = false, platformSupported = true))
         assertFalse(effectiveReaderVolumeKeysEnabled(configured = true, platformSupported = false))
     }
+
+    @Test
+    fun monitoringRequiresAnOpenReaderAndAnEnabledSupportedPlatform() {
+        assertTrue(
+            effectiveReaderVolumeKeyMonitoringEnabled(
+                readerOpen = true,
+                configured = true,
+                platformSupported = true,
+            ),
+        )
+        assertFalse(
+            effectiveReaderVolumeKeyMonitoringEnabled(
+                readerOpen = false,
+                configured = true,
+                platformSupported = true,
+            ),
+        )
+        assertFalse(
+            effectiveReaderVolumeKeyMonitoringEnabled(
+                readerOpen = true,
+                configured = false,
+                platformSupported = true,
+            ),
+        )
+        assertFalse(
+            effectiveReaderVolumeKeyMonitoringEnabled(
+                readerOpen = true,
+                configured = true,
+                platformSupported = false,
+            ),
+        )
+    }
 }

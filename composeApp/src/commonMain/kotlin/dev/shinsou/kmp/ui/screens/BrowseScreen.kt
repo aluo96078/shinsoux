@@ -147,6 +147,9 @@ import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.ui.ReaderProgressPosition
+import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.effectiveReaderVolumeKeysEnabled
+import dev.shinsou.kmp.ui.readerVolumeKeyAction
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
@@ -174,6 +177,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -319,6 +323,7 @@ fun BrowseScreen(
         pageCount: Int?,
     ) -> Unit = { _, _, _, _, _ -> },
     onReaderProgressFlushed: suspend () -> Unit = {},
+    volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
     /** App-owned library mutation for every extension v2 publication. */
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
     isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
@@ -824,6 +829,7 @@ fun BrowseScreen(
                         },
                         onReaderProgress = onReaderProgress,
                         onReaderProgressFlushed = onReaderProgressFlushed,
+                        volumeKeyEvents = volumeKeyEvents,
                         readerBackRequest = v2ReaderBackRequest,
                         onBack = {
                             overlays = overlays.closePublication()
@@ -1178,6 +1184,7 @@ private fun ExtensionNovelReaderShell(
     onCompleted: () -> Unit,
     onReaderProgress: (ReaderProgressPosition) -> Unit,
     onReaderProgressFlushed: suspend () -> Unit,
+    volumeKeyEvents: Flow<ReaderVolumeKeyEvent>,
     systemBackRequest: Long,
 ) {
     val strings = LocalShinsouStrings.current
@@ -1206,6 +1213,8 @@ private fun ExtensionNovelReaderShell(
     }
     var requestedPage by remember(session) { mutableStateOf(initialPage) }
     var pageRequestSerial by remember(session) { mutableStateOf(0L) }
+    var epubNavigationAction by remember(session) { mutableStateOf<ReaderTapAction?>(null) }
+    var epubNavigationRequestKey by remember(session) { mutableStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
     val heldNavigationKeys = remember(session) { mutableSetOf<Key>() }
     val latestProgress = remember(session) {
@@ -1278,11 +1287,33 @@ private fun ExtensionNovelReaderShell(
     }
 
     fun handleTap(action: ReaderTapAction) {
+        if (progressTransitionInFlight || busy) return
         when (action) {
             ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
             ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
             ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
         }
+    }
+
+    fun handleVolumeKey(event: ReaderVolumeKeyEvent) {
+        val action = readerVolumeKeyAction(
+            event = event,
+            readerOpen = true,
+            volumeKeysEnabled = effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys),
+        ) ?: return
+        if (progressTransitionInFlight || busy) return
+        if (epubReader) {
+            epubNavigationAction = action
+            epubNavigationRequestKey++
+        } else {
+            handleTap(action)
+        }
+    }
+
+    val currentVolumeKeyHandler by rememberUpdatedState<(ReaderVolumeKeyEvent) -> Unit>(::handleVolumeKey)
+
+    LaunchedEffect(volumeKeyEvents, session) {
+        volumeKeyEvents.collect { event -> currentVolumeKeyHandler(event) }
     }
 
     LaunchedEffect(session, settingsVisible) {
@@ -1386,6 +1417,8 @@ private fun ExtensionNovelReaderShell(
             settings = readerSettings,
             requestedPageIndex = requestedPage,
             pageRequestSerial = pageRequestSerial,
+            navigationAction = epubNavigationAction,
+            navigationRequestKey = epubNavigationRequestKey,
             readerControlsVisible = controlsVisible,
             onPageIndexChanged = { index, count ->
                 currentPage = index
@@ -1508,6 +1541,30 @@ private fun ExtensionNovelReaderShell(
                 }
             }
         }
+
+        if (progressTransitionInFlight || busy) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.46f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    tonalElevation = 8.dp,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        Text(strings.text("Loading"), fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
     }
 
     if (settingsVisible) {
@@ -1579,6 +1636,7 @@ internal fun ExtensionV2PublicationPane(
         pageCount: Int?,
     ) -> Unit,
     onReaderProgressFlushed: suspend () -> Unit,
+    volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
     readerBackRequest: Long = 0L,
     onBack: () -> Unit,
 ) {
@@ -1601,6 +1659,7 @@ internal fun ExtensionV2PublicationPane(
     var loadingMore by remember(item.identityKey) { mutableStateOf(false) }
     var loadError by remember(item.identityKey) { mutableStateOf<String?>(null) }
     var busyUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var openingReaderUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
     var operationMessage by remember(item.identityKey) { mutableStateOf<String?>(null) }
     var operationFailed by remember(item.identityKey) { mutableStateOf(false) }
     var readerSession by remember(item.identityKey) {
@@ -1644,6 +1703,7 @@ internal fun ExtensionV2PublicationPane(
     ) {
         if (busyUnitId != null) return
         busyUnitId = selection.unit.remoteId
+        if (openReader) openingReaderUnitId = selection.unit.remoteId
         operationMessage = null
         operationFailed = false
         scope.launch {
@@ -1682,6 +1742,7 @@ internal fun ExtensionV2PublicationPane(
                 operationMessage = error.localizedDiagnosticMessage(strings)
             } finally {
                 busyUnitId = null
+                if (openReader) openingReaderUnitId = null
             }
         }
     }
@@ -1729,6 +1790,7 @@ internal fun ExtensionV2PublicationPane(
                 )
             },
             onReaderProgressFlushed = onReaderProgressFlushed,
+            volumeKeyEvents = volumeKeyEvents,
             systemBackRequest = readerBackRequest,
         )
         return
@@ -1933,6 +1995,7 @@ internal fun ExtensionV2PublicationPane(
                         operationMessage = operationMessage,
                         operationFailed = operationFailed,
                         refreshingFromSource = loading,
+                        continueReadingLoading = openingReaderUnitId == continueUnit?.unit?.remoteId,
                         showClose = true,
                         hasChapters = units.isNotEmpty() || hasNextPage,
                         continueLabel = continueLabel,
@@ -1972,6 +2035,7 @@ internal fun ExtensionV2PublicationPane(
                         operationMessage = operationMessage,
                         operationFailed = operationFailed,
                         busyUnitId = busyUnitId,
+                        openingReaderUnitId = openingReaderUnitId,
                         onRetry = ::retryInitialPage,
                         onLoadMore = ::loadMore,
                         onReadUnit = { materialize(it, openReader = true) },
@@ -2008,6 +2072,7 @@ internal fun ExtensionV2PublicationPane(
                             operationMessage = operationMessage,
                             operationFailed = operationFailed,
                             refreshingFromSource = loading,
+                            continueReadingLoading = openingReaderUnitId == continueUnit?.unit?.remoteId,
                             showClose = false,
                             hasChapters = units.isNotEmpty() || hasNextPage,
                             continueLabel = continueLabel,
@@ -2048,6 +2113,7 @@ internal fun ExtensionV2PublicationPane(
                             operationMessage = operationMessage,
                             operationFailed = operationFailed,
                             busyUnitId = busyUnitId,
+                            openingReaderUnitId = openingReaderUnitId,
                             onRetry = ::retryInitialPage,
                             onLoadMore = ::loadMore,
                             onReadUnit = { materialize(it, openReader = true) },
@@ -2113,6 +2179,7 @@ private fun ExtensionV2PublicationInfoPane(
     operationMessage: String?,
     operationFailed: Boolean,
     refreshingFromSource: Boolean,
+    continueReadingLoading: Boolean,
     showClose: Boolean,
     hasChapters: Boolean,
     continueLabel: String?,
@@ -2224,10 +2291,18 @@ private fun ExtensionV2PublicationInfoPane(
         }
         if (continueLabel != null && onContinueReading != null) {
             Spacer(Modifier.height(9.dp))
-            OutlinedButton(onClick = onContinueReading, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
+            OutlinedButton(
+                onClick = onContinueReading,
+                enabled = !continueReadingLoading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (continueReadingLoading) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
+                }
                 Spacer(Modifier.width(7.dp))
-                Text(continueLabel)
+                Text(if (continueReadingLoading) strings.text("Loading") else continueLabel)
             }
         }
         Spacer(Modifier.height(18.dp))
@@ -2322,6 +2397,7 @@ private fun ExtensionV2ChapterPane(
     operationMessage: String?,
     operationFailed: Boolean,
     busyUnitId: String?,
+    openingReaderUnitId: String?,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
@@ -2546,14 +2622,18 @@ private fun ExtensionV2ChapterPane(
                             onClick = { onDownloadUnits(listOf(selection)) },
                             enabled = busyUnitId == null,
                         ) {
-                            if (busyUnitId == unitId) {
+                            if (busyUnitId == unitId && openingReaderUnitId == null) {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Outlined.Download, strings.download)
                             }
                         }
                         IconButton(onClick = { onReadUnit(selection) }, enabled = busyUnitId == null) {
-                            Icon(Icons.Filled.PlayArrow, strings.text("Start reading"))
+                            if (openingReaderUnitId == unitId) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Filled.PlayArrow, strings.text("Start reading"))
+                            }
                         }
                     }
                 }

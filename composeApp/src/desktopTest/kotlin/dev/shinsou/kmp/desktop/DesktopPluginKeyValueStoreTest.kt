@@ -23,6 +23,52 @@ import kotlin.time.measureTime
 
 class DesktopPluginKeyValueStoreTest {
     @Test
+    fun constructionAndOrdinaryStateNeverReadProtectedCredentialStore() = runTest {
+        withTemporaryDirectory { directory ->
+            Files.writeString(
+                directory.resolve(STATE_FILE),
+                "{\"plugin.repositories.selected\":\"https://extensions.example\"}",
+                StandardCharsets.UTF_8,
+            )
+            val keychain = FakeMasterKeyStore()
+            val store = DesktopPluginKeyValueStore(directory, keychain)
+
+            assertEquals(0, keychain.readCount)
+            assertEquals("https://extensions.example", store.getString("plugin.repositories.selected"))
+            assertEquals(0, keychain.readCount)
+
+            store.putString("source.1.reader-mode", "pager")
+            assertEquals(0, keychain.readCount)
+        }
+    }
+
+    @Test
+    fun missingSensitiveValueNeverReadsProtectedCredentialStore() = runTest {
+        withTemporaryDirectory { directory ->
+            val keychain = FakeMasterKeyStore()
+            val store = DesktopPluginKeyValueStore(directory, keychain)
+
+            assertEquals(null, store.getString(SENSITIVE_KEY))
+            assertEquals(0, keychain.readCount)
+        }
+    }
+
+    @Test
+    fun sensitiveReadAndWriteAcquireProtectedMasterKeyOnDemand() = runTest {
+        withTemporaryDirectory { directory ->
+            val keychain = FakeMasterKeyStore()
+            val store = DesktopPluginKeyValueStore(directory, keychain)
+
+            store.putString(SENSITIVE_KEY, "session-cookie")
+
+            assertTrue(keychain.readCount >= 2)
+            val readsAfterWrite = keychain.readCount
+            assertEquals("session-cookie", store.getString(SENSITIVE_KEY))
+            assertEquals(readsAfterWrite, keychain.readCount)
+        }
+    }
+
+    @Test
     fun legacyKeyMigratesToKeychainOnlyAfterExistingCiphertextDecrypts() = runTest {
         withTemporaryDirectory { directory ->
             val legacyKey = ByteArray(32) { (it + 1).toByte() }
@@ -184,6 +230,70 @@ class DesktopPluginKeyValueStoreTest {
     }
 
     @Test
+    fun authorizedKeychainReadDoesNotShowThePurposeExplanation() {
+        val expected = ByteArray(32) { (it + 17).toByte() }
+        var confirmationCount = 0
+        var interactiveReadCount = 0
+
+        val result = readMacOsKeychainPassword(
+            silentRead = { MacOsKeychainReadAttempt.Value(expected.copyOf()) },
+            confirmInteractiveAccess = {
+                confirmationCount += 1
+                true
+            },
+            interactiveRead = {
+                interactiveReadCount += 1
+                MacOsKeychainReadAttempt.Value(expected.copyOf())
+            },
+        )
+
+        assertContentEquals(expected, result)
+        assertEquals(0, confirmationCount)
+        assertEquals(0, interactiveReadCount)
+    }
+
+    @Test
+    fun keychainExplanationAppearsOnlyAfterSilentReadRequiresInteraction() {
+        val expected = ByteArray(32) { (it + 23).toByte() }
+        var confirmationCount = 0
+        var interactiveReadCount = 0
+
+        val result = readMacOsKeychainPassword(
+            silentRead = { MacOsKeychainReadAttempt.AuthenticationRequired },
+            confirmInteractiveAccess = {
+                confirmationCount += 1
+                true
+            },
+            interactiveRead = {
+                interactiveReadCount += 1
+                MacOsKeychainReadAttempt.Value(expected.copyOf())
+            },
+        )
+
+        assertContentEquals(expected, result)
+        assertEquals(1, confirmationCount)
+        assertEquals(1, interactiveReadCount)
+    }
+
+    @Test
+    fun cancelingKeychainExplanationDoesNotRunInteractiveRead() {
+        var interactiveReadCount = 0
+
+        assertFailsWith<MacOsKeychainAccessCanceledException> {
+            readMacOsKeychainPassword(
+                silentRead = { MacOsKeychainReadAttempt.AuthenticationRequired },
+                confirmInteractiveAccess = { false },
+                interactiveRead = {
+                    interactiveReadCount += 1
+                    MacOsKeychainReadAttempt.Missing
+                },
+            )
+        }
+
+        assertEquals(0, interactiveReadCount)
+    }
+
+    @Test
     fun keychainAdapterBoundsAStuckNativeReadAndRecoversAfterAuthorizationCompletes() {
         val executor = Executors.newSingleThreadExecutor { task ->
             Thread(task, "test-keychain-timeout").apply { isDaemon = true }
@@ -317,8 +427,13 @@ class DesktopPluginKeyValueStoreTest {
             private set
         var writeCount: Int = 0
             private set
+        var readCount: Int = 0
+            private set
 
-        override fun read(): ByteArray? = value?.copyOf()
+        override fun read(): ByteArray? {
+            readCount += 1
+            return value?.copyOf()
+        }
 
         override fun write(value: ByteArray) {
             writeCount += 1

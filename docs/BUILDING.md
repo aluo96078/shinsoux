@@ -25,10 +25,10 @@ number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
-目前原始碼中的預設版本為 `1.0.1-beta.3`：Android `versionName` 與應用內顯示使用完整
-beta 版本，Android `versionCode`／iOS build number 為 `25600103`，Desktop／iOS 的
+目前原始碼中的預設版本為 `1.0.1-beta.4`：Android `versionName` 與應用內顯示使用完整
+beta 版本，Android `versionCode`／iOS build number 為 `25600104`，Desktop／iOS 的
 package／marketing version 為 `1.0.1`，Windows installer package version 為
-`1.0.103`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
+`1.0.104`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
 
 ## Workspace 佈局
 
@@ -153,7 +153,8 @@ Application 憑證並完成 notarization。
 
 第一次從 ad-hoc 版切換到固定簽章版時，既有 Keychain 項目仍會再要求一次授權；按下
 「永遠允許」後，同一簽章身分與 bundle id 的後續更新不應再次詢問。更換憑證或退回 ad-hoc
-簽章都會再次觸發授權。不得把 Keychain ACL 放寬為允許所有程式存取。
+簽章都會再次觸發授權。App 會先以禁止互動的方式讀取 Keychain；只有 macOS 明確回報需要
+使用者授權時，才顯示用途說明並觸發系統密碼提示。不得把 Keychain ACL 放寬為允許所有程式存取。
 
 在 Windows 11 x64 的 PowerShell／Windows Terminal 執行 Desktop build、test 與 app：
 

@@ -9,5 +9,11 @@ class PlatformReaderCapabilitiesTest {
         assertFalse(platformSupportsReaderVolumeKeys)
         assertFalse(shouldShowReaderVolumeKeySetting())
         assertFalse(effectiveReaderVolumeKeysEnabled(configured = true))
+        assertFalse(
+            effectiveReaderVolumeKeyMonitoringEnabled(
+                readerOpen = true,
+                configured = true,
+            ),
+        )
     }
 }

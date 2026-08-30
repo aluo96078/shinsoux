@@ -150,8 +150,9 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
   隔離資料與權限的寫入／重讀，防止僅發生於正式封裝的安全狀態解碼故障。beta.4／beta.5
   會先安裝公開 beta.3 MSI，正式 `v1.0.0` 會先安裝公開 beta.5 MSI，`v1.0.1-beta.1`
   會先安裝公開 `v1.0.0` MSI，`v1.0.1-beta.2` 會先安裝公開 `v1.0.1-beta.1` MSI，
-  而 `v1.0.1-beta.3` 會先安裝公開 `v1.0.1-beta.2` MSI，再驗證新 ProductCode 真正取代
-  舊版。任一步無法啟動或升級都不會發布 Release。
+  `v1.0.1-beta.3` 會先安裝公開 `v1.0.1-beta.2` MSI，而 `v1.0.1-beta.4` 會先安裝公開
+  `v1.0.1-beta.3` MSI，再驗證新 ProductCode 真正取代舊版。任一步無法啟動或升級都不會
+  發布 Release。
 
 Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
 會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；

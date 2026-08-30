@@ -181,6 +181,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
@@ -964,10 +965,11 @@ private fun ShinsouAppContent(
     LaunchedEffect(readerOpen, snapshot.settings.reader.fullscreen) {
         appServices.setFullscreen(readerOpen && snapshot.settings.reader.fullscreen)
     }
-    // Browse-owned readers do not yet receive the platform volume-event flow. Keep native volume
-    // controls available there instead of intercepting and silently dropping the key presses.
     val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(snapshot.settings.reader.volumeKeys)
-    val interceptReaderVolumeKeys = readerSession != null && effectiveVolumeKeysEnabled
+    val interceptReaderVolumeKeys = effectiveReaderVolumeKeyMonitoringEnabled(
+        readerOpen = readerOpen,
+        configured = snapshot.settings.reader.volumeKeys,
+    )
     DisposableEffect(appServices, readerOpen) {
         // Publish the reader gate as part of the composition commit.  A launched coroutine leaves
         // a short window where iOS can begin its native edge recognizer after the reader appears.
@@ -1311,7 +1313,9 @@ private fun ShinsouAppContent(
                     chapter = chapter,
                     pages = activeReaderChapter.pages,
                     settings = snapshot.settings.reader,
-                    loading = readerLoading || readerChapterSession != session,
+                    loading = readerTransitionInFlight ||
+                        readerLoading ||
+                        readerChapterSession != session,
                     errorMessage = readerError,
                     inLibrary = manga.favorite,
                     chapters = navigation.storyOrder,
@@ -1652,6 +1656,7 @@ private fun ShinsouAppContent(
                         onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                         onBrowseReaderProgress = ::recordV2ReaderProgress,
                         onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
+                        readerVolumeKeyEvents = appServices.readerVolumeKeyEvents,
                         onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                         isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                         mutate = ::mutate,
@@ -1762,6 +1767,7 @@ private fun ShinsouAppContent(
                                             onReaderVisibilityChanged = { browseReaderOpen = it },
                                             onReaderProgress = ::recordV2ReaderProgress,
                                             onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
+                                            volumeKeyEvents = appServices.readerVolumeKeyEvents,
                                             readerBackRequest = localLibraryReaderBackRequest,
                                             onBack = {
                                                 browseReaderOpen = false
@@ -1907,6 +1913,7 @@ private fun ShinsouAppContent(
                                 onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                                 onBrowseReaderProgress = ::recordV2ReaderProgress,
                                 onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
+                                readerVolumeKeyEvents = appServices.readerVolumeKeyEvents,
                                 onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                                 isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                                 mutate = ::mutate,
@@ -2010,6 +2017,7 @@ private fun ShinsouAppContent(
                             onReaderVisibilityChanged = { browseReaderOpen = it },
                             onReaderProgress = ::recordV2ReaderProgress,
                             onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
+                            volumeKeyEvents = appServices.readerVolumeKeyEvents,
                             readerBackRequest = localLibraryReaderBackRequest,
                             onBack = {
                                 browseReaderOpen = false
@@ -2183,6 +2191,7 @@ private fun SectionPane(
         pageCount: Int?,
     ) -> Unit,
     onBrowseReaderProgressFlushed: suspend () -> Unit,
+    readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent>,
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
     isLocalLibraryFavorite: (BrowseManga) -> Boolean,
     mutate: (suspend () -> Unit) -> Unit,
@@ -2401,6 +2410,7 @@ private fun SectionPane(
                 onReaderVisibilityChanged = onBrowseReaderVisibilityChanged,
                 onReaderProgress = onBrowseReaderProgress,
                 onReaderProgressFlushed = onBrowseReaderProgressFlushed,
+                volumeKeyEvents = readerVolumeKeyEvents,
                 onToggleLocalLibrary = onToggleLocalLibrary,
                 isLocalLibraryFavorite = isLocalLibraryFavorite,
                 onImportDocument = { acceptedExtensions ->
@@ -2824,7 +2834,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.3"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.4"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3164,7 +3174,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.3"),
+                strings.text("Shinsou X 1.0.1-beta.4"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),
