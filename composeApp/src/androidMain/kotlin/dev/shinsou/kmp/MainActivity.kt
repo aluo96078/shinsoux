@@ -25,6 +25,7 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
@@ -36,6 +37,7 @@ import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.ReaderVolumeKeyPressTracker
 import dev.shinsou.kmp.ui.readBoundedImportedBytes
 import dev.shinsou.kmp.ui.requireImportedDocumentSize
 import dev.shinsou.kmp.ui.writeBinaryDocumentWithFailureCleanup
@@ -62,6 +64,7 @@ class MainActivity : FragmentActivity() {
     private val documentLauncher = ActivityDocumentLauncher()
     private lateinit var composition: ShinsouComposition
     private lateinit var appServices: AndroidAppServices
+    private val readerVolumeKeyPressTracker = ReaderVolumeKeyPressTracker()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +89,7 @@ class MainActivity : FragmentActivity() {
             syncInfrastructure = syncInfrastructure,
             platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
+            platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
         )
         val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
@@ -192,11 +196,21 @@ class MainActivity : FragmentActivity() {
             ::appServices.isInitialized &&
             appServices.shouldInterceptReaderVolumeKeys()
         ) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                appServices.emitReaderVolumeKey(readerEvent)
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    // Some OEMs reset repeatCount while a key is still physically held. Track the
+                    // complete DOWN/UP pair so one press can never become multiple page actions.
+                    if (readerVolumeKeyPressTracker.shouldDispatchDown(readerEvent, event.repeatCount)) {
+                        appServices.emitReaderVolumeKey(readerEvent)
+                    }
+                }
+                KeyEvent.ACTION_UP -> readerVolumeKeyPressTracker.release(readerEvent)
             }
             // Consume both DOWN and UP so Android does not change volume or display its HUD.
             return true
+        }
+        if (readerEvent != null && event.action != KeyEvent.ACTION_DOWN) {
+            readerVolumeKeyPressTracker.release(readerEvent)
         }
         return super.dispatchKeyEvent(event)
     }
@@ -208,6 +222,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onStop() {
+        readerVolumeKeyPressTracker.clear()
         if (::appServices.isInitialized) appServices.emitBackground()
         if (::composition.isInitialized) platformScope.launch { composition.onBackground() }
         super.onStop()

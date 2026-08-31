@@ -875,6 +875,15 @@ class PluginSubsystemTest {
             listOf("zh-TW", "en"),
             sourceSettings.preferences.first { it.key == "language" }.choiceValues,
         )
+        val proxyPreference = sourceSettings.preferences.first {
+            it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE
+        }
+        assertEquals("global", proxyPreference.value)
+        assertEquals(
+            listOf("Follow global", "Force enable", "Force disable"),
+            proxyPreference.choices,
+        )
+        assertEquals(listOf("global", "on", "off"), proxyPreference.choiceValues)
         assertEquals(
             listOf(BrowseFilter.Select("Genre", listOf("All", "Action"), 0)),
             sourceSettings.filters,
@@ -887,6 +896,21 @@ class PluginSubsystemTest {
         browse.saveSourcePreferences(123, mapOf("language" to "en", "show_nsfw" to "true"))
         assertEquals("en", storage.getPreference(123, "language"))
         assertEquals("en", browse.state.value.sources.single().preferences.first { it.key == "language" }.value)
+
+        browse.saveSourcePreferences(
+            123,
+            mapOf(ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE to " ON "),
+        )
+        assertEquals(
+            "on",
+            storage.getPreference(123, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE),
+        )
+        assertEquals(
+            "on",
+            browse.state.value.sources.single().preferences.first {
+                it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE
+            }.value,
+        )
 
         assertTrue(loginRequests.request(123, "Test Source", "Account required"))
         assertEquals(

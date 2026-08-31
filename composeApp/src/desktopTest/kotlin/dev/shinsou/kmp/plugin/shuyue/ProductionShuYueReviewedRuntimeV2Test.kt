@@ -369,11 +369,23 @@ class ProductionShuYueReviewedRuntimeV2Test {
         assertTrue(source.supportsLogin)
         assertFalse(source.supportsFavorites)
         assertNull(source.favoriteBrowseOptionKey)
-        assertTrue(source.preferences.any { it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE })
+        val proxyPreference = source.preferences.single {
+            it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE
+        }
+        assertEquals("global", proxyPreference.value)
+        assertEquals(listOf("global", "on", "off"), proxyPreference.choiceValues)
+        callbacks.saveSourcePreferences(
+            source.id,
+            mapOf(ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE to "off"),
+        )
         assertTrue(callbacks.saveSourceCredentials(source.id, "alice", "secret"))
         val scope = BuiltInShuYueExecutionScopesV2.resolve(
             requireNotNull(ShuYueReviewedPluginCatalogV2.findRepositoryProfile("zh.wenku8.api", "1.0.4", 5, null)).identity,
             requireNotNull(source.sourceKey),
+        )
+        assertEquals(
+            "off",
+            storage.getPreference(scope, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE),
         )
         assertEquals(PluginCredential("alice", "secret"), storage.getCredential(scope))
         assertEquals("abc", storage.getCookies(scope).single { it.name == "wenku-session" }.value)

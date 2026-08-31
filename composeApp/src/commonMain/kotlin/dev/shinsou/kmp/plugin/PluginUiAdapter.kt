@@ -136,9 +136,7 @@ public class PluginBrowseAdapter(
     private val exactSourceRefreshInvalidations: ExactSourceRefreshInvalidations = ExactSourceRefreshInvalidations(),
     /** Optional host-provided repository. The application passes an empty value by default. */
     private val defaultRepositoryUrl: String = "",
-    private val extensionGatewayV2: ExtensionBrowseContentGatewayV2 = ExtensionBrowseContentGatewayV2(
-        ExtensionSourceResolverV2 { sourceKey -> manager.extensionSourceV2(sourceKey) },
-    ),
+    extensionGatewayV2: ExtensionBrowseContentGatewayV2? = null,
     /** Null only in previews/tests that intentionally omit the shared content foundation. */
     private val extensionContentConsumerV2: ExtensionContentConsumerV2? = null,
     /** Production supplies the bounded reviewed repository loader; previews may omit it. */
@@ -148,6 +146,13 @@ public class PluginBrowseAdapter(
             ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_INDEX_URL,
         ),
 ) : BrowseCallbacks {
+    private val extensionGatewayV2: ExtensionBrowseContentGatewayV2 = extensionGatewayV2
+        ?: ExtensionBrowseContentGatewayV2(
+            ExtensionSourceResolverV2 { sourceKey ->
+                ensureInstalledLoaded()
+                manager.extensionSourceV2(sourceKey)
+            },
+        )
     override val sourceRefreshInvalidations: StateFlow<Map<SourceKey, Long>> =
         exactSourceRefreshInvalidations.generations
     override val logoutConfirmations: StateFlow<List<PluginLogoutConfirmation>> =
@@ -255,6 +260,12 @@ public class PluginBrowseAdapter(
         return runCatching { BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey) }.getOrNull()
     }
     private val operationMutex = Mutex()
+    /**
+     * Source calls can arrive from the local library before the background Browse refresh. Keep
+     * installation hydration independently serialized so those calls wait for the exact reviewed
+     * runtime (and its fixed credential/cookie storage scope) without deadlocking operationMutex.
+     */
+    private val installedLoadMutex = Mutex()
     private val mutableState = MutableStateFlow(BrowseSnapshot())
     private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore)
     private val reviewedShuYueInstallerV2 = manager.reviewedShuYueInstallCoordinatorV2(
@@ -479,11 +490,18 @@ public class PluginBrowseAdapter(
     ): dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? =
         extensionContentConsumerV2?.extensionLibraryBinding(publicationKey)
 
+    override fun extensionLocalReadingStateV2(
+        publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
+        extensionContentConsumerV2?.localReadingState(publicationKey)
+            ?: dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
+
     override suspend fun recoverExtensionLibraryBindingV2(
         publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
         title: String,
     ): dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? = withContext(Dispatchers.Default) {
         if (title.isBlank()) return@withContext null
+        ensureInstalledLoaded()
         val descriptors = manager.extensionDescriptorsV2()
             .flatMap { descriptor -> descriptor.sources }
             .filter { descriptor -> ExtensionCapability.SEARCH in descriptor.capabilities }
@@ -564,6 +582,7 @@ public class PluginBrowseAdapter(
         remotePublicationId: String,
         page: Int,
     ): ExtensionPublicationPageV2 = withContext(Dispatchers.Default) {
+        ensureInstalledLoaded()
         requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.let { consumer ->
@@ -579,6 +598,7 @@ public class PluginBrowseAdapter(
         publication: RemotePublicationV2,
         page: Int,
     ): ExtensionPublicationPageV2 = withContext(Dispatchers.Default) {
+        ensureInstalledLoaded()
         requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.let { consumer ->
@@ -592,6 +612,7 @@ public class PluginBrowseAdapter(
         selection: ExtensionUnitSelectionV2,
         representationId: String?,
     ): ExtensionContentMaterializationV2 = withContext(Dispatchers.Default) {
+        ensureInstalledLoaded()
         requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.let { consumer ->
@@ -757,12 +778,23 @@ public class PluginBrowseAdapter(
 
     override suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>): Unit =
         operationMutex.withLock {
+            val normalizedValues = values.mapValues { (key, value) ->
+                if (key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE) {
+                    SourceNetworkOverride.fromStored(value, SourceNetworkOverride.GLOBAL).storedValue
+                } else {
+                    value
+                }
+            }
             val v2Scope = requireV2SourceScope(sourceId)
             if (v2Scope != null) {
-                values.forEach { (key, value) -> pluginStorage.setPreference(v2Scope.second, key, value) }
+                normalizedValues.forEach { (key, value) ->
+                    pluginStorage.setPreference(v2Scope.second, key, value)
+                }
             } else {
                 check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
-                values.forEach { (key, value) -> pluginStorage.setPreference(sourceId, key, value) }
+                normalizedValues.forEach { (key, value) ->
+                    pluginStorage.setPreference(sourceId, key, value)
+                }
             }
             rebuildSnapshot(errorMessage = null)
         }
@@ -1545,7 +1577,7 @@ public class PluginBrowseAdapter(
         }
     }
 
-    private suspend fun ensureInstalledLoaded() {
+    private suspend fun ensureInstalledLoaded(): Unit = installedLoadMutex.withLock {
         if (!loadedInstalled) {
             manager.loadInstalled()
             reviewedShuYueInstallerV2.rehydrateInstalled()
@@ -1657,7 +1689,11 @@ public class PluginBrowseAdapter(
                         storageId?.let { add(networkProxyPreference(it)) }
                         if (hostSource != null && ExtensionCapability.PREFERENCES in descriptor.capabilities) {
                             try {
-                                hostSource.preferences().forEach { preference ->
+                                hostSource.preferences()
+                                    .filterNot {
+                                        it.key == ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE
+                                    }
+                                    .forEach { preference ->
                                     storageId?.let { add(preference.toBrowsePreference(it)) }
                                 }
                             } catch (cancelled: CancellationException) {
@@ -1911,6 +1947,7 @@ public class PluginBrowseAdapter(
 
     /** ShuYue v2 keeps the same protected PluginStorage jar, addressed by its host-local scope. */
     private fun v2StorageSourceId(sourceKey: SourceKey): Long? {
+        sourceKey.legacyLongId?.let { return it }
         val profile = ShuYueReviewedPluginCatalogV2.profiles.firstOrNull {
             it.identity.packageId == sourceKey.packageId
         } ?: return null
@@ -1976,14 +2013,17 @@ public class PluginBrowseAdapter(
             sourceId,
             ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE,
         )
-        val value = SourceNetworkOverride.fromStored(stored, SourceNetworkOverride.OFF).name.lowercase()
+        val value = SourceNetworkOverride.fromStored(
+            stored,
+            SourceNetworkOverride.GLOBAL,
+        ).storedValue
         return BrowseSourcePreference(
             key = ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE,
             title = "Cloudflare Worker proxy",
-            summary = "Off is the source default. Follow global uses the Advanced settings switch.",
+            summary = "Follow global uses the Advanced setting. Force enable and Force disable override it for this source.",
             value = value,
-            choices = listOf("Off", "Follow global", "On"),
-            choiceValues = listOf("off", "global", "on"),
+            choices = listOf("Follow global", "Force enable", "Force disable"),
+            choiceValues = listOf("global", "on", "off"),
             kind = SourcePreferenceKind.Choice,
         )
     }

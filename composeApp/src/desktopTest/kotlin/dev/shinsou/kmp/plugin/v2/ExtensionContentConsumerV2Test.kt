@@ -18,6 +18,7 @@ import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.rights.ContentOperation
 import kotlinx.coroutines.test.runTest
@@ -138,6 +139,45 @@ class ExtensionContentConsumerV2Test {
             assertEquals("primary body", readable.canonicalText)
             assertEquals(unit.key, readable.content.navigation.scope.unitId)
             assertEquals(unit.manifestRevisions.single().contentRevision, readable.content.navigation.scope.contentRevision)
+        }
+    }
+
+    @Test
+    fun localReadingStateMapsTypedUnitKeysBackToOpaqueRemoteIds() = runTest {
+        withFoundation { foundation ->
+            var completedUnitKey: UnitKey? = null
+            var latestUnitKey: UnitKey? = null
+            val source = FixtureSource(
+                payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
+                unitItems = {
+                    listOf(
+                        RemoteUnitV2("unit-a", "Unit A"),
+                        RemoteUnitV2("opaque-chapter-215", "Unit 215"),
+                    )
+                },
+            )
+            val consumer = consumer(
+                foundation = foundation,
+                source = source,
+                localUnitProgress = {
+                    ExtensionLocalUnitProgressV2(
+                        completedUnitKeys = setOfNotNull(completedUnitKey),
+                        lastReadUnitKey = latestUnitKey,
+                    )
+                },
+            )
+            val selections = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID)
+                .units.associateBy { it.unit.remoteId }
+            completedUnitKey = consumer.materialize(selections.getValue("unit-a")).unitKey
+            latestUnitKey = consumer.materialize(selections.getValue("opaque-chapter-215")).unitKey
+
+            assertEquals(
+                ExtensionLocalReadingStateV2(
+                    completedRemoteUnitIds = setOf("unit-a"),
+                    lastReadRemoteUnitId = "opaque-chapter-215",
+                ),
+                consumer.localReadingState(extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID)),
+            )
         }
     }
 
@@ -863,6 +903,9 @@ class ExtensionContentConsumerV2Test {
         source: FixtureSource,
         fetcher: ExtensionResourceFetcherV2? = null,
         epubArchiveExtractor: EpubArchiveExtractor = EpubArchiveExtractor { _, _ -> error("not used") },
+        localUnitProgress: (dev.shinsou.kmp.domain.model.PublicationKey) -> ExtensionLocalUnitProgressV2 = {
+            ExtensionLocalUnitProgressV2()
+        },
     ): ExtensionContentConsumerV2 {
         val runtime = ImmutableExtensionPackageRuntimeV2(
             descriptor = ExtensionPackageV2(
@@ -888,6 +931,7 @@ class ExtensionContentConsumerV2Test {
             ),
             resourceFetcher = fetcher,
             nowEpochMillis = { 1_000L },
+            localUnitProgress = localUnitProgress,
             epubArchiveExtractor = epubArchiveExtractor,
         )
     }

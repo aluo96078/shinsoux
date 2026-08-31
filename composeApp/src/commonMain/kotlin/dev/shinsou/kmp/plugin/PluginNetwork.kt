@@ -78,13 +78,23 @@ public enum class SourceNetworkOverride {
     ON,
     OFF;
 
+    /** Stable storage values retained for compatibility with existing source preferences. */
+    public val storedValue: String
+        get() = name.lowercase()
+
+    public fun resolve(globalEnabled: Boolean): Boolean = when (this) {
+        GLOBAL -> globalEnabled
+        ON -> true
+        OFF -> false
+    }
+
     public companion object {
         public fun fromStored(value: String?, default: SourceNetworkOverride): SourceNetworkOverride =
             entries.firstOrNull { it.name.equals(value?.trim(), ignoreCase = true) } ?: default
     }
 }
 
-/** Uses the configured UA when present and otherwise retains per-host sticky rotation. */
+/** Uses the configured UA when present and otherwise mirrors this platform's browser runtime. */
 public class ConfiguredPluginUserAgentProvider(
     private val configuration: PluginNetworkConfigurationProvider,
     private val fallback: PluginUserAgentProvider = StickyPluginUserAgentProvider(),
@@ -95,10 +105,9 @@ public class ConfiguredPluginUserAgentProvider(
 }
 
 /**
- * Cloudflare Worker routing with Shinsou's source opt-in semantics.
+ * Cloudflare Worker routing with per-source overrides.
  *
- * An unset or invalid source override is deliberately [SourceNetworkOverride.OFF]. A source only
- * follows the global switch after the user selects `global` in that source's settings.
+ * An unset source follows the global switch. Explicit `on` and `off` values remain authoritative.
  */
 public class ConfiguredPluginProxyResolver(
     private val storage: PluginStorage,
@@ -108,39 +117,46 @@ public class ConfiguredPluginProxyResolver(
         val current = configuration.current()
         val sourceOverride = SourceNetworkOverride.fromStored(
             storage.getPreference(sourceId, SOURCE_PROXY_PREFERENCE),
-            default = SourceNetworkOverride.OFF,
+            default = SourceNetworkOverride.GLOBAL,
         )
-        val enabled = when (sourceOverride) {
-            SourceNetworkOverride.GLOBAL -> current.proxyEnabled
-            SourceNetworkOverride.ON -> true
-            SourceNetworkOverride.OFF -> false
-        }
+        val enabled = sourceOverride.resolve(current.proxyEnabled)
         if (!enabled) return null
 
-        val proxyUrl = buildProxyUrl(current.proxyWorkerUrl, targetUrl) ?: return null
+        val proxyUrl = buildPluginProxyUrl(current.proxyWorkerUrl, targetUrl) ?: return null
         val proxyHeaders = current.proxyApiKey.takeIf(String::isNotBlank)
             ?.let { mapOf(PROXY_KEY_HEADER to it) }
             .orEmpty()
         return PluginProxyRoute(proxyUrl, proxyHeaders)
     }
 
-    private fun buildProxyUrl(workerUrl: String, targetUrl: String): String? = runCatching {
-        val normalized = workerUrl.trim().trimEnd('/')
-        if (normalized.isEmpty()) return null
-        URLBuilder(normalized).apply {
-            require(protocol.name == "http" || protocol.name == "https")
-            require(host.isNotBlank())
-            pathSegments = pathSegments.dropLastWhile(String::isEmpty) + ""
-            fragment = ""
-            parameters.append("url", targetUrl)
-        }.buildString()
-    }.getOrNull()
-
     public companion object {
         public const val SOURCE_PROXY_PREFERENCE: String = "network.proxy"
         public const val PROXY_KEY_HEADER: String = "X-Proxy-Key"
     }
 }
+
+/** Normalizes the user-entered Worker endpoint and encodes one target as its `url` query value. */
+public fun buildPluginProxyUrl(workerUrl: String, targetUrl: String): String? = runCatching {
+    val entered = workerUrl.trim().trimEnd('/')
+    if (entered.isEmpty()) return null
+    // A workers.dev hostname is commonly copied without a scheme on mobile keyboards. Treat that
+    // as HTTPS instead of silently disabling an otherwise valid proxy configuration.
+    val normalized = if (PLUGIN_PROXY_SCHEME_PREFIX.containsMatchIn(entered)) {
+        entered
+    } else {
+        require(!entered.startsWith("//"))
+        "https://$entered"
+    }
+    URLBuilder(normalized).apply {
+        require(protocol.name == "http" || protocol.name == "https")
+        require(host.isNotBlank())
+        pathSegments = pathSegments.dropLastWhile(String::isEmpty) + ""
+        fragment = ""
+        parameters.append("url", targetUrl)
+    }.buildString()
+}.getOrNull()
+
+private val PLUGIN_PROXY_SCHEME_PREFIX: Regex = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
 
 /** Per-host sticky UA, matching Shinsou while remaining deterministic in a process. */
 public class StickyPluginUserAgentProvider(
@@ -245,12 +261,19 @@ public class PluginRequestBuilder(
         val headers = linkedMapOf<String, String>()
         headers.putAll(sourceHeaders)
         request.headers.forEach { (name, value) -> putHeader(headers, name, value) }
+        val proxy = proxyResolver.route(sourceId, targetUrl)
         val browserBoundUserAgent = storage.getWebChallengeUserAgent(sourceId)
             ?.let(::normalizePluginUserAgent)
         if (browserBoundUserAgent != null) {
             // Cloudflare binds clearance to the browser's real UA. Once a verified browser
             // session is imported, it must take priority over plugin and request header hints.
             putHeader(headers, "User-Agent", browserBoundUserAgent)
+        } else if (proxy != null) {
+            // A Worker receives the app's request headers and forwards them to the destination.
+            // Always give proxied traffic the current platform browser identity; otherwise a
+            // source's hard-coded iPhone/desktop hint can make every device look like the wrong
+            // browser. ConfiguredPluginUserAgentProvider still permits an explicit manual override.
+            putHeader(headers, "User-Agent", userAgents.userAgent(target.host))
         } else if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
             headers["User-Agent"] = userAgents.userAgent(target.host)
         }
@@ -283,7 +306,6 @@ public class PluginRequestBuilder(
             }
         }
 
-        val proxy = proxyResolver.route(sourceId, targetUrl)
         proxy?.headers?.forEach { (name, value) -> putHeader(headers, name, value) }
         return BuiltPluginRequest(
             originalUrl = target,

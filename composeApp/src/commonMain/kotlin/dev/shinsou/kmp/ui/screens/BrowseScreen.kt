@@ -16,10 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,7 +28,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,10 +37,8 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
@@ -54,8 +49,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.KeyboardArrowLeft
-import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PushPin
@@ -144,12 +137,17 @@ import dev.shinsou.kmp.ui.mutateExtensionFavorite
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.ReaderSettings
+import dev.shinsou.kmp.plugin.v2.extensionPublicationKey
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.ui.ReaderProgressPosition
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.ReaderVolumeKeyHandlerSlot
+import dev.shinsou.kmp.ui.ReaderVolumeKeyRouter
 import dev.shinsou.kmp.ui.effectiveReaderVolumeKeysEnabled
 import dev.shinsou.kmp.ui.readerVolumeKeyAction
+import dev.shinsou.kmp.ui.readerMayCrossChapterBoundary
+import dev.shinsou.kmp.ui.readerStatusBarsPadding
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
@@ -177,7 +175,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -323,7 +320,7 @@ fun BrowseScreen(
         pageCount: Int?,
     ) -> Unit = { _, _, _, _, _ -> },
     onReaderProgressFlushed: suspend () -> Unit = {},
-    volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
+    volumeKeyRouter: ReaderVolumeKeyRouter? = null,
     /** App-owned library mutation for every extension v2 publication. */
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
     isLocalLibraryFavorite: (BrowseManga) -> Boolean = { false },
@@ -829,7 +826,7 @@ fun BrowseScreen(
                         },
                         onReaderProgress = onReaderProgress,
                         onReaderProgressFlushed = onReaderProgressFlushed,
-                        volumeKeyEvents = volumeKeyEvents,
+                        volumeKeyRouter = volumeKeyRouter,
                         readerBackRequest = v2ReaderBackRequest,
                         onBack = {
                             overlays = overlays.closePublication()
@@ -1166,6 +1163,15 @@ private enum class ExtensionChapterFilter {
     DOWNLOADED,
 }
 
+internal fun extensionContinueUnitId(
+    unitIds: List<String>,
+    completedUnitIds: Set<String>,
+    resumeUnitId: String?,
+): String? = resumeUnitId
+    ?.takeIf(unitIds::contains)
+    ?: unitIds.firstOrNull { it !in completedUnitIds }
+    ?: unitIds.lastOrNull()
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtensionNovelReaderShell(
@@ -1184,7 +1190,7 @@ private fun ExtensionNovelReaderShell(
     onCompleted: () -> Unit,
     onReaderProgress: (ReaderProgressPosition) -> Unit,
     onReaderProgressFlushed: suspend () -> Unit,
-    volumeKeyEvents: Flow<ReaderVolumeKeyEvent>,
+    volumeKeyRouter: ReaderVolumeKeyRouter?,
     systemBackRequest: Long,
 ) {
     val strings = LocalShinsouStrings.current
@@ -1211,10 +1217,19 @@ private fun ExtensionNovelReaderShell(
             },
         )
     }
+    var pageCountMeasured by remember(
+        session,
+        readerSettings.readingMode,
+        readerSettings.novelFontSizeSp,
+        readerSettings.novelLineHeightMultiplier,
+        readerSettings.novelMaxWidthDp,
+    ) {
+        mutableStateOf(imageReader)
+    }
     var requestedPage by remember(session) { mutableStateOf(initialPage) }
     var pageRequestSerial by remember(session) { mutableStateOf(0L) }
-    var epubNavigationAction by remember(session) { mutableStateOf<ReaderTapAction?>(null) }
-    var epubNavigationRequestKey by remember(session) { mutableStateOf(0L) }
+    var readerNavigationAction by remember(session) { mutableStateOf<ReaderTapAction?>(null) }
+    var readerNavigationRequestKey by remember(session) { mutableStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
     val heldNavigationKeys = remember(session) { mutableSetOf<Key>() }
     val latestProgress = remember(session) {
@@ -1272,6 +1287,12 @@ private fun ExtensionNovelReaderShell(
 
     fun requestPage(index: Int) {
         when {
+            index !in 0 until pageCount &&
+                !readerMayCrossChapterBoundary(
+                    proseReader = textContent,
+                    pageCountMeasured = pageCountMeasured,
+                    interactionBlocked = busy || progressTransitionInFlight,
+                ) -> Unit
             index < 0 && hasCurrent && activeUnitIndex > 0 && !busy -> {
                 openUnitAfterProgressFlush(units[activeUnitIndex - 1])
             }
@@ -1295,25 +1316,54 @@ private fun ExtensionNovelReaderShell(
         }
     }
 
-    fun handleVolumeKey(event: ReaderVolumeKeyEvent) {
+    fun handleNavigationBoundary(action: ReaderTapAction) {
+        if (progressTransitionInFlight || busy) return
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (hasCurrent && activeUnitIndex > 0) {
+                    openUnitAfterProgressFlush(units[activeUnitIndex - 1])
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (hasCurrent && activeUnitIndex + 1 < units.size) {
+                    openUnitAfterProgressFlush(units[activeUnitIndex + 1])
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
+        }
+    }
+
+    fun handleVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
         val action = readerVolumeKeyAction(
             event = event,
             readerOpen = true,
             volumeKeysEnabled = effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys),
-        ) ?: return
-        if (progressTransitionInFlight || busy) return
-        if (epubReader) {
-            epubNavigationAction = action
-            epubNavigationRequestKey++
+        ) ?: return false
+        if (progressTransitionInFlight || busy) return false
+        if (textContent) {
+            readerNavigationAction = action
+            readerNavigationRequestKey++
         } else {
+            val beforePage = currentPage
+            val beforeTransition = progressTransitionInFlight
             handleTap(action)
+            if (beforePage == currentPage && beforeTransition == progressTransitionInFlight) {
+                val hasAdjacent = if (action == ReaderTapAction.NEXT_PAGE) {
+                    hasCurrent && activeUnitIndex + 1 < units.size
+                } else {
+                    hasCurrent && activeUnitIndex > 0
+                }
+                if (!hasAdjacent) return false
+            }
         }
+        return true
     }
 
-    val currentVolumeKeyHandler by rememberUpdatedState<(ReaderVolumeKeyEvent) -> Unit>(::handleVolumeKey)
-
-    LaunchedEffect(volumeKeyEvents, session) {
-        volumeKeyEvents.collect { event -> currentVolumeKeyHandler(event) }
+    val volumeKeyHandlerSlot = remember(session) { ReaderVolumeKeyHandlerSlot() }
+    volumeKeyHandlerSlot.update(::handleVolumeKey)
+    DisposableEffect(volumeKeyRouter, volumeKeyHandlerSlot) {
+        val registration = volumeKeyRouter?.register(volumeKeyHandlerSlot::dispatch)
+        onDispose { registration?.unregister() }
     }
 
     LaunchedEffect(session, settingsVisible) {
@@ -1333,9 +1383,8 @@ private fun ExtensionNovelReaderShell(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF211D1B))
-            // The iOS host is edge-to-edge. Reserve the top safe area for the Face ID cutout
-            // for the entire reader surface, so the first paragraph is shifted with the chrome.
-            .statusBarsPadding()
+            // Android is edge-to-edge; SwiftUI already supplies the iOS safe-area frame.
+            .readerStatusBarsPadding()
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -1417,10 +1466,11 @@ private fun ExtensionNovelReaderShell(
             settings = readerSettings,
             requestedPageIndex = requestedPage,
             pageRequestSerial = pageRequestSerial,
-            navigationAction = epubNavigationAction,
-            navigationRequestKey = epubNavigationRequestKey,
+            navigationAction = readerNavigationAction,
+            navigationRequestKey = readerNavigationRequestKey,
             readerControlsVisible = controlsVisible,
             onPageIndexChanged = { index, count ->
+                pageCountMeasured = true
                 currentPage = index
                 requestedPage = index
                 pageCount = count.coerceAtLeast(1)
@@ -1429,6 +1479,8 @@ private fun ExtensionNovelReaderShell(
                     pageCount = count.coerceAtLeast(1),
                 )
             },
+            onPageCountInvalidated = { pageCountMeasured = false },
+            onNavigationBoundary = ::handleNavigationBoundary,
             onLocatorChanged = { locator, pageIndex, documentPageCount ->
                 val position = ReaderProgressPosition(
                     locator,
@@ -1464,7 +1516,7 @@ private fun ExtensionNovelReaderShell(
                     Column(Modifier.weight(1f)) {
                         Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "$currentUnitTitle · ${currentPage + 1} / $pageCount",
+                            currentUnitTitle,
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.White.copy(alpha = 0.72f),
                             maxLines = 1,
@@ -1479,66 +1531,24 @@ private fun ExtensionNovelReaderShell(
                     }
                 }
             }
-            // ShuYue-style novel chrome: keep the action strip out of the reading surface until
-            // the centre tap toggles the controls. EPUB keeps its semantic search/speech/note
-            // strip inside UnifiedContentReader; plain-text novels use this compact icon-only bar.
+            // Keep plain-text progress controls as an overlay. EPUB retains its own semantic
+            // search/speech/note overlay inside UnifiedContentReader.
             if (!epubReader) {
-                val canGoPrevious = currentPage > 0 || (hasCurrent && activeUnitIndex > 0 && !busy)
-                val canGoNext = currentPage + 1 < pageCount ||
-                    (hasCurrent && activeUnitIndex + 1 < units.size && !busy)
-                val previousOnLeft = readerSettings.readingMode !=
-                    dev.shinsou.kmp.domain.model.ReadingMode.PAGER_RTL
-                val leftEnabled = if (previousOnLeft) canGoPrevious else canGoNext
-                val rightEnabled = if (previousOnLeft) canGoNext else canGoPrevious
-                val leftAction = if (previousOnLeft) {
-                    { requestPage(currentPage - 1) }
-                } else {
-                    { requestPage(currentPage + 1) }
-                }
-                val rightAction = if (previousOnLeft) {
-                    { requestPage(currentPage + 1) }
-                } else {
-                    { requestPage(currentPage - 1) }
-                }
-                Row(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.92f))
-                        .navigationBarsPadding()
-                        .padding(horizontal = 34.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    IconButton(onClick = { settingsVisible = true }) {
-                        Icon(
-                            Icons.Outlined.Brightness4,
-                            contentDescription = strings.settings,
-                            tint = Color.White,
-                        )
-                    }
-                    IconButton(onClick = { chapterListVisible = true }, enabled = units.isNotEmpty()) {
-                        Icon(
-                            Icons.Outlined.MenuBook,
-                            contentDescription = strings.chapters,
-                            tint = Color.White,
-                        )
-                    }
-                    IconButton(onClick = leftAction, enabled = leftEnabled) {
-                        Icon(
-                            Icons.Outlined.KeyboardArrowLeft,
-                            contentDescription = strings.text("Previous page"),
-                            tint = if (leftEnabled) Color.White else Color.White.copy(alpha = 0.32f),
-                        )
-                    }
-                    IconButton(onClick = rightAction, enabled = rightEnabled) {
-                        Icon(
-                            Icons.Outlined.KeyboardArrowRight,
-                            contentDescription = strings.text("Next page"),
-                            tint = if (rightEnabled) Color.White else Color.White.copy(alpha = 0.32f),
-                        )
-                    }
-                }
+                NovelReaderProgressControls(
+                    page = currentPage,
+                    pageCount = pageCount,
+                    hasPreviousChapter = hasCurrent && activeUnitIndex > 0,
+                    hasNextChapter = hasCurrent && activeUnitIndex + 1 < units.size,
+                    onPageChange = ::requestPage,
+                    onPreviousChapter = {
+                        units.getOrNull(activeUnitIndex - 1)?.let(::openUnitAfterProgressFlush)
+                    },
+                    onNextChapter = {
+                        units.getOrNull(activeUnitIndex + 1)?.let(::openUnitAfterProgressFlush)
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    interactionEnabled = !busy && !progressTransitionInFlight,
+                )
             }
         }
 
@@ -1636,7 +1646,7 @@ internal fun ExtensionV2PublicationPane(
         pageCount: Int?,
     ) -> Unit,
     onReaderProgressFlushed: suspend () -> Unit,
-    volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
+    volumeKeyRouter: ReaderVolumeKeyRouter? = null,
     readerBackRequest: Long = 0L,
     onBack: () -> Unit,
 ) {
@@ -1655,6 +1665,7 @@ internal fun ExtensionV2PublicationPane(
     }
     var nextPage by remember(item.identityKey) { mutableStateOf(0) }
     var hasNextPage by remember(item.identityKey) { mutableStateOf(false) }
+    var unitDirectoryComplete by remember(item.identityKey) { mutableStateOf(false) }
     var loading by remember(item.identityKey) { mutableStateOf(true) }
     var loadingMore by remember(item.identityKey) { mutableStateOf(false) }
     var loadError by remember(item.identityKey) { mutableStateOf<String?>(null) }
@@ -1675,6 +1686,7 @@ internal fun ExtensionV2PublicationPane(
     var notes by remember(item.identityKey) { mutableStateOf("") }
     var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var resumeUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
     var bookmarkedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var chapterFilter by remember(item.identityKey) { mutableStateOf(ExtensionChapterFilter.ALL) }
@@ -1757,10 +1769,16 @@ internal fun ExtensionV2PublicationPane(
         if (openedReader != null) onReaderVisibilityChanged(true)
     }
     if (openedReader != null && contentFeatures != null) {
+        val openedReaderScope = openedReader.content.navigation.scope
+        val openedReaderTitle = publicationPage?.publication?.title ?: item.title
+        val openedReaderUnitTitle = units
+            .firstOrNull { it.unit.remoteId == readerUnitId }
+            ?.unit
+            ?.title
+            ?: item.title
         ExtensionNovelReaderShell(
-            title = publicationPage?.publication?.title ?: item.title,
-            currentUnitTitle = units.getOrNull(activeUnitIndex)?.unit?.title
-                ?: item.title,
+            title = openedReaderTitle,
+            currentUnitTitle = openedReaderUnitTitle,
             units = units,
             activeUnitIndex = activeUnitIndex,
             busy = busyUnitId != null,
@@ -1776,21 +1794,26 @@ internal fun ExtensionV2PublicationPane(
             readerSettings = readerSettings,
             onReaderSettingsChange = onReaderSettingsChange,
             onCompleted = {
-                readerUnitId?.let { unitId -> readUnitIds = readUnitIds + unitId }
+                if (readerSession === openedReader) {
+                    readerUnitId?.let { unitId -> readUnitIds = readUnitIds + unitId }
+                }
             },
             onReaderProgress = { position ->
-                val publicationTitle = publicationPage?.publication?.title ?: item.title
-                val unitTitle = units.getOrNull(activeUnitIndex)?.unit?.title ?: item.title
-                onReaderProgress(
-                    publicationTitle,
-                    unitTitle,
-                    position.locator,
-                    position.pageIndex,
-                    position.pageCount,
-                )
+                if (
+                    readerSession === openedReader &&
+                    position.locator.scope == openedReaderScope
+                ) {
+                    onReaderProgress(
+                        openedReaderTitle,
+                        openedReaderUnitTitle,
+                        position.locator,
+                        position.pageIndex,
+                        position.pageCount,
+                    )
+                }
             },
             onReaderProgressFlushed = onReaderProgressFlushed,
-            volumeKeyEvents = volumeKeyEvents,
+            volumeKeyRouter = volumeKeyRouter,
             systemBackRequest = readerBackRequest,
         )
         return
@@ -1818,6 +1841,21 @@ internal fun ExtensionV2PublicationPane(
         }
         nextPage = requestedPage + 1
         hasNextPage = loaded.hasNextPage
+    }
+
+    suspend fun loadInitialUnitDirectory() {
+        loadUnitPage(requestedPage = 0, append = false)
+        // A local-library title must be self-contained when opened directly. Reviewed ShuYue
+        // sources paginate long catalogues (100 units per page); leaving later pages behind a
+        // manual button makes the saved resume unit and adjacent chapter navigation disappear.
+        if (localLibrary) {
+            while (hasNextPage) {
+                currentCoroutineContext().ensureActive()
+                val page = nextPage
+                check(page > 0) { "Extension unit pagination did not advance" }
+                loadUnitPage(requestedPage = page, append = true)
+            }
+        }
     }
 
     fun downloadUnits(selections: List<ExtensionUnitSelectionV2>) {
@@ -1855,6 +1893,7 @@ internal fun ExtensionV2PublicationPane(
 
     LaunchedEffect(item.identityKey, refreshGeneration) {
         loading = true
+        unitDirectoryComplete = false
         loadError = null
         refreshedPublication = null
         // Keep the units request on the critical path. Wenku8 fetches the long introduction in
@@ -1871,7 +1910,13 @@ internal fun ExtensionV2PublicationPane(
             }
         }
         try {
-            loadUnitPage(requestedPage = 0, append = false)
+            val localReading = callbacks.extensionLocalReadingStateV2(
+                extensionPublicationKey(sourceKey, remotePublicationId),
+            )
+            readUnitIds = localReading.completedRemoteUnitIds
+            resumeUnitId = localReading.lastReadRemoteUnitId
+            loadInitialUnitDirectory()
+            unitDirectoryComplete = true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1898,8 +1943,10 @@ internal fun ExtensionV2PublicationPane(
             units = emptyList()
             nextPage = 0
             hasNextPage = false
+            unitDirectoryComplete = false
             try {
-                loadUnitPage(requestedPage = 0, append = false)
+                loadInitialUnitDirectory()
+                unitDirectoryComplete = true
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -1932,11 +1979,17 @@ internal fun ExtensionV2PublicationPane(
         }
     }
 
-    val continueUnit = remember(units, readUnitIds) {
-        units.firstOrNull { it.unit.remoteId !in readUnitIds } ?: units.lastOrNull()
+    val continueUnit = remember(localLibrary, unitDirectoryComplete, units, readUnitIds, resumeUnitId) {
+        if (localLibrary && !unitDirectoryComplete) return@remember null
+        extensionContinueUnitId(
+            unitIds = units.map { it.unit.remoteId },
+            completedUnitIds = readUnitIds,
+            resumeUnitId = resumeUnitId,
+        )?.let { target -> units.firstOrNull { it.unit.remoteId == target } }
     }
     val continueLabel = when {
         continueUnit == null -> null
+        resumeUnitId != null && continueUnit.unit.remoteId == resumeUnitId -> strings.continueReading
         continueUnit.unit.remoteId in readUnitIds -> strings.text("Read again")
         readUnitIds.isNotEmpty() -> strings.continueReading
         else -> strings.text("Start reading")
@@ -1995,7 +2048,8 @@ internal fun ExtensionV2PublicationPane(
                         operationMessage = operationMessage,
                         operationFailed = operationFailed,
                         refreshingFromSource = loading,
-                        continueReadingLoading = openingReaderUnitId == continueUnit?.unit?.remoteId,
+                        continueReadingLoading = loading ||
+                            openingReaderUnitId == continueUnit?.unit?.remoteId,
                         showClose = true,
                         hasChapters = units.isNotEmpty() || hasNextPage,
                         continueLabel = continueLabel,
@@ -2072,7 +2126,8 @@ internal fun ExtensionV2PublicationPane(
                             operationMessage = operationMessage,
                             operationFailed = operationFailed,
                             refreshingFromSource = loading,
-                            continueReadingLoading = openingReaderUnitId == continueUnit?.unit?.remoteId,
+                            continueReadingLoading = loading ||
+                                openingReaderUnitId == continueUnit?.unit?.remoteId,
                             showClose = false,
                             hasChapters = units.isNotEmpty() || hasNextPage,
                             continueLabel = continueLabel,
@@ -3194,10 +3249,10 @@ private fun SourceSettingsDialog(
                     item { Text(strings.text("Preferences"), style = MaterialTheme.typography.titleMedium) }
                     items(source.preferences, key = { "preference:${it.key}" }) { preference ->
                         Column {
-                            Text(preference.title, style = MaterialTheme.typography.titleSmall)
+                            Text(strings.text(preference.title), style = MaterialTheme.typography.titleSmall)
                             preference.summary?.let {
                                 Text(
-                                    it,
+                                    strings.text(it),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3219,7 +3274,7 @@ private fun SourceSettingsDialog(
                                         FilterChip(
                                             selected = values[preference.key] == choiceValue,
                                             onClick = { values = values + (preference.key to choiceValue) },
-                                            label = { Text(label, maxLines = 1) },
+                                            label = { Text(strings.text(label), maxLines = 1) },
                                         )
                                     }
                                 }
@@ -3243,7 +3298,7 @@ private fun SourceSettingsDialog(
                                                         preference.key to updated.sorted().joinToString(",")
                                                     )
                                                 },
-                                                label = { Text(label, maxLines = 1) },
+                                                label = { Text(strings.text(label), maxLines = 1) },
                                             )
                                         }
                                     }

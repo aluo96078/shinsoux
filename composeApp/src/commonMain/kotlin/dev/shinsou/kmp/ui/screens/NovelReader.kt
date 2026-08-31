@@ -2,8 +2,10 @@ package dev.shinsou.kmp.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -280,8 +282,11 @@ internal fun NovelReaderSurface(
     initialVisualPageCount: Int?,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction? = null,
+    navigationRequestKey: Long = 0L,
     onPageChanged: (pageIndex: Int, pageCount: Int) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit = {},
     onTapAction: (ReaderTapAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -368,6 +373,8 @@ internal fun NovelReaderSurface(
                     initialPageOffsetFraction = initialPageOffsetFraction,
                     requestedPageIndex = requestedPageIndex,
                     pageRequestSerial = pageRequestSerial,
+                    navigationAction = navigationAction,
+                    navigationRequestKey = navigationRequestKey,
                     animatePageTransitions = settings.animatePageTransitions,
                     readingMode = settings.readingMode,
                     columnWidth = columnWidth,
@@ -393,6 +400,7 @@ internal fun NovelReaderSurface(
                         currentSourcePosition.offsetUtf16 = sourceOffset
                         onLocatorChanged(navigation.locatorForOffset(sourceOffset), pageIndex, pages.size)
                     },
+                    onNavigationBoundary = onNavigationBoundary,
                     onTapAction = onTapAction,
                 )
             } else {
@@ -401,6 +409,8 @@ internal fun NovelReaderSurface(
                     initialPage = initialPage,
                     requestedPageIndex = requestedPageIndex,
                     pageRequestSerial = pageRequestSerial,
+                    navigationAction = navigationAction,
+                    navigationRequestKey = navigationRequestKey,
                     settings = settings,
                     columnWidth = columnWidth,
                     textStyle = textStyle,
@@ -408,6 +418,7 @@ internal fun NovelReaderSurface(
                         currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, index)
                         reportNovelPage(index, pages, navigation, onPageChanged, onLocatorChanged)
                     },
+                    onNavigationBoundary = onNavigationBoundary,
                     onTapAction = onTapAction,
                 )
             }
@@ -462,6 +473,8 @@ private fun ContinuousNovelReader(
     initialPageOffsetFraction: Double,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     animatePageTransitions: Boolean,
     readingMode: ReadingMode,
     columnWidth: Dp,
@@ -469,6 +482,7 @@ private fun ContinuousNovelReader(
     onPageChanged: (Int) -> Unit,
     onViewportObserved: (NovelViewportPosition) -> Unit,
     onViewportChanged: (NovelViewportPosition) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
 ) {
     // Capture the restoration cursor for this list instance. Live viewport observations must not
@@ -483,9 +497,12 @@ private fun ContinuousNovelReader(
     // reflected in currentSourceOffset. Replaying it after a resize or typography reflow would
     // jump back to the old visual page number instead of preserving the reader's text position.
     val initialPageRequestSerial = remember { pageRequestSerial }
+    val initialNavigationRequestKey = remember { navigationRequestKey }
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
     val latestOnViewportObserved by rememberUpdatedState(onViewportObserved)
     val latestOnViewportChanged by rememberUpdatedState(onViewportChanged)
+    val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+    val latestOnTapAction by rememberUpdatedState(onTapAction)
     // Restoration and external page requests share one cancellable effect. A new request cancels
     // an in-flight fractional restore instead of letting the two scroll operations race.
     LaunchedEffect(listState, pageRequestSerial, pages.size) {
@@ -510,6 +527,51 @@ private fun ContinuousNovelReader(
             (extent * restoredInitialPageOffsetFraction.coerceIn(0.0, 1.0)).roundToInt(),
         )
         restorationReady = true
+    }
+    // Hardware navigation must consult the list that owns the visible viewport. The shell's
+    // reported page can trail a gesture by one frame, which previously made a volume press at the
+    // penultimate page escape to the next chapter. A request present when this keyed surface is
+    // recreated has already been consumed by the previous surface and must not be replayed.
+    LaunchedEffect(listState, navigationRequestKey, pages.size, restorationReady) {
+        val action = navigationAction
+        if (
+            !restorationReady ||
+            navigationRequestKey <= 0L ||
+            navigationRequestKey == initialNavigationRequestKey ||
+            action == null
+        ) return@LaunchedEffect
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            restorationReady &&
+                layout.totalItemsCount == pages.size &&
+                layout.visibleItemsInfo.isNotEmpty() &&
+                layout.viewportEndOffset > layout.viewportStartOffset
+        }.filter { it }.first()
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (!listState.canScrollBackward) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val viewport = (
+                        listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                        ).coerceAtLeast(1)
+                    if (animatePageTransitions) listState.animateScrollBy(-viewport.toFloat())
+                    else listState.scrollBy(-viewport.toFloat())
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (!listState.canScrollForward) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val viewport = (
+                        listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                        ).coerceAtLeast(1)
+                    if (animatePageTransitions) listState.animateScrollBy(viewport.toFloat())
+                    else listState.scrollBy(viewport.toFloat())
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
+        }
     }
     LaunchedEffect(listState, pages.size) {
         snapshotFlow { listState.firstVisibleItemIndex.coerceIn(pages.indices) }
@@ -594,19 +656,42 @@ private fun PagedNovelReader(
     initialPage: Int,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     settings: ReaderSettings,
     columnWidth: Dp,
     textStyle: TextStyle,
     onPageChanged: (Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
 ) {
     if (!settings.animatePageTransitions) {
         var pageIndex by remember(pages, initialPage) { mutableIntStateOf(initialPage) }
         val initialPageRequestSerial = remember { pageRequestSerial }
+        val initialNavigationRequestKey = remember { navigationRequestKey }
         val latestOnPageChanged by rememberUpdatedState(onPageChanged)
+        val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+        val latestOnTapAction by rememberUpdatedState(onTapAction)
         LaunchedEffect(pageRequestSerial, pages.size) {
             if (pageRequestSerial == initialPageRequestSerial) return@LaunchedEffect
             requestedPageIndex?.let { pageIndex = it.coerceIn(pages.indices) }
+        }
+        LaunchedEffect(navigationRequestKey, pages.size) {
+            val action = navigationAction
+            if (
+                navigationRequestKey <= 0L ||
+                navigationRequestKey == initialNavigationRequestKey ||
+                action == null
+            ) return@LaunchedEffect
+            when (action) {
+                ReaderTapAction.PREVIOUS_PAGE -> {
+                    if (pageIndex > 0) pageIndex-- else latestOnNavigationBoundary(action)
+                }
+                ReaderTapAction.NEXT_PAGE -> {
+                    if (pageIndex < pages.lastIndex) pageIndex++ else latestOnNavigationBoundary(action)
+                }
+                ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
+            }
         }
         LaunchedEffect(pageIndex, pages.size) { onPageChanged(pageIndex) }
         DisposableEffect(pages) {
@@ -630,7 +715,10 @@ private fun PagedNovelReader(
         initialPage = readerPhysicalPageIndex(initialPage, pages.size, settings.readingMode),
     ) { pages.size }
     val initialPageRequestSerial = remember { pageRequestSerial }
+    val initialNavigationRequestKey = remember { navigationRequestKey }
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
+    val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+    val latestOnTapAction by rememberUpdatedState(onTapAction)
     DisposableEffect(pagerState, pages.size, settings.readingMode) {
         onDispose {
             latestOnPageChanged(
@@ -643,6 +731,40 @@ private fun PagedNovelReader(
         val logicalTarget = requestedPageIndex?.coerceIn(pages.indices) ?: return@LaunchedEffect
         val target = readerPhysicalPageIndex(logicalTarget, pages.size, settings.readingMode)
         if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+    }
+    LaunchedEffect(navigationRequestKey, pages.size, settings.readingMode) {
+        val action = navigationAction
+        if (
+            navigationRequestKey <= 0L ||
+            navigationRequestKey == initialNavigationRequestKey ||
+            action == null
+        ) return@LaunchedEffect
+        val current = readerLogicalPageIndex(
+            pagerState.currentPage,
+            pages.size,
+            settings.readingMode,
+        )
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (current <= 0) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    pagerState.animateScrollToPage(
+                        readerPhysicalPageIndex(current - 1, pages.size, settings.readingMode),
+                    )
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (current >= pages.lastIndex) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    pagerState.animateScrollToPage(
+                        readerPhysicalPageIndex(current + 1, pages.size, settings.readingMode),
+                    )
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
+        }
     }
     LaunchedEffect(pagerState, pages.size, settings.readingMode) {
         snapshotFlow { pagerState.currentPage }

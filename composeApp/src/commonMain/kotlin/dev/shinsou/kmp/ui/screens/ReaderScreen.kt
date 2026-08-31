@@ -9,9 +9,9 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,10 +19,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -37,10 +35,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.KeyboardArrowLeft
-import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
@@ -56,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -126,23 +122,27 @@ import dev.shinsou.kmp.reader.toCoilTransformation
 import dev.shinsou.kmp.sync.v2.ReaderPosition
 import dev.shinsou.kmp.ui.ReaderPage
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.ReaderVolumeKeyHandlerSlot
+import dev.shinsou.kmp.ui.ReaderVolumeKeyRouter
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.readerNavigationBarsPadding
 import dev.shinsou.kmp.ui.readerVolumeKeyAction
+import dev.shinsou.kmp.ui.readerMayCrossChapterBoundary
+import dev.shinsou.kmp.ui.readerStatusBarsPadding
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 data class UnifiedReaderRenderState(
     val settings: ReaderSettings,
@@ -169,7 +169,7 @@ fun ReaderScreen(
     initialPosition: ReaderPosition? = null,
     remotePositionSuggestion: ReaderPosition? = null,
     positionReportingEnabled: Boolean = true,
-    volumeKeyEvents: Flow<ReaderVolumeKeyEvent> = emptyFlow(),
+    volumeKeyRouter: ReaderVolumeKeyRouter? = null,
     systemBackRequest: Long = 0L,
     onClose: () -> Unit,
     onRetry: () -> Unit,
@@ -191,6 +191,8 @@ fun ReaderScreen(
         Modifier,
         UnifiedReaderRenderState,
         (Int, Int) -> Unit,
+        () -> Unit,
+        (ReaderTapAction) -> Unit,
         (ReaderTapAction) -> Unit,
     ) -> Unit)? = null,
 ) {
@@ -235,6 +237,19 @@ fun ReaderScreen(
                     ?: 1
                 null -> 0
             }.coerceAtLeast(0),
+        )
+    }
+    var unifiedReaderPageCountMeasured by remember(
+        chapter.id,
+        readerSessionId,
+        unifiedReaderContent?.representation?.representationId,
+        settings.readingMode,
+        settings.novelFontSizeSp,
+        settings.novelLineHeightMultiplier,
+        settings.novelMaxWidthDp,
+    ) {
+        mutableStateOf(
+            unifiedReaderContent?.representation is ContentRepresentation.ImageSequence,
         )
     }
     val readerPageCount = if (unifiedReaderEnabled) unifiedReaderPageCount else pages.size
@@ -314,6 +329,12 @@ fun ReaderScreen(
 
     fun requestPage(index: Int) {
         when {
+            index !in 0 until readerPageCount &&
+                !readerMayCrossChapterBoundary(
+                    proseReader = unifiedProseReader,
+                    pageCountMeasured = unifiedReaderPageCountMeasured,
+                    interactionBlocked = loading,
+                ) -> Unit
             index < 0 && unifiedProseReader -> openPreviousChapter()
             index < 0 -> boundaryTransition = ReaderChapterBoundary.PREVIOUS
             index >= readerPageCount && unifiedProseReader -> openNextChapter()
@@ -347,6 +368,15 @@ fun ReaderScreen(
     fun requestUnifiedReaderNavigation(action: ReaderTapAction) {
         unifiedReaderNavigationAction = action
         unifiedReaderNavigationRequestKey++
+    }
+
+    fun handleUnifiedNavigationBoundary(action: ReaderTapAction) {
+        if (loading) return
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> if (previousChapter != null) openPreviousChapter()
+            ReaderTapAction.NEXT_PAGE -> if (nextChapter != null) openNextChapter()
+            ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
+        }
     }
 
     fun applyExternalPosition(position: ReaderPosition) {
@@ -395,14 +425,14 @@ fun ReaderScreen(
      * page, and cross a chapter boundary immediately. Tap zones and pager swipes intentionally
      * keep the in-reader transition card so users can preview the destination chapter.
      */
-    fun handleVolumeKey(event: ReaderVolumeKeyEvent) {
-        if (readerPageCount <= 0) return
+    fun handleVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
+        if (loading || readerPageCount <= 0) return false
 
         val forward = event == ReaderVolumeKeyEvent.VOLUME_DOWN
         val action = if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE
-        if (unifiedEpubReader) {
+        if (unifiedProseReader) {
             requestUnifiedReaderNavigation(action)
-            return
+            return true
         }
         val atBoundary = if (forward) {
             currentPage >= (readerPageCount - 1).coerceAtLeast(0)
@@ -411,10 +441,23 @@ fun ReaderScreen(
         }
 
         if (atBoundary) {
+            // Plain text and EPUB start with only a provisional visual-page count. Until the
+            // renderer reports its actual pagination, that provisional last page is not proof of
+            // a chapter boundary and must never trigger an adjacent chapter.
+            if (
+                !readerMayCrossChapterBoundary(
+                    proseReader = unifiedProseReader,
+                    pageCountMeasured = unifiedReaderPageCountMeasured,
+                    interactionBlocked = loading,
+                )
+            ) return false
+            val adjacentChapter = if (forward) nextChapter else previousChapter
+            if (adjacentChapter == null) return false
             if (forward) openNextChapter() else openPreviousChapter()
         } else {
             handlePageAction(action)
         }
+        return true
     }
 
     DisposableEffect(settings.keepScreenOn) {
@@ -440,26 +483,20 @@ fun ReaderScreen(
     // `pages.isEmpty()` handler forever; toggling the setting happened to restart it after pages
     // loaded, which made the feature appear to require an off/on cycle. Keep the collector stable
     // while forwarding every event to the handler from the latest composition instead.
-    val currentVolumeKeyHandler by rememberUpdatedState<(ReaderVolumeKeyEvent) -> Unit> { event ->
-        if (unifiedReaderEnabled && !unifiedProseReader) return@rememberUpdatedState
+    val volumeKeyHandlerSlot = remember(chapter.id, readerSessionId) {
+        ReaderVolumeKeyHandlerSlot()
+    }
+    volumeKeyHandlerSlot.update { event ->
         val action = readerVolumeKeyAction(
             event = event,
             readerOpen = true,
             volumeKeysEnabled = effectiveVolumeKeysEnabled,
         )
-        if (action != null) {
-            val pageBefore = currentPage
-            handleVolumeKey(event)
-            println(
-                "[ShinsouX.VolumeKeys] reader handled event=$event " +
-                    "pages=${pages.size} pageBefore=$pageBefore pageAfter=$currentPage",
-            )
-        }
+        if (action == null) false else handleVolumeKey(event)
     }
-    LaunchedEffect(volumeKeyEvents, chapter.id, readerSessionId) {
-        volumeKeyEvents.collect { event ->
-            currentVolumeKeyHandler(event)
-        }
+    DisposableEffect(volumeKeyRouter, volumeKeyHandlerSlot) {
+        val registration = volumeKeyRouter?.register(volumeKeyHandlerSlot::dispatch)
+        onDispose { registration?.unregister() }
     }
     LaunchedEffect(systemBackRequest) {
         if (systemBackRequest == 0L) return@LaunchedEffect
@@ -506,9 +543,9 @@ fun ReaderScreen(
         modifier
             .fillMaxSize()
             .background(Color.Black)
-            // Compose is hosted edge-to-edge on iOS. Keep both the title bar and the first
-            // paragraph below the Face ID/status-bar safe area.
-            .statusBarsPadding()
+            // Android is edge-to-edge. SwiftUI already supplies the iOS safe-area frame, so the
+            // platform-aware modifier avoids reserving the Face ID/status-bar inset twice.
+            .readerStatusBarsPadding()
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -636,6 +673,7 @@ fun ReaderScreen(
                     ),
                     { pageIndex, pageCount ->
                         val safePageCount = pageCount.coerceAtLeast(1)
+                        unifiedReaderPageCountMeasured = true
                         unifiedReaderPageCount = safePageCount
                         if (pageIndex in 0 until safePageCount) {
                             unifiedReaderPageIndex = pageIndex
@@ -656,6 +694,8 @@ fun ReaderScreen(
                             }
                         }
                     },
+                    { unifiedReaderPageCountMeasured = false },
+                    ::handleUnifiedNavigationBoundary,
                     ::handlePageAction,
                 )
             }
@@ -806,7 +846,6 @@ fun ReaderScreen(
             },
             onChapterList = { chapterListVisible = true },
             onSettings = { settingsVisible = true },
-            readingMode = settings.readingMode,
         )
     }
 
@@ -1197,7 +1236,6 @@ private fun ReaderControls(
     onNextChapter: () -> Unit,
     onChapterList: () -> Unit,
     onSettings: () -> Unit,
-    readingMode: ReadingMode,
 ) {
     val strings = LocalShinsouStrings.current
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
@@ -1299,89 +1337,153 @@ private fun ReaderControls(
                     }
                 }
             }
-            if (novelToolbar) NovelBottomToolbar(
+            if (novelToolbar) NovelReaderProgressControls(
                 page = page,
                 pageCount = pageCount,
-                readingMode = readingMode,
                 hasPreviousChapter = hasPreviousChapter,
                 hasNextChapter = hasNextChapter,
                 onPageChange = onPageChange,
-                onChapterList = onChapterList,
-                onSettings = onSettings,
+                onPreviousChapter = onPreviousChapter,
+                onNextChapter = onNextChapter,
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
     }
 }
 
 /**
- * ShuYue-style plain-text novel chrome: a small icon-only action strip that is completely absent
- * until the reader's centre tap toggles [ReaderControls]. Keeping it separate from the image-reader
- * slider and EPUB's semantic toolbar avoids introducing a progress bar or duplicate controls.
+ * Novel progress chrome mirrors the manga reader: page scrubbing stays within the current chapter,
+ * while the labelled edge actions always change chapters. The caller places this over the reader
+ * surface, so showing or hiding controls never changes pagination or the visible text geometry.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BoxScope.NovelBottomToolbar(
+internal fun NovelReaderProgressControls(
     page: Int,
     pageCount: Int,
-    readingMode: ReadingMode,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
     onPageChange: (Int) -> Unit,
-    onChapterList: () -> Unit,
-    onSettings: () -> Unit,
+    onPreviousChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+    modifier: Modifier = Modifier,
+    interactionEnabled: Boolean = true,
 ) {
     val strings = LocalShinsouStrings.current
-    val previousOnLeft = readingMode != ReadingMode.PAGER_RTL
-    val canGoPrevious = page > 0 || hasPreviousChapter
-    val canGoNext = pageCount > 0 && (page < pageCount - 1 || hasNextChapter)
-    val leftAction = if (previousOnLeft) {
-        { onPageChange(page - 1) }
-    } else {
-        { onPageChange(page + 1) }
-    }
-    val rightAction = if (previousOnLeft) {
-        { onPageChange(page + 1) }
-    } else {
-        { onPageChange(page - 1) }
-    }
-    val leftEnabled = if (previousOnLeft) canGoPrevious else canGoNext
-    val rightEnabled = if (previousOnLeft) canGoNext else canGoPrevious
-    Row(
-        Modifier
-            .align(Alignment.BottomCenter)
+    val safePageCount = pageCount.coerceAtLeast(1)
+    val safePage = page.coerceIn(0, safePageCount - 1)
+    val sliderEnabled = interactionEnabled && safePageCount > 1
+    val sliderInteractionSource = remember { MutableInteractionSource() }
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = MaterialTheme.colorScheme.primary,
+        activeTrackColor = MaterialTheme.colorScheme.primary,
+        inactiveTrackColor = Color.White.copy(alpha = 0.30f),
+        disabledThumbColor = Color.White.copy(alpha = 0.38f),
+        disabledActiveTrackColor = Color.White.copy(alpha = 0.30f),
+        disabledInactiveTrackColor = Color.White.copy(alpha = 0.18f),
+    )
+    Column(
+        modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.92f))
-            .navigationBarsPadding()
-            .padding(horizontal = 34.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceEvenly,
+            .background(
+                Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Transparent,
+                        0.18f to Color.Black.copy(alpha = 0.86f),
+                        1f to Color.Black.copy(alpha = 0.96f),
+                    ),
+                ),
+            )
+            .readerNavigationBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
     ) {
-        IconButton(onClick = onSettings) {
-            Icon(
-                Icons.Outlined.Brightness4,
-                contentDescription = strings.readerSettings,
-                tint = Color.White,
+        Row(
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "${safePage + 1}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.width(28.dp),
+            )
+            Slider(
+                value = safePage.toFloat(),
+                onValueChange = {
+                    onPageChange(it.roundToInt().coerceIn(0, safePageCount - 1))
+                },
+                valueRange = 0f..(safePageCount - 1).coerceAtLeast(1).toFloat(),
+                enabled = sliderEnabled,
+                colors = sliderColors,
+                interactionSource = sliderInteractionSource,
+                thumb = {
+                    Box(
+                        Modifier
+                            .size(18.dp)
+                            .background(
+                                if (sliderEnabled) MaterialTheme.colorScheme.primary
+                                else Color.White.copy(alpha = 0.38f),
+                                CircleShape,
+                            ),
+                    )
+                },
+                track = { sliderState ->
+                    SliderDefaults.Track(
+                        sliderState = sliderState,
+                        modifier = Modifier.height(5.dp),
+                        enabled = sliderEnabled,
+                        colors = sliderColors,
+                        drawStopIndicator = null,
+                        thumbTrackGapSize = 0.dp,
+                        trackInsideCornerSize = 0.dp,
+                    )
+                },
+                modifier = Modifier.weight(1f).height(44.dp).padding(horizontal = 8.dp),
+            )
+            Text(
+                "$safePageCount",
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.width(28.dp),
             )
         }
-        IconButton(onClick = onChapterList) {
-            Icon(
-                Icons.Outlined.MenuBook,
-                contentDescription = strings.text("Chapter list"),
-                tint = Color.White,
-            )
-        }
-        IconButton(onClick = leftAction, enabled = leftEnabled) {
-            Icon(
-                Icons.Outlined.KeyboardArrowLeft,
-                contentDescription = strings.text("Previous page"),
-                tint = if (leftEnabled) Color.White else Color.White.copy(alpha = 0.32f),
-            )
-        }
-        IconButton(onClick = rightAction, enabled = rightEnabled) {
-            Icon(
-                Icons.Outlined.KeyboardArrowRight,
-                contentDescription = strings.text("Next page"),
-                tint = if (rightEnabled) Color.White else Color.White.copy(alpha = 0.32f),
-            )
+        Row(
+            Modifier.fillMaxWidth().height(44.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                TextButton(
+                    onClick = onPreviousChapter,
+                    enabled = interactionEnabled && hasPreviousChapter,
+                ) {
+                    Icon(Icons.Outlined.ArrowBack, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.previousChapter, maxLines = 1)
+                }
+            }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "${safePage + 1} / $safePageCount",
+                        color = Color.White,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                TextButton(
+                    onClick = onNextChapter,
+                    enabled = interactionEnabled && hasNextChapter,
+                ) {
+                    Text(strings.nextChapter, maxLines = 1)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Outlined.ArrowForward, null)
+                }
+            }
         }
     }
 }

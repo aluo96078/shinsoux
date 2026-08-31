@@ -11,6 +11,7 @@ import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.JavaScriptCoreScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
@@ -126,6 +127,7 @@ internal object IosApplicationContainer {
         syncInfrastructure = syncInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
+        platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
     )
 
     private val snapshotSync = SnapshotSyncController(

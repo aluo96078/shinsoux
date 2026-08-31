@@ -70,7 +70,7 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 
 ## 擴充套件與網路
 
-JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Browse、Reader 與 Download 共用同一套來源儲存與 request builder，因此來源 headers、cookies、Referer、per-source proxy 與 User-Agent 會沿用到圖片和下載請求。
+JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Browse、Reader 與 Download 共用同一套來源儲存與 request builder，因此來源 headers、cookies、Referer、per-source proxy 與 User-Agent 會沿用到圖片和下載請求。每個來源可將 Cloudflare Worker Proxy 設為「跟隨全域」、「強制啟用」或「強制關閉」。
 
 - Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 的官方腳本並在 Rhino 初始化；這不會連正式來源網站。
 - iOS Simulator test 覆蓋 JavaScriptCore 的同步 extension contract；任意第三方 Promise／async／`fetch` 腳本不保證相容。

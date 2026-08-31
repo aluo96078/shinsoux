@@ -1537,7 +1537,15 @@ private fun AdvancedSettingsPane(settings: AppSettings, onChange: (AppSettings) 
                 settings.advanced.dnsOverHttps,
             ) { onChange(settings.copy(advanced = settings.advanced.copy(dnsOverHttps = it))) }
         }
-        item { ToggleSetting(strings.text("Cloudflare Worker proxy"), null, settings.advanced.proxyEnabled) { onChange(settings.copy(advanced = settings.advanced.copy(proxyEnabled = it))) } }
+        item {
+            ToggleSetting(
+                strings.text("Cloudflare Worker proxy"),
+                strings.text("Default for sources set to Follow global. Per-source overrides remain authoritative."),
+                settings.advanced.proxyEnabled,
+            ) { enabled ->
+                onChange(settings.copy(advanced = settings.advanced.copy(proxyEnabled = enabled)))
+            }
+        }
         item {
             OutlinedTextField(
                 value = settings.advanced.proxyWorkerUrl,
@@ -1562,7 +1570,13 @@ private fun AdvancedSettingsPane(settings: AppSettings, onChange: (AppSettings) 
                 value = settings.advanced.customUserAgent,
                 onValueChange = { onChange(settings.copy(advanced = settings.advanced.copy(customUserAgent = it))) },
                 label = { Text(strings.text("Custom User-Agent")) },
-                supportingText = { Text(strings.text("Source or request headers take priority when a plugin supplies its own User-Agent.")) },
+                supportingText = {
+                    Text(
+                        strings.text(
+                            "Leave blank to use this device's browser User-Agent for Worker proxy requests. An imported Cloudflare session remains bound to the User-Agent captured with its cookies.",
+                        ),
+                    )
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )

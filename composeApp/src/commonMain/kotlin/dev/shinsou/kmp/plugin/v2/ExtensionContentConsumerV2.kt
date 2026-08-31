@@ -114,6 +114,18 @@ public data class ExtensionContentMaterializationV2(
     val commit: ContentCommitResult,
 )
 
+/** Durable local reading hints for one source-backed publication. */
+public data class ExtensionLocalReadingStateV2(
+    val completedRemoteUnitIds: Set<String> = emptySet(),
+    val lastReadRemoteUnitId: String? = null,
+)
+
+/** App compatibility keys used to join local history to the typed extension graph. */
+public data class ExtensionLocalUnitProgressV2(
+    val completedUnitKeys: Set<UnitKey> = emptySet(),
+    val lastReadUnitKey: UnitKey? = null,
+)
+
 /** Exact rights-gated reader input for one materialized extension representation. */
 public data class ExtensionReadableContentV2(
     val content: UnifiedReaderContent,
@@ -227,6 +239,9 @@ public class ExtensionContentConsumerV2(
     private val offlineStoreAuthorizer: ContentBodyOfflineStoreAuthorizer,
     private val resourceFetcher: ExtensionResourceFetcherV2? = null,
     private val nowEpochMillis: () -> Long,
+    private val localUnitProgress: (PublicationKey) -> ExtensionLocalUnitProgressV2 = {
+        ExtensionLocalUnitProgressV2()
+    },
     private val identityDeriver: LocalAcquisitionIdentityDeriver = LocalAcquisitionIdentityDeriver(),
     private val epubArchiveExtractor: EpubArchiveExtractor = BoundedEpubArchiveExtractor(),
 ) {
@@ -251,6 +266,33 @@ public class ExtensionContentConsumerV2(
                 remotePublicationId = binding.remoteId,
             )
         }.getOrNull()
+    }
+
+    /**
+     * Maps compatibility history back through the typed graph to the source's opaque unit id.
+     * No secret or source invocation is needed, so the local-library screen can select the exact
+     * resume chapter before it starts downloading chapter content.
+     */
+    public fun localReadingState(publicationKey: PublicationKey): ExtensionLocalReadingStateV2 {
+        val publication = foundation.publications.find(publicationKey)
+            ?: return ExtensionLocalReadingStateV2()
+        val remoteIdByUnitKey = publication.acquisitions
+            .asSequence()
+            .flatMap { it.units.asSequence() }
+            .mapNotNull { unit ->
+                unit.sourceBinding
+                    ?.takeIf { it.entityKind == RemoteEntityKind.UNIT }
+                    ?.remoteId
+                    ?.let { remoteId -> unit.key to remoteId }
+            }
+            .toMap()
+        val localProgress = localUnitProgress(publicationKey)
+        return ExtensionLocalReadingStateV2(
+            completedRemoteUnitIds = localProgress.completedUnitKeys.mapNotNullTo(linkedSetOf()) {
+                remoteIdByUnitKey[it]
+            },
+            lastReadRemoteUnitId = localProgress.lastReadUnitKey?.let(remoteIdByUnitKey::get),
+        )
     }
 
     public suspend fun publicationPage(

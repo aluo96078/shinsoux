@@ -11,7 +11,24 @@ import kotlin.test.assertTrue
 
 class PluginNetworkConfigurationTest {
     @Test
-    fun sourceProxyDefaultsOffAndGlobalOverrideTracksGlobalSetting() = runTest {
+    fun sourceProxyOverrideStorageIsStableAndInvalidValuesFallBackToGlobal() {
+        assertEquals("global", SourceNetworkOverride.GLOBAL.storedValue)
+        assertEquals("on", SourceNetworkOverride.ON.storedValue)
+        assertEquals("off", SourceNetworkOverride.OFF.storedValue)
+
+        assertEquals(
+            SourceNetworkOverride.GLOBAL,
+            SourceNetworkOverride.fromStored("unknown", SourceNetworkOverride.GLOBAL),
+        )
+        assertEquals(SourceNetworkOverride.ON, SourceNetworkOverride.fromStored(" ON ", SourceNetworkOverride.GLOBAL))
+        assertTrue(SourceNetworkOverride.GLOBAL.resolve(globalEnabled = true))
+        assertFalse(SourceNetworkOverride.GLOBAL.resolve(globalEnabled = false))
+        assertTrue(SourceNetworkOverride.ON.resolve(globalEnabled = false))
+        assertFalse(SourceNetworkOverride.OFF.resolve(globalEnabled = true))
+    }
+
+    @Test
+    fun sourceProxyDefaultsToGlobalAndExplicitOverridesRemainAuthoritative() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         var current = PluginNetworkConfiguration(
             proxyEnabled = true,
@@ -19,11 +36,12 @@ class PluginNetworkConfigurationTest {
         )
         val resolver = ConfiguredPluginProxyResolver(storage) { current }
 
-        assertNull(resolver.route(1, TARGET_URL), "An unset source must remain opted out")
+        assertNotNull(resolver.route(1, TARGET_URL), "An unset source must follow global on")
+
+        current = current.copy(proxyEnabled = false)
+        assertNull(resolver.route(1, TARGET_URL), "An unset source must follow global off")
 
         storage.setPreference(1, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE, "global")
-        assertNotNull(resolver.route(1, TARGET_URL))
-        current = current.copy(proxyEnabled = false)
         assertNull(resolver.route(1, TARGET_URL))
 
         storage.setPreference(1, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE, "on")
@@ -31,6 +49,26 @@ class PluginNetworkConfigurationTest {
         current = current.copy(proxyEnabled = true)
         storage.setPreference(1, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE, "off")
         assertNull(resolver.route(1, TARGET_URL), "Source off must override global on")
+
+        storage.setPreference(1, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE, "invalid")
+        assertNotNull(resolver.route(1, TARGET_URL), "Invalid legacy values must safely follow global")
+    }
+
+    @Test
+    fun proxyWorkerHostnameWithoutSchemeUsesHttps() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val resolver = ConfiguredPluginProxyResolver(storage) {
+            PluginNetworkConfiguration(
+                proxyEnabled = true,
+                proxyWorkerUrl = "  shinsou.example.workers.dev/  ",
+            )
+        }
+
+        val route = assertNotNull(resolver.route(1, TARGET_URL))
+        val proxyUrl = Url(route.url)
+        assertEquals("https", proxyUrl.protocol.name)
+        assertEquals("shinsou.example.workers.dev", proxyUrl.host)
+        assertEquals(TARGET_URL, proxyUrl.parameters["url"])
     }
 
     @Test
@@ -82,6 +120,59 @@ class PluginNetworkConfigurationTest {
         current = current.copy(customUserAgent = "")
         val fallback = builder.build(1, PluginHttpRequest("GET", TARGET_URL))
         assertEquals("sticky-fallback", fallback.transportRequest.headers["User-Agent"])
+    }
+
+    @Test
+    fun proxiedRequestUsesDeviceBrowserUserAgentInsteadOfSourceHint() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val configuration = PluginNetworkConfigurationProvider {
+            PluginNetworkConfiguration(
+                proxyEnabled = true,
+                proxyWorkerUrl = "proxy.example.workers.dev",
+            )
+        }
+        val builder = PluginRequestBuilder(
+            storage = storage,
+            userAgents = ConfiguredPluginUserAgentProvider(
+                configuration = configuration,
+                fallback = PluginUserAgentProvider { "Device Browser/1.0" },
+            ),
+            proxyResolver = ConfiguredPluginProxyResolver(storage, configuration),
+        )
+
+        val built = builder.build(
+            sourceId = 1,
+            request = PluginHttpRequest("GET", TARGET_URL),
+            sourceHeaders = mapOf("User-Agent" to "Source iPhone Hint/17"),
+        )
+
+        assertEquals("Device Browser/1.0", built.transportRequest.headers["User-Agent"])
+        assertTrue(built.transportRequest.url.startsWith("https://proxy.example.workers.dev/"))
+    }
+
+    @Test
+    fun cloudflareSessionUserAgentStillWinsForProxiedRequests() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        storage.setWebChallengeUserAgent(1, "Cloudflare Browser/2.0")
+        val configuration = PluginNetworkConfigurationProvider {
+            PluginNetworkConfiguration(
+                proxyEnabled = true,
+                proxyWorkerUrl = "https://proxy.example",
+            )
+        }
+        val builder = PluginRequestBuilder(
+            storage = storage,
+            userAgents = PluginUserAgentProvider { "Device Browser/1.0" },
+            proxyResolver = ConfiguredPluginProxyResolver(storage, configuration),
+        )
+
+        val built = builder.build(
+            sourceId = 1,
+            request = PluginHttpRequest("GET", TARGET_URL),
+            sourceHeaders = mapOf("User-Agent" to "Source Hint"),
+        )
+
+        assertEquals("Cloudflare Browser/2.0", built.transportRequest.headers["User-Agent"])
     }
 
     private companion object {

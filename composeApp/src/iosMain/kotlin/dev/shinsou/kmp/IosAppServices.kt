@@ -18,6 +18,7 @@ import dev.shinsou.kmp.ui.ImportedDocumentReadException
 import dev.shinsou.kmp.ui.ImportedDocumentSource
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.ReaderVolumeKeyEventSink
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
@@ -106,6 +107,7 @@ internal class IosAppServices(
 ) : ShinsouAppServices {
     private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val readerVolumeKeyChannel = Channel<ReaderVolumeKeyEvent>(capacity = Channel.BUFFERED)
+    private var readerVolumeKeyEventSink: ReaderVolumeKeyEventSink? = null
     private val systemBackChannel = Channel<Unit>(capacity = Channel.BUFFERED)
     // Gesture progress can arrive faster than Compose consumes it. Keep only the latest event so
     // the terminal Settled event replaces stale progress instead of being rejected by a full buffer.
@@ -136,6 +138,7 @@ internal class IosAppServices(
         if (!IosReaderPresentationState.readerOpen) return false
         if (!IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys) return false
         if (!IosReaderVolumeKeyState.monitoringEnabled) return false
+        readerVolumeKeyEventSink?.let { return it.dispatch(event) }
         return readerVolumeKeyChannel.trySend(event).isSuccess
     }
 
@@ -325,6 +328,10 @@ internal class IosAppServices(
 
     override fun setReaderVolumeKeyMonitoringEnabled(enabled: Boolean) {
         IosReaderVolumeKeyState.setMonitoringEnabled(enabled)
+    }
+
+    override fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?) {
+        readerVolumeKeyEventSink = sink
     }
 
     override fun requestNotificationPermission() {

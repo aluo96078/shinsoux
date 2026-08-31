@@ -533,6 +533,18 @@ internal class LocalTypedContentController(
 internal fun isTypedLocalCompatibilityUrl(value: String): Boolean =
     value.startsWith(TYPED_LOCAL_URL_PREFIX)
 
+/** Strict local-only decoder used to join compatibility history to typed unit identity. */
+internal fun typedLocalChapterUnitKey(value: String): UnitKey? {
+    if (!value.startsWith(TYPED_LOCAL_URL_PREFIX)) return null
+    val parts = value.removePrefix(TYPED_LOCAL_URL_PREFIX).split('/')
+    if (parts.size != 3) return null
+    return runCatching {
+        val publicationKey = PublicationKey(parts[0])
+        require(PublicationKey.isPortableUuid(parts[1]))
+        UnitKey(publicationKey, parts[2]).also(UnitKey::validate)
+    }.getOrNull()
+}
+
 /** Returns the publication identity only for the publication-scoped compatibility URL. */
 internal fun decodeTypedLocalPublicationUrl(value: String): PublicationKey? {
     if (!value.startsWith(TYPED_LOCAL_URL_PREFIX)) return null

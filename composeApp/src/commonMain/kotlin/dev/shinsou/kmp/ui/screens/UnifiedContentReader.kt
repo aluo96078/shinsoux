@@ -56,8 +56,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +101,7 @@ import dev.shinsou.kmp.tts.SpeechPlaybackStatus
 import dev.shinsou.kmp.ui.TypedReaderContentSession
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.readerNavigationBarsPadding
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.math.abs
@@ -133,6 +132,8 @@ internal fun UnifiedContentReader(
     navigationRequestKey: Long = 0L,
     readerControlsVisible: Boolean = false,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit = { _, _ -> },
+    onPageCountInvalidated: () -> Unit = {},
+    onNavigationBoundary: (ReaderTapAction) -> Unit = {},
     onReaderTap: (ReaderTapAction) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -163,6 +164,8 @@ internal fun UnifiedContentReader(
             navigationRequestKey = navigationRequestKey,
             readerControlsVisible = readerControlsVisible,
             onPageIndexChanged = onPageIndexChanged,
+            onPageCountInvalidated = onPageCountInvalidated,
+            onNavigationBoundary = onNavigationBoundary,
             onReaderTap = onReaderTap,
             onLocatorChanged = onLocatorChanged,
             modifier = modifier,
@@ -199,8 +202,11 @@ internal fun UnifiedContentReader(
         initialVisualPageCount = session.initialVisualPageCount,
         requestedPageIndex = requestedPageIndex,
         pageRequestSerial = pageRequestSerial,
+        navigationAction = navigationAction,
+        navigationRequestKey = navigationRequestKey,
         onPageChanged = onPageIndexChanged,
         onLocatorChanged = onLocatorChanged,
+        onNavigationBoundary = onNavigationBoundary,
         onTapAction = onReaderTap,
         modifier = modifier,
     )
@@ -815,6 +821,8 @@ private fun EpubUnifiedContentReader(
     navigationRequestKey: Long,
     readerControlsVisible: Boolean,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onPageCountInvalidated: () -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
     modifier: Modifier,
@@ -844,9 +852,7 @@ private fun EpubUnifiedContentReader(
                 ?: (currentVisualPageIndex + 1),
         )
     }
-    var viewportPageCountMeasured by remember(session) {
-        mutableStateOf(session.initialVisualPageCount != null)
-    }
+    var viewportPageCountMeasured by remember(session) { mutableStateOf(false) }
     val restoredDocumentProgression = remember(session, initialLocator) {
         when {
             session.initialVisualPageIndex == null || session.initialVisualPageCount == null ->
@@ -981,23 +987,26 @@ private fun EpubUnifiedContentReader(
         currentIndex = index
         currentVisualPageIndex = 0
         currentVisualPageCount = 1
-        viewportPageCountMeasured = true
+        // The new spine document has not published its viewport yet. Keeping this provisional
+        // state unmeasured prevents an immediate second hardware press from escaping the chapter
+        // merely because the placeholder visual page count is one.
+        viewportPageCountMeasured = false
+        onPageCountInvalidated()
         navigationRevision++
-        onPageIndexChanged(0, 1)
-        onLocatorChanged(locator, 0, 1)
+        onLocatorChanged(locator, 0, null)
     }
 
     fun handleBrowserAction(action: ReaderTapAction) {
         when (action) {
             ReaderTapAction.PREVIOUS_PAGE -> {
                 if (currentIndex > 0) openLocator(navigation.locatorAt(currentIndex - 1))
-                else onReaderTap(action)
+                else onNavigationBoundary(action)
             }
             ReaderTapAction.NEXT_PAGE -> {
                 if (currentIndex + 1 < navigation.itemCount) {
                     openLocator(navigation.locatorAt(currentIndex + 1))
                 } else {
-                    onReaderTap(action)
+                    onNavigationBoundary(action)
                 }
             }
             ReaderTapAction.TOGGLE_CHROME -> onReaderTap(action)
@@ -1085,8 +1094,10 @@ private fun EpubUnifiedContentReader(
         }
     }
 
-    LaunchedEffect(session, currentVisualPageIndex, currentVisualPageCount) {
-        onPageIndexChanged(currentVisualPageIndex, currentVisualPageCount)
+    LaunchedEffect(session, currentVisualPageIndex, currentVisualPageCount, viewportPageCountMeasured) {
+        if (viewportPageCountMeasured) {
+            onPageIndexChanged(currentVisualPageIndex, currentVisualPageCount)
+        }
     }
 
     LaunchedEffect(readerControlsVisible) {
@@ -1157,6 +1168,7 @@ private fun EpubUnifiedContentReader(
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
                 tonalElevation = 6.dp,
+                modifier = Modifier.readerNavigationBarsPadding(),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),

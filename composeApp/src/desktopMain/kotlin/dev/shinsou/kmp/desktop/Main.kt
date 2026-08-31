@@ -34,6 +34,7 @@ import dev.shinsou.kmp.files.DesktopAppFileSystem
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
@@ -107,6 +108,7 @@ fun main(args: Array<String>) {
                 syncInfrastructure = syncInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
+                platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
             )
         }
         val syncRuntime = requireNotNull(composition.syncRuntime)

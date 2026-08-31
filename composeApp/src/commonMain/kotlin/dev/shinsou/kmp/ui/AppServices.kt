@@ -198,6 +198,9 @@ interface ShinsouAppServices {
     /** Starts or stops platform interception. Common UI always supplies the complete gate state. */
     fun setReaderVolumeKeyMonitoringEnabled(enabled: Boolean) = Unit
 
+    /** Installs the active common-reader dispatcher for synchronous native hardware delivery. */
+    fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?) = Unit
+
     fun requestNotificationPermission() = Unit
 
     suspend fun authenticate(reason: String): Boolean = false
@@ -288,6 +291,87 @@ enum class ReaderVolumeKeyEvent {
     VOLUME_DOWN,
 }
 
+fun interface ReaderVolumeKeyEventSink {
+    /** Returns true when the currently mounted reader accepted the physical press. */
+    fun dispatch(event: ReaderVolumeKeyEvent): Boolean
+}
+
+/**
+ * Routes every platform volume-button event to exactly one mounted reader.
+ *
+ * Compose can temporarily retain an outgoing destination while the next reader is already
+ * mounted. A broadcast flow lets both destinations react to the same key press. Registrations are
+ * therefore ordered: the newest reader owns input, disposing an older registration cannot clear
+ * the newer owner, and disposing the newer owner cannot reactivate an outgoing reader.
+ */
+class ReaderVolumeKeyRouter : ReaderVolumeKeyEventSink {
+    private class Owner(
+        val handler: (ReaderVolumeKeyEvent) -> Boolean,
+    )
+
+    class Registration internal constructor(
+        private val unregisterAction: () -> Unit,
+    ) {
+        private var registered = true
+
+        fun unregister() {
+            if (!registered) return
+            registered = false
+            unregisterAction()
+        }
+    }
+
+    private var activeOwner: Owner? = null
+    fun register(handler: (ReaderVolumeKeyEvent) -> Boolean): Registration {
+        val owner = Owner(handler)
+        activeOwner = owner
+        return Registration {
+            if (activeOwner === owner) activeOwner = null
+        }
+    }
+
+    override fun dispatch(event: ReaderVolumeKeyEvent): Boolean {
+        val owner = activeOwner ?: return false
+        return owner.handler(event)
+    }
+}
+
+/** Stable router target that follows the latest state of one reader chapter or extension unit. */
+internal class ReaderVolumeKeyHandlerSlot {
+    private var handler: (ReaderVolumeKeyEvent) -> Boolean = { false }
+
+    fun update(handler: (ReaderVolumeKeyEvent) -> Boolean) {
+        this.handler = handler
+    }
+
+    fun dispatch(event: ReaderVolumeKeyEvent): Boolean = handler(event)
+}
+
+/** De-duplicates a native DOWN/repeat/UP sequence into one logical reader action. */
+internal class ReaderVolumeKeyPressTracker {
+    private val heldKeys = mutableSetOf<ReaderVolumeKeyEvent>()
+
+    fun shouldDispatchDown(event: ReaderVolumeKeyEvent, repeatCount: Int): Boolean {
+        if (repeatCount != 0) return false
+        return heldKeys.add(event)
+    }
+
+    fun release(event: ReaderVolumeKeyEvent) {
+        heldKeys.remove(event)
+    }
+
+    fun clear() {
+        heldKeys.clear()
+    }
+}
+
+/** Rejects callbacks emitted by a reader surface after its immutable session was replaced. */
+internal fun readerProgressSessionIsActive(
+    activeSession: Any?,
+    callbackSession: Any,
+    transitionInFlight: Boolean,
+): Boolean = activeSession === callbackSession && !transitionInFlight
+
 sealed interface SystemBackGestureEvent {
     data class Progress(val fraction: Float) : SystemBackGestureEvent
 
@@ -309,6 +393,12 @@ fun readerVolumeKeyAction(
         ReaderVolumeKeyEvent.VOLUME_DOWN -> ReaderTapAction.NEXT_PAGE
     }
 }
+
+internal fun readerMayCrossChapterBoundary(
+    proseReader: Boolean,
+    pageCountMeasured: Boolean,
+    interactionBlocked: Boolean,
+): Boolean = !interactionBlocked && (!proseReader || pageCountMeasured)
 
 sealed interface ShinsouDeepLink {
     data class OpenManga(val mangaId: Long) : ShinsouDeepLink
@@ -644,6 +734,12 @@ interface BrowseCallbacks {
     fun extensionLibraryBindingV2(
         publicationKey: PublicationKey,
     ): ExtensionLibraryBindingV2? = null
+
+    /** Local-only chapter completion and exact resume unit for a typed extension publication. */
+    fun extensionLocalReadingStateV2(
+        publicationKey: PublicationKey,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
+        dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
 
     /**
      * Best-effort repair for beta-era UUID-only extension favorites. Implementations must return

@@ -32,6 +32,7 @@ import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.ReaderVolumeKeyEventSink
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
@@ -77,6 +78,8 @@ internal class AndroidAppServices(
     private var previousRequestedOrientation: Int? = null
     @Volatile
     private var monitorReaderVolumeKeys: Boolean = false
+    @Volatile
+    private var readerVolumeKeyEventSink: ReaderVolumeKeyEventSink? = null
     @Volatile
     private var systemBackHandler: (() -> Boolean)? = null
 
@@ -201,11 +204,19 @@ internal class AndroidAppServices(
         monitorReaderVolumeKeys = enabled
     }
 
+    override fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?) {
+        readerVolumeKeyEventSink = sink
+    }
+
     /** Returns true only while Reader owns the hardware volume buttons. */
     fun emitReaderVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
         if (!monitorReaderVolumeKeys) return false
-        mutableReaderVolumeKeyEvents.tryEmit(event)
-        return true
+        // Activity key dispatch and Compose state both run on Android's UI thread. Deliver
+        // directly so a press cannot be dropped by a small SharedFlow buffer or handled after
+        // the reader/session that owned it has already been replaced.
+        val sink = readerVolumeKeyEventSink
+        if (sink != null) return sink.dispatch(event)
+        return mutableReaderVolumeKeyEvents.tryEmit(event)
     }
 
     fun shouldInterceptReaderVolumeKeys(): Boolean = monitorReaderVolumeKeys

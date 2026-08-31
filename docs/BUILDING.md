@@ -25,10 +25,10 @@ number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
-目前原始碼中的預設版本為 `1.0.1-beta.4`：Android `versionName` 與應用內顯示使用完整
-beta 版本，Android `versionCode`／iOS build number 為 `25600104`，Desktop／iOS 的
+目前原始碼中的預設版本為 `1.0.1-beta.5`：Android `versionName` 與應用內顯示使用完整
+beta 版本，Android `versionCode`／iOS build number 為 `25600105`，Desktop／iOS 的
 package／marketing version 為 `1.0.1`，Windows installer package version 為
-`1.0.104`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
+`1.0.105`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
 
 ## Workspace 佈局
 

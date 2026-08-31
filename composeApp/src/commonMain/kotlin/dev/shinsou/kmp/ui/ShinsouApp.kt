@@ -181,7 +181,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
@@ -349,6 +348,7 @@ private fun ShinsouAppContent(
     }
     val completedReaderChapterIds = remember { mutableSetOf<Long>() }
     val v2ReaderProgressSessions = remember { mutableMapOf<String, String>() }
+    val readerVolumeKeyRouter = remember { ReaderVolumeKeyRouter() }
     val readerProgressObservationClock = remember { ReaderProgressObservationClock() }
     val readerLocalProgressCoordinator = remember(repository, snackbar, strings) {
         ReaderLocalProgressCoordinator(
@@ -397,6 +397,17 @@ private fun ShinsouAppContent(
 
     LaunchedEffect(readerLocalProgressCoordinator) {
         readerLocalProgressCoordinator.run()
+    }
+
+    DisposableEffect(appServices, readerVolumeKeyRouter) {
+        // Android can synchronously hand Activity key events to this router. Other platforms keep
+        // using readerVolumeKeyEvents below, but both paths still resolve to one active owner.
+        appServices.setReaderVolumeKeyEventSink(readerVolumeKeyRouter)
+        onDispose { appServices.setReaderVolumeKeyEventSink(null) }
+    }
+
+    LaunchedEffect(appServices, readerVolumeKeyRouter) {
+        appServices.readerVolumeKeyEvents.collect(readerVolumeKeyRouter::dispatch)
     }
 
     LaunchedEffect(appLifecycle, v2ReaderProgressCoordinator) {
@@ -1325,7 +1336,7 @@ private fun ShinsouAppContent(
                     initialPosition = readerInitialPosition,
                     remotePositionSuggestion = readerRemotePosition?.position,
                     positionReportingEnabled = readerPositionInitializedFor == session,
-                    volumeKeyEvents = appServices.readerVolumeKeyEvents,
+                    volumeKeyRouter = readerVolumeKeyRouter,
                     systemBackRequest = readerBackRequest,
                     onClose = { transitionReader() },
                     onRetry = { readerReloadKey++ },
@@ -1344,7 +1355,14 @@ private fun ShinsouAppContent(
                         mutate { repository.updateSettings { it.copy(reader = readerSettings) } }
                     },
                     onPositionChanged = { position ->
-                        if (!snapshot.settings.security.incognitoMode) {
+                        if (
+                            !snapshot.settings.security.incognitoMode &&
+                            readerProgressSessionIsActive(
+                                activeSession = readerSession,
+                                callbackSession = session,
+                                transitionInFlight = readerTransitionInFlight,
+                            )
+                        ) {
                             val readAt = readerProgressObservationClock.next(
                                 Clock.System.now().toEpochMilliseconds(),
                             )
@@ -1480,7 +1498,8 @@ private fun ShinsouAppContent(
                     unifiedReaderInitialPageIndex = typedReaderSession?.initialVisualPageIndex,
                     unifiedReaderInitialPageCount = typedReaderSession?.initialVisualPageCount,
                     unifiedReaderRenderer = typedReaderSession?.let { typed ->
-                        { _, rendererModifier, renderState, onPageIndexChanged, onReaderTap ->
+                        { _, rendererModifier, renderState, onPageIndexChanged, onPageCountInvalidated,
+                            onNavigationBoundary, onReaderTap ->
                             val features = appServices.contentFeatures
                             if (features == null) {
                                 Box(rendererModifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1498,9 +1517,18 @@ private fun ShinsouAppContent(
                                     navigationRequestKey = renderState.navigationRequestKey,
                                     readerControlsVisible = renderState.controlsVisible,
                                     onPageIndexChanged = onPageIndexChanged,
+                                    onPageCountInvalidated = onPageCountInvalidated,
+                                    onNavigationBoundary = onNavigationBoundary,
                                     onReaderTap = onReaderTap,
                                     onLocatorChanged = { locator, pageIndex, pageCount ->
-                                        if (!snapshot.settings.security.incognitoMode) {
+                                        if (
+                                            !snapshot.settings.security.incognitoMode &&
+                                            readerProgressSessionIsActive(
+                                                activeSession = readerSession,
+                                                callbackSession = session,
+                                                transitionInFlight = readerTransitionInFlight,
+                                            )
+                                        ) {
                                             typed.content.navigation.indexOf(locator)?.let { semanticIndex ->
                                                 val readAt = readerProgressObservationClock.next(
                                                     Clock.System.now().toEpochMilliseconds(),
@@ -1656,7 +1684,7 @@ private fun ShinsouAppContent(
                         onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                         onBrowseReaderProgress = ::recordV2ReaderProgress,
                         onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
-                        readerVolumeKeyEvents = appServices.readerVolumeKeyEvents,
+                        readerVolumeKeyRouter = readerVolumeKeyRouter,
                         onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                         isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                         mutate = ::mutate,
@@ -1767,7 +1795,7 @@ private fun ShinsouAppContent(
                                             onReaderVisibilityChanged = { browseReaderOpen = it },
                                             onReaderProgress = ::recordV2ReaderProgress,
                                             onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
-                                            volumeKeyEvents = appServices.readerVolumeKeyEvents,
+                                            volumeKeyRouter = readerVolumeKeyRouter,
                                             readerBackRequest = localLibraryReaderBackRequest,
                                             onBack = {
                                                 browseReaderOpen = false
@@ -1913,7 +1941,7 @@ private fun ShinsouAppContent(
                                 onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                                 onBrowseReaderProgress = ::recordV2ReaderProgress,
                                 onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
-                                readerVolumeKeyEvents = appServices.readerVolumeKeyEvents,
+                                readerVolumeKeyRouter = readerVolumeKeyRouter,
                                 onToggleLocalLibrary = ::toggleV2PublicationLocalLibrary,
                                 isLocalLibraryFavorite = ::isV2PublicationInLocalLibrary,
                                 mutate = ::mutate,
@@ -2017,7 +2045,7 @@ private fun ShinsouAppContent(
                             onReaderVisibilityChanged = { browseReaderOpen = it },
                             onReaderProgress = ::recordV2ReaderProgress,
                             onReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
-                            volumeKeyEvents = appServices.readerVolumeKeyEvents,
+                            volumeKeyRouter = readerVolumeKeyRouter,
                             readerBackRequest = localLibraryReaderBackRequest,
                             onBack = {
                                 browseReaderOpen = false
@@ -2191,7 +2219,7 @@ private fun SectionPane(
         pageCount: Int?,
     ) -> Unit,
     onBrowseReaderProgressFlushed: suspend () -> Unit,
-    readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent>,
+    readerVolumeKeyRouter: ReaderVolumeKeyRouter,
     onToggleLocalLibrary: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit,
     isLocalLibraryFavorite: (BrowseManga) -> Boolean,
     mutate: (suspend () -> Unit) -> Unit,
@@ -2410,7 +2438,7 @@ private fun SectionPane(
                 onReaderVisibilityChanged = onBrowseReaderVisibilityChanged,
                 onReaderProgress = onBrowseReaderProgress,
                 onReaderProgressFlushed = onBrowseReaderProgressFlushed,
-                volumeKeyEvents = readerVolumeKeyEvents,
+                volumeKeyRouter = readerVolumeKeyRouter,
                 onToggleLocalLibrary = onToggleLocalLibrary,
                 isLocalLibraryFavorite = isLocalLibraryFavorite,
                 onImportDocument = { acceptedExtensions ->
@@ -2834,7 +2862,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.4"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.5"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3174,7 +3202,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.4"),
+                strings.text("Shinsou X 1.0.1-beta.5"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),

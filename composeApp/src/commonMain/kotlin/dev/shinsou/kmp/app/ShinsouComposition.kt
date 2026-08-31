@@ -17,8 +17,10 @@ import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.download.DownloadManager
 import dev.shinsou.kmp.domain.model.TrackerIds
 import dev.shinsou.kmp.domain.model.Publication
+import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
+import dev.shinsou.kmp.local.typedLocalChapterUnitKey
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.domain.model.InMemoryPortableAliasLedger
 import dev.shinsou.kmp.domain.model.LegacyPublicationBundle
@@ -45,6 +47,7 @@ import dev.shinsou.kmp.plugin.PluginNetworkClient
 import dev.shinsou.kmp.plugin.PluginNetworkConfiguration
 import dev.shinsou.kmp.plugin.PluginNetworkConfigurationProvider
 import dev.shinsou.kmp.plugin.PluginRequestBuilder
+import dev.shinsou.kmp.plugin.PluginUserAgentProvider
 import dev.shinsou.kmp.plugin.PluginVerifier
 import dev.shinsou.kmp.plugin.RepositoryPluginCoordinator
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
@@ -74,6 +77,7 @@ import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
+import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
 import dev.shinsou.kmp.plugin.v2.ExtensionNetworkScopeResolverV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
@@ -148,6 +152,8 @@ public class ShinsouComposition(
     private val syncInfrastructure: SyncPlatformInfrastructure? = null,
     private val platformTextToSpeechEngine: PlatformTextToSpeechEngine? = null,
     private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null,
+    private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
+        dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
 ) {
     private val mutableSyncBoundaryReady = MutableStateFlow(syncInfrastructure == null)
     /** UI remains non-interactive until persisted provider ownership is enforced. */
@@ -238,7 +244,10 @@ public class ShinsouComposition(
     }
     private val requestBuilder = PluginRequestBuilder(
         storage = pluginStorage,
-        userAgents = ConfiguredPluginUserAgentProvider(networkConfiguration),
+        userAgents = ConfiguredPluginUserAgentProvider(
+            configuration = networkConfiguration,
+            fallback = platformBrowserUserAgentProvider,
+        ),
         proxyResolver = ConfiguredPluginProxyResolver(pluginStorage, networkConfiguration),
     )
     private val pluginNetwork = PluginNetworkClient(
@@ -641,6 +650,32 @@ public class ShinsouComposition(
                     scopes = extensionNetworkScopeResolver,
                 ),
                 nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
+                localUnitProgress = { publicationKey ->
+                    val snapshot = repository.currentSnapshot
+                    val chapters = snapshot.chapters.filter { chapter ->
+                        typedLocalChapterUnitKey(chapter.url)?.publicationKey == publicationKey
+                    }
+                    val chapterById = chapters.associateBy { it.id }
+                    val completed = chapters.asSequence()
+                        .filter { it.read }
+                        .mapNotNull { typedLocalChapterUnitKey(it.url) }
+                        .toSet()
+                    val latest = snapshot.histories
+                        .asSequence()
+                        .filter { it.chapterId in chapterById }
+                        .maxWithOrNull(
+                            compareBy<History> { it.lastRead }
+                                .thenBy { it.id },
+                        )
+                        ?.chapterId
+                        ?.let(chapterById::get)
+                        ?.url
+                        ?.let(::typedLocalChapterUnitKey)
+                    ExtensionLocalUnitProgressV2(
+                        completedUnitKeys = completed,
+                        lastReadUnitKey = latest,
+                    )
+                },
             )
         },
         reviewedShuYueRepositoryLoaderV2 = reviewedShuYueRepositoryLoader,
@@ -1059,7 +1094,7 @@ public class ShinsouComposition(
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.4"
+        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.5"
         const val DEFAULT_SYNC_USER_NAME = "Shinsou X user"
         const val CLOUDFLARE_DEPLOY_URL =
             "https://deploy.workers.cloudflare.com/?url=https://github.com/aluo96078/shinsoux/tree/master/syncWorker"
