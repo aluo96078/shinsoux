@@ -452,7 +452,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.3' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.4' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.5' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.6'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.6' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.7'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -487,6 +488,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.5"
             $expectedHash = "c72b0b26335c114d3aa1f05dc5f20a8a57697fdcd477bc50c2133b725f9795b4"
             $baselineProductCode = "{386BBE31-6B58-3674-B464-D1AF88BF7956}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.7") {
+            $baselineVersion = "1.0.1-beta.6"
+            $expectedHash = "8c5531e50190c3deb71518c0519be8ca2d136ed973ea558628ce5d946e7b09c6"
+            $baselineProductCode = "{5030C62C-11CA-3BAD-971A-D10CFD3B19DB}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -711,7 +716,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.3 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.4 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.5 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.6 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.6 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.7 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -745,6 +751,11 @@ jobs:
                 "Extension note: BiliManga novels and manga now use separate package identities while existing manga favorites and installations migrate to the standalone manga source." \
                 "Browser note: Android, iOS, and Desktop can transfer browser challenge cookies, User-Agent, and local storage into extension requests, with stricter session and login error reporting." \
                 "Reader note: extension manga pages resolve lazily with visible loading failures; Android and macOS Desktop add AVIF decoding required by current BiliManga image responses."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.7 ]]; then
+              printf '%s\n' \
+                "Validation note: macOS ImageIO AVIF integration tests now run only on macOS, while cross-platform format detection still verifies that Windows never initializes macOS frameworks." \
+                "Runtime content is otherwise unchanged from beta.6; this build restores a clean Windows master validation result and verifies MSI upgrade from beta.6."
             fi
           } > release-notes.md
 

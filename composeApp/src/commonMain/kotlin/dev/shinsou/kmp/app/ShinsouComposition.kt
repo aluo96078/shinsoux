@@ -1120,7 +1120,7 @@ public class ShinsouComposition(
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.6"
+        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.7"
         const val DEFAULT_SYNC_USER_NAME = "Shinsou X user"
         const val CLOUDFLARE_DEPLOY_URL =
             "https://deploy.workers.cloudflare.com/?url=https://github.com/aluo96078/shinsoux/tree/master/syncWorker"

@@ -43,7 +43,7 @@ public class AutoBackupException(message: String, cause: Throwable? = null) : Ex
 public class AutoBackupService(
     private val repository: ShinsouRepository,
     private val fileSystem: AppFileSystem,
-    private val appVersion: String = "1.0.1-beta.6",
+    private val appVersion: String = "1.0.1-beta.7",
     private val deviceId: String? = null,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val syncAwareRestore: SyncAwareSnapshotRestore? = null,
