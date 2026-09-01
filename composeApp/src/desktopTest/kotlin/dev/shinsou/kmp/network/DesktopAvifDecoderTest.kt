@@ -18,28 +18,38 @@ import kotlinx.coroutines.test.runTest
 import okio.Buffer
 import okio.FileSystem
 import org.jetbrains.skia.Color
+import org.junit.Assume.assumeTrue
 
 class DesktopAvifDecoderTest {
     @Test
-    fun factoryRecognizesAvifMimeTypeAndHeaderOnlyOnMacOs() {
+    fun factoryRecognizesAvifMimeTypeAndHeaderOnlyWhenConfiguredForMacOs() {
         val encoded = avifFixture()
         val imageLoader = ImageLoader.Builder(PlatformContext.INSTANCE).build()
         try {
             val byMimeType = sourceResult(encoded, mimeType = "image/avif")
             assertNotNull(
-                DesktopAvifDecoder.Factory(decoderProvider = { MacOsAvifImageDecoder { null } })
+                DesktopAvifDecoder.Factory(
+                    platformName = "macOS 15",
+                    decoderProvider = { MacOsAvifImageDecoder { null } },
+                )
                     .create(byMimeType, Options(PlatformContext.INSTANCE), imageLoader),
             )
 
             val bySignature = sourceResult(encoded, mimeType = "application/octet-stream")
             assertNotNull(
-                DesktopAvifDecoder.Factory(decoderProvider = { MacOsAvifImageDecoder { null } })
+                DesktopAvifDecoder.Factory(
+                    platformName = "macOS 15",
+                    decoderProvider = { MacOsAvifImageDecoder { null } },
+                )
                     .create(bySignature, Options(PlatformContext.INSTANCE), imageLoader),
             )
 
             val notAvif = sourceResult("not an image".encodeToByteArray(), mimeType = null)
             assertNull(
-                DesktopAvifDecoder.Factory(decoderProvider = { MacOsAvifImageDecoder { null } })
+                DesktopAvifDecoder.Factory(
+                    platformName = "macOS 15",
+                    decoderProvider = { MacOsAvifImageDecoder { null } },
+                )
                     .create(notAvif, Options(PlatformContext.INSTANCE), imageLoader),
             )
 
@@ -57,6 +67,7 @@ class DesktopAvifDecoderTest {
 
     @Test
     fun macOsImageIoDecodesLicensedAvifFixtureIntoSkiaBitmap() = runTest {
+        assumeTrue("macOS ImageIO is only available on macOS.", isMacOs())
         val encoded = avifFixture()
         assertEquals(FIXTURE_SHA_256, encoded.sha256())
 
@@ -99,6 +110,7 @@ class DesktopAvifDecoderTest {
 
     @Test
     fun registeredCoilLoaderDecodesAvifFileEndToEnd() = runTest {
+        assumeTrue("macOS ImageIO is only available on macOS.", isMacOs())
         val imageLoader = ImageLoader.Builder(PlatformContext.INSTANCE)
             .components { add(DesktopAvifDecoder.Factory()) }
             .build()
@@ -136,6 +148,10 @@ class DesktopAvifDecoderTest {
 
     private fun Int.channels(): String =
         "${Color.getR(this)},${Color.getG(this)},${Color.getB(this)},${Color.getA(this)}"
+
+    private fun isMacOs(): Boolean = System.getProperty("os.name").orEmpty().let { name ->
+        name.contains("mac", ignoreCase = true) || name.contains("darwin", ignoreCase = true)
+    }
 
     private companion object {
         // red-at-12-oclock-with-color-profile-lossy.avif from link-u/avif-sample-images,
