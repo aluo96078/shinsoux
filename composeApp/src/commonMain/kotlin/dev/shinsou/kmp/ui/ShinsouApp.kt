@@ -319,6 +319,7 @@ private fun ShinsouAppContent(
     var browseBackAvailable by remember { mutableStateOf(false) }
     var browseReaderOpen by remember { mutableStateOf(false) }
     var pendingBrowseManga by remember { mutableStateOf<BrowseManga?>(null) }
+    var browseOwnedLegacyMangaId by remember { mutableStateOf<Long?>(null) }
     var localLibraryPublication by remember { mutableStateOf<BrowseManga?>(null) }
     var localLibraryReaderBackRequest by remember { mutableStateOf(0L) }
     var recoveringLocalLibraryMangaId by remember { mutableStateOf<Long?>(null) }
@@ -535,7 +536,7 @@ private fun ShinsouAppContent(
         ) {
             LocalLibraryExtensionRoute.LocalDetail -> false
             is LocalLibraryExtensionRoute.Open -> {
-                section = localLibraryExtensionHostSection(section)
+                section = localLibraryExtensionHostSection()
                 if (route.migrateLegacyUrl) {
                     mutate {
                         repository.updateManga(manga.id) { stored ->
@@ -555,7 +556,7 @@ private fun ShinsouAppContent(
                 true
             }
             is LocalLibraryExtensionRoute.RecoverLegacy -> {
-                val hostSection = localLibraryExtensionHostSection(section)
+                val hostSection = localLibraryExtensionHostSection()
                 // UUID-only beta rows cannot be reversed directly. Search enabled v2 sources and
                 // accept only a candidate whose deterministic publication UUID is an exact match.
                 // The request token prevents a cancelled recovery from navigating after Back.
@@ -687,6 +688,7 @@ private fun ShinsouAppContent(
         }
         localLibraryPublication = null
         browseReaderOpen = false
+        browseOwnedLegacyMangaId = null
         section = next
         selectedMangaId = null
         moreDestination = null
@@ -706,7 +708,16 @@ private fun ShinsouAppContent(
         // users click the same card twice.  DetailPane will render as the state flow catches up.
         val manga = repository.currentSnapshot.mangas.firstOrNull { it.id == mangaId }
         dismissMobileInput()
+        browseOwnedLegacyMangaId = null
         if (manga != null && openLocalExtensionManga(manga)) return
+        if (manga != null) {
+            val hostSection = legacyLibraryFavoriteHostSection(section, manga.favorite)
+            if (hostSection != section) {
+                section = hostSection
+                browseBackRequest = 0L
+                browseBackAvailable = false
+            }
+        }
         localLibraryPublication = null
         browseReaderOpen = false
         pendingBrowseRequest++
@@ -728,11 +739,31 @@ private fun ShinsouAppContent(
         dismissMobileInput()
         localLibraryPublication = null
         browseReaderOpen = false
+        browseOwnedLegacyMangaId = null
         pendingBrowseManga = item
         val request = pendingBrowseRequest + 1
         pendingBrowseRequest = request
         selectedMangaId = null
         moreDestination = null
+    }
+
+    fun closeBrowseParentDetail() {
+        // Legacy source details live in the app shell while their catalogue/search parent lives
+        // inside BrowseScreen. Invalidate an unresolved child first so it cannot navigate after
+        // its parent has closed, then remove only the resolved child owned by that parent.
+        pendingBrowseRequest++
+        pendingBrowseManga = null
+        val previousSelection = selectedMangaId
+        selectedMangaId = selectedMangaAfterBrowseParentDismissed(
+            selectedMangaId = previousSelection,
+            browseOwnedMangaId = browseOwnedLegacyMangaId,
+        )
+        if (selectedMangaId != previousSelection) {
+            selectedChapterIds = emptySet()
+            detailBackRequest = 0L
+            detailNestedBackAvailable = false
+        }
+        browseOwnedLegacyMangaId = null
     }
 
     fun openMore(destination: MoreDestination) {
@@ -853,6 +884,7 @@ private fun ShinsouAppContent(
             if (mangaId != null) {
                 detailBackRequest = 0L
                 detailNestedBackAvailable = false
+                browseOwnedLegacyMangaId = mangaId
                 selectedMangaId = mangaId
                 selectedChapterIds = emptySet()
             } else {
@@ -1681,6 +1713,7 @@ private fun ShinsouAppContent(
                             0f
                         },
                         onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
+                        onBrowseParentDismissed = ::closeBrowseParentDetail,
                         onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                         onBrowseReaderProgress = ::recordV2ReaderProgress,
                         onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
@@ -1938,6 +1971,7 @@ private fun ShinsouAppContent(
                                     0f
                                 },
                                 onBrowseBackAvailabilityChanged = { browseBackAvailable = it },
+                                onBrowseParentDismissed = ::closeBrowseParentDetail,
                                 onBrowseReaderVisibilityChanged = { browseReaderOpen = it },
                                 onBrowseReaderProgress = ::recordV2ReaderProgress,
                                 onBrowseReaderProgressFlushed = v2ReaderProgressCoordinator::flushLocal,
@@ -2210,6 +2244,7 @@ private fun SectionPane(
     browseSystemBackRequest: Long,
     browseBackGestureProgress: Float,
     onBrowseBackAvailabilityChanged: (Boolean) -> Unit,
+    onBrowseParentDismissed: () -> Unit,
     onBrowseReaderVisibilityChanged: (Boolean) -> Unit,
     onBrowseReaderProgress: (
         title: String,
@@ -2435,6 +2470,7 @@ private fun SectionPane(
                 systemBackRequest = browseSystemBackRequest,
                 backGestureProgress = browseBackGestureProgress,
                 onBackAvailabilityChanged = onBrowseBackAvailabilityChanged,
+                onParentDismissed = onBrowseParentDismissed,
                 onReaderVisibilityChanged = onBrowseReaderVisibilityChanged,
                 onReaderProgress = onBrowseReaderProgress,
                 onReaderProgressFlushed = onBrowseReaderProgressFlushed,
@@ -2862,7 +2898,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.5"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.6"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3202,7 +3238,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.5"),
+                strings.text("Shinsou X 1.0.1-beta.6"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),

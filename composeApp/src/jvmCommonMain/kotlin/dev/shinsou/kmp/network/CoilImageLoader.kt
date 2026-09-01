@@ -8,10 +8,16 @@ import io.ktor.client.HttpClient
 
 /** Installs a Coil loader that shares the app's configured Ktor client on JVM targets. */
 @OptIn(ExperimentalCoilApi::class)
-public fun installConfiguredImageLoader(httpClient: HttpClient) {
+public fun installConfiguredImageLoader(
+    httpClient: HttpClient,
+    configureComponents: coil3.ComponentRegistry.Builder.() -> Unit = {},
+) {
     SingletonImageLoader.setSafe { context ->
         ImageLoader.Builder(context)
-            .components { add(KtorNetworkFetcherFactory(httpClient)) }
+            .components {
+                add(KtorNetworkFetcherFactory(httpClient))
+                configureComponents()
+            }
             .build()
     }
 }

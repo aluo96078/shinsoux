@@ -10,6 +10,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
+import android.view.ViewGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +43,10 @@ internal actual fun PlatformWebChallengeView(
     val state = remember(request) {
         val cookieManager = CookieManager.getInstance().apply { setAcceptCookie(true) }
         val webView = WebView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -63,6 +69,10 @@ internal actual fun PlatformWebChallengeView(
         state.webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
                 currentPageLoaded.value.invoke()
+                view.evaluateJavascript(ANDROID_WEB_CHALLENGE_VIEWPORT_FIX, null)
+                automaticWebChallengeLoginScript(request)?.let { script ->
+                    view.evaluateJavascript(script, null)
+                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, navigation: WebResourceRequest): Boolean {
@@ -84,7 +94,7 @@ internal actual fun PlatformWebChallengeView(
         state.prepareIsolatedSession(
             request = request,
             initialCookies = initial,
-            onReady = { state.webView.loadUrl(request.url) },
+            onReady = { state.loadWhenMeasured(request.url) },
             onError = { currentError.value.invoke(it) },
         )
     }
@@ -93,15 +103,28 @@ internal actual fun PlatformWebChallengeView(
         if (captureRequest > 0) {
             state.cookieManager.flush()
             val cookies = state.cookies(request.url)
-            currentSessionCaptured.value.invoke(
-                WebChallengeCapture(cookies = cookies, userAgent = state.webView.settings.userAgentString.orEmpty()),
-            )
+            val captureScript = webChallengeLocalStorageCaptureScript(request)
+            state.webView.evaluateJavascript(captureScript) { encoded ->
+                val storage = decodeWebChallengeLocalStorageCapture(encoded, request.localStorageKeys)
+                if (storage.error != null) {
+                    currentError.value.invoke(storage.error)
+                } else {
+                    currentSessionCaptured.value.invoke(
+                        WebChallengeCapture(
+                            cookies = cookies,
+                            userAgent = state.webView.settings.userAgentString.orEmpty(),
+                            localStorage = storage.values,
+                        ),
+                    )
+                }
+            }
         }
     }
 
     AndroidView(
         factory = { state.webView },
         modifier = modifier,
+        update = { state.resumePendingLoad() },
     )
 
     DisposableEffect(state) {
@@ -116,6 +139,14 @@ private class AndroidChallengeState(
     val cookieManager: CookieManager,
 ) {
     private var released: Boolean = false
+    private var pendingUrl: String? = null
+    private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        openPendingUrlIfMeasured()
+    }
+
+    init {
+        webView.addOnLayoutChangeListener(layoutListener)
+    }
 
     fun cookies(requestUrl: String): List<SourceCookie> =
         parseWebViewCookieHeader(cookieManager.getCookie(requestUrl), requestUrl)
@@ -150,9 +181,95 @@ private class AndroidChallengeState(
         }
     }
 
+    /**
+     * Loading a WebView while Compose still measures it at 0 x 0 can permanently leave Chromium's
+     * viewport units at zero even after the native view becomes visible. Wait for the first real
+     * Android layout before opening the challenge page.
+     */
+    fun loadWhenMeasured(url: String) {
+        if (released) return
+        pendingUrl = url
+        resumePendingLoad()
+    }
+
+    fun resumePendingLoad() {
+        if (released || pendingUrl == null) return
+        webView.post { openPendingUrlIfMeasured() }
+    }
+
+    private fun openPendingUrlIfMeasured() {
+        if (released || !webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) return
+        val url = pendingUrl ?: return
+        pendingUrl = null
+        webView.loadUrl(url)
+    }
+
     fun release() {
         released = true
+        pendingUrl = null
+        webView.removeOnLayoutChangeListener(layoutListener)
         webView.stopLoading()
         webView.destroy()
     }
 }
+
+/**
+ * Some Chromium WebView builds retain a zero layout-viewport after being hosted by a measured
+ * Compose AndroidView. `innerHeight` remains correct, but vh/dvh/svh/lvh all resolve to 0 px. The
+ * website DOM is then present yet every full-screen surface is invisible. Apply this compatibility
+ * layer only after proving that exact engine defect, and only to document roots plus zero-height
+ * elements that explicitly span both vertical insets.
+ */
+private val ANDROID_WEB_CHALLENGE_VIEWPORT_FIX = """
+    (() => {
+      const stateKey = "__shinsouViewportUnitCompatibility";
+      const viewportHeight = () => Math.max(0, Math.round(window.visualViewport?.height || window.innerHeight || 0));
+      const viewportUnitsAreBroken = () => {
+        const expected = viewportHeight();
+        if (expected < 2 || !document.body) return false;
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:100vh;pointer-events:none";
+        document.body.appendChild(probe);
+        const measured = probe.getBoundingClientRect().height;
+        probe.remove();
+        return measured < 1;
+      };
+      if (!viewportUnitsAreBroken()) return "not-needed";
+      const apply = () => {
+        const height = viewportHeight();
+        if (height < 2) return;
+        document.documentElement.style.setProperty("min-height", height + "px", "important");
+        if (document.body) document.body.style.setProperty("min-height", height + "px", "important");
+        for (const selector of ["#root", "#app", "#__next", "#__nuxt"]) {
+          const root = document.querySelector(selector);
+          if (root) root.style.setProperty("min-height", height + "px", "important");
+        }
+        for (const element of document.querySelectorAll("body *")) {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          if ((style.position === "fixed" || style.position === "absolute") &&
+              style.top !== "auto" && style.bottom !== "auto" && rect.height < 1) {
+            element.style.setProperty("height", height + "px", "important");
+            element.dataset.shinsouViewportHeight = "true";
+          } else if (element.dataset.shinsouViewportHeight === "true") {
+            element.style.setProperty("height", height + "px", "important");
+          }
+        }
+      };
+      apply();
+      if (!window[stateKey]) {
+        let queued = false;
+        const schedule = () => {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(() => { queued = false; apply(); });
+        };
+        const observer = new MutationObserver(schedule);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener("resize", schedule, { passive: true });
+        window.visualViewport?.addEventListener("resize", schedule, { passive: true });
+        window[stateKey] = { observer, schedule };
+      }
+      return "applied";
+    })()
+""".trimIndent()

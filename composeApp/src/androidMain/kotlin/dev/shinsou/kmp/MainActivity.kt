@@ -26,6 +26,7 @@ import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
@@ -77,7 +78,9 @@ class MainActivity : FragmentActivity() {
         // bypasses it. Reuse the same configured client for images so covers follow the exact
         // networking policy used by source requests.
         val httpClient = createPlatformHttpClient()
-        installConfiguredImageLoader(httpClient)
+        installConfiguredImageLoader(httpClient) {
+            add(dev.shinsou.kmp.network.AndroidAvifDecoder.Factory())
+        }
         val syncInfrastructure = AndroidSyncInfrastructure(applicationContext)
         composition = ShinsouComposition(
             repository = repository,
@@ -89,6 +92,7 @@ class MainActivity : FragmentActivity() {
             syncInfrastructure = syncInfrastructure,
             platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
+            pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
         )
         val syncRuntime = requireNotNull(composition.syncRuntime)

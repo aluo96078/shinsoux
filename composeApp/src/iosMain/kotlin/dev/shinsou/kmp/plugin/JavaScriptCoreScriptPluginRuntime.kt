@@ -130,6 +130,10 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         private set
     override var webChallengeUrl: String? = null
         private set
+    override var webChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
+    override var requiredWebChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
     override val recentLogs: List<String> get() = withLogsLock { logs.toList() }
 
     private suspend fun initialize(script: String): Unit = mutex.withLock {
@@ -172,6 +176,12 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     headers = headers + ("Referer" to baseUrl)
                 }
                 webChallengeUrl = metadata.string("webChallengeUrl")?.toString()?.takeIf(String::isNotBlank)
+                webChallengeLocalStorageKeys = metadata["webChallengeLocalStorageKeys"]
+                    .stringList()
+                    .toSet()
+                requiredWebChallengeLocalStorageKeys = metadata["requiredWebChallengeLocalStorageKeys"]
+                    .stringList()
+                    .toSet()
                 evaluate("globalThis.baseUrl=${JsonPrimitive(baseUrl)};", "base-url.js")
             }
         } catch (error: Throwable) {
@@ -427,7 +437,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     private suspend fun executeBridgeCall(method: String, arguments: JsonArray): JsonElement =
         try {
             when (method) {
-                "httpGet", "httpGetWithHeaders" -> {
+                "httpGet", "httpGetWithHeaders", "httpGetResponse" -> {
                     val url = arguments.string(0)
                     val customHeaders = arguments.getOrNull(1).stringMap()
                     val response = environment.network.get(
@@ -437,10 +447,17 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                         sourceHeaders = headers,
                         referer = headers.header("Referer"),
                     )
-                    JsonPrimitive(response.bodyText())
+                    if (method == "httpGetResponse") {
+                        buildJsonObject {
+                            put("status", response.status)
+                            put("body", response.bodyText())
+                        }
+                    } else {
+                        JsonPrimitive(response.bodyText())
+                    }
                 }
 
-                "httpPost" -> {
+                "httpPost", "httpPostResponse" -> {
                     val response = environment.network.post(
                         id,
                         arguments.string(0),
@@ -449,7 +466,14 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                         sourceHeaders = headers,
                         referer = headers.header("Referer"),
                     )
-                    JsonPrimitive(response.bodyText())
+                    if (method == "httpPostResponse") {
+                        buildJsonObject {
+                            put("status", response.status)
+                            put("body", response.bodyText())
+                        }
+                    } else {
+                        JsonPrimitive(response.bodyText())
+                    }
                 }
 
                 "httpPostBatch" -> {
@@ -471,6 +495,29 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                             JsonArray(responses.map { JsonPrimitive(it.bodyText()) }),
                         ),
                     )
+                }
+
+                "browserSessionRequest" -> {
+                    val prepared = preparePluginBrowserSessionRequest(
+                        sourceOrigin = selectedSource?.baseUrl.orEmpty(),
+                        allowedOrigins = selectedSource?.browserSessionOrigins.orEmpty(),
+                        request = PluginHttpRequest(
+                            method = arguments.string(1),
+                            url = arguments.string(0),
+                            body = arguments.string(2).encodeToByteArray(),
+                            headers = arguments.getOrNull(3).stringMap(),
+                        ),
+                    )
+                    val response = environment.browserSessionTransport.execute(
+                        sourceId = id,
+                        sourceOrigin = prepared.sourceOrigin,
+                        allowedOrigins = setOf(prepared.targetOrigin),
+                        request = prepared.request,
+                    )
+                    buildJsonObject {
+                        put("status", response.status)
+                        put("body", response.bodyText())
+                    }
                 }
 
                 "log" -> {
@@ -526,7 +573,9 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     } ?: environment.systemEventNegotiation
                     put("enabled", negotiation?.enabled == true)
                     put("protocol", "dev.shinsou.system")
-                    negotiation?.version?.let { put("version", it) } ?: put("version", JsonNull)
+                    val negotiatedVersion = negotiation?.version
+                    if (negotiatedVersion == null) put("version", JsonNull)
+                    else put("version", negotiatedVersion)
                     put("grantedCapabilities", PluginJson.encodeToJsonElement(negotiation?.grantedCapabilities.orEmpty()))
                     put("hardLimits", PluginJson.encodeToJsonElement(negotiation?.hardLimits))
                 }

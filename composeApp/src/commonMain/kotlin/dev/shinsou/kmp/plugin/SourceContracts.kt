@@ -21,6 +21,13 @@ public interface CatalogueSource : Source {
     public val headers: Map<String, String> get() = emptyMap()
     /** Optional protected, same-origin endpoint used to mint browser-bound anti-bot cookies. */
     public val webChallengeUrl: String? get() = null
+    /**
+     * Source-owned localStorage keys that an explicit, same-origin browser challenge may import.
+     * The host reads only these exact keys and persists them as source preferences.
+     */
+    public val webChallengeLocalStorageKeys: Set<String> get() = emptySet()
+    /** Keys from [webChallengeLocalStorageKeys] that must be present before import can succeed. */
+    public val requiredWebChallengeLocalStorageKeys: Set<String> get() = emptySet()
 
     public suspend fun getPopularManga(page: Int): MangasPage
     public suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage

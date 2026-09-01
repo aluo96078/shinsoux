@@ -14,12 +14,30 @@ private struct CookiePayload: Codable {
 }
 
 private struct LaunchPayload: Codable {
+    let mode: String
     let url: String
     let sourceName: String
     let userAgent: String
     let cookies: [CookiePayload]
+    let localStorageKeys: [String]
     let username: String?
     let password: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, url, sourceName, userAgent, cookies, localStorageKeys, username, password
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try values.decodeIfPresent(String.self, forKey: .mode) ?? "challenge"
+        url = try values.decode(String.self, forKey: .url)
+        sourceName = try values.decode(String.self, forKey: .sourceName)
+        userAgent = try values.decode(String.self, forKey: .userAgent)
+        cookies = try values.decode([CookiePayload].self, forKey: .cookies)
+        localStorageKeys = try values.decodeIfPresent([String].self, forKey: .localStorageKeys) ?? []
+        username = try values.decodeIfPresent(String.self, forKey: .username)
+        password = try values.decodeIfPresent(String.self, forKey: .password)
+    }
 }
 
 private struct HelperEvent: Codable {
@@ -27,19 +45,80 @@ private struct HelperEvent: Codable {
     let message: String?
     let cookies: [CookiePayload]?
     let userAgent: String?
+    let localStorage: [String: String]?
+    let id: String?
+    let value: String?
 
     static func simple(_ type: String) -> HelperEvent {
-        HelperEvent(type: type, message: nil, cookies: nil, userAgent: nil)
+        HelperEvent(
+            type: type,
+            message: nil,
+            cookies: nil,
+            userAgent: nil,
+            localStorage: nil,
+            id: nil,
+            value: nil
+        )
     }
 
     static func error(_ message: String) -> HelperEvent {
-        HelperEvent(type: "error", message: message, cookies: nil, userAgent: nil)
+        HelperEvent(
+            type: "error",
+            message: message,
+            cookies: nil,
+            userAgent: nil,
+            localStorage: nil,
+            id: nil,
+            value: nil
+        )
     }
 
-    static func captured(_ cookies: [CookiePayload], userAgent: String) -> HelperEvent {
-        HelperEvent(type: "cookies", message: nil, cookies: cookies, userAgent: userAgent)
+    static func evaluated(_ id: String, value: String?) -> HelperEvent {
+        HelperEvent(
+            type: "evaluated",
+            message: nil,
+            cookies: nil,
+            userAgent: nil,
+            localStorage: nil,
+            id: id,
+            value: value
+        )
     }
 
+    static func evaluationError(_ id: String) -> HelperEvent {
+        HelperEvent(
+            type: "error",
+            message: "The browser-session script failed.",
+            cookies: nil,
+            userAgent: nil,
+            localStorage: nil,
+            id: id,
+            value: nil
+        )
+    }
+
+    static func captured(
+        _ cookies: [CookiePayload],
+        userAgent: String,
+        localStorage: [String: String]
+    ) -> HelperEvent {
+        HelperEvent(
+            type: "cookies",
+            message: nil,
+            cookies: cookies,
+            userAgent: userAgent,
+            localStorage: localStorage,
+            id: nil,
+            value: nil
+        )
+    }
+
+}
+
+private struct BrowserSessionCommand: Codable {
+    let type: String
+    let id: String?
+    let script: String?
 }
 
 private final class EventWriter {
@@ -65,6 +144,7 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
     private var didReportFirstPage = false
     private var autoLoginInFlight = false
     private var didSubmitAutomaticLogin = false
+    private var automaticLoginWatcherInstalled = false
     private var automaticLoginRecoveryAttempts = 0
     private var terminating = false
 
@@ -113,6 +193,24 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
         browser.customUserAgent = nil
         browser.allowsMagnification = true
         webView = browser
+
+        if launch.mode == "browserSession" {
+            // Browser-session transport is deliberately headless. Keeping the WKWebView attached
+            // to a tiny hidden window gives WebKit a normal page lifecycle and Safari's native
+            // networking identity without exposing an interactive browser surface.
+            NSApp.setActivationPolicy(.prohibited)
+            let browserWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            browserWindow.contentView = browser
+            browserWindow.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+            window = browserWindow
+            writer.send(.simple("ready"))
+            return
+        }
 
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1100, height: 800)
         let size = NSSize(
@@ -171,14 +269,48 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
             while let line = readLine(strippingNewline: true) {
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    switch line {
-                    case "capture": self.captureCookies()
-                    case "close": self.terminate()
-                    default: self.writer.send(.error("The browser helper received an unsupported command."))
+                    if self.launch.mode == "browserSession" {
+                        self.handleBrowserSessionCommand(line)
+                    } else {
+                        switch line {
+                        case "capture": self.captureCookies()
+                        case "close": self.terminate()
+                        default: self.writer.send(.error("The browser helper received an unsupported command."))
+                        }
                     }
                 }
             }
             DispatchQueue.main.async { [weak self] in self?.terminate() }
+        }
+    }
+
+    private func handleBrowserSessionCommand(_ line: String) {
+        guard let data = line.data(using: .utf8),
+              let command = try? JSONDecoder().decode(BrowserSessionCommand.self, from: data) else {
+            writer.send(.error("The browser-session command was invalid."))
+            return
+        }
+        switch command.type {
+        case "close":
+            terminate()
+        case "evaluate":
+            guard let id = command.id, !id.isEmpty, id.count <= 128,
+                  let script = command.script, script.utf8.count <= 4_194_304,
+                  let browser = webView else {
+                writer.send(.error("The browser-session command was invalid."))
+                return
+            }
+            browser.evaluateJavaScript(script) { [weak self] value, error in
+                guard let self else { return }
+                if error != nil {
+                    self.writer.send(.evaluationError(id))
+                } else {
+                    let rendered = value.map { String(describing: $0) }
+                    self.writer.send(.evaluated(id, value: rendered))
+                }
+            }
+        default:
+            writer.send(.error("The browser helper received an unsupported command."))
         }
     }
 
@@ -187,19 +319,51 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
             writer.send(.error("The browser session is unavailable."))
             return
         }
-        browser.evaluateJavaScript("navigator.userAgent") { [weak self] value, _ in
+        guard browser.url.map(isSameOrigin) == true else {
+            writer.send(.error("Return to the source website before importing its browser session."))
+            return
+        }
+        let storageScript = Self.localStorageCaptureScript(keys: launch.localStorageKeys)
+        browser.evaluateJavaScript(storageScript) { [weak self] storageValue, storageError in
             guard let self else { return }
-            let userAgent = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !userAgent.isEmpty, userAgent.count <= 512,
-                  !userAgent.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
-                self.writer.send(.error("The browser User-Agent could not be read."))
+            guard storageError == nil,
+                  let storageJson = storageValue as? String,
+                  let storageData = storageJson.data(using: .utf8),
+                  let storage = try? JSONDecoder().decode([String: String].self, from: storageData) else {
+                self.writer.send(.error("The browser session data could not be read."))
                 return
             }
-            self.dataStore.httpCookieStore.getAllCookies { cookies in
-                let payloads = cookies.compactMap { self.payload(for: $0) }
-                self.writer.send(.captured(payloads, userAgent: userAgent))
+            browser.evaluateJavaScript("navigator.userAgent") { value, _ in
+                let userAgent = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !userAgent.isEmpty, userAgent.count <= 512,
+                      !userAgent.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
+                    self.writer.send(.error("The browser User-Agent could not be read."))
+                    return
+                }
+                self.dataStore.httpCookieStore.getAllCookies { cookies in
+                    let payloads = cookies.compactMap { self.payload(for: $0) }
+                    self.writer.send(.captured(payloads, userAgent: userAgent, localStorage: storage))
+                }
             }
         }
+    }
+
+    private static func localStorageCaptureScript(keys: [String]) -> String {
+        let allowed = Array(Set(keys.filter {
+            !$0.isEmpty && $0.count <= 64 && $0.allSatisfy { $0.isLetter || $0.isNumber || ".-_".contains($0) }
+        })).prefix(8)
+        let encoded = (try? JSONSerialization.data(withJSONObject: Array(allowed)))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        return """
+        (() => {
+          const values = {};
+          for (const key of \(encoded)) {
+            const value = localStorage.getItem(key);
+            if (value !== null) values[key] = String(value);
+          }
+          return JSON.stringify(values);
+        })()
+        """
     }
 
     private func payload(for cookie: HTTPCookie) -> CookiePayload? {
@@ -233,7 +397,9 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
             didReportFirstPage = true
             writer.send(.simple("loaded"))
         }
-        attemptAutomaticLogin(in: webView)
+        if launch.mode != "browserSession" {
+            attemptAutomaticLogin(in: webView)
+        }
     }
 
     private func attemptAutomaticLogin(in browser: WKWebView) {
@@ -247,7 +413,11 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
         autoLoginInFlight = true
         browser.callAsyncJavaScript(
             Self.automaticLoginScript,
-            arguments: ["username": username, "password": password],
+            arguments: [
+                "username": username,
+                "password": password,
+                "installWatcher": !automaticLoginWatcherInstalled,
+            ],
             in: nil,
             in: .page
         ) { [weak self] result in
@@ -259,6 +429,8 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
                     if let status = value as? String,
                        status == "submitted" || status == "already-submitted" {
                         self.didSubmitAutomaticLogin = true
+                    } else if value as? String == "watching" {
+                        self.automaticLoginWatcherInstalled = true
                     }
                 case .failure:
                     // A Cloudflare navigation can cancel JavaScript before it reports that no
@@ -305,16 +477,18 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
     const attemptKey = "__shinsouAutomaticLoginSubmitted";
     if (sessionStorage.getItem(attemptKey) === "1") return "already-submitted";
 
+    const visible = (element) => !!element && element.getClientRects().length > 0;
+    const submit = () => {
     const passwordInput = Array.from(document.querySelectorAll('input[type="password"]'))
-        .find((input) => !input.disabled && !input.readOnly);
-    if (!passwordInput) return "no-password-field";
+        .find((input) => visible(input) && !input.disabled && !input.readOnly);
+    if (!passwordInput) return false;
 
     const form = passwordInput.form || passwordInput.closest("form");
-    if (!form) return "no-form";
+    if (!form) return false;
 
     const action = new URL(form.getAttribute("action") || location.href, location.href);
     if (!/^https?:$/.test(action.protocol) || action.origin !== location.origin) {
-        return "blocked-form-action";
+        return false;
     }
 
     const selectors = [
@@ -330,14 +504,15 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
     ];
     let usernameInput = null;
     for (const selector of selectors) {
-        const candidate = form.querySelector(selector);
-        if (candidate && candidate !== passwordInput && !candidate.disabled && !candidate.readOnly &&
-            String(candidate.type).toLowerCase() !== "hidden") {
+        const candidate = Array.from(form.querySelectorAll(selector)).find((input) =>
+            visible(input) && input !== passwordInput && !input.disabled && !input.readOnly &&
+            String(input.type).toLowerCase() !== "hidden");
+        if (candidate) {
             usernameInput = candidate;
             break;
         }
     }
-    if (!usernameInput) return "no-username-field";
+    if (!usernameInput) return false;
 
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     const fill = (input, value) => {
@@ -360,7 +535,28 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
     } else {
         HTMLFormElement.prototype.submit.call(form);
     }
-    return "submitted";
+    return true;
+    };
+    if (submit()) return "submitted";
+    if (!Boolean(installWatcher)) return "waiting";
+    const observer = new MutationObserver(() => {
+        if (submit()) observer.disconnect();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const labels = new Set(["login", "log in", "sign in", "登入", "登录", "會員登入", "会员登录"]);
+    const opener = Array.from(document.querySelectorAll('button, a, [role="button"]')).find((element) => {
+        if (!visible(element) || element.disabled) return false;
+        const label = String(element.getAttribute("aria-label") || element.getAttribute("title") ||
+            element.textContent || "").trim().toLowerCase();
+        if (!labels.has(label)) return false;
+        if (element.tagName === "A" && element.href) {
+            try { if (new URL(element.href, location.href).origin !== location.origin) return false; }
+            catch (_) { return false; }
+        }
+        return true;
+    });
+    if (opener) opener.click();
+    return "watching";
     """#
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

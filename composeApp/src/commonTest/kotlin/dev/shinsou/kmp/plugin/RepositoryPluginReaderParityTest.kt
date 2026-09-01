@@ -23,7 +23,7 @@ import kotlin.test.assertTrue
 
 class RepositoryPluginReaderParityTest {
     @Test
-    fun resolvesViewerHtmlBeforeBuildingCoilRequest() = runTest {
+    fun resolvesViewerHtmlOnlyWhenTheReaderDisplaysThatPage() = runTest {
         val source = ReaderParityRuntime(
             sourceId = 9_001,
             pages = listOf(Page(0, url = "/gallery/view/page.html", imageUrl = null)),
@@ -45,6 +45,10 @@ class RepositoryPluginReaderParityTest {
                 PluginCookie("session", "reader-cookie", ".example", secure = true),
             )
             val chapter = fixture.coordinator.loadReaderChapter(fixture.mangaId, fixture.chapterId)
+            assertTrue(fixture.transportRequests.isEmpty(), "viewer HTML must stay lazy while opening a chapter")
+            val pendingPage = chapter.pages.single()
+            assertTrue(pendingPage.imageUrl.isBlank())
+            val readerPage = assertNotNull(pendingPage.imageResolver).invoke()
 
             val viewerRequest = fixture.transportRequests.single()
             assertEquals(
@@ -58,7 +62,6 @@ class RepositoryPluginReaderParityTest {
             assertEquals("https://reader.example/chapter", viewerRequest.headers["Referer"])
             assertTrue(viewerRequest.headers.getValue("Accept").startsWith("text/html"))
 
-            val readerPage = chapter.pages.single()
             assertEquals(
                 "https://reader.example/images/page.jpg?token=a&next=b",
                 Url(readerPage.imageUrl).parameters["url"],
@@ -72,6 +75,7 @@ class RepositoryPluginReaderParityTest {
                 readerPage.headers["Referer"],
             )
             assertFalse(readerPage.imageUrl.contains("/gallery/view/page.html"))
+            assertEquals(null, readerPage.imageResolver)
         } finally {
             fixture.close()
         }
@@ -92,7 +96,8 @@ class RepositoryPluginReaderParityTest {
         }
         try {
             val error = assertFailsWith<IllegalStateException> {
-                fixture.coordinator.loadReaderChapter(fixture.mangaId, fixture.chapterId)
+                val chapter = fixture.coordinator.loadReaderChapter(fixture.mangaId, fixture.chapterId)
+                assertNotNull(chapter.pages.single().imageResolver).invoke()
             }
             assertTrue(error.message.orEmpty().contains("<img id=\"img\""))
             assertTrue(error.message.orEmpty().contains("refusing to pass an HTML URL"))

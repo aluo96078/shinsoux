@@ -8,7 +8,13 @@ import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 internal data class WebChallengeCapture(
     val cookies: List<SourceCookie>,
     val userAgent: String,
-)
+    val localStorage: Map<String, String> = emptyMap(),
+) {
+    /** Browser storage may contain tokens; never render captured values in diagnostics. */
+    override fun toString(): String =
+        "WebChallengeCapture(cookieCount=${cookies.size}, hasUserAgent=${userAgent.isNotBlank()}, " +
+            "localStorageKeyCount=${localStorage.size})"
+}
 
 /** Platform WebView surface backed by an isolated, non-persistent browser session. */
 @Composable

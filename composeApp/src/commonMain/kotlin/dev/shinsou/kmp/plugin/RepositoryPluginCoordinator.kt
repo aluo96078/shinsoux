@@ -130,23 +130,22 @@ public class RepositoryPluginCoordinator(
         val referer = source.headers.header("Referer")
             ?: absoluteSourceUrl(source.baseUrl, reference.chapter.url)
         val pages = source.getPageList(reference.chapter).mapIndexed { fallbackIndex, page ->
-            val resolved = resolvePage(source, page, fallbackIndex, referer)
-            val built = requestBuilder.build(
-                sourceId = source.id,
-                request = PluginHttpRequest(
-                    method = "GET",
-                    url = resolved.url,
-                    headers = resolved.headers,
-                ),
-                sourceHeaders = source.headers,
-                referer = resolved.referer,
-            )
-            ReaderPage(
-                index = resolved.index,
-                imageUrl = built.transportRequest.url,
-                headers = built.transportRequest.headers,
-                imageTransform = resolved.imageTransform,
-            )
+            if (page.imageUrl.isNullOrBlank() && page.url.isNotBlank()) {
+                ReaderPage(
+                    index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
+                    imageResolver = {
+                        buildReaderPage(
+                            source = source,
+                            resolved = resolvePage(source, page, fallbackIndex, referer),
+                        )
+                    },
+                )
+            } else {
+                buildReaderPage(
+                    source = source,
+                    resolved = resolvePage(source, page, fallbackIndex, referer),
+                )
+            }
         }.sortedBy(ReaderPage::index)
         return ReaderChapter(pages, referer, source.headers)
     }
@@ -337,6 +336,28 @@ public class RepositoryPluginCoordinator(
         val referer: String,
         val imageTransform: ReaderImageTransform?,
     )
+
+    private suspend fun buildReaderPage(
+        source: CatalogueSource,
+        resolved: ResolvedPage,
+    ): ReaderPage {
+        val built = requestBuilder.build(
+            sourceId = source.id,
+            request = PluginHttpRequest(
+                method = "GET",
+                url = resolved.url,
+                headers = resolved.headers,
+            ),
+            sourceHeaders = source.headers,
+            referer = resolved.referer,
+        )
+        return ReaderPage(
+            index = resolved.index,
+            imageUrl = built.transportRequest.url,
+            headers = built.transportRequest.headers,
+            imageTransform = resolved.imageTransform,
+        )
+    }
 
     private suspend fun resolvePage(
         source: CatalogueSource,

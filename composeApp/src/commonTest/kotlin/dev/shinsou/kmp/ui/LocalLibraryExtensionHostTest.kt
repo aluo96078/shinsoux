@@ -9,7 +9,33 @@ class LocalLibraryExtensionHostTest {
     fun openingAnExtensionFavoriteDoesNotSwitchAwayFromTheLibrary() {
         assertEquals(
             MainSection.LIBRARY,
-            localLibraryExtensionHostSection(MainSection.LIBRARY),
+            localLibraryExtensionHostSection(),
         )
+    }
+
+    @Test
+    fun openingALegacyFavoriteCannotLeaveTheBrowseCatalogueUnderItsDetail() {
+        assertEquals(
+            MainSection.LIBRARY,
+            legacyLibraryFavoriteHostSection(MainSection.BROWSE, favorite = true),
+        )
+    }
+
+    @Test
+    fun ordinaryBrowseResultsKeepTheirBrowseHost() {
+        assertEquals(
+            MainSection.BROWSE,
+            legacyLibraryFavoriteHostSection(MainSection.BROWSE, favorite = false),
+        )
+    }
+
+    @Test
+    fun updatesAndHistoryKeepTheirExistingDetailHost() {
+        listOf(MainSection.UPDATES, MainSection.HISTORY).forEach { current ->
+            assertEquals(
+                current,
+                legacyLibraryFavoriteHostSection(current, favorite = true),
+            )
+        }
     }
 }

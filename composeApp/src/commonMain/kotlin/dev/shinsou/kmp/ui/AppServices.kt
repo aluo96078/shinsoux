@@ -597,10 +597,16 @@ data class ReaderChapter(
 
 data class ReaderPage(
     val index: Int,
-    val imageUrl: String,
+    val imageUrl: String = "",
     val headers: Map<String, String> = emptyMap(),
     val local: Boolean = false,
     val imageTransform: ReaderImageTransform? = null,
+    /**
+     * Resolves viewer HTML only when this page is about to be displayed. Large galleries can
+     * therefore open without fetching hundreds of viewer pages up front. The returned page must
+     * contain a final image URL and no further resolver.
+     */
+    val imageResolver: (suspend () -> ReaderPage)? = null,
 )
 
 /** A non-blocking login prompt requested by an executable source. */
@@ -890,6 +896,7 @@ interface BrowseCallbacks {
         sourceId: Long,
         cookies: List<SourceCookie>,
         userAgent: String,
+        localStorage: Map<String, String> = emptyMap(),
     ) {
         cookies.forEach { cookie -> setSourceCookie(sourceId, cookie) }
     }
@@ -947,6 +954,8 @@ data class BrowseSource(
     val isNsfw: Boolean = false,
     val supportsLatest: Boolean = true,
     val supportsLogin: Boolean = false,
+    /** Login must complete in the source's browser because credentials alone cannot mint a session. */
+    val requiresBrowserSessionLogin: Boolean = false,
     /** The source exposes an account-owned remote collection (for example Wenku8 bookcase). */
     val supportsFavorites: Boolean = false,
     /** v2 browse option key used to open the source-owned collection. */
@@ -1044,6 +1053,10 @@ data class SourceWebChallengeRequest(
     val cookies: List<SourceCookie> = emptyList(),
     /** Cookie name that proves the requested anti-bot challenge completed, when one is required. */
     val requiredCookieName: String? = null,
+    /** Exact same-origin localStorage allowlist. Values are never included in this request. */
+    val localStorageKeys: List<String> = emptyList(),
+    /** Allowlisted keys that must contain a non-empty value before the session can be imported. */
+    val requiredLocalStorageKeys: Set<String> = emptySet(),
     /** Credentials are supplied only for an explicit, source-scoped browser login request. */
     val username: String? = null,
     val password: String? = null,
@@ -1052,6 +1065,8 @@ data class SourceWebChallengeRequest(
     override fun toString(): String =
         "SourceWebChallengeRequest(sourceId=$sourceId, sourceName=$sourceName, " +
             "cookieCount=${cookies.size}, requiresChallengeCookie=${requiredCookieName != null}, " +
+            "localStorageKeyCount=${localStorageKeys.size}, " +
+            "requiredLocalStorageKeyCount=${requiredLocalStorageKeys.size}, " +
             "hasCredentials=${!username.isNullOrBlank() && !password.isNullOrEmpty()})"
 }
 

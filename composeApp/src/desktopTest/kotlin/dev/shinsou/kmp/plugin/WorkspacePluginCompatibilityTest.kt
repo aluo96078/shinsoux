@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
 
 /** Verifies legacy Shinsou scripts through JVM classpath resources, independent of the test cwd. */
@@ -89,8 +90,11 @@ class WorkspacePluginCompatibilityTest {
                 assertEquals(pluginId, runtime.pluginId)
                 assertTrue(runtime.baseUrl.isNotBlank(), "$fileName did not export source.baseUrl")
                 if (pluginId == "zh.bika") {
-                    val page = runtime.getPopularManga(0)
-                    assertTrue(page.mangas.isEmpty(), "Bika offline fixture should return an empty catalogue")
+                    val failure = assertFails { runtime.getPopularManga(0) }
+                    assertTrue(
+                        failure.message.orEmpty().contains("漫畫目錄"),
+                        "Bika offline fixture should preserve its missing-catalogue diagnostic",
+                    )
                     // A raw compatibility runtime has no host-bound artifact/source admission.
                     // Even a newer workspace script that calls bridge.requestLogin must fail closed.
                     assertEquals(emptyList(), loginRequests)

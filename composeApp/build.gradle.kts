@@ -13,14 +13,14 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.5")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.105")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.6")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.106")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600105)
+    .orElse(25600106)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
@@ -290,6 +290,7 @@ kotlin {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.biometric)
                 implementation(libs.androidx.work.runtime)
+                implementation(libs.android.avif)
                 // MainActivity installs a shared Coil network fetcher so Android image
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)

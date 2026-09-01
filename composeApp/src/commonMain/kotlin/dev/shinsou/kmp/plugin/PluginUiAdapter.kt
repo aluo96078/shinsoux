@@ -1017,15 +1017,34 @@ public class PluginBrowseAdapter(
         sourceId: Long,
         cookies: List<BrowseSourceCookie>,
         userAgent: String,
+        localStorage: Map<String, String>,
     ): Unit = operationMutex.withLock {
-        val storageId = requireV2SourceScope(sourceId)?.second ?: run {
+        val v2Scope = requireV2SourceScope(sourceId)
+        val storageId = v2Scope?.second ?: run {
             check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
             sourceId
+        }
+        val allowedStorageKeys = if (v2Scope != null) {
+            manager.extensionSourceV2(v2Scope.first)?.webChallengeLocalStorageKeys().orEmpty()
+        } else {
+            manager.source(sourceId)?.webChallengeLocalStorageKeys.orEmpty()
+        }
+            .let(::normalizeWebChallengeStorageKeyDeclaration)
+        val safeLocalStorage = normalizeImportedWebChallengeStorage(localStorage, allowedStorageKeys)
+        val requiredStorageKeys = if (v2Scope != null) {
+            manager.extensionSourceV2(v2Scope.first)?.requiredWebChallengeLocalStorageKeys().orEmpty()
+        } else {
+            manager.source(sourceId)?.requiredWebChallengeLocalStorageKeys.orEmpty()
+        }.let(::normalizeWebChallengeStorageKeyDeclaration)
+        require(requiredStorageKeys.all { key -> !safeLocalStorage[key].isNullOrEmpty() }) {
+            "Required browser session data is missing"
         }
         val safeUserAgent = requireNotNull(normalizePluginUserAgent(userAgent)) {
             "Invalid browser User-Agent"
         }
-        require(cookies.isNotEmpty()) { "No browser cookies were supplied" }
+        require(cookies.isNotEmpty() || safeLocalStorage.isNotEmpty()) {
+            "No browser session data was supplied"
+        }
         cookies.forEach { cookie ->
             require(cookie.name.isNotBlank()) { "Cookie name cannot be blank" }
             require(cookie.domain.isNotBlank()) { "Cookie domain cannot be blank" }
@@ -1042,6 +1061,9 @@ public class PluginBrowseAdapter(
                     hostOnly = cookie.hostOnly,
                 ),
             )
+        }
+        safeLocalStorage.forEach { (key, value) ->
+            pluginStorage.setPreference(storageId, key, value)
         }
         pluginStorage.setWebChallengeUserAgent(storageId, safeUserAgent)
         rebuildSnapshot(errorMessage = null)
@@ -1079,6 +1101,8 @@ public class PluginBrowseAdapter(
         val sourceHeaders: Map<String, String>
         val referer: String?
         val supportsLogin: Boolean
+        val localStorageKeys: Set<String>
+        val requiredLocalStorageKeys: Set<String>
         if (v2Scope != null) {
             val source = requireNotNull(manager.extensionSourceV2(v2Scope.first)) {
                 "Unknown extension v2 source: ${v2Scope.first.canonicalId}"
@@ -1097,6 +1121,12 @@ public class PluginBrowseAdapter(
                 .orEmpty()
             referer = baseUrl
             supportsLogin = ExtensionCapability.LOGIN in source.descriptor.capabilities
+            localStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
+                source.webChallengeLocalStorageKeys(),
+            )
+            requiredLocalStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
+                source.requiredWebChallengeLocalStorageKeys(),
+            )
         } else {
             val source = manager.source(sourceId) ?: throw IllegalArgumentException("Unknown source: $sourceId")
             sourceName = source.name
@@ -1105,6 +1135,15 @@ public class PluginBrowseAdapter(
             sourceHeaders = source.headers
             referer = source.headers.header("Referer") ?: source.baseUrl
             supportsLogin = (source as? LoginSource)?.supportsLogin == true
+            localStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
+                source.webChallengeLocalStorageKeys,
+            )
+            requiredLocalStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
+                source.requiredWebChallengeLocalStorageKeys,
+            )
+            require(requiredLocalStorageKeys.all(localStorageKeys::contains)) {
+                "Required browser storage keys must be included in the source allowlist"
+            }
         }
         val sourceOrigin = runCatching { Url(baseUrl.trim()) }.getOrNull() ?: return null
         val target = runCatching { Url(challengeUrl.trim()) }.getOrNull() ?: return null
@@ -1151,13 +1190,49 @@ public class PluginBrowseAdapter(
             requiredCookieName = "cf_clearance".takeIf {
                 v2Scope?.first?.let(::requiresCloudflareClearance) == true
             },
+            localStorageKeys = localStorageKeys.sorted(),
+            requiredLocalStorageKeys = requiredLocalStorageKeys,
             username = credential?.username,
             password = credential?.password,
         )
     }
 
+    private fun normalizeWebChallengeStorageKeyDeclaration(values: Iterable<String>): Set<String> =
+        values.asSequence()
+            .map(String::trim)
+            .onEach { key ->
+                require(key.length in 1..64 && key.all { it.isLetterOrDigit() || it in "._-" }) {
+                    "Invalid browser storage key declaration"
+                }
+            }
+            .distinct()
+            .take(9)
+            .toSet()
+            .also { require(it.size <= 8) { "Too many browser storage keys were declared" } }
+
+    private fun normalizeImportedWebChallengeStorage(
+        values: Map<String, String>,
+        allowedKeys: Set<String>,
+    ): Map<String, String> {
+        require(values.keys.all(allowedKeys::contains)) {
+            "Browser session contained an undeclared storage key"
+        }
+        var totalBytes = 0
+        return values.entries.associate { (key, value) ->
+            require(value.none(Char::isISOControl)) { "Invalid browser storage value" }
+            val bytes = value.encodeToByteArray().size
+            require(bytes <= 16 * 1_024 && totalBytes + bytes <= 32 * 1_024) {
+                "Browser storage value is too large"
+            }
+            totalBytes += bytes
+            key to value
+        }
+    }
+
     private fun requiresCloudflareClearance(sourceKey: SourceKey): Boolean =
-        sourceKey.packageId == "zh.bilimanga" && sourceKey.sourceId == "zh.bilimanga.manga"
+        sourceKey.packageId == "zh.bilimanga" && sourceKey.sourceId == "zh.bilimanga.manga" ||
+            sourceKey.packageId == "zh.bilimanga.manga" &&
+            sourceKey.sourceId == BILIMANGA_MANGA_SOURCE_ID.toString()
 
     private fun Url.sameOrigin(other: Url): Boolean =
         protocol.name.equals(other.protocol.name, ignoreCase = true) &&
@@ -1654,6 +1729,7 @@ public class PluginBrowseAdapter(
                 isNsfw = descriptor?.nsfw ?: false,
                 supportsLatest = source.supportsLatest,
                 supportsLogin = supportsLogin,
+                requiresBrowserSessionLogin = source.requiredWebChallengeLocalStorageKeys.isNotEmpty(),
                 supportsFavorites = source.supportsFavorites,
                 // Credentials and cookies are intentionally not decrypted while rebuilding the
                 // public source catalogue. Desktop protected storage may need interactive OS
@@ -1726,6 +1802,9 @@ public class PluginBrowseAdapter(
                                 ?.toBooleanStrictOrNull() ?: true,
                             supportsLatest = ExtensionCapability.LATEST in descriptor.capabilities,
                             supportsLogin = supportsLogin,
+                            requiresBrowserSessionLogin = hostSource
+                                ?.requiredWebChallengeLocalStorageKeys()
+                                ?.isNotEmpty() == true,
                             supportsFavorites = ExtensionCapability.FAVORITE in descriptor.capabilities,
                             favoriteBrowseOptionKey = if (ExtensionCapability.FAVORITE in descriptor.capabilities) {
                                 DEFAULT_FAVORITE_BROWSE_OPTION_KEY

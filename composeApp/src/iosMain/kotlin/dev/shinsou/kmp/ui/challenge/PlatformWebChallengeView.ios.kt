@@ -6,6 +6,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
+import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import dev.shinsou.kmp.ui.SourceCookie
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
@@ -59,8 +61,11 @@ internal actual fun PlatformWebChallengeView(
         }
         val challengeState = IosChallengeState(webView)
         val delegate = IosChallengeNavigationDelegate(
-            onLoaded = {
+            onLoaded = { loadedWebView ->
                 currentPageLoaded.value.invoke()
+                automaticWebChallengeLoginScript(request)?.let { script ->
+                    loadedWebView.evaluateJavaScript(script, completionHandler = null)
+                }
             },
             onError = { currentError.value.invoke(it) },
         )
@@ -76,10 +81,24 @@ internal actual fun PlatformWebChallengeView(
     LaunchedEffect(state, captureRequest) {
         if (captureRequest > 0) {
             state.capture(request.url) { cookies ->
-                state.webView.evaluateJavaScript("navigator.userAgent") { value, _ ->
-                    currentSessionCaptured.value.invoke(
-                        WebChallengeCapture(cookies = cookies, userAgent = value as? String ?: ""),
+                state.webView.evaluateJavaScript(webChallengeLocalStorageCaptureScript(request)) { encoded, _ ->
+                    val storage = decodeWebChallengeLocalStorageCapture(
+                        encoded as? String,
+                        request.localStorageKeys,
                     )
+                    if (storage.error != null) {
+                        currentError.value.invoke(storage.error)
+                    } else {
+                        state.webView.evaluateJavaScript("navigator.userAgent") { value, _ ->
+                            currentSessionCaptured.value.invoke(
+                                WebChallengeCapture(
+                                    cookies = cookies,
+                                    userAgent = value as? String ?: "",
+                                    localStorage = storage.values,
+                                ),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -93,6 +112,14 @@ internal actual fun PlatformWebChallengeView(
             released.stopLoading()
             released.navigationDelegate = null
         },
+        properties = UIKitInteropProperties(
+            // Login controls, Cloudflare widgets, and scrolling must receive UIKit touches
+            // immediately. Cooperative mode lets the surrounding Compose dialog win the gesture
+            // arena first, which can make an otherwise visible WKWebView entirely non-interactive.
+            interactionMode = UIKitInteropInteractionMode.NonCooperative,
+            isNativeAccessibilityEnabled = true,
+            placedAsOverlay = true,
+        ),
     )
 }
 
@@ -135,11 +162,11 @@ private class IosChallengeState(val webView: WKWebView) {
 
 @OptIn(ExperimentalForeignApi::class)
 private class IosChallengeNavigationDelegate(
-    private val onLoaded: () -> Unit,
+    private val onLoaded: (WKWebView) -> Unit,
     private val onError: (String) -> Unit,
 ) : NSObject(), WKNavigationDelegateProtocol {
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
-        onLoaded()
+        onLoaded(webView)
     }
 
     @ObjCSignatureOverride

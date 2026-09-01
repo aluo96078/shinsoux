@@ -253,6 +253,164 @@ public class KeyValuePluginStorage(
         "source.$sourceId.webChallenge.userAgent"
 }
 
+/**
+ * Lazily copies the former reviewed BiliManga session into its standalone numeric source scope.
+ *
+ * Each state kind migrates only when that kind is first requested. In particular, constructing the
+ * storage graph and reading cookies never decrypts credentials, so an app launch cannot trigger a
+ * keychain prompt merely because the package identity changed. Empty new state is marked after an
+ * explicit clear to prevent stale legacy values from being restored on a later request.
+ */
+public class MigratingPluginStorage(
+    private val delegate: PluginStorage,
+    private val migrationState: PluginKeyValueStore,
+    private val legacySourceId: Long = LEGACY_BILIMANGA_MANGA_STORAGE_ID,
+    private val targetSourceId: Long = BILIMANGA_MANGA_SOURCE_ID,
+) : PluginStorage {
+    private val mutex = Mutex()
+
+    override suspend fun getPreference(sourceId: Long, key: String): String? {
+        migratePreferenceIfNeeded(sourceId, key)
+        return delegate.getPreference(sourceId, key)
+    }
+
+    override suspend fun setPreference(sourceId: Long, key: String, value: String) {
+        delegate.setPreference(sourceId, key, value)
+        markMigrated(sourceId, preferenceKind(key))
+    }
+
+    override suspend fun getCredential(sourceId: Long): PluginCredential? {
+        migrateCredentialIfNeeded(sourceId)
+        return delegate.getCredential(sourceId)
+    }
+
+    override suspend fun setCredential(sourceId: Long, credential: PluginCredential) {
+        delegate.setCredential(sourceId, credential)
+        markMigrated(sourceId, CREDENTIAL_KIND)
+    }
+
+    override suspend fun clearCredential(sourceId: Long) {
+        markMigrated(sourceId, CREDENTIAL_KIND)
+        delegate.clearCredential(sourceId)
+    }
+
+    override suspend fun getCookies(sourceId: Long): List<PluginCookie> {
+        migrateCookiesIfNeeded(sourceId)
+        return delegate.getCookies(sourceId)
+    }
+
+    override suspend fun setCookie(sourceId: Long, cookie: PluginCookie) {
+        migrateCookiesIfNeeded(sourceId)
+        delegate.setCookie(sourceId, cookie)
+    }
+
+    override suspend fun deleteCookie(sourceId: Long, name: String, domain: String) {
+        migrateCookiesIfNeeded(sourceId)
+        delegate.deleteCookie(sourceId, name, domain)
+    }
+
+    override suspend fun deleteCookieExact(sourceId: Long, name: String, domain: String, path: String) {
+        migrateCookiesIfNeeded(sourceId)
+        delegate.deleteCookieExact(sourceId, name, domain, path)
+    }
+
+    override suspend fun clearCookies(sourceId: Long) {
+        markMigrated(sourceId, COOKIES_KIND)
+        markMigrated(sourceId, USER_AGENT_KIND)
+        delegate.clearCookies(sourceId)
+    }
+
+    override suspend fun getWebChallengeUserAgent(sourceId: Long): String? {
+        migrateUserAgentIfNeeded(sourceId)
+        return delegate.getWebChallengeUserAgent(sourceId)
+    }
+
+    override suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) {
+        delegate.setWebChallengeUserAgent(sourceId, userAgent)
+        markMigrated(sourceId, USER_AGENT_KIND)
+    }
+
+    override suspend fun clearWebChallengeUserAgent(sourceId: Long) {
+        markMigrated(sourceId, USER_AGENT_KIND)
+        delegate.clearWebChallengeUserAgent(sourceId)
+    }
+
+    private suspend fun migratePreferenceIfNeeded(sourceId: Long, key: String) {
+        migrateIfNeeded(sourceId, preferenceKind(key)) {
+            val current = delegate.getPreference(targetSourceId, key)
+            if (current == null) {
+                delegate.getPreference(legacySourceId, key)?.let { delegate.setPreference(targetSourceId, key, it) }
+            }
+        }
+    }
+
+    private suspend fun migrateCredentialIfNeeded(sourceId: Long) {
+        migrateIfNeeded(sourceId, CREDENTIAL_KIND) {
+            val current = delegate.getCredential(targetSourceId)
+            if (current == null) {
+                delegate.getCredential(legacySourceId)?.let { delegate.setCredential(targetSourceId, it) }
+            }
+        }
+    }
+
+    private suspend fun migrateCookiesIfNeeded(sourceId: Long) {
+        migrateIfNeeded(sourceId, COOKIES_KIND) {
+            if (delegate.getCookies(targetSourceId).isEmpty()) {
+                delegate.getCookies(legacySourceId).forEach { delegate.setCookie(targetSourceId, it) }
+            }
+        }
+    }
+
+    private suspend fun migrateUserAgentIfNeeded(sourceId: Long) {
+        migrateIfNeeded(sourceId, USER_AGENT_KIND) {
+            if (delegate.getWebChallengeUserAgent(targetSourceId) == null) {
+                delegate.getWebChallengeUserAgent(legacySourceId)
+                    ?.let { delegate.setWebChallengeUserAgent(targetSourceId, it) }
+            }
+        }
+    }
+
+    private suspend fun migrateIfNeeded(sourceId: Long, kind: String, block: suspend () -> Unit) {
+        if (sourceId != targetSourceId || isMigrated(kind)) return
+        mutex.withLock {
+            if (isMigrated(kind)) return@withLock
+            block()
+            migrationState.putString(markerKey(kind), "1")
+        }
+    }
+
+    private suspend fun markMigrated(sourceId: Long, kind: String) {
+        if (sourceId == targetSourceId) mutex.withLock {
+            migrationState.putString(markerKey(kind), "1")
+        }
+    }
+
+    private suspend fun isMigrated(kind: String): Boolean = migrationState.getString(markerKey(kind)) == "1"
+    private fun preferenceKind(key: String): String = "preference:$key"
+    private fun markerKey(kind: String): String =
+        "source.$targetSourceId.migration.bilimanga-reviewed-v1.${kind.hexMarkerComponent()}"
+
+    private companion object {
+        const val CREDENTIAL_KIND: String = "credential"
+        const val COOKIES_KIND: String = "cookies"
+        const val USER_AGENT_KIND: String = "webChallenge.userAgent"
+    }
+}
+
+/** Keeps migration bookkeeping in ordinary storage even when the migrated state is sensitive. */
+private fun String.hexMarkerComponent(): String = buildString(length * 2) {
+    encodeToByteArray().forEach { byte ->
+        val value = byte.toInt() and 0xff
+        append(HEX_MARKER_DIGITS[value ushr 4])
+        append(HEX_MARKER_DIGITS[value and 0x0f])
+    }
+}
+
+private const val HEX_MARKER_DIGITS: String = "0123456789abcdef"
+
+public const val LEGACY_BILIMANGA_MANGA_STORAGE_ID: Long = -9_110_000_000_000_005L
+public const val BILIMANGA_MANGA_SOURCE_ID: Long = 7_289_707_411_592_168_382L
+
 internal const val MAX_COOKIES_PER_SOURCE: Int = 500
 internal const val MAX_COOKIE_BYTES: Int = 4_096
 

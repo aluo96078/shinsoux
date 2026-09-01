@@ -156,6 +156,23 @@ class ShuYueCompatibilityProjectionCoordinatorTest {
     }
 
     @Test
+    fun handedOffPublicationIsNotRecreatedAfterItsCompatibilityRowsMoveToAStandaloneSource() = runTest {
+        val fixture = fixture()
+        val handoffMarker = shuyueCompatibilityProjectionHandoffMarker(fixture.publication.key)
+        val repository = ShinsouRepository(
+            AppSnapshot(contentAuthorityProjectionMarkers = setOf(handoffMarker)).validate(),
+        )
+
+        val result = coordinator(repository, fixture).repair()
+
+        assertEquals(0, result.mangasCreated)
+        assertEquals(0, result.chaptersCreated)
+        assertTrue(repository.currentSnapshot.mangas.isEmpty())
+        assertTrue(repository.currentSnapshot.chapters.isEmpty())
+        assertTrue(handoffMarker in repository.currentSnapshot.contentAuthorityProjectionMarkers)
+    }
+
+    @Test
     fun deterministicCategoryNumericIdCollisionFailsBeforePublishingAnyProjection() = runTest {
         val fixture = fixture()
         val stableId = shuyueLegacyCategoryId(fixture.categoryId)

@@ -29,15 +29,19 @@ import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
 import dev.shinsou.kmp.migration.shuyue.ShuYueSyncV2OutboxFactory
 import dev.shinsou.kmp.migration.shuyue.ShuYueTransactionalImporter
 import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
+import dev.shinsou.kmp.plugin.BiliMangaStandaloneLibraryMigration
+import dev.shinsou.kmp.plugin.BILIMANGA_MANGA_SOURCE_ID
 import dev.shinsou.kmp.plugin.FilePluginPackageStore
 import dev.shinsou.kmp.plugin.ConfiguredPluginProxyResolver
 import dev.shinsou.kmp.plugin.ConfiguredPluginUserAgentProvider
 import dev.shinsou.kmp.plugin.KeyValueExtensionRepositoryStore
 import dev.shinsou.kmp.plugin.KeyValuePluginPackageStore
 import dev.shinsou.kmp.plugin.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.MigratingPluginStorage
 import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
+import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.PluginLoginRequestCoordinator
 import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
@@ -152,6 +156,8 @@ public class ShinsouComposition(
     private val syncInfrastructure: SyncPlatformInfrastructure? = null,
     private val platformTextToSpeechEngine: PlatformTextToSpeechEngine? = null,
     private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null,
+    private val pluginBrowserSessionTransport: PluginBrowserSessionTransport =
+        PluginBrowserSessionTransport.Unavailable,
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
 ) {
@@ -191,6 +197,8 @@ public class ShinsouComposition(
     /** Versioned M1 migration runs after the first interactive frame on the background scope. */
     private val legacyPublicationStartupMigration: LegacyPublicationStartupMigration? =
         contentFoundation?.let(::LegacyPublicationStartupMigration)
+    private val biliMangaStandaloneLibraryMigration: BiliMangaStandaloneLibraryMigration? =
+        contentFoundation?.let { BiliMangaStandaloneLibraryMigration(repository, it) }
     /** Derived ShuYue compatibility rows are restart-safe and never become content authority. */
     private val shuYueCompatibilityProjection: ShuYueCompatibilityProjectionCoordinator? =
         contentFoundation?.let { foundation ->
@@ -223,7 +231,10 @@ public class ShinsouComposition(
             allowLocalArtifactOrigins = true,
         ),
     )
-    private val pluginStorage = KeyValuePluginStorage(pluginKeyValueStore)
+    private val pluginStorage = MigratingPluginStorage(
+        delegate = KeyValuePluginStorage(pluginKeyValueStore),
+        migrationState = pluginKeyValueStore,
+    )
     private val trustStore = KeyValuePluginTrustStore(pluginKeyValueStore)
     private val repositoryClient = ExtensionRepositoryClient(httpClient)
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
@@ -379,6 +390,7 @@ public class ShinsouComposition(
         environment = ScriptPluginEnvironment(
             network = pluginNetwork,
             storage = pluginStorage,
+            browserSessionTransport = pluginBrowserSessionTransport,
             loginRequester = pluginLoginRequests,
             systemEventSink = pluginEventGateway,
             systemEventContextRegistry = pluginEventContextRegistry,
@@ -751,6 +763,19 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // PluginBrowseAdapter publishes its actionable error in BrowseSnapshot.
             }
+            try {
+                // Do not turn a readable local reviewed favorite into an unavailable remote row.
+                // Installed-source hydration happens at the start of browse.refresh(), even when
+                // optional repository discovery later times out or fails.
+                if (pluginManager.source(BILIMANGA_MANGA_SOURCE_ID) != null) {
+                    biliMangaStandaloneLibraryMigration?.migrate()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Migration is an idempotent source/url rewrite. A missing standalone package or
+                // incomplete typed chapter graph leaves the old row intact for a later launch.
+            }
             if (portableRepositoryReconciliationJob == null) {
                 portableRepositoryReconciliationJob = trackingScope.launch {
                     repository.snapshot
@@ -1044,6 +1069,7 @@ public class ShinsouComposition(
         pluginEventUiJob.cancelAndJoin()
         downloads.close()
         pluginManager.close()
+        pluginBrowserSessionTransport.close()
         pluginEventGateway.close()
         pluginDiagnosticLog.clear()
         if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
@@ -1094,7 +1120,7 @@ public class ShinsouComposition(
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.5"
+        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.6"
         const val DEFAULT_SYNC_USER_NAME = "Shinsou X user"
         const val CLOUDFLARE_DEPLOY_URL =
             "https://deploy.workers.cloudflare.com/?url=https://github.com/aluo96078/shinsoux/tree/master/syncWorker"

@@ -18,6 +18,7 @@ class SourceSettingsSectionsTest {
         )
 
         assertFalse(sourceSettingsSections(source).credentials)
+        assertFalse(sourceSettingsSections(source).browserSessionLogin)
     }
 
     @Test
@@ -30,5 +31,20 @@ class SourceSettingsSectionsTest {
         )
 
         assertTrue(sourceSettingsSections(source).credentials)
+        assertFalse(sourceSettingsSections(source).browserSessionLogin)
+    }
+
+    @Test
+    fun requiredBrowserSessionRoutesLoginThroughWebsite() {
+        val source = BrowseSource(
+            id = 3L,
+            name = "Browser Login Source",
+            language = "all",
+            supportsLogin = true,
+            requiresBrowserSessionLogin = true,
+        )
+
+        assertTrue(sourceSettingsSections(source).credentials)
+        assertTrue(sourceSettingsSections(source).browserSessionLogin)
     }
 }

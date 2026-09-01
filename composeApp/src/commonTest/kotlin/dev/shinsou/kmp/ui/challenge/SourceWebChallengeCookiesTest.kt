@@ -7,6 +7,7 @@ import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SourceWebChallengeCookiesTest {
@@ -119,5 +120,61 @@ class SourceWebChallengeCookiesTest {
         assertEquals("Native WebKit/1.0", normalizeWebChallengeUserAgent("  Native WebKit/1.0  "))
         assertEquals(null, normalizeWebChallengeUserAgent("bad\nagent"))
         assertEquals(null, normalizeWebChallengeUserAgent("x".repeat(513)))
+    }
+
+    @Test
+    fun browserStorageImportUsesOnlyTheDeclaredBoundedAllowlist() {
+        val oversized = "x".repeat(MAX_WEB_CHALLENGE_STORAGE_VALUE_BYTES + 1)
+        val normalized = normalizeWebChallengeLocalStorage(
+            values = mapOf(
+                "token" to "member-token",
+                "nonce" to "device-nonce",
+                "savedCredentials" to "must-not-cross-boundary",
+                "oversized" to oversized,
+            ),
+            allowlist = listOf("token", "nonce", "oversized"),
+        )
+
+        assertEquals(setOf("token", "nonce"), normalized.keys)
+        assertEquals(listOf("token", "nonce"), normalizeWebChallengeLocalStorageKeys(listOf(" token ", "nonce", "token")))
+        assertTrue(normalizeWebChallengeLocalStorageKeys(listOf("bad key", "bad/key")).isEmpty())
+    }
+
+    @Test
+    fun browserStorageCaptureRejectsOriginFailureAndDoubleEncodedAndroidResult() {
+        val allowed = listOf("token", "nonce")
+        val androidEncoded = "\"{\\\"ok\\\":true,\\\"values\\\":{\\\"token\\\":\\\"member-token\\\",\\\"other\\\":\\\"blocked\\\"}}\""
+        val captured = decodeWebChallengeLocalStorageCapture(androidEncoded, allowed)
+
+        assertEquals(mapOf("token" to "member-token"), captured.values)
+        assertNull(captured.error)
+        assertTrue(
+            decodeWebChallengeLocalStorageCapture(
+                """{"ok":false,"error":"origin"}""",
+                allowed,
+            ).error.orEmpty().contains("origin"),
+        )
+    }
+
+    @Test
+    fun automaticLoginAndStorageScriptsDoNotExposeValuesThroughRequestToString() {
+        val request = SourceWebChallengeRequest(
+            sourceId = 1L,
+            sourceName = "Fixture",
+            url = "https://example.test/",
+            userAgent = "fixture-agent",
+            localStorageKeys = listOf("token", "nonce"),
+            requiredLocalStorageKeys = setOf("token"),
+            username = "member@example.test",
+            password = "fixture-password",
+        )
+
+        val loginScript = automaticWebChallengeLoginScript(request).orEmpty()
+        val storageScript = webChallengeLocalStorageCaptureScript(request)
+        assertTrue(loginScript.contains("member@example.test"))
+        assertTrue(storageScript.contains("token"))
+        assertFalse(request.toString().contains("member@example.test"))
+        assertFalse(request.toString().contains("fixture-password"))
+        assertFalse(request.toString().contains("token"))
     }
 }

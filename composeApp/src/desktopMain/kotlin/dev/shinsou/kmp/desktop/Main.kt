@@ -32,6 +32,8 @@ import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.DesktopAppFileSystem
 import dev.shinsou.kmp.network.createPlatformHttpClient
+import dev.shinsou.kmp.network.DesktopAvifDecoder
+import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
 import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
@@ -84,6 +86,10 @@ fun main(args: Array<String>) {
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
+    val httpClient = createPlatformHttpClient()
+    installConfiguredImageLoader(httpClient) {
+        add(DesktopAvifDecoder.Factory())
+    }
 
     application {
         val repository = remember {
@@ -101,13 +107,14 @@ fun main(args: Array<String>) {
         val composition = remember {
             ShinsouComposition(
                 repository = repository,
-                httpClient = createPlatformHttpClient(),
+                httpClient = httpClient,
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
                 runtimeFactory = RhinoScriptPluginRuntimeFactory(),
                 syncInfrastructure = syncInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
+                pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
             )
         }
@@ -343,6 +350,15 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
     check(ModuleLayer.boot().findModule("jdk.accessibility").isPresent) {
         "The packaged desktop runtime is missing jdk.accessibility."
     }
+    // ReaderScreen is one of the largest Compose-generated classes in the application. A prior
+    // ProGuard output rebuilt an invalid stack-map frame in this class, so the packaged app opened
+    // normally but failed with VerifyError only when a chapter entered the reader. Force the JVM
+    // to verify the release class during the existing installer/runtime probe as well.
+    Class.forName(
+        "dev.shinsou.kmp.ui.screens.ReaderScreenKt",
+        false,
+        Thread.currentThread().contextClassLoader,
+    )
     verifyPackagedShuYueQuarantineRoundTrip()
     Toolkit.getDefaultToolkit()
     writeDesktopProbeMarker(required = false)

@@ -38,6 +38,38 @@ import kotlin.test.assertTrue
 
 class JavaScriptCoreScriptPluginRuntimeTest {
     @Test
+    fun webChallengeStorageDeclarationCrossesJavaScriptCoreMetadata() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_WEB_CHALLENGE_STORAGE_PLUGIN,
+            manifest = PluginManifest(
+                "challenge.ios",
+                "Challenge iOS",
+                "1.0.0",
+                1,
+                "all",
+                script = "challenge.ios.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Challenge", "all", 301L, "https://example.test")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { error("No network request expected") },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        try {
+            assertEquals("https://example.test/", runtime.webChallengeUrl)
+            assertEquals(setOf("token", "nonce"), runtime.webChallengeLocalStorageKeys)
+            assertEquals(setOf("token"), runtime.requiredWebChallengeLocalStorageKeys)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
     fun multiSourcePackageSelectsExactExportedSourceInsteadOfListPosition() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
@@ -322,6 +354,56 @@ class JavaScriptCoreScriptPluginRuntimeTest {
     }
 
     @Test
+    fun loginPreservesPlainTextAndTransportErrorsFromTheIosBridge() = runTest {
+        suspend fun loginError(response: suspend () -> PluginHttpResponse): String? {
+            val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+            val network = PluginNetworkClient(
+                transport = PluginHttpTransport { response() },
+                storage = storage,
+                requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            )
+            val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+                script = IOS_HTTP_LOGIN_ERROR_PLUGIN,
+                manifest = PluginManifest(
+                    "zh.login-error.ios",
+                    "Login Error iOS",
+                    "1.0.0",
+                    1,
+                    "zh",
+                    script = "zh.login-error.ios.js",
+                    signature = "",
+                    sources = listOf(SourceIndexEntry("Login Error", "zh", 995, "https://api.example")),
+                ),
+                environment = ScriptPluginEnvironment(network, storage),
+            )
+            return try {
+                runtime.loginResult("alice", "wrong").errorMessage
+            } finally {
+                runtime.close()
+            }
+        }
+
+        assertEquals(
+            "error code: 502",
+            loginError { PluginHttpResponse(502, "error code: 502".encodeToByteArray()) },
+        )
+        assertEquals(
+            "invalid email or password",
+            loginError {
+                PluginHttpResponse(
+                    400,
+                    """{"code":400,"error":"1004","message":"invalid email or password","detail":":("}"""
+                        .encodeToByteArray(),
+                )
+            },
+        )
+        assertEquals(
+            "The Internet connection appears to be offline.",
+            loginError { throw IllegalStateException("The Internet connection appears to be offline.") },
+        )
+    }
+
+    @Test
     fun synchronousPluginContractRunsInsideJavaScriptCore() = runTest {
         val requests = mutableListOf<PluginHttpRequest>()
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
@@ -333,7 +415,8 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                     """<script>var payload = "<fake-node>";</script>
                         <style>.card::after { content: "<fake-style>"; }</style>
                         <div class="card"><a data-image="cover.jpg" href="/m/one"><span>One</span></a></div>
-                        <div class="card disabled"><a href="/m/two">Two</a></div>""".encodeToByteArray(),
+                        <div class="card disabled"><a href="/m/two">Two</a></div>
+                        <table class="ptb"><tr><td class="ptds"><a href="/page/1">1</a></td><td><a href="/page/2">2</a></td></tr></table>""".encodeToByteArray(),
                     emptyMap(),
                 )
             },
@@ -392,7 +475,130 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             runtime.close()
         }
     }
+
+    @Test
+    fun httpGetResponseBridgePreservesNonSuccessStatusAndBody() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_HTTP_GET_RESPONSE_PLUGIN,
+            manifest = PluginManifest(
+                "zh.get-response.ios",
+                "GET Response iOS",
+                "1.0.0",
+                1,
+                "zh",
+                script = "zh.get-response.ios.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("GET Response", "zh", 996, "https://api.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    transport = PluginHttpTransport {
+                        PluginHttpResponse(
+                            429,
+                            """{"code":400,"message":"too many requests"}""".encodeToByteArray(),
+                        )
+                    },
+                    storage = storage,
+                    requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                ),
+                storage = storage,
+            ),
+        )
+        try {
+            assertEquals("429|too many requests", runtime.getPopularManga(0).mangas.single().title)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun browserSessionBridgeUsesOnlyManifestDeclaredOrigin() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val captured = mutableListOf<PluginHttpRequest>()
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            script = IOS_BROWSER_SESSION_PLUGIN,
+            manifest = PluginManifest(
+                "zh.browser-session.ios",
+                "Browser Session iOS",
+                "1.0.0",
+                1,
+                "zh",
+                script = "zh.browser-session.ios.js",
+                signature = "",
+                sources = listOf(
+                    SourceIndexEntry(
+                        "Browser Session",
+                        "zh",
+                        997,
+                        "https://source.example",
+                        browserSessionOrigins = setOf("https://api.example"),
+                    ),
+                ),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { error("Native transport must not be used") },
+                    storage,
+                ),
+                storage = storage,
+                browserSessionTransport = object : PluginBrowserSessionTransport {
+                    override suspend fun execute(
+                        sourceId: Long,
+                        sourceOrigin: String,
+                        allowedOrigins: Set<String>,
+                        request: PluginHttpRequest,
+                    ): PluginHttpResponse {
+                        assertEquals(997, sourceId)
+                        assertEquals("https://source.example", sourceOrigin)
+                        assertEquals(setOf("https://api.example"), allowedOrigins)
+                        captured += request
+                        return PluginHttpResponse(429, "limited".encodeToByteArray())
+                    }
+                },
+            ),
+        )
+        try {
+            assertEquals("429|limited", runtime.getPopularManga(0).mangas.single().title)
+            assertEquals("https://api.example/catalogue", captured.single().url)
+            assertEquals("signed", captured.single().headers["Authorization"])
+            assertFalse(captured.single().headers.keys.any { it.equals("Cookie", true) })
+        } finally {
+            runtime.close()
+        }
+    }
 }
+
+private const val IOS_WEB_CHALLENGE_STORAGE_PLUGIN: String = """
+var source={
+  baseUrl:'https://example.test',
+  webChallengeUrl:'https://example.test/',
+  webChallengeLocalStorageKeys:['token','nonce'],
+  requiredWebChallengeLocalStorageKeys:['token'],
+  getPopularManga:function(){return new MangasPage([],false);},
+  getLatestUpdates:function(){return new MangasPage([],false);},
+  getSearchManga:function(){return new MangasPage([],false);},
+  getMangaDetails:function(manga){return manga;},
+  getChapterList:function(){return[];},
+  getPageList:function(){return[];},
+  getFilterList:function(){return[];}
+};
+"""
+
+private const val IOS_BROWSER_SESSION_PLUGIN: String = """
+var source={
+  getPopularManga:function(){
+    var response=bridge.browserSessionRequest('https://api.example/catalogue','GET','',{
+      Authorization:'signed',Cookie:'forged=1'
+    });
+    var manga=SManga.create();manga.url='/result';manga.title=String(response.status)+'|'+String(response.body);
+    return new MangasPage([manga],false);
+  },
+  getLatestUpdates:function(){return new MangasPage([],false);},
+  getSearchManga:function(){return new MangasPage([],false);},
+  getMangaDetails:function(manga){return manga;},getChapterList:function(){return[];},getPageList:function(){return[];}
+};
+"""
 
 private const val IOS_MULTI_SOURCE_PLUGIN: String = """
 var sources={
@@ -414,6 +620,34 @@ var source={
     var values=JSON.parse(raw||'[]');
     var manga=SManga.create();
     manga.url='/batch';manga.title=values.join('|');
+    return new MangasPage([manga],false);
+  }
+};
+"""
+
+private const val IOS_HTTP_LOGIN_ERROR_PLUGIN: String = """
+var source={
+  baseUrl:'https://api.example',supportsLogin:true,
+  login:function(username,password){
+    var raw=bridge.httpPostResponse(this.baseUrl+'/auth/sign-in',JSON.stringify({email:username,password:password}),{});
+    if(raw&&typeof raw==='object'&&raw.error)return{loggedIn:false,errorMessage:String(raw.error)};
+    var text=typeof raw==='string'?raw:(raw&&raw.body!=null?String(raw.body):'');
+    try{
+      var response=JSON.parse(text);
+      return{loggedIn:false,errorMessage:String(response.message||response.detail||response.error||'Login failed')};
+    }catch(e){return{loggedIn:false,errorMessage:text||'No response'};}
+  }
+};
+"""
+
+private const val IOS_HTTP_GET_RESPONSE_PLUGIN: String = """
+var source={
+  baseUrl:'https://api.example',
+  getPopularManga:function(){
+    var raw=bridge.httpGetResponse(this.baseUrl+'/comics',{});
+    var parsed=JSON.parse(String(raw.body||'{}'));
+    var manga=SManga.create();manga.url='/diagnostic';
+    manga.title=String(raw.status)+'|'+String(parsed.message||'');
     return new MangasPage([manga],false);
   }
 };
@@ -474,6 +708,8 @@ var source={
     if(!script||script.html().indexOf('<fake-node>')<0)throw new Error('raw script content was not preserved');
     var link=doc.selectFirst('div.card:has(a):not(.disabled) > a');
     if(doc.selectFirst('a[data-image\x24=".jpg"]')!==link)throw new Error('attribute suffix selector failed');
+    var adjacent=doc.selectFirst('table.ptb td.ptds + td a');
+    if(!adjacent||adjacent.attr('href')!=='/page/2')throw new Error('adjacent sibling selector failed');
     var manga=SManga.create();manga.url=link.attr('href');manga.title=link.text()+'|'+bridge.getPreference('name');
     return new MangasPage([manga],false);
   },

@@ -129,6 +129,8 @@ public data class SourceIndexEntry(
     val baseUrl: String? = null,
     val type: String? = null,
     val contentType: String? = null,
+    /** Exact HTTPS API origins allowed to use this source's browser network transport. */
+    val browserSessionOrigins: Set<String> = emptySet(),
     /**
      * Optional v2 canonical identity used when a reviewed source is backed by a legacy engine.
      * It is process-local metadata: the legacy engine still uses [id] as its host execution
@@ -136,7 +138,11 @@ public data class SourceIndexEntry(
      */
     @Transient
     val canonicalSourceId: String? = null,
-)
+) {
+    init {
+        normalizePluginBrowserSessionOrigins(browserSessionOrigins)
+    }
+}
 
 /** Accepts both native Shinsou numeric IDs and Mihon's quoted 64-bit IDs. */
 public object StringOrNumberLongSerializer : KSerializer<Long> {

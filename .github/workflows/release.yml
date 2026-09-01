@@ -451,7 +451,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.2' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.3' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.4' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.5'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.5' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.6'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -482,6 +483,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.4"
             $expectedHash = "a40e1814caed003a719b0eecc905c9b1022f349400a616dc8191f3c605bb057f"
             $baselineProductCode = "{D5617664-F9F4-3BD5-8545-AECA58335574}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.6") {
+            $baselineVersion = "1.0.1-beta.5"
+            $expectedHash = "c72b0b26335c114d3aa1f05dc5f20a8a57697fdcd477bc50c2133b725f9795b4"
+            $baselineProductCode = "{386BBE31-6B58-3674-B464-D1AF88BF7956}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -705,7 +710,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.2 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.3 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.4 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.5 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.5 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.6 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -733,6 +739,12 @@ jobs:
                 "Reader note: this beta keeps novel controls floating above content, restores safe-area layout, de-duplicates mobile volume-key paging, prevents premature chapter changes, and rejects stale progress callbacks during chapter transitions." \
                 "Library note: extension titles opened directly from the local library now hydrate their complete chapter directory, credentials, and exact local resume chapter before continuing." \
                 "Proxy note: every source can follow the global Cloudflare Worker Proxy setting, force-enable it, or force-disable it; proxied requests use the current platform browser User-Agent unless a captured Cloudflare session or explicit override is present."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.6 ]]; then
+              printf '%s\n' \
+                "Extension note: BiliManga novels and manga now use separate package identities while existing manga favorites and installations migrate to the standalone manga source." \
+                "Browser note: Android, iOS, and Desktop can transfer browser challenge cookies, User-Agent, and local storage into extension requests, with stricter session and login error reporting." \
+                "Reader note: extension manga pages resolve lazily with visible loading failures; Android and macOS Desktop add AVIF decoding required by current BiliManga image responses."
             fi
           } > release-notes.md
 

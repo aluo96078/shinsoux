@@ -127,6 +127,7 @@ internal object IosApplicationContainer {
         syncInfrastructure = syncInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
+        pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
     )
 

@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.BrowseSource
 import dev.shinsou.kmp.ui.SourceLoginRequest
+import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
@@ -46,6 +48,7 @@ internal fun SourceLoginDialog(
     var secretsLoading by remember(request) { mutableStateOf(true) }
     var busy by remember(request) { mutableStateOf(false) }
     var errorMessage by remember(request) { mutableStateOf<String?>(null) }
+    var challengeRequest by remember(request) { mutableStateOf<SourceWebChallengeRequest?>(null) }
 
     LaunchedEffect(request) {
         secretsLoading = true
@@ -70,12 +73,32 @@ internal fun SourceLoginDialog(
     }
 
     fun submit() {
-        if (busy || secretsLoading || username.isBlank() || password.isEmpty()) return
+        if (busy || secretsLoading) return
+        if (source?.requiresBrowserSessionLogin != true && (username.isBlank() || password.isEmpty())) return
         busy = true
         errorMessage = null
         scope.launch {
             // Paint the modal and its progress state before the plugin performs synchronous work.
             withFrameNanos { }
+            if (source?.requiresBrowserSessionLogin == true) {
+                runCatching {
+                    callbacks.sourceWebChallenge(
+                        sourceId = request.sourceId,
+                        username = username.takeIf(String::isNotBlank),
+                        password = password.takeIf(String::isNotEmpty),
+                    )
+                }.onSuccess { challenge ->
+                    if (challenge == null) {
+                        errorMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
+                    } else {
+                        challengeRequest = challenge
+                    }
+                }.onFailure {
+                    errorMessage = strings.text("Unable to start the web challenge.")
+                }
+                busy = false
+                return@launch
+            }
             runCatching {
                 request.eventId?.let { eventId ->
                     callbacks.saveSourceEventCredentialsResult(eventId, request.sourceId, username, password)
@@ -100,6 +123,35 @@ internal fun SourceLoginDialog(
             }
             busy = false
         }
+    }
+
+    challengeRequest?.let { challenge ->
+        SourceWebChallengeDialog(
+            request = challenge,
+            onImport = { importedSession ->
+                busy = true
+                scope.launch {
+                    runCatching {
+                        callbacks.importSourceWebChallengeSession(
+                            sourceId = request.sourceId,
+                            cookies = importedSession.cookies,
+                            userAgent = importedSession.userAgent,
+                            localStorage = importedSession.localStorage,
+                        )
+                    }.onSuccess {
+                        challengeRequest = null
+                        request.eventId?.let(callbacks::dismissSourceLoginEvent)
+                            ?: callbacks.dismissSourceLoginRequest(request.sourceId)
+                    }.onFailure {
+                        challengeRequest = null
+                        errorMessage = strings.text("The browser session could not be imported.")
+                    }
+                    busy = false
+                }
+            },
+            onDismiss = { challengeRequest = null },
+        )
+        return
     }
 
     AlertDialog(
@@ -138,19 +190,32 @@ internal fun SourceLoginDialog(
                 errorMessage?.let { message ->
                     Text(message, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
                 }
+                if (source?.requiresBrowserSessionLogin == true) {
+                    Text(
+                        strings.text(
+                            "This source must sign in through its website. The app will import only the source-declared browser session data and will not call its direct password login API.",
+                        ),
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = ::submit,
-                enabled = username.isNotBlank() && password.isNotEmpty() && !busy && !secretsLoading,
+                enabled = !busy && !secretsLoading &&
+                    (source?.requiresBrowserSessionLogin == true ||
+                        (username.isNotBlank() && password.isNotEmpty())),
             ) {
                 Row(horizontalArrangement = Arrangement.Center) {
                     if (busy) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(7.dp))
                     }
-                    Text(strings.text("Login"))
+                    Text(
+                        strings.text(
+                            if (source?.requiresBrowserSessionLogin == true) "Sign in in browser" else "Login",
+                        ),
+                    )
                 }
             }
         },

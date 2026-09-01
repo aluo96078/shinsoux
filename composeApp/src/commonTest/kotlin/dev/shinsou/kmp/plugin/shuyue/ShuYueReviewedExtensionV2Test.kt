@@ -240,7 +240,7 @@ class ShuYueReviewedExtensionV2Test {
         val biliProfiles = ShuYueReviewedPluginCatalogV2.profiles
             .filter { it.identity.packageId == "zh.bilimanga" }
             .sortedBy { it.identity.versionCode }
-        assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), biliProfiles.map { it.identity.versionCode })
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), biliProfiles.map { it.identity.versionCode })
         val currentBili = requireNotNull(
             ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
                 "zh.bilimanga",
@@ -295,6 +295,16 @@ class ShuYueReviewedExtensionV2Test {
             setOf("zh.bilimanga.novel", "zh.bilimanga.manga"),
             browserSessionBili.sourceProfiles.map { it.sourceId }.toSet(),
         )
+        val splitBiliNovel = requireNotNull(
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.bilimanga",
+                "1.6.0",
+                12,
+                "f740eb9fb1da98774f32aa8a555829a828ea799fc6987781ad594a4a6eceb0f5",
+            ),
+        )
+        assertEquals(listOf("zh.bilimanga.novel"), splitBiliNovel.sourceIds)
+        assertEquals(setOf(ContentKind.PLAIN_TEXT), splitBiliNovel.sourceProfiles.single().supportedContentKinds)
     }
 
     private fun candidate(bytes: ByteArray, reported: String? = Sha256.hex(bytes)): ShuYueScriptCandidateV2 =

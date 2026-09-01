@@ -40,6 +40,38 @@ import kotlin.test.assertTrue
 
 class RhinoScriptPluginRuntimeTest {
     @Test
+    fun webChallengeStorageDeclarationCrossesRhinoRuntimeMetadata() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            script = RHINO_WEB_CHALLENGE_STORAGE_FIXTURE,
+            manifest = PluginManifest(
+                id = "challenge.rhino",
+                name = "Challenge Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "challenge.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Challenge", "all", 101L, "https://example.test")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { error("No network request expected") },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        try {
+            assertEquals("https://example.test/", runtime.webChallengeUrl)
+            assertEquals(setOf("token", "nonce"), runtime.webChallengeLocalStorageKeys)
+            assertEquals(setOf("token"), runtime.requiredWebChallengeLocalStorageKeys)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
     fun multiSourceLoginFailuresPreserveMessagesThroughRhino() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val network = PluginNetworkClient(
@@ -335,6 +367,143 @@ class RhinoScriptPluginRuntimeTest {
     }
 
     @Test
+    fun httpPostResponseBridgePreservesNonSuccessStatusAndBodyForLogin() = runTest {
+        suspend fun loginError(response: suspend () -> PluginHttpResponse): String? {
+            val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+            val network = PluginNetworkClient(
+                transport = PluginHttpTransport { response() },
+                storage = storage,
+                requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            )
+            val runtime = RhinoScriptPluginRuntimeFactory().create(
+                RHINO_HTTP_LOGIN_ERROR_FIXTURE,
+                PluginManifest(
+                    id = "zh.login-error.rhino",
+                    name = "Login Error Rhino",
+                    version = "1.0.0",
+                    versionCode = 1,
+                    lang = "zh",
+                    script = "zh.login-error.rhino.js",
+                    signature = "",
+                    sources = listOf(SourceIndexEntry("Login Error", "zh", 780, "https://api.example")),
+                ),
+                ScriptPluginEnvironment(network, storage),
+            )
+            return try {
+                runtime.loginResult("alice", "wrong").errorMessage
+            } finally {
+                runtime.close()
+            }
+        }
+
+        assertEquals(
+            "error code: 502",
+            loginError { PluginHttpResponse(502, "error code: 502".encodeToByteArray()) },
+        )
+        assertEquals(
+            "too many requests",
+            loginError {
+                PluginHttpResponse(
+                    400,
+                    """{"code":400,"message":"too many requests"}""".encodeToByteArray(),
+                )
+            },
+        )
+    }
+
+    @Test
+    fun httpGetResponseBridgePreservesNonSuccessStatusAndBody() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_HTTP_GET_RESPONSE_FIXTURE,
+            PluginManifest(
+                id = "zh.get-response.rhino",
+                name = "GET Response Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "zh",
+                script = "zh.get-response.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("GET Response", "zh", 781, "https://api.example")),
+            ),
+            ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    transport = PluginHttpTransport {
+                        PluginHttpResponse(
+                            429,
+                            """{"code":400,"message":"too many requests"}""".encodeToByteArray(),
+                        )
+                    },
+                    storage = storage,
+                    requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                ),
+                storage = storage,
+            ),
+        )
+        try {
+            assertEquals("429|too many requests", runtime.getPopularManga(0).mangas.single().title)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun browserSessionBridgeUsesOnlyManifestDeclaredOrigin() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val captured = mutableListOf<PluginHttpRequest>()
+        val runtime = RhinoScriptPluginRuntimeFactory().create(
+            RHINO_BROWSER_SESSION_FIXTURE,
+            PluginManifest(
+                id = "zh.browser-session.rhino",
+                name = "Browser Session Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "zh",
+                script = "zh.browser-session.rhino.js",
+                signature = "",
+                sources = listOf(
+                    SourceIndexEntry(
+                        "Browser Session",
+                        "zh",
+                        782,
+                        "https://source.example",
+                        browserSessionOrigins = setOf("https://api.example"),
+                    ),
+                ),
+            ),
+            ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { error("Native transport must not be used") },
+                    storage,
+                ),
+                storage = storage,
+                browserSessionTransport = object : PluginBrowserSessionTransport {
+                    override suspend fun execute(
+                        sourceId: Long,
+                        sourceOrigin: String,
+                        allowedOrigins: Set<String>,
+                        request: PluginHttpRequest,
+                    ): PluginHttpResponse {
+                        assertEquals(782, sourceId)
+                        assertEquals("https://source.example", sourceOrigin)
+                        assertEquals(setOf("https://api.example"), allowedOrigins)
+                        captured += request
+                        return PluginHttpResponse(429, "limited".encodeToByteArray())
+                    }
+                },
+            ),
+        )
+        try {
+            assertEquals("429|limited", runtime.getPopularManga(0).mangas.single().title)
+            assertEquals("https://api.example/catalogue", captured.single().url)
+            assertEquals("signed", captured.single().headers["Authorization"])
+            assertFalse(captured.single().headers.keys.any { it.equals("Cookie", true) })
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
     fun runtimeSupportsDomSourceLifecycleFiltersStorageAndSerializedCalls() = runTest {
         val requests = mutableListOf<PluginHttpRequest>()
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
@@ -452,6 +621,22 @@ class RhinoScriptPluginRuntimeTest {
     }
 }
 
+private val RHINO_WEB_CHALLENGE_STORAGE_FIXTURE = """
+    var source = {
+      baseUrl: 'https://example.test',
+      webChallengeUrl: 'https://example.test/',
+      webChallengeLocalStorageKeys: ['token', 'nonce'],
+      requiredWebChallengeLocalStorageKeys: ['token'],
+      getPopularManga: function() { return new MangasPage([], false); },
+      getLatestUpdates: function() { return new MangasPage([], false); },
+      getSearchManga: function() { return new MangasPage([], false); },
+      getMangaDetails: function(manga) { return manga; },
+      getChapterList: function() { return []; },
+      getPageList: function() { return []; },
+      getFilterList: function() { return []; }
+    };
+""".trimIndent()
+
 private val RHINO_MULTI_SOURCE_FIXTURE = """
     var sources = {
       '101': {
@@ -507,6 +692,47 @@ private val RHINO_BATCH_FIXTURE = """
         );
         var values = JSON.parse(raw || '[]');
         var manga = SManga.create(); manga.url = '/batch'; manga.title = values.join('|');
+        return new MangasPage([manga], false);
+      }
+    };
+""".trimIndent()
+
+private val RHINO_HTTP_LOGIN_ERROR_FIXTURE = """
+    var source = {
+      baseUrl: 'https://api.example', supportsLogin: true,
+      login: function(username, password) {
+        var raw = bridge.httpPostResponse(
+          this.baseUrl + '/auth/sign-in',
+          JSON.stringify({email: username, password: password}),
+          {}
+        );
+        if (raw && typeof raw === 'object' && raw.error) {
+          return {loggedIn: false, errorMessage: String(raw.error)};
+        }
+        var text = typeof raw === 'string' ? raw :
+          (raw && raw.body != null ? String(raw.body) : '');
+        try {
+          var response = JSON.parse(text);
+          return {
+            loggedIn: false,
+            errorMessage: String(response.message || response.detail || response.error || 'Login failed')
+          };
+        } catch (e) {
+          return {loggedIn: false, errorMessage: text || 'No response'};
+        }
+      }
+    };
+""".trimIndent()
+
+private val RHINO_HTTP_GET_RESPONSE_FIXTURE = """
+    var source = {
+      baseUrl: 'https://api.example',
+      getPopularManga: function() {
+        var raw = bridge.httpGetResponse(this.baseUrl + '/comics', {});
+        var parsed = JSON.parse(String(raw.body || '{}'));
+        var manga = SManga.create();
+        manga.url = '/diagnostic';
+        manga.title = String(raw.status) + '|' + String(parsed.message || '');
         return new MangasPage([manga], false);
       }
     };
@@ -793,4 +1019,19 @@ private val RHINO_FIXTURE = """
         {type:'multiSelect',key:'content',title:'Content',entries:['Safe','Adult'],entryValues:['safe','adult'],defaultValues:['safe']}
       ]; }
     };
+""".trimIndent()
+
+private val RHINO_BROWSER_SESSION_FIXTURE = """
+var source={
+  getPopularManga:function(){
+    var response=bridge.browserSessionRequest('https://api.example/catalogue','GET','',{
+      Authorization:'signed',Cookie:'forged=1'
+    });
+    var manga=SManga.create();manga.url='/result';manga.title=String(response.status)+'|'+String(response.body);
+    return new MangasPage([manga],false);
+  },
+  getLatestUpdates:function(){return new MangasPage([],false);},
+  getSearchManga:function(){return new MangasPage([],false);},
+  getMangaDetails:function(manga){return manga;},getChapterList:function(){return[];},getPageList:function(){return[];}
+};
 """.trimIndent()

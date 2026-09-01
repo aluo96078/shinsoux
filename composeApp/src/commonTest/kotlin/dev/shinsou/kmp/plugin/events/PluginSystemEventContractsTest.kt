@@ -93,15 +93,16 @@ class PluginSystemEventContractsTest {
 
     @Test
     fun unknownProtocolVersionAndKindRemainUnsupportedAfterStructuralDecode() {
-        val base = """
-            {"protocol":"%s","version":%d,"kind":"%s","name":"auth.login.request",
+        fun envelope(protocol: String, version: Int, kind: String): ByteArray = """
+            {"protocol":"$protocol","version":$version,"kind":"$kind","name":"auth.login.request",
              "id":"one","payloadVersion":1,"payload":{}}
-        """
-        val unknownProtocol = codec.decode(base.format("dev.unknown", 1, "command").encodeToByteArray())
+        """.trimIndent().encodeToByteArray()
+
+        val unknownProtocol = codec.decode(envelope("dev.unknown", 1, "command"))
         assertEquals("dev.unknown", unknownProtocol.protocol)
-        val unknownVersion = codec.decode(base.format("dev.shinsou.system", 99, "command").encodeToByteArray())
+        val unknownVersion = codec.decode(envelope("dev.shinsou.system", 99, "command"))
         assertEquals(99, unknownVersion.version)
-        val unknownKind = codec.decode(base.format("dev.shinsou.system", 1, "future").encodeToByteArray())
+        val unknownKind = codec.decode(envelope("dev.shinsou.system", 1, "future"))
         assertEquals(PluginSystemEventKind.UNKNOWN, unknownKind.kind)
     }
 

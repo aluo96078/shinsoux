@@ -14,8 +14,11 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
   global.bridge={
     httpGet:function(url){return nativeCall('httpGet',[String(url)]);},
     httpGetWithHeaders:function(url,headers){return nativeCall('httpGetWithHeaders',[String(url),headers||{}]);},
+    httpGetResponse:function(url,headers){return nativeCall('httpGetResponse',[String(url),headers||{}]);},
     httpPost:function(url,body,headers){return nativeCall('httpPost',[String(url),String(body||''),headers||{}]);},
+    httpPostResponse:function(url,body,headers){return nativeCall('httpPostResponse',[String(url),String(body||''),headers||{}]);},
     httpPostBatch:function(urls,bodies,headers){return nativeCall('httpPostBatch',[urls||[],bodies||[],headers||{}]);},
+    browserSessionRequest:function(url,method,body,headers){return nativeCall('browserSessionRequest',[String(url),String(method||'GET'),String(body||''),headers||{}]);},
     log:function(sourceOrMessage,message){nativeCall('log',[String(message===undefined?sourceOrMessage:message)]);},
     getPreference:function(key){return nativeCall('getPreference',[String(key)]);},
     setPreference:function(key,value){nativeCall('setPreference',[String(key),String(value)]);},
@@ -250,7 +253,7 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     }
     return true;
   };
-  global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,supportsFavorites:!!source.supportsFavorites,headers:source.headers||{},webChallengeUrl:source.webChallengeUrl||null});};
+  global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,supportsFavorites:!!source.supportsFavorites,headers:source.headers||{},webChallengeUrl:source.webChallengeUrl||null,webChallengeLocalStorageKeys:Array.isArray(source.webChallengeLocalStorageKeys)?source.webChallengeLocalStorageKeys:[],requiredWebChallengeLocalStorageKeys:Array.isArray(source.requiredWebChallengeLocalStorageKeys)?source.requiredWebChallengeLocalStorageKeys:[]});};
   global.__shinsouPreferences=function(){if(typeof source!=='object'||!source)return '[]';var values=typeof source.getPreferenceDefinitions==='function'?source.getPreferenceDefinitions():(source.preferences||[]);return JSON.stringify(values||[]);};
   global.__shinsouInvoke=function(method,argsJson){bridge.domReleaseAll();if(typeof source!=='object'||!source||typeof source[method]!=='function')throw new Error('Plugin has no function '+method);var result=source[method].apply(source,JSON.parse(argsJson||'[]'));return JSON.stringify(result===undefined?null:result);};
 })(this);

@@ -132,6 +132,7 @@ import dev.shinsou.kmp.ui.readerNavigationBarsPadding
 import dev.shinsou.kmp.ui.readerVolumeKeyAction
 import dev.shinsou.kmp.ui.readerMayCrossChapterBoundary
 import dev.shinsou.kmp.ui.readerStatusBarsPadding
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -478,26 +479,13 @@ fun ReaderScreen(
             focusRequester.requestFocus()
         }
     }
-    // ReaderScreen is first composed while the async chapter request still exposes an empty page
-    // list. A long-lived collector that captures that first composition keeps calling the stale
-    // `pages.isEmpty()` handler forever; toggling the setting happened to restart it after pages
-    // loaded, which made the feature appear to require an off/on cycle. Keep the collector stable
-    // while forwarding every event to the handler from the latest composition instead.
-    val volumeKeyHandlerSlot = remember(chapter.id, readerSessionId) {
-        ReaderVolumeKeyHandlerSlot()
-    }
-    volumeKeyHandlerSlot.update { event ->
-        val action = readerVolumeKeyAction(
-            event = event,
-            readerOpen = true,
-            volumeKeysEnabled = effectiveVolumeKeysEnabled,
-        )
-        if (action == null) false else handleVolumeKey(event)
-    }
-    DisposableEffect(volumeKeyRouter, volumeKeyHandlerSlot) {
-        val registration = volumeKeyRouter?.register(volumeKeyHandlerSlot::dispatch)
-        onDispose { registration?.unregister() }
-    }
+    ReaderVolumeKeyRegistration(
+        chapterId = chapter.id,
+        readerSessionId = readerSessionId,
+        router = volumeKeyRouter,
+        enabled = effectiveVolumeKeysEnabled,
+        onEvent = ::handleVolumeKey,
+    )
     LaunchedEffect(systemBackRequest) {
         if (systemBackRequest == 0L) return@LaunchedEffect
         handleReaderBack()
@@ -518,8 +506,11 @@ fun ReaderScreen(
     LaunchedEffect(chapter.id, readerSessionId, currentPage, pages, unifiedReaderEnabled) {
         if (unifiedReaderEnabled) return@LaunchedEffect
         val loader = SingletonImageLoader.get(platformContext)
-        val requests = readerPrefetchIndices(currentPage, pages.size).map { index ->
+        val requests = readerPrefetchIndices(currentPage, pages.size).mapNotNull { index ->
             val page = pages[index]
+            // Viewer-backed pages are resolved by their visible page composable. Prefetching the
+            // placeholder would hand HTML to Coil and duplicate the viewer request.
+            if (page.imageResolver != null || page.imageUrl.isBlank()) return@mapNotNull null
             val networkHeaders = NetworkHeaders.Builder().apply {
                 page.headers.forEach { (name, value) -> set(name, value) }
             }.build()
@@ -873,6 +864,38 @@ fun ReaderScreen(
     }
 }
 
+/**
+ * Keeps the native volume-key registration outside ReaderScreen's already large Compose state
+ * machine. Besides making ownership explicit, this prevents JVM shrinkers from merging the
+ * registration slot with unrelated long-valued reader state while rebuilding stack-map frames.
+ */
+@Composable
+private fun ReaderVolumeKeyRegistration(
+    chapterId: Long,
+    readerSessionId: String,
+    router: ReaderVolumeKeyRouter?,
+    enabled: Boolean,
+    onEvent: (ReaderVolumeKeyEvent) -> Boolean,
+) {
+    // ReaderScreen is first composed while the async chapter request still exposes an empty page
+    // list. A long-lived collector that captures that first composition keeps calling the stale
+    // handler forever. Keep the collector stable while forwarding every event to the handler from
+    // the latest composition.
+    val handlerSlot = remember(chapterId, readerSessionId) { ReaderVolumeKeyHandlerSlot() }
+    val currentOnEvent by rememberUpdatedState(onEvent)
+    handlerSlot.update { event ->
+        readerVolumeKeyAction(
+            event = event,
+            readerOpen = true,
+            volumeKeysEnabled = enabled,
+        ) != null && currentOnEvent(event)
+    }
+    DisposableEffect(router, handlerSlot) {
+        val registration = router?.register(handlerSlot::dispatch)
+        onDispose { registration?.unregister() }
+    }
+}
+
 @Composable
 private fun ReaderHorizontalPager(
     pages: List<ReaderPage>,
@@ -1034,6 +1057,92 @@ private fun ReaderWebtoon(
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ReaderPageImage(
+    page: ReaderPage,
+    settings: ReaderSettings,
+    zoomEnabled: Boolean,
+    onTap: (ReaderTapAction) -> Unit,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Fit,
+) {
+    val resolver = page.imageResolver
+    if (resolver != null) {
+        LazyResolvedReaderPageImage(
+            page = page,
+            settings = settings,
+            zoomEnabled = zoomEnabled,
+            onTap = onTap,
+            modifier = modifier,
+            contentScale = contentScale,
+        )
+        return
+    }
+    ResolvedReaderPageImage(page, settings, zoomEnabled, onTap, modifier, contentScale)
+}
+
+@Composable
+private fun LazyResolvedReaderPageImage(
+    page: ReaderPage,
+    settings: ReaderSettings,
+    zoomEnabled: Boolean,
+    onTap: (ReaderTapAction) -> Unit,
+    modifier: Modifier,
+    contentScale: ContentScale,
+) {
+    val strings = LocalShinsouStrings.current
+    var retryKey by remember(page.index, page.imageResolver) { mutableStateOf(0) }
+    var resolved by remember(page.index, page.imageResolver, retryKey) { mutableStateOf<ReaderPage?>(null) }
+    var resolutionFailed by remember(page.index, page.imageResolver, retryKey) { mutableStateOf(false) }
+
+    LaunchedEffect(page.index, page.imageResolver, retryKey) {
+        resolutionFailed = false
+        resolved = try {
+            requireNotNull(page.imageResolver).invoke()
+                .takeIf { it.imageResolver == null && it.imageUrl.isNotBlank() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            resolutionFailed = true
+            null
+        }
+        if (resolved == null) resolutionFailed = true
+    }
+
+    resolved?.let {
+        ResolvedReaderPageImage(it, settings, zoomEnabled, onTap, modifier, contentScale)
+        return
+    }
+
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        if (resolutionFailed) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.82f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        strings.text("Page {0} failed to load.", page.index + 1),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { retryKey++ }) {
+                        Icon(Icons.Outlined.Refresh, null, tint = Color.White)
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.text("Retry this page"), color = Color.White)
+                    }
+                }
+            }
+        } else {
+            CircularProgressIndicator(color = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun ResolvedReaderPageImage(
     page: ReaderPage,
     settings: ReaderSettings,
     zoomEnabled: Boolean,

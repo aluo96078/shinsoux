@@ -74,7 +74,7 @@ private fun EmbeddedChallenge(
     var message by remember(request) {
         mutableStateOf(
             strings.text(
-                "Complete verification and sign in to the website in this browser, then import its cookies.",
+                "Complete verification and sign in to the website in this browser, then import its browser session.",
             ),
         )
     }
@@ -109,16 +109,23 @@ private fun EmbeddedChallenge(
                     loading = false
                     errorVisible = false
                     message = strings.text(
-                        "Verification page loaded. Complete verification and website sign-in here, then choose Import cookies.",
+                        "Verification page loaded. Complete verification and website sign-in here, then choose Import browser session.",
                     )
                 },
                 onSessionCaptured = { captured ->
                     capturing = false
                     val safe = normalizeWebChallengeCookies(request.url, captured.cookies)
+                    val safeStorage = normalizeWebChallengeLocalStorage(
+                        captured.localStorage,
+                        request.localStorageKeys,
+                    )
                     val userAgent = normalizeWebChallengeUserAgent(captured.userAgent)
-                    if (safe.isEmpty()) {
+                    val missingStorage = request.requiredLocalStorageKeys.filter { key ->
+                        safeStorage[key].isNullOrEmpty()
+                    }
+                    if (safe.isEmpty() && safeStorage.isEmpty()) {
                         errorVisible = true
-                        message = strings.text("Error: no usable cookies were found for this source. Complete the challenge and try again.")
+                        message = strings.text("Error: no usable browser session was found for this source. Complete website sign-in and try again.")
                     } else if (userAgent == null) {
                         errorVisible = true
                         message = strings.text("Error: the browser User-Agent could not be read. Keep this browser open and try again.")
@@ -130,8 +137,19 @@ private fun EmbeddedChallenge(
                             "Error: Cloudflare verification is not complete because {0} is missing. Keep this browser open, complete verification and website sign-in, then try again.",
                             request.requiredCookieName,
                         )
+                    } else if (missingStorage.isNotEmpty()) {
+                        errorVisible = true
+                        message = strings.text(
+                            "Error: website sign-in is not complete. Keep this browser open, finish signing in, then try again.",
+                        )
                     } else {
-                        onImport(WebChallengeCapture(cookies = safe, userAgent = userAgent))
+                        onImport(
+                            WebChallengeCapture(
+                                cookies = safe,
+                                userAgent = userAgent,
+                                localStorage = safeStorage,
+                            ),
+                        )
                     }
                 },
                 onError = { error ->
@@ -152,11 +170,11 @@ private fun EmbeddedChallenge(
                 onClick = {
                     capturing = true
                     errorVisible = false
-                    message = strings.text("Reading cookies from the isolated browser session…")
+                    message = strings.text("Reading the isolated browser session…")
                     captureRequest += 1
                 },
                 enabled = !loading && !capturing,
-            ) { Text(strings.text("Import cookies")) }
+            ) { Text(strings.text("Import browser session")) }
         }
     }
 }

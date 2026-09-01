@@ -202,6 +202,7 @@ public class ExtensionRepositoryClient(
                         id = rawId.toLongOrNull() ?: error("Invalid lossless source id '$rawId'"),
                         baseUrl = source["baseUrl"]?.jsonPrimitive?.contentOrNull,
                         contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
+                        browserSessionOrigins = source.stringSet("browserSessionOrigins"),
                     )
                 },
                 sha256 = pkg.requiredString("sha256"),
@@ -259,6 +260,7 @@ public class ExtensionRepositoryClient(
                 val sourceKey = match["sourceKey"]?.jsonObject ?: error("Missing sourceKey")
                 require(sourceKey.requiredString("packageId") == entry.id)
                 require(sourceKey.requiredString("sourceId") == expected.id.toString())
+                require(match.stringSet("browserSessionOrigins") == expected.browserSessionOrigins)
             }
             val events = sidecar["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
             require(events.requiredString("protocol") == "dev.shinsou.system")

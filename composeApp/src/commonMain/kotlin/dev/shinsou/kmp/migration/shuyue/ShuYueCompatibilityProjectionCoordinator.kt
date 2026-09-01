@@ -214,6 +214,12 @@ private fun materialize(
     var categoryBindingsCreated = 0
 
     authority.publications.forEach { publication ->
+        if (
+            shuyueCompatibilityProjectionHandoffMarker(publication.key) in
+            current.contentAuthorityProjectionMarkers
+        ) {
+            return@forEach
+        }
         val existing = findProjectedManga(current.copy(mangas = mangas, chapters = chapters), publication.key)
         val manga = existing ?: publication.toLegacyManga(nextMangaId++).also {
             mangas += it
@@ -332,6 +338,13 @@ private fun materialize(
         result = result,
     )
 }
+
+/** Prevents a compatibility row already handed to a native/standalone source from being rebuilt. */
+internal fun shuyueCompatibilityProjectionHandoffMarker(publicationKey: PublicationKey): String =
+    "$SHUYUE_COMPATIBILITY_PROJECTION_HANDOFF_PREFIX${publicationKey.value}"
+
+private const val SHUYUE_COMPATIBILITY_PROJECTION_HANDOFF_PREFIX: String =
+    "migration.shuyue.compatibility-handoff."
 
 private fun findProjectedManga(snapshot: AppSnapshot, publicationKey: PublicationKey): Manga? {
     val canonicalUrl = encodeTypedLocalPublicationUrl(publicationKey)

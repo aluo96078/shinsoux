@@ -93,6 +93,23 @@ class FilePluginPackageStoreTest {
         )
     }
 
+    @Test
+    fun reconstructsPackageWithEventPermissionMetadata() = runTest {
+        val files = PackageMemoryFileSystem()
+        val scriptFile = "script-932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8.js"
+        files.write(
+            "plugins/packages/zh.bika/package.json",
+            """{"metadata":{"manifest":{"id":"zh.bika","name":"哔咔漫画","version":"1.0.8","versionCode":9,"lang":"zh","nsfw":true,"script":"zh.bika.js","signature":"932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8","sources":[{"name":"哔咔漫画","lang":"zh","id":8123456,"baseUrl":"https://manhuabika.com","contentType":"manga"}],"systemEvents":{"minVersion":1,"maxVersion":1,"optional":["command.auth.login.request"]},"requestedHostPermissions":["REQUEST_LOGIN_UI"]},"repositoryBaseUrl":"http://127.0.0.1:18082","installedSha256":"932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8"},"scriptFile":"$scriptFile"}""".encodeToByteArray(),
+        )
+        files.write("plugins/packages/zh.bika/$scriptFile", ByteArray(31_982))
+
+        val reconstructed = assertNotNull(FilePluginPackageStore(files).get("zh.bika"))
+
+        assertEquals("1.0.8", reconstructed.manifest.version)
+        assertEquals(9, reconstructed.manifest.versionCode)
+        assertEquals(31_982, reconstructed.scriptBytes.size)
+    }
+
     private fun storedPlugin(script: String, versionCode: Int = 1): StoredPlugin {
         val bytes = script.encodeToByteArray()
         val hash = Sha256.hex(bytes)

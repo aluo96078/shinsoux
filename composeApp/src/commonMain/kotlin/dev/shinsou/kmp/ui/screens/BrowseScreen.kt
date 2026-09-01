@@ -311,6 +311,8 @@ fun BrowseScreen(
     systemBackRequest: Long = 0L,
     backGestureProgress: Float = 0f,
     onBackAvailabilityChanged: (Boolean) -> Unit = {},
+    /** Closes a legacy detail route owned by a source/search parent outside this composable. */
+    onParentDismissed: () -> Unit = {},
     onReaderVisibilityChanged: (Boolean) -> Unit = {},
     onReaderProgress: (
         title: String,
@@ -379,6 +381,21 @@ fun BrowseScreen(
         catalogueLoadingMore = false
     }
 
+    fun closeActiveSource() {
+        val hadSource = overlays.activeSource != null
+        cancelCatalogueLoad()
+        overlays = overlays.closeSource()
+        currentReaderVisibilityCallback.value(false)
+        if (hadSource) onParentDismissed()
+    }
+
+    fun closeGlobalSearch() {
+        val hadSearch = overlays.globalSearchVisible
+        overlays = overlays.closeGlobalSearch()
+        currentReaderVisibilityCallback.value(false)
+        if (hadSearch) onParentDismissed()
+    }
+
     LaunchedEffect(hasBrowseOverlay) {
         currentBackAvailabilityCallback.value(hasBrowseOverlay)
     }
@@ -401,11 +418,8 @@ fun BrowseScreen(
                     overlays = overlays.closePublication()
                     currentReaderVisibilityCallback.value(false)
                 }
-                overlays.activeSource != null -> {
-                    cancelCatalogueLoad()
-                    overlays = overlays.closeSource()
-                }
-                overlays.globalSearchVisible -> overlays = overlays.closeGlobalSearch()
+                overlays.activeSource != null -> closeActiveSource()
+                overlays.globalSearchVisible -> closeGlobalSearch()
             }
         }
     }
@@ -605,9 +619,11 @@ fun BrowseScreen(
                     FilterChip(
                         selected = section == option,
                         onClick = {
+                            val parentWasOpen = overlays.activeSource != null || overlays.globalSearchVisible
                             cancelCatalogueLoad()
                             overlays = overlays.closeAll()
                             currentReaderVisibilityCallback.value(false)
+                            if (parentWasOpen) onParentDismissed()
                             section = option
                             query = ""
                         },
@@ -727,7 +743,7 @@ fun BrowseScreen(
                             (showNsfw || !it.isNsfw) &&
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages)
                     },
-                    onBack = { overlays = overlays.closeGlobalSearch() },
+                    onBack = ::closeGlobalSearch,
                     onOpenManga = ::openManga,
                 )
             }
@@ -749,11 +765,7 @@ fun BrowseScreen(
                     loading = catalogueLoading,
                     loadingMore = catalogueLoadingMore,
                     error = catalogueError,
-                    onBack = {
-                        cancelCatalogueLoad()
-                        overlays = overlays.closeSource()
-                        currentReaderVisibilityCallback.value(false)
-                    },
+                    onBack = ::closeActiveSource,
                     onBrowse = { search, mode, filters ->
                         overlays.activeSource?.let {
                             loadCatalogue(it, search, mode, filters, requestedPage = 1, append = false)
@@ -2928,6 +2940,7 @@ private fun SourceSectionHeader(title: String, count: Int, pinned: Boolean) {
 internal data class SourceSettingsSections(
     val credentials: Boolean,
     val preferences: Boolean,
+    val browserSessionLogin: Boolean,
 )
 
 /**
@@ -2938,6 +2951,7 @@ internal fun sourceSettingsSections(source: BrowseSource): SourceSettingsSection
     SourceSettingsSections(
         credentials = source.supportsLogin,
         preferences = source.preferences.isNotEmpty(),
+        browserSessionLogin = source.supportsLogin && source.requiresBrowserSessionLogin,
     )
 
 @Composable
@@ -3108,6 +3122,32 @@ private fun SourceSettingsDialog(
     var cookieImportBusy by remember(source.id) { mutableStateOf(false) }
     var cookieImportMessage by remember(source.id) { mutableStateOf<String?>(null) }
 
+    fun openWebChallenge() {
+        challengeBusy = true
+        challengeMessage = null
+        scope.launch {
+            withFrameNanos { }
+            runCatching {
+                callbacks.sourceWebChallenge(
+                    sourceId = source.id,
+                    username = username,
+                    password = password,
+                )
+            }
+                .onSuccess { request ->
+                    if (request == null) {
+                        challengeMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
+                    } else {
+                        challengeRequest = request
+                    }
+                }
+                .onFailure { error ->
+                    challengeMessage = error.message ?: strings.text("Unable to start the web challenge.")
+                }
+            challengeBusy = false
+        }
+    }
+
     LaunchedEffect(source.id) {
         secretsLoading = true
         secretsError = null
@@ -3177,6 +3217,12 @@ private fun SourceSettingsDialog(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
+                                        if (settingsSections.browserSessionLogin) {
+                                            loginMessage = null
+                                            loginError = null
+                                            openWebChallenge()
+                                            return@Button
+                                        }
                                         loginBusy = true
                                         loginMessage = null
                                         loginError = null
@@ -3208,10 +3254,15 @@ private fun SourceSettingsDialog(
                                             loginBusy = false
                                         }
                                     },
-                                    enabled = username.isNotBlank() && password.isNotEmpty() &&
-                                        !secretsLoading && !loginBusy,
+                                    enabled = !secretsLoading && !loginBusy && !challengeBusy &&
+                                        (settingsSections.browserSessionLogin ||
+                                            (username.isNotBlank() && password.isNotEmpty())),
                                 ) {
-                                    Text(strings.text("Login"))
+                                    Text(
+                                        strings.text(
+                                            if (settingsSections.browserSessionLogin) "Sign in in browser" else "Login",
+                                        ),
+                                    )
                                 }
                                 if (credential != null) {
                                     OutlinedButton(
@@ -3240,6 +3291,15 @@ private fun SourceSettingsDialog(
                             }
                             loginError?.let {
                                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            }
+                            if (settingsSections.browserSessionLogin) {
+                                Text(
+                                    strings.text(
+                                        "This source must sign in through its website. The app will import only the source-declared browser session data and will not call its direct password login API.",
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                             }
                         }
                     }
@@ -3310,33 +3370,14 @@ private fun SourceSettingsDialog(
 
                 item {
                         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text(strings.text("Cookies"), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                strings.text(
+                                    if (settingsSections.browserSessionLogin) "Browser session" else "Cookies",
+                                ),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                             OutlinedButton(
-                                onClick = {
-                                    challengeBusy = true
-                                    challengeMessage = null
-                                    scope.launch {
-                                        withFrameNanos { }
-                                        runCatching {
-                                            callbacks.sourceWebChallenge(
-                                                sourceId = source.id,
-                                                username = username,
-                                                password = password,
-                                            )
-                                        }
-                                            .onSuccess { request ->
-                                                if (request == null) {
-                                                    challengeMessage = strings.text("This source does not provide a valid HTTP(S) URL.")
-                                                } else {
-                                                    challengeRequest = request
-                                                }
-                                            }
-                                            .onFailure { error ->
-                                                challengeMessage = error.message ?: strings.text("Unable to start the web challenge.")
-                                            }
-                                        challengeBusy = false
-                                    }
-                                },
+                                onClick = { openWebChallenge() },
                                 enabled = !challengeBusy && !secretsLoading,
                             ) {
                                 Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
@@ -3540,10 +3581,15 @@ private fun SourceSettingsDialog(
                             sourceId = source.id,
                             cookies = importedSession.cookies,
                             userAgent = importedSession.userAgent,
+                            localStorage = importedSession.localStorage,
                         )
                     }.onSuccess {
                         sourceCookies = importedSession.cookies.fold(sourceCookies) { saved, cookie -> saved.upsert(cookie) }
-                        challengeMessage = strings.text("Imported {0} cookie(s).", importedSession.cookies.size)
+                        challengeMessage = if (importedSession.localStorage.isNotEmpty()) {
+                            strings.text("Browser session imported successfully.")
+                        } else {
+                            strings.text("Imported {0} cookie(s).", importedSession.cookies.size)
+                        }
                         challengeRequest = null
                     }.onFailure { error ->
                         challengeMessage = strings.text(
@@ -3556,7 +3602,7 @@ private fun SourceSettingsDialog(
             },
             onDismiss = {
                 challengeRequest = null
-                challengeMessage = strings.text("Web challenge cancelled. No browser cookies were imported.")
+                challengeMessage = strings.text("Web challenge cancelled. No browser session was imported.")
             },
         )
     }

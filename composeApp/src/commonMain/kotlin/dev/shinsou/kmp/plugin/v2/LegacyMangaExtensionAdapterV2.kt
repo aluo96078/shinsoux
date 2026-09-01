@@ -89,6 +89,12 @@ public class LegacyMangaExtensionSourceV2(
     override val webChallengeUrl: String?
         get() = source.webChallengeUrl
 
+    override val webChallengeLocalStorageKeys: Set<String>
+        get() = source.webChallengeLocalStorageKeys
+
+    override val requiredWebChallengeLocalStorageKeys: Set<String>
+        get() = source.requiredWebChallengeLocalStorageKeys
+
     override suspend fun getFilterList(): BrowseFilterListV2 =
         source.getFilterList().map { it.toBrowseFilterV2() }
 

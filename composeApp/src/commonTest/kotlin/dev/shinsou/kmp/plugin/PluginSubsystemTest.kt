@@ -734,6 +734,165 @@ class PluginSubsystemTest {
     }
 
     @Test
+    fun uiAdapterRequiresCloudflareCookieForStandaloneBiliMangaSource() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey.fromLegacy("zh.bilimanga.manga", BILIMANGA_MANGA_SOURCE_ID)
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "嗶哩漫畫",
+            languageTag = "zh",
+            supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://www.bilimanga.net",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.0.0",
+                    displayName = "嗶哩漫畫",
+                    sources = listOf(descriptor),
+                ),
+                listOf(
+                    FailingLoginExtensionSource(
+                        descriptor = descriptor,
+                        webChallengeUserAgent = null,
+                        webChallengeUrl = "https://www.bilimanga.net/login.php",
+                    ),
+                ),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+        )
+
+        try {
+            browse.setPluginUiAvailable(true)
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            val challenge = assertNotNull(browse.sourceWebChallenge(source.id))
+            assertEquals("cf_clearance", challenge.requiredCookieName)
+        } finally {
+            manager.close()
+            http.close()
+        }
+    }
+
+    @Test
+    fun uiAdapterImportsAllowlistedV2BrowserStorageWithoutCookies() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val trust = KeyValuePluginTrustStore(keyValues)
+        val http = HttpClient(MockEngine { error("Repository access is not expected") })
+        val repositoryClient = ExtensionRepositoryClient(http)
+        val manager = PluginManager(
+            repositoryClient = repositoryClient,
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(trust),
+            runtimeFactory = NoopScriptPluginRuntimeFactory,
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(
+                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0), emptyMap()) },
+                    storage,
+                ),
+                storage = storage,
+            ),
+        )
+        val sourceKey = SourceKey(2, "zh.bika", "8123456", 8_123_456L)
+        val descriptor = SourceDescriptorV2(
+            sourceKey = sourceKey,
+            displayName = "哔咔漫画",
+            languageTag = "zh",
+            supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
+            capabilities = setOf(ExtensionCapability.CONTENT, ExtensionCapability.LOGIN),
+            baseUrl = "https://manhuabika.com",
+        )
+        manager.installExtensionRuntimeV2(
+            ImmutableExtensionPackageRuntimeV2(
+                ExtensionPackageV2(
+                    contractVersion = 2,
+                    packageId = sourceKey.packageId,
+                    version = "1.0.10",
+                    displayName = "哔咔漫画",
+                    sources = listOf(descriptor),
+                ),
+                listOf(
+                    FailingLoginExtensionSource(
+                        descriptor = descriptor,
+                        webChallengeUserAgent = null,
+                        webChallengeUrl = "https://manhuabika.com/",
+                        webChallengeLocalStorageKeys = setOf("token", "nonce"),
+                        requiredWebChallengeLocalStorageKeys = setOf("token", "nonce"),
+                    ),
+                ),
+            ),
+        )
+        val browse = PluginBrowseAdapter(
+            manager = manager,
+            repositoryClient = repositoryClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(keyValues),
+            pluginStorage = storage,
+            keyValueStore = keyValues,
+            trustStore = trust,
+            requestBuilder = PluginRequestBuilder(storage, PluginUserAgentProvider { "android-webview-agent" }),
+        )
+
+        try {
+            browse.setPluginUiAvailable(true)
+            browse.setSourceEnabledV2(sourceKey, true)
+            val source = browse.state.value.sources.single { it.sourceKey == sourceKey }
+            assertTrue(source.requiresBrowserSessionLogin)
+            val challenge = assertNotNull(browse.sourceWebChallenge(source.id))
+            assertEquals(listOf("nonce", "token"), challenge.localStorageKeys)
+            assertEquals(setOf("token", "nonce"), challenge.requiredLocalStorageKeys)
+            assertEquals("android-webview-agent", challenge.userAgent)
+
+            browse.importSourceWebChallengeSession(
+                sourceId = source.id,
+                cookies = emptyList(),
+                userAgent = "android-webview-agent",
+                localStorage = mapOf("token" to "member-token", "nonce" to "device-nonce"),
+            )
+            assertEquals("member-token", storage.getPreference(8_123_456L, "token"))
+            assertEquals("device-nonce", storage.getPreference(8_123_456L, "nonce"))
+            assertFailsWith<IllegalArgumentException> {
+                browse.importSourceWebChallengeSession(
+                    sourceId = source.id,
+                    cookies = emptyList(),
+                    userAgent = "android-webview-agent",
+                    localStorage = mapOf("savedCredentials" to "blocked"),
+                )
+            }
+        } finally {
+            manager.close()
+            http.close()
+        }
+    }
+
+    @Test
     fun uiAdapterRejectsCrossOriginV2WebChallengeUrl() = runTest {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
@@ -1117,6 +1276,8 @@ private class FailingLoginExtensionSource(
     override val descriptor: SourceDescriptorV2,
     override val webChallengeUserAgent: String?,
     override val webChallengeUrl: String? = null,
+    override val webChallengeLocalStorageKeys: Set<String> = emptySet(),
+    override val requiredWebChallengeLocalStorageKeys: Set<String> = emptySet(),
 ) : ExtensionSourceV2, WebChallengeUserAgentSourceV2 {
     override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2()
     override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =

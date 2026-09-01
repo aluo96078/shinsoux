@@ -84,6 +84,10 @@ private class RhinoScriptPluginRuntime private constructor(
         private set
     override var webChallengeUrl: String? = null
         private set
+    override var webChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
+    override var requiredWebChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
     override val recentLogs: List<String> get() = logs.toList()
 
     private suspend fun initialize(script: String) = onEngine { context ->
@@ -95,6 +99,8 @@ private class RhinoScriptPluginRuntime private constructor(
             pluginId = manifest.id,
             sourceId = id,
             sourceName = name,
+            sourceOrigin = selectedSource?.baseUrl.orEmpty(),
+            browserSessionOrigins = selectedSource?.browserSessionOrigins.orEmpty(),
             environment = environment,
             scopeProvider = { scope },
             logs = logs,
@@ -147,6 +153,9 @@ private class RhinoScriptPluginRuntime private constructor(
         }
         bridge.sourceHeaders = headers
         webChallengeUrl = sourceObject.stringProperty("webChallengeUrl")?.takeIf(String::isNotBlank)
+        webChallengeLocalStorageKeys = sourceObject.property("webChallengeLocalStorageKeys").toStringSet()
+        requiredWebChallengeLocalStorageKeys =
+            sourceObject.property("requiredWebChallengeLocalStorageKeys").toStringSet()
         ScriptableObject.putProperty(scope, "baseUrl", baseUrl)
     }
 
@@ -322,6 +331,8 @@ public class RhinoPluginBridge internal constructor(
     private val pluginId: String,
     private val sourceId: Long,
     private val sourceName: String,
+    private val sourceOrigin: String,
+    private val browserSessionOrigins: Set<String>,
     private val environment: ScriptPluginEnvironment,
     private val scopeProvider: () -> Scriptable,
     private val logs: MutableList<String>,
@@ -351,6 +362,25 @@ public class RhinoPluginBridge internal constructor(
         mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
     }
 
+    /** Structured status/body variant for sources that must distinguish an empty result from HTTP failure. */
+    public fun httpGetResponse(url: String, headers: Any?): Any? = try {
+        runBlocking {
+            environment.network.get(
+                sourceId,
+                url,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+    }
+
     public fun httpPost(url: String, body: String, headers: Any?): Any? = try {
         runBlocking {
             environment.network.post(
@@ -366,6 +396,59 @@ public class RhinoPluginBridge internal constructor(
         throw cancelled
     } catch (_: Throwable) {
         null
+    }
+
+    /** Structured status/body variant used by sources that must explain non-2xx login failures. */
+    public fun httpPostResponse(url: String, body: String, headers: Any?): Any? = try {
+        runBlocking {
+            environment.network.post(
+                sourceId,
+                url,
+                body,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+    }
+
+    /** Exact-manifest, browser-backed request for APIs that reject native TLS identities. */
+    public fun browserSessionRequest(
+        url: String,
+        method: String,
+        body: String,
+        headers: Any?,
+    ): Any? = try {
+        runBlocking {
+            val prepared = preparePluginBrowserSessionRequest(
+                sourceOrigin = sourceOrigin,
+                allowedOrigins = browserSessionOrigins,
+                request = PluginHttpRequest(
+                    method = method,
+                    url = url,
+                    body = body.encodeToByteArray(),
+                    headers = headers.toStringMap(),
+                ),
+            )
+            environment.browserSessionTransport.execute(
+                sourceId = sourceId,
+                sourceOrigin = prepared.sourceOrigin,
+                allowedOrigins = setOf(prepared.targetOrigin),
+                request = prepared.request,
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
     }
 
     /** Returns a JSON string because the reviewed ShuYue script parses the bridge result itself. */
@@ -618,11 +701,25 @@ private class RhinoBridgeScriptable(
         bind("httpGetWithHeaders") { _, _, args ->
             bridge.httpGetWithHeaders(stringArg(args, 0), rawArg(args, 1))
         }
+        bind("httpGetResponse") { _, _, args ->
+            bridge.httpGetResponse(stringArg(args, 0), rawArg(args, 1))
+        }
         bind("httpPost") { _, _, args ->
             bridge.httpPost(stringArg(args, 0), stringArg(args, 1), rawArg(args, 2))
         }
+        bind("httpPostResponse") { _, _, args ->
+            bridge.httpPostResponse(stringArg(args, 0), stringArg(args, 1), rawArg(args, 2))
+        }
         bind("httpPostBatch") { _, _, args ->
             bridge.httpPostBatch(rawArg(args, 0), rawArg(args, 1), rawArg(args, 2))
+        }
+        bind("browserSessionRequest") { _, _, args ->
+            bridge.browserSessionRequest(
+                stringArg(args, 0),
+                stringArg(args, 1),
+                stringArg(args, 2),
+                rawArg(args, 3),
+            )
         }
 
         bind("htmlParse") { _, _, args -> bridge.htmlParse(stringArg(args, 0)) }
@@ -839,6 +936,19 @@ private fun Any?.toStringMap(): Map<String, String> = when (val value = this) {
         if (key == null || raw == null) null else key.toString() to raw.toString()
     }.toMap()
     else -> emptyMap()
+}
+
+private fun Any?.toStringSet(): Set<String> = when (val value = this) {
+    null, is Undefined -> emptySet()
+    is NativeJavaObject -> value.unwrap().toStringSet()
+    is Wrapper -> value.unwrap().toStringSet()
+    is NativeArray -> (0 until value.length.toInt()).mapNotNullTo(linkedSetOf()) { index ->
+        value.get(index, value)
+            .takeUnless { it === Scriptable.NOT_FOUND || it is Undefined }
+            ?.let(Context::toString)
+    }
+    is Iterable<*> -> value.mapNotNullTo(linkedSetOf()) { it?.toString() }
+    else -> emptySet()
 }
 
 private inline fun <T, K, V> Array<T>.associateNotNull(transform: (T) -> Pair<K, V>?): Map<K, V> =

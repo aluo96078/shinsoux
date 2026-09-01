@@ -30,6 +30,15 @@
 -keep interface dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$Kernel32Library { *; }
 -keep class dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$DataBlob { *; }
 
+# BiliManga serves page images as AVIF. Compose Desktop's Skia decoder does not
+# understand that format, so macOS decodes it through ImageIO/CoreGraphics via
+# JNA. Preserve native method and Structure field names in release images.
+-keep class dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder { *; }
+-keep interface dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$CoreFoundationFramework { *; }
+-keep interface dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$ImageIoFramework { *; }
+-keep interface dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$CoreGraphicsFramework { *; }
+-keep class dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$CoreGraphicsRect { *; }
+
 # Rhino selects its JVM bridge by class name at runtime.  ProGuard cannot see
 # the reflective lookup from VMBridge.makeInstance(), so a release image that
 # only keeps the entry point loses jdk18/VMBridge_jdk18 and every plugin fails

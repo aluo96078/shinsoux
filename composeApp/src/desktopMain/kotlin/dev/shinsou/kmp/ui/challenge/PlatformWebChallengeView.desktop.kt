@@ -146,7 +146,8 @@ private class MacOsWebChallengeState(
                     "cookies" -> {
                         val captured = event.cookies.orEmpty().map(NativeCookiePayload::toSourceCookie)
                         val userAgent = event.userAgent.orEmpty()
-                        dispatch { onSessionCaptured(WebChallengeCapture(captured, userAgent)) }
+                        val localStorage = event.localStorage.orEmpty()
+                        dispatch { onSessionCaptured(WebChallengeCapture(captured, userAgent, localStorage)) }
                     }
                     "closed" -> if (!closed.get()) {
                         dispatchError(
@@ -284,6 +285,7 @@ private data class NativeChallengeLaunch(
     val sourceName: String,
     val userAgent: String,
     val cookies: List<NativeCookiePayload>,
+    val localStorageKeys: List<String> = emptyList(),
     val username: String? = null,
     val password: String? = null,
 )
@@ -294,6 +296,7 @@ private data class NativeHelperEvent(
     val message: String? = null,
     val cookies: List<NativeCookiePayload>? = null,
     val userAgent: String? = null,
+    val localStorage: Map<String, String>? = null,
 )
 
 @Serializable
@@ -344,6 +347,7 @@ internal fun webChallengeLaunchLine(request: SourceWebChallengeRequest): String 
                     hostOnly = cookie.hostOnly,
                 )
             },
+            localStorageKeys = normalizeWebChallengeLocalStorageKeys(request.localStorageKeys),
             username = credentials?.first,
             password = credentials?.second,
         ),

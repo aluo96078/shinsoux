@@ -693,6 +693,8 @@ public interface UserInteractionScopedExtensionSourceV2 {
 public interface WebChallengeUserAgentSourceV2 {
     public val webChallengeUserAgent: String?
     public val webChallengeUrl: String? get() = null
+    public val webChallengeLocalStorageKeys: Set<String> get() = emptySet()
+    public val requiredWebChallengeLocalStorageKeys: Set<String> get() = emptySet()
 }
 
 /** Host-only exact artifact authority for native/reviewed event-capable runtimes. */
@@ -726,6 +728,14 @@ public class HostExtensionSourceV2 internal constructor(
         requireRemoteUri(url, "Web challenge URL")
         return url
     }
+    public fun webChallengeLocalStorageKeys(): Set<String> =
+        (implementation as? WebChallengeUserAgentSourceV2)
+            ?.webChallengeLocalStorageKeys
+            .orEmpty()
+    public fun requiredWebChallengeLocalStorageKeys(): Set<String> =
+        (implementation as? WebChallengeUserAgentSourceV2)
+            ?.requiredWebChallengeLocalStorageKeys
+            .orEmpty()
     public suspend fun browseOptions(): BrowseOptionsSchemaV2 {
         requireCapability(ExtensionCapability.BROWSE)
         return implementation.browseOptions().also(::validateBrowseSchema)

@@ -31,6 +31,7 @@ class ExtensionRepositoryV2AdmissionTest {
         assertEquals(SIDECAR_PATH, shinsou.sidecarUrl)
         assertEquals(EVENTS, shinsou.systemEvents)
         assertEquals(PERMISSIONS, shinsou.requestedHostPermissions)
+        assertEquals(BROWSER_ORIGINS, shinsou.sources!!.single().browserSessionOrigins)
 
         assertEquals(SHUYUE_ID, shuyue.id)
         assertEquals(SHUYUE_OPAQUE_SOURCE_ID, shuyue.sources.single().id)
@@ -66,6 +67,7 @@ class ExtensionRepositoryV2AdmissionTest {
                 """.trimIndent(),
             ),
             "permissions" to sidecarJson(permissions = listOf("REQUEST_SOURCE_REFRESH")),
+            "browser-session origins" to sidecarJson(browserOrigins = listOf("https://other-api.example")),
         )
 
         mismatches.forEach { (label, sidecar) ->
@@ -96,6 +98,7 @@ class ExtensionRepositoryV2AdmissionTest {
                 """.trimIndent(),
             ),
             sidecarJson(permissions = listOf("REQUEST_SOURCE_REFRESH")),
+            sidecarJson(browserOrigins = listOf("https://other-api.example")),
         )
 
         mismatches.forEach { sidecar ->
@@ -216,6 +219,7 @@ class ExtensionRepositoryV2AdmissionTest {
             assertEquals(SHA256, installed.metadata.installedSha256)
             assertEquals(EVENTS, installed.manifest.systemEvents)
             assertEquals(PERMISSIONS, installed.manifest.requestedHostPermissions)
+            assertEquals(BROWSER_ORIGINS, installed.manifest.sources!!.single().browserSessionOrigins)
             assertEquals(SCRIPT_BYTES.toList(), installed.scriptBytes.toList())
             assertEquals(listOf("/$SIDECAR_PATH", "/$SCRIPT_PATH"), requests)
         } finally {
@@ -248,6 +252,7 @@ class ExtensionRepositoryV2AdmissionTest {
                 lang = "en",
                 id = 9_223_372_036_854_775_807L,
                 baseUrl = "https://source.example",
+                browserSessionOrigins = BROWSER_ORIGINS,
             ),
         ),
         sha256 = SHA256,
@@ -272,7 +277,7 @@ class ExtensionRepositoryV2AdmissionTest {
               "versionCode":7,
               "lang":"en",
               "scriptUrl":"$SCRIPT_PATH",
-              "sources":[{"sourceId":"9223372036854775807","name":"V2 source","lang":"en","baseUrl":"https://source.example"}],
+              "sources":[{"sourceId":"9223372036854775807","name":"V2 source","lang":"en","baseUrl":"https://source.example","browserSessionOrigins":["https://api.example"]}],
               "sha256":"$SHA256",
               "byteSize":${SCRIPT_BYTES.size},
               "contentType":"manga",
@@ -311,6 +316,7 @@ class ExtensionRepositoryV2AdmissionTest {
         contentType: String = "manga",
         events: String = eventsJson(),
         permissions: List<String> = listOf("REQUEST_LOGIN_UI", "REPORT_DIAGNOSTIC"),
+        browserOrigins: List<String> = listOf("https://api.example"),
     ): String = """
         {
           "format":"shinsou-extension-sidecar-v2",
@@ -320,7 +326,7 @@ class ExtensionRepositoryV2AdmissionTest {
           "versionCode":$versionCode,
           "artifact":{"scriptUrl":"$SCRIPT_PATH","sha256":"$digest","byteSize":$byteSize},
           "content":{"contractVersion":2,"type":"$contentType"},
-          "sources":[{"sourceId":"$sourceId","sourceKey":{"contractVersion":2,"packageId":"$sourcePackageId","sourceId":"$sourceId"}}],
+          "sources":[{"sourceId":"$sourceId","browserSessionOrigins":${browserOrigins.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},"sourceKey":{"contractVersion":2,"packageId":"$sourcePackageId","sourceId":"$sourceId"}}],
           "systemEvents":$events,
           "requestedHostPermissions":${permissions.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")}
         }
@@ -351,5 +357,6 @@ class ExtensionRepositoryV2AdmissionTest {
             PluginHostPermission.REQUEST_LOGIN_UI,
             PluginHostPermission.REPORT_DIAGNOSTIC,
         )
+        val BROWSER_ORIGINS = setOf("https://api.example")
     }
 }

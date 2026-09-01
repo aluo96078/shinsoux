@@ -38,6 +38,7 @@ public fun interface PluginLoginRequester {
 public data class ScriptPluginEnvironment(
     val network: PluginNetworkClient,
     val storage: PluginStorage,
+    val browserSessionTransport: PluginBrowserSessionTransport = PluginBrowserSessionTransport.Unavailable,
     val logger: PluginLogger = PluginLogger.None,
     val loginRequester: PluginLoginRequester = PluginLoginRequester.None,
     /** Optional v1 system-event ingress shared by Rhino and JavaScriptCore adapters. */

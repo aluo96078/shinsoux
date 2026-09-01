@@ -180,6 +180,24 @@ class DesktopWebChallengeCookieSessionTest {
     }
 
     @Test
+    fun nativeLaunchIncludesOnlyDeclaredStorageKeyNamesAndNoValues() {
+        val line = webChallengeLaunchLine(
+            SourceWebChallengeRequest(
+                sourceId = 1L,
+                sourceName = "Fixture",
+                url = "https://example.test/",
+                userAgent = "fixture-agent",
+                localStorageKeys = listOf("token", "nonce", "bad key"),
+            ),
+        )
+        val payload = Json.parseToJsonElement(line).jsonObject
+        val keys = payload.getValue("localStorageKeys").jsonArray.map { it.jsonPrimitive.content }
+
+        assertEquals(listOf("token", "nonce"), keys)
+        assertFalse(line.contains("member-token"))
+    }
+
+    @Test
     fun nativeHelperProtocolCanReturnBrowserUserAgentWithoutPuttingItInProcessArguments() {
         val helperSource = Path.of(
             "src/desktopMain/swift/ShinsouWebChallenge/main.swift",
@@ -194,6 +212,24 @@ class DesktopWebChallengeCookieSessionTest {
     }
 
     @Test
+    fun nativeHelperKeepsLegacyChallengeAndAddsHeadlessBrowserSessionProtocol() {
+        val helperSource = Path.of(
+            "src/desktopMain/swift/ShinsouWebChallenge/main.swift",
+        ).let { local ->
+            if (Files.isRegularFile(local)) local else Path.of("composeApp").resolve(local)
+        }
+        val sourceText = Files.readString(helperSource)
+
+        assertTrue(sourceText.contains("?? \"challenge\""), "Legacy launch payload must default to challenge mode")
+        assertTrue(sourceText.contains("launch.mode == \"browserSession\""))
+        assertTrue(sourceText.contains("NSApp.setActivationPolicy(.prohibited)"))
+        assertTrue(sourceText.contains("case \"evaluate\":"))
+        assertTrue(sourceText.contains("type: \"evaluated\""))
+        assertTrue(sourceText.contains("id: id"), "Evaluation replies must correlate with their command ID")
+        assertTrue(sourceText.contains("script.utf8.count <= 4_194_304"))
+    }
+
+    @Test
     fun nativeHelperUsesArgumentBoundSameOriginAutomaticLogin() {
         val helperSource = Path.of(
             "src/desktopMain/swift/ShinsouWebChallenge/main.swift",
@@ -203,10 +239,12 @@ class DesktopWebChallengeCookieSessionTest {
         val sourceText = Files.readString(helperSource)
 
         assertTrue(sourceText.contains("callAsyncJavaScript"))
-        assertTrue(sourceText.contains("arguments: [\"username\": username, \"password\": password]"))
+        assertTrue(sourceText.contains("\"username\": username"))
+        assertTrue(sourceText.contains("\"password\": password"))
         assertTrue(sourceText.contains("action.origin !== location.origin"))
         assertTrue(sourceText.contains("form.requestSubmit"))
         assertTrue(sourceText.contains("didSubmitAutomaticLogin"))
+        assertTrue(sourceText.contains("MutationObserver"))
         assertFalse(sourceText.contains("evaluateJavaScript(launch.password"))
     }
 
