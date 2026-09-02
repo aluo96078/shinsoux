@@ -3,6 +3,7 @@ import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.LibraryElements
 import org.gradle.api.attributes.Usage
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -241,6 +242,15 @@ kotlin {
             baseName = "ShinsouKit"
             isStatic = true
             binaryOption("bundleId", "dev.aluo.shinsoux.shared")
+
+            // Kotlin/Native 2.4.0's interprocedural static-initializer analysis can exhaust the
+            // compiler heap while linking this optimized iOS framework. This phase only removes
+            // redundant initializer checks, so skipping it preserves initialization semantics
+            // while avoiding the pathological memory spike during Archive/Ad Hoc builds.
+            if (buildType == NativeBuildType.RELEASE) {
+                freeCompilerArgs +=
+                    "-Xdisable-phases=RemoveRedundantCallsToStaticInitializersPhase"
+            }
         }
     }
 

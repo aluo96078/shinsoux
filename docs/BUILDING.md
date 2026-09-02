@@ -119,6 +119,17 @@ xcodebuild -project Shinsou.xcodeproj \
 
 這會一併驗證 SwiftUI host、Widget extension 與 Kotlin framework linkage，但無法驗證需要簽章或帳號的 capability。
 
+Release／Archive 會執行 Kotlin/Native 的最佳化 framework 連結，與上方的 Debug Simulator
+建置不同。Kotlin/Native 2.4.0 的
+`RemoveRedundantCallsToStaticInitializersPhase` 在本專案規模下會產生異常的記憶體尖峰，最終讓
+Xcode 只回報 `PhaseScriptExecution Build ShinsouKit`／`exit status 65`。專案只對 iOS
+Release framework 停用這個「移除重複 static initializer 檢查」的編譯期最佳化；初始化語意
+與 ABI 不變，Debug 與其他平台也不受影響。Kotlin 2.4 預設會在 Gradle process 內執行
+Native compiler，導致 `kotlin.native.jvmArgs` 無法提供獨立 heap；專案因此設定
+`kotlin.native.disableCompilerDaemon=true`，改用一次性的獨立 compiler process，並為其保留
+6 GiB heap。執行 Archive 的 macOS runner 應提供足夠的實體記憶體，且不應在使用者層級的
+Gradle 設定覆蓋成更小的 `kotlin.native.jvmArgs` 或關閉這項隔離設定。
+
 ### 5. Desktop 執行與平台安裝包
 
 在 macOS 執行 Desktop、編譯並建立 DMG：
