@@ -63,6 +63,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install required Android SDK packages
         shell: bash
@@ -187,6 +189,8 @@ jobs:
 
       - name: Set up Android SDK for the shared Gradle module
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install required Android SDK packages
         shell: bash
@@ -344,6 +348,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install required Android SDK packages
         shell: pwsh
