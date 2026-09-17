@@ -430,6 +430,7 @@ public class ShuYueTransactionalImporter<D : Any>(
             ),
             description = book.description,
             authors = listOfNotNull(book.author?.takeIf(String::isNotBlank)),
+            thumbnailUrl = book.coverImage?.takeIf(String::isNotBlank),
         )
     }
 

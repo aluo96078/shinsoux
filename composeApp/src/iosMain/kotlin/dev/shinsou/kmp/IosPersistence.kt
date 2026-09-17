@@ -4,6 +4,7 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.plugin.PluginJson
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
+import dev.shinsou.kmp.plugin.allowsIosKeychainPlaintextFallback
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import dev.shinsou.kmp.plugin.migrateLegacySensitivePluginValues
 import kotlinx.cinterop.BetaInteropApi
@@ -24,6 +25,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlin.experimental.ExperimentalNativeApi
 import platform.CoreFoundation.CFDictionaryCreate
 import platform.CoreFoundation.CFTypeRefVar
 import platform.CoreFoundation.kCFAllocatorDefault
@@ -61,6 +63,7 @@ import platform.Security.kSecReturnData
 import platform.Security.kSecValueData
 import platform.Security.errSecItemNotFound
 import platform.darwin.OSStatus
+import kotlin.native.Platform
 
 /** Durable iOS snapshot storage. Foundation's atomic write replaces the file as one transaction. */
 @OptIn(ExperimentalForeignApi::class)
@@ -273,8 +276,12 @@ public class IosPluginKeyValueStore : PluginKeyValueStore {
         }
     }
 
+    @OptIn(ExperimentalNativeApi::class)
     private fun markKeychainUnavailable(error: Throwable): Boolean {
         if (error !is IosKeychainException || error.status != ERR_SEC_MISSING_ENTITLEMENT) return false
+        if (!allowsIosKeychainPlaintextFallback(isIosSimulatorBuild, Platform.isDebugBinary)) {
+            return false
+        }
         IosPluginState.keychainUnavailable = true
         return true
     }
@@ -290,10 +297,10 @@ private object IosPluginState {
     var secureValues: Map<String, String?> = emptyMap()
     var sensitiveMigrationChecked: Boolean = false
 
-    // Simulator/debug builds may not have an application-identifier entitlement. In that
+    // Simulator debug builds may not have an application-identifier entitlement. In that
     // environment Security.framework returns errSecMissingEntitlement (-34018) for every
-    // Keychain operation. Keep the app usable by retaining sensitive values in the cached
-    // file-backed store until a real Keychain is available (release builds still use Keychain).
+    // Keychain operation. The compile-time target + debug-binary gate in markKeychainUnavailable
+    // keeps the compatibility store unreachable from every device or release binary.
     var keychainUnavailable: Boolean = false
 }
 

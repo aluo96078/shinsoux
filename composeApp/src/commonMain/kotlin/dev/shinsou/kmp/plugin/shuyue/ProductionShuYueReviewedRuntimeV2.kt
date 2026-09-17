@@ -13,13 +13,17 @@ import dev.shinsou.kmp.plugin.PluginCredential
 import dev.shinsou.kmp.plugin.PluginLoginRequester
 import dev.shinsou.kmp.plugin.submitLegacyLoginCompatibility
 import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+import dev.shinsou.kmp.plugin.PluginExecutionLimits
 import dev.shinsou.kmp.plugin.PluginManifest
+import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.PluginStorage
 import dev.shinsou.kmp.plugin.SChapter
 import dev.shinsou.kmp.plugin.SManga
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntime
 import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.InProcessScriptProvenance
+import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.SourceIndexEntry
 import dev.shinsou.kmp.plugin.events.BoundPluginScope
 import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
@@ -27,6 +31,8 @@ import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
 import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+import dev.shinsou.kmp.plugin.events.stablePluginRuntimeInstanceId
+import dev.shinsou.kmp.plugin.pluginHttpsOriginOrNull
 import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
 import dev.shinsou.kmp.plugin.toBrowseFilterV2
 import dev.shinsou.kmp.plugin.toPluginFilter
@@ -157,12 +163,19 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
             delegate = environment.storage,
             permissions = artifact.grantedPermissions,
         )
-        val originalScript = artifact.copyBytes().decodeToString(throwOnInvalidSequence = true)
+        val originalBytes = artifact.copyBytes()
+        require(Sha256.hex(originalBytes) == artifact.identity.sha256) {
+            "Reviewed ShuYue artifact bytes changed after admission"
+        }
+        val originalScript = originalBytes.decodeToString(throwOnInvalidSequence = true)
         val bundles = mutableListOf<ShuYueSourceRuntimeBundle>()
         try {
             descriptor.sources.forEach { sourceDescriptor ->
                 require(sourceDescriptor.sourceKey.packageId == artifact.identity.packageId) {
                     "Reviewed ShuYue descriptor package mismatch"
+                }
+                check(nextEventRuntimeGeneration < Long.MAX_VALUE) {
+                    "Reviewed plugin runtime generation space is exhausted"
                 }
                 val eventRuntimeGeneration = ++nextEventRuntimeGeneration
                 val eventBinding = createEventBinding(
@@ -173,11 +186,38 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     runtimeGeneration = eventRuntimeGeneration,
                 )
                 val executionScope = executionScopes.resolve(artifact.identity, sourceDescriptor.sourceKey)
+                val reviewedSourceProfile = reviewedProfile.sourceProfiles.single {
+                    it.sourceId == sourceDescriptor.sourceKey.sourceId
+                }
+                val requestOrigins = reviewedSourceProfile.requestOrigins
+                val browserSessionOrigins = if (
+                    ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in artifact.grantedPermissions
+                ) {
+                    reviewedSourceProfile.browserSessionOrigins
+                } else {
+                    emptySet()
+                }
+                if (ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in artifact.grantedPermissions) {
+                    require(browserSessionOrigins.isNotEmpty()) {
+                        "Reviewed browser challenge permission requires an exact challenge origin"
+                    }
+                }
                 val sourceEntry = SourceIndexEntry(
                     name = sourceDescriptor.displayName,
                     lang = sourceDescriptor.languageTag,
                     id = executionScope,
                     baseUrl = sourceDescriptor.baseUrl,
+                    requestOrigins = requestOrigins,
+                    credentialOrigins = if (
+                        ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS in artifact.grantedPermissions
+                    ) {
+                        reviewedSourceProfile.credentialOrigins
+                    } else {
+                        emptySet()
+                    },
+                    contentOrigins = reviewedSourceProfile.contentOrigins,
+                    browserSessionOrigins = browserSessionOrigins,
+                    originPolicyVersion = 2,
                     canonicalSourceId = sourceDescriptor.sourceKey.sourceId,
                 )
                 val manifest = PluginManifest(
@@ -190,6 +230,9 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     signature = artifact.identity.sha256,
                     sources = listOf(sourceEntry),
                     systemEvents = artifact.systemEvents,
+                    runtimePermissions = artifact.grantedPermissions.mapTo(linkedSetOf()) {
+                        PluginRuntimePermission.valueOf(it.name)
+                    },
                     requestedHostPermissions = if (
                         ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions
                     ) {
@@ -198,9 +241,25 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                         emptySet()
                     },
                 )
+                val evaluatedScript = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
+                val artifactIdentity = PluginArtifactIdentity(
+                    packageId = artifact.identity.packageId,
+                    version = artifact.identity.version,
+                    versionCode = artifact.identity.versionCode,
+                    sha256 = artifact.identity.sha256,
+                )
+                val grantedRuntimePermissions = artifact.grantedPermissions.mapTo(linkedSetOf()) {
+                    PluginRuntimePermission.valueOf(it.name)
+                }
                 val scopedEnvironment = environment.copy(
-                    network = environment.network.scopedToStorage(filteredStorage),
+                    network = environment.network
+                        .scopedToStorage(filteredStorage)
+                        .scopedToPolicy(sourceEntry.networkPolicy())
+                        .forReviewedInProcessArtifact(),
                     storage = filteredStorage,
+                    // The manifest declaration is review input; bridge enforcement consumes the
+                    // separately host-established exact grant in the runtime environment.
+                    runtimePermissions = grantedRuntimePermissions,
                     loginRequester = if (ShuYueExecutionPermissionV2.LOGIN_PROMPT in artifact.grantedPermissions) {
                         environment.loginRequester
                     } else {
@@ -211,11 +270,27 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     systemEventNegotiation = eventBinding?.negotiation,
                     systemEventDeclaration = artifact.systemEvents,
                     systemEventContextRegistry = eventContextRegistry,
+                    // Admission above binds the original bytes to a built-in identity. Bind the
+                    // exact source and final evaluated bytes too, including the host-owned shim.
+                    // The capability constructor is internal and cannot come from repository JSON.
+                    inProcessScriptProvenance = InProcessScriptProvenance.reviewedArtifact(
+                        artifact = artifactIdentity,
+                        sourceKey = sourceDescriptor.sourceKey,
+                        evaluatedScript = evaluatedScript,
+                        // Engines adopt these limits only after requireExactMatch validates the
+                        // artifact, source and final shimmed script. Generic repository loading
+                        // clears provenance and therefore retains the 1/4 MiB defaults.
+                        executionLimits = environment.executionLimits.forReviewedShuYue(),
+                    ),
                 )
                 var runtime: ScriptPluginRuntime? = null
                 try {
-                    val script = originalScript + compatibilityShim(sourceDescriptor.sourceKey.sourceId)
-                    runtime = runtimeFactory.createForSource(script, manifest, sourceEntry, scopedEnvironment)
+                    runtime = runtimeFactory.createForSource(
+                        evaluatedScript,
+                        manifest,
+                        sourceEntry,
+                        scopedEnvironment,
+                    )
                     require(runtime.pluginId == artifact.identity.packageId && runtime.id == executionScope) {
                         "Reviewed ShuYue platform runtime escaped its assigned execution scope"
                     }
@@ -225,6 +300,9 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                         reviewedWebChallengeUrl = reviewedProfile.sourceProfiles
                             .single { it.sourceId == sourceDescriptor.sourceKey.sourceId }
                             .webChallengeUrl,
+                        reviewedBrowserSessionOrigins = reviewedProfile.sourceProfiles
+                            .single { it.sourceId == sourceDescriptor.sourceKey.sourceId }
+                            .browserSessionOrigins,
                         credentialsResolver = credentialsResolver,
                         eventBinding = eventBinding,
                         hasStoredCredentials = { filteredStorage.getCredential(executionScope) != null },
@@ -276,15 +354,19 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
         runtimeGeneration: Long,
     ): ReviewedEventBinding? = artifact.systemEvents?.let { declaration ->
         eventGateway?.let { gateway ->
+            val artifactIdentity = PluginArtifactIdentity(
+                packageId = artifact.identity.packageId,
+                version = artifact.identity.version,
+                versionCode = artifact.identity.versionCode,
+                sha256 = artifact.identity.sha256,
+            )
             val scope = BoundPluginScopeFactory().bind(
-                artifactIdentity = PluginArtifactIdentity(
-                    packageId = artifact.identity.packageId,
-                    version = artifact.identity.version,
-                    versionCode = artifact.identity.versionCode,
-                    sha256 = artifact.identity.sha256,
-                ),
+                artifactIdentity = artifactIdentity,
                 sourceKey = sourceDescriptor.sourceKey,
-                runtimeInstanceId = "shuyue-${artifact.identity.packageId}-${artifact.identity.sha256.take(16)}-${runtimeGeneration}",
+                runtimeInstanceId = stablePluginRuntimeInstanceId(
+                    artifactIdentity,
+                    sourceDescriptor.sourceKey,
+                ),
                 runtimeGeneration = runtimeGeneration,
             )
             val requestedHostPermissions = if (
@@ -370,6 +452,7 @@ private class ProductionShuYueSourceV2(
     override val descriptor: SourceDescriptorV2,
     private val runtime: ScriptPluginRuntime,
     private val reviewedWebChallengeUrl: String?,
+    private val reviewedBrowserSessionOrigins: Set<String>,
     private val credentialsResolver: LegacyLoginCredentialsResolverV2?,
     private val eventBinding: ReviewedEventBinding?,
     private val hasStoredCredentials: suspend () -> Boolean,
@@ -389,6 +472,9 @@ private class ProductionShuYueSourceV2(
 
     override val webChallengeUrl: String?
         get() = reviewedWebChallengeUrl ?: runtime.webChallengeUrl
+
+    override val browserSessionOrigins: Set<String>
+        get() = reviewedBrowserSessionOrigins
 
     override suspend fun <T> withUserInteractionContext(block: suspend () -> T): T {
         interactionMutex.withLock {
@@ -912,6 +998,9 @@ private class CapabilityFilteredShuYueStorage(
     override suspend fun setPreference(sourceId: Long, key: String, value: String): Unit =
         delegate.setPreference(sourceId, key, value)
 
+    override suspend fun removePreference(sourceId: Long, key: String): Unit =
+        delegate.removePreference(sourceId, key)
+
     override suspend fun getCredential(sourceId: Long): PluginCredential? =
         if (credentialsAllowed) delegate.getCredential(sourceId) else null
 
@@ -1118,9 +1207,57 @@ private const val MAX_SHUYUE_UNITS: Int = 100_000
 private const val MAX_SHUYUE_IMAGE_PAGES: Int = 2_000
 private const val MAX_SHUYUE_INLINE_TEXT_BYTES: Long = 4L * 1024L * 1024L
 private const val SHUYUE_TEXT_CHUNK_BYTES: Int = 64 * 1024
-private const val MAX_SHUYUE_TEXT_STREAM_BYTES: Long = 512L * 1024L * 1024L
+// Reviewed legacy scripts join at most 20 individually network-bounded pages in JavaScript. An
+// 8 MiB chapter permits useful multi-page content while bounding the unavoidable JS String plus
+// decoded Kotlin String copies on engines without per-runtime heap isolation. The larger result
+// envelope accounts for JSON escaping on JavaScriptCore; the decoded string remains capped here.
+private const val MAX_SHUYUE_TEXT_STREAM_BYTES: Long = 8L * 1024L * 1024L
 private const val MAX_RESERVED_SHUYUE_TEXT_STREAMS: Int = 8
 private const val MAX_RESERVED_SHUYUE_TEXT_BYTES: Long = MAX_SHUYUE_TEXT_STREAM_BYTES
+private const val GENERIC_INVOCATION_INSTRUCTION_COUNT: Long = 100_000_000
+private const val REVIEWED_SHUYUE_INVOCATION_INSTRUCTION_COUNT: Long = 500_000_000
+private const val GENERIC_MAX_RESULT_BYTES: Int = 4 * 1024 * 1024
+// JSON.stringify may double ordinary chapter text containing quotes, backslashes or newlines.
+// One additional MiB keeps the 8 MiB decoded text ceiling reachable after object-envelope cost.
+private const val REVIEWED_SHUYUE_MAX_RESULT_BYTES: Int = 17 * 1024 * 1024
+private const val GENERIC_MAX_RESULT_STRING_BYTES: Int = 1 * 1024 * 1024
+
+/**
+ * Selective host profile for exact reviewed ShuYue execution.
+ *
+ * A value still at the generic default is promoted to the reviewed capacity; an explicitly
+ * different caller value is capped rather than replaced, preserving constrained-host limits.
+ * Every unrelated limit remains byte-for-byte identical to the caller's policy.
+ */
+internal fun PluginExecutionLimits.forReviewedShuYue(): PluginExecutionLimits {
+    val resultBytes = reviewedCapacity(
+        current = maxResultBytes,
+        genericDefault = GENERIC_MAX_RESULT_BYTES,
+        reviewedMaximum = REVIEWED_SHUYUE_MAX_RESULT_BYTES,
+    )
+    return copy(
+        invocationInstructionCount = reviewedCapacity(
+            current = invocationInstructionCount,
+            genericDefault = GENERIC_INVOCATION_INSTRUCTION_COUNT,
+            reviewedMaximum = REVIEWED_SHUYUE_INVOCATION_INSTRUCTION_COUNT,
+        ),
+        maxResultBytes = resultBytes,
+        maxResultStringBytes = minOf(
+            reviewedCapacity(
+                current = maxResultStringBytes,
+                genericDefault = GENERIC_MAX_RESULT_STRING_BYTES,
+                reviewedMaximum = MAX_SHUYUE_TEXT_STREAM_BYTES.toInt(),
+            ),
+            resultBytes,
+        ),
+    )
+}
+
+private fun reviewedCapacity(current: Int, genericDefault: Int, reviewedMaximum: Int): Int =
+    if (current == genericDefault) reviewedMaximum else minOf(current, reviewedMaximum)
+
+private fun reviewedCapacity(current: Long, genericDefault: Long, reviewedMaximum: Long): Long =
+    if (current == genericDefault) reviewedMaximum else minOf(current, reviewedMaximum)
 private val REVIEWED_IMAGE_SAFE_HEADER_HINTS: Set<String> = setOf(
     "accept",
     "accept-language",
@@ -1129,4 +1266,5 @@ private val REVIEWED_IMAGE_SAFE_HEADER_HINTS: Set<String> = setOf(
     "user-agent",
     "origin",
     "x-requested-with",
+    "x-image-ticket",
 )

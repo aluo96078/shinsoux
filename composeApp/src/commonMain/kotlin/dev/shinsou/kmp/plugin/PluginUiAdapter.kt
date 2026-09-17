@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.SourceKey
@@ -32,6 +33,7 @@ import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryPackageV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
 import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLocation
+import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryException
 import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptCandidateV2
 import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
 import dev.shinsou.kmp.ui.BrowseCallbacks
@@ -61,6 +63,7 @@ import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import io.ktor.http.Url
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -134,8 +137,6 @@ public class PluginBrowseAdapter(
     private val loginRequestCoordinator: PluginLoginRequestCoordinator = PluginLoginRequestCoordinator(),
     private val logoutRequestCoordinator: PluginLogoutRequestCoordinator? = null,
     private val exactSourceRefreshInvalidations: ExactSourceRefreshInvalidations = ExactSourceRefreshInvalidations(),
-    /** Optional host-provided repository. The application passes an empty value by default. */
-    private val defaultRepositoryUrl: String = "",
     extensionGatewayV2: ExtensionBrowseContentGatewayV2? = null,
     /** Null only in previews/tests that intentionally omit the shared content foundation. */
     private val extensionContentConsumerV2: ExtensionContentConsumerV2? = null,
@@ -145,6 +146,7 @@ public class PluginBrowseAdapter(
         ShuYueRepositoryLocation.IndexUrl(
             ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_INDEX_URL,
         ),
+    private val fileSystem: AppFileSystem? = null,
 ) : BrowseCallbacks {
     private val extensionGatewayV2: ExtensionBrowseContentGatewayV2 = extensionGatewayV2
         ?: ExtensionBrowseContentGatewayV2(
@@ -170,9 +172,7 @@ public class PluginBrowseAdapter(
     override suspend fun setPluginUiAvailable(available: Boolean) {
         manager.setPluginUiAvailable(available)
         if (!available) {
-            loginRequestCoordinator.loginRequests.value
-                .mapNotNull { it.eventId }
-                .forEach(loginRequestCoordinator::dismissEvent)
+            loginRequestCoordinator.retainPresentedRequest()
             logoutRequestCoordinator?.clear()
         }
     }
@@ -194,12 +194,13 @@ public class PluginBrowseAdapter(
         if (!remoteSucceeded) return@withContext false
         // Credentials and cookies are the complete host-owned session namespace for this exact
         // execution/storage scope. Preferences remain source configuration, not session state.
-        val ownerKey = ExactPluginSessionOwnership.ownerKey(storageId)
+        val ownerKey = ExactPluginSessionOwnership.ownerKey(request.target)
         if (!ExactPluginSessionOwnership.authorizesCleanup(keyValueStore.getString(ownerKey), request.target)) {
             return@withContext false
         }
-        pluginStorage.clearCredential(storageId)
-        pluginStorage.clearCookies(storageId)
+        val storage = storageForSourceUi(request.target.sourceKey.legacyLongId ?: storageId)
+        storage.clearCredential(storageId)
+        storage.clearCookies(storageId)
         keyValueStore.remove(ownerKey)
         true
     }
@@ -223,7 +224,7 @@ public class PluginBrowseAdapter(
         val result = saveSourceCredentialsInternal(sourceId, username, password, dismissLegacy = false)
         if (result.succeeded) {
             keyValueStore.putString(
-                ExactPluginSessionOwnership.ownerKey(sourceId),
+                ExactPluginSessionOwnership.ownerKey(target),
                 ExactPluginSessionOwnership.targetKey(target),
             )
             exactSourceRefreshInvalidations.invalidate(target)
@@ -267,7 +268,7 @@ public class PluginBrowseAdapter(
      */
     private val installedLoadMutex = Mutex()
     private val mutableState = MutableStateFlow(BrowseSnapshot())
-    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore)
+    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore, fileSystem)
     private val reviewedShuYueInstallerV2 = manager.reviewedShuYueInstallCoordinatorV2(
         quarantineStore = reviewedShuYueStoreV2,
         approvalStore = reviewedShuYueStoreV2,
@@ -282,6 +283,8 @@ public class PluginBrowseAdapter(
     private val reviewedShuYueRepositoriesV2 = linkedMapOf<String, ShuYueReviewedRepositoryCoordinatorV2>()
     private var loadedInstalled = false
     private var descriptors: Map<String, ExtensionDescriptor> = emptyMap()
+    /** Exact process-local authenticated index paired with the displayed repository rows. */
+    private var repositorySnapshots: Map<String, RepositoryIndexSnapshot> = emptyMap()
     private var reviewedShuYuePackages: Map<String, ShuYueReviewedRepositoryPackageV2> = emptyMap()
     private var reviewedShuYuePackageOwners: Map<String, ShuYueReviewedRepositoryCoordinatorV2> = emptyMap()
     private var reviewedShuYueRepositoryRows: List<BrowseRepository> = emptyList()
@@ -336,34 +339,50 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun removeRepository(repositoryId: String): Unit = operationMutex.withLock {
-        reconcilePortableRepositories()
-        val reviewedLocation = when {
-            repositoryId.startsWith(SHUYUE_REPOSITORY_ID_PREFIX) ->
-                repositoryId.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX)
-            reviewedShuYueRepositoryRows.any { it.url == repositoryId } -> repositoryId
-            else -> null
-        }
-        if (reviewedLocation != null) {
-            val location = reviewedLocation
-            val remaining = readReviewedShuYueRepositoryUrls()
-                .filterNot { it == location }
-            writeReviewedShuYueRepositoryUrls(remaining)
-            reviewedShuYueRepositoriesV2.remove(location)
-            // A unified row has a reviewed index URL and a legacy base URL. Removing the visible
-            // ShuYue row must remove both halves; otherwise the manga half silently survives and
-            // is restored again on the next refresh.
-            val legacyBase = normalizeRepositoryInput(location)
-            if (repositoryStore.list().any { it.baseUrl == legacyBase }) deleteRepository(legacyBase)
-            clearUnifiedRepositoryMigrationAttempt(location)
-            refreshLocked(addDefaultRepository = false)
-            return@withLock
-        }
-        deleteRepository(repositoryId)
+        // Deletion is local maintenance. Never load scripts, migrate remote indexes, or refresh
+        // another repository as a prerequisite (or after the durable removal has succeeded).
+        reconcilePortableRepositoryStorage()
+        val base = normalizeRepositoryInput(repositoryId.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX))
+        fun belongsToRemovedRepository(value: String): Boolean =
+            value == repositoryId || runCatching {
+                normalizeRepositoryInput(value.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX)) == base
+            }.getOrDefault(false)
+        // Preserve unrelated malformed records verbatim; they must not prevent removing this row.
+        val remainingReviewed = keyValueStore.getString(SHUYUE_REPOSITORY_URLS_KEY)
+            .orEmpty().lineSequence().filterNot(::belongsToRemovedRepository).filter(String::isNotBlank).toList()
+        if (remainingReviewed.isEmpty()) keyValueStore.remove(SHUYUE_REPOSITORY_URLS_KEY)
+        else keyValueStore.putString(SHUYUE_REPOSITORY_URLS_KEY, remainingReviewed.joinToString("\n"))
+        deleteRepository(base)
         val remaining = repositoryStore.list()
-        if (repositoryStore.selected() !in remaining.map { it.baseUrl }) {
-            repositoryStore.select(remaining.firstOrNull()?.baseUrl)
-        }
-        refreshLocked(addDefaultRepository = false)
+        val selected = repositoryStore.selected().takeIf { id -> remaining.any { it.baseUrl == id } }
+            ?: remaining.firstOrNull()?.baseUrl
+        repositoryStore.select(selected)
+
+        val removedOwners = reviewedShuYueRepositoriesV2.filterKeys(::belongsToRemovedRepository).values.toSet()
+        reviewedShuYueRepositoriesV2.keys.removeAll(::belongsToRemovedRepository)
+        val removedPackageIds = reviewedShuYuePackageOwners.filterValues { it in removedOwners }.keys
+        reviewedShuYuePackageOwners = reviewedShuYuePackageOwners - removedPackageIds
+        reviewedShuYuePackages = reviewedShuYuePackages - removedPackageIds
+        reviewedShuYueRepositoryRows = reviewedShuYueRepositoryRows.filterNot { belongsToRemovedRepository(it.url) }
+        repositorySnapshots = repositorySnapshots.filterKeys { !belongsToRemovedRepository(it) }
+        val removedGenericIds = descriptors.values.filter {
+            it.repositoryBaseUrl?.let(::belongsToRemovedRepository) == true && it.state == ExtensionState.AVAILABLE
+        }.map { it.id }.toSet()
+        descriptors = descriptors - removedGenericIds
+        // Reuse already-rendered source/settings state: rebuilding it can invoke a broken plugin.
+        val current = mutableState.value
+        mutableState.value = current.copy(
+            repositories = (remaining.map { it.toBrowseRepository() } + reviewedShuYueRepositoryRows)
+                .distinctBy(BrowseRepository::url),
+            selectedRepositoryId = selected,
+            extensions = current.extensions.filterNot {
+                !it.installed && (it.id in removedGenericIds || it.id in removedPackageIds)
+            }.map { if (it.id in removedPackageIds || descriptors[it.id]?.repositoryBaseUrl == base) {
+                it.copy(updateAvailable = false)
+            } else it },
+            isRefreshing = false,
+            errorMessage = null,
+        )
     }
 
     override suspend fun selectRepository(repositoryId: String?): Unit = operationMutex.withLock {
@@ -378,14 +397,14 @@ public class PluginBrowseAdapter(
             // normalized Shinsou half. A plain ShuYue row clears an unrelated Shinsou selection.
             val unifiedBase = normalizeRepositoryInput(location)
             repositoryStore.select(unifiedBase.takeIf { base -> repositories.any { it.baseUrl == base } })
-            refreshLocked(addDefaultRepository = false)
+            refreshLocked()
             return@withLock
         }
         require(repositoryId == null || repositories.any { it.baseUrl == repositoryId }) {
             "Unknown extension repository: $repositoryId"
         }
         repositoryStore.select(repositoryId)
-        refreshLocked(addDefaultRepository = false)
+        refreshLocked()
     }
 
     override suspend fun browseSource(
@@ -444,6 +463,80 @@ public class PluginBrowseAdapter(
                 hasNextPage = result.hasNextPage,
             )
         }
+
+    override fun isPluginSource(sourceId: Long): Boolean =
+        sourceId in sourceProjections || v2SourceKeyFor(sourceId) != null
+
+    override fun isPluginSource(sourceKey: SourceKey): Boolean =
+        mutableState.value.sources.any { it.sourceKey == sourceKey }
+
+    override suspend fun loadPluginThumbnail(
+        sourceId: Long,
+        url: String,
+        headers: Map<String, String>,
+    ): ByteArray? {
+        val sourceKey = v2SourceKeyFor(sourceId)
+        if (sourceKey != null) return loadPluginThumbnail(sourceKey, url, headers)
+        val source = manager.source(sourceId) ?: return null
+        val metadata = PageRequestMetadata.parse(url)
+        val resolved = resolveSourceHttpUrl(source.baseUrl, metadata.cleanUrl) ?: return null
+        val content = manager.contentNetworkForSource(sourceId) ?: return null
+        return fetchPluginThumbnail(
+            content = content,
+            sourceId = sourceId,
+            url = resolved,
+            headers = metadata.headers + headers,
+            referer = source.headers.header("Referer") ?: source.baseUrl,
+        )
+    }
+
+    override suspend fun loadPluginThumbnail(
+        sourceKey: SourceKey,
+        url: String,
+        headers: Map<String, String>,
+    ): ByteArray? {
+        val descriptor = manager.extensionSourceV2(sourceKey)?.descriptor ?: return null
+        val metadata = PageRequestMetadata.parse(url)
+        val resolved = resolveSourceHttpUrl(descriptor.baseUrl, metadata.cleanUrl) ?: return null
+        // Use the exact live artifact scope. Looking the id up from the reviewed catalogue can
+        // select an older profile when several admitted versions share a package id, causing the
+        // content request (and its source-scoped UA/preferences) to use the wrong namespace.
+        val contentScope = manager.contentNetworkScopeForSource(sourceKey) ?: return null
+        return fetchPluginThumbnail(
+            content = contentScope.network,
+            sourceId = contentScope.sourceId,
+            url = resolved,
+            headers = metadata.headers + headers,
+            referer = descriptor.baseUrl,
+        )
+    }
+
+    private suspend fun fetchPluginThumbnail(
+        content: PluginContentNetworkClient,
+        sourceId: Long,
+        url: String,
+        headers: Map<String, String>,
+        referer: String?,
+    ): ByteArray? = try {
+        val response = content.get(
+            sourceId = sourceId,
+            url = url,
+            headers = linkedMapOf<String, String>().apply {
+                // Metadata headers are extension-controlled. Content fetches must discard
+                // credential-bearing values instead of letting PluginContentNetworkClient reject
+                // the whole cover request (which the UI otherwise observes only as a null image).
+                putAll(sanitizePluginContentHeaders(headers))
+                if (!referer.isNullOrBlank() && keys.none { it.equals("Referer", ignoreCase = true) }) {
+                    put("Referer", referer)
+                }
+            },
+        )
+        response.imageBodyForDecoderOrNull()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
 
     override suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? =
         extensionGatewayV2.source(sourceKey)
@@ -648,6 +741,7 @@ public class PluginBrowseAdapter(
             initialVisualPageCount = localChapter?.let { chapter ->
                 localSnapshot.histories.firstOrNull { it.chapterId == chapter.id }?.lastPageCount
             },
+            remoteAssetScope = manager.contentNetworkScopeForSource(materialization.sourceKey),
         )
     }
 
@@ -710,17 +804,25 @@ public class PluginBrowseAdapter(
             ?: throw IllegalStateException("Extension '$extensionId' has no repository")
         val repository = repositoryStore.list().firstOrNull { it.baseUrl == repositoryBaseUrl }
             ?: throw IllegalStateException("Repository is no longer configured: $repositoryBaseUrl")
-        val installedVersion = when (val index = repositoryClient.fetchIndex(repository.baseUrl)) {
+        val displayed = repositorySnapshots[repository.baseUrl]
+            ?: throw IllegalStateException("Extension repository must be refreshed before installing")
+        val installedVersion = when (val index = displayed.index) {
             is RepositoryIndex.Plugins -> {
                 val entry = index.entries.firstOrNull { it.id == extensionId }
                     ?: throw IllegalStateException("Extension '$extensionId' is no longer in the repository")
-                manager.install(repository, entry)
+                require(entry.matchesDescriptor(descriptor)) {
+                    "Extension '$extensionId' changed in the repository; refresh before installing"
+                }
+                manager.install(repository, entry, displayed.admission)
                 entry.version
             }
 
             is RepositoryIndex.Legacy -> {
                 val entry = index.entries.firstOrNull { it.pkg == extensionId }
                     ?: throw IllegalStateException("Extension '$extensionId' is no longer in the repository")
+                require(entry.matchesDescriptor(descriptor)) {
+                    "Extension '$extensionId' changed in the repository; refresh before installing"
+                }
                 manager.installLegacy(repository, entry)
                 entry.version
             }
@@ -728,7 +830,10 @@ public class PluginBrowseAdapter(
             is RepositoryIndex.Combined -> {
                 val entry = index.plugins.firstOrNull { it.id == extensionId }
                     ?: throw IllegalStateException("Extension '$extensionId' is no longer in the repository")
-                manager.install(repository, entry)
+                require(entry.matchesDescriptor(descriptor)) {
+                    "Extension '$extensionId' changed in the repository; refresh before installing"
+                }
+                manager.install(repository, entry, displayed.admission)
                 entry.version
             }
         }
@@ -748,20 +853,46 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun pendingPluginEventGrantReview(extensionId: String) =
-        manager.pendingEventGrantReview(extensionId)
+        withContext(Dispatchers.Default) {
+            manager.pendingEventGrantReview(extensionId)
+        }
 
     override suspend fun approvePluginEventGrantReview(
         extensionId: String,
+        expectedReview: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
         permissions: Set<dev.shinsou.kmp.plugin.events.PluginHostPermission>,
-    ) {
-        manager.approveEventGrantReview(extensionId, permissions)
-        operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
+    ): Unit = withContext(Dispatchers.Default) {
+        // Approval can synchronously read durable package/admission state and construct the
+        // platform runtime. Keep that work off the UI dispatcher, and share the adapter's
+        // operation lock so a queued uninstall cannot revoke the artifact halfway through its
+        // exact-digest approval/reload transaction.
+        operationMutex.withLock {
+            manager.approveEventGrantReview(extensionId, expectedReview, permissions)
+            rebuildSnapshot(errorMessage = null, reuseUnchangedSources = true)
+        }
     }
 
-    override suspend fun uninstallExtension(extensionId: String): Unit = operationMutex.withLock {
-        manager.uninstall(extensionId)
-        trustStore.revokeAll(extensionId)
-        refreshLocked(addDefaultRepository = false)
+    override suspend fun uninstallExtension(extensionId: String): Unit = withContext(Dispatchers.Default) {
+        operationMutex.withLock {
+            manager.uninstall(extensionId)
+            trustStore.revokeAll(extensionId)
+            // The authenticated index already backing the visible row is authoritative for this
+            // local mutation. Do not refetch every repository (or rescan unrelated packages): a
+            // repository-backed row becomes available, while an installed-only row disappears.
+            val descriptor = descriptors[extensionId]
+            descriptors = if (descriptor != null && repositorySnapshots.values.any { snapshot ->
+                    snapshot.containsExtension(extensionId)
+                }
+            ) {
+                descriptors + (extensionId to descriptor.copy(
+                    state = ExtensionState.AVAILABLE,
+                    installedVersion = null,
+                ))
+            } else {
+                descriptors - extensionId
+            }
+            rebuildSnapshot(errorMessage = null, reuseUnchangedSources = true)
+        }
     }
 
     override suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean): Unit =
@@ -786,14 +917,15 @@ public class PluginBrowseAdapter(
                 }
             }
             val v2Scope = requireV2SourceScope(sourceId)
+            val storage = storageForSourceUi(sourceId)
             if (v2Scope != null) {
                 normalizedValues.forEach { (key, value) ->
-                    pluginStorage.setPreference(v2Scope.second, key, value)
+                    storage.setPreference(v2Scope.second, key, value)
                 }
             } else {
                 check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
                 normalizedValues.forEach { (key, value) ->
-                    pluginStorage.setPreference(sourceId, key, value)
+                    storage.setPreference(sourceId, key, value)
                 }
             }
             rebuildSnapshot(errorMessage = null)
@@ -825,13 +957,13 @@ public class PluginBrowseAdapter(
         }
         val credential = if (supportsLogin) {
             secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
-                pluginStorage.getCredential(storageId)
+                storageForSourceUi(sourceId).getCredential(storageId)
             }
         } else {
             null
         }
         val cookies = secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
-            pluginStorage.getCookies(storageId)
+            storageForSourceUi(sourceId).getCookies(storageId)
         }
         SourceSecretsResult(
             secrets = SourceSecrets(
@@ -876,10 +1008,10 @@ public class PluginBrowseAdapter(
                 }
             }
             val previous = secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
-                pluginStorage.getCredential(storageId)
+                storageForSourceUi(sourceId).getCredential(storageId)
             }
             secureStorageStage(SourceLoginFailureStage.WRITE_CREDENTIALS) {
-                pluginStorage.setCredential(storageId, PluginCredential(username, password))
+                storageForSourceUi(sourceId).setCredential(storageId, PluginCredential(username, password))
             }
             val loginResult = try {
                 loginStage(SourceLoginFailureStage.AUTHENTICATE) {
@@ -914,7 +1046,7 @@ public class PluginBrowseAdapter(
             // v2 login needs the credential in storage before the call; v1 stores it only after
             // success. Both paths converge here so the settings projection stays consistent.
             if (v2Scope == null) secureStorageStage(SourceLoginFailureStage.WRITE_CREDENTIALS) {
-                pluginStorage.setCredential(storageId, PluginCredential(username, password))
+                storageForSourceUi(sourceId).setCredential(storageId, PluginCredential(username, password))
             }
             if (dismissLegacy) loginRequestCoordinator.dismiss(sourceId)
         }
@@ -931,8 +1063,9 @@ public class PluginBrowseAdapter(
     ) {
         try {
             secureStorageStage(SourceLoginFailureStage.RESTORE_CREDENTIALS) {
-                if (previous == null) pluginStorage.clearCredential(storageId)
-                else pluginStorage.setCredential(storageId, previous)
+                val storage = storageForSourceUi(storageId)
+                if (previous == null) storage.clearCredential(storageId)
+                else storage.setCredential(storageId, previous)
             }
         } catch (restoreFailure: SourceLoginStageException) {
             originalFailure?.let(restoreFailure::addSuppressed)
@@ -984,7 +1117,8 @@ public class PluginBrowseAdapter(
                 (source as? LoginSource)?.takeIf { it.supportsLogin }?.logout()
             }
         }
-        pluginStorage.clearCredential(v2Scope?.second ?: sourceId)
+        val storageId = v2Scope?.second ?: sourceId
+        storageForSourceUi(sourceId).clearCredential(storageId)
         rebuildSnapshot(errorMessage = null)
         result.getOrThrow()
     }
@@ -997,7 +1131,7 @@ public class PluginBrowseAdapter(
             }
             require(cookie.name.isNotBlank()) { "Cookie name cannot be blank" }
             require(cookie.domain.isNotBlank()) { "Cookie domain cannot be blank" }
-            pluginStorage.setCookie(
+            storageForSourceUi(sourceId).setCookie(
                 storageId,
                 PluginCookie(
                     name = cookie.name,
@@ -1015,58 +1149,22 @@ public class PluginBrowseAdapter(
 
     override suspend fun importSourceWebChallengeSession(
         sourceId: Long,
+        capability: dev.shinsou.kmp.ui.SourceWebChallengeCapability,
         cookies: List<BrowseSourceCookie>,
         userAgent: String,
         localStorage: Map<String, String>,
     ): Unit = operationMutex.withLock {
-        val v2Scope = requireV2SourceScope(sourceId)
-        val storageId = v2Scope?.second ?: run {
-            check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
-            sourceId
+        val sourceKey = requireNotNull(v2SourceKeyFor(sourceId) ?: manager.exactSourceKeyForLegacyId(sourceId)) {
+            "Generic sources cannot import an embedded browser session"
         }
-        val allowedStorageKeys = if (v2Scope != null) {
-            manager.extensionSourceV2(v2Scope.first)?.webChallengeLocalStorageKeys().orEmpty()
-        } else {
-            manager.source(sourceId)?.webChallengeLocalStorageKeys.orEmpty()
-        }
-            .let(::normalizeWebChallengeStorageKeyDeclaration)
-        val safeLocalStorage = normalizeImportedWebChallengeStorage(localStorage, allowedStorageKeys)
-        val requiredStorageKeys = if (v2Scope != null) {
-            manager.extensionSourceV2(v2Scope.first)?.requiredWebChallengeLocalStorageKeys().orEmpty()
-        } else {
-            manager.source(sourceId)?.requiredWebChallengeLocalStorageKeys.orEmpty()
-        }.let(::normalizeWebChallengeStorageKeyDeclaration)
-        require(requiredStorageKeys.all { key -> !safeLocalStorage[key].isNullOrEmpty() }) {
-            "Required browser session data is missing"
-        }
-        val safeUserAgent = requireNotNull(normalizePluginUserAgent(userAgent)) {
-            "Invalid browser User-Agent"
-        }
-        require(cookies.isNotEmpty() || safeLocalStorage.isNotEmpty()) {
-            "No browser session data was supplied"
-        }
-        cookies.forEach { cookie ->
-            require(cookie.name.isNotBlank()) { "Cookie name cannot be blank" }
-            require(cookie.domain.isNotBlank()) { "Cookie domain cannot be blank" }
-            pluginStorage.setCookie(
-                storageId,
-                PluginCookie(
-                    name = cookie.name,
-                    value = cookie.value,
-                    domain = cookie.domain,
-                    path = cookie.path.ifBlank { "/" },
-                    expiresAtEpochMillis = cookie.expiresAtEpochMillis,
-                    secure = cookie.secure,
-                    httpOnly = cookie.httpOnly,
-                    hostOnly = cookie.hostOnly,
-                ),
-            )
-        }
-        safeLocalStorage.forEach { (key, value) ->
-            pluginStorage.setPreference(storageId, key, value)
-        }
-        pluginStorage.setWebChallengeUserAgent(storageId, safeUserAgent)
+        manager.importWebChallengeSession(sourceKey, capability, cookies, userAgent, localStorage)
         rebuildSnapshot(errorMessage = null)
+    }
+
+    override suspend fun cancelSourceWebChallenge(
+        capability: dev.shinsou.kmp.ui.SourceWebChallengeCapability,
+    ) {
+        manager.cancelWebChallenge(capability)
     }
 
     override suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String): Unit =
@@ -1075,7 +1173,7 @@ public class PluginBrowseAdapter(
                 check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
                 sourceId
             }
-            pluginStorage.deleteCookie(storageId, name, domain)
+            storageForSourceUi(sourceId).deleteCookie(storageId, name, domain)
             rebuildSnapshot(errorMessage = null)
         }
 
@@ -1084,8 +1182,15 @@ public class PluginBrowseAdapter(
             check(manager.source(sourceId) != null) { "Unknown source: $sourceId" }
             sourceId
         }
-        pluginStorage.clearCookies(storageId)
+        storageForSourceUi(sourceId).clearCookies(storageId)
         rebuildSnapshot(errorMessage = null)
+    }
+
+    override suspend fun isSourceWebChallengeAvailable(sourceId: Long): Boolean {
+        val sourceKey = v2SourceKeyFor(sourceId)
+            ?: manager.exactSourceKeyForLegacyId(sourceId)
+            ?: return false
+        return manager.authorizeWebChallenge(sourceKey)
     }
 
     override suspend fun sourceWebChallenge(
@@ -1093,108 +1198,97 @@ public class PluginBrowseAdapter(
         username: String?,
         password: String?,
     ): SourceWebChallengeRequest? {
-        val v2Scope = requireV2SourceScope(sourceId)
-        val storageId = v2Scope?.second ?: sourceId
-        val sourceName: String
-        val baseUrl: String
-        val challengeUrl: String
-        val sourceHeaders: Map<String, String>
-        val referer: String?
-        val supportsLogin: Boolean
-        val localStorageKeys: Set<String>
-        val requiredLocalStorageKeys: Set<String>
-        if (v2Scope != null) {
-            val source = requireNotNull(manager.extensionSourceV2(v2Scope.first)) {
-                "Unknown extension v2 source: ${v2Scope.first.canonicalId}"
-            }
-            sourceName = source.descriptor.displayName
-            baseUrl = source.descriptor.baseUrl.orEmpty()
-            challengeUrl = source.webChallengeUrl() ?: baseUrl
-            // A previously imported browser-bound UA stays paired with its cookie jar. On macOS
-            // the native helper intentionally starts without a custom UA and captures WebKit's
-            // actual value; other platforms can still seed their source-provided browser hint.
-            sourceHeaders = pluginStorage.getWebChallengeUserAgent(storageId)
+        val sourceKey = requireNotNull(v2SourceKeyFor(sourceId) ?: manager.exactSourceKeyForLegacyId(sourceId)) {
+            "Generic sources cannot receive an embedded browser challenge"
+        }
+        val authorization = requireNotNull(manager.issueWebChallenge(sourceKey)) {
+            "Browser challenge is not authorized for this exact plugin artifact"
+        }
+        var requestBuilt = false
+        return try {
+            val source = authorization.source
+            val storageId = authorization.storageId
+            val sourceName = source.descriptor.displayName
+            val baseUrl = source.descriptor.baseUrl.orEmpty()
+            val challengeUrl = source.webChallengeUrl() ?: baseUrl
+            // Read browser state only after the manager has proven the exact reviewed artifact.
+            // The authorization never exposes a raw storage handle: this host adapter uses its
+            // already-injected storage with the manager-issued fixed reviewed scope.
+            val boundStorage = authorization.storage
+            val sourceHeaders = boundStorage.getWebChallengeUserAgent(storageId)
                 ?.let(::normalizePluginUserAgent)
                 ?.let { mapOf("User-Agent" to it) }
                 ?: source.webChallengeUserAgent()
                 ?.let { mapOf("User-Agent" to it) }
                 .orEmpty()
-            referer = baseUrl
-            supportsLogin = ExtensionCapability.LOGIN in source.descriptor.capabilities
-            localStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
-                source.webChallengeLocalStorageKeys(),
-            )
-            requiredLocalStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
-                source.requiredWebChallengeLocalStorageKeys(),
-            )
-        } else {
-            val source = manager.source(sourceId) ?: throw IllegalArgumentException("Unknown source: $sourceId")
-            sourceName = source.name
-            baseUrl = source.baseUrl
-            challengeUrl = source.webChallengeUrl ?: baseUrl
-            sourceHeaders = source.headers
-            referer = source.headers.header("Referer") ?: source.baseUrl
-            supportsLogin = (source as? LoginSource)?.supportsLogin == true
-            localStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
-                source.webChallengeLocalStorageKeys,
-            )
-            requiredLocalStorageKeys = normalizeWebChallengeStorageKeyDeclaration(
-                source.requiredWebChallengeLocalStorageKeys,
-            )
-            require(requiredLocalStorageKeys.all(localStorageKeys::contains)) {
-                "Required browser storage keys must be included in the source allowlist"
+            val referer = baseUrl
+            val supportsLogin = ExtensionCapability.LOGIN in source.descriptor.capabilities
+            val localStorageKeys = authorization.localStorageKeys
+            val requiredLocalStorageKeys = authorization.requiredLocalStorageKeys
+            val sourceOrigin = runCatching { Url(baseUrl.trim()) }.getOrNull() ?: return null
+            val target = runCatching { Url(challengeUrl.trim()) }.getOrNull() ?: return null
+            if (!target.protocol.name.equals("https", ignoreCase = true) || target.host.isBlank()) return null
+            require(target.sameOrigin(sourceOrigin)) {
+                "Web challenge URL must use the source's exact origin"
             }
-        }
-        val sourceOrigin = runCatching { Url(baseUrl.trim()) }.getOrNull() ?: return null
-        val target = runCatching { Url(challengeUrl.trim()) }.getOrNull() ?: return null
-        if (target.protocol.name !in setOf("http", "https") || target.host.isBlank()) return null
-        require(target.sameOrigin(sourceOrigin)) {
-            "Web challenge URL must use the source's exact origin"
-        }
-        val built = requestBuilder.build(
-            sourceId = storageId,
-            request = PluginHttpRequest("GET", target.toString()),
-            sourceHeaders = sourceHeaders,
-            referer = referer,
-        )
-        val userAgent = built.transportRequest.headers.entries
-            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
-            ?.value
-            .orEmpty()
-        // This method is called only from the explicit Web challenge action. Decrypt credentials
-        // on demand here; catalogue discovery and ordinary snapshot refreshes never receive them.
-        val hasSuppliedCredentialFields = username != null || password != null
-        val suppliedCredential = username
-            ?.takeIf(String::isNotBlank)
-            ?.let { suppliedUsername ->
-                password
-                    ?.takeIf(String::isNotEmpty)
-                    ?.let { suppliedPassword -> PluginCredential(suppliedUsername, suppliedPassword) }
+            require(target.sameOrigin(Url(authorization.canonicalOrigin))) {
+                "Web challenge URL is outside the issued origin"
             }
-        val credential = if (supportsLogin) {
-            if (hasSuppliedCredentialFields) {
-                suppliedCredential
+            val built = requestBuilder.build(
+                sourceId = storageId,
+                request = PluginHttpRequest("GET", target.toString()),
+                sourceHeaders = sourceHeaders,
+                referer = referer,
+            )
+            val userAgent = built.transportRequest.headers.entries
+                .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+                ?.value
+                .orEmpty()
+            // This method is called only from the explicit Web challenge action. Decrypt credentials
+            // on demand here; catalogue discovery and ordinary snapshot refreshes never receive them.
+            val hasSuppliedCredentialFields = username != null || password != null
+            val suppliedCredential = username
+                ?.takeIf(String::isNotBlank)
+                ?.let { suppliedUsername ->
+                    password
+                        ?.takeIf(String::isNotEmpty)
+                        ?.let { suppliedPassword -> PluginCredential(suppliedUsername, suppliedPassword) }
+                }
+            val credential = if (supportsLogin) {
+                if (hasSuppliedCredentialFields) {
+                    suppliedCredential
+                } else {
+                    boundStorage.getCredential(storageId)
+                        ?.takeIf { it.username.isNotBlank() && it.password.isNotEmpty() }
+                }
             } else {
-                pluginStorage.getCredential(storageId)
-                    ?.takeIf { it.username.isNotBlank() && it.password.isNotEmpty() }
+                null
             }
-        } else {
-            null
+            SourceWebChallengeRequest(
+                capability = authorization.capability,
+                sourceId = sourceId,
+                sourceName = sourceName,
+                url = target.toString(),
+                userAgent = userAgent,
+                cookies = boundStorage.getCookies(storageId).map(::toBrowseCookie),
+                requiredCookieName = authorization.requiredCookieName ?: "cf_clearance".takeIf {
+                    requiresCloudflareClearance(sourceKey)
+                },
+                localStorageKeys = localStorageKeys.sorted(),
+                requiredLocalStorageKeys = requiredLocalStorageKeys,
+                username = credential?.username,
+                password = credential?.password,
+                embeddedPolicy = dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
+                allowedNavigationOrigins = setOf(authorization.canonicalOrigin),
+                allowedSubresourceOrigins = authorization.allowedSubresourceOrigins,
+            ).also { requestBuilt = true }
+        } finally {
+            // Parsing, secure-storage reads, and request construction remain fallible. Do not
+            // leave a capability live unless a complete request is actually returned to the UI.
+            if (!requestBuilt) withContext(NonCancellable) {
+                manager.cancelWebChallenge(authorization.capability)
+            }
         }
-        return SourceWebChallengeRequest(
-            sourceId = sourceId,
-            sourceName = sourceName,
-            url = target.toString(),
-            userAgent = userAgent,
-            cookies = pluginStorage.getCookies(storageId).map(::toBrowseCookie),
-            requiredCookieName = "cf_clearance".takeIf {
-                v2Scope?.first?.let(::requiresCloudflareClearance) == true
-            },
-            localStorageKeys = localStorageKeys.sorted(),
-            requiredLocalStorageKeys = requiredLocalStorageKeys,
-            username = credential?.username,
-            password = credential?.password,
-        )
     }
 
     private fun normalizeWebChallengeStorageKeyDeclaration(values: Iterable<String>): Set<String> =
@@ -1210,25 +1304,6 @@ public class PluginBrowseAdapter(
             .toSet()
             .also { require(it.size <= 8) { "Too many browser storage keys were declared" } }
 
-    private fun normalizeImportedWebChallengeStorage(
-        values: Map<String, String>,
-        allowedKeys: Set<String>,
-    ): Map<String, String> {
-        require(values.keys.all(allowedKeys::contains)) {
-            "Browser session contained an undeclared storage key"
-        }
-        var totalBytes = 0
-        return values.entries.associate { (key, value) ->
-            require(value.none(Char::isISOControl)) { "Invalid browser storage value" }
-            val bytes = value.encodeToByteArray().size
-            require(bytes <= 16 * 1_024 && totalBytes + bytes <= 32 * 1_024) {
-                "Browser storage value is too large"
-            }
-            totalBytes += bytes
-            key to value
-        }
-    }
-
     private fun requiresCloudflareClearance(sourceKey: SourceKey): Boolean =
         sourceKey.packageId == "zh.bilimanga" && sourceKey.sourceId == "zh.bilimanga.manga" ||
             sourceKey.packageId == "zh.bilimanga.manga" &&
@@ -1239,7 +1314,7 @@ public class PluginBrowseAdapter(
             host.equals(other.host, ignoreCase = true) &&
             port == other.port
 
-    private suspend fun refreshLocked(addDefaultRepository: Boolean = true): Unit =
+    private suspend fun refreshLocked(): Unit =
         withContext(Dispatchers.Default) {
         mutableState.value = mutableState.value.copy(isRefreshing = true, errorMessage = null)
         try {
@@ -1248,17 +1323,7 @@ public class PluginBrowseAdapter(
             // Publish installed/local sources before touching remote repositories. A cold launch
             // can therefore render immediately while discovery continues in the background.
             rebuildSnapshot(errorMessage = null, isRefreshing = true)
-            var repositories = repositoryStore.list()
-            if (repositories.isEmpty() && addDefaultRepository && defaultRepositoryUrl.isNotBlank()) {
-                val defaultRepository = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                    repositoryClient.fetchRepository(normalizeRepositoryInput(defaultRepositoryUrl))
-                }
-                if (defaultRepository != null) {
-                    saveRepository(defaultRepository)
-                    repositoryStore.select(defaultRepository.baseUrl)
-                    repositories = listOf(defaultRepository)
-                }
-            }
+            val repositories = repositoryStore.list()
             val selected = repositoryStore.selected().takeIf { selected ->
                 repositories.any { it.baseUrl == selected }
             }
@@ -1269,7 +1334,9 @@ public class PluginBrowseAdapter(
             // A repository is optional metadata; it must not hold the reader/browse UI hostage
             // when a host is offline, a GitHub branch moved, or a LAN server is unreachable.
             withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                descriptors = manager.refresh(visibleRepositories).associateBy { it.id }
+                val refreshed = manager.refreshWithAdmissions(visibleRepositories)
+                descriptors = refreshed.descriptors.associateBy { it.id }
+                repositorySnapshots = refreshed.snapshots
                 refreshReviewedShuYueRepositories()
             }
             rebuildSnapshot(errorMessage = null)
@@ -1318,30 +1385,37 @@ public class PluginBrowseAdapter(
         // while the reviewed coordinator owns the ShuYue half. Plain ShuYue repositories remain
         // reviewed-only and are not fed to the executable legacy manager.
         val legacyBase = normalizeRepositoryInput(input)
-        clearUnifiedRepositoryMigrationAttempt(location)
-        val unified = try {
-            val index = repositoryClient.fetchIndex(legacyBase)
-            if (index is RepositoryIndex.Combined && index.plugins.isNotEmpty()) {
-                val repository = loadUnifiedRepositoryMetadata(legacyBase)
-                saveRepository(repository)
-                repositoryStore.select(repository.baseUrl)
-                true
-            } else {
-                false
+        val unified = coordinator.cachedIndexContainsShinsouPackages()
+        val preparedRepository = if (unified) {
+            // The reviewed parser deliberately ignores generic package fields. Once the exact
+            // response says that such a half exists, its authoritative parser and trust policy
+            // must accept it before either durable repository record is touched.
+            val snapshot = repositoryClient.fetchIndexSnapshot(legacyBase)
+            require(snapshot.index is RepositoryIndex.Combined && snapshot.index.plugins.isNotEmpty()) {
+                "Unified repository declares Shinsou packages but exposes no installable generic packages"
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // A normal ShuYue repository may not publish a Shinsou-compatible index; it remains
-            // reviewed-only and is still usable through the explicit approval flow.
-            false
+            loadUnifiedRepositoryMetadata(legacyBase)
+        } else {
+            null
         }
         val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        if (location !in readReviewedShuYueRepositoryUrls()) {
-            writeReviewedShuYueRepositoryUrls(readReviewedShuYueRepositoryUrls() + location)
+        if (preparedRepository != null) {
+            commitUnifiedRepository(location, preparedRepository, select = true)
+        } else {
+            if (location !in readReviewedShuYueRepositoryUrls()) {
+                writeReviewedShuYueRepositoryUrls(readReviewedShuYueRepositoryUrls() + location)
+            }
+            clearUnifiedRepositoryMigrationAttempt(location)
         }
-        refreshReviewedShuYueRepositories()
-        if (unified) refreshLocked(addDefaultRepository = false) else rebuildSnapshot(errorMessage = null)
+        if (unified) {
+            // The full refresh publishes both prepared durable halves. Do not perform a separate
+            // reviewed refresh first; that would refetch the same index without strengthening the
+            // commit boundary.
+            refreshLocked()
+        } else {
+            refreshReviewedShuYueRepositories()
+            rebuildSnapshot(errorMessage = null)
+        }
         return reviewedRepositoryRow(location, official = location == builtIn)
     }
 
@@ -1360,7 +1434,15 @@ public class PluginBrowseAdapter(
             return
         }
         val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        val configured = readReviewedShuYueRepositoryUrls().distinct()
+        // Default repositories and older generic-only records also own a reviewed partition.
+        // Derive it from this refresh's admitted combined indexes; discovery grants no execution
+        // permission, and removing the generic repository removes this derived location as well.
+        val combinedLocations = repositorySnapshots.filter { (baseUrl, snapshot) ->
+            val index = snapshot.index
+            index is RepositoryIndex.Combined &&
+                (index.shuyue.isNotEmpty() || isKnownReviewedLocalRepositoryBaseUrl(baseUrl))
+        }.keys.map(::normalizeShuYueRepositoryInput)
+        val configured = (readReviewedShuYueRepositoryUrls() + combinedLocations).distinct()
         val packages = linkedMapOf<String, ShuYueReviewedRepositoryPackageV2>()
         val owners = linkedMapOf<String, ShuYueReviewedRepositoryCoordinatorV2>()
         var successfulRepositories = 0
@@ -1380,11 +1462,25 @@ public class PluginBrowseAdapter(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
+                val matchingGenericPartition = repositorySnapshots[normalizeRepositoryInput(location)]?.index
+                val matchingGenericPartitionWasAdmitted = matchingGenericPartition is RepositoryIndex.Combined &&
+                    matchingGenericPartition.plugins.isNotEmpty()
                 // One configured source can be unavailable while another user-provided source is
                 // healthy. Keep refreshing the remaining locations so one failed source cannot
                 // hide working ShuYue packages. The explicit add flow still surfaces errors for
                 // the URL the user entered.
-                if (firstFailure == null) firstFailure = failure
+                //
+                // iOS currently cannot bind a vetted DNS answer to TLS SNI/Host. A unified
+                // repository's generic Shinsou half uses its own exact-URL, bounded compatibility
+                // path and may already have refreshed successfully above. Preserve that admitted
+                // half when only the optional reviewed ShuYue reader is unavailable. A pure
+                // ShuYue URL, or any malformed/origin/digest/network failure, remains visible as
+                // an error; this branch never retries through an ordinary unbound transport.
+                if (failure !is ShuYueRepositoryException.PinnedTransportUnavailable ||
+                    !matchingGenericPartitionWasAdmitted
+                ) {
+                    if (firstFailure == null) firstFailure = failure
+                }
             }
         }
         // Preserve the existing error signal when every configured source is unavailable, while
@@ -1413,12 +1509,18 @@ public class PluginBrowseAdapter(
         val unified = repositoryStore.list().firstOrNull {
             it.baseUrl == normalizeRepositoryInput(location)
         }
+        // A unified repository is a Shinsou repository with an additional reviewed ShuYue
+        // partition. Preserve its canonical repository identity in the UI; labelling the whole
+        // row with the synthetic `shuyue:` id made the official shinsou_plugin publication look
+        // like a pure ShuYue source even though its generic packages were admitted and persisted.
+        // Pure ShuYue indexes have no matching repository-store row and keep the synthetic id.
+        if (unified != null) return unified.toBrowseRepository()
         return BrowseRepository(
             id = SHUYUE_REPOSITORY_ID_PREFIX + location,
             url = location,
-            name = unified?.name ?: "ShuYue",
-            website = unified?.website ?: location.substringBeforeLast('/').ifBlank { location },
-            signingFingerprint = unified?.signingKeyFingerprint?.takeIf { it.isNotBlank() },
+            name = "ShuYue",
+            website = location.substringBeforeLast('/').ifBlank { location },
+            signingFingerprint = null,
             official = official,
         )
     }
@@ -1472,6 +1574,12 @@ public class PluginBrowseAdapter(
      * refresh replaces the KV mirror exactly, including removals made by restore or sync.
      */
     private suspend fun reconcilePortableRepositories() {
+        reconcilePortableRepositoryStorage()
+        reconcileLegacyShuYueRepositories()
+        reconcileUnifiedReviewedRepositories()
+    }
+
+    private suspend fun reconcilePortableRepositoryStorage() {
         portableRepository?.let { portable ->
             val migrationComplete = keyValueStore.getString(PORTABLE_REPOSITORY_MIGRATION_KEY) == "true"
             if (!migrationComplete) {
@@ -1492,8 +1600,6 @@ public class PluginBrowseAdapter(
             removeLegacyBundledRepository(portable)
             mirrorPortableRepositoriesToKeyValue(portable)
         }
-        reconcileLegacyShuYueRepositories()
-        reconcileUnifiedReviewedRepositories()
     }
 
     /**
@@ -1542,27 +1648,109 @@ public class PluginBrowseAdapter(
             val base = normalizeRepositoryInput(location)
             if (repositoryStore.list().any { it.baseUrl == base } || location in attempted) return@forEach
             try {
-                val index = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                    repositoryClient.fetchIndex(base)
+                // Prefer the independently admitted generic parser. This repairs an old
+                // reviewed-only unified record even on a platform where the optional ShuYue
+                // transport must remain fail-closed. Pure ShuYue indexes continue below through
+                // their dedicated parser; a generic parse result never grants ShuYue execution.
+                val genericSnapshot = try {
+                    withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
+                        repositoryClient.fetchIndexSnapshot(base)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // A pure ShuYue repository is not required to satisfy the generic schema or
+                    // generic author-trust policy. Its dedicated parser below remains authoritative.
+                    null
                 }
-                if (index is RepositoryIndex.Combined && index.plugins.isNotEmpty()) {
+                if (genericSnapshot?.index is RepositoryIndex.Combined &&
+                    genericSnapshot.index.plugins.isNotEmpty()
+                ) {
+                    val repository = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
+                        loadUnifiedRepositoryMetadata(base)
+                    } ?: throw IllegalStateException("Timed out loading unified repository metadata")
+                    commitUnifiedRepository(
+                        location = location,
+                        repository = repository,
+                        select = repositoryStore.selected() == null,
+                    )
+                    return@forEach
+                }
+                val coordinator = reviewedShuYueCoordinator(
+                    location,
+                    reviewedShuYueRepositoryLoaderV2 ?: return,
+                )
+                withTimeout(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
+                    coordinator.refresh()
+                }
+                if (coordinator.cachedIndexContainsShinsouPackages()) {
+                    val snapshot = withTimeout(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
+                        repositoryClient.fetchIndexSnapshot(base)
+                    }
+                    require(snapshot.index is RepositoryIndex.Combined && snapshot.index.plugins.isNotEmpty()) {
+                        "Unified repository declares Shinsou packages but exposes no installable generic packages"
+                    }
                     val repository = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
                         loadUnifiedRepositoryMetadata(base)
                     }
-                    if (repository != null) {
-                        saveRepository(repository)
-                        if (repositoryStore.selected() == null) repositoryStore.select(repository.baseUrl)
-                    }
+                        ?: throw IllegalStateException("Timed out loading unified repository metadata")
+                    commitUnifiedRepository(
+                        location = location,
+                        repository = repository,
+                        select = repositoryStore.selected() == null,
+                    )
+                } else {
+                    // Only a successfully classified pure ShuYue repository receives the one-shot
+                    // marker. A declared unified half that fails parsing or trust remains eligible
+                    // for repair and is surfaced as an error below.
+                    attempted += location
+                    writeUnifiedRepositoryMigrationAttempts(attempted)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // The reviewed half remains usable when the legacy half is unavailable. Mark the
-                // probe below so a temporary malformed/non-unified repository does not stall
-                // every subsequent app launch; adding the URL again clears it for a retry.
+            } catch (failure: Throwable) {
+                // Do not permanently downgrade an already-configured unified repository to a
+                // misleading ShuYue-only row. No attempt marker is written, so restart/refresh
+                // retries once the remote document is repaired.
+                throw IllegalStateException(
+                    "Unable to reconcile unified repository $location",
+                    failure,
+                )
             }
-            attempted += location
-            writeUnifiedRepositoryMigrationAttempts(attempted)
+        }
+    }
+
+    /**
+     * Transaction-like durable commit for the two internal halves of one visible repository.
+     * Every remote parse/trust/metadata operation must complete before entering this block.
+     */
+    private suspend fun commitUnifiedRepository(
+        location: String,
+        repository: ExtensionRepository,
+        select: Boolean,
+    ) {
+        val previousRepository = repositoryStore.list().firstOrNull { it.baseUrl == repository.baseUrl }
+        val previousSelection = repositoryStore.selected()
+        val previousReviewedUrls = readReviewedShuYueRepositoryUrls()
+        val previousAttempts = readUnifiedRepositoryMigrationAttempts()
+        withContext(NonCancellable) {
+            try {
+                saveRepository(repository)
+                if (select) repositoryStore.select(repository.baseUrl)
+                if (location !in previousReviewedUrls) {
+                    writeReviewedShuYueRepositoryUrls(previousReviewedUrls + location)
+                }
+                clearUnifiedRepositoryMigrationAttempt(location)
+            } catch (failure: Throwable) {
+                runCatching {
+                    if (previousRepository == null) deleteRepository(repository.baseUrl)
+                    else saveRepository(previousRepository)
+                    repositoryStore.select(previousSelection)
+                    writeReviewedShuYueRepositoryUrls(previousReviewedUrls)
+                    writeUnifiedRepositoryMigrationAttempts(previousAttempts)
+                }.exceptionOrNull()?.let(failure::addSuppressed)
+                throw failure
+            }
         }
     }
 
@@ -1572,7 +1760,8 @@ public class PluginBrowseAdapter(
             repositoryClient.fetchRepository(baseUrl)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (missing: ExtensionRepositoryException.Http) {
+            if (missing.status != 404) throw missing
             ExtensionRepository(
                 baseUrl = baseUrl,
                 name = "Unified repository",
@@ -1660,6 +1849,13 @@ public class PluginBrowseAdapter(
         }
     }
 
+    private fun RepositoryIndexSnapshot.containsExtension(extensionId: String): Boolean =
+        when (val displayed = index) {
+            is RepositoryIndex.Plugins -> displayed.entries.any { it.id == extensionId }
+            is RepositoryIndex.Legacy -> displayed.entries.any { it.pkg == extensionId }
+            is RepositoryIndex.Combined -> displayed.plugins.any { it.id == extensionId }
+        }
+
     private suspend fun rebuildSnapshot(
         errorMessage: String?,
         isRefreshing: Boolean = false,
@@ -1740,7 +1936,11 @@ public class PluginBrowseAdapter(
                 cookies = emptyList(),
                 preferences = preferences,
                 filters = filters,
-                contentType = descriptor?.contentType ?: PluginContentType.BOTH,
+                contentType = descriptor?.contentType
+                    ?: installed.values.firstOrNull { stored ->
+                        stored.manifest.sources.orEmpty().any { it.id == source.id }
+                    }?.manifest?.installedContentType()
+                    ?: PluginContentType.BOTH,
             )
             }
             rebuiltSourceProjections[source.id] = BrowseSourceProjection(source, projected)
@@ -1839,21 +2039,9 @@ public class PluginBrowseAdapter(
             .distinctBy { it.identity.packageId }
         val extensions = descriptors.values.filterNot { it.id in reservedReviewedIds }.map { descriptor ->
             val local = installed[descriptor.id]
-            val trusted = local?.let {
-                if (PluginVerifier.isLegacyTrustValid(it)) {
-                    true
-                } else {
-                    val versionCode = it.manifest.versionCode
-                        ?: PluginVerifier.versionInt(it.manifest.version)
-                    try {
-                        trustStore.isTrusted(it.manifest.id, versionCode, it.metadata.installedSha256)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Throwable) {
-                        false
-                    }
-                }
-            } ?: false
+            // A verified digest is integrity state, not permission to execute sensitive host
+            // services. The UI's execution switch reflects the exact-artifact approval gate.
+            val trusted = local != null && manager.hasExecutionApproval(descriptor.id)
             BrowseExtension(
                 id = descriptor.id,
                 name = descriptor.name,
@@ -1926,7 +2114,7 @@ public class PluginBrowseAdapter(
         name = name,
         website = website,
         signingFingerprint = signingKeyFingerprint.takeIf { it.isNotBlank() },
-        official = baseUrl == normalizeRepositoryInput(defaultRepositoryUrl),
+        official = baseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL,
     )
 
     private fun ExtensionRepository.toPortableRepository(): ExtensionRepo = ExtensionRepo(
@@ -1953,27 +2141,14 @@ public class PluginBrowseAdapter(
 
     private suspend fun SManga.toBrowseManga(source: CatalogueSource): BrowseManga {
         val resolvedThumbnail = thumbnailUrl?.let { resolveSourceAsset(source.baseUrl, it) }
-        val preparedThumbnail = resolvedThumbnail?.let { url ->
-            runCatching {
-                val metadata = PageRequestMetadata.parse(url)
-                requestBuilder.build(
-                    sourceId = source.id,
-                    request = PluginHttpRequest(
-                        method = "GET",
-                        url = metadata.cleanUrl,
-                        headers = metadata.headers,
-                    ),
-                    sourceHeaders = source.headers,
-                    referer = source.headers.header("Referer") ?: source.baseUrl,
-                ).transportRequest
-            }.getOrNull()
-        }
         return BrowseManga(
             sourceId = source.id,
             url = url,
             title = title,
-            thumbnailUrl = preparedThumbnail?.url ?: resolvedThumbnail,
-            thumbnailHeaders = preparedThumbnail?.headers.orEmpty(),
+            // Keep the source URL inert. The UI resolves it only through loadPluginThumbnail,
+            // whose exact-source content policy strips cookies, authorization and proxy secrets.
+            thumbnailUrl = resolvedThumbnail,
+            thumbnailHeaders = emptyMap(),
             author = author ?: artist,
         )
     }
@@ -1982,12 +2157,22 @@ public class PluginBrowseAdapter(
         val trimmed = value.trim().trimEnd('/')
         val pathWithoutQuery = trimmed.substringBefore('?').substringBefore('#')
         val fileName = pathWithoutQuery.substringAfterLast('/')
-        return if (fileName == "index.json" || fileName == "index.min.json" || fileName == "repo.json") {
+        val normalized = if (fileName == "index.json" || fileName == "index.min.json" || fileName == "repo.json") {
             pathWithoutQuery.substringBeforeLast('/').trimEnd('/')
         } else {
             trimmed
         }
+        return normalized
     }
+
+    /** Reconciles the immutable row rendered by refresh with the exact candidate being installed. */
+    private fun PluginIndexEntry.matchesDescriptor(descriptor: ExtensionDescriptor): Boolean =
+        descriptor.admissionFingerprint != null &&
+            admissionFingerprint() == descriptor.admissionFingerprint
+
+    private fun LegacyExtensionIndexEntry.matchesDescriptor(descriptor: ExtensionDescriptor): Boolean =
+        descriptor.admissionFingerprint != null &&
+            admissionFingerprint() == descriptor.admissionFingerprint
 
     private fun resolveSourceAsset(baseUrl: String, value: String): String = when {
         value.startsWith("https://") || value.startsWith("http://") -> value
@@ -2065,6 +2250,27 @@ public class PluginBrowseAdapter(
         }
     }
 
+    /** Resolve UI state through the manager's exact package/source ownership map. */
+    private suspend fun storageForSourceUi(sourceId: Long): PluginStorage {
+        val scope = requireV2SourceScope(sourceId)
+        if (scope != null) {
+            val sourceKey = scope.first
+            // Raw protected storage is available only when the manager proves this exact live
+            // artifact owns the same fixed reviewed scope. Catalogue names alone are not authority.
+            val reviewedScope = manager.reviewedShuYueStorageScope(sourceKey)
+            if (reviewedScope != null && reviewedScope == scope.second) return pluginStorage
+            val ownedSourceId = requireNotNull(sourceKey.legacyLongId) {
+                "Generic source has no host-assigned storage id: ${sourceKey.canonicalId}"
+            }
+            return requireNotNull(manager.storageForSource(ownedSourceId)) {
+                "No host-owned storage is available for ${sourceKey.canonicalId}"
+            }
+        }
+        return requireNotNull(manager.storageForSource(sourceId)) {
+            "No host-owned storage is available for source $sourceId"
+        }
+    }
+
     private fun v2LoginCredentials(scopeId: Long): LoginCredentialsV2 = LoginCredentialsV2(
         usernameReference = "$V2_USERNAME_REFERENCE_PREFIX$scopeId",
         passwordReference = "$V2_PASSWORD_REFERENCE_PREFIX$scopeId",
@@ -2088,7 +2294,7 @@ public class PluginBrowseAdapter(
     )
 
     private suspend fun networkProxyPreference(sourceId: Long): BrowseSourcePreference {
-        val stored = pluginStorage.getPreference(
+        val stored = storageForSourceUi(sourceId).getPreference(
             sourceId,
             ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE,
         )
@@ -2112,20 +2318,20 @@ public class PluginBrowseAdapter(
             key = key,
             title = title,
             summary = summary.takeIf { it.isNotBlank() },
-            value = pluginStorage.getPreference(sourceId, key) ?: defaultValue,
+            value = storageForSourceUi(sourceId).getPreference(sourceId, key) ?: defaultValue,
             kind = SourcePreferenceKind.Text,
         )
         is SourcePreference.Toggle -> BrowseSourcePreference(
             key = key,
             title = title,
             summary = summary.takeIf { it.isNotBlank() },
-            value = pluginStorage.getPreference(sourceId, key) ?: defaultValue.toString(),
+            value = storageForSourceUi(sourceId).getPreference(sourceId, key) ?: defaultValue.toString(),
             kind = SourcePreferenceKind.Toggle,
         )
         is SourcePreference.Select -> BrowseSourcePreference(
             key = key,
             title = title,
-            value = pluginStorage.getPreference(sourceId, key) ?: defaultValue,
+            value = storageForSourceUi(sourceId).getPreference(sourceId, key) ?: defaultValue,
             choices = entries,
             choiceValues = entryValues.takeIf { it.size == entries.size } ?: entries,
             kind = SourcePreferenceKind.Choice,
@@ -2133,7 +2339,7 @@ public class PluginBrowseAdapter(
         is SourcePreference.MultiSelect -> BrowseSourcePreference(
             key = key,
             title = title,
-            value = pluginStorage.getPreference(sourceId, key) ?: defaultValues.sorted().joinToString(","),
+            value = storageForSourceUi(sourceId).getPreference(sourceId, key) ?: defaultValues.sorted().joinToString(","),
             choices = entries,
             choiceValues = entryValues.takeIf { it.size == entries.size } ?: entries,
             kind = SourcePreferenceKind.MultiChoice,
@@ -2141,7 +2347,7 @@ public class PluginBrowseAdapter(
     }
 
     private suspend fun PreferenceV2.toBrowsePreference(sourceId: Long): BrowseSourcePreference {
-        val stored = pluginStorage.getPreference(sourceId, key)
+        val stored = storageForSourceUi(sourceId).getPreference(sourceId, key)
         return BrowseSourcePreference(
             key = key,
             title = label,
@@ -2154,7 +2360,9 @@ public class PluginBrowseAdapter(
         private const val SHUYUE_REPOSITORY_ID_PREFIX: String = "shuyue:"
         private const val SHUYUE_REPOSITORY_URLS_KEY: String = "plugin.shuyue.v2.repository-urls"
         private const val UNIFIED_REPOSITORY_MIGRATION_KEY: String =
-            "plugin.repositories.unified-reviewed-migration.v2"
+            // V3 invalidates the generation that permanently marked a failed generic parse as
+            // reconciled and could therefore strand a real unified index as reviewed-only.
+            "plugin.repositories.unified-reviewed-migration.v3"
         private const val V2_USERNAME_REFERENCE_PREFIX: String = "shinsou-v2-username-"
         private const val V2_PASSWORD_REFERENCE_PREFIX: String = "shinsou-v2-password-"
         private val REVIEWED_CREDENTIAL_SCOPES: Set<Long> =
@@ -2220,24 +2428,71 @@ public class PluginContentAdapter(
         val source = manager.source(reference.sourceId)
             ?: throw IllegalStateException("Reader source '${reference.sourceId}' is not loaded")
         val referer = source.headers.header("Referer") ?: reference.chapter.url.takeIf { it.isNotBlank() }
+        val contentNetwork = requireNotNull(manager.contentNetworkForSource(source.id)) {
+            "No content network policy is registered for source ${source.id}"
+        }
         val pages = source.getPageList(reference.chapter).mapIndexed { fallbackIndex, page ->
-            val metadata = PageRequestMetadata.parse(page.imageUrl?.takeIf { it.isNotBlank() } ?: page.url)
-            val built = requestBuilder.build(
-                sourceId = source.id,
-                request = PluginHttpRequest("GET", metadata.cleanUrl, headers = metadata.headers),
-                sourceHeaders = source.headers,
-                referer = referer,
-            )
             ReaderPage(
                 index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
-                imageUrl = built.transportRequest.url,
-                headers = built.transportRequest.headers,
-                imageTransform = metadata.imageTransform(source.id),
+                // Compatibility readers remain lazy, but the resolver now returns bytes acquired
+                // through the same credential-free, origin-pinned content plane as production.
+                imageResolver = {
+                    // Viewer-backed sources may perform an authenticated network request while
+                    // resolving the final image URL. Keep that work inside the page resolver so
+                    // opening a chapter does not eagerly fetch every viewer page (or fail the
+                    // entire chapter because one later page is temporarily unavailable).
+                    val remoteImage = page.imageUrl
+                        ?.takeIf(String::isNotBlank)
+                        ?: source.resolveImageUrl(page.url)?.takeIf(String::isNotBlank)
+                        ?: page.url
+                    val metadata = PageRequestMetadata.parse(remoteImage)
+                    val resolvedUrl = requireNotNull(resolveSourceHttpUrl(source.baseUrl, metadata.cleanUrl)) {
+                        "Reader page URL is not a safe HTTP(S) source URL"
+                    }
+                    val requestHeaders = metadata.headers.filterKeys(::isSafeCompatibilityContentHeader)
+                    val response = contentNetwork.execute(
+                        sourceId = source.id,
+                        request = PluginHttpRequest(
+                            method = "GET",
+                            url = resolvedUrl,
+                            headers = requestHeaders.withFallbackHeader("Referer", referer),
+                        ),
+                    )
+                    check(response.status in 200..299) {
+                        "Unable to load reader page: HTTP ${response.status}"
+                    }
+                    require(response.body.isNotEmpty()) { "Reader page returned no data" }
+                    val contentType = response.normalizedPluginMediaType()
+                    val imageBytes = requireNotNull(response.imageBodyForDecoderOrNull()) {
+                        "Reader page returned non-image content '$contentType'"
+                    }
+                    ReaderPage(
+                        index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
+                        imageBytes = imageBytes,
+                        imageTransform = metadata.imageTransform(source.id),
+                    )
+                },
             )
         }
+        validateReaderPageIndexes(pages)
         return ReaderChapter(pages = pages, referer = referer, sourceHeaders = source.headers)
     }
 }
+
+private fun isSafeCompatibilityContentHeader(name: String): Boolean = when (name.trim().lowercase()) {
+    "accept", "accept-language", "cache-control", "if-modified-since", "if-none-match", "range",
+    // Komiic issues a short-lived ticket in the page URL fragment. It is safe only as a
+    // credential-free content-plane hint; PluginContentNetworkClient strips it from every
+    // cross-origin redirect and never combines it with cookies or authorization.
+    "referer", "user-agent", "x-image-ticket" -> true
+    else -> false
+}
+
+private fun mapOfNotNullHeader(name: String, value: String?): Map<String, String> =
+    value?.takeIf(String::isNotBlank)?.let { mapOf(name to it) }.orEmpty()
+
+private fun Map<String, String>.withFallbackHeader(name: String, value: String?): Map<String, String> =
+    if (keys.any { it.equals(name, ignoreCase = true) }) this else this + mapOfNotNullHeader(name, value)
 
 private fun Map<String, String>.header(name: String): String? =
     entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value

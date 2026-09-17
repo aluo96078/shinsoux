@@ -47,6 +47,7 @@
       "id": "remote-1",
       "title": "Remote Novel",
       "author": "Remote Author",
+      "coverImage": "https://example.test/covers/remote-1.jpg",
       "origin": "RemotePlugin",
       "sourceId": "zh.wenku8.api",
       "originalUri": "https://example.test/book/remote-1",

@@ -27,6 +27,7 @@ import dev.shinsou.kmp.plugin.v2.SourceDescriptorV2
 import dev.shinsou.kmp.plugin.v2.TextChunkResultV2
 import dev.shinsou.kmp.plugin.v2.TextChunkStreamV2
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
+import dev.shinsou.kmp.plugin.v2.WebChallengeUserAgentSourceV2
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -129,7 +130,9 @@ public class ShuYueQuarantinedScriptV2(
 
     init {
         requireAdmissionId(quarantineId, "ShuYue quarantine id")
-        require(this.sourceIds.isNotEmpty() && this.sourceIds.distinct().size == this.sourceIds.size)
+        require(this.sourceIds.isNotEmpty() && this.sourceIds.size <= MAX_SHUYUE_SOURCES &&
+            this.sourceIds.distinct().size == this.sourceIds.size)
+        this.sourceIds.forEach { requireAdmissionId(it, "ShuYue source id") }
         require(backingBytes.isNotEmpty() && backingBytes.size <= MAX_SHUYUE_SCRIPT_BYTES)
     }
 
@@ -265,17 +268,71 @@ public data class ShuYueReviewedSourceProfileV2(
     public val baseUrl: String,
     public val supportedContentKinds: Set<ContentKind> = setOf(ContentKind.PLAIN_TEXT),
     public val webChallengeUrl: String? = null,
+    /** Host-reviewed exact origins used by the executable source HTTP plane. */
+    public val requestOrigins: Set<String> = setOfNotNull(reviewedHttpsOrigin(baseUrl)),
+    /** Exact request origins which may receive account credentials/cookies. */
+    public val credentialOrigins: Set<String> = emptySet(),
+    /** Host-reviewed exact origins for credential-free covers/pages/inline images. */
+    public val contentOrigins: Set<String> = defaultReviewedContentOrigins(baseUrl),
+    /** Exact request origins allowed to use the browser-session transport. */
+    public val browserSessionOrigins: Set<String> = setOfNotNull(webChallengeUrl?.let(::reviewedHttpsOrigin)),
 ) {
     init {
         requireAdmissionId(sourceId, "Reviewed ShuYue source id")
         requireAdmissionText(sourceName, "Reviewed ShuYue source name")
         requireAdmissionId(languageTag, "Reviewed ShuYue source language")
         requireAdmissionText(baseUrl, "Reviewed ShuYue source base URL")
-        webChallengeUrl?.let { requireAdmissionText(it, "Reviewed ShuYue web challenge URL") }
+        webChallengeUrl?.let {
+            requireAdmissionText(it, "Reviewed ShuYue web challenge URL")
+            require(reviewedHttpsOrigin(it) != null) {
+                "Reviewed ShuYue web challenge URL must use HTTPS"
+            }
+        }
+        val baseOrigin = requireNotNull(reviewedHttpsOrigin(baseUrl)) {
+            "Reviewed ShuYue source base URL must use HTTPS"
+        }
+        fun validateOrigins(values: Set<String>, label: String) {
+            values.forEach { origin ->
+                require(reviewedHttpsOrigin(origin) == origin.trim().trimEnd('/')) {
+                    "Reviewed ShuYue $label must be exact HTTPS origins"
+                }
+            }
+        }
+        validateOrigins(requestOrigins, "request origins")
+        validateOrigins(credentialOrigins, "credential origins")
+        validateOrigins(contentOrigins, "content origins")
+        validateOrigins(browserSessionOrigins, "browser-session origins")
+        require(baseOrigin in requestOrigins) { "Reviewed ShuYue request origins must include the base origin" }
+        require(credentialOrigins.all { it in requestOrigins }) {
+            "Reviewed ShuYue credential origins must be request origins"
+        }
+        require(browserSessionOrigins.all { it in requestOrigins }) {
+            "Reviewed ShuYue browser-session origins must be request origins"
+        }
+        webChallengeUrl?.let { challenge ->
+            require(reviewedHttpsOrigin(challenge) in browserSessionOrigins) {
+                "Reviewed ShuYue challenge URL must use a declared browser-session origin"
+            }
+        }
+        require(contentOrigins.isNotEmpty()) { "Reviewed ShuYue source needs a content origin" }
         require(this.supportedContentKinds.isNotEmpty()) {
             "Reviewed ShuYue source must declare at least one content kind"
         }
     }
+}
+
+private fun reviewedHttpsOrigin(value: String): String? = runCatching {
+    val parsed = io.ktor.http.Url(value.trim())
+    require(parsed.protocol.name.equals("https", ignoreCase = true) && parsed.host.isNotBlank())
+    buildString {
+        append("https://").append(parsed.host.lowercase().trimEnd('.'))
+        if (parsed.port != 443) append(':').append(parsed.port)
+    }
+}.getOrNull()
+
+private fun defaultReviewedContentOrigins(baseUrl: String): Set<String> = buildSet {
+    reviewedHttpsOrigin(baseUrl)?.let(::add)
+    if (reviewedHttpsOrigin(baseUrl) == "https://www.bilimanga.net") add("https://i.motiezw.com")
 }
 
 public class ShuYueReviewedPluginProfileV2(
@@ -311,7 +368,36 @@ public class ShuYueReviewedPluginProfileV2(
                     baseUrl = baseUrl,
                 ),
             )
-        }).toList()
+        }).map { source ->
+            // Host-owned profiles may omit repetitive derived pins in source declarations. Fill
+            // them from the reviewed catalogue only; repository descriptors never reach here.
+            val contentOrigins = source.contentOrigins + if (
+                reviewedHttpsOrigin(source.baseUrl) == "https://www.bilimanga.net"
+            ) {
+                setOf("https://i.motiezw.com")
+            } else {
+                emptySet()
+            }
+            val challengeOrigin = reviewedHttpsOrigin(source.baseUrl)
+            val browserOrigins = if (
+                ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in requiredPermissions &&
+                source.browserSessionOrigins.isEmpty()
+            ) {
+                setOfNotNull(challengeOrigin)
+            } else {
+                source.browserSessionOrigins
+            }
+            source.copy(
+                contentOrigins = contentOrigins,
+                webChallengeUrl = source.webChallengeUrl
+                    ?: if (ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in requiredPermissions) {
+                        source.baseUrl
+                    } else {
+                        null
+                    },
+                browserSessionOrigins = browserOrigins,
+            )
+        }
 
     public val sourceIds: List<String> = this.sourceProfiles.map(ShuYueReviewedSourceProfileV2::sourceId)
 
@@ -391,6 +477,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫（停止維護）",
             sourceName = "輕小說文庫（停止維護）",
             baseUrl = "https://www.wenku8.net",
+            contentOrigins = setOf("https://www.wenku8.net", "https://img.wenku8.com"),
             login = true,
             favorite = true,
             browserChallenge = true,
@@ -404,6 +491,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -416,6 +504,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -429,6 +518,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -442,9 +532,28 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "筆趣閣",
             sourceName = "筆趣閣",
             baseUrl = "https://www.biquge.tw",
+            contentOrigins = setOf("https://www.biquge.tw", "https://img.biquge.tw"),
             login = false,
             favorite = false,
             browserChallenge = true,
+        ),
+        // The maintained shinsou_plugin index currently publishes a refreshed Biquge
+        // artifact at the same package/version. Keep the historical digest above for
+        // already-installed legacy ShuYue fixtures, but admit this exact online digest too;
+        // otherwise the reviewed repository coordinator silently filters the package out.
+        profile(
+            packageId = "zh.biquge.tw",
+            version = "1.0.3",
+            versionCode = 4,
+            sha256 = "3ab9e37be7ed83e0a7cd65266f984146b60a138f57d85ced4298f8e804dbb151",
+            displayName = "筆趣閣",
+            sourceName = "筆趣閣",
+            baseUrl = "https://www.biquge.tw",
+            contentOrigins = setOf("https://www.biquge.tw", "https://img.biquge.tw"),
+            login = false,
+            favorite = false,
+            browserChallenge = true,
+            v2IndexOnly = true,
         ),
         profile(
             packageId = "zh.biquge.tw",
@@ -454,6 +563,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "筆趣閣",
             sourceName = "筆趣閣",
             baseUrl = "https://www.biquge.tw",
+            contentOrigins = setOf("https://www.biquge.tw", "https://img.biquge.tw"),
             login = false,
             favorite = false,
             browserChallenge = true,
@@ -1141,6 +1251,10 @@ public object ShuYueReviewedPluginCatalogV2 {
         displayName: String,
         sourceName: String,
         baseUrl: String,
+        requestOrigins: Set<String> = setOfNotNull(reviewedHttpsOrigin(baseUrl)),
+        credentialOrigins: Set<String> = emptySet(),
+        contentOrigins: Set<String> = defaultReviewedContentOrigins(baseUrl),
+        browserSessionOrigins: Set<String> = emptySet(),
         login: Boolean,
         favorite: Boolean,
         browserChallenge: Boolean,
@@ -1156,6 +1270,17 @@ public object ShuYueReviewedPluginCatalogV2 {
             null
         },
     ): ShuYueReviewedPluginProfileV2 {
+        val challengeUrl = if (browserChallenge) baseUrl else null
+        val effectiveRequestOrigins = requestOrigins + if (packageId == "zh.wenku8.api") {
+            setOf("https://www.wenku8.net")
+        } else {
+            emptySet()
+        }
+        val effectiveCredentialOrigins = if (credentialOrigins.isEmpty() && login) {
+            setOfNotNull(reviewedHttpsOrigin(baseUrl))
+        } else {
+            credentialOrigins
+        }
         val capabilities = buildSet {
             add(ExtensionCapability.BROWSE)
             add(ExtensionCapability.SEARCH)
@@ -1189,6 +1314,23 @@ public object ShuYueReviewedPluginCatalogV2 {
             legacyCompatibilityOnly = legacyCompatibilityOnly,
             v2IndexOnly = v2IndexOnly,
             systemEvents = systemEvents,
+            sourceProfiles = listOf(
+                ShuYueReviewedSourceProfileV2(
+                    sourceId = packageId,
+                    sourceName = sourceName,
+                    languageTag = "zh",
+                    baseUrl = baseUrl,
+                    requestOrigins = effectiveRequestOrigins,
+                    credentialOrigins = effectiveCredentialOrigins,
+                    contentOrigins = contentOrigins,
+                    browserSessionOrigins = if (browserSessionOrigins.isEmpty() && browserChallenge) {
+                        setOfNotNull(challengeUrl?.let(::reviewedHttpsOrigin))
+                    } else {
+                        browserSessionOrigins
+                    },
+                    webChallengeUrl = challengeUrl,
+                ),
+            ),
         )
     }
 }
@@ -1217,6 +1359,8 @@ public sealed class ShuYueAdmissionException(message: String) : IllegalStateExce
     public class MissingPermissions(public val missing: Set<ShuYueExecutionPermissionV2>) :
         ShuYueAdmissionException("ShuYue script is missing execution permissions: $missing")
     public class RuntimeMismatch : ShuYueAdmissionException("ShuYue runtime descriptor does not match reviewed metadata")
+    public class CorruptInstallations :
+        ShuYueAdmissionException("Stored ShuYue installation records could not be decoded safely.")
 }
 
 /**
@@ -1338,6 +1482,12 @@ public class ShuYueReviewedPluginAdmissionV2(
         return permissions.toSet()
     }
 
+    /** Host lifecycle check for non-script authorities owned by this exact reviewed artifact. */
+    internal suspend fun isCurrentlyAuthorized(identity: ShuYueArtifactIdentityV2): Boolean {
+        val profile = reviewedProfiles.singleOrNull { it.identity == identity } ?: return false
+        return runCatching { requireCurrentApproval(identity, profile) }.isSuccess
+    }
+
     private fun review(
         identity: ShuYueArtifactIdentityV2,
         sourceIds: List<String>,
@@ -1408,8 +1558,23 @@ private class GuardedRuntime(
 private class GuardedSource(
     private val delegate: ExtensionSourceV2,
     private val authorize: suspend () -> Unit,
-) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2 {
+) : ExtensionSourceV2, UserInteractionScopedExtensionSourceV2, WebChallengeUserAgentSourceV2 {
     override val descriptor: SourceDescriptorV2 = delegate.descriptor
+
+    // Preserve reviewed browser metadata through the authorization wrapper. The UI must never
+    // fall back to an unreviewed source's URL/origin after wrapping the source.
+    private val webChallengeDelegate: WebChallengeUserAgentSourceV2?
+        get() = delegate as? WebChallengeUserAgentSourceV2
+    override val webChallengeUserAgent: String?
+        get() = webChallengeDelegate?.webChallengeUserAgent
+    override val webChallengeUrl: String?
+        get() = webChallengeDelegate?.webChallengeUrl
+    override val webChallengeLocalStorageKeys: Set<String>
+        get() = webChallengeDelegate?.webChallengeLocalStorageKeys.orEmpty()
+    override val requiredWebChallengeLocalStorageKeys: Set<String>
+        get() = webChallengeDelegate?.requiredWebChallengeLocalStorageKeys.orEmpty()
+    override val browserSessionOrigins: Set<String>
+        get() = webChallengeDelegate?.browserSessionOrigins.orEmpty()
 
     /**
      * Preserve the host-only interaction scope across the admission/authorization wrapper.

@@ -189,6 +189,13 @@ class ShuYueReviewedExtensionV2Test {
             )
         }
         assertEquals(null, ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId("unknown.source"))
+        assertTrue(
+            ShuYueReviewedPluginCatalogV2.profiles
+                .filter { it.identity.packageId == "zh.biquge.tw" }
+                .all { profile ->
+                    profile.sourceProfiles.all { "https://img.biquge.tw" in it.contentOrigins }
+                },
+        )
         assertEquals(
             setOf("zh.wenku8.api", "zh.biquge.tw", "zh.bilimanga"),
             ShuYueReviewedPluginCatalogV2.installableProfiles.map { it.identity.packageId }.toSet(),
@@ -237,6 +244,15 @@ class ShuYueReviewedExtensionV2Test {
                 "75e67a5937b9a93956f71e1f97f8738fbdabce6b7e7090c90779479e32cae56c",
             )?.identity?.sha256,
         )
+        assertEquals(
+            "3ab9e37be7ed83e0a7cd65266f984146b60a138f57d85ced4298f8e804dbb151",
+            ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
+                "zh.biquge.tw",
+                "1.0.3",
+                4,
+                "3ab9e37be7ed83e0a7cd65266f984146b60a138f57d85ced4298f8e804dbb151",
+            )?.identity?.sha256,
+        )
         val biliProfiles = ShuYueReviewedPluginCatalogV2.profiles
             .filter { it.identity.packageId == "zh.bilimanga" }
             .sortedBy { it.identity.versionCode }
@@ -266,7 +282,10 @@ class ShuYueReviewedExtensionV2Test {
             "https://www.bilimanga.net/login.php",
             challengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.manga" }.webChallengeUrl,
         )
-        assertNull(challengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.novel" }.webChallengeUrl)
+        assertEquals(
+            "https://tw.linovelib.com",
+            challengeBili.sourceProfiles.single { it.sourceId == "zh.bilimanga.novel" }.webChallengeUrl,
+        )
         val currentChallengeBili = requireNotNull(
             ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
                 "zh.bilimanga",

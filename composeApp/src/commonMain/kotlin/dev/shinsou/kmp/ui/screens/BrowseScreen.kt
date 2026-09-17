@@ -121,6 +121,7 @@ import dev.shinsou.kmp.ui.BrowsePage
 import dev.shinsou.kmp.ui.BrowseRepository
 import dev.shinsou.kmp.ui.BrowseSource
 import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import dev.shinsou.kmp.plugin.toBrowseFilterV2
 import dev.shinsou.kmp.ui.BrowseSortSelection
 import dev.shinsou.kmp.ui.BrowseTriState
@@ -164,12 +165,15 @@ import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.localizedLabel
+import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -191,6 +195,23 @@ private enum class SourceCatalogueMode {
     Latest,
     Favorites,
 }
+
+private const val SOURCE_HTTP_CHALLENGE_MARKER = "SHINSOU_SOURCE_HTTP_CHALLENGE"
+
+/** Immutable snapshot of the exact catalogue operation that encountered a typed challenge. */
+private data class SourceCatalogueRequest(
+    val source: BrowseSource,
+    val search: String,
+    val mode: SourceCatalogueMode,
+    val filters: List<BrowseFilter>?,
+    val requestedPage: Int,
+    val append: Boolean,
+)
+
+private data class CatalogueWebChallenge(
+    val catalogueRequest: SourceCatalogueRequest,
+    val browserRequest: SourceWebChallengeRequest,
+)
 
 internal data class SourceSearchResult(
     val source: BrowseSource,
@@ -345,12 +366,18 @@ fun BrowseScreen(
     var catalogueLoading by remember { mutableStateOf(false) }
     var catalogueLoadingMore by remember { mutableStateOf(false) }
     var catalogueError by remember { mutableStateOf<String?>(null) }
+    var catalogueChallengeAvailable by remember { mutableStateOf(false) }
+    var catalogueChallengePreparing by remember { mutableStateOf(false) }
+    var catalogueChallenge by remember { mutableStateOf<CatalogueWebChallenge?>(null) }
+    var pendingCatalogueRecovery by remember { mutableStateOf<SourceCatalogueRequest?>(null) }
     var cataloguePageNumber by remember { mutableStateOf(1) }
     var catalogueRequestToken by remember { mutableStateOf(0) }
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
-    var reviewedInstallBusyId by remember { mutableStateOf<String?>(null) }
+    val extensionOperations = remember(scope) {
+        ExtensionOperationRunner(scope, beforeWork = { withFrameNanos { } })
+    }
     var handledSystemBackRequest by remember { mutableStateOf(systemBackRequest) }
     val operationSnackbar = remember { SnackbarHostState() }
     val hasBrowseOverlay = overlays.hasOverlay
@@ -361,14 +388,26 @@ fun BrowseScreen(
         onDispose { currentReaderVisibilityCallback.value(false) }
     }
 
-    LaunchedEffect(snapshot.extensions.map { Triple(it.id, it.version, it.installed) }) {
-        if (pendingPluginEventGrant == null) {
-            snapshot.extensions.firstOrNull { it.installed && !it.reviewedShuYueV2 }?.let { extension ->
-                callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
-                    pendingPluginEventGrant = PendingPluginEventGrant(extension, review)
+    LaunchedEffect(snapshot.extensions.map { Triple(it.id, it.version, it.installed) }, extensionOperations.active) {
+        if (pendingPluginEventGrant == null && pendingReviewedInstall == null && extensionOperations.active == null) {
+            try {
+                val pending = withContext(Dispatchers.Default) {
+                    snapshot.extensions.filter { it.installed && !it.reviewedShuYueV2 }
+                        .firstNotNullOfOrNull { extension ->
+                            callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
+                                PendingPluginEventGrant(extension, review)
+                            }
+                        }
                 }
+                // A click can claim an operation before recomposition cancels this effect.
+                if (extensionOperations.active == null && pendingPluginEventGrant == null && pendingReviewedInstall == null) {
+                    pendingPluginEventGrant = pending
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings))
             }
-
         }
     }
 
@@ -381,9 +420,22 @@ fun BrowseScreen(
         catalogueLoadingMore = false
     }
 
+    fun clearCatalogueRecovery() {
+        catalogueChallengeAvailable = false
+        catalogueChallengePreparing = false
+        pendingCatalogueRecovery = null
+        catalogueChallenge?.browserRequest?.capability?.let { capability ->
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                withContext(NonCancellable) { callbacks.cancelSourceWebChallenge(capability) }
+            }
+        }
+        catalogueChallenge = null
+    }
+
     fun closeActiveSource() {
         val hadSource = overlays.activeSource != null
         cancelCatalogueLoad()
+        clearCatalogueRecovery()
         overlays = overlays.closeSource()
         currentReaderVisibilityCallback.value(false)
         if (hadSource) onParentDismissed()
@@ -403,6 +455,13 @@ fun BrowseScreen(
     DisposableEffect(Unit) {
         onDispose {
             catalogueJobs.cancel()
+            catalogueChallenge?.browserRequest?.capability?.let { capability ->
+                // The Compose scope is being cancelled. Enter the revocation synchronously, then
+                // let its small manager critical section finish despite that cancellation.
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    withContext(NonCancellable) { callbacks.cancelSourceWebChallenge(capability) }
+                }
+            }
             currentBackAvailabilityCallback.value(false)
         }
     }
@@ -438,26 +497,31 @@ fun BrowseScreen(
         }
     }
 
+    fun <T> launchExtensionOperation(
+        extension: BrowseExtension,
+        labelKey: String,
+        onSuccess: (T) -> Unit = {},
+        work: suspend () -> T,
+    ): Boolean = extensionOperations.start(
+        operation = ExtensionOperation(extension.id, labelKey),
+        work = work,
+        onSuccess = onSuccess,
+        onError = { error -> operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings)) },
+    )
+
     fun stageReviewedShuYue(extension: BrowseExtension) {
-        if (reviewedInstallBusyId != null) return
-        reviewedInstallBusyId = extension.id
-        scope.launch {
-            withFrameNanos { }
-            try {
-                val review = withContext(Dispatchers.Default) {
-                    callbacks.stageReviewedShuYuePackageV2(extension.id)
-                }
-                check(review.reviewStatus == ShuYueReviewStatusV2.REVIEWED) {
-                    "Downloaded ShuYue artifact is not an exact reviewed version"
-                }
+        launchExtensionOperation(
+            extension,
+            "Preparing installation…",
+            onSuccess = { review: ShuYueQuarantineReviewV2 ->
                 pendingReviewedInstall = PendingReviewedShuYueInstall(extension, review)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings))
-            } finally {
-                reviewedInstallBusyId = null
+            },
+        ) {
+            val review = callbacks.stageReviewedShuYuePackageV2(extension.id)
+            check(review.reviewStatus == ShuYueReviewStatusV2.REVIEWED) {
+                "Downloaded ShuYue artifact is not an exact reviewed version"
             }
+            review
         }
     }
 
@@ -480,6 +544,14 @@ fun BrowseScreen(
         append: Boolean,
     ) {
         if (append && (catalogueLoading || catalogueLoadingMore)) return
+        val exactRequest = SourceCatalogueRequest(
+            source = source,
+            search = search,
+            mode = mode,
+            filters = filters,
+            requestedPage = requestedPage,
+            append = append,
+        )
         val requestToken = catalogueRequestToken + 1
         catalogueRequestToken = requestToken
         if (append) {
@@ -492,6 +564,9 @@ fun BrowseScreen(
             catalogueLoadingMore = false
         }
         catalogueError = null
+        catalogueChallengeAvailable = false
+        catalogueChallengePreparing = false
+        pendingCatalogueRecovery = null
         val existingItems = if (append) page.items else emptyList()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val runningJob = currentCoroutineContext()[Job]
@@ -563,7 +638,32 @@ fun BrowseScreen(
                 throw cancelled
             } catch (error: Throwable) {
                 if (catalogueRequestToken == requestToken) {
+                    // A replacement search must not present the previous query's results as
+                    // its own. Pagination failures keep already loaded items and the footer.
+                    if (!append) page = BrowsePage()
                     catalogueError = error.localizedDiagnosticMessage(strings)
+                    if (
+                        error.sourceFailureMarker() == SOURCE_HTTP_CHALLENGE_MARKER &&
+                        overlays.activeSource?.identityKey == source.identityKey
+                    ) {
+                        pendingCatalogueRecovery = exactRequest
+                        val available = try {
+                            withContext(Dispatchers.Default) {
+                                callbacks.isSourceWebChallengeAvailable(source.id)
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            false
+                        }
+                        if (
+                            catalogueRequestToken == requestToken &&
+                            pendingCatalogueRecovery === exactRequest &&
+                            overlays.activeSource?.identityKey == source.identityKey
+                        ) {
+                            catalogueChallengeAvailable = available
+                        }
+                    }
                 }
             } finally {
                 if (catalogueRequestToken == requestToken) {
@@ -575,6 +675,52 @@ fun BrowseScreen(
         }
         catalogueJobs.replace(job)
         job.start()
+    }
+
+    fun openCatalogueWebChallenge() {
+        val recovery = pendingCatalogueRecovery ?: return
+        if (!catalogueChallengeAvailable || catalogueChallengePreparing) return
+        if (overlays.activeSource?.identityKey != recovery.source.identityKey) {
+            clearCatalogueRecovery()
+            return
+        }
+        catalogueChallengePreparing = true
+        scope.launch {
+            withFrameNanos { }
+            var issuedRequest: SourceWebChallengeRequest? = null
+            var delivered = false
+            try {
+                val request = withContext(Dispatchers.Default) {
+                    callbacks.sourceWebChallenge(recovery.source.id).also { issuedRequest = it }
+                }
+                if (
+                    request == null ||
+                    pendingCatalogueRecovery !== recovery ||
+                    overlays.activeSource?.identityKey != recovery.source.identityKey
+                ) {
+                    if (pendingCatalogueRecovery === recovery) catalogueChallengeAvailable = false
+                } else {
+                    catalogueChallenge = CatalogueWebChallenge(recovery, request)
+                    delivered = true
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (pendingCatalogueRecovery === recovery) {
+                    catalogueError = error.localizedDiagnosticMessage(strings)
+                    catalogueChallengeAvailable = false
+                }
+            } finally {
+                if (pendingCatalogueRecovery === recovery) catalogueChallengePreparing = false
+                if (!delivered) {
+                    issuedRequest?.capability?.let { capability ->
+                        withContext(NonCancellable) {
+                            callbacks.cancelSourceWebChallenge(capability)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ShinsouComposition.start owns the initial extension refresh on every platform. Re-entering
@@ -601,7 +747,7 @@ fun BrowseScreen(
                     }
                     IconButton(
                         onClick = { launchOperation { callbacks.refresh() } },
-                        enabled = !snapshot.isRefreshing,
+                        enabled = !snapshot.isRefreshing && extensionOperations.active == null,
                     ) {
                         if (snapshot.isRefreshing) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -621,6 +767,7 @@ fun BrowseScreen(
                         onClick = {
                             val parentWasOpen = overlays.activeSource != null || overlays.globalSearchVisible
                             cancelCatalogueLoad()
+                            clearCatalogueRecovery()
                             overlays = overlays.closeAll()
                             currentReaderVisibilityCallback.value(false)
                             if (parentWasOpen) onParentDismissed()
@@ -664,6 +811,7 @@ fun BrowseScreen(
                     callbacks = callbacks,
                     onImportDocument = onImportDocument,
                     onOpen = { source ->
+                        clearCatalogueRecovery()
                         overlays = overlays.openSource(source)
                         page = BrowsePage()
                         cataloguePageNumber = 1
@@ -679,6 +827,7 @@ fun BrowseScreen(
                 )
 
                 BrowseSection.Extensions -> ExtensionsPane(
+                    operation = extensionOperations.active,
                     repositories = snapshot.repositories,
                     selectedRepositoryId = snapshot.selectedRepositoryId,
                     extensions = snapshot.extensions.filter {
@@ -691,15 +840,19 @@ fun BrowseScreen(
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
                         if (extension.reviewedShuYueV2) stageReviewedShuYue(extension)
-                        else launchOperation {
+                        else launchExtensionOperation(
+                            extension,
+                            if (extension.installed) "Updating…" else "Installing…",
+                            onSuccess = { review ->
+                                pendingPluginEventGrant = review?.let { PendingPluginEventGrant(extension, it) }
+                            },
+                        ) {
                             callbacks.installExtension(extension.id)
-                            callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
-                                pendingPluginEventGrant = PendingPluginEventGrant(extension, review)
-                            }
+                            callbacks.pendingPluginEventGrantReview(extension.id)
                         }
                     },
                     onUninstall = { extension ->
-                        launchOperation {
+                        launchExtensionOperation(extension, "Removing…") {
                             if (extension.reviewedShuYueV2) {
                                 callbacks.uninstallReviewedShuYueV2(extension.id)
                             } else {
@@ -708,7 +861,16 @@ fun BrowseScreen(
                         }
                     },
                     onTrust = { extension, trusted ->
-                        launchOperation { callbacks.setExtensionTrusted(extension.id, trusted) }
+                        launchExtensionOperation(
+                            extension,
+                            "Updating trust…",
+                            onSuccess = { review ->
+                                pendingPluginEventGrant = review?.let { PendingPluginEventGrant(extension, it) }
+                            },
+                        ) {
+                            callbacks.setExtensionTrusted(extension.id, trusted)
+                            if (trusted) callbacks.pendingPluginEventGrantReview(extension.id) else null
+                        }
                     },
                 )
 
@@ -765,7 +927,10 @@ fun BrowseScreen(
                     loading = catalogueLoading,
                     loadingMore = catalogueLoadingMore,
                     error = catalogueError,
+                    challengeAvailable = catalogueChallengeAvailable,
+                    challengePreparing = catalogueChallengePreparing,
                     onBack = ::closeActiveSource,
+                    onWebChallenge = ::openCatalogueWebChallenge,
                     onBrowse = { search, mode, filters ->
                         overlays.activeSource?.let {
                             loadCatalogue(it, search, mode, filters, requestedPage = 1, append = false)
@@ -854,6 +1019,76 @@ fun BrowseScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(18.dp),
             )
         }
+
+        catalogueChallenge?.let { challenge ->
+            SourceWebChallengeDialog(
+                request = challenge.browserRequest,
+                onImport = { importedSession ->
+                    // Remove the dialog immediately. The opaque authority is one-shot, so neither
+                    // a double click nor a late platform callback can start a duplicate import.
+                    if (catalogueChallenge !== challenge) return@SourceWebChallengeDialog
+                    catalogueChallenge = null
+                    catalogueChallengePreparing = true
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        var imported = false
+                        try {
+                            withContext(Dispatchers.Default) {
+                                callbacks.importSourceWebChallengeSession(
+                                    sourceId = challenge.catalogueRequest.source.id,
+                                    capability = importedSession.capability,
+                                    cookies = importedSession.cookies,
+                                    userAgent = importedSession.userAgent,
+                                    localStorage = importedSession.localStorage,
+                                )
+                            }
+                            imported = true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            if (pendingCatalogueRecovery === challenge.catalogueRequest) {
+                                catalogueError = error.localizedDiagnosticMessage(strings)
+                                catalogueChallengeAvailable = false
+                            }
+                        } finally {
+                            catalogueChallengePreparing = false
+                            // Import consumes valid grants. Cancellation or an early validation
+                            // failure must consume them too, and cancellation itself cannot skip it.
+                            withContext(NonCancellable) {
+                                callbacks.cancelSourceWebChallenge(challenge.browserRequest.capability)
+                            }
+                        }
+                        if (
+                            imported &&
+                            pendingCatalogueRecovery === challenge.catalogueRequest &&
+                            overlays.activeSource?.identityKey == challenge.catalogueRequest.source.identityKey
+                        ) {
+                            val retry = challenge.catalogueRequest
+                            // Consume this recovery before dispatch; a repeated typed challenge
+                            // creates a fresh explicit CTA, never an automatic retry loop.
+                            pendingCatalogueRecovery = null
+                            catalogueChallengeAvailable = false
+                            loadCatalogue(
+                                source = retry.source,
+                                search = retry.search,
+                                mode = retry.mode,
+                                filters = retry.filters,
+                                requestedPage = retry.requestedPage,
+                                append = retry.append,
+                            )
+                        }
+                    }
+                },
+                onDismiss = {
+                    if (catalogueChallenge !== challenge) return@SourceWebChallengeDialog
+                    catalogueChallenge = null
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        withContext(NonCancellable) {
+                            callbacks.cancelSourceWebChallenge(challenge.browserRequest.capability)
+                        }
+                    }
+                },
+            )
+        }
     }
 
 
@@ -863,7 +1098,7 @@ fun BrowseScreen(
             onDismissRequest = { pendingReviewedInstall = null },
             title = { Text(strings.text("Approve reviewed extension")) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
                     pending.extension.description?.let { Text(it) }
                     Text(
@@ -884,8 +1119,7 @@ fun BrowseScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        pendingReviewedInstall = null
-                        launchOperation {
+                        if (launchExtensionOperation(pending.extension, "Installing…") {
                             callbacks.approveAndInstallReviewedShuYueV2(
                                 ShuYueReviewedInstallApprovalV2(
                                     quarantineId = review.quarantineId,
@@ -895,7 +1129,7 @@ fun BrowseScreen(
                                     replaceInstalledVersion = pending.extension.installed,
                                 ),
                             )
-                        }
+                        }) pendingReviewedInstall = null
                     },
                 ) { Text(strings.install) }
             },
@@ -910,27 +1144,31 @@ fun BrowseScreen(
             onDismissRequest = { pendingPluginEventGrant = null },
             title = { Text(strings.text("Review host permissions")) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
-                    Text("SHA-256: ${pending.review.artifact.sha256}", style = MaterialTheme.typography.labelSmall)
+                    Text(strings.text("SHA-256: {0}", pending.review.artifact.sha256), style = MaterialTheme.typography.labelSmall)
+                    Text(strings.text("Required permissions"), fontWeight = FontWeight.SemiBold)
                     pending.review.requestedPermissions.sortedBy { it.name }.forEach { permission ->
-                        Text("• ${permission.name}", style = MaterialTheme.typography.bodySmall)
+                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    pending.review.requestedRuntimePermissions.sortedBy { it.name }.forEach { permission ->
+                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
-                        strings.text("Host event permissions remain blocked until you approve this exact version and digest."),
+                        strings.text("Host event and runtime permissions remain blocked until you approve this exact version and digest."),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    pendingPluginEventGrant = null
-                    launchOperation {
+                    if (launchExtensionOperation(pending.extension, "Applying permissions…") {
                         callbacks.approvePluginEventGrantReview(
                             pending.extension.id,
+                            pending.review,
                             pending.review.requestedPermissions,
                         )
-                    }
+                    }) pendingPluginEventGrant = null
                 }) { Text(strings.text("Approve")) }
             },
             dismissButton = {
@@ -963,6 +1201,15 @@ private fun Throwable.diagnosticMessage(): String {
 }
 
 private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
+    localizedSourceFailure(strings)?.let { return it }
+    if (generateSequence(this) { it.cause }.any {
+            it.message in setOf(
+                "Installed plugin artifact or requested permissions changed after review",
+                "The exact displayed plugin review is no longer pending",
+                "Reviewed plugin identity does not match the requested extension",
+            )
+        }
+    ) return strings.text("This extension changed. Review its permissions again.")
     val diagnostic = diagnosticMessage()
     val translated = strings.text(diagnostic)
     if (translated != diagnostic) return translated
@@ -1136,6 +1383,8 @@ private fun BrowseResultCard(item: BrowseManga, onClick: () -> Unit) {
                 url = item.thumbnailUrl,
                 modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
                 headers = item.thumbnailHeaders,
+                sourceId = item.sourceId,
+                sourceKey = item.sourceKey,
             )
             Spacer(Modifier.height(6.dp))
             Text(
@@ -1238,8 +1487,9 @@ private fun ExtensionNovelReaderShell(
     ) {
         mutableStateOf(imageReader)
     }
-    var requestedPage by remember(session) { mutableStateOf(initialPage) }
-    var pageRequestSerial by remember(session) { mutableStateOf(0L) }
+    var pageRequest by remember(session) {
+        mutableStateOf(UnifiedReaderPageRequest(initialPage))
+    }
     var readerNavigationAction by remember(session) { mutableStateOf<ReaderTapAction?>(null) }
     var readerNavigationRequestKey by remember(session) { mutableStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
@@ -1313,18 +1563,22 @@ private fun ExtensionNovelReaderShell(
             }
             index in 0 until pageCount -> {
                 currentPage = index
-                requestedPage = index
-                pageRequestSerial++
+                pageRequest = pageRequest.request(index)
             }
         }
     }
 
     fun handleTap(action: ReaderTapAction) {
         if (progressTransitionInFlight || busy) return
+        val imagePage = pageRequest.navigationIndex(currentPage)
         when (action) {
-            ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
+            ReaderTapAction.PREVIOUS_PAGE -> requestPage(
+                (if (imageReader) imagePage else currentPage) - 1,
+            )
             ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
-            ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
+            ReaderTapAction.NEXT_PAGE -> requestPage(
+                (if (imageReader) imagePage else currentPage) + 1,
+            )
         }
     }
 
@@ -1352,22 +1606,17 @@ private fun ExtensionNovelReaderShell(
             volumeKeysEnabled = effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys),
         ) ?: return false
         if (progressTransitionInFlight || busy) return false
-        if (textContent) {
-            readerNavigationAction = action
-            readerNavigationRequestKey++
-        } else {
-            val beforePage = currentPage
-            val beforeTransition = progressTransitionInFlight
-            handleTap(action)
-            if (beforePage == currentPage && beforeTransition == progressTransitionInFlight) {
-                val hasAdjacent = if (action == ReaderTapAction.NEXT_PAGE) {
-                    hasCurrent && activeUnitIndex + 1 < units.size
-                } else {
-                    hasCurrent && activeUnitIndex > 0
-                }
-                if (!hasAdjacent) return false
-            }
+        if (imageReader) {
+            val target = imageSequenceNavigationTarget(
+                currentIndex = pageRequest.navigationIndex(currentPage),
+                pageCount = pageCount,
+                action = action,
+            )
+            if (target != null) requestPage(target) else handleNavigationBoundary(action)
+            return true
         }
+        readerNavigationAction = action
+        readerNavigationRequestKey++
         return true
     }
 
@@ -1380,7 +1629,7 @@ private fun ExtensionNovelReaderShell(
 
     LaunchedEffect(session, settingsVisible) {
         heldNavigationKeys.clear()
-        if (!settingsVisible && !epubReader) focusRequester.requestFocus()
+        if (!settingsVisible) focusRequester.requestFocus()
     }
 
     LaunchedEffect(systemBackRequest) {
@@ -1405,12 +1654,16 @@ private fun ExtensionNovelReaderShell(
                     return@onPreviewKeyEvent false
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (epubReader && event.key != Key.Escape && event.key != Key.Back &&
-                    event.key != Key.NavigatePrevious
+                if (!readerPreviewKeyIsHostOwned(
+                        key = event.key,
+                        unifiedImageOrEpubReader = imageReader || epubReader,
+                    )
                 ) {
                     return@onPreviewKeyEvent false
                 }
                 val handledNavigationKey = when (event.key) {
+                    Key.VolumeDown, Key.VolumeUp,
+                    -> effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys)
                     Key.DirectionDown, Key.NumPadDirectionDown,
                     Key.PageDown, Key.NumPadPageDown,
                     Key.Spacebar,
@@ -1428,6 +1681,8 @@ private fun ExtensionNovelReaderShell(
                     return@onPreviewKeyEvent true
                 }
                 when (event.key) {
+                    Key.VolumeDown -> handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_DOWN)
+                    Key.VolumeUp -> handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_UP)
                     Key.DirectionDown, Key.NumPadDirectionDown,
                     Key.PageDown, Key.NumPadPageDown,
                     Key.Spacebar,
@@ -1476,15 +1731,15 @@ private fun ExtensionNovelReaderShell(
             features = features,
             copyText = copyText,
             settings = readerSettings,
-            requestedPageIndex = requestedPage,
-            pageRequestSerial = pageRequestSerial,
+            requestedPageIndex = pageRequest.targetIndex,
+            pageRequestSerial = pageRequest.serial,
             navigationAction = readerNavigationAction,
             navigationRequestKey = readerNavigationRequestKey,
             readerControlsVisible = controlsVisible,
             onPageIndexChanged = { index, count ->
                 pageCountMeasured = true
                 currentPage = index
-                requestedPage = index
+                pageRequest = pageRequest.observe(index)
                 pageCount = count.coerceAtLeast(1)
                 latestProgress.position = latestProgress.position?.copy(
                     pageIndex = index.coerceAtLeast(0),
@@ -1940,8 +2195,13 @@ internal fun ExtensionV2PublicationPane(
         detailsRefresh.join()
     }
 
+    // A details endpoint is allowed to omit the cover even when the catalogue supplied one.
+    // Do not let a successful background refresh replace a usable catalogue cover with a
+    // placeholder in the detail pane (novel APIs commonly split metadata across endpoints).
     val publication = refreshedPublication ?: publicationPage?.publication
-    val displayPublication = publication ?: cataloguePublication
+    val displayPublication = publication
+        ?.withFallbackThumbnail(cataloguePublication.thumbnailUrl)
+        ?: cataloguePublication
     val targetUrl = (displayPublication.url ?: item.url).takeIf {
         it.startsWith("http://") || it.startsWith("https://")
     }
@@ -2053,6 +2313,7 @@ internal fun ExtensionV2PublicationPane(
                 Row(Modifier.fillMaxSize()) {
                     ExtensionV2PublicationInfoPane(
                         publication = displayPublication,
+                        sourceKey = sourceKey,
                         supportsFavorite = supportsFavorite,
                         favorite = favorite,
                         allowUnfavorite = localLibrary,
@@ -2131,6 +2392,7 @@ internal fun ExtensionV2PublicationPane(
                     item("extension-info") {
                         ExtensionV2PublicationInfoPane(
                             publication = displayPublication,
+                            sourceKey = sourceKey,
                             supportsFavorite = supportsFavorite,
                             favorite = favorite,
                             allowUnfavorite = localLibrary,
@@ -2239,6 +2501,7 @@ internal fun ExtensionV2PublicationPane(
 @Composable
 private fun ExtensionV2PublicationInfoPane(
     publication: RemotePublicationV2,
+    sourceKey: dev.shinsou.kmp.domain.model.SourceKey,
     supportsFavorite: Boolean,
     favorite: Boolean,
     allowUnfavorite: Boolean,
@@ -2293,6 +2556,7 @@ private fun ExtensionV2PublicationInfoPane(
             title = publication.title,
             url = publication.thumbnailUrl,
             modifier = Modifier.width(186.dp).aspectRatio(2f / 3f),
+            sourceKey = sourceKey,
         )
         Spacer(Modifier.height(18.dp))
         Text(
@@ -2794,6 +3058,11 @@ internal suspend fun browseGlobalSearchSource(
     page = 1,
     filters = emptyList(),
 )
+
+/** Keeps a previously resolved catalogue cover when a detail response omits it. */
+internal fun RemotePublicationV2.withFallbackThumbnail(fallback: String?): RemotePublicationV2 =
+    if (!thumbnailUrl.isNullOrBlank() || fallback.isNullOrBlank()) this
+    else copy(thumbnailUrl = fallback)
 
 private fun RemotePublicationV2.toBrowseManga(source: BrowseSource): BrowseManga = BrowseManga(
     sourceId = source.id,
@@ -3579,6 +3848,7 @@ private fun SourceSettingsDialog(
                     runCatching {
                         callbacks.importSourceWebChallengeSession(
                             sourceId = source.id,
+                            capability = importedSession.capability,
                             cookies = importedSession.cookies,
                             userAgent = importedSession.userAgent,
                             localStorage = importedSession.localStorage,
@@ -3592,6 +3862,9 @@ private fun SourceSettingsDialog(
                         }
                         challengeRequest = null
                     }.onFailure { error ->
+                        // Import authority is one-shot and was consumed even when validation
+                        // failed, so close this request instead of presenting a doomed retry.
+                        challengeRequest = null
                         challengeMessage = strings.text(
                             "Error: {0}",
                             error.message ?: strings.text("unable to save browser cookies"),
@@ -3603,6 +3876,7 @@ private fun SourceSettingsDialog(
             onDismiss = {
                 challengeRequest = null
                 challengeMessage = strings.text("Web challenge cancelled. No browser session was imported.")
+                scope.launch { callbacks.cancelSourceWebChallenge(request.capability) }
             },
         )
     }
@@ -3635,6 +3909,7 @@ private fun SourceIcon(source: BrowseSource) {
 
 @Composable
 private fun ExtensionsPane(
+    operation: ExtensionOperation?,
     repositories: List<BrowseRepository>,
     selectedRepositoryId: String?,
     extensions: List<BrowseExtension>,
@@ -3655,7 +3930,7 @@ private fun ExtensionsPane(
         item("repositories-title") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(strings.text("Repositories"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = { repositoryDialog = true }) {
+                TextButton(enabled = operation == null, onClick = { repositoryDialog = true }) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(17.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(strings.text("Add"))
@@ -3679,6 +3954,7 @@ private fun ExtensionsPane(
         } else {
             items(repositories, key = { "repo-${it.id}" }) { repository ->
                 Surface(
+                    enabled = operation == null,
                     onClick = { onSelectRepository(repository.id) },
                     shape = RoundedCornerShape(11.dp),
                     color = if (repository.id == selectedRepositoryId) MaterialTheme.colorScheme.primaryContainer
@@ -3706,9 +3982,8 @@ private fun ExtensionsPane(
                         if (repository.official) {
                             Icon(Icons.Filled.CheckCircle, strings.text("Official"), tint = MaterialTheme.colorScheme.primary)
                         }
-                        // Official repositories are recoverable defaults, not immutable rows. The
-                        // adapter hides an official ShuYue row until the user adds it again.
-                        IconButton(onClick = { onRemoveRepository(repository.id) }) {
+                        // Every repository is user-managed, including official repositories.
+                        IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
                             Icon(Icons.Outlined.Delete, strings.delete)
                         }
                     }
@@ -3732,7 +4007,7 @@ private fun ExtensionsPane(
             }
         } else {
             items(extensions, key = { "extension-${it.id}" }) { extension ->
-                ExtensionRow(extension, onInstall, onUninstall, onTrust)
+                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust)
             }
         }
     }
@@ -3752,7 +4027,7 @@ private fun ExtensionsPane(
             },
             confirmButton = {
                 TextButton(
-                    enabled = repositoryUrl.startsWith("http"),
+                    enabled = operation == null && repositoryUrl.startsWith("http"),
                     onClick = {
                         onAddRepository(repositoryUrl.trim())
                         repositoryUrl = ""
@@ -3768,6 +4043,7 @@ private fun ExtensionsPane(
 @Composable
 private fun ExtensionRow(
     extension: BrowseExtension,
+    operation: ExtensionOperation?,
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
@@ -3817,6 +4093,7 @@ private fun ExtensionRow(
                         }
                     } else {
                         AssistChip(
+                            enabled = operation == null,
                             onClick = { onTrust(extension, !extension.trusted) },
                             label = {
                                 Text(
@@ -3828,19 +4105,29 @@ private fun ExtensionRow(
                         )
                     }
                 }
+                if (operation?.extensionId == extension.id) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text(strings.text(operation.labelKey), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
             when {
                 extension.installed && extension.updateAvailable -> Column(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    Button(onClick = { onInstall(extension) }) { Text(strings.text("Update")) }
-                    TextButton(onClick = { onUninstall(extension) }) { Text(strings.uninstall) }
+                    Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.text("Update")) }
+                    TextButton(enabled = operation == null, onClick = { onUninstall(extension) }) { Text(strings.uninstall) }
                 }
-                extension.installed -> OutlinedButton(onClick = { onUninstall(extension) }) {
+                extension.installed -> OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
                     Text(strings.uninstall)
                 }
-                else -> Button(onClick = { onInstall(extension) }) { Text(strings.install) }
+                else -> Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
             }
         }
     }
@@ -3925,7 +4212,8 @@ private fun MigrationCandidateCard(
                 throw cancelled
             } catch (error: Throwable) {
                 searchResults = emptyList()
-                searchError = error.message ?: strings.text("Unable to search {0}", source.name)
+                searchError = error.localizedSourceFailure(strings)
+                    ?: error.message ?: strings.text("Unable to search {0}", source.name)
             }
             searchLoading = false
         }
@@ -4045,7 +4333,10 @@ private fun SourceCatalogueScreen(
     loading: Boolean,
     loadingMore: Boolean,
     error: String?,
+    challengeAvailable: Boolean,
+    challengePreparing: Boolean,
     onBack: () -> Unit,
+    onWebChallenge: () -> Unit,
     onBrowse: (String, SourceCatalogueMode, List<BrowseFilter>?) -> Unit,
     onLoadMore: (String, SourceCatalogueMode, List<BrowseFilter>?) -> Unit,
     onOpenManga: (BrowseManga) -> Unit,
@@ -4200,7 +4491,24 @@ private fun SourceCatalogueScreen(
                 title = strings.text("Source error"),
                 message = error,
                 icon = { Icon(Icons.Outlined.Language, null, Modifier.size(30.dp)) },
-                action = { Button(onClick = { requestBrowse() }) { Text(strings.retry) } },
+                action = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { requestBrowse() }) { Text(strings.retry) }
+                        if (challengeAvailable) {
+                            OutlinedButton(
+                                onClick = onWebChallenge,
+                                enabled = !challengePreparing,
+                            ) {
+                                Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (challengePreparing) strings.text("Preparing…")
+                                    else strings.text("Web challenge / Cloudflare"),
+                                )
+                            }
+                        }
+                    }
+                },
             )
             page.items.isEmpty() -> EmptyState(
                 title = strings.noMatches,
@@ -4229,6 +4537,8 @@ private fun SourceCatalogueScreen(
                             url = item.thumbnailUrl,
                             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
                             headers = item.thumbnailHeaders,
+                            sourceId = item.sourceId,
+                            sourceKey = item.sourceKey,
                         )
                         Spacer(Modifier.height(7.dp))
                         Text(item.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -4243,6 +4553,19 @@ private fun SourceCatalogueScreen(
                         ) {
                             if (error != null) {
                                 Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            if (error != null && challengeAvailable) {
+                                OutlinedButton(
+                                    onClick = onWebChallenge,
+                                    enabled = !challengePreparing,
+                                ) {
+                                    Icon(Icons.Outlined.Security, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        if (challengePreparing) strings.text("Preparing…")
+                                        else strings.text("Web challenge / Cloudflare"),
+                                    )
+                                }
                             }
                             if (loadingMore) {
                                 CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)

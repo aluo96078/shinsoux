@@ -3,7 +3,10 @@ package dev.shinsou.kmp.plugin
 import io.ktor.http.Url
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -16,6 +19,7 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.ClassShutter
+import org.mozilla.javascript.ContextFactory
 import org.mozilla.javascript.BaseFunction
 import org.mozilla.javascript.Function
 import org.mozilla.javascript.NativeArray
@@ -26,32 +30,65 @@ import org.mozilla.javascript.Undefined
 import org.mozilla.javascript.Wrapper
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.IdentityHashMap
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Clock
 
 /** Rhino is used instead of WebView so native HTTP bridge calls remain synchronous. */
-public class RhinoScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
+public class RhinoScriptPluginRuntimeFactory private constructor(
+    private val allowUnsandboxedScriptsForTests: Boolean,
+) : ScriptPluginRuntimeFactory {
+    public constructor() : this(false)
+
+    internal companion object {
+        /** Tests only: production callers must establish exact host-reviewed provenance. */
+        fun unsafeForTests(): RhinoScriptPluginRuntimeFactory =
+            RhinoScriptPluginRuntimeFactory(allowUnsandboxedScriptsForTests = true)
+    }
+
     override suspend fun create(
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = RhinoScriptPluginRuntime.create(
-        script,
-        manifest,
-        manifest.requireLegacyExecutableSource(),
-        environment,
-    )
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val source = manifest.requireLegacyExecutableSource()
+        val effectiveEnvironment = requireSafeInProcessProvenance(script, manifest, source, environment)
+        return RhinoScriptPluginRuntime.create(script, manifest, source, effectiveEnvironment)
+    }
 
     override suspend fun createForSource(
         script: String,
         manifest: PluginManifest,
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = RhinoScriptPluginRuntime.create(
-        script,
-        manifest,
-        manifest.requireDeclaredExecutableSource(source),
-        environment,
-    )
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val declaredSource = manifest.requireDeclaredExecutableSource(source)
+        val effectiveEnvironment = requireSafeInProcessProvenance(
+            script,
+            manifest,
+            declaredSource,
+            environment,
+        )
+        return RhinoScriptPluginRuntime.create(script, manifest, declaredSource, effectiveEnvironment)
+    }
+
+    private fun requireSafeInProcessProvenance(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry?,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginEnvironment {
+        if (allowUnsandboxedScriptsForTests) return environment
+        val provenance = environment.inProcessScriptProvenance
+            ?: throw ScriptRuntimeUnavailableException(
+                "Plugin '${manifest.id}' cannot run in-process on Rhino: the JVM provides no " +
+                    "per-runtime heap isolation. Only exact host-reviewed artifacts are enabled.",
+            )
+        val reviewedLimits = provenance.requireExactMatch(script, manifest, source)
+        return reviewedLimits?.let { environment.copy(executionLimits = it) } ?: environment
+    }
 }
 
 private class RhinoScriptPluginRuntime private constructor(
@@ -61,10 +98,15 @@ private class RhinoScriptPluginRuntime private constructor(
     private val environment: ScriptPluginEnvironment,
     private val dispatcher: ExecutorCoroutineDispatcher,
 ) : ScriptPluginRuntime {
+    private val contextFactory = SandboxedRhinoContextFactory(environment.executionLimits)
     private lateinit var scope: Scriptable
     private lateinit var sourceObject: Scriptable
     private lateinit var bridge: RhinoPluginBridge
     private val logs = CopyOnWriteArrayList<String>()
+    @Volatile
+    private var poisonedBy: PluginResourceLimitException? = null
+    @Volatile
+    private var activeInvocationJob: Job? = null
 
     override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
         private set
@@ -83,6 +125,7 @@ private class RhinoScriptPluginRuntime private constructor(
     override var headers: Map<String, String> = emptyMap()
         private set
     override var webChallengeUrl: String? = null
+    override var browserSessionOrigins: Set<String> = emptySet()
         private set
     override var webChallengeLocalStorageKeys: Set<String> = emptySet()
         private set
@@ -90,7 +133,7 @@ private class RhinoScriptPluginRuntime private constructor(
         private set
     override val recentLogs: List<String> get() = logs.toList()
 
-    private suspend fun initialize(script: String) = onEngine { context ->
+    private suspend fun initialize(script: String) = onEngine(initialization = true) { context ->
         // Do not expose Rhino's Java/package gateways through the default standard-object
         // bootstrap.  The bridge is the only host surface; ClassShutter remains a second
         // defense for reflective access once the bridge is installed.
@@ -153,6 +196,7 @@ private class RhinoScriptPluginRuntime private constructor(
         }
         bridge.sourceHeaders = headers
         webChallengeUrl = sourceObject.stringProperty("webChallengeUrl")?.takeIf(String::isNotBlank)
+        browserSessionOrigins = selectedSource?.browserSessionOrigins.orEmpty()
         webChallengeLocalStorageKeys = sourceObject.property("webChallengeLocalStorageKeys").toStringSet()
         requiredWebChallengeLocalStorageKeys =
             sourceObject.property("requiredWebChallengeLocalStorageKeys").toStringSet()
@@ -226,6 +270,11 @@ private class RhinoScriptPluginRuntime private constructor(
             value.toStringAnyMap()?.toPage(index)
         }
 
+    override suspend fun resolveImageUrl(pageUrl: String): String? {
+        if (!hasFunction("resolveImageUrl")) return null
+        return invoke("resolveImageUrl", listOf(pageUrl)).toString().takeIf(String::isNotBlank)
+    }
+
     override suspend fun getFilterList(): FilterList {
         // HttpSource supplies an empty default in original Shinsou, and older JavaScript sources
         // commonly omit this optional hook entirely. Treat absence as "no filters" so global
@@ -238,7 +287,12 @@ private class RhinoScriptPluginRuntime private constructor(
         val value = if (hasFunction("getPreferenceDefinitions")) {
             invoke("getPreferenceDefinitions", emptyList())
         } else {
-            onEngine { sourceObject.property("preferences").fromRhino() }
+            onEngine {
+                sourceObject.property("preferences").fromRhino(
+                    limits = environment.executionLimits,
+                    pluginId = manifest.id,
+                )
+            }
         }
         return value.toAnyList().mapNotNull { it.toStringAnyMap()?.toSourcePreference() }
     }
@@ -248,6 +302,7 @@ private class RhinoScriptPluginRuntime private constructor(
 
     override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
         if (!supportsLogin) return LoginAttemptResult(false)
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         val raw = invoke("login", listOf(username, password))
         val result = raw.toLoginAttemptResult()
         if (result.loggedIn) environment.storage.setCredential(id, PluginCredential(username, password))
@@ -255,19 +310,21 @@ private class RhinoScriptPluginRuntime private constructor(
     }
 
     override suspend fun logout() {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         environment.storage.clearCredential(id)
         if (hasFunction("logout")) invoke("logout", emptyList())
     }
 
     override suspend fun close() {
-        withContext(dispatcher) {
+        activeInvocationJob?.cancel(CancellationException("Plugin runtime '$pluginId' is closing"))
+        withContext(dispatcher + NonCancellable) {
             bridge.releaseAll()
         }
         dispatcher.close()
     }
 
     private suspend fun invokeMangasPage(method: String, args: List<Any?>): MangasPage {
-        logs.clear()
+        bridge.clearLogs()
         bridge.releaseAll()
         val result = invoke(method, args).toStringAnyMap() ?: return MangasPage(emptyList(), false)
         val mangas = result["mangas"].toAnyList().mapNotNull { it.toStringAnyMap()?.toManga() }
@@ -282,19 +339,38 @@ private class RhinoScriptPluginRuntime private constructor(
         bridge.releaseAll()
         val function = sourceObject.property(method) as? Function
             ?: throw IllegalArgumentException("Plugin '${manifest.id}' has no function '$method'")
+        requireBoundedRhinoInvocationInput(arguments, environment.executionLimits, manifest.id)
         val args = arguments.map { it.toRhino(context, scope) }.toTypedArray()
-        function.call(context, scope, sourceObject, args).fromRhino()
+        function.call(context, scope, sourceObject, args).fromRhino(
+            limits = environment.executionLimits,
+            pluginId = manifest.id,
+        )
     }
 
-    private suspend fun <T> onEngine(block: (Context) -> T): T = withContext(dispatcher) {
-        val context = Context.enter()
-        try {
-            context.optimizationLevel = -1
-            context.languageVersion = Context.VERSION_ES6
-            context.setClassShutter(ClassShutter { false })
-            block(context)
-        } finally {
-            Context.exit()
+    private suspend fun <T> onEngine(
+        initialization: Boolean = false,
+        block: (Context) -> T,
+    ): T {
+        poisonedBy?.let { throw it }
+        return withContext(dispatcher) {
+            val invocationJob = currentCoroutineContext()[Job]
+            activeInvocationJob = invocationJob
+            if (::bridge.isInitialized) bridge.beginInvocation(invocationJob)
+            contextFactory.beginInvocation(initialization, invocationJob)
+            val context = contextFactory.enterContext()
+            try {
+                block(context).also {
+                    contextFactory.throwIfLimitExceeded()
+                    if (::bridge.isInitialized) bridge.throwIfLimitExceeded()
+                }
+            } catch (limited: PluginResourceLimitException) {
+                poisonedBy = limited
+                throw limited
+            } finally {
+                Context.exit()
+                contextFactory.endInvocation()
+                if (activeInvocationJob === invocationJob) activeInvocationJob = null
+            }
         }
     }
 
@@ -337,6 +413,7 @@ public class RhinoPluginBridge internal constructor(
     private val scopeProvider: () -> Scriptable,
     private val logs: MutableList<String>,
 ) {
+    private val limits: PluginExecutionLimits = environment.executionLimits
     @Volatile
     internal var sourceHeaders: Map<String, String> = emptyMap()
 
@@ -345,11 +422,19 @@ public class RhinoPluginBridge internal constructor(
 
     private val nodes = linkedMapOf<Int, Node>()
     private var nextHandle = 0
+    private var bridgeCalls = 0
+    private var logBytes = 0
+    private var limitFailure: PluginResourceLimitException? = null
+    private var invocationJob: Job? = null
+
+    private fun <T> awaitBridge(block: suspend () -> T): T =
+        runBlocking(invocationJob ?: EmptyCoroutineContext) { block() }
 
     public fun httpGet(url: String): Any? = httpGetWithHeaders(url, null)
 
     public fun httpGetWithHeaders(url: String, headers: Any?): Any? = try {
-        runBlocking {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
             environment.network.get(
                 sourceId,
                 url,
@@ -358,13 +443,16 @@ public class RhinoPluginBridge internal constructor(
                 referer = sourceHeaders.header("Referer"),
             ).bodyText()
         }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (error: Throwable) {
-        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+        mapOf("error" to safeBridgeError(error))
     }
 
     /** Structured status/body variant for sources that must distinguish an empty result from HTTP failure. */
     public fun httpGetResponse(url: String, headers: Any?): Any? = try {
-        runBlocking {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
             environment.network.get(
                 sourceId,
                 url,
@@ -378,11 +466,12 @@ public class RhinoPluginBridge internal constructor(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Throwable) {
-        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+        mapOf("error" to safeBridgeError(error))
     }
 
     public fun httpPost(url: String, body: String, headers: Any?): Any? = try {
-        runBlocking {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
             environment.network.post(
                 sourceId,
                 url,
@@ -400,7 +489,8 @@ public class RhinoPluginBridge internal constructor(
 
     /** Structured status/body variant used by sources that must explain non-2xx login failures. */
     public fun httpPostResponse(url: String, body: String, headers: Any?): Any? = try {
-        runBlocking {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
             environment.network.post(
                 sourceId,
                 url,
@@ -415,7 +505,7 @@ public class RhinoPluginBridge internal constructor(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Throwable) {
-        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+        mapOf("error" to safeBridgeError(error))
     }
 
     /** Exact-manifest, browser-backed request for APIs that reject native TLS identities. */
@@ -425,7 +515,8 @@ public class RhinoPluginBridge internal constructor(
         body: String,
         headers: Any?,
     ): Any? = try {
-        runBlocking {
+        environment.requireRuntimePermission(PluginRuntimePermission.BROWSER_CHALLENGE)
+        awaitBridge {
             val prepared = preparePluginBrowserSessionRequest(
                 sourceOrigin = sourceOrigin,
                 allowedOrigins = browserSessionOrigins,
@@ -436,11 +527,13 @@ public class RhinoPluginBridge internal constructor(
                     headers = headers.toStringMap(),
                 ),
             )
-            environment.browserSessionTransport.execute(
+            environment.browserSessionTransport.executeWithNetworkPolicy(
                 sourceId = sourceId,
                 sourceOrigin = prepared.sourceOrigin,
                 allowedOrigins = setOf(prepared.targetOrigin),
                 request = prepared.request,
+                resolver = environment.hostResolver,
+                allowDeveloperUnpinnedTransport = environment.allowDeveloperUnpinnedBrowserSession,
             ).let { response ->
                 mapOf("status" to response.status, "body" to response.bodyText())
             }
@@ -453,9 +546,10 @@ public class RhinoPluginBridge internal constructor(
 
     /** Returns a JSON string because the reviewed ShuYue script parses the bridge result itself. */
     public fun httpPostBatch(urls: Any?, bodies: Any?, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
         val urlList = urls.toStringList()
         val bodyList = bodies.toStringList()
-        runBlocking {
+        awaitBridge {
             val responses = environment.network.postBatch(
                 sourceId = sourceId,
                 urls = urlList,
@@ -464,22 +558,40 @@ public class RhinoPluginBridge internal constructor(
                 sourceHeaders = sourceHeaders,
                 referer = sourceHeaders.header("Referer"),
             )
-            PluginJson.encodeToString(JsonArray(responses.map { JsonPrimitive(it.bodyText()) }))
+            encodeBoundedPluginBatchResponseBodies(
+                responses,
+                limits.maxBridgeResultBytes,
+            )
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
+    } catch (limited: PluginResourceLimitException) {
+        // Resource admission failures must poison the invocation instead of looking like an
+        // ordinary recoverable transport failure to plugin code.
+        throw limited
     } catch (_: Throwable) {
         null
     }
 
-    public fun htmlParse(html: String): Int = store(Jsoup.parse(html))
-    public fun htmlParseFragment(html: String, baseUri: String): Int = store(Jsoup.parse(html, baseUri))
+    public fun htmlParse(html: String): Int {
+        requireDomInput(html)
+        return store(Jsoup.parse(html))
+    }
 
-    public fun domSelect(handleId: Number, selector: String): IntArray =
-        element(handleId)?.select(selector)?.map(::store)?.toIntArray() ?: IntArray(0)
+    public fun htmlParseFragment(html: String, baseUri: String): Int {
+        requireDomInput(html)
+        return store(Jsoup.parse(html, baseUri))
+    }
 
-    public fun domFirst(handleId: Number, selector: String): Int =
-        element(handleId)?.selectFirst(selector)?.let(::store) ?: -1
+    public fun domSelect(handleId: Number, selector: String): IntArray {
+        requireSelector(selector)
+        return element(handleId)?.select(selector)?.map(::store)?.toIntArray() ?: IntArray(0)
+    }
+
+    public fun domFirst(handleId: Number, selector: String): Int {
+        requireSelector(selector)
+        return element(handleId)?.selectFirst(selector)?.let(::store) ?: -1
+    }
 
     public fun domText(handleId: Number): String = element(handleId)?.text().orEmpty()
     public fun domOwnText(handleId: Number): String = element(handleId)?.ownText().orEmpty()
@@ -501,7 +613,9 @@ public class RhinoPluginBridge internal constructor(
     public fun domReleaseAll() { releaseAll() }
 
     public fun parseHtml(html: String, selector: String): Any = try {
-        Jsoup.parse(html).select(selector).map { element ->
+        requireDomInput(html)
+        requireSelector(selector)
+        Jsoup.parse(html).select(selector).take(limits.maxParsedElements).map { element ->
             mapOf(
                 "text" to element.text(),
                 "html" to element.html(),
@@ -511,13 +625,23 @@ public class RhinoPluginBridge internal constructor(
                 "tagName" to element.tagName(),
             )
         }
+    } catch (limited: PluginResourceLimitException) {
+        throw limited
     } catch (_: Throwable) {
         html
     }
 
     public fun log(message: String) {
-        logs += message
-        environment.logger.log(pluginId, message)
+        val bounded = boundedPluginLogMessage(message, limits.maxLogEntryBytes)
+        val bytes = bounded.encodeToByteArray().size
+        while (logs.isNotEmpty() && (logs.size >= limits.maxLogEntries || logBytes + bytes > limits.maxLogBytes)) {
+            logBytes -= logs.removeAt(0).encodeToByteArray().size
+        }
+        if (bytes <= limits.maxLogBytes) {
+            logs += bounded
+            logBytes += bytes
+            environment.logger.log(pluginId, bounded)
+        }
     }
 
     /** Reviewed ShuYue scripts retain their historical `bridge.log(sourceId, message)` call. */
@@ -525,28 +649,35 @@ public class RhinoPluginBridge internal constructor(
         log(message?.toString().orEmpty())
     }
 
-    public fun getPreference(key: String): String? = runBlocking {
+    public fun getPreference(key: String): String? = awaitBridge {
         environment.storage.getPreference(sourceId, key)
     }
 
-    public fun setPreference(key: String, value: String) = runBlocking {
+    public fun setPreference(key: String, value: String) = awaitBridge {
         environment.storage.setPreference(sourceId, key, value)
     }
 
-    public fun getCredentialUsername(): String? = runBlocking {
+    public fun getCredentialUsername(): String? = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         environment.storage.getCredential(sourceId)?.username
     }
 
-    public fun getCredentialPassword(): String? = runBlocking {
+    public fun getCredentialPassword(): String? = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         environment.storage.getCredential(sourceId)?.password
     }
 
-    public fun setCredential(username: String, password: String) = runBlocking {
+    public fun setCredential(username: String, password: String) = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         environment.storage.setCredential(sourceId, PluginCredential(username, password))
     }
 
-    public fun clearCredential() = runBlocking { environment.storage.clearCredential(sourceId) }
-    public fun hasCredential(): Boolean = runBlocking {
+    public fun clearCredential() = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.clearCredential(sourceId)
+    }
+    public fun hasCredential(): Boolean = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         !environment.storage.getCredential(sourceId)?.username.isNullOrEmpty()
     }
 
@@ -554,6 +685,7 @@ public class RhinoPluginBridge internal constructor(
     public fun requestLogin(): Boolean = requestLogin("")
 
     public fun requestLogin(reason: String?): Boolean {
+        if (PluginRuntimePermission.LOGIN_PROMPT !in environment.runtimePermissions) return false
         return submitLegacyLoginCompatibility(environment, supportsLogin, reason)
     }
 
@@ -569,6 +701,8 @@ public class RhinoPluginBridge internal constructor(
         } else {
             try {
                 sink.submit(boundScope, envelope.encodeToByteArray())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Throwable) {
                 PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
             }
@@ -627,13 +761,15 @@ public class RhinoPluginBridge internal constructor(
             else environment.systemEventNegotiation
         } ?: environment.systemEventNegotiation
 
-    public fun getCookie(name: String, url: String): String? = runBlocking {
+    public fun getCookie(name: String, url: String): String? = awaitBridge {
+        if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) return@awaitBridge null
         val target = Url(url)
         val now = Clock.System.now().toEpochMilliseconds()
         environment.storage.getCookies(sourceId).firstOrNull { it.name == name && it.matches(target, now) }?.value
     }
 
-    public fun getCookies(url: String): Map<String, String> = runBlocking {
+    public fun getCookies(url: String): Map<String, String> = awaitBridge {
+        if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) return@awaitBridge emptyMap()
         val target = Url(url)
         val now = Clock.System.now().toEpochMilliseconds()
         environment.storage.getCookies(sourceId).filter { it.matches(target, now) }.associate { it.name to it.value }
@@ -645,8 +781,13 @@ public class RhinoPluginBridge internal constructor(
         domain: String,
         path: String,
         expirySeconds: Number,
-    ): Boolean = runBlocking {
+    ): Boolean = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
         val seconds = expirySeconds.toLong()
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (seconds > 0 && seconds > (Long.MAX_VALUE - now) / 1_000L) {
+            failLimit("Plugin '$pluginId' supplied an overflowing cookie expiry")
+        }
         environment.storage.setCookie(
             sourceId,
             PluginCookie(
@@ -654,28 +795,84 @@ public class RhinoPluginBridge internal constructor(
                 value = value,
                 domain = domain,
                 path = path.ifEmpty { "/" },
-                expiresAtEpochMillis = if (seconds > 0) Clock.System.now().toEpochMilliseconds() + seconds * 1_000 else null,
+                expiresAtEpochMillis = if (seconds > 0) now + seconds * 1_000L else null,
             ),
         )
         true
     }
 
-    public fun deleteCookie(name: String, domain: String) = runBlocking {
+    public fun deleteCookie(name: String, domain: String) = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
         environment.storage.deleteCookie(sourceId, name, domain)
     }
 
-    public fun clearCookies() = runBlocking { environment.storage.clearCookies(sourceId) }
+    public fun clearCookies() = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
+        environment.storage.clearCookies(sourceId)
+    }
 
     internal fun releaseAll() {
         nodes.clear()
         nextHandle = 0
     }
 
+    internal fun beginInvocation(job: Job?) {
+        invocationJob = job
+        bridgeCalls = 0
+        limitFailure = null
+    }
+
+    internal fun beforeHostCall() {
+        limitFailure?.let { throw it }
+        bridgeCalls += 1
+        if (bridgeCalls > limits.maxBridgeCallsPerInvocation) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxBridgeCallsPerInvocation} bridge calls")
+        }
+    }
+
+    internal fun requireBoundedArguments(arguments: Array<Any?>) {
+        RhinoBridgeArgumentValidator(limits, pluginId).validate(arguments)
+    }
+
+    internal fun throwIfLimitExceeded() {
+        limitFailure?.let { throw it }
+    }
+
+    internal fun clearLogs() {
+        logs.clear()
+        logBytes = 0
+    }
+
     private fun store(node: Node): Int {
+        if (nodes.size >= limits.maxDomHandles) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxDomHandles} live DOM handles")
+        }
         val id = ++nextHandle
         nodes[id] = node
         return id
     }
+
+    private fun requireDomInput(html: String) {
+        if (pluginUtf8ByteCountAtMost(html, limits.maxDomInputBytes) == null) {
+            failLimit("Plugin '$pluginId' exceeded the ${limits.maxDomInputBytes}-byte DOM input limit")
+        }
+    }
+
+    private fun requireSelector(selector: String) {
+        if (selector.length > limits.maxSelectorChars) {
+            failLimit("Plugin '$pluginId' exceeded the ${limits.maxSelectorChars}-character selector limit")
+        }
+    }
+
+    private fun failLimit(message: String): Nothing {
+        val failure = limitFailure ?: PluginResourceLimitException(message).also { limitFailure = it }
+        throw failure
+    }
+
+    private fun safeBridgeError(error: Throwable): String =
+        error.message?.takeIf {
+            it.startsWith("Plugin runtime lacks ") && it.endsWith(" permission")
+        } ?: "Host operation failed"
 
     private fun node(id: Number): Node? = nodes[id.toInt()]
     private fun element(id: Number): Element? = node(id) as? Element
@@ -798,7 +995,7 @@ private class RhinoBridgeScriptable(
         name: String,
         handler: (Context, Scriptable, Array<Any?>) -> Any?,
     ) {
-        val fn = BridgeFunction(handler).also {
+        val fn = BridgeFunction(bridge, handler).also {
             val parent = getParentScope() ?: this
             it.setParentScope(parent)
             it.setPrototype(ScriptableObject.getFunctionPrototype(parent))
@@ -807,6 +1004,7 @@ private class RhinoBridgeScriptable(
     }
 
     private class BridgeFunction(
+        private val bridge: RhinoPluginBridge,
         private val handler: (Context, Scriptable, Array<Any?>) -> Any?,
     ) : BaseFunction() {
         override fun call(
@@ -814,9 +1012,152 @@ private class RhinoBridgeScriptable(
             scope: Scriptable,
             thisObj: Scriptable,
             args: Array<Any?>,
-        ): Any? = bridgeResult(context, scope, handler(context, scope, args))
+        ): Any? {
+            bridge.beforeHostCall()
+            bridge.requireBoundedArguments(args)
+            return bridgeResult(context, scope, handler(context, scope, args))
+        }
     }
 }
+
+private class RhinoBridgeArgumentValidator(
+    private val limits: PluginExecutionLimits,
+    private val pluginId: String,
+) {
+    private val visited = java.util.Collections.newSetFromMap(IdentityHashMap<Scriptable, Boolean>())
+    private var elements = 0
+    private var bytes = 0L
+
+    fun validate(arguments: Array<Any?>) {
+        arguments.forEach { visit(it, 0) }
+    }
+
+    private fun visit(value: Any?, depth: Int) {
+        requireLimit(depth <= limits.maxResultDepth) { "bridge argument nesting depth" }
+        elements += 1
+        requireLimit(elements <= limits.maxResultTotalElements) { "bridge argument elements" }
+        when (value) {
+            null, is Undefined -> countBytes(4)
+            is CharSequence -> countString(value.toString())
+            is Number, is Boolean, is Function -> countBytes(32)
+            is NativeArray -> {
+                if (!visited.add(value)) return
+                requireLimit(value.length <= limits.maxResultArrayElements.toLong()) { "bridge argument array elements" }
+                countBytes(2)
+                for (index in 0 until value.length.toInt()) visit(value.get(index, value), depth + 1)
+            }
+            is Scriptable -> {
+                if (!visited.add(value)) return
+                val ids = value.ids
+                requireLimit(ids.size <= limits.maxResultObjectEntries) { "bridge argument object entries" }
+                countBytes(2)
+                ids.forEach { id ->
+                    val key = id.toString()
+                    countString(key)
+                    visit(if (id is Int) value.get(id, value) else value.get(key, value), depth + 1)
+                }
+            }
+            else -> countString(value.toString())
+        }
+    }
+
+    private fun countString(value: String) {
+        val remaining = (limits.maxBridgeArgumentBytes.toLong() - bytes).coerceAtMost(Int.MAX_VALUE.toLong())
+        requireLimit(remaining >= 0 && pluginUtf8ByteCountAtMost(value, remaining.toInt()) != null) {
+            "bridge argument bytes"
+        }
+        countBytes(pluginUtf8ByteCountAtMost(value, remaining.toInt())!!.toLong())
+    }
+
+    private fun countBytes(count: Long) {
+        bytes += count
+        requireLimit(bytes <= limits.maxBridgeArgumentBytes.toLong()) { "bridge argument bytes" }
+    }
+
+    private inline fun requireLimit(condition: Boolean, kind: () -> String) {
+        if (!condition) {
+            throw PluginResourceLimitException(
+                "Plugin '$pluginId' exceeded the ${limits.maxBridgeArgumentBytes}-byte ${kind()} limit",
+            )
+        }
+    }
+}
+
+private class SandboxedRhinoContextFactory(
+    private val limits: PluginExecutionLimits,
+) : ContextFactory() {
+    private var budget: RhinoInvocationBudget? = null
+    private var limitFailure: PluginResourceLimitException? = null
+
+    override fun makeContext(): Context = super.makeContext().apply {
+        optimizationLevel = -1
+        languageVersion = Context.VERSION_ES6
+        instructionObserverThreshold = limits.instructionObserverThreshold
+        maximumInterpreterStackDepth = limits.maximumInterpreterStackDepth
+        setClassShutter(ClassShutter { false })
+    }
+
+    fun beginInvocation(initialization: Boolean, job: Job?) {
+        check(budget == null) { "Nested Rhino invocation budget" }
+        limitFailure = null
+        budget = RhinoInvocationBudget(
+            startedNanos = System.nanoTime(),
+            wallTimeMillis = if (initialization) {
+                limits.initializationWallTimeMillis
+            } else {
+                limits.invocationWallTimeMillis
+            },
+            maximumInstructions = if (initialization) {
+                limits.initializationInstructionCount
+            } else {
+                limits.invocationInstructionCount
+            },
+            job = job,
+        )
+    }
+
+    fun endInvocation() {
+        budget = null
+        limitFailure = null
+    }
+
+    fun throwIfLimitExceeded() {
+        limitFailure?.let { throw it }
+    }
+
+    override fun observeInstructionCount(context: Context, instructionCount: Int) {
+        val current = budget ?: throw PluginResourceLimitException("Rhino executed outside a host budget")
+        if (current.job?.isActive == false) {
+            throw CancellationException("Plugin JavaScript invocation was cancelled")
+        }
+        current.instructions += instructionCount.toLong().coerceAtLeast(0)
+        if (current.instructions > current.maximumInstructions) {
+            failLimit(
+                "Plugin JavaScript exceeded ${current.maximumInstructions} interpreted instructions",
+            )
+        }
+        val elapsed = System.nanoTime() - current.startedNanos
+        val maximumNanos = current.wallTimeMillis.coerceAtMost(Long.MAX_VALUE / 1_000_000) * 1_000_000
+        if (elapsed >= maximumNanos) {
+            failLimit(
+                "Plugin JavaScript exceeded the ${current.wallTimeMillis}ms execution deadline",
+            )
+        }
+    }
+
+    private fun failLimit(message: String): Nothing {
+        val failure = limitFailure ?: PluginResourceLimitException(message).also { limitFailure = it }
+        throw failure
+    }
+}
+
+private data class RhinoInvocationBudget(
+    val startedNanos: Long,
+    val wallTimeMillis: Long,
+    val maximumInstructions: Long,
+    val job: Job?,
+    var instructions: Long = 0,
+)
 
 private fun rawArg(args: Array<Any?>, index: Int): Any? = args.getOrNull(index)
 
@@ -891,6 +1232,12 @@ private fun Scriptable.booleanProperty(name: String): Boolean? = property(name)?
 
 private fun Any?.toRhino(context: Context, scope: Scriptable): Any? = when (this) {
     null -> null
+    is String, is Boolean -> this
+    is Number -> Context.javaToJS(this, scope).let { converted ->
+        // Rhino converts numeric primitives to a script number; reject a future adapter change
+        // rather than exposing a boxed JVM object with reflective methods.
+        if (converted is NativeJavaObject || converted is Wrapper) toDouble() else converted
+    }
     is Map<*, *> -> context.newObject(scope).also { objectValue ->
         forEach { (key, value) ->
             if (key != null) ScriptableObject.putProperty(objectValue, key.toString(), value.toRhino(context, scope))
@@ -898,28 +1245,117 @@ private fun Any?.toRhino(context: Context, scope: Scriptable): Any? = when (this
     }
     is Iterable<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
     is Array<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
-    else -> Context.javaToJS(this, scope)
+    else -> throw IllegalArgumentException("Unsupported plugin invocation argument type")
 }
 
 /** Rhino's Object[] overload rejects arrays retaining a Kotlin/JVM component type. */
 private fun rhinoObjectArray(values: Iterable<*>): Array<Any?> = values.map { it }.toTypedArray()
 
-private fun Any?.fromRhino(depth: Int = 0): Any? {
-    if (depth > 32) return null
-    return when (this) {
-        null, is Undefined -> null
-        is NativeJavaObject -> unwrap().fromRhino(depth + 1)
-        is Wrapper -> unwrap().fromRhino(depth + 1)
-        is NativeArray -> (0 until length.toInt()).map { index -> get(index, this).fromRhino(depth + 1) }
-        is Scriptable -> ids.associate { id ->
-            val key = id.toString()
-            val value = when (id) {
-                is Int -> get(id, this)
-                else -> get(key, this)
-            }
-            key to value.fromRhino(depth + 1)
+private fun Any?.fromRhino(
+    limits: PluginExecutionLimits = PluginExecutionLimits(),
+    pluginId: String = "unknown",
+): Any? = RhinoResultDecoder(limits, pluginId).decode(this)
+
+private class RhinoResultDecoder(
+    private val limits: PluginExecutionLimits,
+    private val pluginId: String,
+) {
+    private var elements = 0
+    private var estimatedBytes = 0L
+
+    fun decode(value: Any?): Any? = decodeValue(value, 0)
+
+    private fun decodeValue(value: Any?, depth: Int): Any? {
+        requireLimit(depth <= limits.maxResultDepth) {
+            "Plugin '$pluginId' exceeded result nesting depth ${limits.maxResultDepth}"
         }
-        else -> this
+        countElement()
+        return when (value) {
+            null, is Undefined -> null
+            is NativeJavaObject -> decodeValue(value.unwrap(), depth + 1)
+            is Wrapper -> decodeValue(value.unwrap(), depth + 1)
+            is CharSequence -> value.toString().also(::countString)
+            is Number -> value.also { countBytes(32) }
+            is Boolean -> value.also { countBytes(5) }
+            is NativeArray -> {
+                requireLimit(value.length <= limits.maxResultArrayElements.toLong()) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultArrayElements} result array elements"
+                }
+                countBytes(2)
+                (0 until value.length.toInt()).map { index -> decodeValue(value.get(index, value), depth + 1) }
+            }
+            is Scriptable -> {
+                requireLimit(value.ids.size <= limits.maxResultObjectEntries) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultObjectEntries} result object entries"
+                }
+                countBytes(2)
+                value.ids.associate { id ->
+                    val key = id.toString().also(::countString)
+                    countBytes(2)
+                    val child = when (id) {
+                        is Int -> value.get(id, value)
+                        else -> value.get(key, value)
+                    }
+                    key to decodeValue(child, depth + 1)
+                }
+            }
+            else -> value.also { countString(it.toString()) }
+        }
+    }
+
+    private fun countElement() {
+        elements += 1
+        requireLimit(elements <= limits.maxResultTotalElements) {
+            "Plugin '$pluginId' exceeded ${limits.maxResultTotalElements} total result elements"
+        }
+    }
+
+    private fun countString(value: String) {
+        val bytes = pluginUtf8ByteCountAtMost(value, limits.maxResultStringBytes)
+        requireLimit(bytes != null) {
+            "Plugin '$pluginId' exceeded the ${limits.maxResultStringBytes}-byte result string limit"
+        }
+        countBytes(bytes!! + 2)
+    }
+
+    private fun countBytes(bytes: Int) {
+        estimatedBytes += bytes.toLong()
+        requireLimit(estimatedBytes <= limits.maxResultBytes.toLong()) {
+            "Plugin '$pluginId' exceeded the ${limits.maxResultBytes}-byte result limit"
+        }
+    }
+
+    private inline fun requireLimit(condition: Boolean, message: () -> String) {
+        if (!condition) throw PluginResourceLimitException(message())
+    }
+}
+
+private fun requireBoundedRhinoInvocationInput(
+    arguments: List<Any?>,
+    limits: PluginExecutionLimits,
+    pluginId: String,
+) {
+    val encoded = PluginJson.encodeToString(arguments.toSafeJsonElement())
+    if (pluginUtf8ByteCountAtMost(encoded, limits.maxInvocationInputBytes) == null) {
+        throw PluginResourceLimitException(
+            "Plugin '$pluginId' exceeded the ${limits.maxInvocationInputBytes}-byte invocation input limit",
+        )
+    }
+}
+
+private fun Any?.toSafeJsonElement(depth: Int = 0): kotlinx.serialization.json.JsonElement {
+    if (depth > 64) return kotlinx.serialization.json.JsonNull
+    return when (this) {
+        null -> kotlinx.serialization.json.JsonNull
+        is Boolean -> JsonPrimitive(this)
+        is Number -> JsonPrimitive(this)
+        is String -> JsonPrimitive(this)
+        is Map<*, *> -> kotlinx.serialization.json.JsonObject(entries.associate { (key, value) ->
+            key.toString() to value.toSafeJsonElement(depth + 1)
+        })
+        is Iterable<*> -> JsonArray(map { it.toSafeJsonElement(depth + 1) })
+        is Array<*> -> JsonArray(map { it.toSafeJsonElement(depth + 1) })
+        else -> JsonPrimitive(toString())
     }
 }
 
@@ -965,7 +1401,8 @@ private fun Any?.toStringAnyMap(): Map<String, Any?>? = when (this) {
 private fun Any?.toAnyList(): List<Any?> = when (this) {
     is List<*> -> this
     is Array<*> -> toList()
-    is NativeArray -> (0 until length.toInt()).map { index -> get(index, this).fromRhino() }
+    // Native arrays are converted at the invocation boundary before domain mapping.
+    is NativeArray -> emptyList()
     else -> emptyList()
 }
 

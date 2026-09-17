@@ -52,9 +52,10 @@ internal fun SourceWebChallengeDialog(
             shape = RoundedCornerShape(20.dp),
             tonalElevation = 6.dp,
         ) {
-            when (platformWebChallengeMode) {
-                PlatformWebChallengeMode.Embedded -> EmbeddedChallenge(request, onImport, onDismiss)
-                PlatformWebChallengeMode.ExternalBrowserOnly -> ExternalBrowserFallback(request, onDismiss)
+            when {
+                platformWebChallengeMode == PlatformWebChallengeMode.Embedded &&
+                    request.allowsEmbeddedWebChallenge() -> EmbeddedChallenge(request, onImport, onDismiss)
+                else -> ExternalBrowserFallback(request, onDismiss)
             }
         }
     }
@@ -145,6 +146,7 @@ private fun EmbeddedChallenge(
                     } else {
                         onImport(
                             WebChallengeCapture(
+                                capability = captured.capability,
                                 cookies = safe,
                                 userAgent = userAgent,
                                 localStorage = safeStorage,
@@ -199,7 +201,7 @@ private fun ExternalBrowserFallback(
             modifier = Modifier.padding(top = 12.dp),
         )
         Text(
-            strings.text("Desktop does not include an embedded browser whose cookie store can be safely shared with sources. The page can open in your default browser, but those cookies stay in that browser and will not be imported. After verification, add the required cookies manually in Source settings."),
+            strings.text("An in-app verification browser is unavailable for this device or source. Cookies from your default browser cannot be imported automatically. On Android, update Android System WebView and try again. You can also import a cookie file or add cookies manually in Source settings."),
             modifier = Modifier.padding(vertical = 18.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -22,13 +22,20 @@ import dev.shinsou.kmp.plugin.events.PluginSystemEventLane
 import dev.shinsou.kmp.plugin.events.PluginSystemEventNames
 import dev.shinsou.kmp.plugin.events.SourceRefreshRequestV1
 import dev.shinsou.kmp.plugin.events.TypedPluginSystemEventHandler
+import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,13 +43,239 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class RhinoScriptPluginRuntimeTest {
     @Test
+    fun sourceFailureMarkerRetainsRecognizableAnchoredRhinoWrapper() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        for (marker in listOf("SHINSOU_SOURCE_HTTP_FORBIDDEN", "SHINSOU_SOURCE_QUOTA_EXCEEDED")) {
+            val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+                script = "var source={baseUrl:'https://source.example',getPopularManga:function(){throw new Error('$marker');}};",
+                manifest = PluginManifest(
+                    "failure.rhino", "Failure Rhino", "1.0.0", 1, "all",
+                    script = "failure.rhino.js", signature = "",
+                    sources = listOf(SourceIndexEntry("Failure", "all", 116L, "https://source.example")),
+                ),
+                environment = ScriptPluginEnvironment(
+                    PluginNetworkClient(
+                        PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) }, storage,
+                        policy = rhinoTestNetworkPolicy("https://source.example"),
+                        hostResolver = RHINO_TEST_HOST_RESOLVER,
+                    ),
+                    storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                ),
+            )
+            try {
+                val error = assertFailsWith<Throwable> { runtime.getPopularManga(1) }
+                assertNotNull(error.localizedSourceFailure(dev.shinsou.kmp.ui.i18n.shinsouStringsFor("en")))
+            } finally {
+                runtime.close()
+            }
+        }
+    }
+    @Test
+    fun productionFactoryRejectsRepositoryScriptWithoutHostReviewedProvenance() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val source = SourceIndexEntry("Unreviewed", "all", 991L, "https://source.example")
+        val manifest = PluginManifest(
+            id = "unreviewed.rhino",
+            name = "Unreviewed Rhino",
+            version = "1.0.0",
+            versionCode = 1,
+            lang = "all",
+            script = "unreviewed.rhino.js",
+            signature = "0".repeat(64),
+            sources = listOf(source),
+        )
+
+        val failure = assertFailsWith<ScriptRuntimeUnavailableException> {
+            RhinoScriptPluginRuntimeFactory().createForSource(
+                "var source = {};",
+                manifest,
+                source,
+                ScriptPluginEnvironment(
+                    network = PluginNetworkClient(
+                        PluginHttpTransport { error("No network request expected") },
+                        storage,
+                    ),
+                    storage = storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                ),
+            )
+        }
+
+        assertTrue(failure.message.orEmpty().contains("per-runtime heap isolation"))
+    }
+
+    @Test
+    fun productionFactoryRejectsBytesThatDoNotMatchReviewedProvenance() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val source = SourceIndexEntry(
+            name = "Reviewed",
+            lang = "all",
+            id = 992L,
+            baseUrl = "https://source.example",
+            canonicalSourceId = "reviewed-source",
+        )
+        val artifact = PluginArtifactIdentity(
+            packageId = "reviewed.rhino",
+            version = "1.0.0",
+            versionCode = 1,
+            sha256 = "1".repeat(64),
+        )
+        val manifest = PluginManifest(
+            id = artifact.packageId,
+            name = "Reviewed Rhino",
+            version = artifact.version,
+            versionCode = artifact.versionCode,
+            lang = "all",
+            script = "reviewed.rhino.js",
+            signature = artifact.sha256,
+            sources = listOf(source),
+        )
+        val reviewedScript = "var source = { id: 'reviewed-source' };"
+        val environment = ScriptPluginEnvironment(
+            network = PluginNetworkClient(
+                PluginHttpTransport { error("No network request expected") },
+                storage,
+            ),
+            storage = storage,
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            inProcessScriptProvenance = InProcessScriptProvenance.reviewedArtifact(
+                artifact = artifact,
+                sourceKey = SourceKey(
+                    packageId = artifact.packageId,
+                    sourceId = "reviewed-source",
+                    legacyLongId = source.id,
+                ),
+                evaluatedScript = reviewedScript,
+            ),
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            RhinoScriptPluginRuntimeFactory().createForSource(
+                reviewedScript + " ",
+                manifest,
+                source,
+                environment,
+            )
+        }
+    }
+
+    @Test
+    fun cancellingSearchCancelsHttpGetAndReleasesEngineWorker() = runBlocking {
+        val slowRequestStarted = CompletableDeferred<Unit>()
+        val slowRequestCancelled = CompletableDeferred<Unit>()
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val network = PluginNetworkClient(
+            transport = PluginHttpTransport { request ->
+                if (request.url.endsWith("/slow")) {
+                    slowRequestStarted.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        slowRequestCancelled.complete(Unit)
+                    }
+                }
+                PluginHttpResponse(200, "fast-response".encodeToByteArray())
+            },
+            storage = storage,
+            requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            policy = rhinoTestNetworkPolicy("https://source.example"),
+            hostResolver = RHINO_TEST_HOST_RESOLVER,
+        )
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source={
+                  baseUrl:'https://source.example',
+                  getSearchManga:function(page,query){
+                    var body=bridge.httpGet(this.baseUrl+'/'+query);
+                    var manga=SManga.create();manga.url='/'+query;manga.title=query+'|'+body;
+                    return new MangasPage([manga],false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                "cancel.rhino", "Cancellation Rhino", "1.0.0", 1, "all",
+                script = "cancel.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Cancellation", "all", 115L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
+            ),
+        )
+        try {
+            val obsoleteSearch = launch { runtime.getSearchManga(1, "slow", emptyList()) }
+            slowRequestStarted.await()
+            withTimeout(5_000) {
+                obsoleteSearch.cancelAndJoin()
+                slowRequestCancelled.await()
+                assertEquals(
+                    "fast|fast-response",
+                    runtime.getSearchManga(1, "fast", emptyList()).mangas.single().title,
+                )
+            }
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun bridgeEnforcesRuntimePermissionsWhileNetworkKeepsCookieSideEffectsOptional() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source = {
+                  baseUrl: 'https://source.example',
+                  getPopularManga: function() {
+                    var response = bridge.httpGet(this.baseUrl + '/blocked');
+                    var cookie = bridge.getCookie('sid', this.baseUrl + '/');
+                    var manga = SManga.create();
+                    manga.url = '/permissions';
+                    manga.title = String(response.error) + '|' + String(cookie);
+                    return new MangasPage([manga], false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                id = "permissions.rhino",
+                name = "Permissions Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "permissions.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Permissions", "all", 123L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(PluginHttpTransport { error("network must be blocked") }, storage),
+                storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
+        )
+        try {
+            assertEquals(
+                "Plugin runtime lacks NETWORK permission|null",
+                runtime.getPopularManga(1).mangas.single().title,
+            )
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
     fun webChallengeStorageDeclarationCrossesRhinoRuntimeMetadata() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             script = RHINO_WEB_CHALLENGE_STORAGE_FIXTURE,
             manifest = PluginManifest(
                 id = "challenge.rhino",
@@ -60,12 +293,175 @@ class RhinoScriptPluginRuntimeTest {
                     storage,
                 ),
                 storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
             ),
         )
         try {
             assertEquals("https://example.test/", runtime.webChallengeUrl)
             assertEquals(setOf("token", "nonce"), runtime.webChallengeLocalStorageKeys)
             assertEquals(setOf("token"), runtime.requiredWebChallengeLocalStorageKeys)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun instructionBudgetTerminatesAndPoisonsAnInfiniteLoop() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source = {
+                  baseUrl: 'https://source.example',
+                  getPopularManga: function() { while (true) {} }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                id = "limit.rhino",
+                name = "Limit Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "limit.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Limit", "all", 111L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                executionLimits = PluginExecutionLimits(
+                    invocationWallTimeMillis = 1_000,
+                    invocationInstructionCount = 50_000,
+                    instructionObserverThreshold = 1_000,
+                ),
+            ),
+        )
+        try {
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun bridgeAndLogLimitsAreBounded() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source = {
+                  baseUrl: 'https://source.example',
+                  getPopularManga: function() {
+                    for (var i=0; i<20; i++) bridge.log('0123456789abcdef');
+                    return new MangasPage([], false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                id = "log-limit.rhino",
+                name = "Log limit Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "log-limit.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Limit", "all", 112L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                executionLimits = PluginExecutionLimits(
+                    maxBridgeCallsPerInvocation = 64,
+                    maxLogEntries = 3,
+                    maxLogBytes = 24,
+                    maxLogEntryBytes = 8,
+                ),
+            ),
+        )
+        try {
+            runtime.getPopularManga(1)
+            assertEquals(3, runtime.recentLogs.size)
+            assertTrue(runtime.recentLogs.all { it.encodeToByteArray().size <= 8 })
+            assertTrue(runtime.recentLogs.sumOf { it.encodeToByteArray().size } <= 24)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun oversizedResultStringPoisonsRuntimeBeforeDomainMapping() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source = {
+                  baseUrl: 'https://source.example',
+                  getPopularManga: function() {
+                    var manga = SManga.create();
+                    manga.url = '/large'; manga.title = new Array(257).join('x');
+                    return new MangasPage([manga], false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                id = "result-string-limit.rhino",
+                name = "Result limit Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "result-limit.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Limit", "all", 113L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                executionLimits = PluginExecutionLimits(
+                    maxResultStringBytes = 128,
+                    maxResultBytes = 2_048,
+                ),
+            ),
+        )
+        try {
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun oversizedResultArrayPoisonsRuntimeBeforeAllocation() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source = {
+                  baseUrl: 'https://source.example',
+                  getChapterList: function() { return new Array(65); }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                id = "result-array-limit.rhino",
+                name = "Array limit Rhino",
+                version = "1.0.0",
+                versionCode = 1,
+                lang = "all",
+                script = "array-limit.rhino.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Limit", "all", 114L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                network = PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                executionLimits = PluginExecutionLimits(maxResultArrayElements = 64),
+            ),
+        )
+        try {
+            assertFailsWith<PluginResourceLimitException> {
+                runtime.getChapterList(SManga(url = "/manga", title = "Manga"))
+            }
         } finally {
             runtime.close()
         }
@@ -105,11 +501,18 @@ class RhinoScriptPluginRuntimeTest {
             ),
         )
         for (source in manifest.sources.orEmpty()) {
-            val runtime = RhinoScriptPluginRuntimeFactory().createForSource(
+            val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().createForSource(
                 RHINO_MULTI_SOURCE_LOGIN_FAILURE_FIXTURE,
                 manifest,
                 source,
-                ScriptPluginEnvironment(network, storage),
+                ScriptPluginEnvironment(
+                    network,
+                    storage,
+                    runtimePermissions = setOf(
+                        PluginRuntimePermission.EXECUTE_SCRIPT,
+                        PluginRuntimePermission.CREDENTIAL_ACCESS,
+                    ),
+                ),
             )
             try {
                 val result = runtime.loginResult("fixture-user", "fixture-password")
@@ -145,21 +548,37 @@ class RhinoScriptPluginRuntimeTest {
                 SourceIndexEntry("Two", "en", 202L, "https://two.example"),
             ),
         )
-        val factory = RhinoScriptPluginRuntimeFactory()
+        val factory = RhinoScriptPluginRuntimeFactory.unsafeForTests()
         assertFailsWith<IllegalArgumentException> {
-            factory.create(RHINO_MULTI_SOURCE_FIXTURE, manifest, ScriptPluginEnvironment(network, storage))
+            factory.create(
+                RHINO_MULTI_SOURCE_FIXTURE,
+                manifest,
+                ScriptPluginEnvironment(
+                    network,
+                    storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                ),
+            )
         }
         val one = factory.createForSource(
             RHINO_MULTI_SOURCE_FIXTURE,
             manifest,
             manifest.sources.orEmpty()[0],
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         val two = factory.createForSource(
             RHINO_MULTI_SOURCE_FIXTURE,
             manifest,
             manifest.sources.orEmpty()[1],
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertEquals(101L, one.id)
@@ -191,7 +610,7 @@ class RhinoScriptPluginRuntimeTest {
             sources = listOf(SourceIndexEntry("Login Source", "zh", 779, "https://source.example")),
         )
         val requests = mutableListOf<Triple<Long, String, String?>>()
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_LOGIN_REQUEST_FIXTURE,
             manifest,
             ScriptPluginEnvironment(
@@ -201,6 +620,7 @@ class RhinoScriptPluginRuntimeTest {
                     requests += Triple(sourceId, sourceName, reason)
                     true
                 },
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
             ),
         )
         try {
@@ -211,10 +631,14 @@ class RhinoScriptPluginRuntimeTest {
             runtime.close()
         }
 
-        val noOpRuntime = RhinoScriptPluginRuntimeFactory().create(
+        val noOpRuntime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_LOGIN_REQUEST_FIXTURE,
             manifest,
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertEquals("false", noOpRuntime.getPopularManga(0).mangas.single().title)
@@ -231,7 +655,7 @@ class RhinoScriptPluginRuntimeTest {
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
         )
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_NO_FILTER_FIXTURE,
             PluginManifest(
                 id = "zh.no-filter",
@@ -243,7 +667,11 @@ class RhinoScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("No Filter", "zh", 778, "https://source.example")),
             ),
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertTrue(runtime.getFilterList().isEmpty())
@@ -256,7 +684,7 @@ class RhinoScriptPluginRuntimeTest {
     @Test
     fun systemEventReceiptAndCapabilitiesStayBoundedAndSourceScoped() = runTest {
         val fixture = rhinoSystemEventFixture()
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_SYSTEM_EVENT_FIXTURE,
             fixture.manifest,
             fixture.environment,
@@ -285,7 +713,7 @@ class RhinoScriptPluginRuntimeTest {
             permissions = setOf(PluginHostPermission.REQUEST_SOURCE_REFRESH),
             sourceCapabilities = setOf("CATALOGUE"),
         )
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_ACTIVE_CONTEXT_FIXTURE,
             fixture.manifest,
             fixture.environment,
@@ -309,7 +737,7 @@ class RhinoScriptPluginRuntimeTest {
             transport = PluginHttpTransport { error("No network request expected") },
             storage = storage,
         )
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_SANDBOX_ESCAPE_FIXTURE,
             PluginManifest(
                 id = "rhino.sandbox.escape",
@@ -321,7 +749,11 @@ class RhinoScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("Sandbox", "all", 778, "https://source.example")),
             ),
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertEquals("true|true|true|true|true|true", runtime.getPopularManga(0).mangas.single().title)
@@ -343,8 +775,10 @@ class RhinoScriptPluginRuntimeTest {
             requestGate = PerHostRequestGate(
                 PluginRateLimitProvider { PluginRateLimit(32, 0) },
             ),
+            policy = rhinoTestNetworkPolicy("https://batch.example"),
+            hostResolver = RHINO_TEST_HOST_RESOLVER,
         )
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_BATCH_FIXTURE,
             PluginManifest(
                 id = "zh.batch",
@@ -356,7 +790,14 @@ class RhinoScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("Batch", "zh", 779, "https://batch.example")),
             ),
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
+            ),
         )
         try {
             assertEquals("one|two|three", runtime.getPopularManga(0).mangas.single().title)
@@ -374,8 +815,10 @@ class RhinoScriptPluginRuntimeTest {
                 transport = PluginHttpTransport { response() },
                 storage = storage,
                 requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                policy = rhinoTestNetworkPolicy("https://api.example"),
+                hostResolver = RHINO_TEST_HOST_RESOLVER,
             )
-            val runtime = RhinoScriptPluginRuntimeFactory().create(
+            val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
                 RHINO_HTTP_LOGIN_ERROR_FIXTURE,
                 PluginManifest(
                     id = "zh.login-error.rhino",
@@ -387,7 +830,15 @@ class RhinoScriptPluginRuntimeTest {
                     signature = "",
                     sources = listOf(SourceIndexEntry("Login Error", "zh", 780, "https://api.example")),
                 ),
-                ScriptPluginEnvironment(network, storage),
+                ScriptPluginEnvironment(
+                    network,
+                    storage,
+                    runtimePermissions = setOf(
+                        PluginRuntimePermission.EXECUTE_SCRIPT,
+                        PluginRuntimePermission.NETWORK,
+                        PluginRuntimePermission.CREDENTIAL_ACCESS,
+                    ),
+                ),
             )
             return try {
                 runtime.loginResult("alice", "wrong").errorMessage
@@ -414,7 +865,7 @@ class RhinoScriptPluginRuntimeTest {
     @Test
     fun httpGetResponseBridgePreservesNonSuccessStatusAndBody() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_HTTP_GET_RESPONSE_FIXTURE,
             PluginManifest(
                 id = "zh.get-response.rhino",
@@ -436,8 +887,14 @@ class RhinoScriptPluginRuntimeTest {
                     },
                     storage = storage,
                     requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                    policy = rhinoTestNetworkPolicy("https://api.example"),
+                    hostResolver = RHINO_TEST_HOST_RESOLVER,
                 ),
                 storage = storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
             ),
         )
         try {
@@ -451,7 +908,7 @@ class RhinoScriptPluginRuntimeTest {
     fun browserSessionBridgeUsesOnlyManifestDeclaredOrigin() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val captured = mutableListOf<PluginHttpRequest>()
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_BROWSER_SESSION_FIXTURE,
             PluginManifest(
                 id = "zh.browser-session.rhino",
@@ -491,6 +948,12 @@ class RhinoScriptPluginRuntimeTest {
                         return PluginHttpResponse(429, "limited".encodeToByteArray())
                     }
                 },
+                hostResolver = RHINO_TEST_HOST_RESOLVER,
+                allowDeveloperUnpinnedBrowserSession = true,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.BROWSER_CHALLENGE,
+                ),
             ),
         )
         try {
@@ -520,6 +983,8 @@ class RhinoScriptPluginRuntimeTest {
             storage = storage,
             requestBuilder = PluginRequestBuilder(storage, PluginUserAgentProvider { "rhino-agent" }),
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            policy = rhinoTestNetworkPolicy("https://source.example"),
+            hostResolver = RHINO_TEST_HOST_RESOLVER,
         )
         val manifest = PluginManifest(
             id = "all.rhino-test",
@@ -531,10 +996,19 @@ class RhinoScriptPluginRuntimeTest {
             signature = "",
             sources = listOf(SourceIndexEntry("Rhino Test", "all", 777, "https://source.example")),
         )
-        val runtime = RhinoScriptPluginRuntimeFactory().create(
+        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
             RHINO_FIXTURE,
             manifest,
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                    PluginRuntimePermission.COOKIE_STORAGE,
+                    PluginRuntimePermission.CREDENTIAL_ACCESS,
+                ),
+            ),
         )
         try {
             assertEquals("https://source.example", runtime.baseUrl)
@@ -620,6 +1094,14 @@ class RhinoScriptPluginRuntimeTest {
         }
     }
 }
+
+private val RHINO_TEST_HOST_RESOLVER = PluginHostResolver { listOf("93.184.216.34") }
+
+private fun rhinoTestNetworkPolicy(origin: String): PluginNetworkPolicy = PluginNetworkPolicy(
+    requestOrigins = setOf(origin),
+    credentialOrigins = setOf(origin),
+    allowDeveloperUnpinnedTransport = true,
+)
 
 private val RHINO_WEB_CHALLENGE_STORAGE_FIXTURE = """
     var source = {
@@ -915,6 +1397,7 @@ private fun rhinoSystemEventFixture(
             boundPluginScope = scope,
             systemEventContextRegistry = contextRegistry,
             systemEventDeclaration = declaration,
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
         ),
         manifest = PluginManifest(
             id = source.packageId,

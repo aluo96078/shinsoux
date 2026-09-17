@@ -17,31 +17,69 @@ import kotlin.test.assertTrue
 
 class PluginBrowseRepositoryReconciliationTest {
     @Test
-    fun defaultRepositoryIsPublishedToPortableSnapshot() = runTest {
+    fun freshInstallAndRefreshNeverSeedOrContactARepository() = runTest {
         val kv = InMemoryPluginKeyValueStore()
         val store = KeyValueExtensionRepositoryStore(kv)
         val portable = ShinsouRepository()
-        val harness = createHarness(
-            kv = kv,
-            store = store,
-            portable = portable,
-            defaultRepositoryUrl = "https://default.example",
-        )
-
+        val requested = CompletableDeferred<Unit>()
+        val harness = createHarness(kv, store, portable, indexRequestStarted = requested)
         try {
-            harness.adapter.refresh()
+            repeat(2) { harness.adapter.refresh() }
+            assertTrue(portable.currentSnapshot.extensionRepositories.isEmpty())
+            assertTrue(store.list().isEmpty())
+            assertTrue(harness.adapter.state.value.repositories.isEmpty())
+            assertFalse(requested.isCompleted)
+        } finally { harness.client.close() }
+    }
 
-            assertEquals(
-                listOf("https://default.example"),
-                portable.currentSnapshot.extensionRepositories.map { it.baseUrl },
-            )
-            assertEquals(
-                portable.currentSnapshot.extensionRepositories.map { it.baseUrl },
-                store.list().map { it.baseUrl },
-            )
-        } finally {
-            harness.client.close()
-        }
+    @Test
+    fun removalSkipsBrokenReviewedMigrationAndUnrelatedRemoteRefresh() = runTest {
+        val kv = InMemoryPluginKeyValueStore()
+        val store = KeyValueExtensionRepositoryStore(kv)
+        val portable = ShinsouRepository()
+        val requested = CompletableDeferred<Unit>()
+        store.put(ExtensionRepository("https://remove.example", "Remove"))
+        store.put(ExtensionRepository("https://offline.example", "Offline"))
+        // This previously prevented deletion during the pre-delete reconciliation.
+        kv.putString("plugin.shuyue.v2.repository-urls", "https://remove.example/index.json\nmalformed")
+        val harness = createHarness(kv, store, portable, indexRequestStarted = requested)
+        try {
+            harness.adapter.removeRepository("https://remove.example")
+            assertEquals(listOf("https://offline.example"), store.list().map { it.baseUrl })
+            assertEquals(listOf("https://offline.example"), portable.currentSnapshot.extensionRepositories.map { it.baseUrl })
+            assertEquals("malformed", kv.getString("plugin.shuyue.v2.repository-urls"))
+            assertFalse(requested.isCompleted)
+            assertEquals(null, harness.adapter.state.value.errorMessage)
+            harness.adapter.removeRepository("https://offline.example")
+            assertTrue(store.list().isEmpty())
+        } finally { harness.client.close() }
+    }
+
+    @Test
+    fun deletionAfterRefreshFailureDoesNotRetryNetworkAndSurvivesRestart() = runTest {
+        val kv = InMemoryPluginKeyValueStore()
+        val store = KeyValueExtensionRepositoryStore(kv)
+        val portable = ShinsouRepository()
+        store.put(ExtensionRepository("https://broken.example", "Broken"))
+        var calls = 0
+        val harness = createHarness(kv, store, portable, onIndexRequest = {
+            calls++
+            error("Repository unavailable")
+        })
+        try {
+            runCatching { harness.adapter.refresh() }
+            val before = calls
+            assertTrue(before > 0)
+            harness.adapter.removeRepository("https://broken.example")
+            assertEquals(before, calls)
+            assertTrue(harness.adapter.state.value.repositories.isEmpty())
+            assertEquals(null, harness.adapter.state.value.errorMessage)
+            val restarted = createHarness(kv, store, portable, onIndexRequest = { error("Must stay offline") })
+            try {
+                restarted.adapter.refresh()
+                assertTrue(restarted.adapter.state.value.repositories.isEmpty())
+            } finally { restarted.client.close() }
+        } finally { harness.client.close() }
     }
 
     @Test
@@ -64,6 +102,7 @@ class PluginBrowseRepositoryReconciliationTest {
             assertEquals(listOf(added.baseUrl), harness.adapter.state.value.repositories.map { it.id })
 
             harness.adapter.removeRepository(added.baseUrl)
+            harness.adapter.refresh()
 
             assertTrue(portable.currentSnapshot.extensionRepositories.isEmpty())
             assertTrue(store.list().isEmpty())
@@ -132,11 +171,13 @@ class PluginBrowseRepositoryReconciliationTest {
         val kv = InMemoryPluginKeyValueStore()
         val indexRequestStarted = CompletableDeferred<Unit>()
         val indexResponseGate = CompletableDeferred<Unit>()
+        val configuredStore = KeyValueExtensionRepositoryStore(kv).also {
+            it.put(ExtensionRepository("https://default.example", "Configured"))
+        }
         val harness = createHarness(
             kv = kv,
-            store = KeyValueExtensionRepositoryStore(kv),
+            store = configuredStore,
             portable = ShinsouRepository(),
-            defaultRepositoryUrl = "https://default.example",
             indexRequestStarted = indexRequestStarted,
             indexResponseGate = indexResponseGate,
         )
@@ -158,9 +199,9 @@ class PluginBrowseRepositoryReconciliationTest {
         kv: PluginKeyValueStore,
         store: ExtensionRepositoryStore,
         portable: ShinsouRepository,
-        defaultRepositoryUrl: String = "",
         indexRequestStarted: CompletableDeferred<Unit>? = null,
         indexResponseGate: CompletableDeferred<Unit>? = null,
+        onIndexRequest: () -> Unit = {},
     ): Harness {
         val client = HttpClient(
             MockEngine { request ->
@@ -171,6 +212,7 @@ class PluginBrowseRepositoryReconciliationTest {
                     )
 
                     request.url.encodedPath.endsWith("/index.json") -> {
+                        onIndexRequest()
                         indexRequestStarted?.complete(Unit)
                         indexResponseGate?.await()
                         respond("[]", HttpStatusCode.OK)
@@ -179,7 +221,11 @@ class PluginBrowseRepositoryReconciliationTest {
                 }
             },
         )
-        val repositoryClient = ExtensionRepositoryClient(client, cacheToken = { 1L })
+        val repositoryClient = ExtensionRepositoryClient(
+            client,
+            cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        )
         val storage = KeyValuePluginStorage(kv)
         val trustStore = KeyValuePluginTrustStore(kv)
         val manager = PluginManager(
@@ -205,7 +251,6 @@ class PluginBrowseRepositoryReconciliationTest {
                 keyValueStore = kv,
                 trustStore = trustStore,
                 portableRepository = portable,
-                defaultRepositoryUrl = defaultRepositoryUrl,
             ),
         )
     }

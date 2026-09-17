@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.plugin.shuyue
 
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL
 import dev.shinsou.kmp.plugin.Sha256
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -336,6 +337,8 @@ public data class ShuYueRepositoryEntry(
     val capabilities: Set<String> = emptySet(),
     /** Set only by a unified repository document; it is not a security/trust signal. */
     val contract: String? = null,
+    /** V2 adapter identity retained so sidecar admission can require an exact runtime pairing. */
+    val runtime: String? = null,
     /** V2 exact-artifact metadata retained through reviewed admission. */
     val sha256: String? = null,
     /** V2 artifact byte count retained for an exact download check. */
@@ -370,6 +373,12 @@ public sealed interface ShuYueRepositoryIndex {
     public val requestedIndexUrl: String
     public val finalIndexUrl: String
     public val entries: List<ShuYueRepositoryEntry>
+    /**
+     * True when the same response also declares a generic Shinsou half. The reviewed loader does
+     * not interpret that executable contract, but callers use this bit to require the generic
+     * parser/trust path to succeed before persisting a unified repository.
+     */
+    public val containsShinsouPackages: Boolean
 }
 
 /** Metadata retained with an unexecuted script package during migration/quarantine. */
@@ -403,6 +412,18 @@ public sealed interface ShuYueScriptDownload {
 }
 
 public sealed class ShuYueRepositoryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    /**
+     * The host cannot provide the DNS/TLS binding required for public repository traffic.
+     *
+     * Keep this distinct from malformed metadata and transient network failures: a unified
+     * repository reader may still expose an independently admitted Shinsou partition while the
+     * optional reviewed ShuYue partition remains unavailable on that platform. Callers must not
+     * use this signal to fall back to an ordinary, DNS-unbound HTTP client.
+     */
+    public class PinnedTransportUnavailable : ShuYueRepositoryException(
+        "Pinned ShuYue repository transport is unavailable on this platform",
+    )
+
     public class InvalidUrl(public val value: String, message: String = "Invalid ShuYue URL") :
         ShuYueRepositoryException("$message: $value")
 
@@ -474,9 +495,9 @@ public class ShuYueRepositoryIndexLoader(
             ),
         )
         val final = validateResponse(request, response, "index", fetchedOrigins, limits.maxIndexBytes)
-        val entries = decodeEntries(final.url, response.body)
-        validateEntries(entries)
-        val resolvedEntries = entries.map { entry ->
+        val decoded = decodeEntries(final.url, response.body)
+        validateEntries(decoded.entries)
+        val resolvedEntries = decoded.entries.map { entry ->
             val resolved = resolveRelativeScript(final, entry.scriptUrl)
             requireAllowed(ShuYueUrlParser.parseAbsolute(resolved, "script URL").origin, fetchedOrigins)
             val resolvedSidecar = entry.sidecarUrl?.let { sidecarUrl ->
@@ -494,6 +515,8 @@ public class ShuYueRepositoryIndexLoader(
             requestedIndexUrl = requestUrl,
             finalIndexUrl = final.url,
             entries = resolvedEntries,
+            containsShinsouPackages = decoded.containsShinsouPackages,
+            indexHadRedirects = response.redirectChain.isNotEmpty(),
         )
     }
 
@@ -540,7 +563,17 @@ public class ShuYueRepositoryIndexLoader(
                 fetchedOrigins,
                 limits.maxSidecarBytes,
             )
-            verifySidecar(matching, sidecarResponse.body, sidecarUrl)
+            verifySidecar(
+                entry = matching,
+                body = sidecarResponse.body,
+                url = sidecarUrl,
+                officialRuntimeOmissionCompatible =
+                    loadedIndex.requestedIndexUrl == OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL &&
+                        loadedIndex.finalIndexUrl == OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL &&
+                        !loadedIndex.indexHadRedirects &&
+                        sidecarResponse.redirectChain.isEmpty() &&
+                        sidecarFinal.url == sidecarUrl,
+            )
             SidecarDownloadMetadata(
                 referenceUrl = sidecarReference,
                 resolvedUrl = sidecarUrl,
@@ -607,6 +640,8 @@ public class ShuYueRepositoryIndexLoader(
         override val requestedIndexUrl: String,
         override val finalIndexUrl: String,
         entries: List<ShuYueRepositoryEntry>,
+        override val containsShinsouPackages: Boolean,
+        val indexHadRedirects: Boolean,
     ) : ShuYueRepositoryIndex {
         private val ownerToken: Any = provenanceToken
         private val authorizedEntries: List<ShuYueRepositoryEntry> = ReadOnlyListSnapshot(entries)
@@ -648,7 +683,12 @@ public class ShuYueRepositoryIndexLoader(
      * particular, a sidecar cannot silently change the digest, source identity, content type, or
      * host-event request that the index advertised.
      */
-    private fun verifySidecar(entry: ShuYueRepositoryEntry, body: ByteArray, url: String) {
+    private fun verifySidecar(
+        entry: ShuYueRepositoryEntry,
+        body: ByteArray,
+        url: String,
+        officialRuntimeOmissionCompatible: Boolean,
+    ) {
         val text = try {
             body.decodeToString(throwOnInvalidSequence = true)
         } catch (error: Throwable) {
@@ -664,9 +704,10 @@ public class ShuYueRepositoryIndexLoader(
             if (root.requiredInt("contractVersion") != 2) {
                 sidecarInvalid("contractVersion", "unsupported sidecar contract")
             }
-            if (root.optionalString("contract")?.let { it != "shuyue" } == true) {
+            if (root.requiredString("contract") != entry.contract || entry.contract != V2_SHUYUE_CONTRACT) {
                 sidecarInvalid("contract", "sidecar contract does not match ShuYue")
             }
+            requireSidecarRuntimeParity(root, entry, officialRuntimeOmissionCompatible)
             if (root.requiredString("packageId") != entry.id) sidecarMismatch("packageId")
             if (root.requiredString("version") != entry.version) sidecarMismatch("version")
             if (root.requiredInt("versionCode") != entry.versionCode) sidecarMismatch("versionCode")
@@ -725,6 +766,29 @@ public class ShuYueRepositoryIndexLoader(
             source.optionalString("lang")?.let { if (it != expected.lang) sidecarMismatch("sources.lang") }
             source.optionalString("baseUrl")?.let { if (it != expected.baseUrl) sidecarMismatch("sources.baseUrl") }
         }
+    }
+
+    private fun requireSidecarRuntimeParity(
+        sidecar: JsonObject,
+        entry: ShuYueRepositoryEntry,
+        officialRuntimeOmissionCompatible: Boolean,
+    ) {
+        val element = sidecar["runtime"]
+        if (element == null) {
+            if (!officialRuntimeOmissionCompatible ||
+                entry.contract != V2_SHUYUE_CONTRACT ||
+                entry.runtime != V2_SHUYUE_RUNTIME
+            ) {
+                sidecarInvalid("runtime", "runtime is required")
+            }
+            return
+        }
+        val primitive = element as? JsonPrimitive
+            ?: sidecarInvalid("runtime", "runtime must be a string")
+        if (!primitive.isString || primitive.content.isBlank()) {
+            sidecarInvalid("runtime", "runtime must be a non-blank string")
+        }
+        if (primitive.content != entry.runtime) sidecarMismatch("runtime")
     }
 
     private fun parseSidecarEvents(events: JsonObject): dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration {
@@ -793,7 +857,12 @@ public class ShuYueRepositoryIndexLoader(
         return buildAbsolute(base, "$path/index.json")
     }
 
-    private fun decodeEntries(url: String, body: ByteArray): List<ShuYueRepositoryEntry> {
+    private data class DecodedRepositoryEntries(
+        val entries: List<ShuYueRepositoryEntry>,
+        val containsShinsouPackages: Boolean,
+    )
+
+    private fun decodeEntries(url: String, body: ByteArray): DecodedRepositoryEntries {
         val text = try {
             body.decodeToString(throwOnInvalidSequence = true)
         } catch (error: IllegalArgumentException) {
@@ -813,12 +882,36 @@ public class ShuYueRepositoryIndexLoader(
         return try {
             val root = StrictShuYueJson.parseToJsonElement(text)
             when {
-                root is JsonArray -> decodeLegacyEntries(root)
-                root is JsonObject && isV2Index(root) -> decodeV2Entries(root)
+                root is JsonArray -> DecodedRepositoryEntries(
+                    entries = decodeLegacyEntries(root),
+                    containsShinsouPackages = false,
+                )
+                root is JsonObject && isV2Index(root) -> {
+                    val packages = root["packages"] as? JsonArray
+                        ?: throw SerializationException("V2 repository packages must be an array")
+                    DecodedRepositoryEntries(
+                        entries = decodeV2Entries(root),
+                        containsShinsouPackages = packages.any { element ->
+                            element.asObject("package").requiredString("contract") == "shinsou"
+                        },
+                    )
+                }
                 root is JsonObject -> {
                     val entriesElement = root["shuyue"] ?: root["entries"]
                         ?: throw SerializationException("ShuYue repository must be an array or unified envelope")
-                    decodeLegacyEntries(entriesElement)
+                    DecodedRepositoryEntries(
+                        entries = decodeLegacyEntries(entriesElement),
+                        // Presence is intentionally enough here. If the generic collection has
+                        // the wrong shape, its authoritative parser must reject the repository;
+                        // treating that case as pure ShuYue would recreate a reviewed-only half.
+                        containsShinsouPackages = listOf("shinsou", "legacy").any { field ->
+                            when (val generic = root[field]) {
+                                null -> false
+                                is JsonArray -> generic.isNotEmpty()
+                                else -> true
+                            }
+                        },
+                    )
                 }
                 else -> throw SerializationException("ShuYue repository must be an array or unified envelope")
             }
@@ -842,6 +935,12 @@ public class ShuYueRepositoryIndexLoader(
         return packages.mapNotNull { element ->
             val packageObject = element.asObject("package")
             if (packageObject.requiredString("contract") != "shuyue") return@mapNotNull null
+            val runtime = packageObject.requiredString("runtime")
+            if (runtime != V2_SHUYUE_RUNTIME) {
+                throw SerializationException(
+                    "V2 runtime '$runtime' is not supported for contract '$V2_SHUYUE_CONTRACT'",
+                )
+            }
             val capabilities = packageObject.optionalStringArray("capabilities").toSet()
             val packageContentType = packageObject["contentType"]
                 ?.takeUnless { it is JsonNull }
@@ -864,6 +963,7 @@ public class ShuYueRepositoryIndexLoader(
                     if (!packageHasContentType) put("contentType", contentType)
                 }
                 put("contract", JsonPrimitive("shuyue"))
+                put("runtime", JsonPrimitive(runtime))
                 packageObject.copyIfPresent(this, "sha256")
                 packageObject.copyIfPresent(this, "byteSize")
                 packageObject.copyIfPresent(this, "sidecarUrl")
@@ -1140,6 +1240,8 @@ public class ShuYueRepositoryIndexLoader(
             coerceInputValues = false
             explicitNulls = true
         }
+        const val V2_SHUYUE_CONTRACT: String = "shuyue"
+        const val V2_SHUYUE_RUNTIME: String = "reviewed-shuyue-adapter-v2"
     }
 }
 

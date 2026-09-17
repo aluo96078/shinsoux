@@ -213,6 +213,7 @@ fun ReaderScreen(
     val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(settings.volumeKeys)
     val unifiedTextContent = unifiedReaderContent?.representation is ContentRepresentation.PlainText
     val unifiedEpubContent = unifiedReaderContent?.representation is ContentRepresentation.EpubSpine
+    val unifiedImageContent = unifiedReaderContent?.representation is ContentRepresentation.ImageSequence
     val unifiedProseContent = unifiedTextContent || unifiedEpubContent
     var controlsVisible by remember(chapter.id, readerSessionId, unifiedProseContent) {
         mutableStateOf(!unifiedProseContent)
@@ -264,10 +265,17 @@ fun ReaderScreen(
             (unifiedReaderInitialPageIndex
                 ?: unifiedReaderContent?.navigation?.indexOf(unifiedReaderContent.initialLocator))
                 ?.coerceIn(0, (unifiedReaderPageCount - 1).coerceAtLeast(0))
-                ?: 0,
+            ?: 0,
         )
     }
-    var unifiedReaderPageRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
+    var unifiedReaderPageRequest by remember(
+        chapter.id,
+        readerSessionId,
+        unifiedReaderContent?.representation?.representationId,
+        unifiedReaderInitialPageIndex,
+    ) {
+        mutableStateOf(UnifiedReaderPageRequest(unifiedReaderPageIndex))
+    }
     var unifiedReaderNavigationAction by remember(chapter.id, readerSessionId) {
         mutableStateOf<ReaderTapAction?>(null)
     }
@@ -343,8 +351,9 @@ fun ReaderScreen(
             readerPageCount > 0 -> {
                 boundaryTransition = null
                 if (unifiedReaderEnabled) {
-                    unifiedReaderPageIndex = index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0))
-                    unifiedReaderPageRequestSerial++
+                    unifiedReaderPageRequest = unifiedReaderPageRequest.request(
+                        index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0)),
+                    )
                 }
                 currentPosition = if (currentModeIsContinuous()) {
                     ReaderPosition(
@@ -383,8 +392,7 @@ fun ReaderScreen(
     fun applyExternalPosition(position: ReaderPosition) {
         currentPosition = coerceReaderPosition(position, settings.readingMode, readerPageCount)
         if (unifiedReaderEnabled && readerPageCount > 0) {
-            unifiedReaderPageIndex = currentPosition.pageIndex
-            unifiedReaderPageRequestSerial++
+            unifiedReaderPageRequest = unifiedReaderPageRequest.request(currentPosition.pageIndex)
         }
         boundaryTransition = null
         viewportRequestSerial++
@@ -401,10 +409,15 @@ fun ReaderScreen(
             }
             return
         }
+        val imagePage = unifiedReaderPageRequest.navigationIndex(unifiedReaderPageIndex)
         when (action) {
-            ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
+            ReaderTapAction.PREVIOUS_PAGE -> requestPage(
+                (if (unifiedImageContent) imagePage else currentPage) - 1,
+            )
             ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
-            ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
+            ReaderTapAction.NEXT_PAGE -> requestPage(
+                (if (unifiedImageContent) imagePage else currentPage) + 1,
+            )
         }
     }
 
@@ -427,11 +440,32 @@ fun ReaderScreen(
      * keep the in-reader transition card so users can preview the destination chapter.
      */
     fun handleVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
-        if (loading || readerPageCount <= 0) return false
+        if (readerPageCount <= 0) return false
+        // Unified image/EPUB surfaces already have a page graph. A parent loading flag must
+        // not drop hardware paging, or manga volume keys stay silent after the first frame.
+        if (loading && !unifiedReaderEnabled) return false
 
         val forward = event == ReaderVolumeKeyEvent.VOLUME_DOWN
         val action = if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE
-        if (unifiedProseReader) {
+        if (unifiedImageContent) {
+            val target = imageSequenceNavigationTarget(
+                currentIndex = unifiedReaderPageRequest.navigationIndex(unifiedReaderPageIndex),
+                pageCount = readerPageCount,
+                action = action,
+            )
+            if (target != null) {
+                // Image pages already expose a durable page-index request channel. Use it
+                // directly so a volume press cannot be mistaken for the initial value when the
+                // pager is mounted or recomposed after chapter loading.
+                requestPage(target)
+            } else {
+                val adjacentChapter = if (forward) nextChapter else previousChapter
+                if (adjacentChapter == null) return false
+                if (forward) openNextChapter() else openPreviousChapter()
+            }
+            return true
+        }
+        if (unifiedReaderEnabled) {
             requestUnifiedReaderNavigation(action)
             return true
         }
@@ -475,7 +509,7 @@ fun ReaderScreen(
     // so hardware paging and Escape/back keep working without requiring another pointer click.
     LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled) {
         heldNavigationKeys.clear()
-        if ((!unifiedReaderEnabled || unifiedTextReader) && !settingsVisible && !chapterListVisible) {
+        if (!settingsVisible && !chapterListVisible) {
             focusRequester.requestFocus()
         }
     }
@@ -484,7 +518,10 @@ fun ReaderScreen(
         readerSessionId = readerSessionId,
         router = volumeKeyRouter,
         enabled = effectiveVolumeKeysEnabled,
-        onEvent = ::handleVolumeKey,
+        // A lambda has a fresh identity for each composition, so rememberUpdatedState below
+        // cannot retain Kotlin/Native's structurally equal local callable reference from the
+        // initial loading/pages-empty composition.
+        onEvent = { event -> handleVolumeKey(event) },
     )
     LaunchedEffect(systemBackRequest) {
         if (systemBackRequest == 0L) return@LaunchedEffect
@@ -510,12 +547,16 @@ fun ReaderScreen(
             val page = pages[index]
             // Viewer-backed pages are resolved by their visible page composable. Prefetching the
             // placeholder would hand HTML to Coil and duplicate the viewer request.
-            if (page.imageResolver != null || page.imageUrl.isBlank()) return@mapNotNull null
+            // A remote URL is never a valid prefetch input. Plugin pages must have already
+            // crossed the host content plane and carry bytes; only explicitly local pages may
+            // use their file URI directly. This keeps prefetch from becoming a second,
+            // policy-free network path for legacy/foreign ReaderPage providers.
+            if (page.imageResolver != null || readerImageData(page) == null) return@mapNotNull null
             val networkHeaders = NetworkHeaders.Builder().apply {
                 page.headers.forEach { (name, value) -> set(name, value) }
             }.build()
             val request = ImageRequest.Builder(platformContext)
-                .data(page.imageUrl)
+                .data(requireNotNull(readerImageData(page)))
                 .httpHeaders(networkHeaders)
                 .apply {
                     page.imageTransform?.let { transformations(it.toCoilTransformation()) }
@@ -545,11 +586,13 @@ fun ReaderScreen(
                     return@onPreviewKeyEvent false
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (unifiedReaderEnabled && !unifiedTextReader && event.key != Key.Escape && event.key != Key.Back &&
-                    event.key != Key.NavigatePrevious
+                if (!readerPreviewKeyIsHostOwned(
+                        key = event.key,
+                        unifiedImageOrEpubReader = unifiedReaderEnabled && !unifiedTextReader,
+                    )
                 ) {
-                    // Let the injected text/EPUB surface own navigation keys. The host retains
-                    // only the reader-level close/back behavior.
+                    // Let the injected text/EPUB surface own swipe and keyboard paging. Hardware
+                    // volume keys still belong to the host so manga paging cannot miss HID events.
                     return@onPreviewKeyEvent false
                 }
                 val suppressRepeat = when (event.key) {
@@ -656,8 +699,8 @@ fun ReaderScreen(
                     Modifier.fillMaxSize(),
                     UnifiedReaderRenderState(
                         settings = settings,
-                        requestedPageIndex = unifiedReaderPageIndex,
-                        pageRequestSerial = unifiedReaderPageRequestSerial,
+                        requestedPageIndex = unifiedReaderPageRequest.targetIndex,
+                        pageRequestSerial = unifiedReaderPageRequest.serial,
                         navigationAction = unifiedReaderNavigationAction,
                         navigationRequestKey = unifiedReaderNavigationRequestKey,
                         controlsVisible = controlsVisible,
@@ -668,6 +711,7 @@ fun ReaderScreen(
                         unifiedReaderPageCount = safePageCount
                         if (pageIndex in 0 until safePageCount) {
                             unifiedReaderPageIndex = pageIndex
+                            unifiedReaderPageRequest = unifiedReaderPageRequest.observe(pageIndex)
                             currentPosition = if (currentModeIsContinuous()) {
                                 ReaderPosition(
                                     readingMode = settings.readingMode,
@@ -1079,6 +1123,21 @@ private fun ReaderPageImage(
     ResolvedReaderPageImage(page, settings, zoomEnabled, onTap, modifier, contentScale)
 }
 
+/**
+ * Returns only image data that is safe for Coil to consume directly.
+ *
+ * Remote plugin URLs must be materialized by the host content plane before reaching this helper;
+ * otherwise a custom ContentCallbacks implementation (or stale persisted legacy state) could
+ * accidentally restore the old direct-Coil network path.
+ */
+internal fun readerImageData(page: ReaderPage): Any? = when {
+    // An empty host response is not image data. Treat it as unresolved so callers keep the
+    // retry/error surface instead of enqueueing an inevitably failing Coil request.
+    page.imageBytes?.takeIf { it.isNotEmpty() } != null -> page.imageBytes
+    page.local && page.imageUrl.isNotBlank() -> page.imageUrl
+    else -> null
+}
+
 @Composable
 private fun LazyResolvedReaderPageImage(
     page: ReaderPage,
@@ -1097,7 +1156,7 @@ private fun LazyResolvedReaderPageImage(
         resolutionFailed = false
         resolved = try {
             requireNotNull(page.imageResolver).invoke()
-                .takeIf { it.imageResolver == null && it.imageUrl.isNotBlank() }
+                .takeIf { it.imageResolver == null && readerImageData(it) != null }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -1151,10 +1210,12 @@ private fun ResolvedReaderPageImage(
     contentScale: ContentScale = ContentScale.Fit,
 ) {
     val strings = LocalShinsouStrings.current
-    var scale by remember(page.index) { mutableFloatStateOf(1f) }
-    var offset by remember(page.index) { mutableStateOf(Offset.Zero) }
-    var retryKey by remember(page.index, page.imageUrl) { mutableStateOf(0) }
-    var imageError by remember(page.index, page.imageUrl, retryKey) { mutableStateOf(false) }
+    // A resolver/retry can replace the bytes while retaining the same page index. Reset the
+    // gesture state for the new image so a zoomed previous image does not carry over.
+    var scale by remember(page.index, page.imageUrl, page.imageBytes) { mutableFloatStateOf(1f) }
+    var offset by remember(page.index, page.imageUrl, page.imageBytes) { mutableStateOf(Offset.Zero) }
+    var retryKey by remember(page.index, page.imageUrl, page.imageBytes) { mutableStateOf(0) }
+    var imageError by remember(page.index, page.imageUrl, page.imageBytes, retryKey) { mutableStateOf(false) }
     val animatedScale by animateFloatAsState(scale, label = "reader-zoom")
     val transformable = rememberTransformableState { zoom, pan, _ ->
         if (zoomEnabled) {
@@ -1163,12 +1224,13 @@ private fun ResolvedReaderPageImage(
         }
     }
     val platformContext = LocalPlatformContext.current
-    val imageRequest = remember(page.imageUrl, page.headers, page.imageTransform, retryKey, platformContext) {
+    val imageData = readerImageData(page)
+    val imageRequest = remember(imageData, page.headers, page.imageTransform, retryKey, platformContext) {
         val networkHeaders = NetworkHeaders.Builder().apply {
             page.headers.forEach { (name, value) -> set(name, value) }
         }.build()
         ImageRequest.Builder(platformContext)
-            .data(page.imageUrl)
+            .data(imageData)
             .httpHeaders(networkHeaders)
             .apply {
                 page.imageTransform?.let { transformations(it.toCoilTransformation()) }

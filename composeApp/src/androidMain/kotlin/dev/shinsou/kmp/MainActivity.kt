@@ -65,6 +65,7 @@ class MainActivity : FragmentActivity() {
     private val documentLauncher = ActivityDocumentLauncher()
     private lateinit var composition: ShinsouComposition
     private lateinit var appServices: AndroidAppServices
+    private var localRepositoryTransport: dev.shinsou.kmp.plugin.JvmReviewedLocalRepositoryTransport? = null
     private val readerVolumeKeyPressTracker = ReaderVolumeKeyPressTracker()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,6 +83,14 @@ class MainActivity : FragmentActivity() {
             add(dev.shinsou.kmp.network.AndroidAvifDecoder.Factory())
         }
         val syncInfrastructure = AndroidSyncInfrastructure(applicationContext)
+        val localRepositoryPolicy = if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.EXACT_ANDROID_LAN_192_168_50_193_18081
+        } else {
+            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED
+        }
+        localRepositoryTransport = if (localRepositoryPolicy !=
+            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED
+        ) dev.shinsou.kmp.plugin.JvmReviewedLocalRepositoryTransport(localRepositoryPolicy) else null
         composition = ShinsouComposition(
             repository = repository,
             httpClient = httpClient,
@@ -94,6 +103,8 @@ class MainActivity : FragmentActivity() {
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
+            reviewedLocalRepositoryPolicy = localRepositoryPolicy,
+            reviewedLocalRepositoryTransport = localRepositoryTransport,
         )
         val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
@@ -234,6 +245,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onDestroy() {
         if (::composition.isInitialized) runCatching { runBlocking { composition.close() } }
+        localRepositoryTransport?.close()
+        localRepositoryTransport = null
         super.onDestroy()
         platformScope.cancel()
     }

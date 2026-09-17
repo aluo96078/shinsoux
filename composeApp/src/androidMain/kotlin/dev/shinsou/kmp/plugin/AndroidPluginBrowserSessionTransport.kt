@@ -16,11 +16,27 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Android System WebView transport used only for manifest-approved API origins. */
+/** Reviewed Bika uses pinned native HTTPS; the legacy unpinned WebView path is development-only. */
 public class AndroidPluginBrowserSessionTransport(context: Context) : PluginBrowserSessionTransport {
     private val appContext = context.applicationContext
     private val mutex = Mutex()
     private val states = mutableMapOf<Long, AndroidBrowserSessionState>()
+    private val pinnedTransport = requireNotNull(createPlatformPinnedPluginHttpTransport())
+    private val userAgentProvider = AndroidBrowserUserAgentProvider(appContext)
+
+    override suspend fun executeResolved(
+        sourceId: Long,
+        sourceOrigin: String,
+        allowedOrigins: Set<String>,
+        request: PluginHttpRequest,
+        resolution: PluginHostResolution,
+    ): PluginHttpResponse {
+        val nativeRequest = bikaPinnedSessionRequest(
+            sourceOrigin, allowedOrigins, request, resolution,
+            userAgentProvider.userAgent(resolution.host),
+        )
+        return pinnedTransport.executeResolved(nativeRequest, resolution)
+    }
 
     override suspend fun execute(
         sourceId: Long,
@@ -89,7 +105,16 @@ public class AndroidPluginBrowserSessionTransport(context: Context) : PluginBrow
                         }
                     }
                 }
-                loadUrl("$sourceOrigin/robots.txt")
+                // Establish the source security origin without running a remote bootstrap page.
+                // A /robots.txt redirect to attacker HTML would otherwise execute before the
+                // host-issued Fetch script and could scan local/private network resources.
+                loadDataWithBaseURL(
+                    sourceOrigin,
+                    "<!doctype html><meta charset=\"utf-8\"><title>Shinsou browser session</title>",
+                    "text/html",
+                    "UTF-8",
+                    null,
+                )
             }
             AndroidBrowserSessionState(sourceOrigin, webView, ready)
         }

@@ -43,6 +43,7 @@ public data class LegacyLoginCredentialsV2(
 public class LegacyMangaExtensionSourceV2(
     private val source: CatalogueSource,
     packageId: String,
+    sourceKey: SourceKey = SourceKey.fromLegacy(packageId, source.id),
     private val credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
     additionalContentKinds: Set<ContentKind> = emptySet(),
     additionalRepresentations: Iterable<UnitContentRepresentationProviderV2> = emptyList(),
@@ -55,7 +56,7 @@ public class LegacyMangaExtensionSourceV2(
     )
 
     override val descriptor: SourceDescriptorV2 = SourceDescriptorV2(
-        sourceKey = SourceKey.fromLegacy(packageId, source.id),
+        sourceKey = sourceKey,
         displayName = source.name,
         languageTag = source.lang,
         supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE) + additionalContentKinds,
@@ -88,6 +89,9 @@ public class LegacyMangaExtensionSourceV2(
 
     override val webChallengeUrl: String?
         get() = source.webChallengeUrl
+
+    override val browserSessionOrigins: Set<String>
+        get() = source.browserSessionOrigins
 
     override val webChallengeLocalStorageKeys: Set<String>
         get() = source.webChallengeLocalStorageKeys
@@ -209,7 +213,14 @@ public class LegacyMangaExtensionSourceV2(
                 sourceKey = request.sourceKey,
                 remoteUnitId = request.remoteUnitId,
                 pages = pages.mapIndexed { ordinal, page ->
-                    val parsed = PageRequestMetadata.parse(page.imageUrl ?: page.url)
+                    // Viewer-backed sources intentionally leave imageUrl empty until content is
+                    // requested. Resolve through the source plane before emitting the host-owned,
+                    // credential-free image request plan.
+                    val remoteImage = page.imageUrl
+                        ?.takeIf(String::isNotBlank)
+                        ?: source.resolveImageUrl(page.url)?.takeIf(String::isNotBlank)
+                        ?: page.url
+                    val parsed = PageRequestMetadata.parse(remoteImage)
                     val resolvedUrl = requireNotNull(resolveSourceHttpUrl(source.baseUrl, parsed.cleanUrl)) {
                         "Legacy manga page URL is not a safe HTTP(S) resource"
                     }
@@ -267,13 +278,26 @@ public class LegacyMangaPackageRuntimeV2(
     version: String,
     displayName: String,
     sources: Iterable<CatalogueSource>,
+    sourceKeysByLegacyId: Map<Long, SourceKey> = emptyMap(),
+    /** Missing keys are pre-V2 image compatibility; present empty values deny V2 content. */
+    declaredContentKindsByLegacyId: Map<Long, Set<ContentKind>> = emptyMap(),
     credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
 ) : ExtensionPackageRuntimeV2 {
     private val delegate: ImmutableExtensionPackageRuntimeV2
 
     init {
-        val adapters = sources.map { source ->
-            LegacyMangaExtensionSourceV2(source, packageId, credentialsResolver)
+        val adapters = sources.mapNotNull { source ->
+            val declaredKinds = declaredContentKindsByLegacyId[source.id]
+                ?: setOf(ContentKind.IMAGE_SEQUENCE)
+            // The legacy adapter implements only image sequences. A V2 source which explicitly
+            // omits that kind must not regain it merely because its executable uses this adapter.
+            if (ContentKind.IMAGE_SEQUENCE !in declaredKinds) return@mapNotNull null
+            LegacyMangaExtensionSourceV2(
+                source = source,
+                packageId = packageId,
+                sourceKey = sourceKeysByLegacyId[source.id] ?: SourceKey.fromLegacy(packageId, source.id),
+                credentialsResolver = credentialsResolver,
+            )
         }
         require(adapters.isNotEmpty()) { "Legacy manga package needs at least one source" }
         val packageDescriptor = ExtensionPackageV2(
@@ -282,7 +306,7 @@ public class LegacyMangaPackageRuntimeV2(
             version = version,
             displayName = displayName,
             sources = adapters.map(LegacyMangaExtensionSourceV2::descriptor),
-            supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
+            supportedContentKinds = adapters.flatMapTo(linkedSetOf()) { it.descriptor.supportedContentKinds },
         )
         delegate = ImmutableExtensionPackageRuntimeV2(packageDescriptor, adapters)
     }
@@ -330,4 +354,5 @@ private val LEGACY_SAFE_HEADER_HINTS: Set<String> = setOf(
     "user-agent",
     "origin",
     "x-requested-with",
+    "x-image-ticket",
 )

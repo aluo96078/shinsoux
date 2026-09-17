@@ -398,6 +398,64 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
+    fun wildcardImageMediaTypeUsesValidatedResponseTypeForExtensionlessResources() = runTest {
+        withFoundation { foundation ->
+            val imageBytes = byteArrayOf(1, 2, 3, 4)
+            val source = wildcardImageSource()
+            val consumer = consumer(
+                foundation = foundation,
+                source = source,
+                fetcher = ExtensionResourceFetcherV2 { sourceKey, request ->
+                    assertEquals(SOURCE_KEY, sourceKey)
+                    assertEquals("https://fixture.example/image?id=page-1", request.effectiveUri)
+                    ExtensionFetchedResourceV2(imageBytes, "IMAGE/PNG")
+                },
+            )
+
+            val materialized = consumer.materialize(
+                consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single(),
+            )
+
+            val representation = assertIs<ContentRepresentation.ImageSequence>(
+                foundation.publications.find(materialized.publicationKey)
+                    ?.acquisitions?.single()?.units?.single()?.latestManifest
+                    ?.representations?.single(),
+            )
+            val page = representation.pages.single()
+            assertEquals("image/png", page.resource.mediaType)
+            assertEquals("image/png", page.resource.blob.mediaType)
+            assertContentEquals(imageBytes, foundation.blobStore.read(page.resource.blob))
+            assertEquals(0, foundation.blobStore.pendingReceiptCount)
+        }
+    }
+
+    @Test
+    fun wildcardImageMediaTypeFailsClosedWithoutResponseImageTypeOrCommit() = runTest {
+        listOf(null, "application/octet-stream", "text/html", "image/svg+xml").forEach { responseMediaType ->
+            withFoundation { foundation ->
+                val consumer = consumer(
+                    foundation = foundation,
+                    source = wildcardImageSource(),
+                    fetcher = ExtensionResourceFetcherV2 { _, _ ->
+                        ExtensionFetchedResourceV2(byteArrayOf(1, 2, 3, 4), responseMediaType)
+                    },
+                )
+                val selection = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single()
+
+                assertFailsWith<IllegalArgumentException>(responseMediaType.toString()) {
+                    consumer.materialize(selection)
+                }
+
+                assertTrue(foundation.publications.all().isEmpty(), responseMediaType.toString())
+                assertTrue(foundation.rightsGrants.all().isEmpty(), responseMediaType.toString())
+                assertTrue(foundation.transactions.pendingOutbox().isEmpty(), responseMediaType.toString())
+                assertEquals(0, foundation.blobStore.count, responseMediaType.toString())
+                assertEquals(0, foundation.blobStore.pendingReceiptCount, responseMediaType.toString())
+            }
+        }
+    }
+
+    @Test
     fun epubArchiveIsHostParsedAndMustExactlyMatchTheDeclaredRemoteGraph() = runTest {
         withReopenableFoundation { driver, foundation ->
             val archiveBytes = "bounded fake EPUB archive".encodeToByteArray()
@@ -1035,6 +1093,30 @@ class ExtensionContentConsumerV2Test {
             remoteUnitId = remoteUnitId,
             source = TextPayloadSourceV2.InlineTextPayload(text),
             blocks = listOf(TextBlock("body", 0, text.length)),
+        )
+
+        fun wildcardImageSource(): FixtureSource = FixtureSource(
+            payloads = { remoteUnitId ->
+                listOf(
+                    UnitContentPayload.ImageSequence(
+                        schemaVersion = 2,
+                        representationId = "images",
+                        sourceKey = SOURCE_KEY,
+                        remoteUnitId = remoteUnitId,
+                        pages = listOf(
+                            ImagePageV2(
+                                resourceId = "page-1",
+                                request = RemoteRequestPlanV2(
+                                    method = HttpMethodV2.GET,
+                                    url = "https://fixture.example/image?id=page-1",
+                                ),
+                                mediaType = "image/*",
+                            ),
+                        ),
+                    ),
+                )
+            },
+            supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE),
         )
 
         fun textResource(): RemoteResourceV2 = RemoteResourceV2(

@@ -41,10 +41,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +73,11 @@ import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.PluginImageLoader
+import dev.shinsou.kmp.domain.model.SourceKey
+import kotlinx.coroutines.CancellationException
+
+val LocalPluginImageLoader = staticCompositionLocalOf { PluginImageLoader.None }
 
 @Composable
 fun CoverImage(
@@ -79,17 +87,63 @@ fun CoverImage(
     contentScale: ContentScale = ContentScale.Crop,
     selected: Boolean = false,
     headers: Map<String, String> = emptyMap(),
+    /** Host-fetched image bytes. When supplied, the URL is never handed to Coil. */
+    bytes: ByteArray? = null,
+    /** Optional host content-plane loader for plugin-controlled URLs. */
+    loadBytes: (suspend () -> ByteArray?)? = null,
+    /** Legacy or exact extension authority. Supplying either makes a failed host fetch terminal. */
+    sourceId: Long? = null,
+    sourceKey: SourceKey? = null,
 ) {
     val strings = LocalShinsouStrings.current
     val platformContext = LocalPlatformContext.current
     val shape = RoundedCornerShape(10.dp)
-    var imageError by remember(url, headers) { mutableStateOf(false) }
-    val imageRequest = remember(url, headers, platformContext) {
+    val pluginImages = LocalPluginImageLoader.current
+    val protectedLoader = loadBytes
+        ?: sourceKey?.let { pluginImages.load(it, url, headers) }
+        ?: sourceId?.let { pluginImages.load(it, url, headers) }
+    val currentProtectedLoader by rememberUpdatedState(protectedLoader)
+    val explicitLoaderKey = loadBytes.takeIf { sourceId == null && sourceKey == null }
+    var imageError by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
+        mutableStateOf(false)
+    }
+    var loadedBytes by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
+        mutableStateOf<ByteArray?>(null)
+    }
+    LaunchedEffect(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
+        if (bytes != null) {
+            loadedBytes = null
+            imageError = false
+            return@LaunchedEffect
+        }
+        val loader = currentProtectedLoader
+        loadedBytes = if (loader == null) {
+            null
+        } else {
+            try {
+                loader()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        imageError = loadedBytes == null && loader != null
+    }
+    val imageBytes = bytes ?: loadedBytes
+    // A plugin URL is intentionally replaced by null while the host loader runs (and on
+    // failure), so Coil cannot create an unreviewed second network path.
+    val imageData: Any? = if (protectedLoader != null) {
+        imageBytes
+    } else {
+        imageBytes ?: url?.takeIf(String::isNotBlank)
+    }
+    val imageRequest = remember(imageData, headers, platformContext) {
         val networkHeaders = NetworkHeaders.Builder().apply {
             headers.forEach { (name, value) -> set(name, value) }
         }.build()
         ImageRequest.Builder(platformContext)
-            .data(url)
+            .data(imageData)
             .httpHeaders(networkHeaders)
             .build()
     }
@@ -102,7 +156,7 @@ fun CoverImage(
                 else Modifier,
             ),
     ) {
-        if (url.isNullOrBlank() || imageError) {
+        if (imageData == null || imageError) {
             CoverPlaceholder(title = title)
         } else {
             AsyncImage(

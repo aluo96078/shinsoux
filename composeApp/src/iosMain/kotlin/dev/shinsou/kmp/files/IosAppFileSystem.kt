@@ -23,15 +23,20 @@ import platform.Foundation.writeToFile
 import kotlinx.cinterop.ByteVar
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
-class IosAppFileSystem : AppFileSystem {
+class IosAppFileSystem internal constructor(private val root: String) : AppFileSystem {
+    constructor() : this(defaultContentRoot())
+
     private val manager = NSFileManager.defaultManager
-    private val root: String = run {
-        val support = NSSearchPathForDirectoriesInDomains(
-            NSApplicationSupportDirectory,
-            NSUserDomainMask,
-            true,
-        ).firstOrNull() as? String ?: error("Application Support directory is unavailable")
-        "$support/Shinsou/Content"
+
+    private companion object {
+        fun defaultContentRoot(): String {
+            val support = NSSearchPathForDirectoriesInDomains(
+                NSApplicationSupportDirectory,
+                NSUserDomainMask,
+                true,
+            ).firstOrNull() as? String ?: error("Application Support directory is unavailable")
+            return "$support/Shinsou/Content"
+        }
     }
 
     override suspend fun write(relativePath: String, bytes: ByteArray): Unit = withContext(Dispatchers.Default) {
@@ -73,6 +78,25 @@ class IosAppFileSystem : AppFileSystem {
             }
         }
     }
+
+    override suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> =
+        withContext(Dispatchers.Default) {
+            require(maximumEntries >= 0) { "Maximum directory entry count cannot be negative" }
+            val directory = path(relativeDirectory)
+            val enumerator = manager.enumeratorAtPath(directory) ?: return@withContext emptyList()
+            buildList {
+                while (true) {
+                    val next = enumerator.nextObject() as? String ?: break
+                    val absolute = "$directory/$next"
+                    if (manager.attributesOfItemAtPath(absolute, error = null)?.get(NSFileType) ==
+                        NSFileTypeRegular
+                    ) {
+                        require(size < maximumEntries) { "Directory contains too many files" }
+                        add("${validatedRelativePath(relativeDirectory)}/$next")
+                    }
+                }
+            }
+        }
 
     override fun uri(relativePath: String): String = NSURL.fileURLWithPath(path(relativePath)).absoluteString ?: ""
 

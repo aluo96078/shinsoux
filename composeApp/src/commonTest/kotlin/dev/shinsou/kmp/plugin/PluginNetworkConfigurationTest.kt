@@ -4,6 +4,7 @@ import io.ktor.http.Url
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -92,6 +93,71 @@ class PluginNetworkConfigurationTest {
         assertTrue("%23" in route.url, "The target fragment must stay inside the url parameter")
         assertTrue("%25" in route.url, "Existing target escapes must be encoded exactly once as query data")
         assertFalse("&next=" in route.url)
+    }
+
+    @Test
+    fun pluginRequestsAndSourceHeadersCannotControlTransportOrProxyRouting() = runTest {
+        val builder = PluginRequestBuilder(
+            storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore()),
+            userAgents = PluginUserAgentProvider { "fixture-agent" },
+        )
+        val forbidden = listOf(
+            "Host",
+            ":authority",
+            "Connection",
+            "Proxy-Authorization",
+            "Content-Length",
+            "Forwarded",
+            "X-Forwarded-Host",
+            "X-Original-URL",
+            "X-Rewrite-URL",
+            "X-Proxy-Key",
+        )
+
+        forbidden.forEach { name ->
+            assertFailsWith<IllegalArgumentException>("request header $name must be rejected") {
+                builder.build(
+                    sourceId = 1,
+                    request = PluginHttpRequest("GET", TARGET_URL, headers = mapOf(name to "forged")),
+                )
+            }
+            assertFailsWith<IllegalArgumentException>("source header $name must be rejected") {
+                builder.build(
+                    sourceId = 1,
+                    request = PluginHttpRequest("GET", TARGET_URL),
+                    sourceHeaders = mapOf(name to "forged"),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun configuredProxyResolverAddsHostOwnedProxyKeyAfterPluginHeaderValidation() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore()).also {
+            it.setPreference(1, ConfiguredPluginProxyResolver.SOURCE_PROXY_PREFERENCE, "on")
+        }
+        val configuration = PluginNetworkConfigurationProvider {
+            PluginNetworkConfiguration(
+                proxyEnabled = true,
+                proxyWorkerUrl = "https://proxy.example/worker",
+                proxyApiKey = "host-owned-secret",
+            )
+        }
+        val builder = PluginRequestBuilder(
+            storage = storage,
+            userAgents = PluginUserAgentProvider { "fixture-agent" },
+            proxyResolver = ConfiguredPluginProxyResolver(storage, configuration),
+        )
+
+        val built = builder.build(
+            sourceId = 1,
+            request = PluginHttpRequest("GET", TARGET_URL),
+        )
+
+        assertEquals(
+            "host-owned-secret",
+            built.transportRequest.headers[ConfiguredPluginProxyResolver.PROXY_KEY_HEADER],
+        )
     }
 
     @Test

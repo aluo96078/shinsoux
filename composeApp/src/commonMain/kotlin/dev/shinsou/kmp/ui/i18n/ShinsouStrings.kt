@@ -212,6 +212,23 @@ private val EnglishStrings = ShinsouStrings(
         "Novel" to "Novel",
         "Mixed" to "Mixed",
         "Unknown type" to "Unknown",
+        "Review host permissions" to "Review host permissions",
+        "Host event and runtime permissions remain blocked until you approve this exact version and digest." to
+            "Host event and runtime permissions remain blocked until you approve this exact version and digest.",
+        "Approve" to "Approve",
+        "Request login UI" to "Request login UI",
+        "Request source refresh" to "Request source refresh",
+        "Request logout" to "Request logout",
+        "Report diagnostics" to "Report diagnostics",
+        "Show user messages" to "Show user messages",
+        "Request browser challenge" to "Request browser challenge",
+        "Preparing installation…" to "Preparing installation…",
+        "Installing…" to "Installing…",
+        "Updating…" to "Updating…",
+        "Removing…" to "Removing…",
+        "Applying permissions…" to "Applying permissions…",
+        "Updating trust…" to "Updating trust…",
+        "This extension changed. Review its permissions again." to "This extension changed. Review its permissions again.",
     ),
 )
 
@@ -392,7 +409,7 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Delete after reading" to "閱讀後刪除",
     "Delete {0}" to "刪除 {0}",
     "Deselect all" to "取消全選",
-    "Desktop does not include an embedded browser whose cookie store can be safely shared with sources. The page can open in your default browser, but those cookies stay in that browser and will not be imported. After verification, add the required cookies manually in Source settings." to "桌面版沒有可安全與來源共用 Cookie 儲存區的內嵌瀏覽器。頁面可以在預設瀏覽器開啟，但 Cookie 會留在該瀏覽器中且不會匯入。完成驗證後，請在來源設定中手動加入所需 Cookie。",
+    "An in-app verification browser is unavailable for this device or source. Cookies from your default browser cannot be imported automatically. On Android, update Android System WebView and try again. You can also import a cookie file or add cookies manually in Source settings." to "此裝置或來源目前無法使用 App 內驗證瀏覽器，預設瀏覽器的 Cookie 無法自動匯入。Android 使用者可更新 Android System WebView 後重試，也可在來源設定匯入 Cookie 檔案或手動加入 Cookie。",
     "Disabled" to "已停用",
     "Do not save history or sync trackers" to "不儲存歷史或同步追蹤器",
     "Double-tap to zoom" to "雙擊縮放",
@@ -488,8 +505,8 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Saved for platforms with a hostname-aware DNS resolver; direct IP rewriting cannot preserve TLS SNI safely" to "僅儲存給支援主機名稱感知 DNS 解析器的平台；直接改寫 IP 無法安全保留 TLS SNI",
     "Score (0–10)" to "評分（0–10）",
     "Selected categories only" to "僅選取的分類",
-    "Shinsou X · version 1.0.1-beta.7" to "Shinsou X · 版本 1.0.1-beta.7",
-    "Shinsou X 1.0.1-beta.7" to "Shinsou X 1.0.1-beta.7",
+    "Shinsou X · version 1.0.1-beta.8" to "Shinsou X · 版本 1.0.1-beta.8",
+    "Shinsou X 1.0.1-beta.8" to "Shinsou X 1.0.1-beta.8",
     "Shinsou X is a local-first manga library and reader. It does not operate an analytics or advertising service." to "Shinsou X 是以本機優先的漫畫書庫與閱讀器，不會執行分析或廣告服務。",
     "Show NSFW sources" to "顯示 NSFW 來源",
     "Show page number" to "顯示頁碼",
@@ -2645,6 +2662,22 @@ private val PortuguesePortabilityTranslations = mapOf(
 )
 
 private val TraditionalReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "審核主機權限",
+    "Request login UI" to "要求登入介面",
+    "Request source refresh" to "要求重新整理來源",
+    "Request logout" to "要求登出",
+    "Report diagnostics" to "回報診斷資訊",
+    "Show user messages" to "顯示使用者訊息",
+    "Request browser challenge" to "要求瀏覽器驗證",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "在你核准這個確切版本與摘要前，主機事件與執行階段權限會持續被阻擋。",
+    "Approve" to "核准",
+    "Preparing installation…" to "準備安裝中…",
+    "Installing…" to "安裝中…",
+    "Updating…" to "更新中…",
+    "Removing…" to "移除中…",
+    "Applying permissions…" to "套用權限中…",
+    "Updating trust…" to "更新信任狀態中…",
+    "This extension changed. Review its permissions again." to "這個擴充套件已變更，請重新審核其權限。",
     "Approve reviewed extension" to "核准已審核的擴充套件",
     "SHA-256: {0}" to "SHA-256：{0}",
     "Required permissions" to "必要權限",
@@ -2669,9 +2702,36 @@ private val SimplifiedReviewedExtensionTranslations =
     TraditionalReviewedExtensionTranslations.mapValues { (_, value) -> value.toSimplifiedChinese() } + mapOf(
         "Approve reviewed extension" to "批准已审核的扩展",
         "Exact reviewed permissions granted" to "已授予精确审核的权限",
+        "Review host permissions" to "审核主机权限",
+        "Host event and runtime permissions remain blocked until you approve this exact version and digest." to
+            "在你批准这个确切版本和摘要前，主机事件与运行时权限会持续被阻止。",
+        "Approve" to "批准",
+        "Preparing installation…" to "准备安装中…",
+        "Installing…" to "安装中…",
+        "Updating…" to "更新中…",
+        "Removing…" to "移除中…",
+        "Applying permissions…" to "应用权限中…",
+        "Updating trust…" to "更新信任状态中…",
+        "This extension changed. Review its permissions again." to "此扩展已更改，请重新审核其权限。",
     )
 
 private val JapaneseReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "ホスト権限を確認",
+    "Request login UI" to "ログイン画面を要求",
+    "Request source refresh" to "ソース更新を要求",
+    "Request logout" to "ログアウトを要求",
+    "Report diagnostics" to "診断情報を報告",
+    "Show user messages" to "ユーザーメッセージを表示",
+    "Request browser challenge" to "ブラウザー認証を要求",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "この正確なバージョンとダイジェストを承認するまで、ホストイベントとランタイム権限はブロックされたままです。",
+    "Approve" to "承認",
+    "Preparing installation…" to "インストールを準備中…",
+    "Installing…" to "インストール中…",
+    "Updating…" to "更新中…",
+    "Removing…" to "削除中…",
+    "Applying permissions…" to "権限を適用中…",
+    "Updating trust…" to "信頼を更新中…",
+    "This extension changed. Review its permissions again." to "この拡張機能が変更されました。権限をもう一度確認してください。",
     "Approve reviewed extension" to "レビュー済み拡張機能を承認",
     "SHA-256: {0}" to "SHA-256：{0}",
     "Required permissions" to "必要な権限",
@@ -2693,6 +2753,22 @@ private val JapaneseReviewedExtensionTranslations = mapOf(
 )
 
 private val KoreanReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "호스트 권한 검토",
+    "Request login UI" to "로그인 UI 요청",
+    "Request source refresh" to "소스 새로 고침 요청",
+    "Request logout" to "로그아웃 요청",
+    "Report diagnostics" to "진단 정보 보고",
+    "Show user messages" to "사용자 메시지 표시",
+    "Request browser challenge" to "브라우저 인증 요청",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "이 정확한 버전과 다이제스트를 승인할 때까지 호스트 이벤트 및 런타임 권한이 차단됩니다.",
+    "Approve" to "승인",
+    "Preparing installation…" to "설치 준비 중…",
+    "Installing…" to "설치 중…",
+    "Updating…" to "업데이트 중…",
+    "Removing…" to "제거 중…",
+    "Applying permissions…" to "권한 적용 중…",
+    "Updating trust…" to "신뢰 업데이트 중…",
+    "This extension changed. Review its permissions again." to "이 확장이 변경되었습니다. 권한을 다시 검토하세요.",
     "Approve reviewed extension" to "검토된 확장 승인",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "필수 권한",
@@ -2714,6 +2790,22 @@ private val KoreanReviewedExtensionTranslations = mapOf(
 )
 
 private val FrenchReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "Vérifier les autorisations de l’hôte",
+    "Request login UI" to "Demander l’interface de connexion",
+    "Request source refresh" to "Demander l’actualisation de la source",
+    "Request logout" to "Demander la déconnexion",
+    "Report diagnostics" to "Signaler les diagnostics",
+    "Show user messages" to "Afficher les messages utilisateur",
+    "Request browser challenge" to "Demander la vérification du navigateur",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "Les autorisations d’événements et d’exécution de l’hôte restent bloquées tant que vous n’approuvez pas cette version et cette empreinte exactes.",
+    "Approve" to "Approuver",
+    "Preparing installation…" to "Préparation de l’installation…",
+    "Installing…" to "Installation…",
+    "Updating…" to "Mise à jour…",
+    "Removing…" to "Suppression…",
+    "Applying permissions…" to "Application des autorisations…",
+    "Updating trust…" to "Mise à jour de la confiance…",
+    "This extension changed. Review its permissions again." to "Cette extension a changé. Vérifiez à nouveau ses autorisations.",
     "Approve reviewed extension" to "Approuver l’extension vérifiée",
     "SHA-256: {0}" to "SHA-256 : {0}",
     "Required permissions" to "Autorisations requises",
@@ -2735,6 +2827,22 @@ private val FrenchReviewedExtensionTranslations = mapOf(
 )
 
 private val GermanReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "Host-Berechtigungen prüfen",
+    "Request login UI" to "Anmeldedialog anfordern",
+    "Request source refresh" to "Quellenaktualisierung anfordern",
+    "Request logout" to "Abmeldung anfordern",
+    "Report diagnostics" to "Diagnose melden",
+    "Show user messages" to "Benutzernachrichten anzeigen",
+    "Request browser challenge" to "Browser-Verifizierung anfordern",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "Host-Ereignis- und Laufzeitberechtigungen bleiben gesperrt, bis du genau diese Version und Prüfsumme genehmigst.",
+    "Approve" to "Genehmigen",
+    "Preparing installation…" to "Installation wird vorbereitet…",
+    "Installing…" to "Wird installiert…",
+    "Updating…" to "Wird aktualisiert…",
+    "Removing…" to "Wird entfernt…",
+    "Applying permissions…" to "Berechtigungen werden angewendet…",
+    "Updating trust…" to "Vertrauen wird aktualisiert…",
+    "This extension changed. Review its permissions again." to "Diese Erweiterung wurde geändert. Prüfe ihre Berechtigungen erneut.",
     "Approve reviewed extension" to "Geprüfte Erweiterung genehmigen",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Erforderliche Berechtigungen",
@@ -2756,6 +2864,22 @@ private val GermanReviewedExtensionTranslations = mapOf(
 )
 
 private val SpanishReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "Revisar permisos del host",
+    "Request login UI" to "Solicitar interfaz de inicio de sesión",
+    "Request source refresh" to "Solicitar actualización de la fuente",
+    "Request logout" to "Solicitar cierre de sesión",
+    "Report diagnostics" to "Informar de diagnósticos",
+    "Show user messages" to "Mostrar mensajes al usuario",
+    "Request browser challenge" to "Solicitar verificación del navegador",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "Los permisos de eventos y ejecución del host seguirán bloqueados hasta que apruebes esta versión y este resumen exactos.",
+    "Approve" to "Aprobar",
+    "Preparing installation…" to "Preparando la instalación…",
+    "Installing…" to "Instalando…",
+    "Updating…" to "Actualizando…",
+    "Removing…" to "Eliminando…",
+    "Applying permissions…" to "Aplicando permisos…",
+    "Updating trust…" to "Actualizando la confianza…",
+    "This extension changed. Review its permissions again." to "Esta extensión ha cambiado. Revisa sus permisos de nuevo.",
     "Approve reviewed extension" to "Aprobar extensión revisada",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Permisos requeridos",
@@ -2777,6 +2901,22 @@ private val SpanishReviewedExtensionTranslations = mapOf(
 )
 
 private val PortugueseReviewedExtensionTranslations = mapOf(
+    "Review host permissions" to "Revisar permissões do host",
+    "Request login UI" to "Solicitar interface de login",
+    "Request source refresh" to "Solicitar atualização da fonte",
+    "Request logout" to "Solicitar logout",
+    "Report diagnostics" to "Relatar diagnósticos",
+    "Show user messages" to "Mostrar mensagens ao usuário",
+    "Request browser challenge" to "Solicitar verificação do navegador",
+    "Host event and runtime permissions remain blocked until you approve this exact version and digest." to "As permissões de eventos e execução do host continuarão bloqueadas até você aprovar esta versão e este resumo exatos.",
+    "Approve" to "Aprovar",
+    "Preparing installation…" to "Preparando a instalação…",
+    "Installing…" to "Instalando…",
+    "Updating…" to "Atualizando…",
+    "Removing…" to "Removendo…",
+    "Applying permissions…" to "Aplicando permissões…",
+    "Updating trust…" to "Atualizando a confiança…",
+    "This extension changed. Review its permissions again." to "Esta extensão foi alterada. Revise suas permissões novamente.",
     "Approve reviewed extension" to "Aprovar extensão revisada",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Permissões necessárias",
@@ -2813,7 +2953,7 @@ private val TraditionalChineseStrings = EnglishStrings.copy(
     pageTurnAnimation = "翻頁動畫", pageTurnAnimationDescription = "切換頁面時顯示動畫",
     clearFilters = "清除篩選", noMatches = "沒有符合項目", libraryEmpty = "書庫是空的",
     noUpdates = "沒有最近更新", noHistory = "沒有閱讀歷史", createBackup = "建立備份", restoreBackup = "還原備份",
-    translations = TraditionalLongTranslations + LibraryContentTypeTranslations.getValue("zh-TW") + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
+    translations = TraditionalLongTranslations + TraditionalSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-TW") + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
         TraditionalReviewedExtensionTranslations,
 )
 
@@ -2833,7 +2973,7 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     pageTurnAnimation = "翻页动画", pageTurnAnimationDescription = "切换页面时显示动画",
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
     // Explicit Simplified wording wins over the character-converted Traditional fallback.
-    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + LibraryContentTypeTranslations.getValue("zh-CN") + SimplifiedReaderTranslations +
+    translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + SimplifiedSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-CN") + SimplifiedReaderTranslations +
         SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations,
 )
 

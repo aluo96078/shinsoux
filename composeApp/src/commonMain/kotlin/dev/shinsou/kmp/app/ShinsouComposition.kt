@@ -39,6 +39,14 @@ import dev.shinsou.kmp.plugin.KeyValuePluginPackageStore
 import dev.shinsou.kmp.plugin.KeyValuePluginStorage
 import dev.shinsou.kmp.plugin.MigratingPluginStorage
 import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
+import dev.shinsou.kmp.plugin.KeyValueRepositorySecurityStateStore
+import dev.shinsou.kmp.plugin.KeyValueRepositoryTrustRootStore
+import dev.shinsou.kmp.plugin.ConfiguredRepositoryTrustPolicy
+import dev.shinsou.kmp.plugin.createPlatformPinnedPluginHttpTransport
+import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
+import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
+import dev.shinsou.kmp.plugin.isCanonicalOfficialUnsignedRepository
+import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
@@ -82,7 +90,6 @@ import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
-import dev.shinsou.kmp.plugin.v2.ExtensionNetworkScopeResolverV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
 import dev.shinsou.kmp.tracking.TrackerDescriptor
@@ -160,7 +167,15 @@ public class ShinsouComposition(
         PluginBrowserSessionTransport.Unavailable,
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
+    private val reviewedLocalRepositoryPolicy: dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy =
+        dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED,
+    private val reviewedLocalRepositoryTransport: dev.shinsou.kmp.plugin.PluginHttpTransport? = null,
 ) {
+    /**
+     * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
+     * network admission boundary: unavailable pinned transport still rejects public egress.
+     */
+    public val pluginNetworkCapability = inspectPlatformPluginNetwork()
     private val mutableSyncBoundaryReady = MutableStateFlow(syncInfrastructure == null)
     /** UI remains non-interactive until persisted provider ownership is enforced. */
     public val syncBoundaryReady: StateFlow<Boolean> = mutableSyncBoundaryReady.asStateFlow()
@@ -220,15 +235,23 @@ public class ShinsouComposition(
         createSyncHttpClient(httpClient)
     }
     private val pluginHttpClient = httpClient.config { followRedirects = false }
+    private val platformPluginHostResolver = createPlatformPluginHostResolver()
+    private val platformPinnedPluginTransport = createPlatformPinnedPluginHttpTransport()
     private val reviewedShuYueRepositoryLoader = ShuYueRepositoryIndexLoader(
-        transport = KtorShuYueRepositoryTransport(pluginHttpClient),
+        transport = KtorShuYueRepositoryTransport(
+            client = pluginHttpClient,
+            hostResolver = platformPluginHostResolver,
+            pinnedTransport = platformPinnedPluginTransport,
+            reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
+            reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
+        ),
         limits = ShuYueRepositoryLimits(
-            allowedArtifactOrigins = setOf(
+            allowedArtifactOrigins = setOfNotNull(
                 ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_ARTIFACT_ORIGIN,
+                reviewedLocalRepositoryPolicy.baseUrl,
             ),
-            // The user may explicitly point the app at the local/LAN ShuYue development server.
-            // Only loopback/private origins are added; public artifacts remain GitHub-pinned.
-            allowLocalArtifactOrigins = true,
+            // Local/LAN repositories require a separate explicit developer composition.
+            allowLocalArtifactOrigins = false,
         ),
     )
     private val pluginStorage = MigratingPluginStorage(
@@ -236,7 +259,25 @@ public class ShinsouComposition(
         migrationState = pluginKeyValueStore,
     )
     private val trustStore = KeyValuePluginTrustStore(pluginKeyValueStore)
-    private val repositoryClient = ExtensionRepositoryClient(httpClient)
+    /** Out-of-band/admin configuration boundary; key replacement requires its explicit API. */
+    public val repositoryTrustRootStore: RepositoryTrustRootStore =
+        KeyValueRepositoryTrustRootStore(pluginKeyValueStore)
+    private val repositorySecurityState = KeyValueRepositorySecurityStateStore(pluginKeyValueStore)
+    private val repositoryClient = ExtensionRepositoryClient(
+        client = httpClient,
+        repositoryTrustPolicy = ConfiguredRepositoryTrustPolicy(
+            roots = repositoryTrustRootStore,
+            // Temporary compatibility for the unsigned official publication only. URL
+            // normalization happens before this exact predicate; every other unpinned public
+            // repository remains rejected before transport.
+            allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
+        ),
+        repositorySecurityState = repositorySecurityState,
+        repositoryHostResolver = platformPluginHostResolver,
+        repositoryTransport = platformPinnedPluginTransport,
+        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
+        reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
+    )
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
     private val pluginLoginRequests = PluginLoginRequestCoordinator()
     private val pluginEventUiJob = SupervisorJob()
@@ -262,29 +303,11 @@ public class ShinsouComposition(
         proxyResolver = ConfiguredPluginProxyResolver(pluginStorage, networkConfiguration),
     )
     private val pluginNetwork = PluginNetworkClient(
-        transport = KtorPluginHttpTransport(pluginHttpClient),
+        transport = platformPinnedPluginTransport ?: KtorPluginHttpTransport(pluginHttpClient),
         storage = pluginStorage,
         requestBuilder = requestBuilder,
+        hostResolver = platformPluginHostResolver,
     )
-    /**
-     * V2 source keys intentionally do not carry the legacy numeric source id. Reviewed ShuYue
-     * packages still execute through the legacy network plane, so map their exact package/source
-     * identity to the fixed host-local scope before a content body is fetched.
-     */
-    private val extensionNetworkScopeResolver = ExtensionNetworkScopeResolverV2 { sourceKey ->
-        sourceKey.legacyLongId ?: ShuYueReviewedPluginCatalogV2.profiles
-            .asSequence()
-            .filter { profile ->
-                profile.identity.packageId == sourceKey.packageId &&
-                    sourceKey.sourceId in profile.sourceIds
-            }
-            .mapNotNull { profile ->
-                runCatching {
-                    BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey)
-                }.getOrNull()
-            }
-            .firstOrNull()
-    }
     private val pluginEventAuthorizer: MutablePluginSystemEventAuthorizer = MutablePluginSystemEventAuthorizer()
     private val pluginEventContextRegistry: PluginEventContextRegistry = PluginEventContextRegistry()
     private val pluginEventGrantAdmission = KeyValuePluginEventGrantAdmission(
@@ -390,18 +413,19 @@ public class ShinsouComposition(
         environment = ScriptPluginEnvironment(
             network = pluginNetwork,
             storage = pluginStorage,
+            hostResolver = platformPluginHostResolver,
             browserSessionTransport = pluginBrowserSessionTransport,
             loginRequester = pluginLoginRequests,
             systemEventSink = pluginEventGateway,
             systemEventContextRegistry = pluginEventContextRegistry,
         ),
         eventGrantAdmission = pluginEventGrantAdmission,
+        reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
+        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
     )
     private val coordinator = RepositoryPluginCoordinator(
         repository = repository,
         manager = pluginManager,
-        network = pluginNetwork,
-        requestBuilder = requestBuilder,
         fileSystem = fileSystem,
     )
     private val trackingJob = SupervisorJob()
@@ -658,8 +682,7 @@ public class ShinsouComposition(
                     nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
                 ),
                 resourceFetcher = PluginNetworkExtensionResourceFetcherV2(
-                    network = pluginNetwork,
-                    scopes = extensionNetworkScopeResolver,
+                    contentScope = pluginManager::contentNetworkScopeForSource,
                 ),
                 nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
                 localUnitProgress = { publicationKey ->
@@ -691,6 +714,11 @@ public class ShinsouComposition(
             )
         },
         reviewedShuYueRepositoryLoaderV2 = reviewedShuYueRepositoryLoader,
+        fileSystem = fileSystem,
+        // Seed only the single app-reviewed official repository when a new installation has no
+        // persisted repository. PluginBrowseAdapter still requires an empty repository list and
+        // performs the exact canonical URL/trust check before fetching; user-configured
+        // repositories and upgraded snapshots are never replaced or re-seeded.
     )
 
     public val localContent: LocalContentManager = LocalContentManager(
@@ -1120,7 +1148,7 @@ public class ShinsouComposition(
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.7"
+        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.8"
         const val DEFAULT_SYNC_USER_NAME = "Shinsou X user"
         const val CLOUDFLARE_DEPLOY_URL =
             "https://deploy.workers.cloudflare.com/?url=https://github.com/aluo96078/shinsoux/tree/master/syncWorker"

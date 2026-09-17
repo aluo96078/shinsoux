@@ -52,6 +52,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope
+import dev.shinsou.kmp.plugin.PluginHttpRequest
+import dev.shinsou.kmp.plugin.imageBodyForDecoderOrNull
+import kotlinx.coroutines.CancellationException
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 import dev.shinsou.kmp.reader.PlainTextNavigation
@@ -104,6 +110,19 @@ internal fun isReaderNavigationKey(key: Key): Boolean = when (key) {
     -> true
 
     else -> false
+}
+
+/**
+ * Unified image/EPUB surfaces own swipe/keyboard paging, but hardware volume keys still belong
+ * to the host reader. Dropping them here made manga paging ignore Compose/HID volume events.
+ */
+internal fun readerPreviewKeyIsHostOwned(
+    key: Key,
+    unifiedImageOrEpubReader: Boolean,
+): Boolean {
+    if (key == Key.VolumeUp || key == Key.VolumeDown) return true
+    if (!unifiedImageOrEpubReader) return true
+    return key == Key.Escape || key == Key.Back || key == Key.NavigatePrevious
 }
 
 /** ShuYue's useful interaction grammar: 30% previous, 40% chrome, 30% next. */
@@ -289,6 +308,7 @@ internal fun NovelReaderSurface(
     onNavigationBoundary: (ReaderTapAction) -> Unit = {},
     onTapAction: (ReaderTapAction) -> Unit,
     modifier: Modifier = Modifier,
+    remoteAssetScope: TypedReaderRemoteAssetScope? = null,
 ) {
     val textMeasurer = rememberTextMeasurer(cacheSize = 32)
     val density = LocalDensity.current
@@ -379,6 +399,7 @@ internal fun NovelReaderSurface(
                     readingMode = settings.readingMode,
                     columnWidth = columnWidth,
                     textStyle = textStyle,
+                    remoteAssetScope = remoteAssetScope,
                     onPageChanged = { index ->
                         onPageChanged(index, pages.size)
                     },
@@ -414,6 +435,7 @@ internal fun NovelReaderSurface(
                     settings = settings,
                     columnWidth = columnWidth,
                     textStyle = textStyle,
+                    remoteAssetScope = remoteAssetScope,
                     onPageChanged = { index ->
                         currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, index)
                         reportNovelPage(index, pages, navigation, onPageChanged, onLocatorChanged)
@@ -479,6 +501,7 @@ private fun ContinuousNovelReader(
     readingMode: ReadingMode,
     columnWidth: Dp,
     textStyle: TextStyle,
+    remoteAssetScope: TypedReaderRemoteAssetScope?,
     onPageChanged: (Int) -> Unit,
     onViewportObserved: (NovelViewportPosition) -> Unit,
     onViewportChanged: (NovelViewportPosition) -> Unit,
@@ -642,6 +665,7 @@ private fun ContinuousNovelReader(
                 page = page,
                 columnWidth = columnWidth,
                 textStyle = textStyle,
+                remoteAssetScope = remoteAssetScope,
                 modifier = Modifier
                     .fillParentMaxWidth(),
             )
@@ -661,6 +685,7 @@ private fun PagedNovelReader(
     settings: ReaderSettings,
     columnWidth: Dp,
     textStyle: TextStyle,
+    remoteAssetScope: TypedReaderRemoteAssetScope?,
     onPageChanged: (Int) -> Unit,
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
@@ -701,6 +726,7 @@ private fun PagedNovelReader(
             page = pages[pageIndex],
             columnWidth = columnWidth,
             textStyle = textStyle,
+            remoteAssetScope = remoteAssetScope,
             modifier = Modifier
                 .fillMaxSize()
                 .novelTapZones(settings.readingMode, onTapAction)
@@ -783,6 +809,7 @@ private fun PagedNovelReader(
             page = pages[logicalIndex],
             columnWidth = columnWidth,
             textStyle = textStyle,
+            remoteAssetScope = remoteAssetScope,
             modifier = Modifier
                 .fillMaxSize()
                 .novelTapZones(settings.readingMode, onTapAction)
@@ -863,6 +890,7 @@ private fun NovelPage(
     page: NovelVisualPage,
     columnWidth: Dp,
     textStyle: TextStyle,
+    remoteAssetScope: TypedReaderRemoteAssetScope?,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier, contentAlignment = Alignment.TopCenter) {
@@ -877,10 +905,10 @@ private fun NovelPage(
                         .fillMaxWidth(),
                 )
             }
-            is NovelVisualPage.Image -> AsyncImage(
-                model = page.url,
-                contentDescription = page.alt.ifBlank { null },
-                contentScale = ContentScale.Fit,
+            is NovelVisualPage.Image -> ProtectedNovelImage(
+                url = page.url,
+                alt = page.alt,
+                remoteAssetScope = remoteAssetScope,
                 modifier = Modifier
                     .widthIn(max = columnWidth)
                     .fillMaxWidth()
@@ -889,6 +917,58 @@ private fun NovelPage(
             )
         }
     }
+}
+
+@Composable
+private fun ProtectedNovelImage(
+    url: String,
+    alt: String,
+    remoteAssetScope: TypedReaderRemoteAssetScope?,
+    modifier: Modifier,
+) {
+    val context = LocalPlatformContext.current
+    var retryKey by remember(url, remoteAssetScope) { mutableStateOf(0) }
+    var bytes by remember(url, remoteAssetScope, retryKey) { mutableStateOf<ByteArray?>(null) }
+    var failed by remember(url, remoteAssetScope, retryKey) { mutableStateOf(remoteAssetScope == null) }
+    var decodeFailed by remember(url, remoteAssetScope, retryKey) { mutableStateOf(false) }
+    LaunchedEffect(url, remoteAssetScope, retryKey) {
+        val scope = remoteAssetScope
+        if (scope == null) {
+            failed = true
+            return@LaunchedEffect
+        }
+        try {
+            val response = scope.network.execute(
+                sourceId = scope.sourceId,
+                request = PluginHttpRequest("GET", url),
+            )
+            bytes = response.imageBodyForDecoderOrNull()
+            failed = bytes == null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            bytes = null
+            failed = true
+        }
+    }
+    val body = bytes
+    if (body == null || decodeFailed) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            if (failed || decodeFailed) {
+                androidx.compose.material3.TextButton(onClick = { retryKey++ }) {
+                    Text("圖片載入失敗，重試", color = NOVEL_READER_TEXT)
+                }
+            }
+        }
+        return
+    }
+    AsyncImage(
+        model = ImageRequest.Builder(context).data(body).build(),
+        contentDescription = alt.ifBlank { null },
+        contentScale = ContentScale.Fit,
+        onError = { decodeFailed = true },
+        modifier = modifier,
+    )
 }
 
 private fun paginateNovelContent(

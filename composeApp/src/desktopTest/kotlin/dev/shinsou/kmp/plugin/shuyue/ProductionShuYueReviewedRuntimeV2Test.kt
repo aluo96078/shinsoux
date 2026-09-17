@@ -12,10 +12,13 @@ import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
 import dev.shinsou.kmp.plugin.PluginHttpRequest
 import dev.shinsou.kmp.plugin.PluginHttpResponse
 import dev.shinsou.kmp.plugin.PluginHttpTransport
+import dev.shinsou.kmp.plugin.PluginHostResolver
+import dev.shinsou.kmp.plugin.PluginExecutionLimits
 import dev.shinsou.kmp.plugin.PluginManager
 import dev.shinsou.kmp.plugin.PluginNetworkClient
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginCredential
+import dev.shinsou.kmp.plugin.PluginResourceLimitException
 import dev.shinsou.kmp.plugin.PluginVerifier
 import dev.shinsou.kmp.plugin.ConfiguredPluginProxyResolver
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
@@ -63,6 +66,121 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProductionShuYueReviewedRuntimeV2Test {
+    @Test
+    fun reviewedThumbnailUsesExactLiveScopeAndStripsCredentialMetadata() = runTest {
+        val requests = CopyOnWriteArrayList<PluginHttpRequest>()
+        val fixture = installedReviewedSource(
+            packageId = "zh.biquge.tw",
+            resourceName = "biquge-tw.js",
+            transport = PluginHttpTransport { request ->
+                requests += request
+                PluginHttpResponse(status = 200, body = byteArrayOf(1, 2, 3))
+            },
+        )
+        try {
+            val repositoryHttp = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
+            val repositoryClient = ExtensionRepositoryClient(repositoryHttp)
+            val adapter = PluginBrowseAdapter(
+                manager = fixture.manager,
+                repositoryClient = repositoryClient,
+                repositoryStore = KeyValueExtensionRepositoryStore(InMemoryPluginKeyValueStore()),
+                pluginStorage = fixture.storage,
+                keyValueStore = InMemoryPluginKeyValueStore(),
+                trustStore = KeyValuePluginTrustStore(InMemoryPluginKeyValueStore()),
+            )
+            val exactScope = assertNotNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+            val result = adapter.loadPluginThumbnail(
+                fixture.sourceKey,
+                "https://img.biquge.tw/book/123.jpg",
+                mapOf(
+                    "Authorization" to "secret",
+                    "Cookie" to "session=secret",
+                    "X-Image-Ticket" to "public-ticket",
+                    "X-Unsupported" to "discard-me",
+                ),
+            )
+            assertEquals(listOf<Byte>(1, 2, 3), assertNotNull(result).toList())
+            assertEquals(1, requests.size)
+            val request = requests.single()
+            assertTrue(request.headers.keys.none { it.equals("Authorization", true) || it.equals("Cookie", true) })
+            assertEquals("public-ticket", request.headers.entries.single { it.key.equals("X-Image-Ticket", true) }.value)
+            assertTrue(request.headers.keys.none { it.equals("X-Unsupported", true) })
+            assertTrue(request.headers.keys.any { it.equals("Referer", true) })
+            assertEquals(
+                BuiltInShuYueExecutionScopesV2.resolve(fixture.profile.identity, fixture.sourceKey),
+                exactScope.sourceId,
+            )
+            val requestCount = requests.size
+            assertNull(
+                adapter.loadPluginThumbnail(
+                    SourceKey(2, fixture.sourceKey.packageId, "stale.source"),
+                    "https://img.biquge.tw/book/123.jpg",
+                    emptyMap(),
+                ),
+            )
+            assertEquals(requestCount, requests.size)
+
+            fixture.manager.setEventSourceEnabled(fixture.sourceKey, false)
+            assertNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+            fixture.manager.setEventSourceEnabled(fixture.sourceKey, true)
+            assertNotNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+
+            val approvalsField = fixture.profile.identity
+            // The fixture admission shares this approval store through its guarded runtime;
+            // revocation must also remove the separately issued host content authority.
+            fixture.approvals.revokeTrust(approvalsField)
+            assertNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+            fixture.approvals.trust(approvalsField)
+            fixture.approvals.grant(approvalsField, fixture.profile.requiredPermissions)
+            assertNotNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+
+            assertTrue(fixture.manager.uninstallExtensionRuntimeV2(fixture.sourceKey.packageId))
+            assertNull(fixture.manager.contentNetworkScopeForSource(fixture.sourceKey))
+            repositoryHttp.close()
+        } finally {
+            fixture.manager.close()
+        }
+    }
+
+    @Test
+    fun reviewedExecutionLimitsPromoteOnlyDefaultsAndPreserveTighterHostPolicy() {
+        val promoted = PluginExecutionLimits().forReviewedShuYue()
+        assertEquals(500_000_000L, promoted.invocationInstructionCount)
+        assertEquals(17 * 1024 * 1024, promoted.maxResultBytes)
+        assertEquals(8 * 1024 * 1024, promoted.maxResultStringBytes)
+
+        val constrained = PluginExecutionLimits(
+            invocationInstructionCount = 75_000_000,
+            maxLogEntries = 7,
+            maxDomHandles = 19,
+            maxResultBytes = 3 * 1024 * 1024,
+            maxResultStringBytes = 512 * 1024,
+        ).forReviewedShuYue()
+        assertEquals(75_000_000L, constrained.invocationInstructionCount)
+        assertEquals(7, constrained.maxLogEntries)
+        assertEquals(19, constrained.maxDomHandles)
+        assertEquals(3 * 1024 * 1024, constrained.maxResultBytes)
+        assertEquals(512 * 1024, constrained.maxResultStringBytes)
+
+        val callerRaisedButStillTighter = PluginExecutionLimits(
+            invocationInstructionCount = 200_000_000,
+            maxResultBytes = 6 * 1024 * 1024,
+            maxResultStringBytes = 5 * 1024 * 1024,
+        ).forReviewedShuYue()
+        assertEquals(200_000_000L, callerRaisedButStillTighter.invocationInstructionCount)
+        assertEquals(6 * 1024 * 1024, callerRaisedButStillTighter.maxResultBytes)
+        assertEquals(5 * 1024 * 1024, callerRaisedButStillTighter.maxResultStringBytes)
+
+        val capped = PluginExecutionLimits(
+            invocationInstructionCount = 600_000_000,
+            maxResultBytes = 32 * 1024 * 1024,
+            maxResultStringBytes = 24 * 1024 * 1024,
+        ).forReviewedShuYue()
+        assertEquals(500_000_000L, capped.invocationInstructionCount)
+        assertEquals(17 * 1024 * 1024, capped.maxResultBytes)
+        assertEquals(8 * 1024 * 1024, capped.maxResultStringBytes)
+    }
+
     @Test
     fun reviewedWenkuScriptsContainNoFixedWaitPrimitives() {
         val forbidden = Regex(
@@ -115,8 +233,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val environment = ScriptPluginEnvironment(
             network = PluginNetworkClient(
-                transport = PluginHttpTransport { error("No network request expected") },
+                transport = fixtureTransport { error("No network request expected") },
                 storage = storage,
+                hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
             ),
             storage = storage,
         )
@@ -173,8 +292,8 @@ class ProductionShuYueReviewedRuntimeV2Test {
               getPageList: function(chapter) {
                 return [{
                   index: 0,
-                  url: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0",
-                  imageUrl: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0"
+                  url: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0&X-Image-Ticket=komiic-ticket",
+                  imageUrl: "https://cdn.example/page.jpg#Referer=https%3A%2F%2Fmanga.example%2Fread%2F1&User-Agent=Page%20Agent%2F2.0&X-Image-Ticket=komiic-ticket"
                 }];
               }
             };
@@ -211,8 +330,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val environment = ScriptPluginEnvironment(
             network = PluginNetworkClient(
-                transport = PluginHttpTransport { error("No network request expected") },
+                transport = fixtureTransport { error("No network request expected") },
                 storage = storage,
+                hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
             ),
             storage = storage,
         )
@@ -250,6 +370,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             assertEquals("https://cdn.example/page.jpg", request.effectiveUri)
             assertEquals("https://manga.example/read/1", request.headerHints["Referer"])
             assertEquals("Page Agent/2.0", request.headerHints["User-Agent"])
+            assertEquals("komiic-ticket", request.headerHints["X-Image-Ticket"])
             assertEquals("image/avif,image/webp,*/*", request.headerHints["Accept"])
             assertFalse(request.headerHints.keys.any { it.equals("Cookie", ignoreCase = true) })
         } finally {
@@ -262,8 +383,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport(::fixtureResponse),
+            transport = fixtureTransport(::fixtureResponse),
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -321,10 +443,11 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport { request ->
+            transport = fixtureTransport { request ->
                 wenkuApiResponse(decodeRelayRequest(request))
             },
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -397,8 +520,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport(::fixtureResponse),
+            transport = fixtureTransport(::fixtureResponse),
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -463,10 +587,11 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport {
+            transport = fixtureTransport {
                 PluginHttpResponse(status = 200, body = ByteArray(0))
             },
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -580,8 +705,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport(::fixtureResponse),
+            transport = fixtureTransport(::fixtureResponse),
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -656,17 +782,24 @@ class ProductionShuYueReviewedRuntimeV2Test {
 
     @Test
     fun reviewedLargeTextUsesOneUseBoundedCursorStreamAndSupportsCancellation() = runTest {
-        val largeText = "界".repeat((4 * 1024 * 1024 / 3) + 17)
+        val firstPageText = "界".repeat(700_000)
+        val secondPageText = "界".repeat(700_000)
+        val largeText = "$firstPageText\n\n$secondPageText"
         val fixture = installedReviewedSource(
             packageId = "zh.biquge.tw",
             resourceName = "biquge-tw.js",
-            transport = PluginHttpTransport { request ->
+            transport = fixtureTransport { request ->
                 require(request.method == "GET")
-                require(request.url == "https://www.biquge.tw/book/123/456.html")
-                PluginHttpResponse(
-                    status = 200,
-                    body = "<div id=\"chaptercontent\">$largeText</div>".encodeToByteArray(),
-                )
+                val body = when (request.url) {
+                    "https://www.biquge.tw/book/123/456.html" ->
+                        "<div id=\"chaptercontent\">$firstPageText</div>" +
+                            "<a id=\"next_url\" href=\"/book/123/456_2.html\">下一頁</a>"
+                    "https://www.biquge.tw/book/123/456_2.html" ->
+                        "<div id=\"chaptercontent\">$secondPageText</div>"
+                    else -> error("Unexpected fixture URL ${request.url}")
+                }
+                assertTrue(body.encodeToByteArray().size < 4 * 1024 * 1024)
+                PluginHttpResponse(status = 200, body = body.encodeToByteArray())
             },
         )
 
@@ -678,6 +811,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val firstPlan = assertIs<TextPayloadSourceV2.ChunkedTextPayload>(firstPayload.source)
         assertEquals(64 * 1024, firstPlan.maxChunkBytes)
         assertTrue(firstPlan.maxTotalBytes > 4L * 1024L * 1024L)
+        assertTrue(firstPlan.maxTotalBytes <= 8L * 1024L * 1024L)
 
         val stream = fixture.source.openTextStream(firstPlan)
         val reconstructed = StringBuilder(largeText.length)
@@ -706,23 +840,21 @@ class ProductionShuYueReviewedRuntimeV2Test {
         cancelledStream.cancel()
         assertFailsWith<IllegalStateException> { cancelledStream.next(cancellablePlan.firstCursor) }
 
-        val activeStreams = List(8) {
-            val payload = assertIs<UnitContentPayload.ChunkedTextPayload>(
-                fixture.source.content(
-                    "https://www.biquge.tw/book/123.html",
-                    "https://www.biquge.tw/book/123/456.html",
-                ).representations.single(),
-            )
-            val plan = assertIs<TextPayloadSourceV2.ChunkedTextPayload>(payload.source)
-            fixture.source.openTextStream(plan)
-        }
+        val activePayload = assertIs<UnitContentPayload.ChunkedTextPayload>(
+            fixture.source.content(
+                "https://www.biquge.tw/book/123.html",
+                "https://www.biquge.tw/book/123/456.html",
+            ).representations.single(),
+        )
+        val activePlan = assertIs<TextPayloadSourceV2.ChunkedTextPayload>(activePayload.source)
+        val activeStream = fixture.source.openTextStream(activePlan)
         assertFailsWith<IllegalArgumentException> {
             fixture.source.content(
                 "https://www.biquge.tw/book/123.html",
                 "https://www.biquge.tw/book/123/456.html",
             )
         }
-        activeStreams.first().cancel()
+        activeStream.cancel()
         val afterRelease = assertIs<UnitContentPayload.ChunkedTextPayload>(
             fixture.source.content(
                 "https://www.biquge.tw/book/123.html",
@@ -732,7 +864,6 @@ class ProductionShuYueReviewedRuntimeV2Test {
         fixture.source.openTextStream(
             assertIs<TextPayloadSourceV2.ChunkedTextPayload>(afterRelease.source),
         ).cancel()
-        activeStreams.drop(1).forEach { it.cancel() }
 
         val unopened = assertIs<UnitContentPayload.ChunkedTextPayload>(
             fixture.source.content(
@@ -743,6 +874,43 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val unopenedPlan = assertIs<TextPayloadSourceV2.ChunkedTextPayload>(unopened.source)
         fixture.manager.close()
         assertFailsWith<IllegalStateException> { fixture.source.openTextStream(unopenedPlan) }
+    }
+
+    @Test
+    fun productionReviewedLargeTextFailsClosedAboveEightMiBAcrossBoundedPages() = runTest {
+        val pageText = "界".repeat(950_000)
+        val fixture = installedReviewedSource(
+            packageId = "zh.biquge.tw",
+            resourceName = "biquge-tw.js",
+            transport = fixtureTransport { request ->
+                require(request.method == "GET")
+                val page = when (request.url) {
+                    "https://www.biquge.tw/book/123/456.html" -> 1
+                    "https://www.biquge.tw/book/123/456_2.html" -> 2
+                    "https://www.biquge.tw/book/123/456_3.html" -> 3
+                    else -> error("Unexpected fixture URL ${request.url}")
+                }
+                val next = if (page < 3) {
+                    "<a id=\"next_url\" href=\"/book/123/456_${page + 1}.html\">下一頁</a>"
+                } else {
+                    ""
+                }
+                val body = "<div id=\"chaptercontent\">$pageText</div>$next"
+                assertTrue(body.encodeToByteArray().size < 4 * 1024 * 1024)
+                PluginHttpResponse(status = 200, body = body.encodeToByteArray())
+            },
+        )
+
+        try {
+            assertFailsWith<PluginResourceLimitException> {
+                fixture.source.content(
+                    "https://www.biquge.tw/book/123.html",
+                    "https://www.biquge.tw/book/123/456.html",
+                )
+            }
+        } finally {
+            fixture.manager.close()
+        }
     }
 
     @Test
@@ -762,6 +930,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
             BrowseOptionsV2(mapOf("option" to "rank:lastupdate")),
             page = 0,
         ).items.single()
+        assertTrue(requests.all { request ->
+            request.headers.keys.none { it.equals("Connection", ignoreCase = true) }
+        })
         assertEquals("https://www.wenku8.net/book/123.htm", publication.remoteId)
         assertEquals("https://img.wenku8.com/image/0/123/123s.jpg", publication.thumbnailUrl)
         assertEquals("Fixture Book", fixture.source.details(publication.remoteId).title)
@@ -1004,10 +1175,11 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
-            transport = PluginHttpTransport { request ->
+            transport = fixtureTransport { request ->
                 wenkuApiResponse(decodeRelayRequest(request))
             },
             storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
@@ -1179,7 +1351,11 @@ class ProductionShuYueReviewedRuntimeV2Test {
     ): InstalledReviewedSourceFixture {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
-        val network = PluginNetworkClient(transport = transport, storage = storage)
+        val network = PluginNetworkClient(
+            transport = fixtureTransport { request -> transport.execute(request) },
+            storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
+        )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
         )
@@ -1219,6 +1395,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             sourceKey = sourceKey,
             storage = storage,
             profile = profile,
+            approvals = approvals,
         )
     }
 
@@ -1233,6 +1410,17 @@ class ProductionShuYueReviewedRuntimeV2Test {
             assertEquals("password-ref", references.passwordReference)
             LegacyLoginCredentialsV2("alice", "secret")
         }
+
+    private fun fixtureTransport(
+        handler: suspend (PluginHttpRequest) -> PluginHttpResponse,
+    ): PluginHttpTransport = object : PluginHttpTransport {
+        override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = handler(request)
+
+        override suspend fun executeResolved(
+            request: PluginHttpRequest,
+            resolution: dev.shinsou.kmp.plugin.PluginHostResolution,
+        ): PluginHttpResponse = handler(request)
+    }
 
     private suspend fun assertStoredLoginAndCookie(
         fixture: InstalledReviewedSourceFixture,
@@ -1371,6 +1559,9 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     private companion object {
+        val FIXTURE_PUBLIC_HOST_RESOLVER: PluginHostResolver =
+            PluginHostResolver { listOf("93.184.216.34") }
+
         const val REVIEWED_ARTIFACT_ORIGIN: String = "https://raw.githubusercontent.com"
         const val REVIEWED_INDEX_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shuyue_plugin/refs/heads/main/index.json"
@@ -1385,13 +1576,14 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 }
 
-private data class InstalledReviewedSourceFixture(
-    val manager: PluginManager,
-    val source: HostExtensionSourceV2,
-    val sourceKey: SourceKey,
-    val storage: KeyValuePluginStorage,
-    val profile: ShuYueReviewedPluginProfileV2,
-)
+    private data class InstalledReviewedSourceFixture(
+        val manager: PluginManager,
+        val source: HostExtensionSourceV2,
+        val sourceKey: SourceKey,
+        val storage: KeyValuePluginStorage,
+        val profile: ShuYueReviewedPluginProfileV2,
+        val approvals: InMemoryShuYueExecutionApprovalsV2,
+    )
 
 private class CapturingScriptPluginRuntimeFactory(
     private val delegate: ScriptPluginRuntimeFactory = RhinoScriptPluginRuntimeFactory(),

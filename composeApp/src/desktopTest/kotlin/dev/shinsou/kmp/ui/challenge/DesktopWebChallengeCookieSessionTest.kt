@@ -1,12 +1,19 @@
 package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.ui.SourceWebChallengeCapability
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy
+import java.io.ByteArrayInputStream
+import java.io.EOFException
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -15,6 +22,32 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assume.assumeTrue
 
 class DesktopWebChallengeCookieSessionTest {
+    @Test
+    fun boundedIpcReaderAcceptsNormalLfAndCrLfFrames() {
+        val reader = BoundedUtf8LineReader(ByteArrayInputStream("first\nsecond\r\n".encodeToByteArray()))
+
+        assertEquals("first", reader.readLine(16))
+        assertEquals("second", reader.readLine(16))
+        assertNull(reader.readLine(16))
+    }
+
+    @Test
+    fun boundedIpcReaderRejectsOverlongFrameBeforeNewline() {
+        val reader = BoundedUtf8LineReader(ByteArrayInputStream("12345".encodeToByteArray()))
+
+        assertFailsWith<IOException> { reader.readLine(4) }
+    }
+
+    @Test
+    fun boundedIpcReaderRejectsPartialEofAndInvalidUtf8() {
+        assertFailsWith<EOFException> {
+            BoundedUtf8LineReader(ByteArrayInputStream("partial".encodeToByteArray())).readLine(16)
+        }
+        assertFailsWith<IOException> {
+            BoundedUtf8LineReader(ByteArrayInputStream(byteArrayOf(0xc3.toByte(), 0x28, 0x0a))).readLine(16)
+        }
+    }
+
     @Test
     fun packagedWkWebViewHelperIsPresentAndNative() {
         assumeTrue(
@@ -54,6 +87,7 @@ class DesktopWebChallengeCookieSessionTest {
         val command = webChallengeProcessCommand(helper).joinToString(" ")
         val launch = webChallengeLaunchLine(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://example.test/login.php",
@@ -74,12 +108,14 @@ class DesktopWebChallengeCookieSessionTest {
     fun incompleteCredentialsAreOmittedFromNativeLaunch() {
         listOf(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://example.test/login.php",
                 userAgent = "fixture-agent",
             ),
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://example.test/login.php",
@@ -98,6 +134,7 @@ class DesktopWebChallengeCookieSessionTest {
     @Test
     fun challengeRequestToStringRedactsTransportAndSecrets() {
         val request = SourceWebChallengeRequest(
+            capability = SourceWebChallengeCapability(),
             sourceId = 1L,
             sourceName = "Fixture",
             url = "https://secret.example.test/login.php",
@@ -125,6 +162,7 @@ class DesktopWebChallengeCookieSessionTest {
         val keptSession = "keep-session-value"
         val line = webChallengeLaunchLine(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://www.bilimanga.net/login.php",
@@ -146,6 +184,7 @@ class DesktopWebChallengeCookieSessionTest {
     fun nativeLaunchProtocolEscapesSourceTextAsOneJsonLine() {
         val line = webChallengeLaunchLine(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture \"quoted\"\nsource",
                 url = "https://www.bilimanga.net/login.php",
@@ -163,6 +202,7 @@ class DesktopWebChallengeCookieSessionTest {
     fun nativeLaunchProtocolIncludesCookieDefaultsRequiredBySwiftCodable() {
         val launch = webChallengeLaunchLine(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://example.test/login",
@@ -183,6 +223,7 @@ class DesktopWebChallengeCookieSessionTest {
     fun nativeLaunchIncludesOnlyDeclaredStorageKeyNamesAndNoValues() {
         val line = webChallengeLaunchLine(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://example.test/",
@@ -195,6 +236,33 @@ class DesktopWebChallengeCookieSessionTest {
 
         assertEquals(listOf("token", "nonce"), keys)
         assertFalse(line.contains("member-token"))
+    }
+
+    @Test
+    fun nativeLaunchCarriesReviewedOriginCapability() {
+        val launch = webChallengeLaunchLine(
+            SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
+                sourceId = 1L,
+                sourceName = "Reviewed",
+                url = "https://example.test/challenge",
+                userAgent = "fixture-agent",
+                embeddedPolicy = WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
+                allowedNavigationOrigins = setOf("https://example.test"),
+                allowedSubresourceOrigins = setOf("https://cdn.example.test", "https://example.test"),
+            ),
+        )
+        val payload = Json.parseToJsonElement(launch).jsonObject
+
+        assertEquals("ALLOW_REVIEWED_ORIGINS", payload.getValue("embeddedPolicy").jsonPrimitive.content)
+        assertEquals(
+            listOf("https://example.test"),
+            payload.getValue("allowedNavigationOrigins").jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(
+            listOf("https://cdn.example.test", "https://example.test"),
+            payload.getValue("allowedSubresourceOrigins").jsonArray.map { it.jsonPrimitive.content },
+        )
     }
 
     @Test
@@ -227,6 +295,28 @@ class DesktopWebChallengeCookieSessionTest {
         assertTrue(sourceText.contains("type: \"evaluated\""))
         assertTrue(sourceText.contains("id: id"), "Evaluation replies must correlate with their command ID")
         assertTrue(sourceText.contains("script.utf8.count <= 4_194_304"))
+        assertTrue(sourceText.contains("BoundedLineReader"))
+        assertTrue(sourceText.contains("helperEventMaxBytes"))
+        assertFalse(sourceText.contains("readLine(strippingNewline:"))
+    }
+
+    @Test
+    fun desktopHelperReadersUseBoundedFramesForStdoutAndStderr() {
+        val challengeSource = Path.of(
+            "src/desktopMain/kotlin/dev/shinsou/kmp/ui/challenge/PlatformWebChallengeView.desktop.kt",
+        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("composeApp").resolve(local) }
+        val sessionSource = Path.of(
+            "src/desktopMain/kotlin/dev/shinsou/kmp/plugin/DesktopPluginBrowserSessionTransport.kt",
+        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("composeApp").resolve(local) }
+
+        listOf(Files.readString(challengeSource), Files.readString(sessionSource)).forEach { source ->
+            assertTrue(source.contains("BoundedUtf8LineReader"))
+            assertFalse(source.contains("BufferedReader"))
+            assertFalse(source.contains("useLines"))
+        }
+        val sessionText = Files.readString(sessionSource)
+        assertTrue(sessionText.contains("Native browser-session request failed"))
+        assertFalse(sessionText.contains("event.message?.takeIf"))
     }
 
     @Test
@@ -246,6 +336,13 @@ class DesktopWebChallengeCookieSessionTest {
         assertTrue(sourceText.contains("didSubmitAutomaticLogin"))
         assertTrue(sourceText.contains("MutationObserver"))
         assertFalse(sourceText.contains("evaluateJavaScript(launch.password"))
+        assertTrue(sourceText.contains("WKContentRuleListStore.default()"))
+        assertTrue(sourceText.contains("installContentRulesAndStart()"))
+        assertTrue(sourceText.contains("launch.mode == \"browserSession\""))
+        assertTrue(sourceText.contains("loadHTMLString"))
+        assertTrue(sourceText.contains("allowedNavigationOrigins.contains"))
+        assertTrue(sourceText.contains("allowedSubresourceOrigins"))
+        assertTrue(sourceText.contains("navigationOrigins.isSubset(of: subresourceOrigins)"))
     }
 
     @Test
@@ -290,5 +387,19 @@ class DesktopWebChallengeCookieSessionTest {
                 IllegalStateException("failed https://example.test/{secret}"),
             ),
         )
+    }
+
+    @Test
+    fun challengeUiDoesNotProjectHelperControlledDiagnostics() {
+        val source = Path.of(
+            "src/desktopMain/kotlin/dev/shinsou/kmp/ui/challenge/PlatformWebChallengeView.desktop.kt",
+        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("composeApp").resolve(local) }
+            .let { Files.readString(it) }
+
+        assertTrue(source.contains("dispatchError(\"The native browser could not be initialized.\")"))
+        assertTrue(source.contains("dispatchError(\"The native browser stopped unexpectedly.\")"))
+        assertTrue(source.contains("\"error\" -> dispatchError(\"The native browser encountered an error.\")"))
+        assertFalse(source.contains("stopped unexpectedly\$suffix"))
+        assertFalse(source.contains("event.message?.let(::sanitizeDiagnosticLine)"))
     }
 }

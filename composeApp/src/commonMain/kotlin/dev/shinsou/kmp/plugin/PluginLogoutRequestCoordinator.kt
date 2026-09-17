@@ -18,8 +18,6 @@ public data class PluginLogoutConfirmation(
 )
 
 internal object ExactPluginSessionOwnership {
-    fun ownerKey(storageId: Long): String = "plugin.events.sessionOwner.$storageId"
-
     fun targetKey(target: ExactPluginSourceTarget): String {
         val artifact = target.artifactIdentity
         val source = target.sourceKey
@@ -31,6 +29,10 @@ internal object ExactPluginSessionOwnership {
             source.canonicalId,
         ).joinToString("|") { "${it.length}:$it" }
     }
+
+    /** Owner records are keyed by the complete immutable artifact/source identity. */
+    fun ownerKey(target: ExactPluginSourceTarget): String =
+        "plugin.events.sessionOwner.v2.${targetKey(target)}"
 
     fun authorizesCleanup(storedOwner: String?, target: ExactPluginSourceTarget): Boolean =
         storedOwner != null && storedOwner == targetKey(target)

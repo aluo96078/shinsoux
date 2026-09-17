@@ -2,19 +2,114 @@ package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.plugin.PluginCookie
 import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.ui.SourceWebChallengeCapability
 import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy
 import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SourceWebChallengeCookiesTest {
     @Test
+    fun embeddedChallengeCapabilityDefaultsClosed() {
+        val request = SourceWebChallengeRequest(
+            capability = SourceWebChallengeCapability(),
+            sourceId = 1L,
+            sourceName = "Generic",
+            url = "https://example.test/challenge",
+            userAgent = "fixture-agent",
+        )
+
+        assertFalse(request.allowsEmbeddedWebChallenge())
+        assertFalse(request.allowsWebChallengeNavigation(request.url))
+        assertFalse(request.allowsWebChallengeSubresource(request.url))
+        assertNull(request.appleWebChallengeContentRuleList())
+    }
+
+    @Test
+    fun reviewedChallengeUsesSeparateExactOriginGrants() {
+        val request = reviewedChallengeRequest()
+
+        assertTrue(request.allowsEmbeddedWebChallenge())
+        assertTrue(request.allowsWebChallengeNavigation("https://example.test/account/login"))
+        assertFalse(request.allowsWebChallengeNavigation("https://cdn.example.test/redirect"))
+        assertFalse(request.allowsWebChallengeNavigation("https://example.test.evil.test/"))
+        assertTrue(request.allowsWebChallengeSubresource("https://cdn.example.test/challenge.js"))
+        assertFalse(request.allowsWebChallengeSubresource("https://127.0.0.1/admin"))
+        assertFalse(request.allowsWebChallengeSubresource("https://metadata.google.internal/"))
+        assertTrue(request.allowsWebChallengeInternalResource("about:blank", isMainFrame = false))
+        assertTrue(request.allowsWebChallengeInternalResource("about:srcdoc", isMainFrame = false))
+        assertTrue(request.allowsWebChallengeInternalResource("blob:https://example.test/id", isMainFrame = false))
+        assertTrue(request.allowsWebChallengeInternalResource("data:text/plain,fixture", isMainFrame = false))
+        assertFalse(request.allowsWebChallengeInternalResource("about:blank", isMainFrame = true))
+        assertFalse(request.allowsWebChallengeInternalResource("blob:https://evil.test/id", isMainFrame = false))
+        assertFalse(request.allowsWebChallengeInternalResource("file:///etc/passwd", isMainFrame = false))
+        assertFalse(request.allowsWebChallengeInternalResource("content://settings/system", isMainFrame = false))
+        assertFalse(request.allowsWebChallengeInternalResource("javascript:alert(1)", isMainFrame = false))
+    }
+
+    @Test
+    fun captureRejectsAnAllowedLoginOriginUntilItReturnsToTheSource() {
+        val request = reviewedChallengeRequest(
+            navigationOrigins = setOf("https://example.test", "https://cdn.example.test"),
+        )
+        assertTrue(request.allowsWebChallengeNavigation("https://cdn.example.test/login"))
+        assertFalse(request.allowsWebChallengeCapture("https://cdn.example.test/login"))
+        assertFalse(request.allowsWebChallengeCapture(null))
+        assertFalse(request.allowsWebChallengeCapture("https://example.test.evil.test/"))
+        assertTrue(request.allowsWebChallengeCapture("https://example.test/account"))
+    }
+
+    @Test
+    fun reviewedChallengeRejectsUncanonicalPrivateOrIncompleteGrants() {
+        assertFailsWith<IllegalArgumentException> {
+            reviewedChallengeRequest(navigationOrigins = setOf("https://EXAMPLE.test"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            reviewedChallengeRequest(navigationOrigins = setOf("https://example.test/path"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            reviewedChallengeRequest(
+                url = "https://127.0.0.1/challenge",
+                navigationOrigins = setOf("https://127.0.0.1"),
+                subresourceOrigins = setOf("https://127.0.0.1"),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            reviewedChallengeRequest(subresourceOrigins = setOf("https://cdn.example.test"))
+        }
+    }
+
+    @Test
+    fun challengeUrlMayContainPathQueryAndFragmentWithoutWideningOriginDeclaration() {
+        val request = reviewedChallengeRequest(
+            url = "https://example.test/login/path?return=%2Freader#form",
+        )
+
+        assertTrue(request.allowsEmbeddedWebChallenge())
+        assertTrue(request.allowsWebChallengeNavigation(request.url))
+    }
+
+    @Test
+    fun appleContentRulesBlockNetworkByDefaultThenAllowOnlyReviewedOrigins() {
+        val rules = reviewedChallengeRequest().appleWebChallengeContentRuleList().orEmpty()
+
+        assertTrue(rules.contains("^(?:https?|wss?|ftp)://"))
+        assertTrue(rules.contains("^https://example\\\\.test(?::443)?(?:[/?#]|$)"))
+        assertTrue(rules.contains("^https://cdn\\\\.example\\\\.test(?::443)?(?:[/?#]|$)"))
+        assertFalse(rules.contains("127.0.0.1"))
+        assertFalse(rules.contains("metadata.google.internal"))
+    }
+
+    @Test
     fun requiredChallengeCookieIsNeverSeededIntoAnIsolatedBrowser() {
         val seeded = webChallengeSeedCookies(
             SourceWebChallengeRequest(
+                capability = SourceWebChallengeCapability(),
                 sourceId = 1L,
                 sourceName = "Fixture",
                 url = "https://www.bilimanga.net/login.php",
@@ -157,8 +252,23 @@ class SourceWebChallengeCookiesTest {
     }
 
     @Test
+    fun browserStorageCaptureIsBoundedBeforeJsonDecode() {
+        val oversizedWireValue = "x".repeat(MAX_WEB_CHALLENGE_STORAGE_CAPTURE_BYTES + 1)
+
+        val captured = decodeWebChallengeLocalStorageCapture(oversizedWireValue, listOf("token"))
+        val script = webChallengeLocalStorageCaptureScript(reviewedChallengeRequest())
+
+        assertTrue(captured.values.isEmpty())
+        assertTrue(captured.error.orEmpty().contains("could not be read"))
+        assertTrue(script.contains("const maxValueBytes = $MAX_WEB_CHALLENGE_STORAGE_VALUE_BYTES"))
+        assertTrue(script.contains("const maxTotalBytes = $MAX_WEB_CHALLENGE_STORAGE_TOTAL_BYTES"))
+        assertTrue(script.contains("boundedUtf8Length"))
+    }
+
+    @Test
     fun automaticLoginAndStorageScriptsDoNotExposeValuesThroughRequestToString() {
         val request = SourceWebChallengeRequest(
+            capability = SourceWebChallengeCapability(),
             sourceId = 1L,
             sourceName = "Fixture",
             url = "https://example.test/",
@@ -177,4 +287,19 @@ class SourceWebChallengeCookiesTest {
         assertFalse(request.toString().contains("fixture-password"))
         assertFalse(request.toString().contains("token"))
     }
+
+    private fun reviewedChallengeRequest(
+        url: String = "https://example.test/challenge",
+        navigationOrigins: Set<String> = setOf("https://example.test"),
+        subresourceOrigins: Set<String> = setOf("https://example.test", "https://cdn.example.test"),
+    ) = SourceWebChallengeRequest(
+        capability = SourceWebChallengeCapability(),
+        sourceId = 1L,
+        sourceName = "Reviewed",
+        url = url,
+        userAgent = "fixture-agent",
+        embeddedPolicy = WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
+        allowedNavigationOrigins = navigationOrigins,
+        allowedSubresourceOrigins = subresourceOrigins,
+    )
 }

@@ -19,6 +19,7 @@ import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
 import dev.shinsou.kmp.plugin.v2.PagedResultV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import dev.shinsou.kmp.plugin.isBlockedPluginAddress
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
@@ -31,17 +32,76 @@ import dev.shinsou.kmp.sync.v2.EphemeralSyncPayload
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
+import io.ktor.http.Url
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 private val emptySourceLoginRequests = MutableStateFlow<List<SourceLoginRequest>>(emptyList())
 private val emptySourceRefreshInvalidations = MutableStateFlow<Map<SourceKey, Long>>(emptyMap())
 private val emptyLogoutConfirmations = MutableStateFlow<List<PluginLogoutConfirmation>>(emptyList())
+
+/**
+ * Host content-plane bridge used by image composables. Plugin-controlled URLs are classified by
+ * their exact source before Coil is allowed to see a model; a failed load stays a placeholder.
+ */
+class PluginImageLoader internal constructor(
+    private val callbacks: BrowseCallbacks?,
+    maxConcurrentLoads: Int = DEFAULT_PLUGIN_IMAGE_CONCURRENCY,
+) {
+    private val permits = Semaphore(maxConcurrentLoads.also {
+        require(it > 0) { "Plugin image concurrency must be positive" }
+    })
+
+    fun load(
+        sourceId: Long,
+        url: String?,
+        headers: Map<String, String> = emptyMap(),
+    ): (suspend () -> ByteArray?)? = url
+        ?.takeIf(String::isNotBlank)
+        ?.let { value ->
+            when {
+                // Source zero is normally app-owned local content. A remote URL without an exact
+                // extension binding is ambiguous, however, so keep it inert instead of handing
+                // a beta-era/orphaned plugin cover directly to Coil.
+                sourceId == 0L && isRemoteImageUrl(value) -> ({ null })
+                sourceId == 0L -> null
+                // Every other persisted legacy source is extension-controlled even while its
+                // runtime is unloaded; a failed host fetch must remain a placeholder.
+                else -> ({ permits.withPermit {
+                    withContext(Dispatchers.Default) { callbacks?.loadPluginThumbnail(sourceId, value, headers) }
+                } })
+            }
+        }
+
+    fun load(
+        sourceKey: SourceKey,
+        url: String?,
+        headers: Map<String, String> = emptyMap(),
+    ): (suspend () -> ByteArray?)? = url
+        ?.takeIf(String::isNotBlank)
+        ?.let { value -> { permits.withPermit {
+            withContext(Dispatchers.Default) { callbacks?.loadPluginThumbnail(sourceKey, value, headers) }
+        } } }
+
+    companion object {
+        val None = PluginImageLoader(null)
+    }
+}
+
+/** Bounds decoded cover bytes and sockets retained by a fast-scrolling catalogue. */
+internal const val DEFAULT_PLUGIN_IMAGE_CONCURRENCY: Int = 6
+
+private fun isRemoteImageUrl(value: String): Boolean =
+    value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true)
 
 /**
  * Platform and extension operations used by the common UI.
@@ -394,6 +454,16 @@ fun readerVolumeKeyAction(
     }
 }
 
+/**
+ * iOS applies a real system volume change unless this returns true. Consume the press whenever
+ * a reader is open and volume-key paging is live, even if the current page cannot move.
+ */
+fun readerVolumeKeyShouldBeConsumed(
+    readerOpen: Boolean,
+    volumeKeysEnabled: Boolean,
+    monitoringEnabled: Boolean,
+): Boolean = readerOpen && volumeKeysEnabled && monitoringEnabled
+
 internal fun readerMayCrossChapterBoundary(
     proseReader: Boolean,
     pageCountMeasured: Boolean,
@@ -598,6 +668,8 @@ data class ReaderChapter(
 data class ReaderPage(
     val index: Int,
     val imageUrl: String = "",
+    /** Host-fetched bytes for plugin-controlled remote content; Coil never sees the remote URL. */
+    val imageBytes: ByteArray? = null,
     val headers: Map<String, String> = emptyMap(),
     val local: Boolean = false,
     val imageTransform: ReaderImageTransform? = null,
@@ -704,6 +776,27 @@ interface BrowseCallbacks {
         sourceId: Long,
         page: Int = 1,
     ): BrowsePage = browseSource(sourceId = sourceId, page = page)
+
+    /** True when [sourceId] belongs to an executable plugin source. */
+    fun isPluginSource(sourceId: Long): Boolean = false
+
+    fun isPluginSource(sourceKey: SourceKey): Boolean = sourceKey.legacyLongId?.let(::isPluginSource) == true
+
+    /**
+     * Fetches a plugin-owned image through the host content plane. Implementations must return
+     * bounded bytes only; UI image loaders must never receive a plugin-controlled remote URL.
+     */
+    suspend fun loadPluginThumbnail(
+        sourceId: Long,
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+    ): ByteArray? = null
+
+    suspend fun loadPluginThumbnail(
+        sourceKey: SourceKey,
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+    ): ByteArray? = sourceKey.legacyLongId?.let { loadPluginThumbnail(it, url, headers) }
 
     /** Exact, capability-gated v2 source; opaque ids are never projected into legacy Long DTOs. */
     suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? = null
@@ -838,6 +931,7 @@ interface BrowseCallbacks {
 
     suspend fun approvePluginEventGrantReview(
         extensionId: String,
+        expectedReview: PluginEventGrantReview,
         permissions: Set<PluginHostPermission>,
     ) = Unit
 
@@ -894,16 +988,24 @@ interface BrowseCallbacks {
     /** Persists one isolated browser session and its browser-bound User-Agent together. */
     suspend fun importSourceWebChallengeSession(
         sourceId: Long,
+        capability: SourceWebChallengeCapability,
         cookies: List<SourceCookie>,
         userAgent: String,
         localStorage: Map<String, String> = emptyMap(),
-    ) {
-        cookies.forEach { cookie -> setSourceCookie(sourceId, cookie) }
-    }
+    ) = Unit
+
+    /** Invalidates a browser capability when its isolated browser is dismissed without import. */
+    suspend fun cancelSourceWebChallenge(capability: SourceWebChallengeCapability) = Unit
 
     suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String) = Unit
 
     suspend fun clearSourceCookies(sourceId: Long) = Unit
+
+    /**
+     * Reports whether the exact live source artifact may start a host-reviewed Web challenge.
+     * This is an availability check only: it must not issue a capability or read source secrets.
+     */
+    suspend fun isSourceWebChallengeAvailable(sourceId: Long): Boolean = false
 
     /**
      * Builds the browser challenge request with the exact source URL and source-isolated cookies.
@@ -1045,7 +1147,28 @@ data class SourceCookie(
     val hostOnly: Boolean = !domain.startsWith('.'),
 )
 
+/**
+ * Host-issued capability for an embedded browser challenge. A source declaration alone must
+ * never enable this mode: only host-reviewed, immutable origin metadata may select
+ * [ALLOW_REVIEWED_ORIGINS].
+ */
+enum class WebChallengeEmbeddedPolicy {
+    DENY,
+    ALLOW_REVIEWED_ORIGINS,
+}
+
+/**
+ * Process-local, one-shot authority returned by the host with a browser challenge request.
+ *
+ * It intentionally exposes no identifier or serializable value. Equality remains object identity,
+ * and the internal constructor prevents extensions or remote data from minting import authority.
+ */
+class SourceWebChallengeCapability internal constructor() {
+    override fun toString(): String = "SourceWebChallengeCapability(opaque)"
+}
+
 data class SourceWebChallengeRequest(
+    val capability: SourceWebChallengeCapability,
     val sourceId: Long,
     val sourceName: String,
     val url: String,
@@ -1060,15 +1183,78 @@ data class SourceWebChallengeRequest(
     /** Credentials are supplied only for an explicit, source-scoped browser login request. */
     val username: String? = null,
     val password: String? = null,
+    /** Defaults closed so older/generic request producers cannot silently gain an embedded WebView. */
+    val embeddedPolicy: WebChallengeEmbeddedPolicy = WebChallengeEmbeddedPolicy.DENY,
+    /** Canonical HTTPS origins to which a top-level document may navigate. */
+    val allowedNavigationOrigins: Set<String> = emptySet(),
+    /** Canonical HTTPS origins from which frames, scripts, XHR/fetch, images, and other resources may load. */
+    val allowedSubresourceOrigins: Set<String> = emptySet(),
 ) {
+    init {
+        require(allowedNavigationOrigins.size <= MAX_WEB_CHALLENGE_NAVIGATION_ORIGINS) {
+            "Too many Web challenge navigation origins"
+        }
+        require(allowedSubresourceOrigins.size <= MAX_WEB_CHALLENGE_SUBRESOURCE_ORIGINS) {
+            "Too many Web challenge subresource origins"
+        }
+        require(allowedNavigationOrigins.all(::isCanonicalWebChallengeOrigin)) {
+            "Web challenge navigation origins must be canonical HTTPS origins"
+        }
+        require(allowedSubresourceOrigins.all(::isCanonicalWebChallengeOrigin)) {
+            "Web challenge subresource origins must be canonical HTTPS origins"
+        }
+        when (embeddedPolicy) {
+            WebChallengeEmbeddedPolicy.DENY -> require(
+                allowedNavigationOrigins.isEmpty() && allowedSubresourceOrigins.isEmpty(),
+            ) { "A denied Web challenge cannot carry embedded-browser origin grants" }
+
+            WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS -> {
+                require(allowedNavigationOrigins.isNotEmpty()) {
+                    "An embedded Web challenge needs a reviewed navigation origin"
+                }
+                require(allowedNavigationOrigins.all(allowedSubresourceOrigins::contains)) {
+                    "Web challenge navigation origins must also be allowed as subresource origins"
+                }
+                val requestOrigin = canonicalWebChallengeOrigin(url)
+                require(requestOrigin != null && requestOrigin in allowedNavigationOrigins) {
+                    "The Web challenge URL must use a reviewed navigation origin"
+                }
+            }
+        }
+    }
+
     /** Prevent accidental logging of URLs, cookies, browser fingerprints, or credentials. */
     override fun toString(): String =
         "SourceWebChallengeRequest(sourceId=$sourceId, sourceName=$sourceName, " +
             "cookieCount=${cookies.size}, requiresChallengeCookie=${requiredCookieName != null}, " +
             "localStorageKeyCount=${localStorageKeys.size}, " +
             "requiredLocalStorageKeyCount=${requiredLocalStorageKeys.size}, " +
+            "embeddedPolicy=$embeddedPolicy, navigationOriginCount=${allowedNavigationOrigins.size}, " +
+            "subresourceOriginCount=${allowedSubresourceOrigins.size}, " +
             "hasCredentials=${!username.isNullOrBlank() && !password.isNullOrEmpty()})"
 }
+
+private fun isCanonicalWebChallengeOrigin(value: String): Boolean =
+    runCatching {
+        val parsed = Url(value)
+        require(parsed.encodedPath in setOf("", "/") && parsed.parameters.isEmpty() && parsed.fragment.isEmpty())
+        canonicalWebChallengeOrigin(value) == value
+    }.getOrDefault(false)
+
+/** Derives an exact origin from an arbitrary HTTPS challenge URL, including paths and queries. */
+private fun canonicalWebChallengeOrigin(value: String): String? = runCatching {
+    val parsed = Url(value)
+    require(parsed.protocol.name.equals("https", ignoreCase = true) && parsed.host.isNotBlank())
+    require(parsed.user.isNullOrEmpty() && parsed.password.isNullOrEmpty())
+    require(!isBlockedPluginAddress(parsed.host))
+    buildString {
+        append("https://").append(parsed.host.lowercase().trimEnd('.'))
+        if (parsed.port != 443) append(':').append(parsed.port)
+    }
+}.getOrNull()
+
+private const val MAX_WEB_CHALLENGE_NAVIGATION_ORIGINS = 8
+private const val MAX_WEB_CHALLENGE_SUBRESOURCE_ORIGINS = 32
 
 data class SourcePreference(
     val key: String,

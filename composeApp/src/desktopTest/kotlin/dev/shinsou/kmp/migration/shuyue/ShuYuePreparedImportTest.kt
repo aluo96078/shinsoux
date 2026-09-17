@@ -17,6 +17,10 @@ class ShuYuePreparedImportTest {
 
         assertTrue(result.accepted)
         assertEquals(3L, prepared.preview.counts.books)
+        assertEquals(
+            "https://example.test/covers/remote-1.jpg",
+            prepared.preview.bookSummaries.single { it.id == "remote-1" }.coverImage,
+        )
         assertEquals(setOf("example-source"), prepared.availableCredentialSourceIds())
         assertEquals(setOf("example-source"), prepared.availableCookieSourceIds())
         val rendered = "$result $prepared"

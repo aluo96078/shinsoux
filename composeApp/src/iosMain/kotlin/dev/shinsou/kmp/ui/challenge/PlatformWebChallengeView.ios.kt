@@ -30,8 +30,11 @@ import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
+import platform.WebKit.WKContentRuleListStore
+import platform.WebKit.WKUIDelegateProtocol
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
+import platform.WebKit.WKWindowFeatures
 import platform.WebKit.WKWebsiteDataStore
 import platform.darwin.NSObject
 
@@ -61,6 +64,7 @@ internal actual fun PlatformWebChallengeView(
         }
         val challengeState = IosChallengeState(webView)
         val delegate = IosChallengeNavigationDelegate(
+            request = request,
             onLoaded = { loadedWebView ->
                 currentPageLoaded.value.invoke()
                 automaticWebChallengeLoginScript(request)?.let { script ->
@@ -71,6 +75,7 @@ internal actual fun PlatformWebChallengeView(
         )
         challengeState.delegate = delegate
         webView.navigationDelegate = delegate
+        webView.UIDelegate = delegate
         challengeState
     }
 
@@ -81,7 +86,9 @@ internal actual fun PlatformWebChallengeView(
     LaunchedEffect(state, captureRequest) {
         if (captureRequest > 0) {
             state.capture(request.url) { cookies ->
+                if (!state.isActive()) return@capture
                 state.webView.evaluateJavaScript(webChallengeLocalStorageCaptureScript(request)) { encoded, _ ->
+                    if (!state.isActive()) return@evaluateJavaScript
                     val storage = decodeWebChallengeLocalStorageCapture(
                         encoded as? String,
                         request.localStorageKeys,
@@ -90,13 +97,16 @@ internal actual fun PlatformWebChallengeView(
                         currentError.value.invoke(storage.error)
                     } else {
                         state.webView.evaluateJavaScript("navigator.userAgent") { value, _ ->
-                            currentSessionCaptured.value.invoke(
-                                WebChallengeCapture(
-                                    cookies = cookies,
-                                    userAgent = value as? String ?: "",
-                                    localStorage = storage.values,
-                                ),
-                            )
+                            if (state.isActive()) {
+                                currentSessionCaptured.value.invoke(
+                                    WebChallengeCapture(
+                                        capability = request.capability,
+                                        cookies = cookies,
+                                        userAgent = value as? String ?: "",
+                                        localStorage = storage.values,
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -108,9 +118,8 @@ internal actual fun PlatformWebChallengeView(
         factory = { state.webView },
         modifier = modifier,
         update = {},
-        onRelease = { released ->
-            released.stopLoading()
-            released.navigationDelegate = null
+        onRelease = {
+            state.release()
         },
         properties = UIKitInteropProperties(
             // Login controls, Cloudflare widgets, and scrolling must receive UIKit touches
@@ -126,34 +135,76 @@ internal actual fun PlatformWebChallengeView(
 @OptIn(ExperimentalForeignApi::class)
 private class IosChallengeState(val webView: WKWebView) {
     var delegate: IosChallengeNavigationDelegate? = null
+    private var released = false
 
     fun load(request: SourceWebChallengeRequest, onError: (String) -> Unit) {
+        if (!request.allowsEmbeddedWebChallenge()) {
+            onError("Embedded browser access is not authorized for this source.")
+            return
+        }
         val url = NSURL.URLWithString(request.url)
         if (url == null) {
             onError("The source URL is invalid.")
             return
         }
-        val cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-        val nativeCookies = webChallengeSeedCookies(request)
-            .mapNotNull(SourceCookie::toNativeCookie)
-        fun open() {
-            webView.loadRequest(NSURLRequest.requestWithURL(url))
-        }
-        if (nativeCookies.isEmpty()) {
-            open()
+        val encodedRules = request.appleWebChallengeContentRuleList()
+        if (encodedRules == null) {
+            onError("The reviewed browser network policy is invalid.")
             return
         }
-        var pending = nativeCookies.size
-        nativeCookies.forEach { cookie ->
-            cookieStore.setCookie(cookie) {
-                pending -= 1
-                if (pending == 0) open()
+        val ruleIdentifier = "dev.aluo.shinsoux.web-challenge.${encodedRules.hashCode()}"
+        val ruleStore = WKContentRuleListStore.defaultStore()
+        if (ruleStore == null) {
+            onError("The isolated browser network policy is unavailable.")
+            return
+        }
+        ruleStore.compileContentRuleListForIdentifier(
+            ruleIdentifier,
+            encodedRules,
+        ) { ruleList, ruleError ->
+            if (released) return@compileContentRuleListForIdentifier
+            if (ruleList == null || ruleError != null) {
+                onError("The isolated browser network policy could not be installed.")
+                return@compileContentRuleListForIdentifier
+            }
+            webView.configuration.userContentController.addContentRuleList(ruleList)
+            val cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+            val nativeCookies = webChallengeSeedCookies(request)
+                .mapNotNull(SourceCookie::toNativeCookie)
+            fun open() {
+                if (released) return
+                webView.loadRequest(NSURLRequest.requestWithURL(url))
+            }
+            if (nativeCookies.isEmpty()) {
+                open()
+                return@compileContentRuleListForIdentifier
+            }
+            var pending = nativeCookies.size
+            nativeCookies.forEach { cookie ->
+                cookieStore.setCookie(cookie) {
+                    if (released) return@setCookie
+                    pending -= 1
+                    if (pending == 0) open()
+                }
             }
         }
     }
 
+    fun release() {
+        released = true
+        webView.stopLoading()
+        delegate?.release()
+        webView.navigationDelegate = null
+        webView.UIDelegate = null
+        delegate = null
+    }
+
+    fun isActive(): Boolean = !released
+
     fun capture(requestUrl: String, onCaptured: (List<SourceCookie>) -> Unit) {
+        if (released) return
         webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { values ->
+            if (released) return@getAllCookies
             val cookies = values.orEmpty().filterIsInstance<NSHTTPCookie>().map { it.toSourceCookie() }
             onCaptured(normalizeWebChallengeCookies(requestUrl, cookies))
         }
@@ -162,21 +213,32 @@ private class IosChallengeState(val webView: WKWebView) {
 
 @OptIn(ExperimentalForeignApi::class)
 private class IosChallengeNavigationDelegate(
+    private val request: SourceWebChallengeRequest,
     private val onLoaded: (WKWebView) -> Unit,
     private val onError: (String) -> Unit,
-) : NSObject(), WKNavigationDelegateProtocol {
+) : NSObject(), WKNavigationDelegateProtocol, WKUIDelegateProtocol {
+    private var released: Boolean = false
+
+    fun release() {
+        released = true
+    }
+
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
-        onLoaded(webView)
+        if (!released) onLoaded(webView)
     }
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFailNavigation: WKNavigation?, withError: NSError) {
-        onError(withError.localizedDescription)
+        // NSError text may include the request URL and other site/session details. Do not expose
+        // native diagnostics across the challenge UI boundary.
+        if (!released) onError("The isolated browser could not load the source page safely.")
     }
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFailProvisionalNavigation: WKNavigation?, withError: NSError) {
-        onError(withError.localizedDescription)
+        if (!released) {
+            onError("The isolated browser could not establish a safe connection to the source page.")
+        }
     }
 
     override fun webView(
@@ -184,13 +246,42 @@ private class IosChallengeNavigationDelegate(
         decidePolicyForNavigationAction: WKNavigationAction,
         decisionHandler: (platform.WebKit.WKNavigationActionPolicy) -> Unit,
     ) {
+        if (released) {
+            decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+            return
+        }
+        val target = decidePolicyForNavigationAction.request.URL?.absoluteString
+        val mainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame != false
         val scheme = decidePolicyForNavigationAction.request.URL?.scheme?.lowercase()
-        if (scheme == "http" || scheme == "https") {
+        val allowed = when {
+            mainFrame -> request.allowsWebChallengeNavigation(target)
+            scheme in setOf("about", "blob", "data") ->
+                request.allowsWebChallengeInternalResource(target, isMainFrame = false)
+            else -> request.allowsWebChallengeSubresource(target)
+        }
+        if (allowed) {
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
         } else {
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-            onError("Blocked unsupported navigation scheme: ${scheme.orEmpty()}")
+            onError("Blocked browser navigation outside the reviewed source origins.")
         }
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(
+        webView: WKWebView,
+        createWebViewWithConfiguration: WKWebViewConfiguration,
+        forNavigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures,
+    ): WKWebView? {
+        if (released) return null
+        val target = forNavigationAction.request.URL?.absoluteString
+        if (request.allowsWebChallengeNavigation(target) && target != null) {
+            NSURL.URLWithString(target)?.let { webView.loadRequest(NSURLRequest.requestWithURL(it)) }
+        } else {
+            onError("Blocked browser popup outside the reviewed source origins.")
+        }
+        return null
     }
 }
 

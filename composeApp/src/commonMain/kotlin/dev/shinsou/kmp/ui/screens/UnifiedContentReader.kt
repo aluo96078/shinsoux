@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,6 +73,7 @@ import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
+import dev.shinsou.kmp.plugin.imageBodyForDecoderOrNull
 import dev.shinsou.kmp.reader.PlainTextNavigation
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReadingLocator
@@ -146,7 +149,10 @@ internal fun UnifiedContentReader(
             settings = settings,
             requestedPageIndex = requestedPageIndex,
             pageRequestSerial = pageRequestSerial,
+            navigationAction = navigationAction,
+            navigationRequestKey = navigationRequestKey,
             onPageIndexChanged = onPageIndexChanged,
+            onNavigationBoundary = onNavigationBoundary,
             onReaderTap = onReaderTap,
             onLocatorChanged = onLocatorChanged,
             modifier = modifier,
@@ -208,6 +214,7 @@ internal fun UnifiedContentReader(
         onLocatorChanged = onLocatorChanged,
         onNavigationBoundary = onNavigationBoundary,
         onTapAction = onReaderTap,
+        remoteAssetScope = session.remoteAssetScope,
         modifier = modifier,
     )
 }
@@ -350,6 +357,7 @@ private fun NovelTextBlock(text: String) {
                     key = "$index:${segment.url}",
                     url = segment.url,
                     alt = segment.alt,
+                    remoteAssetScope = null,
                 )
             }
         }
@@ -361,9 +369,27 @@ private fun NovelInlineImage(
     key: String,
     url: String,
     alt: String,
+    remoteAssetScope: dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
 ) {
     val context = LocalPlatformContext.current
-    var failed by remember(key) { mutableStateOf(false) }
+    var bytes by remember(key, remoteAssetScope) { mutableStateOf<ByteArray?>(null) }
+    var failed by remember(key, remoteAssetScope) { mutableStateOf(remoteAssetScope == null) }
+    LaunchedEffect(key, remoteAssetScope) {
+        val scope = remoteAssetScope ?: return@LaunchedEffect
+        try {
+            val response = scope.network.execute(
+                sourceId = scope.sourceId,
+                request = dev.shinsou.kmp.plugin.PluginHttpRequest("GET", url),
+            )
+            bytes = response.imageBodyForDecoderOrNull()
+            failed = bytes == null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            bytes = null
+            failed = true
+        }
+    }
     Box(
         Modifier
             .fillMaxWidth()
@@ -371,15 +397,15 @@ private fun NovelInlineImage(
             .padding(vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(context).data(url).build(),
+        bytes?.let { body -> AsyncImage(
+            model = ImageRequest.Builder(context).data(body).build(),
             contentDescription = alt.ifBlank { null },
             contentScale = ContentScale.Fit,
             onLoading = { failed = false },
             onSuccess = { failed = false },
             onError = { failed = true },
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 560.dp),
-        )
+        ) }
         if (failed) {
             Surface(
                 color = Color.Black.copy(alpha = 0.72f),
@@ -425,7 +451,10 @@ private fun ImageSequenceUnifiedContentReader(
     settings: ReaderSettings,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
     modifier: Modifier,
@@ -445,7 +474,7 @@ private fun ImageSequenceUnifiedContentReader(
 
     // Recreate pager state when direction/layout changes. requestedPageIndex is kept in the
     // reader shell and makes the new container start on the page that was actually visible.
-    key(session, settings.readingMode) {
+    key(session.content.representation.representationId, settings.readingMode) {
         when (imageSequenceReaderLayout(settings.readingMode)) {
             ImageSequenceReaderLayout.HORIZONTAL_PAGER -> ImageSequenceHorizontalPager(
                 session = session,
@@ -455,7 +484,10 @@ private fun ImageSequenceUnifiedContentReader(
                 settings = settings,
                 requestedPageIndex = requestedPageIndex,
                 pageRequestSerial = pageRequestSerial,
+                navigationAction = navigationAction,
+                navigationRequestKey = navigationRequestKey,
                 onPageIndexChanged = onPageIndexChanged,
+                onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
                 modifier = modifier,
@@ -469,7 +501,10 @@ private fun ImageSequenceUnifiedContentReader(
                 settings = settings,
                 requestedPageIndex = requestedPageIndex,
                 pageRequestSerial = pageRequestSerial,
+                navigationAction = navigationAction,
+                navigationRequestKey = navigationRequestKey,
                 onPageIndexChanged = onPageIndexChanged,
+                onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
                 modifier = modifier,
@@ -483,7 +518,10 @@ private fun ImageSequenceUnifiedContentReader(
                 settings = settings,
                 requestedPageIndex = requestedPageIndex,
                 pageRequestSerial = pageRequestSerial,
+                navigationAction = navigationAction,
+                navigationRequestKey = navigationRequestKey,
                 onPageIndexChanged = onPageIndexChanged,
+                onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
                 modifier = modifier,
@@ -533,7 +571,10 @@ private fun ImageSequenceHorizontalPager(
     settings: ReaderSettings,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
     modifier: Modifier,
@@ -543,6 +584,9 @@ private fun ImageSequenceHorizontalPager(
     val pagerState = rememberPagerState(
         initialPage = readerPhysicalPageIndex(initialIndex, pageCount, settings.readingMode),
     ) { pageCount }
+    val initialNavigationRequestKey = remember { navigationRequestKey }
+    val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+    val latestOnTapAction by rememberUpdatedState(onReaderTap)
 
     LaunchedEffect(session, pagerState, settings.readingMode) {
         snapshotFlow { pagerState.currentPage }
@@ -560,9 +604,43 @@ private fun ImageSequenceHorizontalPager(
             pageCount = pageCount,
         ) ?: return@LaunchedEffect
         val physicalTarget = readerPhysicalPageIndex(target, pageCount, settings.readingMode)
-        if (pagerState.currentPage != physicalTarget) {
+        if (pagerState.currentPage != physicalTarget || pagerState.currentPageOffsetFraction != 0f) {
             if (settings.animatePageTransitions) pagerState.animateScrollToPage(physicalTarget)
             else pagerState.scrollToPage(physicalTarget)
+        }
+    }
+    LaunchedEffect(session, navigationRequestKey, pagerState, settings.readingMode) {
+        val action = navigationAction
+        if (
+            navigationRequestKey <= 0L ||
+            navigationRequestKey == initialNavigationRequestKey ||
+            action == null
+        ) return@LaunchedEffect
+        val current = readerLogicalPageIndex(
+            pagerState.currentPage,
+            pageCount,
+            settings.readingMode,
+        )
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (current <= 0) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val target = readerPhysicalPageIndex(current - 1, pageCount, settings.readingMode)
+                    if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
+                    else pagerState.scrollToPage(target)
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (current >= pageCount - 1) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val target = readerPhysicalPageIndex(current + 1, pageCount, settings.readingMode)
+                    if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
+                    else pagerState.scrollToPage(target)
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
         }
     }
 
@@ -599,7 +677,10 @@ private fun ImageSequenceVerticalPager(
     settings: ReaderSettings,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
     modifier: Modifier,
@@ -607,6 +688,9 @@ private fun ImageSequenceVerticalPager(
     val strings = LocalShinsouStrings.current
     val pageCount = navigation.itemCount
     val pagerState = rememberPagerState(initialPage = initialIndex) { pageCount }
+    val initialNavigationRequestKey = remember { navigationRequestKey }
+    val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+    val latestOnTapAction by rememberUpdatedState(onReaderTap)
 
     LaunchedEffect(session, pagerState) {
         snapshotFlow { pagerState.currentPage }
@@ -622,9 +706,39 @@ private fun ImageSequenceVerticalPager(
             requestedPageIndex = requestedPageIndex,
             pageCount = pageCount,
         ) ?: return@LaunchedEffect
-        if (pagerState.currentPage != target) {
+        if (pagerState.currentPage != target || pagerState.currentPageOffsetFraction != 0f) {
             if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
             else pagerState.scrollToPage(target)
+        }
+    }
+    LaunchedEffect(session, navigationRequestKey, pagerState) {
+        val action = navigationAction
+        if (
+            navigationRequestKey <= 0L ||
+            navigationRequestKey == initialNavigationRequestKey ||
+            action == null
+        ) return@LaunchedEffect
+        val current = pagerState.currentPage
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (current <= 0) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val target = current - 1
+                    if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
+                    else pagerState.scrollToPage(target)
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (current >= pageCount - 1) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val target = current + 1
+                    if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
+                    else pagerState.scrollToPage(target)
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
         }
     }
 
@@ -660,13 +774,19 @@ private fun ImageSequenceContinuousReader(
     settings: ReaderSettings,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
     modifier: Modifier,
 ) {
     val strings = LocalShinsouStrings.current
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    val initialNavigationRequestKey = remember { navigationRequestKey }
+    val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
+    val latestOnTapAction by rememberUpdatedState(onReaderTap)
 
     LaunchedEffect(session, listState) {
         snapshotFlow {
@@ -689,9 +809,45 @@ private fun ImageSequenceContinuousReader(
             requestedPageIndex = requestedPageIndex,
             pageCount = navigation.itemCount,
         )
-        if (target != null && listState.firstVisibleItemIndex != target) {
+        if (
+            target != null &&
+            (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset != 0)
+        ) {
             if (settings.animatePageTransitions) listState.animateScrollToItem(target)
             else listState.scrollToItem(target)
+        }
+    }
+    LaunchedEffect(session, navigationRequestKey, listState) {
+        val action = navigationAction
+        if (
+            navigationRequestKey <= 0L ||
+            navigationRequestKey == initialNavigationRequestKey ||
+            action == null
+        ) return@LaunchedEffect
+        when (action) {
+            ReaderTapAction.PREVIOUS_PAGE -> {
+                if (!listState.canScrollBackward) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val viewport = (
+                        listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                        ).coerceAtLeast(1)
+                    if (settings.animatePageTransitions) listState.animateScrollBy(-viewport.toFloat())
+                    else listState.scrollBy(-viewport.toFloat())
+                }
+            }
+            ReaderTapAction.NEXT_PAGE -> {
+                if (!listState.canScrollForward) {
+                    latestOnNavigationBoundary(action)
+                } else {
+                    val viewport = (
+                        listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                        ).coerceAtLeast(1)
+                    if (settings.animatePageTransitions) listState.animateScrollBy(viewport.toFloat())
+                    else listState.scrollBy(viewport.toFloat())
+                }
+            }
+            ReaderTapAction.TOGGLE_CHROME -> latestOnTapAction(action)
         }
     }
 
@@ -807,6 +963,43 @@ internal fun requestedImageSequencePageIndex(
 ): Int? {
     if (pageRequestSerial <= 0L || requestedPageIndex == null || pageCount <= 0) return null
     return requestedPageIndex.coerceIn(0, pageCount - 1)
+}
+
+/**
+ * Keeps an explicit page command independent from progress reported by an in-flight animation.
+ * A mismatching progress callback belongs to the old visual position and must not replace the
+ * newer target. Once the target is observed, later callbacks again follow manual navigation.
+ */
+internal data class UnifiedReaderPageRequest(
+    val targetIndex: Int,
+    val serial: Long = 0L,
+    val pending: Boolean = false,
+) {
+    fun request(targetIndex: Int): UnifiedReaderPageRequest = copy(
+        targetIndex = targetIndex,
+        serial = serial + 1L,
+        pending = true,
+    )
+
+    fun observe(pageIndex: Int): UnifiedReaderPageRequest = when {
+        pending && pageIndex != targetIndex -> this
+        else -> copy(targetIndex = pageIndex, pending = false)
+    }
+
+    fun navigationIndex(observedIndex: Int): Int = if (pending) targetIndex else observedIndex
+}
+
+internal fun imageSequenceNavigationTarget(
+    currentIndex: Int,
+    pageCount: Int,
+    action: ReaderTapAction,
+): Int? {
+    if (pageCount <= 0) return null
+    return when (action) {
+        ReaderTapAction.PREVIOUS_PAGE -> (currentIndex - 1).takeIf { currentIndex > 0 }
+        ReaderTapAction.NEXT_PAGE -> (currentIndex + 1).takeIf { currentIndex < pageCount - 1 }
+        ReaderTapAction.TOGGLE_CHROME -> null
+    }
 }
 
 /** Full-package EPUB surface. Publisher resources stay exact and are served only by the private scheme. */

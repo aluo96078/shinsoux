@@ -10,8 +10,12 @@ import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
+import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.JavaScriptCoreScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.IosReviewedLanRepositoryTransport
+import dev.shinsou.kmp.plugin.REVIEWED_IOS_LAN_SHINSOU_REPOSITORY_BASE_URL
+import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
@@ -25,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import platform.UIKit.UIViewController
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.Platform
 
 /** Native entry point consumed by the SwiftUI application host. */
 @Suppress("FunctionName")
@@ -118,9 +124,20 @@ internal object IosApplicationContainer {
 
     private val syncInfrastructure = IosSyncInfrastructure()
 
+    private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)
+
+    @OptIn(ExperimentalNativeApi::class)
+    private val reviewedLanRepositoryEnabled = !isIosSimulatorBuild && Platform.isDebugBinary
+
+    private val reviewedLocalRepositoryPolicy = if (reviewedLanRepositoryEnabled) {
+        ReviewedLocalRepositoryPolicy.EXACT_IOS_LAN_192_168_50_193_18081
+    } else {
+        ReviewedLocalRepositoryPolicy.DISABLED
+    }
+
     private val composition = ShinsouComposition(
         repository = repository,
-        httpClient = createPlatformHttpClient(),
+        httpClient = httpClient,
         pluginKeyValueStore = IosPluginKeyValueStore(),
         fileSystem = IosAppFileSystem(),
         runtimeFactory = JavaScriptCoreScriptPluginRuntimeFactory(),
@@ -129,6 +146,13 @@ internal object IosApplicationContainer {
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
+        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
+        reviewedLocalRepositoryTransport = if (reviewedLanRepositoryEnabled) {
+            IosReviewedLanRepositoryTransport()
+        } else {
+            null
+        },
+
     )
 
     private val snapshotSync = SnapshotSyncController(

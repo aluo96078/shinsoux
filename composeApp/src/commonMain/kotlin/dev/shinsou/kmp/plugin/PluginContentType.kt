@@ -78,3 +78,34 @@ public fun Set<ContentKind>.toPluginContentType(): PluginContentType {
         else -> PluginContentType.BOTH
     }
 }
+
+internal fun PluginManifest.installedContentType(): PluginContentType {
+    val kinds = declaredContentKinds()
+    if (kinds.isNotEmpty()) return kinds.toPluginContentType()
+    return resolveEntryContentType(packageType = null, packageContentType = null, sources.orEmpty())
+}
+
+/**
+ * A repository index that omits type metadata resolves to [PluginContentType.BOTH]. That fallback
+ * must not hide an already-installed manga-only or novel-only package (for example 漫畫櫃).
+ */
+internal fun PluginContentType.withInstalledFallback(installed: PluginContentType?): PluginContentType {
+    if (this != PluginContentType.BOTH) return this
+    return installed ?: this
+}
+
+internal fun PluginManifest.declaredContentKinds(): Set<ContentKind> {
+    val fromPackage = contentKinds.orEmpty().mapNotNull(::parsePersistedContentKind)
+    val fromSources = sources.orEmpty().flatMap { source ->
+        val declared = when (source.contentKindsDeclared) {
+            true -> source.contentKinds
+            false -> contentKinds.orEmpty()
+            null -> emptySet()
+        }
+        declared.mapNotNull(::parsePersistedContentKind)
+    }
+    return (fromPackage + fromSources).toSet()
+}
+
+private fun parsePersistedContentKind(value: String): ContentKind? =
+    ContentKind.entries.singleOrNull { it.name == value }

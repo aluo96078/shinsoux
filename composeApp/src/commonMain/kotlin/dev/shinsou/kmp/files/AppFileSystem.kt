@@ -17,6 +17,18 @@ interface AppFileSystem {
     suspend fun delete(relativePath: String): Boolean
     suspend fun deleteTree(relativeDirectory: String): Boolean
     suspend fun list(relativeDirectory: String): List<String>
+
+    /**
+     * Lists at most [maximumEntries], failing instead of materializing an unbounded directory.
+     * Production file systems override this with an early-stopping traversal.
+     */
+    suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> {
+        require(maximumEntries >= 0) { "Maximum directory entry count cannot be negative" }
+        return list(relativeDirectory).also { entries ->
+            require(entries.size <= maximumEntries) { "Directory contains too many files" }
+        }
+    }
+
     fun uri(relativePath: String): String
 
     /** Returns a sandboxed native path when a platform API needs direct file-system access. */

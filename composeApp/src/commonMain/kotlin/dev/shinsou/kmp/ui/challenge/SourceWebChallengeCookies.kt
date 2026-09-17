@@ -115,6 +115,8 @@ internal fun normalizeWebChallengeUserAgent(value: String?): String? = value
 internal const val MAX_WEB_CHALLENGE_STORAGE_KEYS: Int = 8
 internal const val MAX_WEB_CHALLENGE_STORAGE_VALUE_BYTES: Int = 16 * 1_024
 internal const val MAX_WEB_CHALLENGE_STORAGE_TOTAL_BYTES: Int = 32 * 1_024
+/** Includes JSON escaping and Android's second evaluateJavascript string encoding. */
+internal const val MAX_WEB_CHALLENGE_STORAGE_CAPTURE_BYTES: Int = 512 * 1_024
 
 /** Validates a source-declared localStorage allowlist before any browser JavaScript is built. */
 internal fun normalizeWebChallengeLocalStorageKeys(values: Iterable<String>): List<String> =
@@ -159,14 +161,42 @@ internal fun webChallengeLocalStorageCaptureScript(request: SourceWebChallengeRe
         (() => {
           const expectedOrigin = $encodedOrigin;
           const keys = $encodedKeys;
+          const maxValueBytes = $MAX_WEB_CHALLENGE_STORAGE_VALUE_BYTES;
+          const maxTotalBytes = $MAX_WEB_CHALLENGE_STORAGE_TOTAL_BYTES;
           if (!expectedOrigin || location.origin !== expectedOrigin) {
             return JSON.stringify({ ok: false, error: "origin" });
           }
+          const boundedUtf8Length = (text, maximum) => {
+            let bytes = 0;
+            for (let index = 0; index < text.length; index += 1) {
+              const code = text.charCodeAt(index);
+              let width;
+              if (code < 0x80) width = 1;
+              else if (code < 0x800) width = 2;
+              else if (code >= 0xD800 && code <= 0xDBFF && index + 1 < text.length &&
+                  text.charCodeAt(index + 1) >= 0xDC00 && text.charCodeAt(index + 1) <= 0xDFFF) {
+                width = 4;
+                index += 1;
+              } else width = 3;
+              if (bytes > maximum - width) return null;
+              bytes += width;
+            }
+            return bytes;
+          };
           const values = {};
+          let totalBytes = 0;
           try {
             for (const key of keys) {
               const value = localStorage.getItem(key);
-              if (value !== null) values[key] = String(value);
+              if (value !== null) {
+                const text = String(value);
+                const bytes = boundedUtf8Length(text, maxValueBytes);
+                if (bytes === null || totalBytes > maxTotalBytes - bytes) {
+                  return JSON.stringify({ ok: false, error: "limit" });
+                }
+                totalBytes += bytes;
+                values[key] = text;
+              }
             }
           } catch (_) {
             return JSON.stringify({ ok: false, error: "storage" });
@@ -187,6 +217,7 @@ internal fun decodeWebChallengeLocalStorageCapture(
     allowlist: Iterable<String>,
 ): WebChallengeLocalStorageCapture {
     val payload = encoded
+        ?.takeIf { utf8ByteCountAtMost(it, MAX_WEB_CHALLENGE_STORAGE_CAPTURE_BYTES) }
         ?.let { raw ->
             runCatching {
                 when (val first = Json.parseToJsonElement(raw)) {
@@ -201,6 +232,7 @@ internal fun decodeWebChallengeLocalStorageCapture(
         val reason = when (payload["error"]?.jsonPrimitive?.contentOrNull) {
             "origin" -> "The browser left the source origin. Return to the source website and try again."
             "storage" -> "The website blocked access to its browser session data."
+            "limit" -> "The browser session data exceeded the safe import limit."
             else -> "The browser session data could not be read."
         }
         return WebChallengeLocalStorageCapture(error = reason)
@@ -212,6 +244,28 @@ internal fun decodeWebChallengeLocalStorageCapture(
     return WebChallengeLocalStorageCapture(
         values = normalizeWebChallengeLocalStorage(decoded, allowlist),
     )
+}
+
+/** Counts without first allocating an attacker-sized UTF-8 ByteArray. */
+private fun utf8ByteCountAtMost(value: String, maximum: Int): Boolean {
+    var bytes = 0
+    var index = 0
+    while (index < value.length) {
+        val char = value[index]
+        val width = when {
+            char.code < 0x80 -> 1
+            char.code < 0x800 -> 2
+            char.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                index += 1
+                4
+            }
+            else -> 3
+        }
+        if (bytes > maximum - width) return false
+        bytes += width
+        index += 1
+    }
+    return true
 }
 
 /**

@@ -4,6 +4,8 @@ import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.files.AppFileSystem
+import dev.shinsou.kmp.plugin.Sha256
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -82,6 +84,18 @@ class DownloadManager(
                         progress = 1.0,
                         downloadedPages = completed.pageCount,
                         totalPages = completed.pageCount,
+                        updatedAt = now(),
+                    )
+                }
+                completed == null && item.state == DownloadState.DOWNLOADED -> {
+                    // A stale marker, missing page, or digest mismatch must not leave the queue
+                    // permanently claiming that unreadable bytes are available offline.
+                    repository.setDownloadState(
+                        item.id,
+                        DownloadState.QUEUED,
+                        progress = 0.0,
+                        downloadedPages = 0,
+                        totalPages = 0,
                         updatedAt = now(),
                     )
                 }
@@ -205,7 +219,7 @@ class DownloadManager(
                             item.id,
                             DownloadState.ERROR,
                             updatedAt = now(),
-                            errorMessage = error.message ?: "Download failed",
+                            errorMessage = error.sourceFailureMarker() ?: error.message ?: "Download failed",
                         )
                     } finally {
                         schedulerMutex.withLock { active.remove(item.id) }
@@ -258,6 +272,8 @@ class DownloadManager(
                             index = page.index,
                             fileName = path.substringAfterLast('/'),
                             transformFileName = page.imageTransform?.let { sidecarPath.substringAfterLast('/') },
+                            byteSize = downloaded.bytes.size.toLong(),
+                            plaintextDigest = Sha256.hex(downloaded.bytes),
                         )
                         completed += 1
                         repository.setDownloadState(

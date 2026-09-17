@@ -46,17 +46,12 @@ struct WidgetCover: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            if let rawURL = manga.coverURL, let url = URL(string: rawURL) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        coverFallback
-                    }
-                }
-            } else {
-                coverFallback
-            }
+            // Widget extensions do not share the host content-plane client.  Never hand a
+            // plugin-controlled URL to SwiftUI AsyncImage: that would create an unreviewed
+            // network path which bypasses the source origin, DNS and response-size guards.
+            // The app can still publish the title projection; a future shared-byte cache can
+            // replace this fallback without reintroducing direct URL loading.
+            coverFallback
 
             LinearGradient(
                 colors: [.clear, .black.opacity(0.78)],

@@ -10,8 +10,6 @@ import kotlinx.coroutines.withContext
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSError
 import platform.Foundation.NSURL
-import platform.Foundation.NSURLRequest
-import platform.Foundation.NSURLRequestReloadIgnoringLocalCacheData
 import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.WebKit.WKWebView
@@ -54,13 +52,12 @@ public class IosPluginBrowserSessionTransport : PluginBrowserSessionTransport {
             val webView = WKWebView(CGRectMake(0.0, 0.0, 1.0, 1.0), configuration)
             val delegate = IosBrowserSessionNavigationDelegate(ready)
             webView.navigationDelegate = delegate
-            val url = requireNotNull(NSURL.URLWithString("$sourceOrigin/robots.txt"))
-            webView.loadRequest(
-                NSURLRequest.requestWithURL(
-                    URL = url,
-                    cachePolicy = NSURLRequestReloadIgnoringLocalCacheData,
-                    timeoutInterval = 20.0,
-                ),
+            val baseUrl = requireNotNull(NSURL.URLWithString(sourceOrigin))
+            // Establish the source security origin from a host-owned empty document. Loading a
+            // remote robots.txt can redirect to executable HTML before the bounded Fetch script.
+            webView.loadHTMLString(
+                "<!doctype html><meta charset=\"utf-8\"><title>Shinsou browser session</title>",
+                baseURL = baseUrl,
             )
             IosBrowserSessionState(sourceOrigin, webView, delegate, ready)
         }

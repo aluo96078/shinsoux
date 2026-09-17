@@ -14,14 +14,14 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.7")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.107")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.8")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.108")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600107)
+    .orElse(25600108)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
@@ -50,6 +50,20 @@ val androidPublicDebugSigningValues = listOf(
 val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+// Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
+val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
+    .orElse(providers.systemProperty("shinsou.pluginRepo"))
+    .orElse("../../shinsou_plugin")
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty(
+        "shinsou.pluginRepo",
+        shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
+    )
+}
 val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
     .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_IDENTITY"))
     .orNull
@@ -123,6 +137,8 @@ val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
             "AppKit",
             "-framework",
             "WebKit",
+            "-framework",
+            "Network",
             sourcePath,
             "-o",
             outputPath,
@@ -235,6 +251,10 @@ kotlin {
     iosSimulatorArm64()
 
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        compilations.getByName("main").cinterops.create("networkReceive") {
+            defFile(project.file("src/nativeInterop/cinterop/networkReceive.def"))
+            includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
         binaries.all {
             linkerOpts("-lsqlite3")
         }
@@ -291,6 +311,7 @@ kotlin {
                 implementation(libs.coil.network.ktor)
                 implementation(libs.jsoup)
                 implementation(libs.rhino)
+                implementation(libs.ktor.client.okhttp)
             }
         }
 
@@ -299,12 +320,12 @@ kotlin {
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.biometric)
+                implementation(libs.androidx.webkit)
                 implementation(libs.androidx.work.runtime)
                 implementation(libs.android.avif)
                 // MainActivity installs a shared Coil network fetcher so Android image
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
-                implementation(libs.ktor.client.okhttp)
                 implementation(libs.sqldelight.android.driver)
                 implementation(libs.google.code.scanner)
             }
@@ -339,7 +360,7 @@ kotlin {
         }
 
         val desktopTest by getting {
-            resources.srcDir(file("../../shinsou_plugin"))
+            resources.srcDir(shinsouPluginRepository.map(::file))
         }
     }
 }
@@ -400,6 +421,10 @@ android {
 compose.desktop {
     application {
         mainClass = "dev.shinsou.kmp.desktop.MainKt"
+
+        if (reviewedLocalRepositoryEnabled.get()) {
+            jvmArgs += "-Dshinsou.reviewedLocalRepository=true"
+        }
 
         if (compileMacOsWebChallengeHelper != null) {
             dependsOn("compileMacOsWebChallengeHelper")

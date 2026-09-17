@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: aluo96078/shinsou_plugin
+          ref: 724c0d691d251cf188ace06030dae7544c541b8a
           path: shinsou_plugin
           persist-credentials: false
 
@@ -57,7 +58,7 @@ jobs:
         id: desktop_tests
         continue-on-error: true
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:desktopTest --stacktrace
+        run: .\gradlew.bat :composeApp:desktopTest -PshinsouPluginRepository=..\shinsou_plugin --stacktrace
 
       - name: Report desktop test failures
         if: steps.desktop_tests.outcome == 'failure'

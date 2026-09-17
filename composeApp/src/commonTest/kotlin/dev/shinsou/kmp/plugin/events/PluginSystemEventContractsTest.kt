@@ -146,4 +146,17 @@ class PluginSystemEventContractsTest {
         assertTrue(authorizer.authorize(scope, PluginHostPermission.REQUEST_LOGIN_UI, "LOGIN").allowed)
         assertFalse(authorizer.authorize(scope, PluginHostPermission.REQUEST_LOGOUT, "LOGIN").allowed)
     }
+
+    @Test
+    fun hostBoundEventScopeRejectsUnboundedSourceIdentity() {
+        val artifact = PluginArtifactIdentity("pkg", "1.0.0", 1, digest)
+        assertFailsWith<IllegalArgumentException> {
+            BoundPluginScopeFactory().bind(
+                artifact,
+                SourceKey(packageId = "pkg", sourceId = "s".repeat(257)),
+                "runtime",
+                1,
+            )
+        }
+    }
 }

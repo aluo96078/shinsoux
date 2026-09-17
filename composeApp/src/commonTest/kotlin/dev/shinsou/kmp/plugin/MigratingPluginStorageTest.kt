@@ -51,6 +51,7 @@ class MigratingPluginStorageTest {
         val delegate = RecordingPluginStorage().apply {
             credentials[LEGACY_BILIMANGA_MANGA_STORAGE_ID] = PluginCredential("member", "secret")
             cookies[LEGACY_BILIMANGA_MANGA_STORAGE_ID] = mutableListOf(cookie("session", "legacy"))
+            preferences[LEGACY_BILIMANGA_MANGA_STORAGE_ID to "sessionToken"] = "legacy-token"
             userAgents[LEGACY_BILIMANGA_MANGA_STORAGE_ID] = "Legacy Browser"
         }
         val markers = InMemoryPluginKeyValueStore()
@@ -58,14 +59,17 @@ class MigratingPluginStorageTest {
 
         storage.clearCredential(BILIMANGA_MANGA_SOURCE_ID)
         storage.clearCookies(BILIMANGA_MANGA_SOURCE_ID)
+        storage.removePreference(BILIMANGA_MANGA_SOURCE_ID, "sessionToken")
 
         assertNull(storage.getCredential(BILIMANGA_MANGA_SOURCE_ID))
         assertEquals(emptyList(), storage.getCookies(BILIMANGA_MANGA_SOURCE_ID))
+        assertNull(storage.getPreference(BILIMANGA_MANGA_SOURCE_ID, "sessionToken"))
         assertNull(storage.getWebChallengeUserAgent(BILIMANGA_MANGA_SOURCE_ID))
 
         val reconstructed = MigratingPluginStorage(delegate, markers)
         assertNull(reconstructed.getCredential(BILIMANGA_MANGA_SOURCE_ID))
         assertEquals(emptyList(), reconstructed.getCookies(BILIMANGA_MANGA_SOURCE_ID))
+        assertNull(reconstructed.getPreference(BILIMANGA_MANGA_SOURCE_ID, "sessionToken"))
         assertNull(reconstructed.getWebChallengeUserAgent(BILIMANGA_MANGA_SOURCE_ID))
     }
 
@@ -144,6 +148,9 @@ private class RecordingPluginStorage : PluginStorage {
     override suspend fun getPreference(sourceId: Long, key: String): String? = preferences[sourceId to key]
     override suspend fun setPreference(sourceId: Long, key: String, value: String) {
         preferences[sourceId to key] = value
+    }
+    override suspend fun removePreference(sourceId: Long, key: String) {
+        preferences.remove(sourceId to key)
     }
 
     override suspend fun getCredential(sourceId: Long): PluginCredential? {
