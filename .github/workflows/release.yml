@@ -4,12 +4,22 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to rebuild
+        required: true
+        type: string
+      release_commit:
+        description: Full peeled commit SHA expected for that tag
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +34,20 @@ jobs:
       windows_package_version: ${{ steps.version.outputs.windows_package_version }}
       version_code: ${{ steps.version.outputs.version_code }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      source_commit: ${{ steps.source.outputs.source_commit }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+      EXPECTED_RELEASE_COMMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.release_commit || '' }}
     steps:
+      - name: Validate workflow source
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != refs/heads/master ]]; then
+            echo "Manual release rebuilds must use the workflow from refs/heads/master; found $GITHUB_REF." >&2
+            exit 1
+          fi
+
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
@@ -33,7 +56,41 @@ jobs:
       - name: Parse version
         id: version
         shell: bash
-        run: bash scripts/ci/parse_release_tag.sh "$GITHUB_REF_NAME"
+        run: bash scripts/ci/parse_release_tag.sh "$RELEASE_TAG"
+
+      - name: Resolve immutable release source
+        id: source
+        shell: bash
+        run: |
+          ref_json="$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          object_type="$(jq -er '.object.type' <<< "$ref_json")"
+          object_sha="$(jq -er '.object.sha' <<< "$ref_json")"
+          ref_object_sha="$object_sha"
+          for _ in 1 2 3 4 5; do
+            [[ "$object_type" == tag ]] || break
+            tag_json="$(gh api "/repos/$GITHUB_REPOSITORY/git/tags/$object_sha")"
+            object_type="$(jq -er '.object.type' <<< "$tag_json")"
+            object_sha="$(jq -er '.object.sha' <<< "$tag_json")"
+          done
+          if [[ "$object_type" != commit || ! "$object_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Tag $RELEASE_TAG does not resolve to a full commit SHA." >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            if [[ ! "$EXPECTED_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ||
+                  "$object_sha" != "$EXPECTED_RELEASE_COMMIT" ]]; then
+              echo "Tag $RELEASE_TAG resolves to $object_sha; expected $EXPECTED_RELEASE_COMMIT." >&2
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" || (
+            "$ref_object_sha" != "$GITHUB_SHA" && "$object_sha" != "$GITHUB_SHA"
+          ) ]]; then
+            echo "Tag event $GITHUB_REF at $GITHUB_SHA does not match $RELEASE_TAG ($ref_object_sha -> $object_sha)." >&2
+            exit 1
+          fi
+
+          echo "source_commit=$object_sha" >> "$GITHUB_OUTPUT"
 
   android:
     name: Android debug APK
@@ -52,6 +109,7 @@ jobs:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
           persist-credentials: false
 
       - name: Set up JDK 17
@@ -179,6 +237,7 @@ jobs:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
           persist-credentials: false
 
       - name: Set up JDK 17
@@ -337,6 +396,7 @@ jobs:
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
           persist-credentials: false
 
       - name: Set up JDK 17
@@ -374,6 +434,7 @@ jobs:
             "-PreleaseVersion=$env:RELEASE_PACKAGE_VERSION" `
             "-PwindowsPackageVersion=$env:WINDOWS_PACKAGE_VERSION" `
             "-PreleaseVersionCode=$env:RELEASE_VERSION_CODE" `
+            "-Pkotlin.native.enableKlibsCrossCompilation=false" `
             --stacktrace
 
       - name: Verify release app image with Windows Access Bridge
@@ -655,7 +716,7 @@ jobs:
       RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
-      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_COMMIT: ${{ needs.metadata.outputs.source_commit }}
     steps:
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
