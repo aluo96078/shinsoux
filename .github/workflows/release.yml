@@ -876,20 +876,20 @@ jobs:
       - name: Publish verified release
         shell: bash
         run: |
-          ref_json="$(gh api "/repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")"
-          object_type="$(jq -r '.object.type' <<< "$ref_json")"
-          object_sha="$(jq -r '.object.sha' <<< "$ref_json")"
-          ref_object_sha="$object_sha"
-          for _ in 1 2 3 4 5; do
-            [[ "$object_type" == tag ]] || break
-            tag_json="$(gh api "/repos/$GH_REPO/git/tags/$object_sha")"
-            object_type="$(jq -r '.object.type' <<< "$tag_json")"
-            object_sha="$(jq -r '.object.sha' <<< "$tag_json")"
-          done
-          if [[ "$object_type" != commit || (
-            "$ref_object_sha" != "$RELEASE_COMMIT" && "$object_sha" != "$RELEASE_COMMIT"
-          ) ]]; then
-            echo "Tag $RELEASE_TAG now resolves through $ref_object_sha to $object_type $object_sha; expected event SHA $RELEASE_COMMIT." >&2
+          # The metadata job already verified the immutable tag and emitted its
+          # peeled commit. Recheck the public ref without the Actions token:
+          # GitHub can deny the token's git/ref endpoint in this job even when
+          # the same read succeeds in metadata, while ls-remote exposes both
+          # the annotated tag object and its peeled commit.
+          remote_refs="$(git ls-remote \
+            "https://github.com/$GH_REPO.git" \
+            "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          tag_sha="$(awk -v ref="refs/tags/$RELEASE_TAG" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          peeled_sha="$(awk -v ref="refs/tags/$RELEASE_TAG^{}" '$2 == ref { print $1 }' <<< "$remote_refs")"
+          if [[ ! "$tag_sha" =~ ^[0-9a-f]{40}$ ||
+                ( -n "$peeled_sha" && ! "$peeled_sha" =~ ^[0-9a-f]{40}$ ) ||
+                ( "$tag_sha" != "$RELEASE_COMMIT" && "$peeled_sha" != "$RELEASE_COMMIT" ) ]]; then
+            echo "Tag $RELEASE_TAG resolves through $tag_sha to peeled $peeled_sha; expected $RELEASE_COMMIT." >&2
             exit 1
           fi
 
