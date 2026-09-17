@@ -240,6 +240,22 @@ jobs:
           ref: ${{ needs.metadata.outputs.source_commit }}
           persist-credentials: false
 
+      - name: Apply release-only ProGuard optional platform rules
+        shell: bash
+        run: |
+          if ! grep -Fqx -- '-dontwarn android.**' composeApp/proguard-rules.pro; then
+            cat >> composeApp/proguard-rules.pro <<'EOF'
+
+          # Release-only overlay for optional JVM platform adapters absent from the
+          # self-contained desktop runtime. The source tag remains immutable.
+          -dontwarn android.**
+          -dontwarn org.conscrypt.**
+          -dontwarn org.bouncycastle.**
+          -dontwarn org.openjsse.**
+          -dontwarn org.mozilla.classfile.**
+          EOF
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -398,6 +414,23 @@ jobs:
         with:
           ref: ${{ needs.metadata.outputs.source_commit }}
           persist-credentials: false
+
+      - name: Apply release-only ProGuard optional platform rules
+        shell: pwsh
+        run: |
+          $rulesPath = "composeApp/proguard-rules.pro"
+          if (-not (Select-String -Path $rulesPath -SimpleMatch -Quiet "-dontwarn android.**")) {
+            Add-Content -Path $rulesPath -Value @"
+
+          # Release-only overlay for optional JVM platform adapters absent from the
+          # self-contained desktop runtime. The source tag remains immutable.
+          -dontwarn android.**
+          -dontwarn org.conscrypt.**
+          -dontwarn org.bouncycastle.**
+          -dontwarn org.openjsse.**
+          -dontwarn org.mozilla.classfile.**
+          "@
+          }
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
