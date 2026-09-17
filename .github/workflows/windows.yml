@@ -60,7 +60,7 @@ jobs:
         id: desktop_tests
         continue-on-error: true
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:desktopTest -PshinsouPluginRepository=..\shinsou_plugin --stacktrace
+        run: .\gradlew.bat :composeApp:desktopTest -PshinsouPluginRepository=..\..\shinsou_plugin --stacktrace
 
       - name: Report desktop test failures
         if: steps.desktop_tests.outcome == 'failure'
