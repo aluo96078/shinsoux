@@ -122,6 +122,10 @@ class ShuYueTransactionalImporterTest {
         }
         val remoteOrigin = remote.acquisitions.single().origin as AcquisitionOrigin.ExtensionSource
         assertEquals(
+            "https://example.test/covers/remote-1.jpg",
+            remote.thumbnailUrl,
+        )
+        assertEquals(
             SourceKey(2, "zh.wenku8.api", "zh.wenku8.api"),
             remoteOrigin.sourceBinding.sourceKey,
         )

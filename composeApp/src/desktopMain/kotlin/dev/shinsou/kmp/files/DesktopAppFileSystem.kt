@@ -9,8 +9,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class DesktopAppFileSystem(
-    private val root: Path = DesktopAppDirectories.contentRoot,
+    root: Path = DesktopAppDirectories.contentRoot,
 ) : AppFileSystem {
+    private val root = root.normalize().toAbsolutePath()
+
     override suspend fun write(relativePath: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
         path(relativePath).also { Files.createDirectories(it.parent) }.let { Files.write(it, bytes) }
     }
@@ -65,6 +67,22 @@ class DesktopAppFileSystem(
             stream.filter(Files::isRegularFile).map { root.relativize(it).toString().replace('\\', '/') }.toList()
         }
     }
+
+    override suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> =
+        withContext(Dispatchers.IO) {
+            require(maximumEntries >= 0) { "Maximum directory entry count cannot be negative" }
+            val directory = path(relativeDirectory)
+            if (!Files.isDirectory(directory)) return@withContext emptyList()
+            Files.walk(directory).use { stream ->
+                stream.filter(Files::isRegularFile)
+                    .limit(maximumEntries.toLong() + 1L)
+                    .map { root.relativize(it).toString().replace('\\', '/') }
+                    .toList()
+                    .also { entries ->
+                        require(entries.size <= maximumEntries) { "Directory contains too many files" }
+                    }
+            }
+        }
 
     override fun uri(relativePath: String): String = path(relativePath).toUri().toString()
 

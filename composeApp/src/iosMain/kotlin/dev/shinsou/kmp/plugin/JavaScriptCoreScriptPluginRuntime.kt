@@ -54,12 +54,14 @@ import platform.JavaScriptCore.JSObjectSetProperty
 import platform.JavaScriptCore.JSStringCreateWithUTF8CString
 import platform.JavaScriptCore.JSStringGetMaximumUTF8CStringSize
 import platform.JavaScriptCore.JSStringGetUTF8CString
+import platform.JavaScriptCore.JSStringGetLength
 import platform.JavaScriptCore.JSStringRef
 import platform.JavaScriptCore.JSStringRelease
 import platform.JavaScriptCore.JSValueMakeString
 import platform.JavaScriptCore.JSValueRef
 import platform.JavaScriptCore.JSValueRefVar
 import platform.JavaScriptCore.JSValueToStringCopy
+import platform.JavaScriptCore.JSValue
 import platform.JavaScriptCore.kJSPropertyAttributeNone
 import platform.posix.size_t
 import kotlin.coroutines.EmptyCoroutineContext
@@ -68,29 +70,72 @@ import dev.shinsou.kmp.plugin.events.PluginEventDisposition
 import dev.shinsou.kmp.plugin.events.PluginEventReceipt
 
 /** JavaScriptCore-backed synchronous plugin runtime for both iOS device and simulator targets. */
-public class JavaScriptCoreScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
+public class JavaScriptCoreScriptPluginRuntimeFactory private constructor(
+    private val allowUninterruptibleScriptsForTests: Boolean,
+) : ScriptPluginRuntimeFactory {
+    public constructor() : this(false)
+
+    internal companion object {
+        /** Tests only: production callers must establish reviewed artifact provenance instead. */
+        fun unsafeForTests(): JavaScriptCoreScriptPluginRuntimeFactory =
+            JavaScriptCoreScriptPluginRuntimeFactory(allowUninterruptibleScriptsForTests = true)
+    }
     override suspend fun create(
         script: String,
         manifest: PluginManifest,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = JavaScriptCoreScriptPluginRuntime.create(
-        script,
-        manifest,
-        manifest.requireLegacyExecutableSource(),
-        environment,
-    )
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val source = manifest.requireLegacyExecutableSource()
+        val effectiveEnvironment = requireSafeInProcessProvenance(script, manifest, source, environment)
+        return JavaScriptCoreScriptPluginRuntime.create(
+            script,
+            manifest,
+            source,
+            effectiveEnvironment,
+        )
+    }
 
     override suspend fun createForSource(
         script: String,
         manifest: PluginManifest,
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = JavaScriptCoreScriptPluginRuntime.create(
-        script,
-        manifest,
-        manifest.requireDeclaredExecutableSource(source),
-        environment,
-    )
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val declaredSource = manifest.requireDeclaredExecutableSource(source)
+        val effectiveEnvironment = requireSafeInProcessProvenance(
+            script,
+            manifest,
+            declaredSource,
+            environment,
+        )
+        return JavaScriptCoreScriptPluginRuntime.create(
+            script,
+            manifest,
+            declaredSource,
+            effectiveEnvironment,
+        )
+    }
+
+    private fun requireSafeInProcessProvenance(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry?,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginEnvironment {
+        if (allowUninterruptibleScriptsForTests) return environment
+        val provenance = environment.inProcessScriptProvenance
+        if (provenance == null) {
+            throw ScriptRuntimeUnavailableException(
+                "Plugin '${manifest.id}' cannot run in-process on iOS: public JavaScriptCore APIs " +
+                    "cannot forcibly interrupt non-cooperative JavaScript. Only exact host-reviewed " +
+                "artifacts are enabled.",
+            )
+        }
+        val reviewedLimits = provenance.requireExactMatch(script, manifest, source)
+        return reviewedLimits?.let { environment.copy(executionLimits = it) } ?: environment
+    }
 }
 
 private class JavaScriptCoreScriptPluginRuntime private constructor(
@@ -105,11 +150,16 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     private val stateLock = NSLock()
     private val logsLock = NSLock()
     private val logs = mutableListOf<String>()
+    private val limits: PluginExecutionLimits = environment.executionLimits
     private var activeInvocationJob: Job? = null
     /** Set only on the engine worker, then consumed immediately after JS evaluation returns. */
     private var bridgeCancellation: CancellationException? = null
     private var closing = false
     private var closed = false
+    private var bridgeCalls = 0
+    private var logBytes = 0
+    private var limitFailure: PluginResourceLimitException? = null
+    private var poisonedBy: PluginResourceLimitException? = null
 
     override val pluginId: String = manifest.id
     override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
@@ -129,6 +179,8 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     override var headers: Map<String, String> = emptyMap()
         private set
     override var webChallengeUrl: String? = null
+        private set
+    override var browserSessionOrigins: Set<String> = selectedSource?.browserSessionOrigins.orEmpty()
         private set
     override var webChallengeLocalStorageKeys: Set<String> = emptySet()
         private set
@@ -165,7 +217,10 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     "__shinsouSelectSource($sourceSelectionId)",
                     "source-selection.js",
                 )
-                val metadata = parseJson(evaluate("__shinsouMetadata()", "metadata.js").toString_())
+                val metadata = parseBoundedJsonResult(
+                    evaluate("__shinsouMetadata()", "metadata.js").toString_(),
+                    "metadata.js",
+                )
                     .jsonObject
                 baseUrl = selectedSource?.baseUrl ?: metadata.string("baseUrl").orEmpty()
                 supportsLatest = metadata.boolean("supportsLatest")
@@ -176,6 +231,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     headers = headers + ("Referer" to baseUrl)
                 }
                 webChallengeUrl = metadata.string("webChallengeUrl")?.toString()?.takeIf(String::isNotBlank)
+                browserSessionOrigins = selectedSource?.browserSessionOrigins.orEmpty()
                 webChallengeLocalStorageKeys = metadata["webChallengeLocalStorageKeys"]
                     .stringList()
                     .toSet()
@@ -244,6 +300,14 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         }
     }
 
+    override suspend fun resolveImageUrl(pageUrl: String): String? {
+        if (!hasFunction("resolveImageUrl")) return null
+        return invoke(
+            "resolveImageUrl",
+            JsonArray(listOf(JsonPrimitive(pageUrl))),
+        ).jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+    }
+
     override suspend fun getFilterList(): FilterList {
         // Match original Shinsou's JSSourceProxy: getFilterList is optional and a missing method
         // means that the source accepts an empty FilterList. MangaCopy is one such source.
@@ -254,7 +318,10 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     }
 
     override suspend fun getPreferenceDefinitions(): List<SourcePreference> = onEngine {
-        parseJson(evaluate("__shinsouPreferences()", "preferences.js").toString_())
+        parseBoundedJsonResult(
+            evaluate("__shinsouPreferences()", "preferences.js").toString_(),
+            "preferences.js",
+        )
             .arrayOrEmpty()
             .mapNotNull { (it as? JsonObject)?.toSourcePreference() }
     }
@@ -264,6 +331,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
 
     override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
         if (!supportsLogin) return LoginAttemptResult(false)
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         val result = invoke(
             "login",
             JsonArray(listOf(JsonPrimitive(username), JsonPrimitive(password))),
@@ -273,6 +341,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     }
 
     override suspend fun logout() {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
         environment.storage.clearCredential(id)
         if (hasFunction("logout")) invoke("logout", JsonArray(emptyList()))
     }
@@ -334,11 +403,16 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
         transform: (JsonElement) -> T,
     ): T = onEngine {
         if (resetLogs) clearLogs()
+        requireUtf8Bound(
+            arguments.toString(),
+            limits.maxInvocationInputBytes,
+            "invocation input",
+        )
         val result = evaluate(
             "__shinsouInvoke(${JsonPrimitive(method)},${JsonPrimitive(arguments.toString())})",
             "invoke-$method.js",
         ).toString_()
-        transform(parseJson(result))
+        transform(parseBoundedJsonResult(result, "invoke-$method.js"))
     }
 
     /** Keeps JavaScriptCore and its synchronous native bridge confined to one background worker. */
@@ -352,17 +426,25 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
      * request holding this runtime's single engine worker.
      */
     private suspend fun <T> withEngineInvocation(block: () -> T): T {
+        poisonedBy?.let { throw it }
         val invocationJob = Job(currentCoroutineContext()[Job])
         withStateLock {
             check(!closed && !closing) { "Plugin runtime '$pluginId' is closed" }
             check(activeInvocationJob == null) { "Plugin runtime '$pluginId' is already executing" }
             activeInvocationJob = invocationJob
+            bridgeCalls = 0
+            domHandles = 0
+            domNodes = 0
+            limitFailure = null
         }
         return try {
             withContext(engineDispatcher + invocationJob) {
                 bridgeCancellation = null
                 try {
-                    block()
+                    block().also { limitFailure?.let { throw it } }
+                } catch (limited: PluginResourceLimitException) {
+                    poisonedBy = limited
+                    throw limited
                 } finally {
                     bridgeCancellation = null
                 }
@@ -378,22 +460,55 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     private fun evaluate(script: String, label: String): platform.JavaScriptCore.JSValue {
         val engineContext = requireNotNull(context) { "Plugin runtime '$pluginId' has no JSContext" }
         engineContext.exception = null
-        val result = engineContext.evaluateScript(script)
+        // JSContext may stringify an uncaught object before exposing `exception`, which can
+        // execute its attacker-defined toString. Catch inside the evaluation first and throw
+        // only a primitive. A top-level try preserves `var source` and statement completion
+        // values (unlike a function wrapper); the legacy contract exports var source/sources.
+        val result = engineContext.evaluateScript(
+            "try {\n$script\n} catch (__shinsouCaughtException) {\n" +
+                "throw typeof __shinsouCaughtException === 'string' ? __shinsouCaughtException : 'SHINSOU_JS_REDACTED';\n}",
+        )
         // Kotlin exceptions must never cross the C callback boundary. bridgeCall records
         // cancellation and returns an error value to JS; rethrow it safely once JSC returns here.
         bridgeCancellation?.let { cancellation ->
             engineContext.exception = null
             throw cancellation
         }
+        limitFailure?.let { limited ->
+            engineContext.exception = null
+            throw limited
+        }
         val exception = engineContext.exception
         if (exception != null && !exception.isUndefined && !exception.isNull) {
-            val message = exception.toString_().orEmpty()
-            appendLog("$label: $message")
-            environment.logger.log(pluginId, "$label: $message")
+            // The exception text is plugin-controlled and may include credentials or response
+            // bodies. Keep it out of host logs and public failures; resource-limit diagnostics
+            // take the separate, host-authored path above.
+            // Never coerce exception objects: user-defined toString/getters can execute more
+            // JavaScript. Sources may throw a primitive marker string; every other value stays
+            // redacted. Checking the primitive type and bounding its copy invokes no plugin code.
+            val marker = if (exception.isString) {
+                jsValueToBoundedString(contextRef, exception.JSValueRef(), 512)?.let(::sourceFailureMarker)
+            } else null
+            appendLog("$label: JavaScript execution failed")
             engineContext.exception = null
-            throw IllegalArgumentException("Plugin '$pluginId' JavaScript error in $label: $message")
+            throw IllegalArgumentException(marker ?: "Plugin '$pluginId' JavaScript execution failed in $label")
         }
-        return requireNotNull(result) { "Plugin '$pluginId' returned no value while evaluating $label" }
+        val value = requireNotNull(result) { "Plugin '$pluginId' returned no value while evaluating $label" }
+        return boundEvaluationResult(value, label)
+    }
+
+    private fun boundEvaluationResult(value: JSValue, label: String): JSValue {
+        if (value.isString) {
+            val bounded = jsValueToBoundedString(
+                contextRef,
+                value.JSValueRef(),
+                limits.maxResultBytes,
+            ) ?: failLimit("Plugin '$pluginId' exceeded the ${limits.maxResultBytes}-byte result limit in $label")
+            // The caller already expects a string; returning a fresh bounded value avoids a second
+            // conversion/allocation of the original attacker-controlled JS string.
+            return requireNotNull(JSValue.valueWithObject(bounded, requireNotNull(context)))
+        }
+        return value
     }
 
     private fun installNativeBridgeCallback() {
@@ -420,6 +535,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
     fun bridgeCall(method: String, encodedArguments: String): String {
         val invocationContext = withStateLock { activeInvocationJob } ?: EmptyCoroutineContext
         val result = try {
+            beforeBridgeCall(encodedArguments)
             runBlocking(invocationContext) {
                 val arguments = runCatching { parseJson(encodedArguments).jsonArray }
                     .getOrDefault(JsonArray(emptyList()))
@@ -430,14 +546,40 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
             // JavaScriptCore yields back to Kotlin and restores structured cancellation.
             bridgeCancellation = cancelled
             bridgeError(cancelled)
+        } catch (limited: PluginResourceLimitException) {
+            resourceLimitBridgeError(limited)
         }
-        return result.toString()
+        return try {
+            result.toString().also {
+                requireUtf8Bound(it, limits.maxBridgeResultBytes, "bridge result")
+            }
+        } catch (limited: PluginResourceLimitException) {
+            resourceLimitBridgeError(limited).toString()
+        }
+    }
+
+    internal val bridgeMethodByteLimit: Int get() = limits.maxBridgeMethodBytes
+    internal val bridgeArgumentByteLimit: Int get() = limits.maxBridgeArgumentBytes
+
+    internal fun rejectOversizedBridgeMethod(): String {
+        val failure = recordLimit(
+            "Plugin '$pluginId' exceeded the ${limits.maxBridgeMethodBytes}-byte bridge method limit",
+        )
+        return resourceLimitBridgeError(failure).toString()
+    }
+
+    internal fun rejectOversizedBridgeArguments(): String {
+        val failure = recordLimit(
+            "Plugin '$pluginId' exceeded the ${limits.maxBridgeArgumentBytes}-byte bridge arguments limit",
+        )
+        return resourceLimitBridgeError(failure).toString()
     }
 
     private suspend fun executeBridgeCall(method: String, arguments: JsonArray): JsonElement =
         try {
             when (method) {
                 "httpGet", "httpGetWithHeaders", "httpGetResponse" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
                     val url = arguments.string(0)
                     val customHeaders = arguments.getOrNull(1).stringMap()
                     val response = environment.network.get(
@@ -458,6 +600,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 }
 
                 "httpPost", "httpPostResponse" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
                     val response = environment.network.post(
                         id,
                         arguments.string(0),
@@ -477,6 +620,7 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 }
 
                 "httpPostBatch" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
                     val urls = arguments.getOrNull(0).stringList()
                     val bodies = arguments.getOrNull(1).stringList()
                     val responses = environment.network.postBatch(
@@ -491,13 +635,16 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     // string and parses it itself. Keep the native bridge value a string rather
                     // than exposing a platform-specific JavaScript array representation.
                     JsonPrimitive(
-                        PluginJson.encodeToString(
-                            JsonArray(responses.map { JsonPrimitive(it.bodyText()) }),
+                        encodeBoundedPluginBatchResponseBodies(
+                            responses,
+                            limits.maxBridgeResultBytes,
+                            jsonStringWrapped = true,
                         ),
                     )
                 }
 
                 "browserSessionRequest" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.BROWSER_CHALLENGE)
                     val prepared = preparePluginBrowserSessionRequest(
                         sourceOrigin = selectedSource?.baseUrl.orEmpty(),
                         allowedOrigins = selectedSource?.browserSessionOrigins.orEmpty(),
@@ -508,11 +655,13 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                             headers = arguments.getOrNull(3).stringMap(),
                         ),
                     )
-                    val response = environment.browserSessionTransport.execute(
+                    val response = environment.browserSessionTransport.executeWithNetworkPolicy(
                         sourceId = id,
                         sourceOrigin = prepared.sourceOrigin,
                         allowedOrigins = setOf(prepared.targetOrigin),
                         request = prepared.request,
+                        resolver = environment.hostResolver,
+                        allowDeveloperUnpinnedTransport = environment.allowDeveloperUnpinnedBrowserSession,
                     )
                     buildJsonObject {
                         put("status", response.status)
@@ -523,7 +672,6 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 "log" -> {
                     val message = arguments.string(0)
                     appendLog(message)
-                    environment.logger.log(pluginId, message)
                     JsonNull
                 }
 
@@ -532,22 +680,43 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                 "setPreference" -> {
                     environment.storage.setPreference(id, arguments.string(0), arguments.string(1)); JsonNull
                 }
-                "getCredentialUsername" -> environment.storage.getCredential(id)?.username?.let(::JsonPrimitive)
+                "getCredentialUsername" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+                    environment.storage.getCredential(id)?.username?.let(::JsonPrimitive)
                     ?: JsonNull
-                "getCredentialPassword" -> environment.storage.getCredential(id)?.password?.let(::JsonPrimitive)
+                }
+                "getCredentialPassword" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+                    environment.storage.getCredential(id)?.password?.let(::JsonPrimitive)
                     ?: JsonNull
+                }
                 "setCredential" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
                     environment.storage.setCredential(id, PluginCredential(arguments.string(0), arguments.string(1)))
                     JsonNull
                 }
-                "clearCredential" -> { environment.storage.clearCredential(id); JsonNull }
-                "hasCredential" -> JsonPrimitive(!environment.storage.getCredential(id)?.username.isNullOrEmpty())
+                "clearCredential" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+                    environment.storage.clearCredential(id); JsonNull
+                }
+                "hasCredential" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+                    JsonPrimitive(!environment.storage.getCredential(id)?.username.isNullOrEmpty())
+                }
                 "requestLogin" -> JsonPrimitive(
-                    submitLegacyLoginCompatibility(
-                        environment,
-                        supportsLogin,
-                        arguments.string(0).takeIf(String::isNotBlank),
-                    ),
+                    run {
+                        if (PluginRuntimePermission.LOGIN_PROMPT !in environment.runtimePermissions) {
+                            // The JS compatibility API is boolean-valued. Returning false is
+                            // fail-closed; returning bridgeError would coerce to true in `!!`.
+                            false
+                        } else {
+                            submitLegacyLoginCompatibility(
+                                environment,
+                                supportsLogin,
+                                arguments.string(0).takeIf(String::isNotBlank),
+                            )
+                        }
+                    },
                 )
                 "requestHostEvent" -> {
                     val sink = environment.systemEventSink
@@ -580,19 +749,26 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                     put("hardLimits", PluginJson.encodeToJsonElement(negotiation?.hardLimits))
                 }
                 "getCookie" -> {
-                    val target = Url(arguments.string(1))
-                    val now = Clock.System.now().toEpochMilliseconds()
-                    environment.storage.getCookies(id).firstOrNull {
-                        it.name == arguments.string(0) && it.matches(target, now)
-                    }?.value?.let(::JsonPrimitive) ?: JsonNull
+                    if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) JsonNull
+                    else {
+                        val target = Url(arguments.string(1))
+                        val now = Clock.System.now().toEpochMilliseconds()
+                        environment.storage.getCookies(id).firstOrNull {
+                            it.name == arguments.string(0) && it.matches(target, now)
+                        }?.value?.let(::JsonPrimitive) ?: JsonNull
+                    }
                 }
                 "getCookies" -> {
-                    val target = Url(arguments.string(0))
-                    val now = Clock.System.now().toEpochMilliseconds()
-                    JsonObject(environment.storage.getCookies(id).filter { it.matches(target, now) }
-                        .associate { it.name to JsonPrimitive(it.value) })
+                    if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) JsonObject(emptyMap())
+                    else {
+                        val target = Url(arguments.string(0))
+                        val now = Clock.System.now().toEpochMilliseconds()
+                        JsonObject(environment.storage.getCookies(id).filter { it.matches(target, now) }
+                            .associate { it.name to JsonPrimitive(it.value) })
+                    }
                 }
                 "setCookie" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
                     val seconds = arguments.long(4)
                     environment.storage.setCookie(
                         id,
@@ -601,39 +777,161 @@ private class JavaScriptCoreScriptPluginRuntime private constructor(
                             value = arguments.string(1),
                             domain = arguments.string(2),
                             path = arguments.string(3).ifBlank { "/" },
-                            expiresAtEpochMillis = if (seconds > 0) {
-                                Clock.System.now().toEpochMilliseconds() + seconds * 1_000L
-                            } else null,
+                            expiresAtEpochMillis = boundedCookieExpiryMillis(seconds),
                         ),
                     )
                     JsonPrimitive(true)
                 }
                 "deleteCookie" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
                     environment.storage.deleteCookie(id, arguments.string(0), arguments.string(1)); JsonNull
                 }
-                "clearCookies" -> { environment.storage.clearCookies(id); JsonNull }
-                // DOM is implemented inside JavaScriptCore by the injected parser/selector engine.
-                "domReleaseAll", "domRelease" -> JsonNull
-                "parseHtml" -> arguments.getOrNull(0) ?: JsonNull
+                "clearCookies" -> {
+                    environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
+                    environment.storage.clearCookies(id); JsonNull
+                }
+                // The parser is JavaScript-side, but every parse/selection allocation is admitted
+                // by these native quota calls so script code cannot bypass host-owned limits.
+                // JavaScriptCore object reachability is controlled by GC, not this compatibility
+                // hint. Do not decrement accounting for a forgeable/double-releasable handle.
+                "domRelease", "domReleaseAll" -> JsonNull
+                "domParse" -> {
+                    requireDomInput(arguments.string(0))
+                    buildJsonObject {
+                        put("maxNodes", limits.maxDomNodes - domNodes)
+                        put("maxDepth", limits.maxDomDepth)
+                    }
+                }
+                "domParsed" -> {
+                    val requested = arguments.long(0)
+                    if (requested < 0 || requested > limits.maxDomNodes.toLong() - domNodes) {
+                        failLimit("Plugin '$pluginId' exceeded ${limits.maxDomNodes} parsed DOM nodes")
+                    }
+                    domNodes += requested.toInt()
+                    JsonNull
+                }
+                "domSelect" -> {
+                    requireSelector(arguments.string(0))
+                    reserveDomHandles(arguments.long(1))
+                    JsonNull
+                }
+                "domDepth" -> {
+                    failLimit("Plugin '$pluginId' exceeded DOM depth ${limits.maxDomDepth}")
+                }
+                "parseHtml" -> {
+                    requireDomInput(arguments.string(0))
+                    requireSelector(arguments.string(1))
+                    arguments.getOrNull(0) ?: JsonNull
+                }
                 else -> buildJsonObject { put("error", "Unknown bridge method '$method'") }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
+            if (method in setOf("httpGet", "httpGetWithHeaders", "httpGetResponse")) {
+                // Diagnose host failures without logging URLs, headers, bodies or credentials.
+                println("SHINSOU_IOS_NETWORK_FAILURE " + iosPluginNetworkFailureCode(error))
+            }
             bridgeError(error)
         }
 
     private fun bridgeError(error: Throwable): JsonObject = buildJsonObject {
-        put("error", error.message ?: error::class.simpleName.orEmpty())
+        put("error", safeBridgeError(error))
+    }
+
+    private fun safeBridgeError(error: Throwable): String =
+        error.message?.takeIf {
+            it.startsWith("Plugin runtime lacks ") && it.endsWith(" permission")
+        } ?: "Host operation failed"
+
+    private fun boundedCookieExpiryMillis(seconds: Long): Long? {
+        if (seconds <= 0) return null
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (seconds > (Long.MAX_VALUE - now) / 1_000L) {
+            failLimit("Plugin '$pluginId' supplied an overflowing cookie expiry")
+        }
+        return now + seconds * 1_000L
+    }
+
+    private fun resourceLimitBridgeError(error: PluginResourceLimitException): JsonObject = buildJsonObject {
+        put("error", error.message.orEmpty())
+        put("__shinsouResourceLimit", true)
     }
 
     private fun clearLogs() {
-        withLogsLock { logs.clear() }
+        withLogsLock {
+            logs.clear()
+            logBytes = 0
+        }
     }
 
     private fun appendLog(message: String) {
-        withLogsLock { logs += message }
+        val bounded = boundedPluginLogMessage(message, limits.maxLogEntryBytes)
+        val bytes = bounded.encodeToByteArray().size
+        withLogsLock {
+            while (logs.isNotEmpty() && (logs.size >= limits.maxLogEntries || logBytes + bytes > limits.maxLogBytes)) {
+                logBytes -= logs.removeAt(0).encodeToByteArray().size
+            }
+            if (bytes <= limits.maxLogBytes) {
+                logs += bounded
+                logBytes += bytes
+                environment.logger.log(pluginId, bounded)
+            }
+        }
     }
+
+    private var domHandles = 0
+    private var domNodes = 0
+
+    private fun beforeBridgeCall(encodedArguments: String) {
+        limitFailure?.let { throw it }
+        bridgeCalls += 1
+        if (bridgeCalls > limits.maxBridgeCallsPerInvocation) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxBridgeCallsPerInvocation} bridge calls")
+        }
+        requireUtf8Bound(encodedArguments, limits.maxBridgeArgumentBytes, "bridge arguments")
+    }
+
+    private fun requireDomInput(html: String) {
+        requireUtf8Bound(html, limits.maxDomInputBytes, "DOM input")
+    }
+
+    private fun requireSelector(selector: String) {
+        if (selector.length > limits.maxSelectorChars) {
+            failLimit("Plugin '$pluginId' exceeded the ${limits.maxSelectorChars}-character selector limit")
+        }
+    }
+
+    private fun reserveDomHandles(requested: Long) {
+        if (requested < 0 || requested > limits.maxParsedElements.toLong()) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxParsedElements} parsed selector elements")
+        }
+        if (requested > limits.maxDomHandles.toLong() - domHandles) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxDomHandles} live DOM handles")
+        }
+        domHandles += requested.toInt()
+    }
+
+    private fun parseBoundedJsonResult(value: String?, label: String): JsonElement {
+        val encoded = value.orEmpty()
+        requireUtf8Bound(encoded, limits.maxResultBytes, "result")
+        val parsed = parseJson(encoded)
+        JsonResultLimitValidator(limits, pluginId).validate(parsed)
+        return parsed
+    }
+
+    private fun requireUtf8Bound(value: String, maximum: Int, kind: String) {
+        if (pluginUtf8ByteCountAtMost(value, maximum) == null) {
+            failLimit("Plugin '$pluginId' exceeded the $maximum-byte $kind limit")
+        }
+    }
+
+    private fun failLimit(message: String): Nothing {
+        throw recordLimit(message)
+    }
+
+    private fun recordLimit(message: String): PluginResourceLimitException =
+        limitFailure ?: PluginResourceLimitException(message).also { limitFailure = it }
 
     private inline fun <T> withLogsLock(block: () -> T): T {
         logsLock.lock()
@@ -708,21 +1006,48 @@ private fun iosBridgeCallback(
     exception: CPointer<JSValueRefVar>?,
 ): JSValueRef? {
     val runtime = IosBridgeRegistry.runtime(context)
-    val method = if (argumentCount > 0u) jsValueToString(context, arguments?.get(0)) else ""
-    val encodedArguments = if (argumentCount > 1u) jsValueToString(context, arguments?.get(1)) else "[]"
-    val result = runtime?.bridgeCall(method, encodedArguments)
+    val method = if (argumentCount > 0u) {
+        jsValueToBoundedString(context, arguments?.get(0), runtime?.bridgeMethodByteLimit ?: 256)
+    } else {
+        ""
+    }
+    if (method == null) {
+        val failure = runtime?.rejectOversizedBridgeMethod()
+            ?: "{\"error\":\"JavaScriptCore bridge method exceeded host limit\"}"
+        return jsStringValue(context, failure)
+    }
+    val encodedArguments = if (argumentCount > 1u) {
+        jsValueToBoundedString(context, arguments?.get(1), runtime?.bridgeArgumentByteLimit ?: 4 * 1_024 * 1_024)
+    } else {
+        "[]"
+    }
+    if (encodedArguments == null && runtime != null) {
+        return jsStringValue(context, runtime.rejectOversizedBridgeArguments())
+    }
+    val result = runtime?.bridgeCall(method, encodedArguments ?: "[]")
         ?: "{\"error\":\"JavaScriptCore runtime is unavailable\"}"
     return jsStringValue(context, result)
 }
 
-private fun jsValueToString(context: JSContextRef?, value: JSValueRef?): String {
+private fun jsValueToBoundedString(
+    context: JSContextRef?,
+    value: JSValueRef?,
+    maximumUtf8Bytes: Int,
+): String? {
     val string = JSValueToStringCopy(context, value, null) ?: return ""
     return try {
         val capacity = JSStringGetMaximumUTF8CStringSize(string)
+        val utf16Length = JSStringGetLength(string)
+        // Every non-empty UTF-16 string needs at least ceil(codeUnits / 2) UTF-8 bytes (one
+        // four-byte scalar may occupy two code units). This cheap lower bound prevents an
+        // attacker-sized native allocation; the exact UTF-8 bound is checked after decoding.
+        if (utf16Length > maximumUtf8Bytes.toULong() * 2uL || capacity > Int.MAX_VALUE.toULong()) return null
         kotlinx.cinterop.memScoped {
             val buffer = allocArray<kotlinx.cinterop.ByteVar>(capacity.toInt())
             JSStringGetUTF8CString(string, buffer, capacity)
-            buffer.toKString()
+            buffer.toKString().takeIf { decoded ->
+                pluginUtf8ByteCountAtMost(decoded, maximumUtf8Bytes) != null
+            }
         }
     } finally {
         JSStringRelease(string)
@@ -736,6 +1061,56 @@ private fun jsStringValue(context: JSContextRef?, value: String): JSValueRef? {
 
 private fun parseJson(value: String?): JsonElement =
     value?.let { runCatching { PluginJson.parseToJsonElement(it) }.getOrNull() } ?: JsonNull
+
+private class JsonResultLimitValidator(
+    private val limits: PluginExecutionLimits,
+    private val pluginId: String,
+) {
+    private var totalElements = 0
+
+    fun validate(value: JsonElement) {
+        visit(value, 0)
+    }
+
+    private fun visit(value: JsonElement, depth: Int) {
+        requireLimit(depth <= limits.maxResultDepth) {
+            "Plugin '$pluginId' exceeded result nesting depth ${limits.maxResultDepth}"
+        }
+        totalElements += 1
+        requireLimit(totalElements <= limits.maxResultTotalElements) {
+            "Plugin '$pluginId' exceeded ${limits.maxResultTotalElements} total result elements"
+        }
+        when (value) {
+            is JsonArray -> {
+                requireLimit(value.size <= limits.maxResultArrayElements) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultArrayElements} result array elements"
+                }
+                value.forEach { visit(it, depth + 1) }
+            }
+            is JsonObject -> {
+                requireLimit(value.size <= limits.maxResultObjectEntries) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultObjectEntries} result object entries"
+                }
+                value.forEach { (key, child) ->
+                    requireString(key)
+                    visit(child, depth + 1)
+                }
+            }
+            is JsonPrimitive -> if (value.isString) requireString(value.content)
+            JsonNull -> Unit
+        }
+    }
+
+    private fun requireString(value: String) {
+        requireLimit(pluginUtf8ByteCountAtMost(value, limits.maxResultStringBytes) != null) {
+            "Plugin '$pluginId' exceeded the ${limits.maxResultStringBytes}-byte result string limit"
+        }
+    }
+
+    private inline fun requireLimit(condition: Boolean, message: () -> String) {
+        if (!condition) throw PluginResourceLimitException(message())
+    }
+}
 
 private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
 private fun JsonObject.boolean(key: String): Boolean = this[key]?.jsonPrimitive?.booleanOrNull ?: false

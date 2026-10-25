@@ -1,0 +1,5 @@
+language = Objective-C
+headers = ShinsouNetworkReceive.h
+package = dev.shinsou.interop.network
+compilerOpts = -fblocks
+linkerOpts = -framework Network

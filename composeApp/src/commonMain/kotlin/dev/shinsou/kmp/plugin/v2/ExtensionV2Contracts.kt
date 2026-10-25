@@ -695,6 +695,20 @@ public interface WebChallengeUserAgentSourceV2 {
     public val webChallengeUrl: String? get() = null
     public val webChallengeLocalStorageKeys: Set<String> get() = emptySet()
     public val requiredWebChallengeLocalStorageKeys: Set<String> get() = emptySet()
+    /** Exact origins which may receive the browser-bound session. */
+    public val browserSessionOrigins: Set<String>
+        get() = webChallengeUrl?.let { runCatching { Url(it).let(::pluginOriginForWebChallenge) }.getOrNull() }
+            ?.let(::setOf)
+            .orEmpty()
+}
+
+private fun pluginOriginForWebChallenge(url: Url): String {
+    require(url.protocol.name.equals("https", ignoreCase = true) && url.host.isNotBlank())
+    val defaultPort = if (url.protocol.name.equals("https", ignoreCase = true)) 443 else 80
+    return buildString {
+        append(url.protocol.name.lowercase()).append("://").append(url.host.lowercase())
+        if (url.port != defaultPort) append(':').append(url.port)
+    }
 }
 
 /** Host-only exact artifact authority for native/reviewed event-capable runtimes. */
@@ -736,6 +750,11 @@ public class HostExtensionSourceV2 internal constructor(
         (implementation as? WebChallengeUserAgentSourceV2)
             ?.requiredWebChallengeLocalStorageKeys
             .orEmpty()
+    public fun webChallengeBrowserSessionOrigins(): Set<String> =
+        (implementation as? WebChallengeUserAgentSourceV2)
+            ?.browserSessionOrigins
+            .orEmpty()
+
     public suspend fun browseOptions(): BrowseOptionsSchemaV2 {
         requireCapability(ExtensionCapability.BROWSE)
         return implementation.browseOptions().also(::validateBrowseSchema)
@@ -1548,6 +1567,6 @@ private val MEDIA_TYPE_PATTERN = Regex("[A-Za-z0-9!#${'$'}%&'*+.^_`|~-]+/[A-Za-z
 private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
 private val SAFE_HEADER_HINTS = setOf(
     "accept", "accept-language", "content-type", "referer", "user-agent", "origin",
-    "x-requested-with",
+    "x-requested-with", "x-image-ticket",
 )
 private val RFC_TOKEN = Regex("[!#${'$'}%&'*+.^_`|~0-9A-Za-z-]+")

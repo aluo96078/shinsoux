@@ -9,7 +9,11 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
   'use strict';
   function nativeCall(method,args){
     var encoded=__shinsouBridge(String(method),JSON.stringify(args||[]));
-    try{return JSON.parse(String(encoded));}catch(e){return null;}
+    try{
+      var value=JSON.parse(String(encoded));
+      if(value&&value.__shinsouResourceLimit){var limitError=new Error(String(value.error||'Plugin resource limit exceeded'));limitError.__shinsouResourceLimit=true;throw limitError;}
+      return value;
+    }catch(e){if(e&&e.__shinsouResourceLimit)throw e;return null;}
   }
   global.bridge={
     httpGet:function(url){return nativeCall('httpGet',[String(url)]);},
@@ -40,8 +44,9 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     setCookie:function(name,value,domain,path,seconds){return !!nativeCall('setCookie',[String(name),String(value),String(domain),String(path||'/'),Number(seconds||0)]);},
     deleteCookie:function(name,domain){nativeCall('deleteCookie',[String(name),String(domain)]);},
     clearCookies:function(){nativeCall('clearCookies',[]);},
-    domReleaseAll:function(){nativeCall('domReleaseAll',[]);},
     domRelease:function(id){nativeCall('domRelease',[Number(id||0)]);},
+    // JSC owns DOM objects through GC; this legacy hint must not reset invocation quotas.
+    domReleaseAll:function(){nativeCall('domReleaseAll',[]);},
     parseHtml:function(html,selector){var doc=parseHtml(String(html),'');return doc.select(String(selector)).map(function(e){return{text:e.text(),html:e.html(),outerHtml:e.outerHtml(),attr_href:e.attr('href'),attr_src:e.attr('src'),tagName:e.tagName()};});}
   };
   bridge.system={
@@ -94,6 +99,8 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
   Element.prototype.nextElementSibling=function(){var p=this.parent();if(!p)return null;var a=p.children()._arr,i=a.indexOf(this);return i>=0&&i+1<a.length?a[i+1]:null;};
   Element.prototype.previousElementSibling=function(){var p=this.parent();if(!p)return null;var a=p.children()._arr,i=a.indexOf(this);return i>0?a[i-1]:null;};
   Element.prototype.remove=function(){if(!this._parent)return;var i=this._parent._children.indexOf(this);if(i>=0)this._parent._children.splice(i,1);this._parent=null;};
+  // JavaScriptCore object liveness is GC-managed. The host resets accounting only at a new
+  // invocation boundary; a script-visible reset would let still-live DOM objects bypass quota.
   Element.prototype.release=function(){};
   Element.prototype.ownText=function(){return normalizeText(this._children.filter(function(n){return n instanceof TextNode;}).map(function(n){return n.value;}).join(' '));};
   Element.prototype.text=function(){var out=[];(function visit(node){node._children.forEach(function(child){if(child instanceof TextNode)out.push(child.value);else visit(child);});})(this);return normalizeText(out.join(' '));};
@@ -104,7 +111,7 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     return '<'+this._tag+attrs+'>'+(voidTags[this._tag]?'':this.html()+'</'+this._tag+'>');
   };
   Element.prototype.absUrl=function(name){return resolveUrl(this._baseUri,this.attr(name));};
-  Element.prototype.select=function(selector){return querySelectorAll(this,String(selector));};
+  Element.prototype.select=function(selector){selector=String(selector);var result=querySelectorAll(this,selector);nativeCall('domSelect',[selector,result.length]);return result;};
   Element.prototype.selectFirst=function(selector){var values=this.select(selector);return values.length?values[0]:null;};
   Element.prototype.getElementsByTag=function(tag){return this.select(String(tag));};
   Element.prototype.getElementsByClass=function(name){return this.select('.'+String(name));};
@@ -143,21 +150,23 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     return attrs;
   }
   function parseHtml(html,baseUri){
-    html=String(html||'');var doc=new Document(baseUri||''),stack=[doc],i=0;
+    html=String(html||'');var quota=nativeCall('domParse',[html])||{},maxNodes=Number(quota.maxNodes||0),maxDepth=Number(quota.maxDepth||0),nodeCount=1;
+    function reserveNode(){nodeCount++;if(nodeCount>maxNodes){nativeCall('domParsed',[nodeCount]);throw new Error('Plugin DOM handle limit exceeded');}}
+    var doc=new Document(baseUri||''),stack=[doc],i=0;
     while(i<html.length){
       var parent=stack[stack.length-1];
       if(parent._tag==='script'||parent._tag==='style'){
         var closeToken='</'+parent._tag,closeAt=html.toLowerCase().indexOf(closeToken,i);
-        if(closeAt<0){parent._children.push(new TextNode(html.substring(i),parent,true));stack.pop();break;}
-        parent._children.push(new TextNode(html.substring(i,closeAt),parent,true));
+        if(closeAt<0){reserveNode();parent._children.push(new TextNode(html.substring(i),parent,true));stack.pop();break;}
+        reserveNode();parent._children.push(new TextNode(html.substring(i,closeAt),parent,true));
         var closeEnd=findTagEnd(html,closeAt+1);
         stack.pop();i=closeEnd<0?html.length:closeEnd+1;continue;
       }
       var open=html.indexOf('<',i);
-      if(open<0){parent._children.push(new TextNode(decodeEntities(html.substring(i)),parent,false));break;}
-      if(open>i)parent._children.push(new TextNode(decodeEntities(html.substring(i,open)),parent,false));
+      if(open<0){reserveNode();parent._children.push(new TextNode(decodeEntities(html.substring(i)),parent,false));break;}
+      if(open>i){reserveNode();parent._children.push(new TextNode(decodeEntities(html.substring(i,open)),parent,false));}
       if(html.substring(open,open+4)==='<!--'){var endComment=html.indexOf('-->',open+4);i=endComment<0?html.length:endComment+3;continue;}
-      var end=findTagEnd(html,open+1);if(end<0){parent._children.push(new TextNode(decodeEntities(html.substring(open)),parent,false));break;}
+      var end=findTagEnd(html,open+1);if(end<0){reserveNode();parent._children.push(new TextNode(decodeEntities(html.substring(open)),parent,false));break;}
       var raw=html.substring(open+1,end).trim();i=end+1;if(!raw||raw.charAt(0)==='!'||raw.charAt(0)==='?')continue;
       if(raw.charAt(0)==='/'){
         var closing=raw.substring(1).trim().split(/\s+/)[0].toLowerCase();
@@ -166,9 +175,10 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
       }
       var selfClosing=/\/\s*$/.test(raw);if(selfClosing)raw=raw.replace(/\/\s*$/,'');
       var match=raw.match(/^([^\s]+)/);if(!match)continue;var tag=match[1].toLowerCase();
-      var element=new Element(tag,parseAttributes(raw.substring(match[0].length)),parent,baseUri||'',doc);
-      parent._children.push(element);if(!selfClosing&&!voidTags[tag])stack.push(element);
+      reserveNode();var element=new Element(tag,parseAttributes(raw.substring(match[0].length)),parent,baseUri||'',doc);
+      parent._children.push(element);if(!selfClosing&&!voidTags[tag]){if(stack.length>=maxDepth){nativeCall('domDepth',[stack.length+1]);throw new Error('Plugin DOM depth limit exceeded');}stack.push(element);}
     }
+    nativeCall('domParsed',[nodeCount]);
     return doc;
   }
   function findTagEnd(html,start){var quote='';for(var i=start;i<html.length;i++){var c=html.charAt(i);if(quote){if(c===quote)quote='';}else if(c==='"'||c==="'")quote=c;else if(c==='>')return i;}return -1;}
@@ -200,7 +210,13 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
     if(op==='=')return actual===expected;if(op==='^=')return actual.indexOf(expected)===0;if(op==='*=')return actual.indexOf(expected)>=0;if(op.charCodeAt(0)===36)return actual.lastIndexOf(expected)===actual.length-expected.length;if(op==='~=')return actual.split(/\s+/).indexOf(expected)>=0;if(op==='|=')return actual===expected||actual.indexOf(expected+'-')===0;return false;
   }
   function rootOf(element){var current=element;while(current._parent)current=current._parent;return current;}
-  function matchesComplex(element,selector){var selected=querySelectorAll(rootOf(element),selector)._arr;return selected.indexOf(element)>=0;}
+  function matchesComplex(element,selector){
+    return splitTopLevel(String(selector),',').some(function(group){
+      var steps=selectorSteps(group);
+      if(steps.length===1)return matchesSimple(element,steps[0].simple);
+      return querySelectorAll(rootOf(element),group)._arr.indexOf(element)>=0;
+    });
+  }
   function matchesSimple(element,simple){
     var i=0,tag=simple.substring(i).match(/^[a-zA-Z*][a-zA-Z0-9_-]*/);if(tag){if(tag[0]!=='*'&&element._tag!==tag[0].toLowerCase())return false;i+=tag[0].length;}
     while(i<simple.length){var c=simple.charAt(i);
@@ -209,7 +225,8 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
       if(c===':'){var nm=simple.substring(i+1).match(/^[a-zA-Z-]+/);if(!nm)return false;var name=nm[0].toLowerCase();i+=name.length+1;var arg=null;if(simple.charAt(i)==='('){var endp=readBalanced(simple,i,'(',')');arg=simple.substring(i+1,endp);i=endp+1;}
         var siblings=element.parent()?element.parent().children()._arr:[element],position=siblings.indexOf(element)+1;
         if(name==='contains'&&element.text().indexOf(stripQuotes(arg))<0)return false;
-        else if(name==='has'&&element.select(arg||'').isEmpty())return false;
+        // Internal predicate checks do not expose handles to the plugin.
+        else if(name==='has'&&querySelectorAll(element,arg||'').isEmpty())return false;
         else if(name==='not'&&matchesComplex(element,arg||''))return false;
         else if(name==='first-child'&&position!==1)return false;
         else if(name==='last-child'&&position!==siblings.length)return false;
@@ -255,6 +272,6 @@ internal const val IOS_JAVASCRIPTCORE_BOOTSTRAP: String = """
   };
   global.__shinsouMetadata=function(){if(typeof source!=='object'||!source)throw new Error('Plugin does not export source');return JSON.stringify({baseUrl:source.baseUrl||'',supportsLatest:!!source.supportsLatest,supportsLogin:!!source.supportsLogin,supportsFavorites:!!source.supportsFavorites,headers:source.headers||{},webChallengeUrl:source.webChallengeUrl||null,webChallengeLocalStorageKeys:Array.isArray(source.webChallengeLocalStorageKeys)?source.webChallengeLocalStorageKeys:[],requiredWebChallengeLocalStorageKeys:Array.isArray(source.requiredWebChallengeLocalStorageKeys)?source.requiredWebChallengeLocalStorageKeys:[]});};
   global.__shinsouPreferences=function(){if(typeof source!=='object'||!source)return '[]';var values=typeof source.getPreferenceDefinitions==='function'?source.getPreferenceDefinitions():(source.preferences||[]);return JSON.stringify(values||[]);};
-  global.__shinsouInvoke=function(method,argsJson){bridge.domReleaseAll();if(typeof source!=='object'||!source||typeof source[method]!=='function')throw new Error('Plugin has no function '+method);var result=source[method].apply(source,JSON.parse(argsJson||'[]'));return JSON.stringify(result===undefined?null:result);};
+  global.__shinsouInvoke=function(method,argsJson){if(typeof source!=='object'||!source||typeof source[method]!=='function')throw new Error('Plugin has no function '+method);var result=source[method].apply(source,JSON.parse(argsJson||'[]'));return JSON.stringify(result===undefined?null:result);};
 })(this);
 """

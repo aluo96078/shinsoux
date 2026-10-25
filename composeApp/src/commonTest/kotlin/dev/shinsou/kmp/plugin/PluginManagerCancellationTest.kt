@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
+import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -80,23 +82,74 @@ class PluginManagerCancellationTest {
     }
 
     @Test
-    fun failedPackageRemovalKeepsTheExistingRuntimeLive() = runTest {
+    fun failedPackageRemovalLeavesRetainedPackageInertAndCanBeRetried() = runTest {
         val packageStore = ControllablePackageStore()
+        val values = InMemoryPluginKeyValueStore()
         val factory = CancellationRuntimeFactory()
-        val manager = manager(packageStore, factory)
+        val manager = manager(
+            packageStore,
+            factory,
+            values = values,
+            enableEventGrantAdmission = true,
+        )
         manager.install(REPOSITORY, ENTRY)
+        manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
         packageStore.failRemove = OperationGate()
 
         val uninstall = async { runCatching { manager.uninstall(PLUGIN_ID) } }
         val gate = requireNotNull(packageStore.failRemove)
         gate.reached.await()
-        assertEquals(SOURCE_ID, manager.source(SOURCE_ID)?.id)
+        assertNull(manager.source(SOURCE_ID))
+        assertTrue(factory.created.single().closed)
         gate.release.complete(Unit)
 
-        assertTrue(uninstall.await().isFailure)
-        assertEquals(PLUGIN_ID, packageStore.list().single().manifest.id)
-        assertEquals(SOURCE_ID, manager.source(SOURCE_ID)?.id)
-        assertFalse(factory.created.single().closed)
+        val failure = uninstall.await().exceptionOrNull()
+        assertEquals("Injected package removal failure", failure?.message)
+        val retained = packageStore.list().single()
+        assertEquals(PLUGIN_ID, retained.manifest.id)
+        assertFalse(retained.metadata.legacyTrustOnInstall)
+        assertNull(manager.source(SOURCE_ID))
+
+        // Neither the current process nor a fresh manager may silently revive retained bytes.
+        assertTrue(manager.loadInstalled().isEmpty())
+        val restartedFactory = CancellationRuntimeFactory()
+        val restartedManager = manager(
+            packageStore,
+            restartedFactory,
+            values = values,
+            enableEventGrantAdmission = true,
+        )
+        assertTrue(restartedManager.loadInstalled().isEmpty())
+        assertTrue(restartedFactory.created.isEmpty())
+
+        // A later explicit retry can finish durable deletion without reconstructing a runtime.
+        packageStore.failRemove = null
+        manager.uninstall(PLUGIN_ID)
+        assertTrue(packageStore.list().isEmpty())
+        assertNull(manager.source(SOURCE_ID))
+    }
+
+    @Test
+    fun packageRemovalFailureRemainsPrimaryWhenOtherRevocationAlsoFails() = runTest {
+        val packageStore = ControllablePackageStore().apply { failRemove = OperationGate() }
+        val trustStore = FailingRevokeTrustStore()
+        val manager = manager(
+            packageStore,
+            CancellationRuntimeFactory(),
+            providedTrustStore = trustStore,
+        )
+        manager.install(REPOSITORY, ENTRY)
+        val uninstall = async { runCatching { manager.uninstall(PLUGIN_ID) } }
+        val gate = requireNotNull(packageStore.failRemove)
+        gate.reached.await()
+        gate.release.complete(Unit)
+
+        val failure = requireNotNull(uninstall.await().exceptionOrNull())
+        assertEquals("Injected package removal failure", failure.message)
+        assertEquals(1, trustStore.revokeAllCalls)
+        assertEquals(1, failure.suppressedExceptions.size)
+        assertNull(manager.source(SOURCE_ID))
+        assertTrue(packageStore.list().isNotEmpty())
     }
 
     @Test
@@ -136,24 +189,23 @@ class PluginManagerCancellationTest {
     }
 
     @Test
-    fun failedDurableRevocationKeepsTheTrustedRuntimeLive() = runTest {
+    fun failedDurableRevocationStillUnloadsTheRuntimeFailClosed() = runTest {
         val packageStore = InMemoryPluginPackageStore().apply { put(executableLegacyPackage()) }
         val factory = CancellationRuntimeFactory()
-        val manager = manager(packageStore, factory, FailingRevokeTrustStore)
+        val manager = manager(packageStore, factory, FailingRevokeTrustStore())
         manager.loadInstalled()
-        val liveBefore = requireNotNull(manager.source(SOURCE_ID))
+        requireNotNull(manager.source(SOURCE_ID))
 
         assertFailsWith<IllegalStateException> {
             manager.setPluginTrusted(PLUGIN_ID, false)
         }
 
-        assertTrue(manager.source(SOURCE_ID) === liveBefore)
-        assertFalse(factory.created.single().closed)
+        assertNull(manager.source(SOURCE_ID))
+        assertTrue(factory.created.single().closed)
         assertFalse(packageStore.list().single().metadata.legacyTrustOnInstall)
 
-        // The token revocation failed, so a reconstruction must still treat this package as trusted.
-        val restarted = manager(packageStore, CancellationRuntimeFactory(), FailingRevokeTrustStore)
-        assertEquals(SOURCE_ID, restarted.loadInstalled().single().id)
+        // The failed durable token must not allow an in-process reload to revive the runtime.
+        assertTrue(manager.loadInstalled().isEmpty())
     }
 
     @Test
@@ -213,13 +265,15 @@ class PluginManagerCancellationTest {
         packageStore: PluginPackageStore,
         factory: ScriptPluginRuntimeFactory,
         providedTrustStore: PluginTrustStore? = null,
+        values: InMemoryPluginKeyValueStore = InMemoryPluginKeyValueStore(),
+        enableEventGrantAdmission: Boolean = false,
     ): PluginManager {
-        val values = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(values)
         return PluginManager(
             repositoryClient = ExtensionRepositoryClient(
                 HttpClient(MockEngine { respond(SCRIPT) }),
                 cacheToken = { 1L },
+                repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
             ),
             packageStore = packageStore,
             verifier = PluginVerifier(providedTrustStore ?: KeyValuePluginTrustStore(values)),
@@ -232,6 +286,15 @@ class PluginManagerCancellationTest {
                 ),
                 storage = storage,
             ),
+            eventGrantAdmission = if (enableEventGrantAdmission) {
+                KeyValuePluginEventGrantAdmission(
+                    values,
+                    MutablePluginSystemEventAuthorizer(),
+                )
+            } else {
+                null
+            },
+            executionAdmissionMode = PluginExecutionAdmissionMode.UNSAFE_DEVELOPER_COMPATIBILITY,
         )
     }
 
@@ -247,6 +310,9 @@ class PluginManagerCancellationTest {
             script = "$PLUGIN_ID.js",
             signature = hash,
             sources = ENTRY.sources,
+            // This fixture models an executable pre-V2 package. Missing runtime permissions are
+            // intentionally inert now and are covered by PluginManagerExecutionAdmissionTest.
+            runtimePermissions = PluginRuntimePermission.LEGACY_COMPATIBILITY,
         )
         return StoredPlugin(
             InstalledPluginMetadata(
@@ -296,6 +362,7 @@ class PluginManagerCancellationTest {
             sources = listOf(
                 SourceIndexEntry("Cancellation", "all", SOURCE_ID, "https://source.example"),
             ),
+            runtimePermissions = PluginRuntimePermission.LEGACY_COMPATIBILITY,
         )
         val LEGACY_ENTRY = LegacyExtensionIndexEntry(
             name = "Cancellation",
@@ -331,16 +398,20 @@ private class ControllablePackageStore : PluginPackageStore {
     var pauseRemoveBeforeCommit: OperationGate? = null
     var failRemove: OperationGate? = null
 
-    override suspend fun list(): List<StoredPlugin> = mutex.withLock { plugins.values.toList() }
+    override suspend fun list(): List<StoredPlugin> = mutex.withLock {
+        plugins.values.map(::copyPlugin)
+    }
 
-    override suspend fun get(pluginId: String): StoredPlugin? = mutex.withLock { plugins[pluginId] }
+    override suspend fun get(pluginId: String): StoredPlugin? = mutex.withLock {
+        plugins[pluginId]?.let(::copyPlugin)
+    }
 
     override suspend fun put(plugin: StoredPlugin) {
         failPut?.let { gate ->
             gate.pause()
             error("Injected package commit failure")
         }
-        mutex.withLock { plugins[plugin.manifest.id] = plugin }
+        mutex.withLock { plugins[plugin.manifest.id] = copyPlugin(plugin) }
         pausePutAfterCommit?.pause()
     }
 
@@ -352,6 +423,9 @@ private class ControllablePackageStore : PluginPackageStore {
         pauseRemoveBeforeCommit?.pause()
         mutex.withLock { plugins.remove(pluginId) }
     }
+
+    private fun copyPlugin(plugin: StoredPlugin): StoredPlugin =
+        plugin.copy(scriptBytes = plugin.scriptBytes.copyOf())
 }
 
 private object FailingTrustStore : PluginTrustStore {
@@ -362,11 +436,17 @@ private object FailingTrustStore : PluginTrustStore {
     override suspend fun revokeAll(pluginId: String) = Unit
 }
 
-private object FailingRevokeTrustStore : PluginTrustStore {
+private class FailingRevokeTrustStore : PluginTrustStore {
+    var revokeAllCalls: Int = 0
+        private set
+
     override suspend fun isTrusted(pluginId: String, versionCode: Int, sha256: String): Boolean = true
     override suspend fun trust(pluginId: String, versionCode: Int, sha256: String) = Unit
     override suspend fun revoke(pluginId: String, versionCode: Int, sha256: String) = Unit
-    override suspend fun revokeAll(pluginId: String): Unit = error("Injected revocation failure")
+    override suspend fun revokeAll(pluginId: String) {
+        revokeAllCalls += 1
+        error("Injected revocation failure")
+    }
 }
 
 private class CancellationRuntimeFactory : ScriptPluginRuntimeFactory {

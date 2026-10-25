@@ -8,8 +8,12 @@ import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class AndroidAppFileSystem(context: Context) : AppFileSystem {
-    private val root = File(context.filesDir, "shinsou-content").apply { mkdirs() }
+class AndroidAppFileSystem internal constructor(rootDirectory: File) : AppFileSystem {
+    constructor(context: Context) : this(File(context.filesDir, "shinsou-content"))
+
+    // file() returns canonical paths. Use that same base for relative directory entries;
+    // Android can expose filesDir through a different alias after process reconstruction.
+    private val root = rootDirectory.canonicalFile.apply { mkdirs() }
 
     override suspend fun write(relativePath: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
         file(relativePath).also { it.parentFile?.mkdirs() }.writeBytes(bytes)
@@ -59,6 +63,21 @@ class AndroidAppFileSystem(context: Context) : AppFileSystem {
         if (!directory.isDirectory) emptyList()
         else directory.walkTopDown().filter(File::isFile).map { it.relativeTo(root).invariantSeparatorsPath }.toList()
     }
+
+    override suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> =
+        withContext(Dispatchers.IO) {
+            require(maximumEntries in 0 until Int.MAX_VALUE) { "Invalid maximum directory entry count" }
+            val directory = file(relativeDirectory)
+            if (!directory.isDirectory) return@withContext emptyList()
+            directory.walkTopDown()
+                .filter(File::isFile)
+                .take(maximumEntries + 1)
+                .map { it.relativeTo(root).invariantSeparatorsPath }
+                .toList()
+                .also { entries ->
+                    require(entries.size <= maximumEntries) { "Directory contains too many files" }
+                }
+        }
 
     override fun uri(relativePath: String): String = file(relativePath).toURI().toString()
 

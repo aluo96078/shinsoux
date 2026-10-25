@@ -50,6 +50,10 @@ val androidPublicDebugSigningValues = listOf(
 val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+// Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
+val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
 val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
     .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_IDENTITY"))
     .orNull
@@ -123,6 +127,8 @@ val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
             "AppKit",
             "-framework",
             "WebKit",
+            "-framework",
+            "Network",
             sourcePath,
             "-o",
             outputPath,
@@ -235,6 +241,10 @@ kotlin {
     iosSimulatorArm64()
 
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        compilations.getByName("main").cinterops.create("networkReceive") {
+            defFile(project.file("src/nativeInterop/cinterop/networkReceive.def"))
+            includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
         binaries.all {
             linkerOpts("-lsqlite3")
         }
@@ -291,6 +301,7 @@ kotlin {
                 implementation(libs.coil.network.ktor)
                 implementation(libs.jsoup)
                 implementation(libs.rhino)
+                implementation(libs.ktor.client.okhttp)
             }
         }
 
@@ -299,12 +310,12 @@ kotlin {
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.biometric)
+                implementation(libs.androidx.webkit)
                 implementation(libs.androidx.work.runtime)
                 implementation(libs.android.avif)
                 // MainActivity installs a shared Coil network fetcher so Android image
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
-                implementation(libs.ktor.client.okhttp)
                 implementation(libs.sqldelight.android.driver)
                 implementation(libs.google.code.scanner)
             }
@@ -400,6 +411,10 @@ android {
 compose.desktop {
     application {
         mainClass = "dev.shinsou.kmp.desktop.MainKt"
+
+        if (reviewedLocalRepositoryEnabled.get()) {
+            jvmArgs += "-Dshinsou.reviewedLocalRepository=true"
+        }
 
         if (compileMacOsWebChallengeHelper != null) {
             dependsOn("compileMacOsWebChallengeHelper")

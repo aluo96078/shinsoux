@@ -11,6 +11,13 @@ public interface Source {
     public suspend fun getMangaDetails(manga: SManga): SManga
     public suspend fun getChapterList(manga: SManga): List<SChapter>
     public suspend fun getPageList(chapter: SChapter): List<Page>
+
+    /**
+     * Optional source-owned viewer resolution for pages whose image URL requires an authenticated
+     * or stateful API request. The returned URL is still treated as untrusted metadata and must
+     * pass the host content-plane policy before any bytes are fetched.
+     */
+    public suspend fun resolveImageUrl(pageUrl: String): String? = null
 }
 
 public interface CatalogueSource : Source {
@@ -21,6 +28,8 @@ public interface CatalogueSource : Source {
     public val headers: Map<String, String> get() = emptyMap()
     /** Optional protected, same-origin endpoint used to mint browser-bound anti-bot cookies. */
     public val webChallengeUrl: String? get() = null
+    /** Exact origins that may receive the browser-bound session. */
+    public val browserSessionOrigins: Set<String> get() = emptySet()
     /**
      * Source-owned localStorage keys that an explicit, same-origin browser challenge may import.
      * The host reads only these exact keys and persists them as source preferences.

@@ -510,12 +510,16 @@ fun ReaderScreen(
             val page = pages[index]
             // Viewer-backed pages are resolved by their visible page composable. Prefetching the
             // placeholder would hand HTML to Coil and duplicate the viewer request.
-            if (page.imageResolver != null || page.imageUrl.isBlank()) return@mapNotNull null
+            // A remote URL is never a valid prefetch input. Plugin pages must have already
+            // crossed the host content plane and carry bytes; only explicitly local pages may
+            // use their file URI directly. This keeps prefetch from becoming a second,
+            // policy-free network path for legacy/foreign ReaderPage providers.
+            if (page.imageResolver != null || readerImageData(page) == null) return@mapNotNull null
             val networkHeaders = NetworkHeaders.Builder().apply {
                 page.headers.forEach { (name, value) -> set(name, value) }
             }.build()
             val request = ImageRequest.Builder(platformContext)
-                .data(page.imageUrl)
+                .data(requireNotNull(readerImageData(page)))
                 .httpHeaders(networkHeaders)
                 .apply {
                     page.imageTransform?.let { transformations(it.toCoilTransformation()) }
@@ -1079,6 +1083,21 @@ private fun ReaderPageImage(
     ResolvedReaderPageImage(page, settings, zoomEnabled, onTap, modifier, contentScale)
 }
 
+/**
+ * Returns only image data that is safe for Coil to consume directly.
+ *
+ * Remote plugin URLs must be materialized by the host content plane before reaching this helper;
+ * otherwise a custom ContentCallbacks implementation (or stale persisted legacy state) could
+ * accidentally restore the old direct-Coil network path.
+ */
+internal fun readerImageData(page: ReaderPage): Any? = when {
+    // An empty host response is not image data. Treat it as unresolved so callers keep the
+    // retry/error surface instead of enqueueing an inevitably failing Coil request.
+    page.imageBytes?.takeIf { it.isNotEmpty() } != null -> page.imageBytes
+    page.local && page.imageUrl.isNotBlank() -> page.imageUrl
+    else -> null
+}
+
 @Composable
 private fun LazyResolvedReaderPageImage(
     page: ReaderPage,
@@ -1097,7 +1116,7 @@ private fun LazyResolvedReaderPageImage(
         resolutionFailed = false
         resolved = try {
             requireNotNull(page.imageResolver).invoke()
-                .takeIf { it.imageResolver == null && it.imageUrl.isNotBlank() }
+                .takeIf { it.imageResolver == null && readerImageData(it) != null }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -1151,10 +1170,12 @@ private fun ResolvedReaderPageImage(
     contentScale: ContentScale = ContentScale.Fit,
 ) {
     val strings = LocalShinsouStrings.current
-    var scale by remember(page.index) { mutableFloatStateOf(1f) }
-    var offset by remember(page.index) { mutableStateOf(Offset.Zero) }
-    var retryKey by remember(page.index, page.imageUrl) { mutableStateOf(0) }
-    var imageError by remember(page.index, page.imageUrl, retryKey) { mutableStateOf(false) }
+    // A resolver/retry can replace the bytes while retaining the same page index. Reset the
+    // gesture state for the new image so a zoomed previous image does not carry over.
+    var scale by remember(page.index, page.imageUrl, page.imageBytes) { mutableFloatStateOf(1f) }
+    var offset by remember(page.index, page.imageUrl, page.imageBytes) { mutableStateOf(Offset.Zero) }
+    var retryKey by remember(page.index, page.imageUrl, page.imageBytes) { mutableStateOf(0) }
+    var imageError by remember(page.index, page.imageUrl, page.imageBytes, retryKey) { mutableStateOf(false) }
     val animatedScale by animateFloatAsState(scale, label = "reader-zoom")
     val transformable = rememberTransformableState { zoom, pan, _ ->
         if (zoomEnabled) {
@@ -1163,12 +1184,13 @@ private fun ResolvedReaderPageImage(
         }
     }
     val platformContext = LocalPlatformContext.current
-    val imageRequest = remember(page.imageUrl, page.headers, page.imageTransform, retryKey, platformContext) {
+    val imageData = readerImageData(page)
+    val imageRequest = remember(imageData, page.headers, page.imageTransform, retryKey, platformContext) {
         val networkHeaders = NetworkHeaders.Builder().apply {
             page.headers.forEach { (name, value) -> set(name, value) }
         }.build()
         ImageRequest.Builder(platformContext)
-            .data(page.imageUrl)
+            .data(imageData)
             .httpHeaders(networkHeaders)
             .apply {
                 page.imageTransform?.let { transformations(it.toCoilTransformation()) }

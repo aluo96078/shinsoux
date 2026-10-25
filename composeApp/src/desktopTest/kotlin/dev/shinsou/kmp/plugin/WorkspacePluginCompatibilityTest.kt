@@ -74,12 +74,13 @@ class WorkspacePluginCompatibilityTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry(pluginId, "all", 80_000L + offset, null)),
             )
-            val runtime = RhinoScriptPluginRuntimeFactory().create(
+            val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
                 script,
                 manifest,
                 ScriptPluginEnvironment(
                     network = network,
                     storage = storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
                     loginRequester = PluginLoginRequester { sourceId, sourceName, reason ->
                         loginRequests += Triple(sourceId, sourceName, reason)
                         true

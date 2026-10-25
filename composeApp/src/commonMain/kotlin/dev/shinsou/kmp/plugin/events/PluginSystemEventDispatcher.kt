@@ -253,8 +253,12 @@ public class PluginSystemEventGateway(
     private val invalidRuntimeKeys = linkedSetOf<String>()
     private val invalidArtifactKeys = linkedSetOf<PluginArtifactIdentity>()
     private val latestGenerationByRuntime = linkedMapOf<String, Long>()
-    /** Runtime identity is retained only while its generation can still be replayed. */
+    /** Binds a runtime id/generation pair to one exact artifact, including after close. */
+    private val latestRuntimeKeyByRuntime = linkedMapOf<String, String>()
+    /** Active-runtime artifact index; replay prevention lives in the bounded generation maps. */
     private val runtimeArtifacts = linkedMapOf<String, PluginArtifactIdentity>()
+    /** Revocation history cannot be evicted safely; overflow makes the whole gateway fail closed. */
+    private var artifactTombstonesSaturated: Boolean = false
     private var pending: Int = 0
     private var operationCounter: Long = 0
     private var closed: Boolean = false
@@ -332,12 +336,26 @@ public class PluginSystemEventGateway(
         )
         return stateLock.withLock {
             pruneDiagnosticAggregationsLocked(now)
+            pruneRateLimitStateLocked(now)
+            if (closed || artifactTombstonesSaturated || scope.artifactIdentity in invalidArtifactKeys) {
+                return@withLock receipt(messageId, PluginEventDisposition.RUNTIME_CLOSED)
+            }
             val latestGeneration = latestGenerationByRuntime[scope.runtimeInstanceId]
+            if (latestGeneration == null && latestGenerationByRuntime.size >= limits.maxTrackedRuntimes) {
+                return@withLock receipt(messageId, PluginEventDisposition.RUNTIME_CLOSED)
+            }
             if (latestGeneration != null && scope.runtimeGeneration < latestGeneration) {
+                return@withLock receipt(messageId, PluginEventDisposition.RUNTIME_CLOSED)
+            }
+            if (latestGeneration == scope.runtimeGeneration &&
+                latestRuntimeKeyByRuntime[scope.runtimeInstanceId] != scope.runtimeKey
+            ) {
+                // A generation is inseparable from the exact artifact it was first bound to.
                 return@withLock receipt(messageId, PluginEventDisposition.RUNTIME_CLOSED)
             }
             if (latestGeneration == null || scope.runtimeGeneration > latestGeneration) {
                 latestGenerationByRuntime[scope.runtimeInstanceId] = scope.runtimeGeneration
+                latestRuntimeKeyByRuntime[scope.runtimeInstanceId] = scope.runtimeKey
                 val staleRuntimePrefix = "${scope.runtimeInstanceId}#"
                 val staleRuntimeKeys = runtimeArtifacts.keys.filter { key ->
                     key.startsWith(staleRuntimePrefix) && key != scope.runtimeKey
@@ -351,12 +369,17 @@ public class PluginSystemEventGateway(
                     it.runtimeKey.startsWith(staleRuntimePrefix) && it.runtimeKey != scope.runtimeKey
                 }
                 staleRuntimeKeys.forEach(::clearRuntimeStateLocked)
+                // The generation floor now rejects every older key, so their exact tombstones are
+                // redundant. Retaining only the current generation keeps this set bounded.
+                invalidRuntimeKeys.removeAll {
+                    it.startsWith(staleRuntimePrefix) && it != scope.runtimeKey
+                }
                 staleJobs.forEach { it.cancel() }
             }
-            runtimeArtifacts[scope.runtimeKey] = scope.artifactIdentity
-            if (closed || scope.runtimeKey in invalidRuntimeKeys || scope.artifactIdentity in invalidArtifactKeys) {
+            if (scope.runtimeKey in invalidRuntimeKeys) {
                 return@withLock receipt(messageId, PluginEventDisposition.RUNTIME_CLOSED)
             }
+            runtimeArtifacts[scope.runtimeKey] = scope.artifactIdentity
             if (activeAdmissions.any {
                     it.runtimeKey == admissionKey.runtimeKey &&
                         it.sourceKey == admissionKey.sourceKey &&
@@ -378,8 +401,21 @@ public class PluginSystemEventGateway(
             }
             // One runtime-wide bucket prevents rotating sources/types/message ids from bypassing
             // the host burst, while the second isolates a noisy exact source/event type.
-            val tokenRetry = consumeTokenLocked("${scope.runtimeKey}|*", now)
-                ?: consumeTokenLocked("$sourcePendingKey|${typedHandler.name}", now)
+            val runtimeBucketKey = "${scope.runtimeKey}|*"
+            val sourceBucketKey = "$sourcePendingKey|${typedHandler.name}"
+            val requiredBucketCapacity = setOf(runtimeBucketKey, sourceBucketKey)
+                .count { it !in buckets }
+            if (buckets.size + requiredBucketCapacity > limits.maxRateLimitBuckets) {
+                return@withLock receipt(messageId, PluginEventDisposition.BUSY)
+            }
+            if (typedHandler.name == PluginSystemEventNames.AUTH_LOGIN_REQUEST &&
+                sourcePendingKey !in loginCooldowns &&
+                loginCooldowns.size >= limits.maxLoginCooldowns
+            ) {
+                return@withLock receipt(messageId, PluginEventDisposition.BUSY)
+            }
+            val tokenRetry = consumeTokenLocked(runtimeBucketKey, now)
+                ?: consumeTokenLocked(sourceBucketKey, now)
             if (tokenRetry != null) {
                 return@withLock receipt(messageId, PluginEventDisposition.THROTTLED, retryAfterMillis = tokenRetry)
             }
@@ -435,15 +471,29 @@ public class PluginSystemEventGateway(
 
     /** Invalidates all queued/running work for one runtime generation. */
     public fun closeRuntime(scope: BoundPluginScope): Unit = stateLock.withLock {
-        invalidRuntimeKeys += scope.runtimeKey
+        val latestGeneration = latestGenerationByRuntime[scope.runtimeInstanceId]
+        if (latestGeneration == null && latestGenerationByRuntime.size < limits.maxTrackedRuntimes) {
+            latestGenerationByRuntime[scope.runtimeInstanceId] = scope.runtimeGeneration
+            latestRuntimeKeyByRuntime[scope.runtimeInstanceId] = scope.runtimeKey
+            invalidRuntimeKeys += scope.runtimeKey
+        } else if (latestGeneration != null && scope.runtimeGeneration > latestGeneration) {
+            val runtimePrefix = "${scope.runtimeInstanceId}#"
+            latestGenerationByRuntime[scope.runtimeInstanceId] = scope.runtimeGeneration
+            latestRuntimeKeyByRuntime[scope.runtimeInstanceId] = scope.runtimeKey
+            invalidRuntimeKeys.removeAll { it.startsWith(runtimePrefix) }
+            invalidRuntimeKeys += scope.runtimeKey
+        } else if (latestGeneration == scope.runtimeGeneration &&
+            latestRuntimeKeyByRuntime[scope.runtimeInstanceId] == scope.runtimeKey
+        ) {
+            invalidRuntimeKeys += scope.runtimeKey
+        }
         contextRegistry?.clearRuntime(scope)
         removeAdmissionsLocked { it.runtimeKey == scope.runtimeKey }
         runningJobs.filterKeys { it.runtimeKey == scope.runtimeKey }.values.forEach { it.cancel() }
         clearRuntimeStateLocked(scope.runtimeKey)
-        if (latestGenerationByRuntime[scope.runtimeInstanceId] == scope.runtimeGeneration) {
-            latestGenerationByRuntime.remove(scope.runtimeInstanceId)
-        }
-        if (authorizer is MutablePluginSystemEventAuthorizer) authorizer.closeRuntime(scope)
+        // The gateway owns the durable bounded tombstone. Do not duplicate every closed runtime in
+        // the mutable authorizer's lifecycle maps.
+        if (authorizer is MutablePluginSystemEventAuthorizer) authorizer.clearRuntime(scope)
         runCatching { observer.onRuntimeClosed(scope) }
     }
 
@@ -458,7 +508,11 @@ public class PluginSystemEventGateway(
     }
 
     public fun setRuntimeLifecycle(scope: BoundPluginScope, lifecycle: PluginRuntimeLifecycle): Unit {
-        if (lifecycle == PluginRuntimeLifecycle.DISABLED || lifecycle == PluginRuntimeLifecycle.CLOSED) {
+        if (lifecycle == PluginRuntimeLifecycle.CLOSED) {
+            closeRuntime(scope)
+            return
+        }
+        if (lifecycle == PluginRuntimeLifecycle.DISABLED) {
             contextRegistry?.clearRuntime(scope)
         }
         (authorizer as? MutablePluginSystemEventAuthorizer)?.setRuntimeLifecycle(scope, lifecycle)
@@ -500,7 +554,13 @@ public class PluginSystemEventGateway(
 
     /** Invalidates stale work when an artifact is replaced or its digest grant is revoked. */
     public fun invalidateArtifact(identity: PluginArtifactIdentity): Unit = stateLock.withLock {
-        invalidArtifactKeys += identity
+        if (identity !in invalidArtifactKeys) {
+            if (invalidArtifactKeys.size < limits.maxInvalidArtifacts) {
+                invalidArtifactKeys += identity
+            } else {
+                artifactTombstonesSaturated = true
+            }
+        }
         contextRegistry?.invalidateArtifact(identity)
         val jobs = runningJobs.filterKeys { key -> activeScopeArtifactKeys[key] == identity }.values.toList()
         removeAdmissionsLocked { key ->
@@ -508,6 +568,10 @@ public class PluginSystemEventGateway(
         }
         runtimeArtifacts.filterValues { it == identity }.keys.toList().forEach(::clearRuntimeStateLocked)
         jobs.forEach { it.cancel() }
+        if (artifactTombstonesSaturated) {
+            removeAdmissionsLocked { true }
+            runningJobs.values.toList().forEach { it.cancel() }
+        }
         runCatching { observer.onArtifactInvalidated(identity) }
     }
 
@@ -535,7 +599,9 @@ public class PluginSystemEventGateway(
             invalidRuntimeKeys.clear()
             invalidArtifactKeys.clear()
             latestGenerationByRuntime.clear()
+            latestRuntimeKeyByRuntime.clear()
             runtimeArtifacts.clear()
+            artifactTombstonesSaturated = false
             buckets.clear()
             loginCooldowns.clear()
             sourceMutexes.clear()
@@ -627,6 +693,7 @@ public class PluginSystemEventGateway(
             if (event.envelope.name == PluginSystemEventNames.SOURCE_REFRESH_REQUEST &&
                 refreshDirty.remove(event.admissionKey) &&
                 !closed &&
+                !artifactTombstonesSaturated &&
                 event.scope.runtimeKey !in invalidRuntimeKeys &&
                 event.scope.artifactIdentity !in invalidArtifactKeys
             ) {
@@ -659,6 +726,7 @@ public class PluginSystemEventGateway(
 
     private fun isLive(event: QueuedPluginEvent): Boolean = stateLock.withLock {
         !closed &&
+            !artifactTombstonesSaturated &&
             event.scope.runtimeKey !in invalidRuntimeKeys &&
             event.scope.artifactIdentity !in invalidArtifactKeys &&
             activeAdmissions.contains(event.admissionKey) &&
@@ -671,7 +739,8 @@ public class PluginSystemEventGateway(
     }
 
     private fun isRuntimeInvalid(scope: BoundPluginScope): Boolean = stateLock.withLock {
-        closed || scope.runtimeKey in invalidRuntimeKeys || scope.artifactIdentity in invalidArtifactKeys
+        closed || artifactTombstonesSaturated ||
+            scope.runtimeKey in invalidRuntimeKeys || scope.artifactIdentity in invalidArtifactKeys
     }
 
     private fun removeAdmissionsLocked(predicate: (EventAdmissionKey) -> Boolean) {
@@ -743,6 +812,18 @@ public class PluginSystemEventGateway(
         }
         val wait = ceil((1.0 - bucket.tokens) * 60_000.0 / limits.tokenPerMinute).toLong()
         return wait.coerceAtLeast(1)
+    }
+
+    /** Fully replenished buckets and expired cooldowns carry no security state and are reusable. */
+    private fun pruneRateLimitStateLocked(now: Long) {
+        buckets.entries.removeAll { (_, bucket) ->
+            val elapsed = (now - bucket.lastMillis).coerceAtLeast(0)
+            bucket.tokens + elapsed.toDouble() * limits.tokenPerMinute.toDouble() / 60_000.0 >=
+                limits.tokenBurst.toDouble()
+        }
+        loginCooldowns.entries.removeAll { (_, last) ->
+            limits.loginCooldownMillis == 0L || now - last >= limits.loginCooldownMillis
+        }
     }
 
     private fun dedupeKey(envelope: PluginSystemEventEnvelope, payload: Any): String = when {

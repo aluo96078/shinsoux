@@ -56,6 +56,10 @@ public class ShuYueReviewedRepositoryCoordinatorV2(
     public suspend fun cachedPackages(): List<ShuYueReviewedRepositoryPackageV2> =
         mutex.withLock { packages.toList() }
 
+    /** Classification from the exact inert index most recently accepted by [refresh]. */
+    public suspend fun cachedIndexContainsShinsouPackages(): Boolean =
+        mutex.withLock { loadedIndex?.containsShinsouPackages == true }
+
     public suspend fun stage(packageId: String): ShuYueQuarantineReviewV2 = mutex.withLock {
         val index = loadedIndex ?: loader.load(location).also { loaded ->
             loadedIndex = loaded

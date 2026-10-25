@@ -2,18 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSUbiquitousContainers</key>
-	<dict>
-		<key>iCloud.dev.aluo.shinsoux</key>
-		<dict>
-			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
-			<true/>
-			<key>NSUbiquitousContainerName</key>
-			<string>Shinsou X</string>
-			<key>NSUbiquitousContainerSupportedFolderLevels</key>
-			<string>Any</string>
-		</dict>
-	</dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>dev.aluo.shinsoux.backup</string>
@@ -57,19 +45,26 @@
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
-		<true/>
-	</dict>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Shinsou X 使用 Face ID 保護您的閱讀資料。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Shinsou X 使用相機掃描裝置配對與同步設定 QR Code；影像不會被儲存。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Shinsou X 使用 Face ID 保護您的閱讀資料。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Shinsou X 在開發模式連線至區域網路內的受審核插件伺服器。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Shinsou X 需要權限以儲存漫畫封面與頁面。</string>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.dev.aluo.shinsoux</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>Shinsou X</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -68,6 +68,19 @@ public class PluginLoginRequestCoordinator : PluginLoginRequester {
         mutableLoginRequests.update { requests -> requests.filterNot { it.eventId == eventId } }
     }
 
+    /**
+     * Keeps the request already presented at the head of the FIFO queue and every legacy request,
+     * while discarding later event prompts. A desktop browser challenge temporarily backgrounds
+     * the main window; retaining its prompt keeps the native browser session alive across that
+     * focus transition.
+     */
+    public fun retainPresentedRequest() {
+        mutableLoginRequests.update { requests ->
+            val presentedEventId = requests.firstOrNull()?.eventId
+            requests.filter { request -> request.eventId == null || request.eventId == presentedEventId }
+        }
+    }
+
     public fun clearTarget(target: ExactPluginSourceTarget) {
         mutableLoginRequests.update { it.filterNot { request -> request.exactTarget == target } }
     }

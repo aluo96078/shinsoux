@@ -368,6 +368,7 @@ private fun Publication.toLegacyManga(id: Long): Manga {
         title = title.ifBlank { "Imported ShuYue publication" },
         author = authors.firstOrNull(),
         description = description,
+        thumbnailUrl = thumbnailUrl,
         genre = listOf("ShuYue"),
         updateStrategy = 1,
         initialized = true,

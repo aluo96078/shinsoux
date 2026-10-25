@@ -71,6 +71,7 @@ import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
+import dev.shinsou.kmp.plugin.imageBodyForDecoderOrNull
 import dev.shinsou.kmp.reader.PlainTextNavigation
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.ReadingLocator
@@ -208,6 +209,7 @@ internal fun UnifiedContentReader(
         onLocatorChanged = onLocatorChanged,
         onNavigationBoundary = onNavigationBoundary,
         onTapAction = onReaderTap,
+        remoteAssetScope = session.remoteAssetScope,
         modifier = modifier,
     )
 }
@@ -350,6 +352,7 @@ private fun NovelTextBlock(text: String) {
                     key = "$index:${segment.url}",
                     url = segment.url,
                     alt = segment.alt,
+                    remoteAssetScope = null,
                 )
             }
         }
@@ -361,9 +364,27 @@ private fun NovelInlineImage(
     key: String,
     url: String,
     alt: String,
+    remoteAssetScope: dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
 ) {
     val context = LocalPlatformContext.current
-    var failed by remember(key) { mutableStateOf(false) }
+    var bytes by remember(key, remoteAssetScope) { mutableStateOf<ByteArray?>(null) }
+    var failed by remember(key, remoteAssetScope) { mutableStateOf(remoteAssetScope == null) }
+    LaunchedEffect(key, remoteAssetScope) {
+        val scope = remoteAssetScope ?: return@LaunchedEffect
+        try {
+            val response = scope.network.execute(
+                sourceId = scope.sourceId,
+                request = dev.shinsou.kmp.plugin.PluginHttpRequest("GET", url),
+            )
+            bytes = response.imageBodyForDecoderOrNull()
+            failed = bytes == null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            bytes = null
+            failed = true
+        }
+    }
     Box(
         Modifier
             .fillMaxWidth()
@@ -371,15 +392,15 @@ private fun NovelInlineImage(
             .padding(vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(context).data(url).build(),
+        bytes?.let { body -> AsyncImage(
+            model = ImageRequest.Builder(context).data(body).build(),
             contentDescription = alt.ifBlank { null },
             contentScale = ContentScale.Fit,
             onLoading = { failed = false },
             onSuccess = { failed = false },
             onError = { failed = true },
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 560.dp),
-        )
+        ) }
         if (failed) {
             Surface(
                 color = Color.Black.copy(alpha = 0.72f),

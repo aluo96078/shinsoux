@@ -146,6 +146,7 @@ import dev.shinsou.kmp.plugin.v2.extensionPublicationKey
 import dev.shinsou.kmp.tracking.TrackUpdate
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.CoverImage
+import dev.shinsou.kmp.ui.components.LocalPluginImageLoader
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ProvideShinsouStrings
@@ -195,6 +196,7 @@ fun ShinsouApp(
     interactionReady: Boolean = true,
 ) {
     val snapshot by repository.snapshot.collectAsState()
+    val pluginImages = remember(appServices.browse) { PluginImageLoader(appServices.browse) }
     ProvideShinsouStrings(snapshot.settings.general.languagePreference) {
         ShinsouTheme(
             mode = snapshot.settings.appearance.theme.toUiTheme(),
@@ -205,6 +207,7 @@ fun ShinsouApp(
                 if (interactionReady) {
                     CompositionLocalProvider(
                         LocalMobileKeyboardDismissEnabled provides !appServices.prefersDesktopChrome,
+                        dev.shinsou.kmp.ui.components.LocalPluginImageLoader provides pluginImages,
                     ) {
                         ShinsouAppContent(
                             repository = repository,
@@ -290,6 +293,7 @@ private fun ShinsouAppContent(
     readerProgressReporter: ReaderProgressReporter?,
 ) {
     val strings = LocalShinsouStrings.current
+    val pluginImages = LocalPluginImageLoader.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
@@ -944,6 +948,7 @@ private fun ShinsouAppContent(
                         access = typed.access,
                         initialVisualPageIndex = localVisualPageIndex,
                         initialVisualPageCount = localHistory?.lastPageCount,
+                        remoteAssetScope = typed.remoteAssetScope,
                     )
                 }
                 if (restored == null) loaded else loaded.copy(typedSession = restored)
@@ -2118,11 +2123,7 @@ private fun ShinsouAppContent(
             }
         }
 
-        if (
-            unlocked &&
-            appLifecycle == AppLifecycleState.FOREGROUND &&
-            pendingSourceLoginRequest != null
-        ) {
+        if (unlocked && pendingSourceLoginRequest != null) {
             PendingSourceLoginDialog(
                 request = pendingSourceLoginRequest,
                 callbacks = appServices.browse,
@@ -2259,6 +2260,7 @@ private fun SectionPane(
     isLocalLibraryFavorite: (BrowseManga) -> Boolean,
     mutate: (suspend () -> Unit) -> Unit,
 ) {
+    val pluginImages = LocalPluginImageLoader.current
     AnimatedContent(
         targetState = section,
         modifier = Modifier.fillMaxSize(),
@@ -2378,6 +2380,13 @@ private fun SectionPane(
                             ids.forEach { repository.patchManga(it, MangaPatch(favorite = false)) }
                         }
                     },
+                    loadCoverBytes = { manga ->
+                        val binding = decodeExtensionLibraryPublicationUrl(manga.url)
+                            ?: decodeTypedLocalPublicationUrl(manga.url)
+                                ?.let(appServices.browse::extensionLibraryBindingV2)
+                        binding?.let { pluginImages.load(it.sourceKey, manga.thumbnailUrl) }
+                            ?: pluginImages.load(manga.source, manga.thumbnailUrl)
+                    },
                 )
             }
             MainSection.UPDATES -> UpdatesScreen(
@@ -2420,6 +2429,13 @@ private fun SectionPane(
                         }
                     }
                 },
+                loadCoverBytes = { manga ->
+                    val binding = decodeExtensionLibraryPublicationUrl(manga.url)
+                        ?: decodeTypedLocalPublicationUrl(manga.url)
+                            ?.let(appServices.browse::extensionLibraryBindingV2)
+                    binding?.let { pluginImages.load(it.sourceKey, manga.thumbnailUrl) }
+                        ?: pluginImages.load(manga.source, manga.thumbnailUrl)
+                },
             )
             MainSection.HISTORY -> HistoryScreen(
                 history = remember(snapshot.revision) { repository.history() },
@@ -2427,6 +2443,13 @@ private fun SectionPane(
                 onResumeChapter = onReadChapter,
                 onDeleteChapterHistory = { chapterId -> mutate { repository.deleteHistory(chapterId) } },
                 onClearHistory = { mutate { repository.clearHistory() } },
+                loadCoverBytes = { manga ->
+                    val binding = decodeExtensionLibraryPublicationUrl(manga.url)
+                        ?: decodeTypedLocalPublicationUrl(manga.url)
+                            ?.let(appServices.browse::extensionLibraryBindingV2)
+                    binding?.let { pluginImages.load(it.sourceKey, manga.thumbnailUrl) }
+                        ?: pluginImages.load(manga.source, manga.thumbnailUrl)
+                },
             )
             MainSection.BROWSE -> BrowseScreen(
                 callbacks = appServices.browse,
@@ -2553,6 +2576,8 @@ private fun PendingMangaDetailPane(
                     url = item.thumbnailUrl,
                     headers = item.thumbnailHeaders,
                     modifier = Modifier.width(160.dp).aspectRatio(2f / 3f),
+                    sourceId = item.sourceId,
+                    sourceKey = item.sourceKey,
                 )
                 CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp)
                 Text(
@@ -2579,6 +2604,7 @@ private fun DetailPane(
     onRead: (Long, Long) -> Unit,
     mutate: (suspend () -> Unit) -> Unit,
 ) {
+    val pluginImages = LocalPluginImageLoader.current
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var trackingSheetVisible by remember(mangaId) { mutableStateOf(false) }
@@ -2713,6 +2739,11 @@ private fun DetailPane(
                 }
             }
         },
+        loadCoverBytes = (decodeExtensionLibraryPublicationUrl(manga.url)
+            ?: decodeTypedLocalPublicationUrl(manga.url)
+                ?.let(appServices.browse::extensionLibraryBindingV2))
+            ?.let { pluginImages.load(it.sourceKey, manga.thumbnailUrl) }
+            ?: pluginImages.load(manga.source, manga.thumbnailUrl),
     )
 
     if (categoryPickerVisible) {

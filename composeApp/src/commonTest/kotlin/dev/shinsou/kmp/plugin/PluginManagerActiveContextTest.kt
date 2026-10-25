@@ -48,6 +48,7 @@ class PluginManagerActiveContextTest {
                 maxVersion = 1,
                 required = setOf(PluginSystemEventNames.REFRESH_CAPABILITY),
             ),
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
         )
         val authorizer = MutablePluginSystemEventAuthorizer()
         authorizer.grant(
@@ -104,7 +105,9 @@ class PluginManagerActiveContextTest {
                 storage = storage,
                 systemEventSink = gateway,
                 systemEventContextRegistry = contextRegistry,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
             ),
+            executionAdmissionMode = PluginExecutionAdmissionMode.UNSAFE_DEVELOPER_COMPATIBILITY,
         )
         try {
             manager.loadInstalled()

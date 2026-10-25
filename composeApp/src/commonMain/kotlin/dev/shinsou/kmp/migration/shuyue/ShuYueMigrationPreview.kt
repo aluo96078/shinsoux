@@ -92,6 +92,8 @@ public data class ShuYueMigrationBookSummary(
     public val chapterCount: Long,
     public val totalTextChars: Long,
     public val category: String,
+    /** Optional cover URL retained for the import preview and subsequent projection. */
+    public val coverImage: String? = null,
 ) {
     override fun toString(): String =
         "ShuYueMigrationBookSummary(id=<redacted>, chapters=$chapterCount, textChars=$totalTextChars)"
@@ -273,6 +275,10 @@ internal object ShuYueBackupV1Stager {
             writer.string(book.title)
             writer.nullableString(book.author)
             writer.nullableString(book.description)
+            // The cover is part of the staged publication metadata. Bind it to the result
+            // fingerprint so a staged/imported publication cannot silently lose or change its
+            // cover while retaining an otherwise identical migration result.
+            writer.nullableString(book.coverImage)
             writer.string(book.origin)
             writer.nullableString(book.sourceId)
             writer.nullableString(book.originalUri)
@@ -456,6 +462,7 @@ internal object ShuYueBackupV1Stager {
                     chapterCount = bookChapterCount,
                     totalTextChars = bookTextChars,
                     category = book.category,
+                    coverImage = book.coverImage,
                 )
             }
         }
@@ -514,6 +521,7 @@ internal object ShuYueBackupV1Stager {
                 title = it.title,
                 author = it.author,
                 description = it.description,
+                coverImage = it.coverImage,
                 origin = it.origin.serialName,
                 sourceId = it.sourceId,
                 originalUri = it.originalUri,
@@ -740,6 +748,7 @@ internal data class ShuYueStagedBook(
     val title: String,
     val author: String?,
     val description: String?,
+    val coverImage: String?,
     val origin: String,
     val sourceId: String?,
     val originalUri: String?,

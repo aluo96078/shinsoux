@@ -3,6 +3,7 @@
 package dev.shinsou.kmp.plugin.events
 
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import kotlinx.serialization.KSerializer
@@ -181,6 +182,33 @@ public data class PluginArtifactIdentity(
 }
 
 /**
+ * Stable logical identity for one exact executable artifact/source pair.
+ *
+ * Runtime incarnations advance [BoundPluginScope.runtimeGeneration] while retaining this value,
+ * so the gateway needs one generation floor per logical runtime instead of one tombstone for
+ * every reload. The length-delimited preimage keeps package, version, digest, and opaque source
+ * boundaries unambiguous; the full SHA-256 output also fits the native bridge's ASCII limit.
+ */
+internal fun stablePluginRuntimeInstanceId(
+    artifactIdentity: PluginArtifactIdentity,
+    sourceKey: SourceKey,
+): String {
+    require(artifactIdentity.packageId == sourceKey.packageId) {
+        "Plugin artifact and source package identities must match"
+    }
+    val fields = listOf(
+        "plugin-runtime-v1",
+        artifactIdentity.packageId,
+        artifactIdentity.version,
+        artifactIdentity.versionCode.toString(),
+        artifactIdentity.sha256,
+        sourceKey.canonicalId,
+    )
+    val preimage = fields.joinToString("|") { value -> "${value.encodeToByteArray().size}:$value" }
+    return "runtime-${Sha256.hex(preimage.encodeToByteArray())}"
+}
+
+/**
  * Runtime-injected scope. The constructor is internal so a transport cannot construct a scope
  * from fields received over the wire; platform code obtains one from [BoundPluginScopeFactory].
  */
@@ -196,6 +224,9 @@ public class BoundPluginScope internal constructor(
     init {
         require(artifactIdentity.packageId == sourceKey.packageId) {
             "Plugin artifact and source package identities must match"
+        }
+        require(sourceKey.sourceId.encodeToByteArray().size <= 256) {
+            "Plugin event source id exceeds its host-bound limit"
         }
         require(isSafeAsciiIdentifier(runtimeInstanceId, 128)) { "Invalid runtime instance id" }
         require(runtimeGeneration > 0) { "Runtime generation must be positive" }
@@ -216,8 +247,8 @@ public class BoundPluginScope internal constructor(
     }
 }
 
-/** Host-only factory for injecting identity and generation at runtime creation. */
-public class BoundPluginScopeFactory(
+/** Module-internal host factory for injecting identity and generation at runtime creation. */
+internal class BoundPluginScopeFactory(
     private val clock: PluginEventClock = SystemPluginEventClock,
 ) {
     public fun bind(
@@ -268,6 +299,14 @@ public data class PluginSystemEventLimits(
     val diagnosticAggregationMillis: Long = 5_000,
     /** Maximum number of completed diagnostic aggregation windows retained per gateway. */
     val maxDiagnosticAggregations: Int = 256,
+    /** Maximum number of runtime identities whose generation/revocation floor is retained. */
+    @kotlinx.serialization.Transient val maxTrackedRuntimes: Int = 2_048,
+    /** Maximum number of live throttling buckets; exhausted capacity rejects new bucket keys. */
+    @kotlinx.serialization.Transient val maxRateLimitBuckets: Int = 8_192,
+    /** Maximum number of unexpired login cooldowns retained by a gateway. */
+    @kotlinx.serialization.Transient val maxLoginCooldowns: Int = 2_048,
+    /** Maximum exact artifact revocation tombstones retained before the gateway fails closed. */
+    @kotlinx.serialization.Transient val maxInvalidArtifacts: Int = 1_024,
 ) {
     init {
         require(maxEnvelopeBytes in 256..(64 * 1024))
@@ -286,6 +325,10 @@ public data class PluginSystemEventLimits(
         require(loginCooldownMillis >= 0)
         require(diagnosticAggregationMillis >= 0)
         require(maxDiagnosticAggregations in 1..4096)
+        require(maxTrackedRuntimes in 1..65_536)
+        require(maxRateLimitBuckets in 2..262_144)
+        require(maxLoginCooldowns in 1..65_536)
+        require(maxInvalidArtifacts in 1..65_536)
     }
 }
 

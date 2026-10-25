@@ -2,6 +2,7 @@ package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.content.access.ContentAccessRequest
+import dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope
 import dev.shinsou.kmp.reader.UnifiedReaderContent
 
 /** Trusted host result that pairs materialized reader bytes with their exact current grant scope. */
@@ -16,6 +17,8 @@ public class TypedReaderContentSession(
     public val initialVisualPageIndex: Int? = null,
     /** Page count paired with the restored visual page under the saved rendition/document. */
     public val initialVisualPageCount: Int? = null,
+    /** Null for local/imported content; remote text images require this exact credential-free scope. */
+    public val remoteAssetScope: TypedReaderRemoteAssetScope? = null,
 ) {
     private val retainedCanonicalText: String? = canonicalText
 

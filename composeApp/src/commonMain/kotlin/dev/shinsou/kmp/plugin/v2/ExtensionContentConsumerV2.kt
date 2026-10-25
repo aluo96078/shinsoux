@@ -56,6 +56,7 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.PluginHttpRequest
 import dev.shinsou.kmp.plugin.PluginNetworkClient
+import dev.shinsou.kmp.plugin.PLUGIN_NETWORK_MAX_RESPONSE_BYTES
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
@@ -187,9 +188,15 @@ public fun interface ExtensionNetworkScopeResolverV2 {
  * resolver; an opaque SourceKey is never hashed or narrowed into a Long.
  */
 public class PluginNetworkExtensionResourceFetcherV2(
-    private val network: PluginNetworkClient,
-    private val scopes: ExtensionNetworkScopeResolverV2 = ExtensionNetworkScopeResolverV2.LegacyOnly,
+    private val contentScope: suspend (SourceKey) -> dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
 ) : ExtensionResourceFetcherV2 {
+    /** Compatibility constructor. Its unscoped client is no longer accepted for production. */
+    @Deprecated("Pass an exact SourceKey content-scope resolver")
+    public constructor(
+        network: PluginNetworkClient,
+        scopes: ExtensionNetworkScopeResolverV2 = ExtensionNetworkScopeResolverV2.LegacyOnly,
+    ) : this(contentScope = { null })
+
     override suspend fun fetch(
         sourceKey: SourceKey,
         request: RemoteRequestPlanV2,
@@ -199,15 +206,22 @@ public class PluginNetworkExtensionResourceFetcherV2(
         require(request.method == HttpMethodV2.GET || request.method == HttpMethodV2.HEAD) {
             "Only body-free GET/HEAD extension resources can be fetched here"
         }
-        val sourceScope = requireNotNull(scopes.resolve(sourceKey)) {
-            "No host network scope is registered for ${sourceKey.canonicalId}"
+        val scope = requireNotNull(contentScope(sourceKey)) {
+            "No exact content network policy is registered for ${sourceKey.canonicalId}"
         }
-        val response = network.execute(
-            sourceId = sourceScope,
+        require(scope.sourceKey == sourceKey) { "Content network scope identity mismatch" }
+        val response = scope.network.execute(
+            sourceId = scope.sourceId,
             request = PluginHttpRequest(
                 method = request.method.name,
                 url = request.effectiveUri,
                 headers = request.headerHints,
+                // V2 historically permits a larger declarative maximum than this transport's
+                // global cap. Narrow it instead of rejecting an otherwise small compatible body.
+                maxResponseBytes = minOf(
+                    request.maxResponseBytes,
+                    PLUGIN_NETWORK_MAX_RESPONSE_BYTES.toLong(),
+                ).toInt(),
             ),
         )
         check(response.status in 200..299) { "HTTP ${response.status} while fetching extension content" }
@@ -494,11 +508,20 @@ public class ExtensionContentConsumerV2(
         // metadata and are applied lazily by the reader; unknown transforms fail closed.
         val transforms = payload.pages.map { it.transform?.toContentTransform() }
         val pages = payload.pages.map { page ->
-            require(page.mediaType in SUPPORTED_LOCAL_IMAGE_MEDIA_TYPES) {
+            val declaredMediaType = page.mediaType.lowercase()
+            require(
+                declaredMediaType == WILDCARD_IMAGE_MEDIA_TYPE ||
+                    declaredMediaType in SUPPORTED_LOCAL_IMAGE_MEDIA_TYPES,
+            ) {
                 "Unsupported extension image media type: ${page.mediaType}"
             }
-            val fetched = fetch(selection.sourceKey, RemoteBlobPlanV2(page.toResource()))
-            LocalImagePageSource(page.resourceId, page.mediaType, fetched.copyBytes())
+            val fetched = fetch(
+                selection.sourceKey,
+                RemoteBlobPlanV2(page.toResource()),
+                verifyMediaType = false,
+            )
+            val storedMediaType = resolveFetchedImageMediaType(declaredMediaType, fetched.mediaType)
+            LocalImagePageSource(page.resourceId, storedMediaType, fetched.copyBytes())
         }
         val target = target(selection, payload.representationId)
         val grant = conservativeGrant(selection)
@@ -664,7 +687,11 @@ public class ExtensionContentConsumerV2(
         return PreparedExtensionRepresentation(representation, acquired.publishedBlobs)
     }
 
-    private suspend fun fetch(sourceKey: SourceKey, plan: RemoteBlobPlanV2): ExtensionFetchedResourceV2 {
+    private suspend fun fetch(
+        sourceKey: SourceKey,
+        plan: RemoteBlobPlanV2,
+        verifyMediaType: Boolean = true,
+    ): ExtensionFetchedResourceV2 {
         val fetcher = resourceFetcher ?: throw ExtensionContentConsumerException.MissingBodyFetcher()
         val fetched = fetcher.fetch(sourceKey, plan.resource.request)
         require(fetched.byteSize.toLong() <= plan.resource.request.maxResponseBytes) {
@@ -676,12 +703,32 @@ public class ExtensionContentConsumerV2(
         plan.expectedPlaintextDigest?.let { expected ->
             require(Sha256.hex(fetched.copyBytes()) == expected) { "Extension resource digest changed" }
         }
-        fetched.mediaType?.let { actual ->
+        fetched.mediaType?.takeIf { verifyMediaType }?.let { actual ->
             require(actual.equals(plan.resource.mediaType, ignoreCase = true)) {
                 "Extension resource media type changed"
             }
         }
         return fetched
+    }
+
+    private fun resolveFetchedImageMediaType(declaredMediaType: String, fetchedMediaType: String?): String {
+        if (declaredMediaType != WILDCARD_IMAGE_MEDIA_TYPE) {
+            fetchedMediaType?.let { actual ->
+                require(actual.equals(declaredMediaType, ignoreCase = true)) {
+                    "Extension resource media type changed"
+                }
+            }
+            return declaredMediaType
+        }
+
+        val actualMediaType = requireNotNull(fetchedMediaType)
+            .substringBefore(';')
+            .trim()
+            .lowercase()
+        require(actualMediaType in SUPPORTED_LOCAL_IMAGE_MEDIA_TYPES) {
+            "Extension wildcard image response has unsupported media type: $actualMediaType"
+        }
+        return actualMediaType
     }
 
     private fun ImagePageV2.toResource(): RemoteResourceV2 = RemoteResourceV2(
@@ -1238,6 +1285,7 @@ private val EXTENSION_CONTENT_JSON = Json {
 }
 private const val FINGERPRINT_TEMPLATE_MANIFEST_ID: String = "00000000-0000-5000-8000-000000000001"
 private const val EXTENSION_HOST_POLICY_ID: String = "extension-v2-host-policy"
+private const val WILDCARD_IMAGE_MEDIA_TYPE: String = "image/*"
 private const val MAX_GRAPH_COMMIT_ATTEMPTS: Int = 4
 private const val MAX_EXTENSION_EPUB_TOTAL_BYTES: Long = 512L * 1024L * 1024L
 private val CONSERVATIVE_REMOTE_OPERATIONS: Set<ContentOperation> = setOf(

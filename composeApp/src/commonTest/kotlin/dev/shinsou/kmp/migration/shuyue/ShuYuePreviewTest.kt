@@ -581,7 +581,7 @@ class ShuYuePreviewTest {
     fun stagedResultFingerprintHasStableV2GoldenValue() {
         val session = requireNotNull(ShuYueBackupV1Stager.stage(fingerprintFixture()))
         assertEquals(
-            "7d90f06c3a9787c5664b62eb6d7ed69fad6e187b37d3a99fb42a416b2b48c4fe",
+            "d6432a8767e3adbb747783b5b495e8efd109d5823226d8a9f1106b1762ae3b6c",
             ShuYueBackupV1Stager.fingerprintStagedResult("01".repeat(32), session),
         )
     }

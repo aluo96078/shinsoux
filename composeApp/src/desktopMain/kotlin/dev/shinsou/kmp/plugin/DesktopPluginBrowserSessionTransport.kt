@@ -1,10 +1,9 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.ui.challenge.BoundedUtf8LineReader
 import dev.shinsou.kmp.ui.challenge.MacOsWebChallengeHelperLocator
 import dev.shinsou.kmp.ui.challenge.webChallengeProcessCommand
-import java.io.BufferedReader
 import java.io.BufferedWriter
-import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.nio.file.Files
 import java.nio.file.Path
@@ -65,23 +64,30 @@ private class MacOsPluginBrowserSessionTransport(
         val prepared = preparePluginBrowserSessionRequest(sourceOrigin, allowedOrigins, request)
         return mutex.withLock {
             val existing = states[sourceId]
-            val state = if (existing?.sourceOrigin == prepared.sourceOrigin) {
+            val sessionOrigins = setOf(prepared.sourceOrigin, prepared.targetOrigin)
+            val state = if (
+                existing?.sourceOrigin == prepared.sourceOrigin &&
+                existing.allowedOrigins == sessionOrigins
+            ) {
                 existing
             } else {
                 existing?.release()
-                createState(prepared.sourceOrigin).also { states[sourceId] = it }
+                createState(prepared.sourceOrigin, sessionOrigins).also { states[sourceId] = it }
             }
             state.ready.await()
             executePluginBrowserSessionFetch(prepared, state::evaluate)
         }
     }
 
-    private suspend fun createState(sourceOrigin: String): MacOsBrowserSessionState =
+    private suspend fun createState(
+        sourceOrigin: String,
+        allowedOrigins: Set<String>,
+    ): MacOsBrowserSessionState =
         withContext(Dispatchers.IO) {
             val helper = helperLocator.prepareExecutableCopy()
             try {
                 val process = ProcessBuilder(webChallengeProcessCommand(helper)).start()
-                MacOsBrowserSessionState(sourceOrigin, helper, process).also { state ->
+                MacOsBrowserSessionState(sourceOrigin, allowedOrigins, helper, process).also { state ->
                     state.start()
                     state.sendLaunch()
                 }
@@ -101,6 +107,7 @@ private class MacOsPluginBrowserSessionTransport(
 
 private class MacOsBrowserSessionState(
     val sourceOrigin: String,
+    val allowedOrigins: Set<String>,
     private val helperCopy: Path,
     private val process: Process,
 ) {
@@ -119,10 +126,14 @@ private class MacOsBrowserSessionState(
         // errors because they can contain WebKit implementation details.
         Thread(
             {
-                BufferedReader(InputStreamReader(process.errorStream, Charsets.UTF_8)).use { reader ->
-                    while (reader.readLine() != null) {
+                try {
+                    val reader = BoundedUtf8LineReader(process.errorStream)
+                    while (reader.readLine(NATIVE_BROWSER_SESSION_STDERR_LINE_MAX_BYTES) != null) {
                         // Intentionally discarded.
                     }
+                } catch (_: Throwable) {
+                    fail(IllegalStateException("Native browser-session diagnostic stream was invalid"))
+                    if (process.isAlive) process.destroyForcibly()
                 }
             },
             "shinsou-wkwebview-session-stderr",
@@ -135,7 +146,11 @@ private class MacOsBrowserSessionState(
     fun sendLaunch() {
         writeProtocolLine(
             NATIVE_BROWSER_SESSION_JSON.encodeToString(
-                NativeBrowserSessionLaunch(url = "$sourceOrigin/robots.txt"),
+                NativeBrowserSessionLaunch(
+                    url = sourceOrigin,
+                    allowedNavigationOrigins = listOf(sourceOrigin),
+                    allowedSubresourceOrigins = allowedOrigins.sorted(),
+                ),
             ),
         )
     }
@@ -177,23 +192,23 @@ private class MacOsBrowserSessionState(
 
     private fun readEvents() {
         try {
-            BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8)).useLines { lines ->
-                lines.forEach { line ->
-                    val event = runCatching {
-                        NATIVE_BROWSER_SESSION_JSON.decodeFromString<NativeBrowserSessionEvent>(line)
-                    }.getOrElse {
-                        fail(IllegalStateException("Native browser-session response was invalid"))
-                        return@forEach
-                    }
+            val reader = BoundedUtf8LineReader(process.inputStream)
+            while (!closed.get()) {
+                val line = reader.readLine(NATIVE_BROWSER_SESSION_EVENT_MAX_BYTES) ?: break
+                val event = NATIVE_BROWSER_SESSION_JSON.decodeFromString<NativeBrowserSessionEvent>(line)
+                check(event.isValid()) { "Native browser-session event shape was invalid" }
                     when (event.type) {
                         "ready" -> Unit
                         "loaded" -> if (!ready.isCompleted) ready.complete(Unit)
-                        "evaluated" -> event.id?.let { id -> pending.remove(id)?.complete(event.value) }
+                        "evaluated" -> {
+                            val id = event.id!!
+                            val result = pending.remove(id)
+                                ?: throw IllegalStateException("Unexpected browser-session evaluation response")
+                            result.complete(event.value)
+                        }
                         "error" -> {
-                            val error = IllegalStateException(
-                                event.message?.takeIf(String::isNotBlank)
-                                    ?: "Native browser-session request failed",
-                            )
+                            // Do not project helper-controlled text, URLs, or page data into errors.
+                            val error = IllegalStateException("Native browser-session request failed")
                             val handled = event.id?.let { id -> pending.remove(id)?.completeExceptionally(error) }
                                 ?: false
                             if (!handled) fail(error)
@@ -202,11 +217,12 @@ private class MacOsBrowserSessionState(
                             IllegalStateException("Native browser-session helper closed unexpectedly"),
                         )
                     }
-                }
             }
             if (!closed.get()) fail(IllegalStateException("Native browser-session helper stopped unexpectedly"))
+        } catch (_: Throwable) {
+            if (!closed.get()) fail(IllegalStateException("Native browser-session response was invalid"))
         } finally {
-            if (!closed.get()) runCatching { process.destroy() }
+            if (!closed.get()) runCatching { process.destroyForcibly() }
         }
     }
 
@@ -225,6 +241,9 @@ private class MacOsBrowserSessionState(
         check(!closed.get() || value.contains("\"type\":\"close\"")) {
             "Browser-session helper is closed"
         }
+        check(value.utf8ByteCountAtMost(NATIVE_BROWSER_SESSION_COMMAND_MAX_BYTES) != null) {
+            "Browser-session helper command is too large"
+        }
         commands.write(value)
         commands.newLine()
         commands.flush()
@@ -239,6 +258,10 @@ private data class NativeBrowserSessionLaunch(
     val userAgent: String = "",
     val cookies: List<NativeBrowserSessionCookie> = emptyList(),
     val localStorageKeys: List<String> = emptyList(),
+    val allowedNavigationOrigins: List<String>,
+    val allowedSubresourceOrigins: List<String>,
+    val reviewedAddresses: List<String> = emptyList(),
+    val proxyToken: String? = null,
 )
 
 @Serializable
@@ -268,13 +291,50 @@ private data class NativeBrowserSessionEvent(
     val value: String? = null,
 )
 
+private fun NativeBrowserSessionEvent.isValid(): Boolean = when (type) {
+    "ready", "loaded", "closed" -> message == null && id == null && value == null
+    "evaluated" -> message == null && id.isValidEvaluationId() &&
+        (value == null || value.utf8ByteCountAtMost(NATIVE_BROWSER_SESSION_MAX_RESULT_BYTES) != null)
+    "error" -> value == null && message != null && message.utf8ByteCountAtMost(512) != null &&
+        (id == null || id.isValidEvaluationId())
+    else -> false
+}
+
+private fun String?.isValidEvaluationId(): Boolean =
+    this != null && isNotEmpty() && utf8ByteCountAtMost(128) != null
+
+private fun String.utf8ByteCountAtMost(maximum: Int): Int? {
+    var bytes = 0
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        val width = when {
+            character.code < 0x80 -> 1
+            character.code < 0x800 -> 2
+            character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> {
+                index++
+                4
+            }
+            else -> 3
+        }
+        if (bytes > maximum - width) return null
+        bytes += width
+        index++
+    }
+    return bytes
+}
+
 private val NATIVE_BROWSER_SESSION_JSON = Json {
     encodeDefaults = true
     explicitNulls = false
-    ignoreUnknownKeys = true
+    ignoreUnknownKeys = false
 }
 // A 512 KiB request body can expand several times when it is JSON-escaped into the Fetch script.
 private const val NATIVE_BROWSER_SESSION_MAX_SCRIPT_BYTES: Int = 4 * 1_024 * 1_024
+private const val NATIVE_BROWSER_SESSION_MAX_RESULT_BYTES: Int = 5_594_432
+private const val NATIVE_BROWSER_SESSION_COMMAND_MAX_BYTES: Int = 26 * 1_024 * 1_024
+private const val NATIVE_BROWSER_SESSION_EVENT_MAX_BYTES: Int = 26 * 1_024 * 1_024
+private const val NATIVE_BROWSER_SESSION_STDERR_LINE_MAX_BYTES: Int = 1_024
 
 private fun deleteNativeHelperCopy(path: Path) {
     runCatching { Files.deleteIfExists(path) }
@@ -292,21 +352,9 @@ private class JavaFxPluginBrowserSessionTransport : PluginBrowserSessionTranspor
         sourceOrigin: String,
         allowedOrigins: Set<String>,
         request: PluginHttpRequest,
-    ): PluginHttpResponse {
-        val prepared = preparePluginBrowserSessionRequest(sourceOrigin, allowedOrigins, request)
-        return mutex.withLock {
-            ensureJavaFx()
-            val existing = states[sourceId]
-            val state = if (existing?.sourceOrigin == prepared.sourceOrigin) {
-                existing
-            } else {
-                existing?.release()
-                createState(prepared.sourceOrigin).also { states[sourceId] = it }
-            }
-            state.ready.await()
-            executePluginBrowserSessionFetch(prepared, state::evaluate)
-        }
-    }
+    ): PluginHttpResponse = throw IllegalStateException(
+        "Browser-session transport is unavailable because JavaFX WebView cannot enforce subresource origins",
+    )
 
     private fun ensureJavaFx() {
         if (initialized.compareAndSet(false, true)) JFXPanel()

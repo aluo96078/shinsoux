@@ -67,6 +67,47 @@ class DownloadManagerTest {
         assertTrue(repository.currentSnapshot.downloadQueue.single().errorMessage?.contains("boom") == true)
         manager.close()
     }
+
+    @Test
+    fun restoreRedownloadsDownloadedQueueEntryWhenOfflineBytesAreMissing() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One")),
+            ),
+        )
+        val files = MemoryFileSystem()
+        var fetches = 0
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher {
+                fetches++
+                DownloadedPage(byteArrayOf(1, 2, 3), "image/jpeg")
+            },
+            now = { 20 },
+        )
+        val queued = repository.enqueueDownload(1, 3, queuedAt = 10)
+        repository.setDownloadState(
+            queued.id,
+            DownloadState.DOWNLOADED,
+            progress = 1.0,
+            downloadedPages = 1,
+            totalPages = 1,
+            updatedAt = 10,
+        )
+
+        manager.restoreQueue()
+        manager.awaitIdle()
+
+        val restored = repository.currentSnapshot.downloadQueue.single()
+        assertEquals(1, fetches)
+        assertEquals(DownloadState.DOWNLOADED, restored.state)
+        assertEquals(1, restored.downloadedPages)
+        assertEquals(1, manager.downloadedPages(1, 3).size)
+        manager.close()
+    }
 }
 
 private class MemoryFileSystem : AppFileSystem {

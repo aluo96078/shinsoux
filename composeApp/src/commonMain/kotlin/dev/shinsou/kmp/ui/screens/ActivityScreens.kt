@@ -93,6 +93,7 @@ fun UpdatesScreen(
     onDeleteChapterDownloads: (Set<Long>) -> Unit = {},
     onToggleChapterBookmarks: (Set<Long>) -> Unit = {},
     modifier: Modifier = Modifier,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)? = { null },
 ) {
     val strings = LocalShinsouStrings.current
     var selectedTab by remember { mutableStateOf(UpdatesTab.RECENT) }
@@ -191,6 +192,7 @@ fun UpdatesScreen(
                                     subtitle = item.chapter.name,
                                     detail = relativeTime(item.discoveredAt, strings),
                                     coverUrl = item.manga.thumbnailUrl,
+                                    loadCoverBytes = loadCoverBytes(item.manga),
                                     selectionMode = selectionMode,
                                     selected = selected,
                                     onClick = {
@@ -224,6 +226,7 @@ fun UpdatesScreen(
             UpdatesTab.UPCOMING -> UpcomingPane(
                 predictions = remember(allManga, allChapters) { predictUpcomingManga(allManga, allChapters) },
                 onOpenManga = onOpenManga,
+                loadCoverBytes = loadCoverBytes,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -302,6 +305,7 @@ private fun RowScope.UpdateBatchAction(
 private fun UpcomingPane(
     predictions: List<UpcomingPrediction>,
     onOpenManga: (Long) -> Unit,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalShinsouStrings.current
@@ -413,6 +417,7 @@ private fun UpcomingPane(
                             ?: strings.text("Estimated from the last library update"),
                         detail = strings.text("Expected today"),
                         coverUrl = prediction.manga.thumbnailUrl,
+                        loadCoverBytes = loadCoverBytes(prediction.manga),
                         onClick = { onOpenManga(prediction.manga.id) },
                     )
                 }
@@ -487,6 +492,7 @@ fun HistoryScreen(
     onDeleteChapterHistory: (Long) -> Unit,
     onClearHistory: () -> Unit,
     modifier: Modifier = Modifier,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)? = { null },
 ) {
     val strings = LocalShinsouStrings.current
     var query by remember { mutableStateOf("") }
@@ -533,6 +539,7 @@ fun HistoryScreen(
                         subtitle = historyPositionLabel(item.chapter, strings),
                         detail = relativeTime(item.lastRead, strings),
                         coverUrl = item.manga.thumbnailUrl,
+                        loadCoverBytes = loadCoverBytes(item.manga),
                         onClick = { onOpenManga(item.manga.id) },
                         primaryAction = {
                             IconButton(onClick = { onResumeChapter(item.manga.id, item.chapter.id) }) {
@@ -576,6 +583,7 @@ private fun ActivityRow(
     subtitle: String,
     detail: String,
     coverUrl: String?,
+    loadCoverBytes: (suspend () -> ByteArray?)? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     selectionMode: Boolean = false,
@@ -604,7 +612,12 @@ private fun ActivityRow(
                     tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            CoverImage(title, coverUrl, Modifier.width(44.dp).aspectRatio(2f / 3f))
+            CoverImage(
+                title = title,
+                url = coverUrl,
+                modifier = Modifier.width(44.dp).aspectRatio(2f / 3f),
+                loadBytes = loadCoverBytes,
+            )
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)

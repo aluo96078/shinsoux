@@ -33,8 +33,6 @@ import kotlin.time.Clock
 public class RepositoryPluginCoordinator(
     private val repository: ShinsouRepository,
     private val manager: PluginManager,
-    private val network: PluginNetworkClient,
-    private val requestBuilder: PluginRequestBuilder,
     private val fileSystem: AppFileSystem,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) : ContentCallbacks,
@@ -127,26 +125,24 @@ public class RepositoryPluginCoordinator(
             ?: throw IllegalArgumentException("Unknown chapter: $chapterId")
         val source = manager.source(reference.sourceId)
             ?: throw IllegalStateException("Source '${reference.sourceId}' is not loaded")
+        val contentNetwork = requireContentNetwork(source.id)
         val referer = source.headers.header("Referer")
             ?: absoluteSourceUrl(source.baseUrl, reference.chapter.url)
         val pages = source.getPageList(reference.chapter).mapIndexed { fallbackIndex, page ->
-            if (page.imageUrl.isNullOrBlank() && page.url.isNotBlank()) {
-                ReaderPage(
-                    index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
-                    imageResolver = {
-                        buildReaderPage(
-                            source = source,
-                            resolved = resolvePage(source, page, fallbackIndex, referer),
-                        )
-                    },
-                )
-            } else {
-                buildReaderPage(
-                    source = source,
-                    resolved = resolvePage(source, page, fallbackIndex, referer),
-                )
-            }
+            // The host fetches every plugin-controlled remote body lazily. Giving the raw URL to
+            // Coil would create a second, policy-free network path (including its own redirects).
+            ReaderPage(
+                index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
+                imageResolver = {
+                    buildReaderPage(
+                        source = source,
+                        contentNetwork = contentNetwork,
+                        resolved = resolvePage(source, contentNetwork, page, fallbackIndex, referer),
+                    )
+                },
+            )
         }.sortedBy(ReaderPage::index)
+        validateReaderPageIndexes(pages)
         return ReaderChapter(pages, referer, source.headers)
     }
 
@@ -182,10 +178,19 @@ public class RepositoryPluginCoordinator(
         val referer = source.headers.header("Referer")
             ?: absoluteSourceUrl(source.baseUrl, reference.chapter.url)
         return source.getPageList(reference.chapter).mapIndexed { fallbackIndex, page ->
-            val resolved = resolvePage(source, page, fallbackIndex, referer)
+            val resolved = resolvePage(
+                source,
+                requireContentNetwork(source.id),
+                page,
+                fallbackIndex,
+                referer,
+            )
             val headers = linkedMapOf<String, String>().apply {
-                putAll(source.headers)
-                resolved.headers.forEach { (name, value) -> putHeader(name, value) }
+                // Download bytes use the same credential-free content plane as online pages.
+                // Catalogue cookies (for example DM5's age preference) must not make every
+                // download fail the content client's credential-header guard.
+                putAll(sanitizePluginContentHeaders(source.headers))
+                sanitizePluginContentHeaders(resolved.headers).forEach { (name, value) -> putHeader(name, value) }
                 if (keys.none { it.equals("Referer", ignoreCase = true) }) put("Referer", resolved.referer)
             }
             DownloadPage(
@@ -199,14 +204,19 @@ public class RepositoryPluginCoordinator(
     }
 
     override suspend fun fetch(page: DownloadPage): DownloadedPage {
-        val response = network.execute(
+        val response = requireContentNetwork(page.sourceId).execute(
             page.sourceId,
             PluginHttpRequest("GET", page.url, headers = page.headers),
         )
         check(response.status in 200..299) { "HTTP ${response.status} while downloading page ${page.index + 1}" }
+        require(response.body.isNotEmpty()) { "Downloaded page ${page.index + 1} returned no data" }
+        val contentType = response.normalizedPluginMediaType()
+        val imageBytes = requireNotNull(response.imageBodyForDecoderOrNull()) {
+            "Downloaded page ${page.index + 1} returned non-image content '$contentType'"
+        }
         return DownloadedPage(
-            bytes = response.body,
-            contentType = response.headers.headerValues("Content-Type").firstOrNull(),
+            bytes = imageBytes,
+            contentType = contentType,
         )
     }
 
@@ -339,34 +349,61 @@ public class RepositoryPluginCoordinator(
 
     private suspend fun buildReaderPage(
         source: CatalogueSource,
+        contentNetwork: PluginContentNetworkClient,
         resolved: ResolvedPage,
     ): ReaderPage {
-        val built = requestBuilder.build(
+        val response = contentNetwork.execute(
             sourceId = source.id,
             request = PluginHttpRequest(
                 method = "GET",
                 url = resolved.url,
-                headers = resolved.headers,
+                headers = linkedMapOf<String, String>().apply {
+                    putAll(resolved.headers)
+                    if (keys.none { it.equals("Referer", ignoreCase = true) }) {
+                        put("Referer", resolved.referer)
+                    }
+                },
             ),
-            sourceHeaders = source.headers,
-            referer = resolved.referer,
         )
+        check(response.status in 200..299) {
+            "Unable to load reader page ${resolved.index + 1}: HTTP ${response.status}"
+        }
+        require(response.body.isNotEmpty()) { "Reader page ${resolved.index + 1} returned no data" }
+        val contentType = response.normalizedPluginMediaType()
+        val imageBytes = requireNotNull(response.imageBodyForDecoderOrNull()) {
+            "Reader page ${resolved.index + 1} returned non-image content '$contentType'"
+        }
         return ReaderPage(
             index = resolved.index,
-            imageUrl = built.transportRequest.url,
-            headers = built.transportRequest.headers,
+            imageBytes = imageBytes,
             imageTransform = resolved.imageTransform,
         )
     }
 
     private suspend fun resolvePage(
         source: CatalogueSource,
+        contentNetwork: PluginContentNetworkClient,
         page: Page,
         fallbackIndex: Int,
         chapterReferer: String,
     ): ResolvedPage {
         val pageIndex = page.index.takeIf { it >= 0 } ?: fallbackIndex
         page.imageUrl?.takeIf(String::isNotBlank)?.let { imageUrl ->
+            val metadata = PageRequestMetadata.parse(imageUrl)
+            return ResolvedPage(
+                index = pageIndex,
+                url = absoluteSourceUrl(source.baseUrl, metadata.cleanUrl),
+                headers = metadata.headers,
+                referer = chapterReferer,
+                imageTransform = metadata.imageTransform(source.id),
+            )
+        }
+
+        // Some sources expose an optional authenticated resolver for viewer pages. Invoke it in
+        // the plugin request plane (where source cookies/state are available), then keep the
+        // resulting image fetch in this host-owned, credential-free content plane. E-Hentai uses
+        // this hook to resolve its #img URL while preserving the gallery referer.
+        source.resolveImageUrl(page.url)?.takeIf(String::isNotBlank)?.let { imageUrl ->
             val metadata = PageRequestMetadata.parse(imageUrl)
             return ResolvedPage(
                 index = pageIndex,
@@ -384,12 +421,13 @@ public class RepositoryPluginCoordinator(
             if (keys.none { it.equals("Accept", ignoreCase = true) }) {
                 put("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
             }
+            if (keys.none { it.equals("Referer", ignoreCase = true) }) {
+                put("Referer", chapterReferer)
+            }
         }
-        val response = network.execute(
+        val response = contentNetwork.execute(
             sourceId = source.id,
             request = PluginHttpRequest("GET", viewerUrl, headers = viewerHeaders),
-            sourceHeaders = source.headers,
-            referer = chapterReferer,
         )
         check(response.status in 200..299) {
             "Unable to resolve reader page ${pageIndex + 1}: viewer '$viewerUrl' returned HTTP ${response.status}"
@@ -441,6 +479,10 @@ public class RepositoryPluginCoordinator(
 
     private fun requireDownloadManager(): DownloadManager =
         downloadManager ?: error("Download manager is not attached")
+
+    private suspend fun requireContentNetwork(sourceId: Long): PluginContentNetworkClient =
+        manager.contentNetworkForSource(sourceId)
+            ?: throw IllegalStateException("Source '$sourceId' has no admitted content network policy")
 
     private fun downloadDirectory(mangaId: Long, chapterId: Long): String =
         "downloads/$mangaId/$chapterId"
@@ -543,6 +585,18 @@ public class RepositoryPluginCoordinator(
 
     private fun Map<String, List<String>>.headerValues(name: String): List<String> =
         entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value.orEmpty()
+}
+
+/**
+ * Reader composables use the source page index as their stable item key. A malformed source page
+ * list with duplicate indexes would otherwise crash Compose (or make two pages share progress),
+ * so reject it at the host boundary with a user-visible chapter load error.
+ */
+internal fun validateReaderPageIndexes(pages: List<ReaderPage>) {
+    require(pages.all { it.index >= 0 }) { "Reader returned a negative page index" }
+    require(pages.map(ReaderPage::index).distinct().size == pages.size) {
+        "Reader returned duplicate page indexes"
+    }
 }
 
 /** Resolves source-owned URL references while refusing non-web schemes and malformed input. */

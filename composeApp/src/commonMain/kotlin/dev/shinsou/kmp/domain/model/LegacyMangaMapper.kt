@@ -242,6 +242,7 @@ public object LegacyMangaMapper {
             acquisitions = listOf(acquisition),
             description = input.record.description,
             authors = listOfNotNull(input.record.author).filter(String::isNotBlank),
+            thumbnailUrl = input.record.thumbnailUrl,
         )
         val portableCategories = input.categories.zip(categoryAliases).map { (record, alias) ->
             PortableLegacyCategory(PortableCategoryId(requireNotNull(bound[alias])), record)

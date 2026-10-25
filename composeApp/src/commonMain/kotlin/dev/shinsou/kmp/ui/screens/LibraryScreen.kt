@@ -93,6 +93,7 @@ import dev.shinsou.kmp.domain.model.LibraryItem
 import dev.shinsou.kmp.domain.model.LibrarySettings
 import dev.shinsou.kmp.domain.model.LibrarySort
 import dev.shinsou.kmp.domain.model.LibrarySortType
+import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.SortDirection
 import dev.shinsou.kmp.domain.model.commonMangaCategorySelection
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
@@ -131,6 +132,7 @@ fun LibraryScreen(
     onMoveSelected: (Set<Long>, Set<Long>) -> Unit,
     onDeleteSelected: (Set<Long>) -> Unit,
     modifier: Modifier = Modifier,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)? = { null },
 ) {
     val strings = LocalShinsouStrings.current
     var query by remember { mutableStateOf("") }
@@ -276,6 +278,7 @@ fun LibraryScreen(
                         onToggleSelection = { id ->
                             onSelectionChange(selectedMangaIds.toggle(id))
                         },
+                        loadCoverBytes = loadCoverBytes,
                     )
                 } else {
                     LibraryGrid(
@@ -291,6 +294,7 @@ fun LibraryScreen(
                         onToggleSelection = { id ->
                             onSelectionChange(selectedMangaIds.toggle(id))
                         },
+                        loadCoverBytes = loadCoverBytes,
                     )
                 }
             }
@@ -308,6 +312,7 @@ fun LibraryScreen(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 16.dp),
+                        loadCoverBytes = loadCoverBytes,
                     )
                 }
         }
@@ -371,6 +376,7 @@ private fun ContinueReadingBanner(
     item: LibraryItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
 ) {
     val strings = LocalShinsouStrings.current
     Surface(
@@ -390,6 +396,7 @@ private fun ContinueReadingBanner(
                 title = item.libraryManga.manga.title,
                 url = item.libraryManga.manga.thumbnailUrl,
                 modifier = Modifier.size(width = 40.dp, height = 56.dp),
+                loadBytes = loadCoverBytes(item.libraryManga.manga),
             )
             Column(Modifier.weight(1f)) {
                 Text(
@@ -655,6 +662,7 @@ private fun LibraryGrid(
     onOpen: (Long) -> Unit,
     onContinue: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
 ) {
     val strings = LocalShinsouStrings.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -689,6 +697,7 @@ private fun LibraryGrid(
                             url = manga.thumbnailUrl,
                             selected = selected,
                             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                            loadBytes = loadCoverBytes(manga),
                         )
                         LibraryContentTypeBadge(
                             type = contentTypes[manga.id] ?: LibraryContentType.UNKNOWN,
@@ -750,6 +759,7 @@ private fun LibraryList(
     onOpen: (Long) -> Unit,
     onContinue: (Long) -> Unit,
     onToggleSelection: (Long) -> Unit,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
 ) {
     val strings = LocalShinsouStrings.current
     LazyColumn(
@@ -788,6 +798,7 @@ private fun LibraryList(
                     url = manga.thumbnailUrl,
                     selected = selected,
                     modifier = Modifier.width(48.dp).aspectRatio(2f / 3f),
+                    loadBytes = loadCoverBytes(manga),
                 )
                 Column(Modifier.weight(1f)) {
                     Row(

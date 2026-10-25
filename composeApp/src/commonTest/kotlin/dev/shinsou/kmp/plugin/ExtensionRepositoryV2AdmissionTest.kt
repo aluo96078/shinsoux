@@ -11,8 +11,59 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class ExtensionRepositoryV2AdmissionTest {
+    @Test
+    fun repositoryHttpRequiresExplicitLocalDeveloperCompatibility() = runTest {
+        val requests = mutableListOf<String>()
+        val http = HttpClient(MockEngine { request ->
+            requests += request.url.toString()
+            respond(v2IndexJson(), HttpStatusCode.OK)
+        })
+        val insecureUrl = "http://127.0.0.1:18081"
+        assertFailsWith<ExtensionRepositoryException.InvalidUrl> {
+            ExtensionRepositoryClient(http).fetchIndex(insecureUrl)
+        }
+        assertEquals(emptyList(), requests)
+
+        val developer = ExtensionRepositoryClient(
+            http,
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+            allowInsecureDeveloperHttp = true,
+        )
+        assertIs<RepositoryIndex.Combined>(developer.fetchIndex(insecureUrl))
+        assertEquals(1, requests.size)
+        assertFailsWith<ExtensionRepositoryException.InvalidUrl> {
+            developer.fetchIndex("http://public.example")
+        }
+    }
+
+    @Test
+    fun admissionFingerprintCoversEveryExecutableFieldAndNormalizesSets() {
+        val original = entry()
+        val sameSetsDifferentOrder = original.copy(
+            capabilities = original.capabilities.reversed().toCollection(linkedSetOf()),
+            requestedHostPermissions = original.requestedHostPermissions.reversed().toCollection(linkedSetOf()),
+        )
+        assertEquals(original.admissionFingerprint(), sameSetsDifferentOrder.admissionFingerprint())
+
+        val mutations = listOf(
+            original.copy(description = "changed"),
+            original.copy(sha256 = "f".repeat(64)),
+            original.copy(runtime = "other-runtime"),
+            original.copy(contentKinds = setOf("PLAIN_TEXT")),
+            original.copy(capabilities = original.capabilities + "LOGIN"),
+            original.copy(runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT)),
+            original.copy(installable = false),
+            original.copy(sources = original.sources!!.map { it.copy(requestOrigins = setOf("https://api.example")) }),
+            original.copy(sources = original.sources!!.map { it.copy(contentKindsDeclared = false) }),
+        )
+        mutations.forEach { changed ->
+            kotlin.test.assertNotEquals(original.admissionFingerprint(), changed.admissionFingerprint())
+        }
+    }
+
     @Test
     fun v2IndexSeparatesContractsAndPreservesLosslessIdsAndAdmissionMetadata() = runTest {
         val client = clientFor(
@@ -36,10 +87,116 @@ class ExtensionRepositoryV2AdmissionTest {
         assertEquals(SHUYUE_ID, shuyue.id)
         assertEquals(SHUYUE_OPAQUE_SOURCE_ID, shuyue.sources.single().id)
         assertEquals(SHUYUE_OPAQUE_SOURCE_ID, shuyue.sourceKeys.single().sourceId)
+        assertEquals(SHUYUE_RUNTIME, shuyue.runtime)
         assertEquals(SHA256, shuyue.sha256)
         assertEquals(SIDECAR_PATH, shuyue.sidecarUrl)
         assertEquals(EVENTS, shuyue.systemEvents)
         assertEquals(PERMISSIONS, shuyue.requestedHostPermissions)
+    }
+
+    @Test
+    fun v2IndexKeepsAllShinsouPackagesWhenSourcePolicyFieldsAreOmitted() = runTest {
+        // This mirrors the maintained shinsou_plugin index: installable Shinsou sources omit
+        // the newer V2 content/origin declarations. Omission is a compatibility input, not a
+        // reason to drop the complete Shinsou half while parsing a mixed repository.
+        val body = buildString {
+            append("""
+                {
+                  "format":"shinsou-extension-v2","contractVersion":2,"packages":[
+            """.trimIndent())
+            repeat(14) { index ->
+                if (index > 0) append(',')
+                append("""
+                    {
+                      "id":"fixture.shinsou.$index","name":"Fixture $index","version":"1.0.0",
+                      "versionCode":1,"lang":"zh","nsfw":false,"contract":"shinsou",
+                      "runtime":"legacy-shinsou-adapter-v2","contentKinds":["IMAGE_SEQUENCE"],
+                      "capabilities":["CATALOGUE","CONTENT"],"runtimePermissions":["EXECUTE_SCRIPT"],
+                      "scriptUrl":"plugins/fixture-$index.js","sha256":"${"0".repeat(64)}",
+                      "byteSize":1,"sidecarUrl":"sidecars/fixture-$index.json",
+                      "requestedHostPermissions":[],
+                      "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+                      "sources":[{"sourceId":"${100L + index}","legacyLongId":"${100L + index}","name":"Fixture source $index","lang":"zh","baseUrl":"https://source-$index.example"}]
+                    }
+                """.trimIndent())
+            }
+            append("]}")
+        }
+        val client = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond(body, HttpStatusCode.OK) }),
+            cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        )
+
+        val combined = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        assertEquals(14, combined.plugins.size)
+        assertEquals((100L..113L).toList(), combined.plugins.flatMap { it.sources.orEmpty() }.map { it.id })
+        combined.plugins.flatMap { it.sources.orEmpty() }.forEach { source ->
+            assertEquals(2, source.originPolicyVersion)
+            assertEquals(emptySet(), source.contentKinds)
+            assertEquals(false, source.contentKindsDeclared)
+            assertEquals(emptySet(), source.requestOrigins)
+            assertEquals(emptySet(), source.credentialOrigins)
+            assertEquals(emptySet(), source.contentOrigins)
+            assertEquals(emptySet(), source.browserSessionOrigins)
+            // V2 omission must fail closed; the source base URL is metadata, not a network grant.
+            assertEquals(emptySet(), source.networkPolicy().requestOrigins)
+            assertEquals(emptySet(), source.networkPolicy().contentOrigins)
+        }
+    }
+
+    @Test
+    fun officialMixedV2IndexKeepsInstallableShinsouAndShuYuePartitions() = runTest {
+        // Keep this fixture in-tree instead of reading the sibling repository at test time. It
+        // mirrors the maintained mixed index's important shape: 14 executable Shinsou packages,
+        // two Shinsou reference packages, and four reviewed ShuYue packages (one compatibility
+        // package). The contract field, rather than package names or URL hints, is the partition
+        // boundary that the repository/UI pipeline must preserve.
+        val shinsouIds = listOf(
+            "eh.ehentai", "all.nhentai", "zh.jinmantiantang", "zh.baozimh", "zh.bika",
+            "zh.manhuagui", "zh.komiic", "zh.wnacg", "zh.mycomic", "zh.dm5",
+            "zh.manhuaren", "zh.mangacopy", "all.mangadex", "zh.bilimanga.manga",
+        )
+        val referenceIds = listOf("example.login", "example.dual")
+        val shuyueIds = listOf("zh.bilimanga", "zh.wenku8", "zh.wenku8.api", "zh.biquge.tw")
+        val body = buildString {
+            append("{\"format\":\"shinsou-extension-v2\",\"contractVersion\":2,\"packages\":[")
+            var first = true
+            fun separator() {
+                if (!first) append(',')
+                first = false
+            }
+            shinsouIds.forEachIndexed { index, id ->
+                separator()
+                append(officialShinsouPackageJson(id, 10_000L + index))
+            }
+            referenceIds.forEachIndexed { index, id ->
+                separator()
+                append(officialReferencePackageJson(id, index))
+            }
+            shuyueIds.forEachIndexed { index, id ->
+                separator()
+                append(officialShuYuePackageJson(id, index, compatibilityOnly = id == "zh.wenku8"))
+            }
+            append("]}")
+        }
+        val client = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond(body, HttpStatusCode.OK) }),
+            cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        )
+
+        val combined = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        assertEquals(shinsouIds.toSet(), combined.plugins.map { it.id }.toSet())
+        assertEquals(14, combined.plugins.count { it.installable && !it.referenceOnly && !it.legacyCompatibilityOnly })
+        // Reference-only Shinsou records are intentionally validated but omitted from the
+        // executable partition; they must not become installable descriptors.
+        assertTrue(combined.plugins.none { it.id in referenceIds })
+        assertEquals(shuyueIds.toSet(), combined.shuyue.map { it.id }.toSet())
+        assertEquals(4, combined.shuyue.size)
+        assertEquals(setOf("zh.wenku8"), combined.shuyue.filter { it.legacyCompatibilityOnly }.map { it.id }.toSet())
+        assertTrue(combined.plugins.none { it.id in shuyueIds })
+        assertTrue(combined.shuyue.none { it.id in shinsouIds })
     }
 
     @Test
@@ -68,6 +225,15 @@ class ExtensionRepositoryV2AdmissionTest {
             ),
             "permissions" to sidecarJson(permissions = listOf("REQUEST_SOURCE_REFRESH")),
             "browser-session origins" to sidecarJson(browserOrigins = listOf("https://other-api.example")),
+            "required package field" to sidecarJson().replace("\"runtime\":\"$RUNTIME\",", ""),
+            "runtime null" to sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":null,"),
+            "runtime wrong type" to sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":7,"),
+            "runtime blank" to sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":\" \","),
+            "runtime mismatch" to sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":\"other-runtime\",") ,
+            "invalid optional source field" to sidecarJson().replace(
+                "\"requestOrigins\":[],",
+                "\"requestOrigins\":{},",
+            ),
         )
 
         mismatches.forEach { (label, sidecar) ->
@@ -77,6 +243,116 @@ class ExtensionRepositoryV2AdmissionTest {
             assertFailsWith<ExtensionRepositoryException.InvalidDocument>(label) {
                 mismatchClient.verifyPluginV2Sidecar(REPOSITORY_URL, mismatchEntry)
             }
+        }
+    }
+
+    @Test
+    fun sidecarSourceContentTypeMayInheritPackageTypeWhenIndexSourceOmitsIt() = runTest {
+        val client = clientFor(
+            index = v2IndexJson(),
+            sidecar = sidecarJson().replace(
+                "\"baseUrl\":\"https://source.example\",\"contentType\":\"manga\",",
+                "\"baseUrl\":\"https://source.example\",",
+            ),
+        )
+        val index = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        client.verifyPluginV2Sidecar(REPOSITORY_URL, index.plugins.single())
+    }
+
+    @Test
+    fun explicitSidecarSourceContentTypeMismatchIsRejected() = runTest {
+        val client = clientFor(
+            index = v2IndexJson(),
+            sidecar = sidecarJson().replace(
+                "\"baseUrl\":\"https://source.example\",\"contentType\":\"manga\",",
+                "\"baseUrl\":\"https://source.example\",\"contentType\":\"novel\",",
+            ),
+        )
+        val index = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        assertFailsWith<ExtensionRepositoryException.InvalidDocument> {
+            client.verifyPluginV2Sidecar(REPOSITORY_URL, index.plugins.single())
+        }
+    }
+
+    @Test
+    fun omittedSourceContentTypeCannotInheritMixedPackageType() = runTest {
+        val client = clientFor(
+            index = v2IndexJson().replace("\"contentType\":\"manga\"", "\"contentType\":\"both\""),
+            sidecar = sidecarJson().replace("\"type\":\"manga\"", "\"type\":\"both\""),
+        )
+        val index = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        assertFailsWith<ExtensionRepositoryException.InvalidDocument> {
+            client.verifyPluginV2Sidecar(REPOSITORY_URL, index.plugins.single())
+        }
+    }
+
+    @Test
+    fun officialShinsouSidecarMayOmitRuntimeAndInheritsTheIndexRuntime() = runTest {
+        val sidecar = sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "")
+        val http = HttpClient(MockEngine { respond(sidecar, HttpStatusCode.OK) })
+        try {
+            developerClient(http).verifyPluginV2Sidecar(
+                OFFICIAL_SHINSOU_REPOSITORY_BASE_URL,
+                entry(),
+            )
+        } finally {
+            http.close()
+        }
+    }
+
+    @Test
+    fun v2RuntimeMustMatchTheContractAllowlist() = runTest {
+        val invalidIndexes = listOf(
+            "Shinsou with ShuYue runtime" to v2IndexJson(
+                shinsouRuntime = SHUYUE_RUNTIME,
+            ),
+            "Shinsou with unknown runtime" to v2IndexJson(
+                shinsouRuntime = "unknown-runtime",
+            ),
+            "ShuYue with Shinsou runtime" to v2IndexJson(
+                shuyueRuntime = RUNTIME,
+            ),
+            "ShuYue with unknown runtime" to v2IndexJson(
+                shuyueRuntime = "unknown-runtime",
+            ),
+        )
+        invalidIndexes.forEach { (label, invalid) ->
+            val http = HttpClient(MockEngine { respond(invalid, HttpStatusCode.OK) })
+            try {
+                assertFailsWith<ExtensionRepositoryException.InvalidDocument>(label) {
+                    developerClient(http).fetchIndex(REPOSITORY_URL)
+                }
+            } finally {
+                http.close()
+            }
+        }
+    }
+
+    @Test
+    fun sourceContentKindOmissionInheritsPackageButExplicitEmptyDoesNot() = runTest {
+        val omittedIndex = v2IndexJson().replace(
+            "\"contentKinds\":[\"IMAGE_SEQUENCE\"],\"requestOrigins\":[]",
+            "\"requestOrigins\":[]",
+        )
+        val omittedClient = clientFor(omittedIndex, sidecarJson())
+        val omittedEntry = assertIs<RepositoryIndex.Combined>(
+            omittedClient.fetchIndex(REPOSITORY_URL),
+        ).plugins.single()
+        assertEquals(false, omittedEntry.sources!!.single().contentKindsDeclared)
+        omittedClient.verifyPluginV2Sidecar(REPOSITORY_URL, omittedEntry)
+
+        val emptyIndex = v2IndexJson().replace(
+            "\"contentKinds\":[\"IMAGE_SEQUENCE\"],\"requestOrigins\":[]",
+            "\"contentKinds\":[],\"requestOrigins\":[]",
+        )
+        val emptyClient = clientFor(emptyIndex, sidecarJson())
+        val emptyEntry = assertIs<RepositoryIndex.Combined>(
+            emptyClient.fetchIndex(REPOSITORY_URL),
+        ).plugins.single()
+        assertEquals(true, emptyEntry.sources!!.single().contentKindsDeclared)
+        assertEquals(emptySet(), emptyEntry.sources!!.single().contentKinds)
+        assertFailsWith<ExtensionRepositoryException.InvalidDocument> {
+            emptyClient.verifyPluginV2Sidecar(REPOSITORY_URL, emptyEntry)
         }
     }
 
@@ -99,6 +375,12 @@ class ExtensionRepositoryV2AdmissionTest {
             ),
             sidecarJson(permissions = listOf("REQUEST_SOURCE_REFRESH")),
             sidecarJson(browserOrigins = listOf("https://other-api.example")),
+            sidecarJson().replace("\"runtime\":\"$RUNTIME\",", ""),
+            sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":null,"),
+            sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":7,"),
+            sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":\" \","),
+            sidecarJson().replace("\"runtime\":\"$RUNTIME\",", "\"runtime\":\"other-runtime\",") ,
+            sidecarJson().replace("\"requestOrigins\":[],", "\"requestOrigins\":{},"),
         )
 
         mismatches.forEach { sidecar ->
@@ -116,7 +398,7 @@ class ExtensionRepositoryV2AdmissionTest {
             val keyValues = InMemoryPluginKeyValueStore()
             val storage = KeyValuePluginStorage(keyValues)
             val manager = PluginManager(
-                repositoryClient = ExtensionRepositoryClient(http, cacheToken = { 1L }),
+                repositoryClient = developerClient(http),
                 packageStore = InMemoryPluginPackageStore(),
                 verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
                 runtimeFactory = NoopScriptPluginRuntimeFactory,
@@ -158,7 +440,7 @@ class ExtensionRepositoryV2AdmissionTest {
             val storage = KeyValuePluginStorage(keyValues)
             val packageStore = InMemoryPluginPackageStore()
             val manager = PluginManager(
-                repositoryClient = ExtensionRepositoryClient(http, cacheToken = { 1L }),
+                repositoryClient = developerClient(http),
                 packageStore = packageStore,
                 verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
                 runtimeFactory = NoopScriptPluginRuntimeFactory,
@@ -200,7 +482,7 @@ class ExtensionRepositoryV2AdmissionTest {
         val storage = KeyValuePluginStorage(keyValues)
         val packageStore = InMemoryPluginPackageStore()
         val manager = PluginManager(
-            repositoryClient = ExtensionRepositoryClient(http, cacheToken = { 1L }),
+            repositoryClient = developerClient(http),
             packageStore = packageStore,
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
             runtimeFactory = NoopScriptPluginRuntimeFactory,
@@ -236,8 +518,14 @@ class ExtensionRepositoryV2AdmissionTest {
                 else -> respond("not found", HttpStatusCode.NotFound)
             }
         })
-        return ExtensionRepositoryClient(http, cacheToken = { 1L })
+        return developerClient(http)
     }
+
+    private fun developerClient(http: HttpClient): ExtensionRepositoryClient = ExtensionRepositoryClient(
+        http,
+        cacheToken = { 1L },
+        repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+    )
 
     private fun entry(): PluginIndexEntry = PluginIndexEntry(
         id = SHINSOU_ID,
@@ -252,19 +540,63 @@ class ExtensionRepositoryV2AdmissionTest {
                 lang = "en",
                 id = 9_223_372_036_854_775_807L,
                 baseUrl = "https://source.example",
+                contentKinds = CONTENT_KINDS,
+                contentKindsDeclared = true,
                 browserSessionOrigins = BROWSER_ORIGINS,
+                legacyLongId = "9223372036854775807",
+                canonicalSourceId = "9223372036854775807",
             ),
         ),
         sha256 = SHA256,
         byteSize = SCRIPT_BYTES.size,
         contentType = "manga",
         contract = "shinsou",
+        runtime = RUNTIME,
+        contentKinds = CONTENT_KINDS,
+        capabilities = CAPABILITIES,
         sidecarUrl = SIDECAR_PATH,
         systemEvents = EVENTS,
         requestedHostPermissions = PERMISSIONS,
+        runtimePermissions = RUNTIME_PERMISSIONS,
     )
 
-    private fun v2IndexJson(): String = """
+    private fun officialShinsouPackageJson(id: String, sourceId: Long): String = """
+        {"contract":"shinsou","id":"$id","name":"$id","version":"1.0.0","versionCode":1,
+         "lang":"zh","nsfw":false,"runtime":"legacy-shinsou-adapter-v2",
+         "scriptUrl":"plugins/$id.js","contentKinds":["IMAGE_SEQUENCE"],
+         "capabilities":["CATALOGUE","CONTENT"],"runtimePermissions":["EXECUTE_SCRIPT"],
+         "sources":[{"sourceId":"$sourceId","legacyLongId":"$sourceId","name":"$id","lang":"zh","baseUrl":"https://$id.example"}],
+         "sha256":"${"0".repeat(64)}","byteSize":1,"sidecarUrl":"sidecars/$id.json",
+         "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+         "requestedHostPermissions":[],"installable":true}
+    """.trimIndent()
+
+    private fun officialReferencePackageJson(id: String, offset: Int): String = """
+        {"contract":"shinsou","id":"$id","name":"$id","version":"1.0.0","versionCode":1,
+         "lang":"all","nsfw":false,"runtime":"legacy-shinsou-adapter-v2",
+         "scriptUrl":"plugins/$id.js","contentType":"manga","contentKinds":["IMAGE_SEQUENCE"],
+         "capabilities":["CATALOGUE","CONTENT"],"runtimePermissions":["EXECUTE_SCRIPT"],
+         "sources":[{"sourceId":"$id","legacyLongId":null,"name":"$id","lang":"all","baseUrl":"https://reference-$offset.example"}],
+         "sha256":"${"1".repeat(64)}","byteSize":1,"sidecarUrl":"sidecars/$id.json",
+         "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+         "requestedHostPermissions":[],"installable":true,"referenceOnly":true}
+    """.trimIndent()
+
+    private fun officialShuYuePackageJson(id: String, offset: Int, compatibilityOnly: Boolean): String = """
+        {"contract":"shuyue","id":"$id","name":"$id","version":"1.0.0","versionCode":1,
+         "lang":"zh","nsfw":false,"runtime":"reviewed-shuyue-adapter-v2",
+         "scriptUrl":"plugins/$id.js","contentType":"novel","contentKinds":["PLAIN_TEXT"],
+         "capabilities":["BROWSE","SEARCH","METADATA","UNITS","CONTENT"],
+         "runtimePermissions":["EXECUTE_SCRIPT"],"sources":[{"sourceId":"$id","name":"$id","lang":"zh","baseUrl":"https://shuyue-$offset.example"}],
+         "sha256":"${"2".repeat(64)}","byteSize":1,"sidecarUrl":"sidecars/$id.json",
+         "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+         "requestedHostPermissions":[],"installable":true,"legacyCompatibilityOnly":$compatibilityOnly}
+    """.trimIndent()
+
+    private fun v2IndexJson(
+        shinsouRuntime: String = RUNTIME,
+        shuyueRuntime: String = SHUYUE_RUNTIME,
+    ): String = """
         {
           "format":"shinsou-extension-v2",
           "contractVersion":2,
@@ -276,8 +608,13 @@ class ExtensionRepositoryV2AdmissionTest {
               "version":"2.0.0",
               "versionCode":7,
               "lang":"en",
+              "nsfw":false,
+              "runtime":"$shinsouRuntime",
               "scriptUrl":"$SCRIPT_PATH",
-              "sources":[{"sourceId":"9223372036854775807","name":"V2 source","lang":"en","baseUrl":"https://source.example","browserSessionOrigins":["https://api.example"]}],
+              "contentKinds":["IMAGE_SEQUENCE"],
+              "capabilities":["CATALOGUE","CONTENT"],
+              "runtimePermissions":["EXECUTE_SCRIPT","NETWORK"],
+              "sources":[{"sourceId":"9223372036854775807","legacyLongId":"9223372036854775807","name":"V2 source","lang":"en","baseUrl":"https://source.example","contentKinds":["IMAGE_SEQUENCE"],"requestOrigins":[],"credentialOrigins":[],"contentOrigins":[],"browserSessionOrigins":["https://api.example"]}],
               "sha256":"$SHA256",
               "byteSize":${SCRIPT_BYTES.size},
               "contentType":"manga",
@@ -292,12 +629,16 @@ class ExtensionRepositoryV2AdmissionTest {
               "version":"2.0.0",
               "versionCode":8,
               "lang":"zh",
+              "nsfw":false,
+              "runtime":"$shuyueRuntime",
               "scriptUrl":"shuyue.js",
               "sources":[{"sourceId":"$SHUYUE_OPAQUE_SOURCE_ID","name":"Opaque source","lang":"zh","baseUrl":"https://shuyue.example"}],
               "sha256":"$SHA256",
+              "byteSize":${SCRIPT_BYTES.size},
               "sidecarUrl":"$SIDECAR_PATH",
               "contentType":"novel",
               "capabilities":["LOGIN"],
+              "runtimePermissions":["EXECUTE_SCRIPT"],
               "systemEvents":${eventsJson()},
               "requestedHostPermissions":["REQUEST_LOGIN_UI","REPORT_DIAGNOSTIC"]
             }
@@ -322,13 +663,23 @@ class ExtensionRepositoryV2AdmissionTest {
           "format":"shinsou-extension-sidecar-v2",
           "contractVersion":2,
           "packageId":"$packageId",
+          "name":"V2 Shinsou",
           "version":"$version",
           "versionCode":$versionCode,
+          "contract":"shinsou",
+          "runtime":"$RUNTIME",
+          "lang":"en",
+          "nsfw":false,
+          "installable":true,
+          "referenceOnly":false,
+          "legacyCompatibilityOnly":false,
           "artifact":{"scriptUrl":"$SCRIPT_PATH","sha256":"$digest","byteSize":$byteSize},
-          "content":{"contractVersion":2,"type":"$contentType"},
-          "sources":[{"sourceId":"$sourceId","browserSessionOrigins":${browserOrigins.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},"sourceKey":{"contractVersion":2,"packageId":"$sourcePackageId","sourceId":"$sourceId"}}],
+          "content":{"contract":"extension-content-v2","contractVersion":2,"type":"$contentType","kinds":["IMAGE_SEQUENCE"]},
+          "capabilities":["CATALOGUE","CONTENT"],
+              "sources":[{"sourceId":"$sourceId","name":"V2 source","lang":"en","baseUrl":"https://source.example","contentType":"$contentType","contentKinds":["IMAGE_SEQUENCE"],"requestOrigins":[],"credentialOrigins":[],"contentOrigins":[],"browserSessionOrigins":${browserOrigins.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},"capabilities":["CATALOGUE","CONTENT"],"systemEvents":$events,"requestedHostPermissions":${permissions.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},"runtimePermissions":["EXECUTE_SCRIPT","NETWORK"],"sourceKey":{"contractVersion":2,"packageId":"$sourcePackageId","sourceId":"$sourceId","legacyLongId":"9223372036854775807"}}],
           "systemEvents":$events,
-          "requestedHostPermissions":${permissions.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")}
+          "requestedHostPermissions":${permissions.joinToString(prefix = "[\"", postfix = "\"]", separator = "\",\"")},
+          "runtimePermissions":["EXECUTE_SCRIPT","NETWORK"]
         }
     """.trimIndent()
 
@@ -358,5 +709,13 @@ class ExtensionRepositoryV2AdmissionTest {
             PluginHostPermission.REPORT_DIAGNOSTIC,
         )
         val BROWSER_ORIGINS = setOf("https://api.example")
+        const val RUNTIME = "legacy-shinsou-adapter-v2"
+        const val SHUYUE_RUNTIME = "reviewed-shuyue-adapter-v2"
+        val CONTENT_KINDS = setOf("IMAGE_SEQUENCE")
+        val CAPABILITIES = setOf("CATALOGUE", "CONTENT")
+        val RUNTIME_PERMISSIONS = setOf(
+            PluginRuntimePermission.EXECUTE_SCRIPT,
+            PluginRuntimePermission.NETWORK,
+        )
     }
 }

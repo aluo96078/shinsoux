@@ -84,6 +84,32 @@
 # builds.
 -keep class dev.shinsou.kmp.reader.protocol.EpubUrlStreamHandlerProvider { *; }
 
+# JavaFX selects its toolkit, Glass platform and Prism pipeline by class name
+# (Toolkit.getToolkit -> Class.forName("com.sun.javafx.tk.quantum.QuantumToolkit"),
+# com.sun.glass.ui.mac/win, com.sun.prism.es2/d3d/sw), and native Glass/Prism code
+# calls back into Java by member name. beta.8 kept only 11 of 101 quantum classes,
+# so the toolkit never started, Platform.runLater parked forever and every
+# catalogue request waiting for the WebKit User-Agent hung.
+-keep class javafx.** { *; }
+-keep class com.sun.javafx.** { *; }
+-keep class com.sun.glass.** { *; }
+-keep class com.sun.prism.** { *; }
+-keep class com.sun.scenario.** { *; }
+-keep class com.sun.webkit.** { *; }
+-keep class com.sun.media.** { *; }
+-keep class com.sun.marlin.** { *; }
+-keep class com.sun.openpisces.** { *; }
+-keep class com.sun.pisces.** { *; }
+
+# OkHttp (the pinned plugin transport on Android/Desktop) probes optional TLS
+# providers and Android platform classes reflectively. None ship in the
+# self-contained desktop runtime; OkHttp falls back to the JDK platform.
+-dontwarn android.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn org.mozilla.classfile.**
+
 # The Compose desktop distribution includes the JavaFX Web module so EPUB
 # pages can be rendered, but WebKit's optional media/editor/control bridges
 # refer to JavaFX modules that are intentionally not shipped in the runtime

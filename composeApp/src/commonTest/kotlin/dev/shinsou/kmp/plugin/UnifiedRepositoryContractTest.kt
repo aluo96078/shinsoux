@@ -25,6 +25,7 @@ class UnifiedRepositoryContractTest {
         val client = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond(body, HttpStatusCode.OK) }),
             cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
         )
 
         val index = client.fetchIndex("https://repo.example")

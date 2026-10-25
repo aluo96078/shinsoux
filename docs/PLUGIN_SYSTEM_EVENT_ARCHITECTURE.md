@@ -1,5 +1,6 @@
 # 插件系統事件接口架構
 
+- 導覽：[插件系統總覽](PLUGIN_SYSTEM.md) · [統一插件儲存庫契約](UNIFIED_PLUGIN_REPOSITORY.md)
 - 狀態：Partially implemented（production V1 gateway 與四個 handler 已接通）
 - 日期：2026-08-22；實作狀態更新：2026-08-29
 - 適用範圍：[Shinsou X KMP](https://github.com/aluo96078/shinsoux)、[Shinsou JavaScript plugins](https://github.com/aluo96078/shinsou_plugin)、reviewed [ShuYue plugins](https://github.com/aluo96078/shuyue_plugin)
@@ -18,6 +19,17 @@ host code 註冊下列四個 V1 handler：
 Exact-artifact event grant 會持久化並在 runtime 啟動時 hydrate；grant identity 是
 `packageId + version + versionCode + SHA-256 + SourceKey`。JVM Rhino 與 iOS JavaScriptCore 都接入同一
 wire／gateway 契約，既有 `requestLogin` 保留 compatibility path。
+
+Durable admission 以每個 exact artifact 的單一 V2 record 為 authority，狀態只有 `PENDING`、`GRANTED`
+與 `REVOKED`。Record 內同時保存 artifact identity、完整 `SourceKey` 清單及 Host／runtime permission
+review；只有 `GRANTED` 的完整單次 commit 才能授權 live authorizer，`PENDING` 不可執行，`REVOKED` 是
+不可被舊資料覆寫的 tombstone。Record 上限為 256 KiB，最多 256 sources，source ID 最多 256 UTF-8
+bytes。
+
+舊版分開的 event/runtime grant 只在兩半都嚴格解碼、未超限且 exact artifact、SourceKey、Host／runtime
+permissions 完全一致時遷移；缺半部、損壞、超限或不一致一律 fail closed，並以 V2 non-grant state
+遮蔽舊值。Legacy pending 可轉為 `PENDING`。撤銷會先撤掉 live authority，再寫 `REVOKED`；durable
+寫入失敗時也保留 process-local revoked floor，避免啟動或 hydrate 復活舊 grant。
 
 目前仍未完成或刻意保留：
 
@@ -423,10 +435,12 @@ effective permission =
 | `REPORT_USER_MESSAGE` | 保留：diagnostic 的 UI projection | production admission 目前拒絕；需 safe presenter，且仍可 suppress/aggregate |
 | `REQUEST_BROWSER_CHALLENGE` | 保留：future web challenge | 目前無 production handler；未來仍需 exact reviewed grant、平台隔離能力 |
 
-Grant key 至少包含：
+Authoritative durable event admission record 必須包含完整 exact artifact 與每個 exact `SourceKey`；
+內含的 Host／runtime permissions 也必須是同一次 review 的集合。只有歷史 split-grant 相容資料的
+內部 key 才可能暫時沒有 `SourceKey`，它不是新的授權格式：
 
 ```text
-(packageId, version, versionCode, sha256, optional SourceKey)
+(packageId, version, versionCode, sha256, SourceKey)
 ```
 
 同 package 更新到新 digest 後，舊 queue、context refs、result mailbox 與 grants 全部失效。
@@ -508,6 +522,10 @@ UI consumer 或某一 handler 失敗不能取消整個 dispatcher。
 - diagnostic：按 `(SourceKey, code, operation)` 在時間窗內聚合。
 
 即使插件不停變換 request ID 或 idempotency key，source/type token bucket 仍必須生效。
+
+上述事件 ingress 的 envelope 上限為 8 KiB UTF-8；durable grant record 另限 256 KiB／256 sources，
+並且所有 artifact、`SourceKey` 與 permission review 欄位都必須通過 strict bounds。任何 decode、migration
+或 persistence 驗證失敗都採 non-grant、fail-closed 行為。
 
 Runtime close、卸載、來源停用、artifact replacement 或權限撤銷時，必須清除該 scope 的 pending
 request、context refs 與 result mailbox。

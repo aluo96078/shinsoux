@@ -353,6 +353,223 @@ class PluginSystemEventDispatcherTest {
         f.gateway.close()
     }
 
+    @Test
+    fun closingLatestGenerationDoesNotReopenAnOlderScope() = runTest {
+        val clock = FakeClock()
+        val f = fixture(
+            clock = clock,
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        val newer = BoundPluginScopeFactory(clock).bind(
+            f.scope.artifactIdentity,
+            f.source,
+            f.scope.runtimeInstanceId,
+            2,
+        )
+        f.authorizer.setRuntimeStatus(newer, PluginEventRuntimeStatus())
+
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(newer, diagnosticBytes(f.codec, "newer", "newer.code")).disposition,
+        )
+        advanceUntilIdle()
+        f.gateway.closeRuntime(newer)
+
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(f.scope, diagnosticBytes(f.codec, "old-replay", "old.code")).disposition,
+        )
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(newer, diagnosticBytes(f.codec, "closed-replay", "closed.code")).disposition,
+        )
+        f.gateway.close()
+    }
+
+    @Test
+    fun repeatedReloadsShareOneLogicalIdentityAndRejectEveryStaleGeneration() = runTest {
+        val clock = FakeClock()
+        val f = fixture(
+            clock = clock,
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            limits = PluginSystemEventLimits(maxTrackedRuntimes = 1),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        val factory = BoundPluginScopeFactory(clock)
+        val logicalRuntimeId = stablePluginRuntimeInstanceId(f.scope.artifactIdentity, f.source)
+        val stale = factory.bind(f.scope.artifactIdentity, f.source, logicalRuntimeId, 1)
+        var current = stale
+
+        // Exceed the production identity-table bound while retaining just one logical identity.
+        repeat(PluginSystemEventLimits().maxTrackedRuntimes + 2) { reload ->
+            val next = factory.bind(
+                f.scope.artifactIdentity,
+                f.source,
+                logicalRuntimeId,
+                reload.toLong() + 2,
+            )
+            f.authorizer.setRuntimeStatus(next, PluginEventRuntimeStatus())
+            assertEquals(
+                PluginEventDisposition.ACCEPTED,
+                f.gateway.submit(
+                    next,
+                    diagnosticBytes(f.codec, "reload-${reload + 2}", "reload.current"),
+                ).disposition,
+            )
+            advanceUntilIdle()
+            current = next
+        }
+
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(current, diagnosticBytes(f.codec, "current-final", "reload.final")).disposition,
+        )
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(stale, diagnosticBytes(f.codec, "stale-final", "reload.stale")).disposition,
+        )
+        f.gateway.close()
+    }
+
+    @Test
+    fun runtimeIdentityChurnStopsAtBoundWithoutEvictingClosedTombstones() = runTest {
+        val limits = PluginSystemEventLimits(maxTrackedRuntimes = 2)
+        val f = fixture(
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            limits = limits,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        val second = BoundPluginScopeFactory().bind(f.scope.artifactIdentity, f.source, "runtime-2", 1)
+        val overflow = BoundPluginScopeFactory().bind(f.scope.artifactIdentity, f.source, "runtime-3", 1)
+        f.authorizer.setRuntimeStatus(second, PluginEventRuntimeStatus())
+        f.authorizer.setRuntimeStatus(overflow, PluginEventRuntimeStatus())
+
+        f.gateway.closeRuntime(f.scope)
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(second, diagnosticBytes(f.codec, "second", "second.code")).disposition,
+        )
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(overflow, diagnosticBytes(f.codec, "overflow", "overflow.code")).disposition,
+        )
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(f.scope, diagnosticBytes(f.codec, "closed", "closed.code")).disposition,
+        )
+        f.gateway.close()
+    }
+
+    @Test
+    fun rateLimitBucketCapacityRejectsNewKeysAndReclaimsFullyRefilledBuckets() = runTest {
+        val clock = FakeClock()
+        val limits = PluginSystemEventLimits(
+            tokenBurst = 1,
+            tokenPerMinute = 1,
+            maxRateLimitBuckets = 2,
+        )
+        val f = fixture(
+            clock = clock,
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            limits = limits,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        val second = BoundPluginScopeFactory(clock).bind(f.scope.artifactIdentity, f.source, "runtime-2", 1)
+        f.authorizer.setRuntimeStatus(second, PluginEventRuntimeStatus())
+
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(f.scope, diagnosticBytes(f.codec, "first", "first.code")).disposition,
+        )
+        assertEquals(
+            PluginEventDisposition.BUSY,
+            f.gateway.submit(second, diagnosticBytes(f.codec, "second", "second.code")).disposition,
+        )
+
+        clock.now = 60_000
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(second, diagnosticBytes(f.codec, "after-refill", "second.code")).disposition,
+        )
+        f.gateway.close()
+    }
+
+    @Test
+    fun sameRuntimeGenerationCannotBeReboundToAnotherArtifact() = runTest {
+        val f = fixture(
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        assertEquals(
+            PluginEventDisposition.ACCEPTED,
+            f.gateway.submit(f.scope, diagnosticBytes(f.codec, "original", "original.code")).disposition,
+        )
+
+        val changedArtifact = f.scope.artifactIdentity.copy(
+            version = "2.0.0",
+            versionCode = 2,
+            sha256 = digest.dropLast(1) + "e",
+        )
+        val rebound = BoundPluginScopeFactory().bind(
+            changedArtifact,
+            f.source,
+            f.scope.runtimeInstanceId,
+            f.scope.runtimeGeneration,
+        )
+        f.authorizer.grant(
+            PluginEventGrantKey(changedArtifact, f.source),
+            setOf(PluginHostPermission.REPORT_DIAGNOSTIC),
+        )
+        f.authorizer.setRuntimeStatus(rebound, PluginEventRuntimeStatus())
+
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(rebound, diagnosticBytes(f.codec, "rebound", "rebound.code")).disposition,
+        )
+        f.gateway.close()
+    }
+
+    @Test
+    fun artifactTombstoneOverflowFailsTheGatewayClosed() = runTest {
+        val f = fixture(
+            permission = PluginHostPermission.REPORT_DIAGNOSTIC,
+            lane = PluginSystemEventLane.TRANSIENT,
+            limits = PluginSystemEventLimits(maxInvalidArtifacts = 1),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        registerDiagnosticHandler(f)
+        val firstInvalid = f.scope.artifactIdentity.copy(
+            version = "2.0.0",
+            versionCode = 2,
+            sha256 = digest.dropLast(1) + "e",
+        )
+        val secondInvalid = f.scope.artifactIdentity.copy(
+            version = "3.0.0",
+            versionCode = 3,
+            sha256 = digest.dropLast(1) + "d",
+        )
+
+        f.gateway.invalidateArtifact(firstInvalid)
+        f.gateway.invalidateArtifact(secondInvalid)
+
+        assertEquals(
+            PluginEventDisposition.RUNTIME_CLOSED,
+            f.gateway.submit(f.scope, diagnosticBytes(f.codec, "after-overflow", "closed.code")).disposition,
+        )
+        f.gateway.close()
+    }
+
     private fun diagnosticBytes(codec: PluginSystemEventCodec, id: String, code: String): ByteArray =
         codec.encodePayload(
             kind = PluginSystemEventKind.EVENT,

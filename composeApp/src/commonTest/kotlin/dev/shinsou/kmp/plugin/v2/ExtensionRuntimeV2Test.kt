@@ -117,6 +117,21 @@ class ExtensionRuntimeV2Test {
         assertNotNull(page.transform?.parameters?.get("segmentCount"))
     }
 
+    @Test
+    fun legacyMangaAdapterResolvesViewerBeforeProducingImagePlan() = runTest {
+        val legacy = ViewerFixtureSource()
+        val adapter = LegacyMangaExtensionSourceV2(legacy, "legacy.viewer")
+
+        val payload = assertIs<UnitContentPayload.ImageSequence>(
+            adapter.content("/book/1", "/chapter/1").representations.single(),
+        )
+        val page = payload.pages.single()
+
+        assertEquals(listOf("/viewer/1"), legacy.resolvedPages)
+        assertEquals("https://cdn.example:44000/page.webp", page.request.effectiveUri)
+        assertEquals("https://legacy.example/viewer/1", page.request.headerHints["Referer"])
+    }
+
     private fun descriptor(packageId: String, sourceId: String): SourceDescriptorV2 = SourceDescriptorV2(
         sourceKey = SourceKey(2, packageId, sourceId),
         displayName = sourceId,
@@ -166,6 +181,31 @@ class ExtensionRuntimeV2Test {
         )
 
         private fun result(): MangasPage = MangasPage(listOf(SManga("/book/1", "Book")), false)
+    }
+
+    private class ViewerFixtureSource : CatalogueSource {
+        override val id: Long = 9_777L
+        override val name: String = "Viewer legacy"
+        override val lang: String = "en"
+        override val baseUrl: String = "https://legacy.example"
+        override val supportsLatest: Boolean = false
+        val resolvedPages = mutableListOf<String>()
+
+        override suspend fun getPopularManga(page: Int): MangasPage = MangasPage(emptyList(), false)
+        override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
+            MangasPage(emptyList(), false)
+        override suspend fun getLatestUpdates(page: Int): MangasPage = MangasPage(emptyList(), false)
+        override suspend fun getFilterList(): FilterList = emptyList()
+        override suspend fun getMangaDetails(manga: SManga): SManga = manga
+        override suspend fun getChapterList(manga: SManga): List<SChapter> = emptyList()
+        override suspend fun getPageList(chapter: SChapter): List<Page> =
+            listOf(Page(index = 0, url = "/viewer/1", imageUrl = null))
+
+        override suspend fun resolveImageUrl(pageUrl: String): String {
+            resolvedPages += pageUrl
+            return "https://cdn.example:44000/page.webp#Referer=" +
+                "https%3A%2F%2Flegacy.example%2Fviewer%2F1"
+        }
     }
 }
 

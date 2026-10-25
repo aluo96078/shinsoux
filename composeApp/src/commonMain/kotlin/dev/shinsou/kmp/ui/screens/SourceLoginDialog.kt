@@ -134,6 +134,7 @@ internal fun SourceLoginDialog(
                     runCatching {
                         callbacks.importSourceWebChallengeSession(
                             sourceId = request.sourceId,
+                            capability = importedSession.capability,
                             cookies = importedSession.cookies,
                             userAgent = importedSession.userAgent,
                             localStorage = importedSession.localStorage,
@@ -149,7 +150,10 @@ internal fun SourceLoginDialog(
                     busy = false
                 }
             },
-            onDismiss = { challengeRequest = null },
+            onDismiss = {
+                challengeRequest = null
+                scope.launch { callbacks.cancelSourceWebChallenge(challenge.capability) }
+            },
         )
         return
     }

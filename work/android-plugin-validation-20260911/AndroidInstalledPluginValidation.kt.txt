@@ -1,0 +1,239 @@
+package dev.shinsou.kmp
+
+import android.graphics.BitmapFactory
+import android.util.Log
+import android.content.Context
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.transformations
+import dev.shinsou.kmp.domain.model.DownloadState
+import dev.shinsou.kmp.domain.model.DownloadQueueItem
+import dev.shinsou.kmp.plugin.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
+import dev.shinsou.kmp.reader.toCoilTransformation
+import dev.shinsou.kmp.app.ShinsouComposition
+import dev.shinsou.kmp.ui.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+
+/** Temporary on-device normal-feature probe. No credentials, URLs, titles or bodies leave the app. */
+internal object AndroidInstalledPluginValidation {
+    private val lock = Mutex()
+    private fun report(source: String, operation: String, result: String) =
+        Log.i("ShinsouValidation", "$source $operation $result")
+
+    private suspend fun <T> check(source: String, operation: String, block: suspend () -> T): T? = try {
+        withTimeout(45_000) { block() }.also { report(source, operation, "PASS") }
+    } catch (e: Throwable) {
+        if (e is CancellationException && e !is TimeoutCancellationException) throw e
+        report(source, operation, "FAIL:${e::class.simpleName}:${e.cause?.javaClass?.simpleName ?: "none"}:${failureCode(e)}")
+        null
+    }
+
+    private fun failureCode(e: Throwable): String {
+        val m = e.message.orEmpty()
+        return when {
+            m == "Plugin network origin was not declared" -> "origin"
+            m == "Plugin response is too large" -> "response-size"
+            m == "Plugin content requests cannot contain credentials" -> "credential-header"
+            m == "Chapter returned no pages" -> "no-pages"
+            m.startsWith("HTTP ") && m.contains("while downloading") -> "download-http-" + m.split(" ").getOrNull(1)
+            m.startsWith("Unsupported plugin response encoding") -> "encoding"
+            m.startsWith("Unable to load reader page") && m.contains(": HTTP ") -> "http-" + m.substringAfterLast(' ').toIntOrNull()
+            m.contains("bridge calls") -> "bridge-call-limit"
+            m.contains("DOM handles", true) -> "dom-handle-limit"
+            m.contains("total result elements") -> "result-total-limit"
+            m.contains("result array elements") -> "result-array-limit"
+            m.contains("wall", true) -> "wall-limit"
+            m.contains("instruction", true) -> "instruction-limit"
+            m == "ImageDecodeFailure" -> "decode"
+            m.startsWith("Reader page") && m.contains("returned non-image") -> "non-image"
+            m == "Failed requirement." -> "empty-result"
+            else -> "unclassified"
+        }
+    }
+
+    private fun decode(bytes: ByteArray?): String {
+        requireNotNull(bytes) { "NoImageBytes" }
+        require(bytes.isNotEmpty()) { "NoImageBytes" }
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        check(options.outWidth > 0 && options.outHeight > 0) { "ImageDecodeFailure" }
+        return "bytes=${bytes.size},width=${options.outWidth},height=${options.outHeight}"
+    }
+
+    suspend fun run(c: ShinsouComposition, context: Context, operations: Boolean = false) {
+        if (!lock.tryLock()) return
+        try {
+            report("run", "begin", "START")
+            withTimeout(60_000) { while (c.browse.state.value.sources.isEmpty()) delay(500) }
+            delay(15_000)
+            val snapshot = c.browse.state.value
+            report("run", "sources", snapshot.sources.size.toString())
+            for (s in snapshot.sources.filter { it.id != 0L }) {
+                val pkg = s.sourceKey?.packageId ?: snapshot.extensions.firstOrNull { s.id in it.sourceIds }?.id ?: when(s.id) {
+                    9119537447562549661L -> "zh.mycomic"
+                    3947628L -> "zh.dm5"
+                    3616827811449702173L -> "zh.manhuaren"
+                    4502917L -> "zh.baozimh"
+                    5209831L -> "zh.wnacg"
+                    7289707411592168382L -> "zh.bilimanga.manga"
+                    else -> "source-${s.id}"
+                }
+                if (!operations && pkg !in setOf("zh.manhuagui", "eh.ehentai", "zh.komiic", "zh.bika")) continue
+                report(pkg, "begin", "latest=${s.supportsLatest},login=${s.supportsLogin},favorites=${s.supportsFavorites},filters=${s.filters.size},preferences=${s.preferences.size},enabled=${s.enabled}")
+                if (!s.enabled) { report(pkg, "all", "SKIP:disabled"); continue }
+                val key = s.sourceKey
+                if (operations) {
+                    check(pkg,"enable-cycle") {
+                        try {
+                            if (key == null) c.browse.setSourceEnabled(s.id,false) else c.browse.setSourceEnabledV2(key,false)
+                            require(c.browse.state.value.sources.first { it.identityKey == s.identityKey }.enabled == false)
+                        } finally {
+                            if (key == null) c.browse.setSourceEnabled(s.id,true) else c.browse.setSourceEnabledV2(key,true)
+                        }
+                        require(c.browse.state.value.sources.first { it.identityKey == s.identityKey }.enabled)
+                    }
+                    check(pkg,"settings-save") {
+                        c.browse.saveSourcePreferences(s.id,s.preferences.associate { it.key to it.value })
+                        val after = c.browse.state.value.sources.first { it.identityKey == s.identityKey }
+                        require(after.preferences.associate { it.key to it.value } == s.preferences.associate { it.key to it.value })
+                    }
+                    if (s.supportsLogin) report(pkg,"login","BLOCKED:preserve-existing-session-no-user-credentials")
+                    for ((i,filters) in filterVariants(s.filters).withIndex()) {
+                        check(pkg,"filter-control-${i+1}") {
+                            if(key == null) c.browse.browseSource(s.id,filters=filters)
+                            else c.browse.browseSourceV2(key,BrowseOptionsV2(filters=filters.map { it.toBrowseFilterV2() }))
+                        }
+                    }
+                }
+                if (key != null) {
+                    val page = check(pkg,"popular") { c.browse.browseSourceV2(key).also { require(it.items.isNotEmpty()) } }
+                    report(pkg,"popular-count", "${page?.items?.size ?: 0}")
+                    if (page?.hasNextPage == true) check(pkg,"popular-page2") { c.browse.browseSourceV2(key, page=1).also { require(it.items.isNotEmpty()) } }
+                    if (s.supportsLatest) check(pkg,"latest") { c.browse.latestSourceV2(key).also { require(it.items.isNotEmpty()) } }
+                    val item = if (!operations && pkg == "eh.ehentai") page?.items?.firstOrNull() else if (!operations && pkg == "zh.komiic") page?.items?.getOrNull(2) else page?.items?.firstOrNull()
+                    check(pkg,"search") { c.browse.searchSourceV2(key, item?.title?.take(4) ?: "我").also { require(it.items.isNotEmpty()) } }
+                    if (item != null) {
+                        item.thumbnailUrl?.let { url -> check(pkg,"cover") { report(pkg,"cover-decode",decode(c.browse.loadPluginThumbnail(key,url))) } }
+                        val detail = check(pkg,"details-units") { c.browse.extensionPublicationPageV2(key,item.remoteId).also { require(it.units.isNotEmpty()) } }
+                        report(pkg,"chapter-count","${detail?.units?.size ?: 0}")
+                        detail?.units?.firstOrNull()?.let { unit ->
+                            val material = check(pkg,"materialize") { c.browse.materializeExtensionContentV2(unit) }
+                            material?.let { check(pkg,"reader") {
+                                val session = c.browse.openMaterializedExtensionContentV2(it)
+                                require(session.content.navigation.itemCount > 0)
+                                report(pkg,"reader-count","items=${session.content.navigation.itemCount},text=${session.canonicalText?.length ?: 0}")
+                            } }
+                        }
+                    }
+                } else {
+                    val page = check(pkg,"popular") { c.browse.browseSource(s.id,filters=if(pkg=="eh.ehentai") s.filters.map { if(it is BrowseFilter.Text && it.name=="Maximum Pages") it.copy(state="40") else it } else null).also { require(it.items.isNotEmpty()) } }
+                    report(pkg,"popular-count","${page?.items?.size ?: 0}")
+                    if (page?.hasNextPage == true) check(pkg,"popular-page2") { c.browse.browseSource(s.id,page=2).also { require(it.items.isNotEmpty()) } }
+                    if (s.supportsLatest) check(pkg,"latest") { c.browse.browseSourceLatest(s.id).also { require(it.items.isNotEmpty()) } }
+                    val item = if (!operations && pkg == "eh.ehentai") page?.items?.firstOrNull() else if (!operations && pkg == "zh.komiic") page?.items?.getOrNull(2) else page?.items?.firstOrNull()
+                    check(pkg,"search") { c.browse.browseSource(s.id,query=item?.title?.take(4) ?: "我").also { require(it.items.isNotEmpty()) } }
+                    if (s.filters.isNotEmpty()) check(pkg,"filters-default") { c.browse.browseSource(s.id,filters=s.filters) }
+                    if (s.supportsFavorites) check(pkg,"favorites") { c.browse.browseSourceFavorites(s.id) }
+                    if (item != null) {
+                        item.thumbnailUrl?.let { url -> check(pkg,"cover") { report(pkg,"cover-decode",decode(c.browse.loadPluginThumbnail(s.id,url,item.thumbnailHeaders))) } }
+                        val id = check(pkg,"resolve-details") { requireNotNull(c.browse.resolveManga(item)) }
+                        if (id != null) {
+                            check(pkg,"refresh-details") { c.content.refreshManga(id) }
+                            val chapters = c.repository.chaptersForManga(id)
+                            report(pkg,"chapter-count",chapters.size.toString())
+                            val selectedChapters = if(!operations && pkg=="zh.manhuagui") chapters.takeLast(2) else chapters.take(2)
+                            var downloadCandidate: Pair<Long,Int>? = null
+                            for ((index,ch) in selectedChapters.withIndex()) {
+                                val reader = check(pkg,"chapter-${index+1}") { c.content.loadReaderChapter(id,ch.id).also { require(it.pages.isNotEmpty() || it.typedSession != null) } }
+                                report(pkg,"page-count-${index+1}","${reader?.pages?.size ?: 0}")
+                                reader?.pages?.size?.takeIf { it in 1..180 }?.let { count ->
+                                    if(downloadCandidate == null || count < downloadCandidate!!.second) downloadCandidate = ch.id to count
+                                }
+                                for (p in reader?.pages.orEmpty().take(2)) {
+                                    check(pkg,"image-${index+1}-${p.index+1}") {
+                                        val resolved = p.imageResolver?.invoke() ?: p
+                                        report(pkg,"image-decode",decode(resolved.imageBytes))
+                                        val result = SingletonImageLoader.get(context).execute(ImageRequest.Builder(context)
+                                            .data(resolved.imageBytes ?: resolved.imageUrl).size(600,900)
+                                            .apply { resolved.imageTransform?.let { transformations(it.toCoilTransformation()) } }.build())
+                                        require(result is SuccessResult) { "CoilDecodeFailure" }
+                                    }
+                                }
+                            }
+                            if(operations || pkg in setOf("zh.manhuagui", "eh.ehentai", "zh.komiic", "zh.bika")) {
+                                downloadCandidate?.let { (chapterId,_) -> download(c,context,pkg,id,chapterId) }
+                                    ?: report(pkg,"download","BLOCKED:no-bounded-chapter")
+                            }
+                        }
+                    }
+                }
+                report(pkg,"end","DONE")
+                delay(1_000)
+            }
+            report("run","end","DONE")
+        } finally { lock.unlock() }
+    }
+    private fun filterVariants(filters: List<BrowseFilter>): List<List<BrowseFilter>> = buildList {
+        filters.forEachIndexed { i,f ->
+            val changed = when(f) {
+                is BrowseFilter.Select -> if(f.values.size > 1) listOf(f.copy(state=(f.state+1)%f.values.size)) else emptyList()
+                is BrowseFilter.CheckBox -> listOf(f.copy(state=!f.state))
+                is BrowseFilter.TriState -> listOf(f.copy(state=BrowseTriState.Include),f.copy(state=BrowseTriState.Exclude))
+                is BrowseFilter.Text -> listOf(f.copy(state=if(f.name.contains("Pages")) "40" else if(f.name.contains("ID")) "000000000000000000000000" else "test"))
+                is BrowseFilter.Sort -> if(f.values.isNotEmpty()) listOf(f.copy(selection=BrowseSortSelection(0,false))) else emptyList()
+                is BrowseFilter.Group -> filterVariants(f.filters).map { f.copy(filters=it) }
+                else -> emptyList()
+            }
+            changed.forEach { change -> add(filters.toMutableList().also { it[i]=change }) }
+        }
+    }
+
+    private suspend fun download(c: ShinsouComposition, context: Context, pkg: String, mangaId: Long, chapterId: Long) {
+        val id = DownloadQueueItem.id(mangaId,chapterId)
+        if(c.repository.currentSnapshot.downloadQueue.any { it.id == id }) {
+            report(pkg,"download","SKIP:preexisting");return
+        }
+        try {
+            check(pkg,"download-enqueue") { c.content.enqueueDownload(mangaId,chapterId) }
+            check(pkg,"download-pause-resume") {
+                c.downloads.pause(id)
+                require(c.repository.currentSnapshot.downloadQueue.first { it.id==id }.state == DownloadState.PAUSED)
+                c.downloads.resume(id)
+            }
+            check(pkg,"download-retry") {
+                c.downloads.pause(id)
+                c.content.retryDownload(id)
+            }
+            try {
+                withTimeout(240_000) {
+                    while(true) {
+                        val item=c.repository.currentSnapshot.downloadQueue.first { it.id==id }
+                        if(item.state==DownloadState.ERROR) { report(pkg,"download","FAIL:queue-error:" + failureCode(IllegalStateException(item.errorMessage)));break }
+                        if(item.state==DownloadState.DOWNLOADED) {
+                            report(pkg,"download","PASS:pages=${item.downloadedPages}")
+                            check(pkg,"offline-reader") {
+                                val reader=c.content.loadReaderChapter(mangaId,chapterId)
+                                require(reader.pages.isNotEmpty() && reader.pages.all { it.local && it.imageResolver==null })
+                                for(p in reader.pages.take(2)) {
+                                    val result=SingletonImageLoader.get(context).execute(ImageRequest.Builder(context).data(p.imageUrl)
+                                        .size(600,900).apply { p.imageTransform?.let { transformations(it.toCoilTransformation()) } }.build())
+                                    require(result is SuccessResult) { "CoilDecodeFailure" }
+                                }
+                            }
+                            break
+                        }
+                        delay(1000)
+                    }
+                }
+            } catch(e: TimeoutCancellationException) { report(pkg,"download","FAIL:timeout") }
+        } finally {
+            withContext(NonCancellable) {
+                check(pkg,"download-remove") { c.content.removeDownload(id);require(c.repository.currentSnapshot.downloadQueue.none { it.id==id }) }
+            }
+        }
+    }
+
+}

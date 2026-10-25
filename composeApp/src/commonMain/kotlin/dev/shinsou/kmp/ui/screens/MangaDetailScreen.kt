@@ -110,6 +110,7 @@ fun MangaDetailScreen(
     onDownloadChapters: (Set<Long>) -> Unit,
     onDeleteChapters: (Set<Long>) -> Unit,
     modifier: Modifier = Modifier,
+    loadCoverBytes: (suspend () -> ByteArray?)? = null,
 ) {
     val strings = LocalShinsouStrings.current
     val excludedScanlators = manga.excludedScanlators
@@ -209,6 +210,7 @@ fun MangaDetailScreen(
         Row(modifier.fillMaxSize()) {
             MangaInfoPane(
                 manga = manga,
+                loadCoverBytes = loadCoverBytes,
                 showBack = false,
                 showClose = true,
                 onBack = onBack,
@@ -237,6 +239,7 @@ fun MangaDetailScreen(
             item(key = "info") {
                 MangaInfoPane(
                     manga = manga,
+                    loadCoverBytes = loadCoverBytes,
                     showBack = true,
                     onBack = onBack,
                     onToggleFavorite = onToggleFavorite,
@@ -264,6 +267,7 @@ fun MangaDetailScreen(
 @Composable
 private fun MangaInfoPane(
     manga: Manga,
+    loadCoverBytes: (suspend () -> ByteArray?)?,
     showBack: Boolean,
     showClose: Boolean = false,
     onBack: () -> Unit,
@@ -312,6 +316,7 @@ private fun MangaInfoPane(
             manga.title,
             manga.thumbnailUrl,
             modifier = Modifier.width(186.dp).aspectRatio(2f / 3f),
+            loadBytes = loadCoverBytes,
         )
         Spacer(Modifier.height(18.dp))
         Text(

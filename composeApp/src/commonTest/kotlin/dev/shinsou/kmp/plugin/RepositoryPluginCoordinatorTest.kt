@@ -40,17 +40,27 @@ class RepositoryPluginCoordinatorTest {
         val transportRequests = mutableListOf<PluginHttpRequest>()
         val transportRequestsMutex = Mutex()
         val pluginNetwork = PluginNetworkClient(
-            transport = PluginHttpTransport { request ->
-                transportRequestsMutex.withLock { transportRequests += request }
-                PluginHttpResponse(
-                    status = 200,
-                    body = byteArrayOf(1, 2, 3),
-                    headers = mapOf("Content-Type" to listOf("image/jpeg")),
-                )
+            transport = object : PluginHttpTransport {
+                override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = respond(request)
+
+                override suspend fun executeResolved(
+                    request: PluginHttpRequest,
+                    resolution: PluginHostResolution,
+                ): PluginHttpResponse = respond(request)
+
+                private suspend fun respond(request: PluginHttpRequest): PluginHttpResponse {
+                    transportRequestsMutex.withLock { transportRequests += request }
+                    return PluginHttpResponse(
+                        status = 200,
+                        body = byteArrayOf(1, 2, 3),
+                        headers = mapOf("Content-Type" to listOf("image/jpeg")),
+                    )
+                }
             },
             storage = storage,
             requestBuilder = requestBuilder,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            hostResolver = PluginHostResolver { listOf("93.184.216.34") },
         )
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine) {
@@ -58,6 +68,7 @@ class RepositoryPluginCoordinatorTest {
                     addHandler { respond("fixture", headers = headersOf(HttpHeaders.ContentType, "text/javascript")) }
                 }
             },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
         )
         val manager = PluginManager(
             repositoryClient = repositoryClient,
@@ -65,6 +76,7 @@ class RepositoryPluginCoordinatorTest {
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
             runtimeFactory = ScriptPluginRuntimeFactory { _, _, _ -> source },
             environment = ScriptPluginEnvironment(pluginNetwork, storage),
+            executionAdmissionMode = PluginExecutionAdmissionMode.UNSAFE_DEVELOPER_COMPATIBILITY,
         )
         manager.install(
             ExtensionRepository("https://plugins.example", "Fixtures"),
@@ -75,7 +87,16 @@ class RepositoryPluginCoordinatorTest {
                 versionCode = 1,
                 lang = "en",
                 scriptUrl = "fixture.js",
-                sources = listOf(SourceIndexEntry("Fixture", "en", source.id, source.baseUrl)),
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK),
+                sources = listOf(
+                    SourceIndexEntry(
+                        "Fixture",
+                        "en",
+                        source.id,
+                        source.baseUrl,
+                        contentOrigins = setOf("https://images.example"),
+                    ),
+                ),
             ),
         )
 
@@ -84,8 +105,6 @@ class RepositoryPluginCoordinatorTest {
         val coordinator = RepositoryPluginCoordinator(
             repository = repository,
             manager = manager,
-            network = pluginNetwork,
-            requestBuilder = requestBuilder,
             fileSystem = files,
             now = { 100 },
         )
@@ -123,26 +142,20 @@ class RepositoryPluginCoordinatorTest {
         )
         assertNull(coordinator.resolveChapterOriginalUrl(mangaId, Long.MAX_VALUE))
         val online = coordinator.loadReaderChapter(mangaId, chapterId)
-        assertEquals(
-            "https://images.example/0.jpg",
-            Url(online.pages.first().imageUrl).parameters["url"],
-        )
-        assertEquals("test-agent", online.pages.first().headers["User-Agent"])
-        assertEquals("proxy-key", online.pages.first().headers["X-Proxy-Key"])
-        assertEquals("https://reader.example/chapter", online.pages.first().headers["Referer"])
+        val firstOnline = assertNotNull(online.pages.first().imageResolver).invoke()
+        assertEquals(byteArrayOf(1, 2, 3).toList(), assertNotNull(firstOnline.imageBytes).toList())
+        assertTrue(firstOnline.imageUrl.isBlank())
 
         coordinator.enqueueDownload(mangaId, chapterId)
         downloads.awaitIdle()
         val completedTransportRequests = transportRequestsMutex.withLock { transportRequests.toList() }
         assertEquals(3, files.list("downloads/$mangaId/$chapterId").size)
-        assertEquals(2, completedTransportRequests.size)
-        assertEquals(
-            setOf("https://images.example/0.jpg", "https://images.example/1.jpg"),
-            completedTransportRequests.mapNotNull { Url(it.url).parameters["url"] }.toSet(),
-        )
+        assertEquals(3, completedTransportRequests.size)
+        assertEquals(setOf("https://images.example/0.jpg", "https://images.example/1.jpg"),
+            completedTransportRequests.map(PluginHttpRequest::url).toSet())
         assertEquals("test-agent", completedTransportRequests.first().headers["User-Agent"])
-        assertEquals("proxy-key", completedTransportRequests.first().headers["X-Proxy-Key"])
         assertEquals("https://reader.example/chapter", completedTransportRequests.first().headers["Referer"])
+        assertTrue(completedTransportRequests.all { "X-Proxy-Key" !in it.headers && "Cookie" !in it.headers })
 
         val offline = coordinator.loadReaderChapter(mangaId, chapterId)
         assertEquals(2, offline.pages.size)

@@ -7,7 +7,9 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FilePluginPackageStoreTest {
@@ -59,6 +61,78 @@ class FilePluginPackageStoreTest {
     }
 
     @Test
+    fun exactV2SourceIdentitySurvivesFileStoreReconstruction() = runTest {
+        val files = PackageMemoryFileSystem()
+        val original = storedPlugin("exact identity script").let { plugin ->
+            plugin.copy(
+                metadata = plugin.metadata.copy(
+                    manifest = plugin.manifest.copy(
+                        contentKinds = setOf("IMAGE_SEQUENCE"),
+                        sources = listOf(
+                            SourceIndexEntry(
+                                name = "Exact source",
+                                lang = "en",
+                                id = 101L,
+                                baseUrl = "https://exact.example",
+                                contentKindsDeclared = false,
+                                originPolicyVersion = 2,
+                                legacyLongId = "101",
+                                canonicalSourceId = "exact.source/a",
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        FilePluginPackageStore(files).put(original)
+
+        val reconstructed = assertNotNull(FilePluginPackageStore(files).get(original.manifest.id))
+        val source = reconstructed.manifest.sources.orEmpty().single()
+        assertEquals("exact.source/a", source.canonicalSourceId)
+        assertEquals("101", source.legacyLongId)
+        assertEquals(2, source.originPolicyVersion)
+        assertEquals(false, source.contentKindsDeclared)
+        assertEquals(setOf("IMAGE_SEQUENCE"), reconstructed.manifest.contentKinds)
+    }
+
+    @Test
+    fun corruptFilePackagePermanentlyShadowsLegacyCopyLeftByCleanupFailure() = runTest {
+        val stale = storedPlugin("stale legacy script")
+        val updated = storedPlugin("new file script", versionCode = 2)
+        val legacyDelegate = InMemoryPluginPackageStore().also { it.put(stale) }
+        val legacy = FailingRemovePluginPackageStore(legacyDelegate)
+        val files = PackageMemoryFileSystem()
+        val migratedStore = FilePluginPackageStore(files, legacy)
+
+        assertContentEquals(stale.scriptBytes, assertNotNull(migratedStore.get(stale.manifest.id)).scriptBytes)
+        assertContentEquals(stale.scriptBytes, assertNotNull(legacyDelegate.get(stale.manifest.id)).scriptBytes)
+        migratedStore.put(updated)
+
+        val metadataPath = files.paths.single { it.endsWith("/package.json") }
+        val markerPath = files.paths.single { it.endsWith("/.file-store-authoritative-v1") }
+        val scriptPath = files.paths.single { it.endsWith(".js") }
+        val persistedMetadata = assertNotNull(files.read(metadataPath))
+        val persistedScript = assertNotNull(files.read(scriptPath))
+
+        files.write(scriptPath, "corrupt script".encodeToByteArray())
+        assertNull(FilePluginPackageStore(files, legacy).get(stale.manifest.id))
+        assertContentEquals("corrupt script".encodeToByteArray(), files.read(scriptPath))
+
+        files.write(scriptPath, persistedScript)
+        files.write(metadataPath, "{corrupt metadata".encodeToByteArray())
+        assertNull(FilePluginPackageStore(files, legacy).get(stale.manifest.id))
+        assertContentEquals("{corrupt metadata".encodeToByteArray(), files.read(metadataPath))
+
+        files.write(metadataPath, persistedMetadata)
+        files.delete(metadataPath)
+        assertTrue(files.exists(markerPath))
+        assertNull(FilePluginPackageStore(files, legacy).get(stale.manifest.id))
+        assertFalse(files.exists(metadataPath))
+        assertContentEquals(stale.scriptBytes, assertNotNull(legacyDelegate.get(stale.manifest.id)).scriptBytes)
+    }
+
+    @Test
     fun obsoleteScriptCleanupFailureCannotRollbackCommittedPackageOrCache() = runTest {
         val files = PackageMemoryFileSystem()
         val store = FilePluginPackageStore(files)
@@ -74,6 +148,113 @@ class FilePluginPackageStoreTest {
             updated.scriptBytes,
             assertNotNull(FilePluginPackageStore(files).get(updated.manifest.id)).scriptBytes,
         )
+    }
+
+    @Test
+    fun rejectsCallerPackageWhoseTrustMetadataDoesNotMatchItsBytes() = runTest {
+        val files = PackageMemoryFileSystem()
+        val store = FilePluginPackageStore(files)
+        val plugin = storedPlugin("verified script")
+
+        assertFailsWith<IllegalArgumentException> {
+            store.put(plugin.copy(scriptBytes = "substituted script".encodeToByteArray()))
+        }
+
+        assertTrue(files.paths.isEmpty())
+    }
+
+    @Test
+    fun rejectsTamperedContentAddressOnReconstruction() = runTest {
+        val files = PackageMemoryFileSystem()
+        val plugin = storedPlugin("verified script")
+        FilePluginPackageStore(files).put(plugin)
+        val scriptPath = files.paths.single { it.endsWith(".js") }
+        files.write(scriptPath, "tampered script".encodeToByteArray())
+
+        assertNull(FilePluginPackageStore(files).get(plugin.manifest.id))
+    }
+
+    @Test
+    fun rejectsOversizedPersistedMetadataBeforeDecoding() = runTest {
+        val files = PackageMemoryFileSystem()
+        files.write(
+            "plugins/packages/all.files/package.json",
+            ByteArray(MAX_PLUGIN_PACKAGE_METADATA_BYTES + 1) { '{'.code.toByte() },
+        )
+
+        assertTrue(FilePluginPackageStore(files).list().isEmpty())
+    }
+
+    @Test
+    fun packageDiscoveryRequestsABoundedFileListing() = runTest {
+        val files = PackageMemoryFileSystem()
+
+        FilePluginPackageStore(files).list()
+
+        assertEquals(MAX_PLUGIN_PACKAGE_COUNT * 4, files.lastListMaximumEntries)
+    }
+
+    @Test
+    fun rejectsOversizedScriptBeforeWritingIt() = runTest {
+        val bytes = ByteArray(MAX_PLUGIN_PACKAGE_SCRIPT_BYTES + 1)
+        val hash = Sha256.hex(bytes)
+        val oversized = StoredPlugin(
+            metadata = InstalledPluginMetadata(
+                manifest = PluginManifest(
+                    id = "all.files",
+                    name = "Files",
+                    version = "1.0.0",
+                    versionCode = 1,
+                    lang = "all",
+                    script = "all.files.js",
+                    signature = hash,
+                ),
+                installedSha256 = hash,
+            ),
+            scriptBytes = bytes,
+        )
+        val files = PackageMemoryFileSystem()
+
+        assertFailsWith<IllegalArgumentException> { FilePluginPackageStore(files).put(oversized) }
+        assertTrue(files.paths.isEmpty())
+    }
+
+    @Test
+    fun kvStoreReconstructsOnlyTheContentAddressedBytesNamedByItsRecord() = runTest {
+        val keyValues = InspectablePluginKeyValueStore()
+        val store = KeyValuePluginPackageStore(keyValues)
+        val original = storedPlugin("old script")
+        val updated = storedPlugin("new script", versionCode = 2)
+        store.put(original)
+        store.put(updated)
+
+        val recordKey = "plugin.package.${updated.manifest.id}.record.v2"
+        val updatedHash = Sha256.hex(updated.scriptBytes)
+        keyValues.putString(
+            "plugin.package.${updated.manifest.id}.script.$updatedHash.hex",
+            "tampered script".encodeToByteArray().toHex(),
+        )
+
+        assertTrue(recordKey in keyValues.keys)
+        assertNull(KeyValuePluginPackageStore(keyValues).get(updated.manifest.id))
+    }
+
+    @Test
+    fun kvStoreReadsLegacySplitRecordsForFileMigration() = runTest {
+        val keyValues = InspectablePluginKeyValueStore()
+        val plugin = storedPlugin("legacy script")
+        val id = plugin.manifest.id
+        keyValues.putString("plugin.packages.index", "[\"$id\"]")
+        keyValues.putString(
+            "plugin.package.$id.metadata",
+            PluginJson.encodeToString(InstalledPluginMetadata.serializer(), plugin.metadata),
+        )
+        keyValues.putString("plugin.package.$id.script.hex", plugin.scriptBytes.toHex())
+
+        val reconstructed = assertNotNull(KeyValuePluginPackageStore(keyValues).get(id))
+
+        assertEquals(plugin.metadata, reconstructed.metadata)
+        assertContentEquals(plugin.scriptBytes, reconstructed.scriptBytes)
     }
 
     @Test
@@ -96,12 +277,14 @@ class FilePluginPackageStoreTest {
     @Test
     fun reconstructsPackageWithEventPermissionMetadata() = runTest {
         val files = PackageMemoryFileSystem()
-        val scriptFile = "script-932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8.js"
+        val scriptBytes = ByteArray(31_982)
+        val hash = Sha256.hex(scriptBytes)
+        val scriptFile = "script-$hash.js"
         files.write(
             "plugins/packages/zh.bika/package.json",
-            """{"metadata":{"manifest":{"id":"zh.bika","name":"哔咔漫画","version":"1.0.8","versionCode":9,"lang":"zh","nsfw":true,"script":"zh.bika.js","signature":"932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8","sources":[{"name":"哔咔漫画","lang":"zh","id":8123456,"baseUrl":"https://manhuabika.com","contentType":"manga"}],"systemEvents":{"minVersion":1,"maxVersion":1,"optional":["command.auth.login.request"]},"requestedHostPermissions":["REQUEST_LOGIN_UI"]},"repositoryBaseUrl":"http://127.0.0.1:18082","installedSha256":"932d74b2d0ef1df660d8f491a64662d26023955fc8e77b995f00f4b15d259cb8"},"scriptFile":"$scriptFile"}""".encodeToByteArray(),
+            """{"metadata":{"manifest":{"id":"zh.bika","name":"哔咔漫画","version":"1.0.8","versionCode":9,"lang":"zh","nsfw":true,"script":"zh.bika.js","signature":"$hash","sources":[{"name":"哔咔漫画","lang":"zh","id":8123456,"baseUrl":"https://manhuabika.com","contentType":"manga"}],"systemEvents":{"minVersion":1,"maxVersion":1,"optional":["command.auth.login.request"]},"requestedHostPermissions":["REQUEST_LOGIN_UI"]},"repositoryBaseUrl":"http://127.0.0.1:18082","installedSha256":"$hash"},"scriptFile":"$scriptFile"}""".encodeToByteArray(),
         )
-        files.write("plugins/packages/zh.bika/$scriptFile", ByteArray(31_982))
+        files.write("plugins/packages/zh.bika/$scriptFile", scriptBytes)
 
         val reconstructed = assertNotNull(FilePluginPackageStore(files).get("zh.bika"))
 
@@ -132,12 +315,39 @@ class FilePluginPackageStoreTest {
     }
 }
 
+private class InspectablePluginKeyValueStore : PluginKeyValueStore {
+    private val values = linkedMapOf<String, String>()
+    val keys: Set<String> get() = values.keys
+
+    override suspend fun getString(key: String): String? = values[key]
+    override suspend fun putString(key: String, value: String) {
+        values[key] = value
+    }
+
+    override suspend fun remove(key: String) {
+        values.remove(key)
+    }
+}
+
+private class FailingRemovePluginPackageStore(
+    private val delegate: PluginPackageStore,
+) : PluginPackageStore by delegate {
+    override suspend fun remove(pluginId: String) {
+        throw IllegalStateException("legacy cleanup failed")
+    }
+}
+
+private fun ByteArray.toHex(): String = joinToString("") { byte ->
+    byte.toUByte().toString(16).padStart(2, '0')
+}
+
 private class PackageMemoryFileSystem : AppFileSystem {
     private val values = linkedMapOf<String, ByteArray>()
     val paths: Set<String> get() = values.keys
     var cancelReads: Boolean = false
     var failScriptDeletes: Boolean = false
     var failTreeDeletes: Boolean = false
+    var lastListMaximumEntries: Int? = null
 
     override suspend fun write(relativePath: String, bytes: ByteArray) {
         values[relativePath] = bytes.copyOf()
@@ -170,6 +380,11 @@ private class PackageMemoryFileSystem : AppFileSystem {
     override suspend fun list(relativeDirectory: String): List<String> {
         val prefix = relativeDirectory.trimEnd('/') + "/"
         return values.keys.filter { it.startsWith(prefix) }
+    }
+
+    override suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> {
+        lastListMaximumEntries = maximumEntries
+        return super.list(relativeDirectory, maximumEntries)
     }
 
     override fun uri(relativePath: String): String = "memory://$relativePath"

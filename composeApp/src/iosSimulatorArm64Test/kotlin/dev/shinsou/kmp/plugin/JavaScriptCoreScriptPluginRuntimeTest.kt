@@ -1,6 +1,8 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.plugin.events.LoginRequestV1
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
@@ -38,9 +40,153 @@ import kotlin.test.assertTrue
 
 class JavaScriptCoreScriptPluginRuntimeTest {
     @Test
+    fun nestedHasPredicatesDoNotSpendExposedHandleBudget() = runTest {
+        val runtime = failureRuntime("""
+            var html='<main>';
+            for(var i=0;i<80;i++)html+='<div class="p-t-5 p-b-5"><a href="/tag">tag</a></div>';
+            html+='<div class="p-t-5 p-b-5">Description</div></main>';
+            var doc=Jsoup.parse(html);
+            var description=doc.selectFirst('.p-t-5.p-b-5:not(:has(a)), div[itemprop=description]');
+            var links=doc.select('.p-t-5.p-b-5:has(a)');
+            var manga=SManga.create();manga.url='/album';manga.title=description.text()+'|'+links.size();
+            bridge.domReleaseAll();return new MangasPage([manga],false);
+        """.trimIndent())
+        try {
+            repeat(2) { assertEquals("Description|80", runtime.getPopularManga(0).mangas.single().title) }
+        } finally { runtime.close() }
+    }
+
+    @Test
+    fun largeDocumentWithSmallSelectionDoesNotConsumeSelectorBudget() = runTest {
+        val runtime = failureRuntime("""
+            var html='<main>';
+            for(var i=0;i<5000;i++)html+='<span>text</span>';
+            html+='<a class="gallery" href="/album">Title</a></main>';
+            var doc=Jsoup.parse(html);
+            var links=doc.select('a.gallery');
+            var manga=SManga.create();manga.url=links.first().attr('href');manga.title=links.first().text();
+            bridge.domReleaseAll();
+            return new MangasPage([manga],false);
+        """.trimIndent())
+        try {
+            repeat(2) { assertEquals("Title", runtime.getPopularManga(0).mangas.single().title) }
+        } finally { runtime.close() }
+    }
+
+    @Test
+    fun largeSelectorResultStillHitsItsOwnBudget() = runTest {
+        val runtime = failureRuntime("""
+            var html='';for(var i=0;i<4100;i++)html+='<a>text</a>';
+            Jsoup.parse(html).select('a');return new MangasPage([],false);
+        """.trimIndent())
+        try {
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(0) }
+        } finally { runtime.close() }
+    }
+
+    @Test
+    fun sourceFailureMarkersSurviveJscExceptionsWhileUnrecognizedTextIsRedacted() = runTest {
+        val markers = listOf(
+            "SHINSOU_SOURCE_HTTP_CHALLENGE",
+            "SHINSOU_SOURCE_HTTP_BLOCKED",
+            "SHINSOU_SOURCE_HTTP_FORBIDDEN",
+            "SHINSOU_SOURCE_HTTP_UNAVAILABLE",
+        )
+        for (marker in markers) {
+            val errorRuntime = failureRuntime("throw '$marker';")
+            try {
+                val error = assertFailsWith<IllegalArgumentException> {
+                    errorRuntime.getPopularManga(1)
+                }
+                assertEquals(marker, error.message)
+                assertTrue(error.localizedSourceFailure(shinsouStringsFor("zh-TW")) != null, "Known marker must localize")
+                assertTrue(errorRuntime.recentLogs.none { marker in it }, "Known marker must not enter logs")
+            } finally {
+                errorRuntime.close()
+            }
+        }
+
+        val plain = failureRuntime("throw 'SHINSOU_SOURCE_HTTP_FORBIDDEN';")
+        try {
+            assertEquals("SHINSOU_SOURCE_HTTP_FORBIDDEN", assertFailsWith<IllegalArgumentException> {
+                plain.getPopularManga(1)
+            }.message)
+        } finally {
+            plain.close()
+        }
+
+        val sensitive = "member-secret-token"
+        val rejected = listOf(
+            "throw new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN');",
+            "throw new Error('unknown $sensitive');",
+            "throw new Error('<html><body>$sensitive</body></html>');",
+            "throw new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN ' + '$sensitive');",
+            "throw new Error(new Array(700).join('x') + '$sensitive');",
+            "throw 'unknown $sensitive';",
+            "throw '<html><body>$sensitive</body></html>';",
+            "throw 'SHINSOU_SOURCE_HTTP_FORBIDDEN $sensitive';",
+            "throw new Array(700).join('x') + '$sensitive';",
+            "throw {toString:function(){bridge.log('$sensitive');return 'SHINSOU_SOURCE_HTTP_FORBIDDEN';}};",
+        )
+        for ((caseIndex, statement) in rejected.withIndex()) {
+            val runtime = failureRuntime(statement)
+            try {
+                val failure = assertFailsWith<IllegalArgumentException> { runtime.getPopularManga(1) }
+                assertEquals("Plugin 'failure.ios' JavaScript execution failed in invoke-getPopularManga.js", failure.message)
+                assertFalse(failure.message.orEmpty().contains(sensitive))
+                assertTrue(runtime.recentLogs.none { sensitive in it || "<html" in it }, "Rejected exception case $caseIndex must not enter logs")
+            } finally {
+                runtime.close()
+            }
+        }
+    }
+
+    @Test
+    fun productionFactoryRejectsUnreviewedInProcessJavaScript() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        assertFailsWith<ScriptRuntimeUnavailableException> {
+            JavaScriptCoreScriptPluginRuntimeFactory().create(
+                script = IOS_WEB_CHALLENGE_STORAGE_PLUGIN,
+                manifest = PluginManifest(
+                    "untrusted.ios",
+                    "Untrusted iOS",
+                    "1.0.0",
+                    1,
+                    "all",
+                    script = "untrusted.ios.js",
+                    signature = "",
+                    sources = listOf(SourceIndexEntry("Untrusted", "all", 300L, "https://example.test")),
+                ),
+                environment = ScriptPluginEnvironment(
+                    PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                    storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                ),
+            )
+        }
+    }
+
+    private suspend fun failureRuntime(statement: String): ScriptPluginRuntime {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        return JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = "var source={baseUrl:'https://source.example',getPopularManga:function(){${statement}}};",
+            manifest = PluginManifest(
+                "failure.ios", "Failure iOS", "1.0.0", 1, "all",
+                script = "failure.ios.js", signature = "",
+                sources = listOf(SourceIndexEntry("Failure", "all", 399L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
+        )
+    }
+
+    @Test
     fun webChallengeStorageDeclarationCrossesJavaScriptCoreMetadata() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_WEB_CHALLENGE_STORAGE_PLUGIN,
             manifest = PluginManifest(
                 "challenge.ios",
@@ -58,12 +204,92 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                     storage,
                 ),
                 storage = storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
             ),
         )
         try {
             assertEquals("https://example.test/", runtime.webChallengeUrl)
             assertEquals(setOf("token", "nonce"), runtime.webChallengeLocalStorageKeys)
             assertEquals(setOf("token"), runtime.requiredWebChallengeLocalStorageKeys)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun bridgeLogAndResultLimitsAreBoundedAndPoisonRuntime() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source={
+                  baseUrl:'https://source.example',
+                  getPopularManga:function(){
+                    for(var i=0;i<20;i++)bridge.log('0123456789abcdef');
+                    var manga=SManga.create();manga.url='/large';manga.title=new Array(257).join('x');
+                    return new MangasPage([manga],false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                "limits.ios", "Limits iOS", "1.0.0", 1, "all",
+                script = "limits.ios.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("Limits", "all", 305L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage,
+                executionLimits = PluginExecutionLimits(
+                    maxBridgeCallsPerInvocation = 64,
+                    maxLogEntries = 3,
+                    maxLogBytes = 24,
+                    maxLogEntryBytes = 8,
+                    maxResultStringBytes = 128,
+                    maxResultBytes = 2_048,
+                ),
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
+        )
+        try {
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+            assertEquals(3, runtime.recentLogs.size)
+            assertTrue(runtime.recentLogs.all { it.encodeToByteArray().size <= 8 })
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun scriptCannotResetLiveDomQuotaThroughPublicBridge() = runTest {
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
+            script = """
+                var source={
+                  baseUrl:'https://source.example',
+                  getPopularManga:function(){
+                    Jsoup.parse('<a></a>');
+                    bridge.domReleaseAll();
+                    Jsoup.parse('<b></b>');
+                    return new MangasPage([],false);
+                  }
+                };
+            """.trimIndent(),
+            manifest = PluginManifest(
+                "dom-reset.ios", "DOM reset iOS", "1.0.0", 1, "all",
+                script = "dom-reset.ios.js",
+                signature = "",
+                sources = listOf(SourceIndexEntry("DOM reset", "all", 306L, "https://source.example")),
+            ),
+            environment = ScriptPluginEnvironment(
+                PluginNetworkClient(PluginHttpTransport { error("No network expected") }, storage),
+                storage,
+                executionLimits = PluginExecutionLimits(maxDomNodes = 3),
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
+        )
+        try {
+            assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) }
         } finally {
             runtime.close()
         }
@@ -90,21 +316,21 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 SourceIndexEntry("Two", "en", 302L, "https://two.example"),
             ),
         )
-        val factory = JavaScriptCoreScriptPluginRuntimeFactory()
+        val factory = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests()
         assertFailsWith<IllegalArgumentException> {
-            factory.create(IOS_MULTI_SOURCE_PLUGIN, manifest, ScriptPluginEnvironment(network, storage))
+            factory.create(IOS_MULTI_SOURCE_PLUGIN, manifest, ScriptPluginEnvironment(network, storage, runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT)))
         }
         val one = factory.createForSource(
             IOS_MULTI_SOURCE_PLUGIN,
             manifest,
             manifest.sources.orEmpty()[0],
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(network, storage, runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT)),
         )
         val two = factory.createForSource(
             IOS_MULTI_SOURCE_PLUGIN,
             manifest,
             manifest.sources.orEmpty()[1],
-            ScriptPluginEnvironment(network, storage),
+            ScriptPluginEnvironment(network, storage, runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT)),
         )
         try {
             assertEquals("one|https://one.example", one.getPopularManga(0).mangas.single().title)
@@ -134,17 +360,25 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             },
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            policy = jscTestNetworkPolicy("https://source.example"),
+            hostResolver = JSC_TEST_HOST_RESOLVER,
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_CANCELLABLE_HTTP_PLUGIN,
             manifest = cancellableManifest(),
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
+            ),
         )
         try {
             val obsoleteSearch = launch { runtime.getSearchManga(1, "slow", emptyList()) }
-            slowRequestStarted.await()
-
             withTimeout(5_000) {
+                slowRequestStarted.await()
                 obsoleteSearch.cancelAndJoin()
                 slowRequestCancelled.await()
                 assertEquals(
@@ -173,16 +407,24 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             },
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            policy = jscTestNetworkPolicy("https://source.example"),
+            hostResolver = JSC_TEST_HOST_RESOLVER,
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_CANCELLABLE_HTTP_PLUGIN,
             manifest = cancellableManifest(),
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
+            ),
         )
         val invocation = launch { runtime.getSearchManga(1, "slow", emptyList()) }
-        requestStarted.await()
-
         withTimeout(5_000) {
+            requestStarted.await()
             runtime.close()
             requestCancelled.await()
             invocation.join()
@@ -209,7 +451,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             sources = listOf(SourceIndexEntry("Login Source", "zh", 993, "https://source.example")),
         )
         val requests = mutableListOf<Triple<Long, String, String?>>()
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_LOGIN_REQUEST_PLUGIN,
             manifest = manifest,
             environment = ScriptPluginEnvironment(
@@ -219,6 +461,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                     requests += Triple(sourceId, sourceName, reason)
                     true
                 },
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
             ),
         )
         try {
@@ -229,10 +472,14 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             runtime.close()
         }
 
-        val noOpRuntime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val noOpRuntime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_LOGIN_REQUEST_PLUGIN,
             manifest = manifest,
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertEquals("false", noOpRuntime.getPopularManga(0).mangas.single().title)
@@ -249,7 +496,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             storage = storage,
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_NO_FILTER_PLUGIN,
             manifest = PluginManifest(
                 "zh.no-filter",
@@ -261,7 +508,11 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("No Filter", "zh", 992, "https://source.example")),
             ),
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+            ),
         )
         try {
             assertTrue(runtime.getFilterList().isEmpty())
@@ -274,7 +525,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
     @Test
     fun systemEventReceiptAndCapabilitiesMatchTheJvmTransportContract() = runTest {
         val fixture = javascriptCoreSystemEventFixture()
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_SYSTEM_EVENT_PLUGIN,
             manifest = fixture.manifest,
             environment = fixture.environment,
@@ -303,7 +554,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             permissions = setOf(PluginHostPermission.REQUEST_SOURCE_REFRESH),
             sourceCapabilities = setOf("CATALOGUE"),
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_ACTIVE_CONTEXT_PLUGIN,
             manifest = fixture.manifest,
             environment = fixture.environment,
@@ -331,8 +582,10 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             requestGate = PerHostRequestGate(
                 PluginRateLimitProvider { PluginRateLimit(32, 0) },
             ),
+            policy = jscTestNetworkPolicy("https://batch.example"),
+            hostResolver = JSC_TEST_HOST_RESOLVER,
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_BATCH_PLUGIN,
             manifest = PluginManifest(
                 "zh.batch.ios",
@@ -344,7 +597,14 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("Batch", "zh", 994, "https://batch.example")),
             ),
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
+            ),
         )
         try {
             assertEquals("one|two|three", runtime.getPopularManga(0).mangas.single().title)
@@ -361,8 +621,10 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 transport = PluginHttpTransport { response() },
                 storage = storage,
                 requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                policy = jscTestNetworkPolicy("https://api.example"),
+                hostResolver = JSC_TEST_HOST_RESOLVER,
             )
-            val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+            val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
                 script = IOS_HTTP_LOGIN_ERROR_PLUGIN,
                 manifest = PluginManifest(
                     "zh.login-error.ios",
@@ -374,7 +636,15 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                     signature = "",
                     sources = listOf(SourceIndexEntry("Login Error", "zh", 995, "https://api.example")),
                 ),
-                environment = ScriptPluginEnvironment(network, storage),
+                environment = ScriptPluginEnvironment(
+                    network,
+                    storage,
+                    runtimePermissions = setOf(
+                        PluginRuntimePermission.EXECUTE_SCRIPT,
+                        PluginRuntimePermission.NETWORK,
+                        PluginRuntimePermission.CREDENTIAL_ACCESS,
+                    ),
+                ),
             )
             return try {
                 runtime.loginResult("alice", "wrong").errorMessage
@@ -398,7 +668,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             },
         )
         assertEquals(
-            "The Internet connection appears to be offline.",
+            "Host operation failed",
             loginError { throw IllegalStateException("The Internet connection appears to be offline.") },
         )
     }
@@ -423,8 +693,10 @@ class JavaScriptCoreScriptPluginRuntimeTest {
             storage = storage,
             requestBuilder = PluginRequestBuilder(storage, PluginUserAgentProvider { "ios-test-agent" }),
             requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+            policy = jscTestNetworkPolicy("https://source.example"),
+            hostResolver = JSC_TEST_HOST_RESOLVER,
         )
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_CONTRACT_PLUGIN,
             manifest = PluginManifest(
                 "all.ios-test",
@@ -436,7 +708,16 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                 signature = "",
                 sources = listOf(SourceIndexEntry("iOS Source", "all", 991, "https://source.example")),
             ),
-            environment = ScriptPluginEnvironment(network, storage),
+            environment = ScriptPluginEnvironment(
+                network,
+                storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                    PluginRuntimePermission.COOKIE_STORAGE,
+                    PluginRuntimePermission.CREDENTIAL_ACCESS,
+                ),
+            ),
         )
         try {
             assertEquals(991, runtime.id)
@@ -479,7 +760,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
     @Test
     fun httpGetResponseBridgePreservesNonSuccessStatusAndBody() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_HTTP_GET_RESPONSE_PLUGIN,
             manifest = PluginManifest(
                 "zh.get-response.ios",
@@ -501,8 +782,14 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                     },
                     storage = storage,
                     requestGate = PerHostRequestGate(PluginRateLimitProvider { PluginRateLimit(1, 0) }),
+                    policy = jscTestNetworkPolicy("https://api.example"),
+                    hostResolver = JSC_TEST_HOST_RESOLVER,
                 ),
                 storage = storage,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.NETWORK,
+                ),
             ),
         )
         try {
@@ -516,7 +803,7 @@ class JavaScriptCoreScriptPluginRuntimeTest {
     fun browserSessionBridgeUsesOnlyManifestDeclaredOrigin() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
         val captured = mutableListOf<PluginHttpRequest>()
-        val runtime = JavaScriptCoreScriptPluginRuntimeFactory().create(
+        val runtime = JavaScriptCoreScriptPluginRuntimeFactory.unsafeForTests().create(
             script = IOS_BROWSER_SESSION_PLUGIN,
             manifest = PluginManifest(
                 "zh.browser-session.ios",
@@ -556,6 +843,12 @@ class JavaScriptCoreScriptPluginRuntimeTest {
                         return PluginHttpResponse(429, "limited".encodeToByteArray())
                     }
                 },
+                hostResolver = JSC_TEST_HOST_RESOLVER,
+                allowDeveloperUnpinnedBrowserSession = true,
+                runtimePermissions = setOf(
+                    PluginRuntimePermission.EXECUTE_SCRIPT,
+                    PluginRuntimePermission.BROWSER_CHALLENGE,
+                ),
             ),
         )
         try {
@@ -568,6 +861,14 @@ class JavaScriptCoreScriptPluginRuntimeTest {
         }
     }
 }
+
+private val JSC_TEST_HOST_RESOLVER = PluginHostResolver { listOf("93.184.216.34") }
+
+private fun jscTestNetworkPolicy(origin: String): PluginNetworkPolicy = PluginNetworkPolicy(
+    requestOrigins = setOf(origin),
+    credentialOrigins = setOf(origin),
+    allowDeveloperUnpinnedTransport = true,
+)
 
 private const val IOS_WEB_CHALLENGE_STORAGE_PLUGIN: String = """
 var source={
@@ -851,6 +1152,7 @@ private fun javascriptCoreSystemEventFixture(
             boundPluginScope = scope,
             systemEventContextRegistry = contextRegistry,
             systemEventDeclaration = declaration,
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
         ),
         manifest = PluginManifest(
             id = source.packageId,

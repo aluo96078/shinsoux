@@ -444,12 +444,15 @@ public data class Publication(
     val workLinks: List<WorkLink> = emptyList(),
     val description: String? = null,
     val authors: List<String> = emptyList(),
+    /** Optional cover URL retained for legacy/portable library projections. */
+    val thumbnailUrl: String? = null,
 ) {
     init {
         key.validate()
         requirePrintable(title, "Publication title", allowNewlines = false, allowBlank = true)
         description?.let { requirePrintable(it, "Publication description", allowNewlines = true, allowBlank = true) }
         authors.forEach { requirePrintable(it, "Publication author", allowNewlines = false) }
+        thumbnailUrl?.let { requirePrintable(it, "Publication thumbnail URL", allowNewlines = false, allowBlank = true) }
         require(acquisitions.map(Acquisition::id).distinct().size == acquisitions.size) {
             "Publication acquisitions must have unique ids"
         }
@@ -472,6 +475,7 @@ public data class Publication(
         requirePrintable(title, "Publication title", allowNewlines = false, allowBlank = true)
         description?.let { requirePrintable(it, "Publication description", allowNewlines = true, allowBlank = true) }
         authors.forEach { requirePrintable(it, "Publication author", allowNewlines = false) }
+        thumbnailUrl?.let { requirePrintable(it, "Publication thumbnail URL", allowNewlines = false, allowBlank = true) }
         require(acquisitions.map(Acquisition::id).distinct().size == acquisitions.size) {
             "Publication acquisitions must have unique ids"
         }
