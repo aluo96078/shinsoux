@@ -19,8 +19,13 @@ import kotlin.test.assertTrue
 class BaoziCompatibilityTest {
     @Test
     fun admittedReaderFollowsExactRedirectAndFetchesCredentialFreePages() = runTest {
-        val repo = requireNotNull(listOf(Path.of("../shinsou_plugin"), Path.of("../../shinsou_plugin"))
-            .firstOrNull { Files.isRegularFile(it.resolve("index.json")) })
+        val repo = requireNotNull(
+            listOfNotNull(
+                Path.of("../shinsou_plugin"),
+                Path.of("../../shinsou_plugin"),
+                System.getProperty("shinsou.pluginRepo")?.let(Path::of),
+            ).map(Path::toAbsolutePath).firstOrNull { Files.isRegularFile(it.resolve("index.json")) },
+        ) { "Sibling shinsou_plugin fixture repository was not found" }
         val http = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath.substringAfter("refs/heads/master/")
             respond(Files.readAllBytes(repo.resolve(path)), HttpStatusCode.OK)

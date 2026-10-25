@@ -251,4 +251,52 @@ class ReaderVolumeKeyPolicyTest {
         assertFalse(readerProgressSessionIsActive(active, active, transitionInFlight = true))
         assertFalse(readerProgressSessionIsActive(null, active, transitionInFlight = false))
     }
+
+    @Test
+    fun openReaderConsumesVolumeKeysEvenWhenThePageCannotMove() {
+        assertTrue(
+            readerVolumeKeyShouldBeConsumed(
+                readerOpen = true,
+                volumeKeysEnabled = true,
+                monitoringEnabled = true,
+            ),
+        )
+        assertFalse(
+            readerVolumeKeyShouldBeConsumed(
+                readerOpen = false,
+                volumeKeysEnabled = true,
+                monitoringEnabled = true,
+            ),
+        )
+        assertFalse(
+            readerVolumeKeyShouldBeConsumed(
+                readerOpen = true,
+                volumeKeysEnabled = false,
+                monitoringEnabled = true,
+            ),
+        )
+        assertFalse(
+            readerVolumeKeyShouldBeConsumed(
+                readerOpen = true,
+                volumeKeysEnabled = true,
+                monitoringEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun routerAcceptsVolumeEventsFromTheAppSurfaceWhenAReaderIsMounted() {
+        val router = ReaderVolumeKeyRouter()
+        val events = mutableListOf<ReaderVolumeKeyEvent>()
+        router.register { event ->
+            events += event
+            true
+        }
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+        assertEquals(
+            listOf(ReaderVolumeKeyEvent.VOLUME_DOWN, ReaderVolumeKeyEvent.VOLUME_UP),
+            events,
+        )
+    }
 }

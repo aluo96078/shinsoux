@@ -25,10 +25,11 @@ number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
-目前原始碼中的預設版本為 `1.0.1-beta.7`：Android `versionName` 與應用內顯示使用完整
-beta 版本，Android `versionCode`／iOS build number 為 `25600107`，Desktop／iOS 的
-package／marketing version 為 `1.0.1`，Windows installer package version 為
-`1.0.107`。上述 `-P` 參數只用於後續 tag 發布時覆寫這些預設值。
+目前原始碼中的預設版本為 `1.0.1-beta.8`：Android `versionName` 與應用內顯示使用完整
+beta 版本，Android `versionCode` 為 `25600108`，Desktop／iOS 的 package／marketing
+version 為 `1.0.1`，Windows installer package version 為 `1.0.108`。iOS 本機建置為保留
+已完成真機驗證的版本，build number 使用 `25600117`。上述 `-P` 參數只用於後續 tag 發布時
+覆寫這些預設值。
 
 ## Workspace 佈局
 
@@ -42,7 +43,10 @@ project/
 └── shinsou_plugin/
 ```
 
-`composeApp/src/desktopTest` 會把 `../../shinsou_plugin` 加入 test resources。若只複製 `shinsou_kmp`，需另外提供相同 fixture 或調整 resource path；否則官方腳本 compatibility test 不具完整輸入。
+`composeApp/src/desktopTest` 預設把 `../../shinsou_plugin` 加入 test resources。若 checkout
+佈局不同，可用 `-PshinsouPluginRepository=/path/to/shinsou_plugin` 指定 fixture；Gradle 會把
+同一路徑提供給 classpath resources 與直接讀取工作區的 compatibility tests。若只複製
+`shinsou_kmp`，需另外提供相同 fixture；否則官方腳本 compatibility test 不具完整輸入。
 
 ## 建議驗證順序
 

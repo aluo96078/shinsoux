@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin.shuyue
 
+import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.PluginManager
 import dev.shinsou.kmp.plugin.Sha256
@@ -191,6 +192,7 @@ public class ShuYueReviewedInstallCoordinatorV2(
 /** Durable exact-version quarantine and approvals over the application's platform KV boundary. */
 public class KeyValueShuYueReviewedStoreV2(
     private val keyValueStore: PluginKeyValueStore,
+    private val fileSystem: AppFileSystem? = null,
     private val json: Json = Json {
         encodeDefaults = true
         explicitNulls = true
@@ -204,21 +206,15 @@ public class KeyValueShuYueReviewedStoreV2(
     private val locallyRevoked = linkedSetOf<ShuYueArtifactIdentityV2>()
 
     override suspend fun put(record: ShuYueQuarantinedScriptV2): Unit = mutex.withLock {
-        val key = quarantineKey(record.quarantineId)
         val encoded = encode(record)
         check(pluginUtf8ByteCountAtMost(encoded, MAX_QUARANTINE_RECORD_BYTES) != null) {
             "Durable ShuYue quarantine exceeds its size limit"
         }
-        val previous = keyValueStore.getString(key)
-        require(previous == null || previous == encoded) {
-            "Quarantine id conflicts with different durable ShuYue bytes"
-        }
-        keyValueStore.putString(key, encoded)
-        check(keyValueStore.getString(key) == encoded) { "Could not verify durable ShuYue quarantine write" }
+        persistQuarantineRecord(record.quarantineId, encoded)
     }
 
     override suspend fun get(quarantineId: String): ShuYueQuarantinedScriptV2? = mutex.withLock {
-        val encoded = keyValueStore.getString(quarantineKey(quarantineId)) ?: return@withLock null
+        val encoded = readQuarantineRecord(quarantineId) ?: return@withLock null
         val decoded = decode(encoded)
         if (decoded.quarantineId != quarantineId) {
             throw ShuYueAdmissionException.CorruptQuarantine()
@@ -304,8 +300,10 @@ public class KeyValueShuYueReviewedStoreV2(
 
     private suspend fun readInstallations(): Map<String, ShuYueReviewedInstallationV2> {
         val encoded = keyValueStore.getString(INSTALLATIONS_KEY) ?: return emptyMap()
-        if (pluginUtf8ByteCountAtMost(encoded, MAX_INSTALLATIONS_RECORD_BYTES) == null) return emptyMap()
-        return runCatching {
+        if (pluginUtf8ByteCountAtMost(encoded, MAX_INSTALLATIONS_RECORD_BYTES) == null) {
+            throw ShuYueAdmissionException.CorruptInstallations()
+        }
+        return try {
             require(pluginJsonArrayCountsAtMost(encoded, MAX_REVIEWED_INSTALLATIONS))
             val decoded = json.decodeFromString(
                 ListSerializer(ShuYueReviewedInstallationV2.serializer()),
@@ -314,7 +312,11 @@ public class KeyValueShuYueReviewedStoreV2(
             require(decoded.size <= MAX_REVIEWED_INSTALLATIONS)
             require(decoded.map { it.identity.packageId }.distinct().size == decoded.size)
             decoded.associateBy { installation -> installation.identity.packageId }
-        }.getOrDefault(emptyMap())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw ShuYueAdmissionException.CorruptInstallations()
+        }
     }
 
     private suspend fun writeInstallations(values: Map<String, ShuYueReviewedInstallationV2>) {
@@ -466,7 +468,57 @@ public class KeyValueShuYueReviewedStoreV2(
         const val MAX_APPROVAL_PERMISSIONS_BYTES: Int = 4 * 1_024
         const val MAX_REVIEWED_INSTALLATIONS: Int = 256
         const val MAX_INSTALLATIONS_RECORD_BYTES: Int = 1 * 1_024 * 1_024
+        const val QUARANTINE_DIRECTORY: String = "plugins/shuyue/quarantine"
+        const val QUARANTINE_FILE_VERSION: String = "v2"
     }
+
+    private suspend fun persistQuarantineRecord(quarantineId: String, encoded: String) {
+        val files = fileSystem
+        if (files == null) {
+            persistQuarantineInKeyValue(quarantineId, encoded)
+            return
+        }
+        val path = quarantineFilePath(quarantineId)
+        val previous = files.read(path)?.decodeToString()
+        require(previous == null || previous == encoded) {
+            "Quarantine id conflicts with different durable ShuYue bytes"
+        }
+        files.writeAtomically(path, encoded.encodeToByteArray())
+        val written = files.read(path)?.decodeToString()
+        check(written == encoded) { "Could not verify durable ShuYue quarantine write" }
+        // Keep the shared iOS plugin-state JSON small. A leftover KV copy of the same bytes is
+        // deleted only after the file round-trip succeeds.
+        val leftoverKey = quarantineKey(quarantineId)
+        if (keyValueStore.getString(leftoverKey) != null) {
+            keyValueStore.remove(leftoverKey)
+            check(keyValueStore.getString(leftoverKey) == null) {
+                "Could not verify durable ShuYue quarantine KV cleanup"
+            }
+        }
+    }
+
+    private suspend fun persistQuarantineInKeyValue(quarantineId: String, encoded: String) {
+        val key = quarantineKey(quarantineId)
+        val previous = keyValueStore.getString(key)
+        require(previous == null || previous == encoded) {
+            "Quarantine id conflicts with different durable ShuYue bytes"
+        }
+        keyValueStore.putString(key, encoded)
+        check(keyValueStore.getString(key) == encoded) { "Could not verify durable ShuYue quarantine write" }
+    }
+
+    private suspend fun readQuarantineRecord(quarantineId: String): String? {
+        val files = fileSystem
+        if (files != null) {
+            val path = quarantineFilePath(quarantineId)
+            val fromFile = files.read(path)?.decodeToString()
+            if (fromFile != null) return fromFile
+        }
+        return keyValueStore.getString(quarantineKey(quarantineId))
+    }
+
+    private fun quarantineFilePath(quarantineId: String): String =
+        "$QUARANTINE_DIRECTORY/${Sha256.hex(quarantineId.encodeToByteArray())}.$QUARANTINE_FILE_VERSION.json"
 
     private suspend fun putVerified(key: String, value: String, label: String) {
         keyValueStore.putString(key, value)

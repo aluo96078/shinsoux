@@ -639,6 +639,9 @@ fun BrowseScreen(
                 throw cancelled
             } catch (error: Throwable) {
                 if (catalogueRequestToken == requestToken) {
+                    // A replacement search must not present the previous query's results as
+                    // its own. Pagination failures keep already loaded items and the footer.
+                    if (!append) page = BrowsePage()
                     catalogueError = error.localizedDiagnosticMessage(strings)
                     if (
                         error.sourceFailureMarker() == SOURCE_HTTP_CHALLENGE_MARKER &&
@@ -1488,8 +1491,9 @@ private fun ExtensionNovelReaderShell(
     ) {
         mutableStateOf(imageReader)
     }
-    var requestedPage by remember(session) { mutableStateOf(initialPage) }
-    var pageRequestSerial by remember(session) { mutableStateOf(0L) }
+    var pageRequest by remember(session) {
+        mutableStateOf(UnifiedReaderPageRequest(initialPage))
+    }
     var readerNavigationAction by remember(session) { mutableStateOf<ReaderTapAction?>(null) }
     var readerNavigationRequestKey by remember(session) { mutableStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
@@ -1563,18 +1567,22 @@ private fun ExtensionNovelReaderShell(
             }
             index in 0 until pageCount -> {
                 currentPage = index
-                requestedPage = index
-                pageRequestSerial++
+                pageRequest = pageRequest.request(index)
             }
         }
     }
 
     fun handleTap(action: ReaderTapAction) {
         if (progressTransitionInFlight || busy) return
+        val imagePage = pageRequest.navigationIndex(currentPage)
         when (action) {
-            ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
+            ReaderTapAction.PREVIOUS_PAGE -> requestPage(
+                (if (imageReader) imagePage else currentPage) - 1,
+            )
             ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
-            ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
+            ReaderTapAction.NEXT_PAGE -> requestPage(
+                (if (imageReader) imagePage else currentPage) + 1,
+            )
         }
     }
 
@@ -1602,22 +1610,17 @@ private fun ExtensionNovelReaderShell(
             volumeKeysEnabled = effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys),
         ) ?: return false
         if (progressTransitionInFlight || busy) return false
-        if (textContent) {
-            readerNavigationAction = action
-            readerNavigationRequestKey++
-        } else {
-            val beforePage = currentPage
-            val beforeTransition = progressTransitionInFlight
-            handleTap(action)
-            if (beforePage == currentPage && beforeTransition == progressTransitionInFlight) {
-                val hasAdjacent = if (action == ReaderTapAction.NEXT_PAGE) {
-                    hasCurrent && activeUnitIndex + 1 < units.size
-                } else {
-                    hasCurrent && activeUnitIndex > 0
-                }
-                if (!hasAdjacent) return false
-            }
+        if (imageReader) {
+            val target = imageSequenceNavigationTarget(
+                currentIndex = pageRequest.navigationIndex(currentPage),
+                pageCount = pageCount,
+                action = action,
+            )
+            if (target != null) requestPage(target) else handleNavigationBoundary(action)
+            return true
         }
+        readerNavigationAction = action
+        readerNavigationRequestKey++
         return true
     }
 
@@ -1630,7 +1633,7 @@ private fun ExtensionNovelReaderShell(
 
     LaunchedEffect(session, settingsVisible) {
         heldNavigationKeys.clear()
-        if (!settingsVisible && !epubReader) focusRequester.requestFocus()
+        if (!settingsVisible) focusRequester.requestFocus()
     }
 
     LaunchedEffect(systemBackRequest) {
@@ -1655,12 +1658,16 @@ private fun ExtensionNovelReaderShell(
                     return@onPreviewKeyEvent false
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (epubReader && event.key != Key.Escape && event.key != Key.Back &&
-                    event.key != Key.NavigatePrevious
+                if (!readerPreviewKeyIsHostOwned(
+                        key = event.key,
+                        unifiedImageOrEpubReader = imageReader || epubReader,
+                    )
                 ) {
                     return@onPreviewKeyEvent false
                 }
                 val handledNavigationKey = when (event.key) {
+                    Key.VolumeDown, Key.VolumeUp,
+                    -> effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys)
                     Key.DirectionDown, Key.NumPadDirectionDown,
                     Key.PageDown, Key.NumPadPageDown,
                     Key.Spacebar,
@@ -1678,6 +1685,8 @@ private fun ExtensionNovelReaderShell(
                     return@onPreviewKeyEvent true
                 }
                 when (event.key) {
+                    Key.VolumeDown -> handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_DOWN)
+                    Key.VolumeUp -> handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_UP)
                     Key.DirectionDown, Key.NumPadDirectionDown,
                     Key.PageDown, Key.NumPadPageDown,
                     Key.Spacebar,
@@ -1726,15 +1735,15 @@ private fun ExtensionNovelReaderShell(
             features = features,
             copyText = copyText,
             settings = readerSettings,
-            requestedPageIndex = requestedPage,
-            pageRequestSerial = pageRequestSerial,
+            requestedPageIndex = pageRequest.targetIndex,
+            pageRequestSerial = pageRequest.serial,
             navigationAction = readerNavigationAction,
             navigationRequestKey = readerNavigationRequestKey,
             readerControlsVisible = controlsVisible,
             onPageIndexChanged = { index, count ->
                 pageCountMeasured = true
                 currentPage = index
-                requestedPage = index
+                pageRequest = pageRequest.observe(index)
                 pageCount = count.coerceAtLeast(1)
                 latestProgress.position = latestProgress.position?.copy(
                     pageIndex = index.coerceAtLeast(0),

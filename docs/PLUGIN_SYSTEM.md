@@ -432,3 +432,7 @@ Repository 清單、書庫 binding 與 Plugin package 是不同資料。重新�
 - DownloadPage 標頭在進入內容平面前使用與封面相同的 sanitizer，避免 DM5 來源 Cookie 令下載全數遭拒，也不把來源憑證傳到圖片 CDN。
 - 包子漫畫 1.0.9 使用一次 bounded parseHtml 取得章節欄位，以精簡物件回傳，避免長篇作品超過 bridge call/result element 預算；4,000 章 fixture 與 Android 3,874 章實測通過。未提高通用腳本限制。
 - 手機抽樣與限制見 work/android-plugin-validation-20260911/status.md；不代表全部站點、帳號狀態或作品都可用。
+- 接續修正：Komiic 的 GraphQL `QUOTA_EXCEEDED` 使用固定 `SHINSOU_SOURCE_QUOTA_EXCEEDED` 分類，閱讀與下載錯誤顯示額度重置提示；不顯示遠端訊息或票券，不自動反覆重試。
+- 漫畫櫃的公開 HTTP 操作使用結構化回應，網路失敗／空本文／403／5xx／驗證頁會回報固定失敗分類，僅成功本文可進入短期快取。有效 HTML 中的空結果仍保留原語意。
+- 本機倉庫更新需同時更新精確 profile 與 digest/byte-size 准入表；新增 Android LAN fixture 驗證修復套件的 index、sidecar、腳本可取得，且不符大小仍拒絕。
+- 嗶哩漫畫公開請求區分 HTTP 失敗與正常空結果，登入／登出保留原路徑。新的來源查詢失敗時不沿用上一查詢的作品列表，避免把舊熱門結果當成新搜尋結果；追加頁失敗仍保留已載入列表。

@@ -8,6 +8,10 @@ import ShinsouKit
 @main
 struct ShinsouIOSApp: App {
     init() {
+        // Keep a device-readable trace for volume-button diagnosis. Unified logging has proven
+        // unreliable when the app is relaunched by CoreDevice or hosted by LiveContainer.
+        _ = ReaderVolumeKeyTrace.shared
+
         // BGTaskScheduler registration must happen during launch, before Compose suspend startup.
         _ = MainViewControllerKt.registerAutomaticBackupBackgroundTask()
 
@@ -26,6 +30,79 @@ struct ShinsouIOSApp: App {
     var body: some Scene {
         WindowGroup {
             ShinsouRootView()
+        }
+    }
+}
+
+/// Small, bounded trace stored at Documents/Diagnostics/reader-volume-keys.log.
+///
+/// The file intentionally contains only volume values and reader-routing state. It can be copied
+/// from an installed app's data container without attaching a debugger or collecting user data.
+private final class ReaderVolumeKeyTrace {
+    static let shared = ReaderVolumeKeyTrace()
+
+    static let relativePath = "Documents/Diagnostics/reader-volume-keys.log"
+    private static let notificationName = Notification.Name(
+        "dev.aluo.shinsoux.reader-volume-keys.trace"
+    )
+    private static let maximumPreviousBytes: UInt64 = 512 * 1024
+
+    private let queue = DispatchQueue(label: "dev.aluo.shinsoux.reader-volume-keys.trace")
+    private let fileURL: URL
+    private var commonTraceObserver: NSObjectProtocol?
+
+    private init() {
+        let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let directory = documents.appendingPathComponent("Diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        fileURL = directory.appendingPathComponent("reader-volume-keys.log")
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let size = attributes[.size] as? NSNumber,
+           size.uint64Value > Self.maximumPreviousBytes {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        }
+
+        commonTraceObserver = NotificationCenter.default.addObserver(
+            forName: Self.notificationName,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let payload = notification.object as? String else { return }
+            self?.record("source=common \(payload)")
+        }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "unknown"
+        record("source=swift event=launch build=\(build)")
+    }
+
+    func record(_ payload: String) {
+        let cleanPayload = payload
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        let wall = Date().timeIntervalSince1970
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let line = "wall=\(wall) uptime=\(uptime) \(cleanPayload)\n"
+        queue.async { [fileURL] in
+            guard let data = line.data(using: .utf8) else { return }
+            do {
+                let handle = try FileHandle(forWritingTo: fileURL)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+                handle.synchronizeFile()
+            } catch {
+                NSLog("[ShinsouX.VolumeKeys] trace write failed: %@", error.localizedDescription)
+            }
         }
     }
 }
@@ -77,7 +154,7 @@ private struct ShinsouRootView: View {
         }
         .onAppear {
             MainViewControllerKt.setApplicationForeground(foreground: scenePhase == .active)
-            volumeKeyMonitor.setApplicationActive(scenePhase == .active)
+            volumeKeyMonitor.setApplicationActive(UIApplication.shared.applicationState != .background)
             synchronizeVolumeKeyMonitor()
             // Compose can publish its persisted setting during the same presentation pass.
             // Re-read it on the next run loop so startup never depends on notification order.
@@ -89,7 +166,7 @@ private struct ShinsouRootView: View {
         }
         .onChange(of: scenePhase) { phase in
             MainViewControllerKt.setApplicationForeground(foreground: phase == .active)
-            volumeKeyMonitor.setApplicationActive(phase == .active)
+            volumeKeyMonitor.setApplicationActive(UIApplication.shared.applicationState != .background)
             synchronizeVolumeKeyMonitor()
             if phase == .background {
                 _ = MainViewControllerKt.scheduleAutomaticBackupBackgroundTask()
@@ -116,9 +193,6 @@ private struct ShinsouRootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: Self.readerVolumeKeysDidChange)) { _ in
             synchronizeVolumeKeyMonitor()
-        }
-        .onDisappear {
-            volumeKeyMonitor.invalidate()
         }
         .animation(.easeOut(duration: 0.15), value: needsPrivacyCover)
     }
@@ -157,13 +231,93 @@ private struct ShinsouRootView: View {
             readerOpen ? 1 : 0,
             mirroredInfrastructure ? 1 : 0,
             mirroredListening ? 1 : 0,
-            scenePhase == .active ? 1 : 0
+            UIApplication.shared.applicationState != .background ? 1 : 0
         )
 
         // Keep the audio infrastructure warm from the durable preference, but only intercept
         // hardware buttons while common code has an active consumer for the presented reader.
         volumeKeyMonitor.setInfrastructureEnabled(configured)
         volumeKeyMonitor.setListeningEnabled(configured && readerOpen && mirroredListening)
+    }
+}
+
+/// Captures hardware volume HID events when LiveContainer does not mutate AVAudioSession.
+private final class VolumeKeyCaptureViewController: UIViewController {
+    let content: UIViewController
+
+    init(content: UIViewController) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(content)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content.view)
+        NSLayoutConstraint.activate([
+            content.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        content.didMove(toParent: self)
+    }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if view.window != nil && !isFirstResponder {
+            becomeFirstResponder()
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if handleVolumePresses(presses) { return }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if handleVolumePresses(presses, began: false) { return }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if handleVolumePresses(presses, began: false) { return }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    @discardableResult
+    private func handleVolumePresses(_ presses: Set<UIPress>, began: Bool = true) -> Bool {
+        var handled = false
+        for press in presses {
+            let volumeUp: Bool?
+            switch press.key?.keyCode {
+            case .keyboardVolumeUp:
+                volumeUp = true
+            case .keyboardVolumeDown:
+                volumeUp = false
+            default:
+                volumeUp = nil
+            }
+            guard let volumeUp else { continue }
+            if began {
+                handled = ReaderVolumeKeyMonitor.shared.emitHardwareVolumeEvent(volumeUp: volumeUp) || handled
+            } else {
+                handled = true
+            }
+        }
+        return handled
     }
 }
 
@@ -201,7 +355,7 @@ private struct ComposeRootView: UIViewControllerRepresentable {
             mouseBack.cancelsTouchesInView = false
             controller.view.addGestureRecognizer(mouseBack)
         }
-        return controller
+        return VolumeKeyCaptureViewController(content: controller)
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
@@ -268,6 +422,13 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
     private var interrupted = false
     private var monitoring = false
     private var previousVolume: Float = 0.5
+    private var nativeEventSequence: UInt64 = 0
+    private var resetGeneration: UInt64 = 0
+    private var resetInFlight = false
+    private var resetTarget: Float?
+    private var resetSourceSequence: UInt64?
+    private var resetAttempt = 0
+    private var resetSettleWorkItem: DispatchWorkItem?
 
     private override init() {
         super.init()
@@ -364,6 +525,30 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         removeInfrastructure()
     }
 
+    @discardableResult
+    func emitHardwareVolumeEvent(volumeUp: Bool) -> Bool {
+        // LiveContainer can deliver HID volume events even when AVAudioSession
+        // never mutates outputVolume. Consume the press when a reader is open
+        // without starting KVO as a side effect of the same physical event.
+        if !listeningEnabled {
+            let configured = MainViewControllerKt.isReaderVolumeKeyConfigured()
+            let readerOpen = MainViewControllerKt.isReaderOpen()
+            guard configured && readerOpen else { return false }
+        }
+        let accepted = MainViewControllerKt.handleReaderVolumeKey(volumeUp: volumeUp)
+        nativeEventSequence &+= 1
+        let direction = volumeUp ? "up" : "down"
+        ReaderVolumeKeyTrace.shared.record(
+            "source=hid seq=\(nativeEventSequence) direction=\(direction) accepted=\(accepted ? 1 : 0)"
+        )
+        NSLog(
+            "[ShinsouX.VolumeKeys] hid direction=%@ accepted=%d",
+            volumeUp ? "up" : "down",
+            accepted ? 1 : 0
+        )
+        return accepted
+    }
+
     private func reconcileMonitoring() {
         let shouldMonitor = infrastructureEnabled
             && listeningEnabled
@@ -441,14 +626,24 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
     private func activeWindow() -> UIWindow? {
         let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .filter {
-                $0.activationState == .foregroundActive
-                    || $0.activationState == .foregroundInactive
-            }
-        return scenes
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)
-            ?? scenes.flatMap(\.windows).first(where: { !$0.isHidden && $0.windowLevel == .normal })
+        let rankedScenes = scenes.sorted { lhs, rhs in
+            rank(lhs.activationState) > rank(rhs.activationState)
+        }
+        let windows = rankedScenes.flatMap(\.windows)
+        return windows.first(where: { $0.isKeyWindow && !$0.isHidden })
+            ?? windows.first(where: { !$0.isHidden && $0.windowLevel == .normal && $0.alpha > 0 })
+            ?? windows.first(where: { !$0.isHidden })
+            ?? UIApplication.shared.windows.first(where: { $0.isKeyWindow && !$0.isHidden })
+            ?? UIApplication.shared.windows.first(where: { !$0.isHidden })
+    }
+
+    private func rank(_ state: UIScene.ActivationState) -> Int {
+        switch state {
+        case .foregroundActive: return 3
+        case .foregroundInactive: return 2
+        case .unattached: return 1
+        default: return 0
+        }
     }
 
     private func startMonitoring() {
@@ -463,6 +658,10 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         clampVolumeToSafeRange()
         audioSession.addObserver(self, forKeyPath: "outputVolume", options: [.new], context: nil)
         monitoring = true
+        let sliderValue = volumeSlider?.value.description ?? "none"
+        ReaderVolumeKeyTrace.shared.record(
+            "source=kvo event=started baseline=\(previousVolume) actual=\(audioSession.outputVolume) slider=\(sliderValue)"
+        )
         NSLog(
             "[ShinsouX.VolumeKeys] KVO started baseline=%.3f slider=%d",
             previousVolume,
@@ -474,6 +673,8 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         guard monitoring else { return }
         audioSession.removeObserver(self, forKeyPath: "outputVolume")
         monitoring = false
+        cancelVolumeReset(reason: "monitoring_stopped")
+        ReaderVolumeKeyTrace.shared.record("source=kvo event=stopped")
         NSLog("[ShinsouX.VolumeKeys] KVO stopped")
     }
 
@@ -498,8 +699,14 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         }
 
         installVolumeViewIfNeeded()
-        previousVolume = audioSession.outputVolume
-        clampVolumeToSafeRange()
+        // KVO captures the new value before dispatching its handler to the main queue. Updating
+        // the baseline while monitoring can therefore turn a queued physical press into a zero
+        // delta when SwiftUI synchronizes the same enabled state between those two steps.
+        // startMonitoring() refreshes the baseline immediately before adding the observer.
+        if !monitoring {
+            previousVolume = audioSession.outputVolume
+            clampVolumeToSafeRange()
+        }
     }
 
     private func removeInfrastructure() {
@@ -536,16 +743,39 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
 
     private func handleOutputVolumeChange(_ volume: Float) {
         guard monitoring else { return }
+        nativeEventSequence &+= 1
+        let eventSequence = nativeEventSequence
         let delta = volume - previousVolume
+        let sliderValue = volumeSlider?.value.description ?? "none"
+        ReaderVolumeKeyTrace.shared.record(
+            "source=kvo seq=\(eventSequence) event=change volume=\(volume) baseline=\(previousVolume) delta=\(delta) actual=\(audioSession.outputVolume) slider=\(sliderValue)"
+        )
+        if resetInFlight {
+            let targetDescription = resetTarget.map { String($0) } ?? "none"
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(eventSequence) event=ignored reason=reset_in_flight target=\(targetDescription)"
+            )
+            scheduleResetSettlementCheck()
+            return
+        }
         NSLog(
             "[ShinsouX.VolumeKeys] outputVolume=%.3f baseline=%.3f delta=%.3f",
             volume,
             previousVolume,
             delta
         )
-        guard abs(delta) > Self.volumeThreshold else { return }
+        guard abs(delta) > Self.volumeThreshold else {
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(eventSequence) event=ignored reason=threshold"
+            )
+            return
+        }
 
         let accepted = MainViewControllerKt.handleReaderVolumeKey(volumeUp: delta > 0)
+        let direction = delta > 0 ? "up" : "down"
+        ReaderVolumeKeyTrace.shared.record(
+            "source=kvo seq=\(eventSequence) event=dispatch direction=\(direction) accepted=\(accepted ? 1 : 0)"
+        )
         NSLog(
             "[ShinsouX.VolumeKeys] event direction=%@ accepted=%d",
             delta > 0 ? "up" : "down",
@@ -556,6 +786,9 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         // was queued. If common code has no consumer, preserve the user's actual volume change.
         guard accepted else {
             previousVolume = volume
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(eventSequence) event=baseline_advanced baseline=\(previousVolume)"
+            )
             return
         }
 
@@ -565,9 +798,12 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         // If the real baseline was at 0/1 and the first press caused MPVolumeSlider to appear,
         // promote it to the safe midpoint now so both directions work on the following press.
         clampVolumeToSafeRange()
-        if !resetVolume() {
+        if !beginVolumeReset(eventSequence: eventSequence) {
             previousVolume = volume
             clampVolumeToSafeRange()
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(eventSequence) event=reset_unavailable baseline=\(previousVolume)"
+            )
         }
     }
 
@@ -619,28 +855,175 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
     }
 
     @discardableResult
-    private func resetVolume() -> Bool {
-        setSystemVolume(previousVolume)
+    private func beginVolumeReset(eventSequence: UInt64) -> Bool {
+        resetGeneration &+= 1
+        resetInFlight = true
+        resetTarget = previousVolume
+        resetSourceSequence = eventSequence
+        resetAttempt = 1
+        resetSettleWorkItem?.cancel()
+        resetSettleWorkItem = nil
+
+        guard setSystemVolume(
+            previousVolume,
+            eventSequence: eventSequence,
+            resetGeneration: resetGeneration
+        ) else {
+            cancelVolumeReset(reason: "slider_unavailable")
+            return false
+        }
+        scheduleResetSettlementCheck()
+        return true
+    }
+
+    private func scheduleResetSettlementCheck() {
+        guard resetInFlight, let target = resetTarget else { return }
+        let generation = resetGeneration
+        let sourceSequence = resetSourceSequence
+        resetSettleWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard
+                let self,
+                self.monitoring,
+                self.resetInFlight,
+                self.resetGeneration == generation,
+                self.resetTarget == target
+            else { return }
+
+            let actual = self.audioSession.outputVolume
+            let sequenceDescription = sourceSequence.map { String($0) } ?? "none"
+            if abs(actual - target) <= Self.volumeThreshold {
+                ReaderVolumeKeyTrace.shared.record(
+                    "source=kvo seq=\(sequenceDescription) event=reset_settled target=\(target) actual=\(actual) attempts=\(self.resetAttempt)"
+                )
+                self.finishVolumeReset()
+                return
+            }
+
+            guard self.resetAttempt < Self.maximumResetAttempts else {
+                self.previousVolume = actual
+                ReaderVolumeKeyTrace.shared.record(
+                    "source=kvo seq=\(sequenceDescription) event=reset_abandoned target=\(target) actual=\(actual) attempts=\(self.resetAttempt) baseline=\(self.previousVolume)"
+                )
+                self.finishVolumeReset()
+                return
+            }
+
+            self.resetAttempt += 1
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(sequenceDescription) event=reset_retry target=\(target) actual=\(actual) attempt=\(self.resetAttempt)"
+            )
+            if self.setSystemVolume(
+                target,
+                eventSequence: sourceSequence,
+                resetGeneration: generation
+            ) {
+                self.scheduleResetSettlementCheck()
+            } else {
+                self.previousVolume = actual
+                self.cancelVolumeReset(reason: "retry_slider_unavailable")
+            }
+        }
+        resetSettleWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resetQuietPeriod, execute: workItem)
+    }
+
+    private func finishVolumeReset() {
+        resetSettleWorkItem?.cancel()
+        resetSettleWorkItem = nil
+        resetInFlight = false
+        resetTarget = nil
+        resetSourceSequence = nil
+        resetAttempt = 0
+    }
+
+    private func cancelVolumeReset(reason: String) {
+        if resetInFlight {
+            let targetDescription = resetTarget.map { String($0) } ?? "none"
+            let sequenceDescription = resetSourceSequence.map { String($0) } ?? "none"
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(sequenceDescription) event=reset_cancelled reason=\(reason) target=\(targetDescription) actual=\(audioSession.outputVolume)"
+            )
+        }
+        resetGeneration &+= 1
+        finishVolumeReset()
     }
 
     @discardableResult
-    private func setSystemVolume(_ target: Float) -> Bool {
+    private func setSystemVolume(
+        _ target: Float,
+        eventSequence: UInt64? = nil,
+        resetGeneration expectedResetGeneration: UInt64? = nil
+    ) -> Bool {
+        let sequenceDescription = eventSequence.map { String($0) } ?? "none"
         // MPVolumeSlider may materialize only after the first hardware event. Resolve it again on
         // every reset instead of permanently caching a cold-launch miss.
         if volumeSlider == nil, let volumeView {
             volumeSlider = findVolumeSlider(in: volumeView)
         }
         guard let volumeSlider else {
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(sequenceDescription) event=reset_missing_slider target=\(target) actual=\(audioSession.outputVolume)"
+            )
             NSLog("[ShinsouX.VolumeKeys] volume reset deferred: slider unavailable")
             return false
         }
-        volumeSlider.value = target
-        NSLog("[ShinsouX.VolumeKeys] volume reset=%.3f", target)
+        // Device traces 25600114/115 proved that the private slider can remain at the baseline
+        // after the hardware button has changed AVAudioSession.outputVolume. Sending that same
+        // slider value is a no-op on this device, even with valueChanged. First synchronize the
+        // control to the actual volume without emitting an action, then submit the distinct target
+        // on the next main-queue turn so MediaPlayer observes a real slider transition.
+        let actualBeforeReset = audioSession.outputVolume
+        let sliderBeforeReset = volumeSlider.value
+        volumeSlider.setValue(actualBeforeReset, animated: false)
+        ReaderVolumeKeyTrace.shared.record(
+            "source=kvo seq=\(sequenceDescription) event=reset_prepared target=\(target) actual=\(actualBeforeReset) slider_before=\(sliderBeforeReset) slider_prepared=\(volumeSlider.value)"
+        )
+        DispatchQueue.main.async { [weak self, weak volumeSlider] in
+            guard
+                let self,
+                let volumeSlider,
+                self.monitoring,
+                self.volumeSlider === volumeSlider,
+                expectedResetGeneration == nil || (
+                    self.resetInFlight && self.resetGeneration == expectedResetGeneration
+                )
+            else { return }
+            volumeSlider.setValue(target, animated: false)
+            volumeSlider.sendActions(for: .valueChanged)
+            volumeSlider.sendActions(for: .touchUpInside)
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(sequenceDescription) event=reset_submitted target=\(target) actual=\(self.audioSession.outputVolume) slider=\(volumeSlider.value)"
+            )
+            NSLog("[ShinsouX.VolumeKeys] volume reset submitted=%.3f", target)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.075) { [weak self, weak volumeSlider] in
+            guard
+                let self,
+                let volumeSlider,
+                self.monitoring,
+                self.volumeSlider === volumeSlider,
+                expectedResetGeneration == nil || (
+                    self.resetInFlight && self.resetGeneration == expectedResetGeneration
+                )
+            else { return }
+            ReaderVolumeKeyTrace.shared.record(
+                "source=kvo seq=\(sequenceDescription) event=reset_observed target=\(target) actual=\(self.audioSession.outputVolume) slider=\(volumeSlider.value)"
+            )
+            NSLog(
+                "[ShinsouX.VolumeKeys] volume reset observed target=%.3f actual=%.3f slider=%.3f",
+                target,
+                self.audioSession.outputVolume,
+                volumeSlider.value
+            )
+        }
         return true
     }
 
     private static let defaultVolume: Float = 0.5
     private static let volumeThreshold: Float = 0.001
+    private static let resetQuietPeriod: TimeInterval = 0.12
+    private static let maximumResetAttempts = 3
 
     private func findVolumeSlider(in view: UIView) -> UISlider? {
         if let slider = view as? UISlider {

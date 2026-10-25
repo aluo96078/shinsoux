@@ -3,7 +3,7 @@ package dev.shinsou.kmp.plugin
 // Only fixed host-authored guidance may escape exception redaction. Accept a bounded engine
 // filename/line wrapper, never arbitrary suffixes, URLs, HTML, or substring matches.
 private val SOURCE_FAILURE_WRAPPER = Regex(
-    "^(?:Error:\\s*)?(SHINSOU_SOURCE_HTTP_(?:CHALLENGE|BLOCKED|FORBIDDEN|UNAVAILABLE))" +
+    "^(?:Error:\\s*)?(SHINSOU_SOURCE_(?:HTTP_(?:CHALLENGE|BLOCKED|FORBIDDEN|UNAVAILABLE)|QUOTA_EXCEEDED))" +
         "(?:\\s*\\([A-Za-z0-9._/-]{1,160}(?:#[0-9]+|:[0-9]+(?::[0-9]+)?)\\))?$",
 )
 

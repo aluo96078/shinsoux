@@ -150,6 +150,7 @@ import dev.shinsou.kmp.ui.components.LocalPluginImageLoader
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ProvideShinsouStrings
+import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.screens.AboutScreen
 import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
@@ -333,6 +334,7 @@ private fun ShinsouAppContent(
     var selectedCategoryId by remember { mutableStateOf(ALL_LIBRARY_CATEGORY_ID) }
     val appFocusRequester = remember { FocusRequester() }
     var hardwareBackKeyHeld by remember { mutableStateOf(false) }
+    val appVolumeKeyPressTracker = remember { ReaderVolumeKeyPressTracker() }
     var selectedLibraryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedChapterIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var downloadsPaused by remember { mutableStateOf(false) }
@@ -963,7 +965,8 @@ private fun ShinsouAppContent(
             if (readerSession == session) {
                 readerChapter = ReaderChapter()
                 readerChapterSession = session
-                readerError = failure.message ?: strings.text("Unable to load chapter pages.")
+                readerError = failure.localizedSourceFailure(strings)
+                    ?: failure.message ?: strings.text("Unable to load chapter pages.")
             }
         } finally {
             if (readerSession == session) readerLoading = false
@@ -1046,6 +1049,9 @@ private fun ShinsouAppContent(
     DisposableEffect(appServices, interceptReaderVolumeKeys) {
         appServices.setReaderVolumeKeyMonitoringEnabled(interceptReaderVolumeKeys)
         onDispose { appServices.setReaderVolumeKeyMonitoringEnabled(false) }
+    }
+    LaunchedEffect(interceptReaderVolumeKeys) {
+        if (!interceptReaderVolumeKeys) appVolumeKeyPressTracker.clear()
     }
     LaunchedEffect(
         appLifecycle,
@@ -1247,6 +1253,27 @@ private fun ShinsouAppContent(
             .focusRequester(appFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                val volumeEvent = when (event.key) {
+                    Key.VolumeUp -> ReaderVolumeKeyEvent.VOLUME_UP
+                    Key.VolumeDown -> ReaderVolumeKeyEvent.VOLUME_DOWN
+                    else -> null
+                }
+                if (volumeEvent != null) {
+                    // LiveContainer delivers hardware volume buttons as HID to the focused
+                    // Compose view. Manga/image readers do not always reclaim focus, so the
+                    // app surface must own this path and forward it to the mounted reader.
+                    if (!interceptReaderVolumeKeys) return@onPreviewKeyEvent false
+                    if (event.type == KeyEventType.KeyUp) {
+                        appVolumeKeyPressTracker.release(volumeEvent)
+                        return@onPreviewKeyEvent true
+                    }
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (!appVolumeKeyPressTracker.shouldDispatchDown(volumeEvent, repeatCount = 0)) {
+                        return@onPreviewKeyEvent true
+                    }
+                    readerVolumeKeyRouter.dispatch(volumeEvent)
+                    return@onPreviewKeyEvent true
+                }
                 val isBackKey = event.key == Key.Escape ||
                     event.key == Key.Back ||
                     event.key == Key.NavigatePrevious
@@ -2929,7 +2956,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.7"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.8"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3269,7 +3296,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.7"),
+                strings.text("Shinsou X 1.0.1-beta.8"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),

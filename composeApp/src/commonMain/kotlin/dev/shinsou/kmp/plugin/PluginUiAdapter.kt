@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.SourceKey
@@ -145,6 +146,7 @@ public class PluginBrowseAdapter(
         ShuYueRepositoryLocation.IndexUrl(
             ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_INDEX_URL,
         ),
+    private val fileSystem: AppFileSystem? = null,
 ) : BrowseCallbacks {
     private val extensionGatewayV2: ExtensionBrowseContentGatewayV2 = extensionGatewayV2
         ?: ExtensionBrowseContentGatewayV2(
@@ -266,7 +268,7 @@ public class PluginBrowseAdapter(
      */
     private val installedLoadMutex = Mutex()
     private val mutableState = MutableStateFlow(BrowseSnapshot())
-    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore)
+    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore, fileSystem)
     private val reviewedShuYueInstallerV2 = manager.reviewedShuYueInstallCoordinatorV2(
         quarantineStore = reviewedShuYueStoreV2,
         approvalStore = reviewedShuYueStoreV2,
@@ -1934,7 +1936,11 @@ public class PluginBrowseAdapter(
                 cookies = emptyList(),
                 preferences = preferences,
                 filters = filters,
-                contentType = descriptor?.contentType ?: PluginContentType.BOTH,
+                contentType = descriptor?.contentType
+                    ?: installed.values.firstOrNull { stored ->
+                        stored.manifest.sources.orEmpty().any { it.id == source.id }
+                    }?.manifest?.installedContentType()
+                    ?: PluginContentType.BOTH,
             )
             }
             rebuiltSourceProjections[source.id] = BrowseSourceProjection(source, projected)

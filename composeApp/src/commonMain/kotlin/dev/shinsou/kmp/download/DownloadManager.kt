@@ -5,6 +5,7 @@ import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.plugin.Sha256
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -218,7 +219,7 @@ class DownloadManager(
                             item.id,
                             DownloadState.ERROR,
                             updatedAt = now(),
-                            errorMessage = error.message ?: "Download failed",
+                            errorMessage = error.sourceFailureMarker() ?: error.message ?: "Download failed",
                         )
                     } finally {
                         schedulerMutex.withLock { active.remove(item.id) }

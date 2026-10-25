@@ -213,6 +213,7 @@ fun ReaderScreen(
     val effectiveVolumeKeysEnabled = effectiveReaderVolumeKeysEnabled(settings.volumeKeys)
     val unifiedTextContent = unifiedReaderContent?.representation is ContentRepresentation.PlainText
     val unifiedEpubContent = unifiedReaderContent?.representation is ContentRepresentation.EpubSpine
+    val unifiedImageContent = unifiedReaderContent?.representation is ContentRepresentation.ImageSequence
     val unifiedProseContent = unifiedTextContent || unifiedEpubContent
     var controlsVisible by remember(chapter.id, readerSessionId, unifiedProseContent) {
         mutableStateOf(!unifiedProseContent)
@@ -264,10 +265,17 @@ fun ReaderScreen(
             (unifiedReaderInitialPageIndex
                 ?: unifiedReaderContent?.navigation?.indexOf(unifiedReaderContent.initialLocator))
                 ?.coerceIn(0, (unifiedReaderPageCount - 1).coerceAtLeast(0))
-                ?: 0,
+            ?: 0,
         )
     }
-    var unifiedReaderPageRequestSerial by remember(chapter.id, readerSessionId) { mutableStateOf(0L) }
+    var unifiedReaderPageRequest by remember(
+        chapter.id,
+        readerSessionId,
+        unifiedReaderContent?.representation?.representationId,
+        unifiedReaderInitialPageIndex,
+    ) {
+        mutableStateOf(UnifiedReaderPageRequest(unifiedReaderPageIndex))
+    }
     var unifiedReaderNavigationAction by remember(chapter.id, readerSessionId) {
         mutableStateOf<ReaderTapAction?>(null)
     }
@@ -343,8 +351,9 @@ fun ReaderScreen(
             readerPageCount > 0 -> {
                 boundaryTransition = null
                 if (unifiedReaderEnabled) {
-                    unifiedReaderPageIndex = index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0))
-                    unifiedReaderPageRequestSerial++
+                    unifiedReaderPageRequest = unifiedReaderPageRequest.request(
+                        index.coerceIn(0, (readerPageCount - 1).coerceAtLeast(0)),
+                    )
                 }
                 currentPosition = if (currentModeIsContinuous()) {
                     ReaderPosition(
@@ -383,8 +392,7 @@ fun ReaderScreen(
     fun applyExternalPosition(position: ReaderPosition) {
         currentPosition = coerceReaderPosition(position, settings.readingMode, readerPageCount)
         if (unifiedReaderEnabled && readerPageCount > 0) {
-            unifiedReaderPageIndex = currentPosition.pageIndex
-            unifiedReaderPageRequestSerial++
+            unifiedReaderPageRequest = unifiedReaderPageRequest.request(currentPosition.pageIndex)
         }
         boundaryTransition = null
         viewportRequestSerial++
@@ -401,10 +409,15 @@ fun ReaderScreen(
             }
             return
         }
+        val imagePage = unifiedReaderPageRequest.navigationIndex(unifiedReaderPageIndex)
         when (action) {
-            ReaderTapAction.PREVIOUS_PAGE -> requestPage(currentPage - 1)
+            ReaderTapAction.PREVIOUS_PAGE -> requestPage(
+                (if (unifiedImageContent) imagePage else currentPage) - 1,
+            )
             ReaderTapAction.TOGGLE_CHROME -> controlsVisible = !controlsVisible
-            ReaderTapAction.NEXT_PAGE -> requestPage(currentPage + 1)
+            ReaderTapAction.NEXT_PAGE -> requestPage(
+                (if (unifiedImageContent) imagePage else currentPage) + 1,
+            )
         }
     }
 
@@ -427,11 +440,32 @@ fun ReaderScreen(
      * keep the in-reader transition card so users can preview the destination chapter.
      */
     fun handleVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
-        if (loading || readerPageCount <= 0) return false
+        if (readerPageCount <= 0) return false
+        // Unified image/EPUB surfaces already have a page graph. A parent loading flag must
+        // not drop hardware paging, or manga volume keys stay silent after the first frame.
+        if (loading && !unifiedReaderEnabled) return false
 
         val forward = event == ReaderVolumeKeyEvent.VOLUME_DOWN
         val action = if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE
-        if (unifiedProseReader) {
+        if (unifiedImageContent) {
+            val target = imageSequenceNavigationTarget(
+                currentIndex = unifiedReaderPageRequest.navigationIndex(unifiedReaderPageIndex),
+                pageCount = readerPageCount,
+                action = action,
+            )
+            if (target != null) {
+                // Image pages already expose a durable page-index request channel. Use it
+                // directly so a volume press cannot be mistaken for the initial value when the
+                // pager is mounted or recomposed after chapter loading.
+                requestPage(target)
+            } else {
+                val adjacentChapter = if (forward) nextChapter else previousChapter
+                if (adjacentChapter == null) return false
+                if (forward) openNextChapter() else openPreviousChapter()
+            }
+            return true
+        }
+        if (unifiedReaderEnabled) {
             requestUnifiedReaderNavigation(action)
             return true
         }
@@ -475,7 +509,7 @@ fun ReaderScreen(
     // so hardware paging and Escape/back keep working without requiring another pointer click.
     LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled) {
         heldNavigationKeys.clear()
-        if ((!unifiedReaderEnabled || unifiedTextReader) && !settingsVisible && !chapterListVisible) {
+        if (!settingsVisible && !chapterListVisible) {
             focusRequester.requestFocus()
         }
     }
@@ -484,7 +518,10 @@ fun ReaderScreen(
         readerSessionId = readerSessionId,
         router = volumeKeyRouter,
         enabled = effectiveVolumeKeysEnabled,
-        onEvent = ::handleVolumeKey,
+        // A lambda has a fresh identity for each composition, so rememberUpdatedState below
+        // cannot retain Kotlin/Native's structurally equal local callable reference from the
+        // initial loading/pages-empty composition.
+        onEvent = { event -> handleVolumeKey(event) },
     )
     LaunchedEffect(systemBackRequest) {
         if (systemBackRequest == 0L) return@LaunchedEffect
@@ -549,11 +586,13 @@ fun ReaderScreen(
                     return@onPreviewKeyEvent false
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (unifiedReaderEnabled && !unifiedTextReader && event.key != Key.Escape && event.key != Key.Back &&
-                    event.key != Key.NavigatePrevious
+                if (!readerPreviewKeyIsHostOwned(
+                        key = event.key,
+                        unifiedImageOrEpubReader = unifiedReaderEnabled && !unifiedTextReader,
+                    )
                 ) {
-                    // Let the injected text/EPUB surface own navigation keys. The host retains
-                    // only the reader-level close/back behavior.
+                    // Let the injected text/EPUB surface own swipe and keyboard paging. Hardware
+                    // volume keys still belong to the host so manga paging cannot miss HID events.
                     return@onPreviewKeyEvent false
                 }
                 val suppressRepeat = when (event.key) {
@@ -660,8 +699,8 @@ fun ReaderScreen(
                     Modifier.fillMaxSize(),
                     UnifiedReaderRenderState(
                         settings = settings,
-                        requestedPageIndex = unifiedReaderPageIndex,
-                        pageRequestSerial = unifiedReaderPageRequestSerial,
+                        requestedPageIndex = unifiedReaderPageRequest.targetIndex,
+                        pageRequestSerial = unifiedReaderPageRequest.serial,
                         navigationAction = unifiedReaderNavigationAction,
                         navigationRequestKey = unifiedReaderNavigationRequestKey,
                         controlsVisible = controlsVisible,
@@ -672,6 +711,7 @@ fun ReaderScreen(
                         unifiedReaderPageCount = safePageCount
                         if (pageIndex in 0 until safePageCount) {
                             unifiedReaderPageIndex = pageIndex
+                            unifiedReaderPageRequest = unifiedReaderPageRequest.observe(pageIndex)
                             currentPosition = if (currentModeIsContinuous()) {
                                 ReaderPosition(
                                     readingMode = settings.readingMode,

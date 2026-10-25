@@ -58,6 +58,23 @@ class ReviewedLocalRepositoryTest {
         try {
             adapter.refresh()
             assertNull(adapter.state.value.errorMessage)
+            // Updated content profiles alone are insufficient for a LAN install: the exact
+            // digest and byte size must also be admitted for index, sidecar and script reads.
+            val repaired = setOf("zh.komiic", "zh.manhuagui", "zh.bilimanga.manga")
+            assertEquals(repaired, adapter.state.value.extensions.filter { it.id in repaired }.map { it.id }.toSet())
+            val genericIndex = client.fetchIndex(base)
+            val genericEntries = when (genericIndex) {
+                is RepositoryIndex.Combined -> genericIndex.plugins
+                is RepositoryIndex.Plugins -> genericIndex.entries
+                else -> error("Expected V2 packages")
+            }
+            for (entry in genericEntries.filter { it.id in repaired }) {
+                client.verifyPluginV2Sidecar(base, entry)
+                val bytes = client.downloadPluginScript(base, entry.scriptUrl)
+                assertEquals(entry.sha256, Sha256.hex(bytes))
+                assertNotNull(OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(entry, policy, base))
+                assertNull(OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(entry.copy(byteSize = requireNotNull(entry.byteSize) + 1), policy, base))
+            }
             val expected = setOf("zh.bilimanga", "zh.wenku8.api", "zh.biquge.tw")
             assertEquals(expected, adapter.state.value.extensions.filter { it.reviewedShuYueV2 }.map { it.id }.toSet())
             val index = loader.load(dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLocation.IndexUrl("$base/index.json"))

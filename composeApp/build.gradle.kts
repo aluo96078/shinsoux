@@ -14,14 +14,14 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.7")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.107")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.8")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.108")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600107)
+    .orElse(25600108)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
@@ -54,6 +54,16 @@ val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
     .orElse(false)
+val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
+    .orElse(providers.systemProperty("shinsou.pluginRepo"))
+    .orElse("../../shinsou_plugin")
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty(
+        "shinsou.pluginRepo",
+        shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
+    )
+}
 val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
     .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_IDENTITY"))
     .orNull
@@ -350,7 +360,7 @@ kotlin {
         }
 
         val desktopTest by getting {
-            resources.srcDir(file("../../shinsou_plugin"))
+            resources.srcDir(shinsouPluginRepository.map(::file))
         }
     }
 }

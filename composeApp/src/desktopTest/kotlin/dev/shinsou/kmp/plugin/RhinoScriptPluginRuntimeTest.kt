@@ -50,28 +50,30 @@ class RhinoScriptPluginRuntimeTest {
     @Test
     fun sourceFailureMarkerRetainsRecognizableAnchoredRhinoWrapper() = runTest {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
-            script = "var source={baseUrl:'https://source.example',getPopularManga:function(){throw new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN');}};",
-            manifest = PluginManifest(
-                "failure.rhino", "Failure Rhino", "1.0.0", 1, "all",
-                script = "failure.rhino.js", signature = "",
-                sources = listOf(SourceIndexEntry("Failure", "all", 116L, "https://source.example")),
-            ),
-            environment = ScriptPluginEnvironment(
-                PluginNetworkClient(
-                    PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) }, storage,
-                    policy = rhinoTestNetworkPolicy("https://source.example"),
-                    hostResolver = RHINO_TEST_HOST_RESOLVER,
+        for (marker in listOf("SHINSOU_SOURCE_HTTP_FORBIDDEN", "SHINSOU_SOURCE_QUOTA_EXCEEDED")) {
+            val runtime = RhinoScriptPluginRuntimeFactory.unsafeForTests().create(
+                script = "var source={baseUrl:'https://source.example',getPopularManga:function(){throw new Error('$marker');}};",
+                manifest = PluginManifest(
+                    "failure.rhino", "Failure Rhino", "1.0.0", 1, "all",
+                    script = "failure.rhino.js", signature = "",
+                    sources = listOf(SourceIndexEntry("Failure", "all", 116L, "https://source.example")),
                 ),
-                storage,
-                runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
-            ),
-        )
-        try {
-            val error = assertFailsWith<Throwable> { runtime.getPopularManga(1) }
-            assertNotNull(error.localizedSourceFailure(dev.shinsou.kmp.ui.i18n.shinsouStringsFor("en")))
-        } finally {
-            runtime.close()
+                environment = ScriptPluginEnvironment(
+                    PluginNetworkClient(
+                        PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) }, storage,
+                        policy = rhinoTestNetworkPolicy("https://source.example"),
+                        hostResolver = RHINO_TEST_HOST_RESOLVER,
+                    ),
+                    storage,
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
+                ),
+            )
+            try {
+                val error = assertFailsWith<Throwable> { runtime.getPopularManga(1) }
+                assertNotNull(error.localizedSourceFailure(dev.shinsou.kmp.ui.i18n.shinsouStringsFor("en")))
+            } finally {
+                runtime.close()
+            }
         }
     }
     @Test

@@ -201,10 +201,25 @@ internal object OfficialShinsouReviewedCatalog {
                 ),
             ),
         )
+    }, publishedProfiles.single { it.manifest.id == "zh.bilimanga.manga" }.let { previous ->
+        previous.copy(manifest = previous.manifest.copy(
+            version = "1.0.1", versionCode = 2,
+            signature = "0f4f4e8783d835cd5d5b4ee2734ecd219dc02da8df96aa71cce4bb1353f1f759",
+        ))
+    }, publishedProfiles.single { it.manifest.id == "zh.komiic" }.let { previous ->
+        previous.copy(manifest = previous.manifest.copy(
+            version = "1.2.2", versionCode = 6,
+            signature = "ccdd5c25dc607f26a436377c15f9b4ab1c3ed41aad66e17bb758f23131186b9c",
+        ))
     }, publishedProfiles.single { it.manifest.id == "zh.komiic" }.let { previous ->
         previous.copy(manifest = previous.manifest.copy(
             version = "1.2.1", versionCode = 5,
             signature = "6970799621bd0a557437524d6b41a2fb477f4e99fbd7789af7288b55cd2052ba",
+        ))
+    }, publishedProfiles.single { it.manifest.id == "zh.manhuagui" }.let { previous ->
+        previous.copy(manifest = previous.manifest.copy(
+            version = "1.1.8", versionCode = 10,
+            signature = "fc6374218ed3c69a7e79823ef61a5f50b97556e29f6f6925ae145c192ab9660c",
         ))
     }, publishedProfiles.single { it.manifest.id == "zh.manhuagui" }.let { previous ->
         previous.copy(manifest = previous.manifest.copy(
@@ -316,7 +331,10 @@ internal object OfficialShinsouReviewedCatalog {
         "850c81d90644a3933fa0d6e5113c057c54d2c22f23b1c5c41dff83003c10f7a9" to 23_123,
         "cd09553432d85389de169017aeeadd776f539183f13598c2259b4fec738cbdf1" to 35_431,
         "75eb03ef359f5ba8aea594f5ec888c24ba045e7b012edd82949fb1a50c270d39" to 29_153,
+        "fc6374218ed3c69a7e79823ef61a5f50b97556e29f6f6925ae145c192ab9660c" to 32_025,
         "5a450bf1480675f9be5993188221e49fb350338217511eb8e61fe90e8b178731" to 10_676,
+        "6970799621bd0a557437524d6b41a2fb477f4e99fbd7789af7288b55cd2052ba" to 11_172,
+        "ccdd5c25dc607f26a436377c15f9b4ab1c3ed41aad66e17bb758f23131186b9c" to 11_711,
         "a6710148c297694ce8f2c2c2345eb68b3cb758aadc22334ab067c8bd06af0765" to 13_788,
         "d79fbcd04e3398f57d73af021691fa368ae3d7702dc3ef62d00cc67144fd7eba" to 23_990,
         "88618e4c1e6df4a7955c40e5c24a879c6d04baf945d5a89fea25f2b27ca4e133" to 22_580,
@@ -324,6 +342,7 @@ internal object OfficialShinsouReviewedCatalog {
         "8da992d2eab8c5b1030b0c9c617e1447645ce8ac3442145760b63f28f62cd8cb" to 41_927,
         "320efd108ed7656cb00dd5270f4e54c67f08fc9e3c2af0c362f57af987c2e1f3" to 25_025,
         "849db61372e4c7cf9d7ca689fbc427c1440dabd10c017a548c242175c651bbdd" to 29_211,
+        "0f4f4e8783d835cd5d5b4ee2734ecd219dc02da8df96aa71cce4bb1353f1f759" to 32_592,
     )
 
     fun match(

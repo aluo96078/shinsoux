@@ -1359,6 +1359,8 @@ public sealed class ShuYueAdmissionException(message: String) : IllegalStateExce
     public class MissingPermissions(public val missing: Set<ShuYueExecutionPermissionV2>) :
         ShuYueAdmissionException("ShuYue script is missing execution permissions: $missing")
     public class RuntimeMismatch : ShuYueAdmissionException("ShuYue runtime descriptor does not match reviewed metadata")
+    public class CorruptInstallations :
+        ShuYueAdmissionException("Stored ShuYue installation records could not be decoded safely.")
 }
 
 /**

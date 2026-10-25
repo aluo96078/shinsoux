@@ -80,6 +80,7 @@ import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
+import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
@@ -495,7 +496,8 @@ private fun DownloadRow(
                         DownloadState.DOWNLOADING -> strings.text("{0}% · {1}/{2} pages", (item.progress * 100).roundToInt(), item.downloadedPages, item.totalPages)
                         DownloadState.PAUSED -> strings.text("Paused")
                         DownloadState.DOWNLOADED -> strings.text("Downloaded")
-                        DownloadState.ERROR -> item.errorMessage ?: strings.text("Download failed")
+                        DownloadState.ERROR -> item.errorMessage?.localizedSourceFailure(strings)
+                            ?: item.errorMessage ?: strings.text("Download failed")
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = if (item.state == DownloadState.ERROR) MaterialTheme.colorScheme.error
@@ -1166,7 +1168,7 @@ fun AboutScreen(
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.about,
-            subtitle = strings.text("Shinsou X · version 1.0.1-beta.7"),
+            subtitle = strings.text("Shinsou X · version 1.0.1-beta.8"),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
         )
         LazyColumn(

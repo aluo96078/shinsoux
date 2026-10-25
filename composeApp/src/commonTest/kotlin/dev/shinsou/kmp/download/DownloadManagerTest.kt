@@ -16,6 +16,36 @@ import kotlin.test.assertTrue
 
 class DownloadManagerTest {
     @Test
+    fun quotaFailurePersistsClassificationWithoutFetchingPagesOrRetrying() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One")),
+            ),
+        )
+        var requests = 0
+        val manager = DownloadManager(
+            repository,
+            MemoryFileSystem(),
+            ChapterPageProvider { _, _ ->
+                requests++
+                throw IllegalStateException("wrapper", IllegalArgumentException("Error: SHINSOU_SOURCE_QUOTA_EXCEEDED (plugin.js#280)"))
+            },
+            DownloadPageFetcher { error("No pages should be fetched after a quota refusal") },
+        )
+        try {
+            manager.enqueue(1, 3)
+            manager.awaitIdle()
+            val entry = repository.currentSnapshot.downloadQueue.single()
+            assertEquals(DownloadState.ERROR, entry.state)
+            assertEquals("SHINSOU_SOURCE_QUOTA_EXCEEDED", entry.errorMessage)
+            assertEquals(1, requests)
+        } finally {
+            manager.close()
+        }
+    }
+
+    @Test
     fun closeWaitsForCancelledDownloadCleanup() = runTest {
         val repository = ShinsouRepository(
             AppSnapshot(

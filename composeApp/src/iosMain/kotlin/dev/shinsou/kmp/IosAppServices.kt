@@ -19,6 +19,7 @@ import dev.shinsou.kmp.ui.ImportedDocumentSource
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEventSink
+import dev.shinsou.kmp.ui.readerVolumeKeyShouldBeConsumed
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
@@ -93,6 +94,10 @@ import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
 import kotlin.coroutines.resume
 
+/** Notification observed by the Swift trace recorder for one ordered reader-volume event. */
+public const val IOS_READER_VOLUME_KEY_TRACE_NOTIFICATION =
+    "dev.aluo.shinsoux.reader-volume-keys.trace"
+
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 internal class IosAppServices(
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
@@ -108,6 +113,7 @@ internal class IosAppServices(
     private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val readerVolumeKeyChannel = Channel<ReaderVolumeKeyEvent>(capacity = Channel.BUFFERED)
     private var readerVolumeKeyEventSink: ReaderVolumeKeyEventSink? = null
+    private var readerVolumeKeyTraceSequence: Long = 0L
     private val systemBackChannel = Channel<Unit>(capacity = Channel.BUFFERED)
     // Gesture progress can arrive faster than Compose consumes it. Keep only the latest event so
     // the terminal Settled event replaces stale progress instead of being rejected by a full buffer.
@@ -133,13 +139,89 @@ internal class IosAppServices(
     }
 
     fun emitReaderVolumeKey(event: ReaderVolumeKeyEvent): Boolean {
-        // A presented Browse reader can intentionally leave platform interception disabled when
-        // it has no consumer for this flow. Never swallow/reset the system volume in that state.
-        if (!IosReaderPresentationState.readerOpen) return false
-        if (!IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys) return false
-        if (!IosReaderVolumeKeyState.monitoringEnabled) return false
-        readerVolumeKeyEventSink?.let { return it.dispatch(event) }
-        return readerVolumeKeyChannel.trySend(event).isSuccess
+        val readerOpen = IosReaderPresentationState.readerOpen
+        val volumeKeysEnabled = IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys
+        val monitoringEnabled = IosReaderVolumeKeyState.monitoringEnabled
+        // While a reader is open and volume-key paging is configured, consume the hardware event
+        // even if the current page cannot move. Returning false lets iOS apply a real volume change.
+        if (
+            !readerVolumeKeyShouldBeConsumed(
+                readerOpen = readerOpen,
+                volumeKeysEnabled = volumeKeysEnabled,
+                monitoringEnabled = monitoringEnabled,
+            )
+        ) {
+            traceReaderVolumeKey(
+                event = "input",
+                key = event,
+                route = "gate_rejected",
+                accepted = false,
+                readerOpen = readerOpen,
+                volumeKeysEnabled = volumeKeysEnabled,
+                monitoringEnabled = monitoringEnabled,
+            )
+            return false
+        }
+        val sink = readerVolumeKeyEventSink
+        if (sink != null) {
+            val accepted = sink.dispatch(event)
+            traceReaderVolumeKey(
+                event = "input",
+                key = event,
+                route = "sink",
+                accepted = accepted,
+                readerOpen = readerOpen,
+                volumeKeysEnabled = volumeKeysEnabled,
+                monitoringEnabled = monitoringEnabled,
+            )
+            return accepted
+        } else {
+            val queued = readerVolumeKeyChannel.trySend(event).isSuccess
+            traceReaderVolumeKey(
+                event = "input",
+                key = event,
+                route = "channel",
+                accepted = queued,
+                readerOpen = readerOpen,
+                volumeKeysEnabled = volumeKeysEnabled,
+                monitoringEnabled = monitoringEnabled,
+            )
+            return queued
+        }
+    }
+
+    /**
+     * Emits a compact, non-sensitive line as the notification object. Swift should observe
+     * [IOS_READER_VOLUME_KEY_TRACE_NOTIFICATION] and append `notification.object as String` to
+     * its durable trace file. Every line has a monotonically increasing `seq` and fixed fields;
+     * no manga/chapter/content identifiers cross this diagnostic boundary.
+     */
+    private fun traceReaderVolumeKey(
+        event: String,
+        key: ReaderVolumeKeyEvent? = null,
+        route: String? = null,
+        accepted: Boolean? = null,
+        readerOpen: Boolean = IosReaderPresentationState.readerOpen,
+        volumeKeysEnabled: Boolean = IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys,
+        monitoringEnabled: Boolean = IosReaderVolumeKeyState.monitoringEnabled,
+    ) {
+        val sequence = ++readerVolumeKeyTraceSequence
+        val payload = buildString {
+            append("seq=").append(sequence)
+            append(" event=").append(event)
+            key?.let { append(" key=").append(it.name) }
+            route?.let { append(" route=").append(it) }
+            accepted?.let { append(" accepted=").append(if (it) 1 else 0) }
+            append(" readerOpen=").append(if (readerOpen) 1 else 0)
+            append(" configured=").append(if (volumeKeysEnabled) 1 else 0)
+            append(" monitoring=").append(if (monitoringEnabled) 1 else 0)
+            append(" infrastructure=").append(if (IosReaderVolumeKeyState.infrastructureEnabled) 1 else 0)
+            append(" sink=").append(if (readerVolumeKeyEventSink != null) 1 else 0)
+        }
+        NSNotificationCenter.defaultCenter.postNotificationName(
+            IOS_READER_VOLUME_KEY_TRACE_NOTIFICATION,
+            `object` = payload,
+        )
     }
 
     fun emitSystemBack(): Boolean = systemBackChannel.trySend(Unit).isSuccess
@@ -317,21 +399,26 @@ internal class IosAppServices(
     }
 
     override fun setReaderOpen(open: Boolean) {
-        if (IosReaderPresentationState.readerOpen == open) return
-        IosReaderPresentationState.readerOpen = open
-        IosReaderPresentationState.notifyChanged()
+        if (IosReaderPresentationState.readerOpen != open) {
+            IosReaderPresentationState.readerOpen = open
+            IosReaderPresentationState.notifyChanged()
+        }
+        traceReaderVolumeKey(event = "reader_open", readerOpen = open)
     }
 
     override fun setReaderVolumeKeyInfrastructureEnabled(enabled: Boolean) {
         IosReaderVolumeKeyState.setInfrastructureEnabled(enabled)
+        traceReaderVolumeKey(event = "infrastructure", volumeKeysEnabled = enabled)
     }
 
     override fun setReaderVolumeKeyMonitoringEnabled(enabled: Boolean) {
         IosReaderVolumeKeyState.setMonitoringEnabled(enabled)
+        traceReaderVolumeKey(event = "monitoring", monitoringEnabled = enabled)
     }
 
     override fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?) {
         readerVolumeKeyEventSink = sink
+        traceReaderVolumeKey(event = "sink", accepted = sink != null)
     }
 
     override fun requestNotificationPermission() {

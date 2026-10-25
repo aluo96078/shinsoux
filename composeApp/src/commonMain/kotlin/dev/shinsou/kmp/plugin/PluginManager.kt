@@ -518,6 +518,7 @@ public class PluginManager(
                 description = null,
                 state = ExtensionState.INSTALLED,
                 installedVersion = manifest.version,
+                contentType = manifest.installedContentType(),
             )
         }
 
@@ -537,7 +538,12 @@ public class PluginManager(
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
-                    result[entry.id] = entry.toDescriptor(repository, state, local?.manifest?.version)
+                    result[entry.id] = entry.toDescriptor(
+                        repository,
+                        state,
+                        local?.manifest?.version,
+                        local?.manifest?.installedContentType(),
+                    )
                 }
 
                 is RepositoryIndex.Legacy -> index.entries.forEach { entry ->
@@ -551,7 +557,12 @@ public class PluginManager(
                             ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
-                    result[entry.pkg] = entry.toDescriptor(repository, state, local?.manifest?.version)
+                    result[entry.pkg] = entry.toDescriptor(
+                        repository,
+                        state,
+                        local?.manifest?.version,
+                        local?.manifest?.installedContentType(),
+                    )
                 }
                 is RepositoryIndex.Combined -> index.plugins.forEach { entry ->
                     val local = installed[entry.id]
@@ -564,7 +575,12 @@ public class PluginManager(
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
-                    result[entry.id] = entry.toDescriptor(repository, state, local?.manifest?.version)
+                    result[entry.id] = entry.toDescriptor(
+                        repository,
+                        state,
+                        local?.manifest?.version,
+                        local?.manifest?.installedContentType(),
+                    )
                 }
             }
         }
@@ -2752,6 +2768,7 @@ public class PluginManager(
         repository: ExtensionRepository,
         state: ExtensionState,
         installedVersion: String?,
+        installedContentType: PluginContentType? = null,
     ): ExtensionDescriptor = ExtensionDescriptor(
         id = id,
         name = name,
@@ -2767,7 +2784,8 @@ public class PluginManager(
         description = description,
         state = state,
         installedVersion = installedVersion,
-        contentType = resolveEntryContentType(type, contentType, sources.orEmpty()),
+        contentType = resolveEntryContentType(type, contentType, sources.orEmpty())
+            .withInstalledFallback(installedContentType),
         admissionFingerprint = admissionFingerprint(),
     )
 
@@ -2775,6 +2793,7 @@ public class PluginManager(
         repository: ExtensionRepository,
         state: ExtensionState,
         installedVersion: String?,
+        installedContentType: PluginContentType? = null,
     ): ExtensionDescriptor = ExtensionDescriptor(
         id = pkg,
         name = name,
@@ -2789,7 +2808,8 @@ public class PluginManager(
         description = null,
         state = state,
         installedVersion = installedVersion,
-        contentType = resolveEntryContentType(type, contentType, sources.orEmpty()),
+        contentType = resolveEntryContentType(type, contentType, sources.orEmpty())
+            .withInstalledFallback(installedContentType),
         admissionFingerprint = admissionFingerprint(),
     )
 }

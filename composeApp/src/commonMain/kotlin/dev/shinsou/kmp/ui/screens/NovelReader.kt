@@ -112,6 +112,19 @@ internal fun isReaderNavigationKey(key: Key): Boolean = when (key) {
     else -> false
 }
 
+/**
+ * Unified image/EPUB surfaces own swipe/keyboard paging, but hardware volume keys still belong
+ * to the host reader. Dropping them here made manga paging ignore Compose/HID volume events.
+ */
+internal fun readerPreviewKeyIsHostOwned(
+    key: Key,
+    unifiedImageOrEpubReader: Boolean,
+): Boolean {
+    if (key == Key.VolumeUp || key == Key.VolumeDown) return true
+    if (!unifiedImageOrEpubReader) return true
+    return key == Key.Escape || key == Key.Back || key == Key.NavigatePrevious
+}
+
 /** ShuYue's useful interaction grammar: 30% previous, 40% chrome, 30% next. */
 internal fun novelTapAction(
     horizontalPosition: Float,

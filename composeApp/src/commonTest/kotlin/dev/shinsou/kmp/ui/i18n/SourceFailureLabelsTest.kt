@@ -5,6 +5,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class SourceFailureLabelsTest {
+    @Test fun quotaFailureUsesFixedLocalizedGuidance() {
+        val error = IllegalStateException("Error: SHINSOU_SOURCE_QUOTA_EXCEEDED (plugin.js#280)")
+        assertEquals("來源的每日圖片額度已用完。請等待額度重置後再試。", error.localizedSourceFailure(shinsouStringsFor("zh-TW")))
+        assertEquals("来源的每日图片额度已用完。请等待额度重置后再试。", error.localizedSourceFailure(shinsouStringsFor("zh-CN")))
+        assertEquals("The source's daily image quota has been reached. Try again after the quota resets.", error.localizedSourceFailure(shinsouStringsFor("en")))
+        assertNull(IllegalStateException("SHINSOU_SOURCE_QUOTA_EXCEEDED private-ticket").localizedSourceFailure(shinsouStringsFor("en")))
+        assertEquals("來源的每日圖片額度已用完。請等待額度重置後再試。", "SHINSOU_SOURCE_QUOTA_EXCEEDED".localizedSourceFailure(shinsouStringsFor("zh-TW")))
+        assertNull("SHINSOU_SOURCE_QUOTA_EXCEEDED private-ticket".localizedSourceFailure(shinsouStringsFor("en")))
+    }
+
     @Test fun exactNestedMarkerUsesLocalizedGuidance() {
         val error = IllegalStateException("wrapper", IllegalArgumentException("SHINSOU_SOURCE_HTTP_CHALLENGE"))
         assertEquals("網站要求驗證。若來源設定提供 Web 驗證，請完成後重試；若沒有此選項，請稍後再試。", error.localizedSourceFailure(shinsouStringsFor("zh-TW")))

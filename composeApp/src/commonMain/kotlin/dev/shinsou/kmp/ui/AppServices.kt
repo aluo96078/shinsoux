@@ -454,6 +454,16 @@ fun readerVolumeKeyAction(
     }
 }
 
+/**
+ * iOS applies a real system volume change unless this returns true. Consume the press whenever
+ * a reader is open and volume-key paging is live, even if the current page cannot move.
+ */
+fun readerVolumeKeyShouldBeConsumed(
+    readerOpen: Boolean,
+    volumeKeysEnabled: Boolean,
+    monitoringEnabled: Boolean,
+): Boolean = readerOpen && volumeKeysEnabled && monitoringEnabled
+
 internal fun readerMayCrossChapterBoundary(
     proseReader: Boolean,
     pageCountMeasured: Boolean,
