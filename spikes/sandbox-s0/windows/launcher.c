@@ -6,7 +6,11 @@
  *
  * "none" is the control (plain child), "job" adds only the Job Object, "container" adds the
  * AppContainer, and "lpac" makes it a Low Privilege AppContainer: it opts out of the
- * ALL APPLICATION PACKAGES group, so default grants (for example parts of HKCU) no longer apply. The child's stdout/stderr are relayed; the child gets a minimal environment.
+ * ALL APPLICATION PACKAGES group, so default grants (for example parts of HKCU) no longer apply.
+ * The child's stdout/stderr are relayed; the child gets a minimal environment. The child joins the
+ * Job at creation (PROC_THREAD_ATTRIBUTE_JOB_LIST), so there is no window in which it runs, or sits
+ * suspended, outside the Job; any failure after creation terminates it.
+ * Test only: SHINSOU_S0_FAIL_AFTER_CREATE=1 forces that post-creation failure path.
  * Prints `LAUNCH mode=... exit=... ms=... peak_mib=...` after the child ends.
  */
 #define WIN32_LEAN_AND_MEAN
@@ -22,8 +26,11 @@
 
 #define PROFILE_NAME L"Shinsou.Sandbox.S0"
 
+static void kill_child(void);
+
 static void die(const char *what) {
     fprintf(stderr, "launcher: %s failed (%lu)\n", what, GetLastError());
+    kill_child();
     exit(2);
 }
 
@@ -51,6 +58,16 @@ static void grant_read_execute(const wchar_t *dir, PSID sid) {
     if (SetNamedSecurityInfoW((LPWSTR)dir, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, acl, NULL) != ERROR_SUCCESS) die("SetNamedSecurityInfo");
     LocalFree(acl);
     LocalFree(sd);
+}
+
+static HANDLE child_process; /* terminated by die() once created */
+
+static void kill_child(void) {
+    if (!child_process) return;
+    TerminateProcess(child_process, 0xDEAD);
+    WaitForSingleObject(child_process, 5000);
+    CloseHandle(child_process);
+    child_process = NULL;
 }
 
 static HANDLE make_job(SIZE_T mem_mib) {
@@ -103,9 +120,9 @@ int wmain(int argc, wchar_t **argv) {
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
 
     SIZE_T attr_size = 0;
-    InitializeProcThreadAttributeList(NULL, 3, 0, &attr_size);
+    InitializeProcThreadAttributeList(NULL, 4, 0, &attr_size);
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, attr_size);
-    if (!InitializeProcThreadAttributeList(attrs, 3, 0, &attr_size)) die("InitializeProcThreadAttributeList");
+    if (!InitializeProcThreadAttributeList(attrs, 4, 0, &attr_size)) die("InitializeProcThreadAttributeList");
     SECURITY_CAPABILITIES caps = { 0 };
     if (use_container) {
         caps.AppContainerSid = sid; /* CapabilityCount = 0: in particular no internetClient */
@@ -118,6 +135,9 @@ int wmain(int argc, wchar_t **argv) {
     /* Only the pipe's write end is inherited. */
     HANDLE inherit[1] = { wr };
     if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, NULL, NULL)) die("UpdateProcThreadAttribute(handles)");
+    /* Job membership is part of process creation (Windows 10+): no unassigned-child window. */
+    HANDLE job = use_job ? make_job(mem) : NULL;
+    if (job && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL)) die("UpdateProcThreadAttribute(job)");
 
     STARTUPINFOEXW si = { 0 };
     si.StartupInfo.cb = sizeof si;
@@ -142,15 +162,17 @@ int wmain(int argc, wchar_t **argv) {
     }
     env[pos] = 0;
 
-    HANDLE job = use_job ? make_job(mem) : NULL;
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
     QueryPerformanceCounter(&t0);
     PROCESS_INFORMATION pi;
     if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
                         env, NULL, &si.StartupInfo, &pi)) die("CreateProcess");
-    if (job && !AssignProcessToJobObject(job, pi.hProcess)) die("AssignProcessToJobObject");
-    ResumeThread(pi.hThread);
+    child_process = pi.hProcess;
+    BOOL in_job = FALSE;
+    if (job && (!IsProcessInJob(pi.hProcess, job, &in_job) || !in_job)) die("IsProcessInJob");
+    if (GetEnvironmentVariableW(L"SHINSOU_S0_FAIL_AFTER_CREATE", NULL, 0)) { SetLastError(ERROR_INVALID_FUNCTION); die("forced post-creation failure"); }
+    if (ResumeThread(pi.hThread) == (DWORD)-1) die("ResumeThread");
     CloseHandle(wr);
 
     char buf[4096];
@@ -160,6 +182,7 @@ int wmain(int argc, wchar_t **argv) {
     QueryPerformanceCounter(&t1);
     DWORD code = 0;
     GetExitCodeProcess(pi.hProcess, &code);
+    child_process = NULL;
     double peak = 0;
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION x;

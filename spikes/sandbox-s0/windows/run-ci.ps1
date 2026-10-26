@@ -59,6 +59,17 @@ $after = @(Get-Process probe -ErrorAction SilentlyContinue).Count
 Log "probe processes before=$before after=$after"
 if ($before -lt 1 -or $after -ne 0) { $fail = 1 }
 
+Log "== post-creation failure: the launcher must not leave a (suspended) child behind"
+$env:SHINSOU_S0_FAIL_AFTER_CREATE = "1"
+$o = & "$B\launcher.exe" lpac 128 "$B\probe.exe" hang 2>&1
+$code = $LASTEXITCODE
+Remove-Item Env:SHINSOU_S0_FAIL_AFTER_CREATE
+$o | ForEach-Object { Log $_ }
+Start-Sleep -Seconds 1
+$left = @(Get-Process probe -ErrorAction SilentlyContinue).Count
+Log "launcher exit=$code probe processes left=$left"
+if ($code -ne 2 -or $left -ne 0) { $fail = 1 }
+
 $listener.Stop()
 Remove-Item $secret -ErrorAction SilentlyContinue
 Log ("== OVERALL " + $(if ($fail) { "FAIL" } else { "PASS" }))
