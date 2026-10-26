@@ -5,6 +5,7 @@
  *   probe.exe <secret-file> <loopback-port> <host-pid>
  *   probe.exe noop                         (cold-start measurement)
  *   probe.exe hang                         (sleeps forever: Job kill-on-close test)
+ *   probe.exe spin                         (busy for 2 s of wall time, prints the CPU time used)
  *
  * Prints `name=OK(unexpected)` or `name=denied(<error>)`, then `RESULT PASS|FAIL (<n> allowed)`.
  */
@@ -45,6 +46,16 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     if (argc >= 2 && strcmp(argv[1], "noop") == 0) return 0;
     if (argc >= 2 && strcmp(argv[1], "hang") == 0) { for (;;) Sleep(1000); } /* kill-on-close test */
+    if (argc >= 2 && strcmp(argv[1], "spin") == 0) { /* Job CPU rate cap test */
+        ULONGLONG end = GetTickCount64() + 2000;
+        volatile unsigned long long x = 0;
+        while (GetTickCount64() < end) x++;
+        FILETIME c, e, k, u;
+        GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
+        ULONGLONG cpu = ((((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime)) / 10000;
+        printf("SPIN wall_ms=2000 cpu_ms=%llu\n", cpu);
+        return 0;
+    }
     if (argc < 4) { fprintf(stderr, "usage: probe <secret-file> <loopback-port> <host-pid>\n"); return 2; }
     WSADATA w;
     WSAStartup(MAKEWORD(2, 2), &w);

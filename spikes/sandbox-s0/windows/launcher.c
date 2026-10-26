@@ -11,12 +11,20 @@
  * Job at creation (PROC_THREAD_ATTRIBUTE_JOB_LIST), so there is no window in which it runs, or sits
  * suspended, outside the Job; any failure after creation terminates it.
  * Test only: SHINSOU_S0_FAIL_AFTER_CREATE=1 forces that post-creation failure path.
+ * SHINSOU_S0_CPU_RATE=<percent> adds a hard CPU rate cap to the Job.
+ *
+ *   launcher.exe <mode> <memMiB> --bench <helper.exe> <bootstrap.js>
+ *
+ * drives helper.c over a stdin/stdout pipe pair instead of relaying output, and prints BENCH lines
+ * (cold start, invoke and sync-bridge round trips, helper memory).
  * Prints `LAUNCH mode=... exit=... ms=... peak_mib=...` after the child ends.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
 #include <aclapi.h>
+#include <psapi.h>
+#include <stdint.h>
 #include <sddl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,11 +91,126 @@ static HANDLE make_job(SIZE_T mem_mib) {
         JOB_OBJECT_UILIMIT_EXITWINDOWS | JOB_OBJECT_UILIMIT_GLOBALATOMS | JOB_OBJECT_UILIMIT_HANDLES |
         JOB_OBJECT_UILIMIT_READCLIPBOARD | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS | JOB_OBJECT_UILIMIT_WRITECLIPBOARD };
     if (!SetInformationJobObject(job, JobObjectBasicUIRestrictions, &ui, sizeof ui)) die("SetInformationJobObject(UI)");
+    wchar_t rate[16];
+    if (GetEnvironmentVariableW(L"SHINSOU_S0_CPU_RATE", rate, 16)) {
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION c = { 0 };
+        c.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        c.CpuRate = (DWORD)_wtoi(rate) * 100; /* units of 1/100 percent of all processors */
+        if (!SetInformationJobObject(job, JobObjectCpuRateControlInformation, &c, sizeof c)) die("SetInformationJobObject(cpu rate)");
+    }
     return job;
 }
 
+/* ---- --bench: drive helper.c (frame = type u8, len u32 LE, payload) ---- */
+static HANDLE bench_to, bench_from;
+static char *bench_buf; /* scratch for result payloads */
+
+static int b_write(const void *p, DWORD n) {
+    const char *c = p;
+    while (n) { DWORD put = 0; if (!WriteFile(bench_to, c, n, &put, NULL) || !put) return -1; c += put; n -= put; }
+    return 0;
+}
+
+static int b_read(void *p, DWORD n) {
+    char *c = p;
+    while (n) { DWORD got = 0; if (!ReadFile(bench_from, c, n, &got, NULL) || !got) return -1; c += got; n -= got; }
+    return 0;
+}
+
+static int b_send(char type, const void *a, uint32_t alen, const void *b, uint32_t blen) {
+    uint32_t len = alen + blen;
+    if (b_write(&type, 1) || b_write(&len, 4)) return -1;
+    if (alen && b_write(a, alen)) return -1;
+    if (blen && b_write(b, blen)) return -1;
+    return 0;
+}
+
+/* Waits for 'R', answering the helper's sync bridge calls ('b') with a fixed reply. */
+static int b_result(uint8_t *status, uint32_t *len) {
+    for (;;) {
+        char type; uint32_t n;
+        if (b_read(&type, 1) || b_read(&n, 4) || n > (8u << 20)) return -1;
+        if (n && b_read(bench_buf, n)) return -1;
+        if (type == 'b') { if (b_send('B', "\"r\"", 3, NULL, 0)) return -1; continue; }
+        if (type != 'R' || n < 1) return -1;
+        *status = (uint8_t)bench_buf[0];
+        *len = n - 1;
+        return 0;
+    }
+}
+
+static int b_invoke(const char *method, const char *args, uint8_t *status, uint32_t *len) {
+    if (b_send('V', method, (uint32_t)strlen(method) + 1, args, (uint32_t)strlen(args))) return -1;
+    return b_result(status, len);
+}
+
+static double since_ms(LARGE_INTEGER a) {
+    LARGE_INTEGER f, b;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&b);
+    return (double)(b.QuadPart - a.QuadPart) * 1000.0 / f.QuadPart;
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* Median of n timed invocations of method(args); -1 on any failure. */
+static double b_median(const char *method, const char *args, int n) {
+    double t[256];
+    for (int i = 0; i < n; i++) {
+        uint8_t st; uint32_t len;
+        LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+        if (b_invoke(method, args, &st, &len) || st != 0) return -1;
+        t[i] = since_ms(t0);
+    }
+    qsort(t, (size_t)n, sizeof t[0], cmp_double);
+    return t[n / 2];
+}
+
+static int run_bench(const wchar_t *bootstrap_path, HANDLE proc, LARGE_INTEGER created) {
+    static const char script[] =
+        "var source={ok:function(){return 'ok';},big:function(n){return 'y'.repeat(n);},"
+        "bridgeN:function(n){for(var i=0;i<n;i++)bridge.httpGet('x');return n;}};";
+    bench_buf = malloc(8u << 20);
+    FILE *f = _wfopen(bootstrap_path, L"rb");
+    if (!f || !bench_buf) return -1;
+    fseek(f, 0, SEEK_END); long blen = ftell(f); fseek(f, 0, SEEK_SET);
+    char *boot = malloc((size_t)blen + 4 + sizeof script);
+    uint32_t b32 = (uint32_t)blen;
+    memcpy(boot, &b32, 4);
+    if (fread(boot + 4, 1, (size_t)blen, f) != (size_t)blen) return -1;
+    fclose(f);
+    memcpy(boot + 4 + blen, script, sizeof script - 1);
+    uint8_t st; uint32_t len;
+    if (b_send('I', boot, (uint32_t)(4 + blen + sizeof script - 1), NULL, 0) || b_result(&st, &len) || st != 0) {
+        fprintf(stderr, "bench: init failed (status %u)\n", st);
+        return -1;
+    }
+    double init_ms = since_ms(created);
+    if (b_invoke("ok", "[]", &st, &len) || st != 0) return -1;
+    printf("BENCH cold_start_to_init_ms=%.1f to_first_invoke_ms=%.1f\n", init_ms, since_ms(created));
+    double ok = b_median("ok", "[]", 200);
+    printf("BENCH invoke_ok_median_ms=%.3f\n", ok);
+    printf("BENCH result_64KiB_median_ms=%.3f\n", b_median("big", "[65536]", 31));
+    printf("BENCH result_1MiB_median_ms=%.3f\n", b_median("big", "[1048576]", 15));
+    double br = b_median("bridgeN", "[1000]", 5);
+    printf("BENCH sync_bridge_round_trip_us=%.1f\n", (br - ok) * 1000.0 / 1000.0);
+    PROCESS_MEMORY_COUNTERS_EX pmc = { sizeof pmc };
+    if (GetProcessMemoryInfo(proc, (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof pmc))
+        printf("BENCH helper_working_set_mib=%.1f private_mib=%.1f peak_working_set_mib=%.1f\n",
+               pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0, pmc.PeakWorkingSetSize / 1048576.0);
+    b_send('Q', NULL, 0, NULL, 0);
+    printf("BENCH done\n");
+    return (ok < 0 || br < 0) ? -1 : 0;
+}
+
 int wmain(int argc, wchar_t **argv) {
-    if (argc < 4) { fprintf(stderr, "usage: launcher <none|job|container> <memMiB> <child.exe> [args...]\n"); return 2; }
+    if (argc < 4) { fprintf(stderr, "usage: launcher <none|job|container|lpac> <memMiB> [--bench] <child.exe> [args...]\n"); return 2; }
+    int bench = wcscmp(argv[3], L"--bench") == 0;
+    if (bench && argc < 6) { fprintf(stderr, "usage: launcher <mode> <memMiB> --bench <helper.exe> <bootstrap.js>\n"); return 2; }
+    int child_at = bench ? 4 : 3, child_end = bench ? 5 : argc;
     const wchar_t *mode = argv[1];
     SIZE_T mem = (SIZE_T)_wtoi(argv[2]);
     int use_job = wcscmp(mode, L"none") != 0;
@@ -98,7 +221,7 @@ int wmain(int argc, wchar_t **argv) {
     SetEnvironmentVariableW(L"SHINSOU_SECRET_TOKEN", L"s0-secret-value");
 
     wchar_t cmd[32768] = L"";
-    for (int i = 3; i < argc; i++) {
+    for (int i = child_at; i < child_end; i++) {
         wcscat_s(cmd, 32768, L"\"");
         wcscat_s(cmd, 32768, argv[i]);
         wcscat_s(cmd, 32768, L"\" ");
@@ -108,7 +231,7 @@ int wmain(int argc, wchar_t **argv) {
     if (use_container) {
         sid = container_sid();
         wchar_t dir[MAX_PATH];
-        wcscpy_s(dir, MAX_PATH, argv[3]);
+        wcscpy_s(dir, MAX_PATH, argv[child_at]);
         wchar_t *slash = wcsrchr(dir, L'\\');
         if (slash) *slash = 0;
         grant_read_execute(dir, sid);
@@ -118,6 +241,12 @@ int wmain(int argc, wchar_t **argv) {
     HANDLE rd, wr;
     if (!CreatePipe(&rd, &wr, &sa, 0)) die("CreatePipe");
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    HANDLE child_in = NULL; /* --bench: the child's stdin; we keep the write end */
+    if (bench) {
+        if (!CreatePipe(&child_in, &bench_to, &sa, 0)) die("CreatePipe(stdin)");
+        SetHandleInformation(bench_to, HANDLE_FLAG_INHERIT, 0);
+        bench_from = rd;
+    }
 
     SIZE_T attr_size = 0;
     InitializeProcThreadAttributeList(NULL, 4, 0, &attr_size);
@@ -132,9 +261,9 @@ int wmain(int argc, wchar_t **argv) {
     if (use_lpac &&
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac_policy, sizeof lpac_policy, NULL, NULL))
         die("UpdateProcThreadAttribute(lpac)");
-    /* Only the pipe's write end is inherited. */
-    HANDLE inherit[1] = { wr };
-    if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, NULL, NULL)) die("UpdateProcThreadAttribute(handles)");
+    /* Only the pipe ends meant for the child are inherited. */
+    HANDLE inherit[2] = { wr, child_in };
+    if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, (bench ? 2 : 1) * sizeof(HANDLE), NULL, NULL)) die("UpdateProcThreadAttribute(handles)");
     /* Job membership is part of process creation (Windows 10+): no unassigned-child window. */
     HANDLE job = use_job ? make_job(mem) : NULL;
     if (job && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL)) die("UpdateProcThreadAttribute(job)");
@@ -142,9 +271,9 @@ int wmain(int argc, wchar_t **argv) {
     STARTUPINFOEXW si = { 0 };
     si.StartupInfo.cb = sizeof si;
     si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    si.StartupInfo.hStdInput = NULL;
+    si.StartupInfo.hStdInput = child_in;
     si.StartupInfo.hStdOutput = wr;
-    si.StartupInfo.hStdError = wr;
+    si.StartupInfo.hStdError = bench ? NULL : wr; /* stderr must not corrupt the bench protocol */
     si.lpAttributeList = attrs;
 
     /*
@@ -174,10 +303,16 @@ int wmain(int argc, wchar_t **argv) {
     if (GetEnvironmentVariableW(L"SHINSOU_S0_FAIL_AFTER_CREATE", NULL, 0)) { SetLastError(ERROR_INVALID_FUNCTION); die("forced post-creation failure"); }
     if (ResumeThread(pi.hThread) == (DWORD)-1) die("ResumeThread");
     CloseHandle(wr);
+    int bench_failed = 0;
+    if (bench) {
+        CloseHandle(child_in);
+        bench_failed = run_bench(argv[5], pi.hProcess, t0) != 0;
+        CloseHandle(bench_to);
+    }
 
     char buf[4096];
     DWORD got;
-    while (ReadFile(rd, buf, sizeof buf, &got, NULL) && got) fwrite(buf, 1, got, stdout);
+    while (ReadFile(rd, buf, sizeof buf, &got, NULL) && got) if (!bench) fwrite(buf, 1, got, stdout);
     WaitForSingleObject(pi.hProcess, INFINITE);
     QueryPerformanceCounter(&t1);
     DWORD code = 0;
@@ -191,5 +326,6 @@ int wmain(int argc, wchar_t **argv) {
     }
     printf("LAUNCH mode=%ls exit=%lu ms=%.1f peak_mib=%.1f\n", mode, code, (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart, peak);
     if (sid) FreeSid(sid);
+    if (bench_failed) { printf("BENCH failed\n"); return 1; }
     return (int)code;
 }

@@ -12,7 +12,11 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +44,8 @@ jobs:
           cmake -S spikes/sandbox-s0 -B spikes/sandbox-s0/build/win -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static
           cmake --build spikes/sandbox-s0/build/win
           mkdir -p spikes/sandbox-s0/windows/build
-          cp spikes/sandbox-s0/build/win/core_test.exe spikes/sandbox-s0/build/win/bootstrap.js spikes/sandbox-s0/windows/build/
+          cp spikes/sandbox-s0/build/win/core_test.exe spikes/sandbox-s0/build/win/sandbox_helper.exe spikes/sandbox-s0/build/win/bootstrap.js spikes/sandbox-s0/windows/build/
+          mv spikes/sandbox-s0/windows/build/sandbox_helper.exe spikes/sandbox-s0/windows/build/helper.exe
 
       - uses: ilammy/msvc-dev-cmd@v1
 
@@ -48,7 +53,7 @@ jobs:
         shell: cmd
         run: |
           cd spikes\sandbox-s0\windows
-          cl /nologo /O2 /W3 /Fe:build\launcher.exe launcher.c userenv.lib advapi32.lib ws2_32.lib
+          cl /nologo /O2 /W3 /Fe:build\launcher.exe launcher.c userenv.lib advapi32.lib ws2_32.lib psapi.lib
           cl /nologo /O2 /W3 /Fe:build\probe.exe probe.c ws2_32.lib advapi32.lib
 
       - name: Isolation probe, core tests in the sandbox, cold start, kill-on-close
@@ -58,5 +63,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sandbox-s0-windows
+          name: sandbox-s0-${{ matrix.os }}
           path: spikes/sandbox-s0/windows/build/results.txt

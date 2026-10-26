@@ -28,6 +28,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "WASI" AND NOT ANDROID)
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract-bootstrap.py
         ${CMAKE_CURRENT_SOURCE_DIR}/../../composeApp/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt)
     add_custom_target(bootstrap ALL DEPENDS ${CMAKE_BINARY_DIR}/bootstrap.js)
+    if(WIN32)
+        # ADR-0002 S0 Windows helper prototype (windows/helper.c), driven by windows/launcher.c --bench.
+        add_executable(sandbox_helper windows/helper.c)
+        target_link_libraries(sandbox_helper shinsou_sandbox_core)
+    endif()
     enable_testing()
     add_test(NAME core_test COMMAND core_test ${CMAKE_BINARY_DIR}/bootstrap.js)
 endif()
