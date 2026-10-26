@@ -56,7 +56,14 @@ if (-not (($o -join "`n") -match "BENCH done") -or (($o -join "`n") -match "BENC
 
 Log "== Job CPU rate hard cap (single busy thread, 2 s wall)"
 $cores = [Environment]::ProcessorCount
-function SpinCpu() { [double]([regex]::Match(((& "$B\launcher.exe" lpac 128 "$B\probe.exe" spin) -join "`n"), "cpu_ms=([0-9]+)").Groups[1].Value) }
+# A run counts only if the launcher succeeded and printed exactly one SPIN sample; otherwise -1.
+function SpinCpu() {
+    $o = (& "$B\launcher.exe" lpac 128 "$B\probe.exe" spin 2>&1) -join "`n"
+    $code = $LASTEXITCODE
+    $m = [regex]::Matches($o, "SPIN wall_ms=2000 cpu_ms=([0-9]+)")
+    if ($code -ne 0 -or $m.Count -ne 1) { Log "spin run failed (exit=$code samples=$($m.Count)): $o"; return -1 }
+    [double]$m[0].Groups[1].Value
+}
 $free = SpinCpu
 $env:SHINSOU_S0_CPU_RATE = "10"
 $capped = SpinCpu
@@ -64,7 +71,7 @@ Remove-Item Env:SHINSOU_S0_CPU_RATE
 # 10% of all processors, but one thread can use at most one of them.
 $expect = 2000 * [Math]::Min(1.0, 0.10 * $cores)
 Log ("cores={0} uncapped cpu_ms={1} capped(10%) cpu_ms={2} expected_cap_ms~{3}" -f $cores, $free, $capped, $expect)
-if ($free -lt 1600 -or $capped -gt $expect * 1.5) { $fail = 1 }
+if ($free -lt 1600 -or $capped -le 0 -or $capped -gt $expect * 1.5) { $fail = 1 }
 
 Log "== kill-on-close: kill the launcher, the sandboxed child must die with the job"
 $p = Start-Process -FilePath "$B\launcher.exe" -ArgumentList @("lpac", "128", "$B\probe.exe", "hang") -PassThru -WindowStyle Hidden

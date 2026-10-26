@@ -156,13 +156,16 @@ static int cmp_double(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-/* Median of n timed invocations of method(args); -1 on any failure. */
-static double b_median(const char *method, const char *args, int n) {
+/* Median of n timed invocations of method(args); -1 on any failure or a result of the wrong size. */
+static double b_median(const char *method, const char *args, uint32_t expect_len, int n) {
     double t[256];
     for (int i = 0; i < n; i++) {
         uint8_t st; uint32_t len;
         LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
-        if (b_invoke(method, args, &st, &len) || st != 0) return -1;
+        if (b_invoke(method, args, &st, &len) || st != 0 || len != expect_len) {
+            fprintf(stderr, "bench: %s%s -> status %u len %u (want %u)\n", method, args, st, len, expect_len);
+            return -1;
+        }
         t[i] = since_ms(t0);
     }
     qsort(t, (size_t)n, sizeof t[0], cmp_double);
@@ -191,19 +194,23 @@ static int run_bench(const wchar_t *bootstrap_path, HANDLE proc, LARGE_INTEGER c
     double init_ms = since_ms(created);
     if (b_invoke("ok", "[]", &st, &len) || st != 0) return -1;
     printf("BENCH cold_start_to_init_ms=%.1f to_first_invoke_ms=%.1f\n", init_ms, since_ms(created));
-    double ok = b_median("ok", "[]", 200);
+    /* Expected JSON sizes: "ok" = 4, a string of n chars = n + 2, the number 1000 = 4. */
+    double ok = b_median("ok", "[]", 4, 200);
     printf("BENCH invoke_ok_median_ms=%.3f\n", ok);
-    printf("BENCH result_64KiB_median_ms=%.3f\n", b_median("big", "[65536]", 31));
-    printf("BENCH result_1MiB_median_ms=%.3f\n", b_median("big", "[1048576]", 15));
-    double br = b_median("bridgeN", "[1000]", 5);
+    double r64 = b_median("big", "[65536]", 65536 + 2, 31);
+    printf("BENCH result_64KiB_median_ms=%.3f\n", r64);
+    double r1m = b_median("big", "[1048576]", 1048576 + 2, 15);
+    printf("BENCH result_1MiB_median_ms=%.3f\n", r1m);
+    double br = b_median("bridgeN", "[1000]", 4, 5);
     printf("BENCH sync_bridge_round_trip_us=%.1f\n", (br - ok) * 1000.0 / 1000.0);
     PROCESS_MEMORY_COUNTERS_EX pmc = { sizeof pmc };
     if (GetProcessMemoryInfo(proc, (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof pmc))
         printf("BENCH helper_working_set_mib=%.1f private_mib=%.1f peak_working_set_mib=%.1f\n",
                pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0, pmc.PeakWorkingSetSize / 1048576.0);
     b_send('Q', NULL, 0, NULL, 0);
+    if (ok < 0 || r64 < 0 || r1m < 0 || br < 0) return -1;
     printf("BENCH done\n");
-    return (ok < 0 || br < 0) ? -1 : 0;
+    return 0;
 }
 
 int wmain(int argc, wchar_t **argv) {
