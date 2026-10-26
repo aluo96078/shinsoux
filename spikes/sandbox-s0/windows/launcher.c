@@ -2,10 +2,11 @@
  * ADR-0002 S0 Windows host launcher: starts a child in an AppContainer with no capabilities,
  * inside a Job Object (memory cap, one active process, kill on close, UI restrictions).
  *
- *   launcher.exe <none|job|container> <memMiB> <child.exe> [args...]
+ *   launcher.exe <none|job|container|lpac> <memMiB> <child.exe> [args...]
  *
  * "none" is the control (plain child), "job" adds only the Job Object, "container" adds the
- * AppContainer. The child's stdout/stderr are relayed; the child gets a minimal environment.
+ * AppContainer, and "lpac" makes it a Low Privilege AppContainer: it opts out of the
+ * ALL APPLICATION PACKAGES group, so default grants (for example parts of HKCU) no longer apply. The child's stdout/stderr are relayed; the child gets a minimal environment.
  * Prints `LAUNCH mode=... exit=... ms=... peak_mib=...` after the child ends.
  */
 #define WIN32_LEAN_AND_MEAN
@@ -73,7 +74,8 @@ int wmain(int argc, wchar_t **argv) {
     const wchar_t *mode = argv[1];
     SIZE_T mem = (SIZE_T)_wtoi(argv[2]);
     int use_job = wcscmp(mode, L"none") != 0;
-    int use_container = wcscmp(mode, L"container") == 0;
+    int use_lpac = wcscmp(mode, L"lpac") == 0;
+    int use_container = use_lpac || wcscmp(mode, L"container") == 0;
 
     /* Secrets that must stay out of reach: an env var and a file in the user profile. */
     SetEnvironmentVariableW(L"SHINSOU_SECRET_TOKEN", L"s0-secret-value");
@@ -101,14 +103,18 @@ int wmain(int argc, wchar_t **argv) {
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
 
     SIZE_T attr_size = 0;
-    InitializeProcThreadAttributeList(NULL, 2, 0, &attr_size);
+    InitializeProcThreadAttributeList(NULL, 3, 0, &attr_size);
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, attr_size);
-    if (!InitializeProcThreadAttributeList(attrs, 2, 0, &attr_size)) die("InitializeProcThreadAttributeList");
+    if (!InitializeProcThreadAttributeList(attrs, 3, 0, &attr_size)) die("InitializeProcThreadAttributeList");
     SECURITY_CAPABILITIES caps = { 0 };
     if (use_container) {
         caps.AppContainerSid = sid; /* CapabilityCount = 0: in particular no internetClient */
         if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps, sizeof caps, NULL, NULL)) die("UpdateProcThreadAttribute(caps)");
     }
+    static DWORD lpac_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
+    if (use_lpac &&
+        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac_policy, sizeof lpac_policy, NULL, NULL))
+        die("UpdateProcThreadAttribute(lpac)");
     /* Only the pipe's write end is inherited. */
     HANDLE inherit[1] = { wr };
     if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, sizeof inherit, NULL, NULL)) die("UpdateProcThreadAttribute(handles)");

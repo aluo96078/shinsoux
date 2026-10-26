@@ -18,27 +18,29 @@ $listener.Start()
 $port = $listener.LocalEndpoint.Port
 
 $fail = 0
-foreach ($mode in @("none", "job", "container")) {
+# "container" (regular AppContainer) is reported for comparison; the requirement is "lpac".
+foreach ($mode in @("none", "job", "container", "lpac")) {
     Log "== probe mode=$mode"
     $o = & "$B\launcher.exe" $mode 128 "$B\probe.exe" $secret $port $PID 2>&1
     $o | ForEach-Object { Log $_ }
     $pass = ($o -join "`n") -match "RESULT PASS"
-    if ($mode -eq "container" -and -not $pass) { $fail = 1 }
+    if ($mode -eq "lpac" -and -not $pass) { $fail = 1 }
 }
 
-Log "== core_test inside AppContainer + Job (1024 MiB)"
-$o = & "$B\launcher.exe" container 1024 "$B\core_test.exe" "$B\bootstrap.js" 2>&1
+Log "== core_test inside LPAC + Job (1024 MiB)"
+$o = & "$B\launcher.exe" lpac 1024 "$B\core_test.exe" "$B\bootstrap.js" 2>&1
 $o | ForEach-Object { Log $_ }
 if (-not (($o -join "`n") -match "ALL PASSED")) { $fail = 1 }
 
-Log "== cold start (container, noop) x20"
-$times = @()
-for ($i = 0; $i -lt 20; $i++) {
-    $l = (& "$B\launcher.exe" container 128 "$B\probe.exe" noop) | Select-String "LAUNCH"
-    $times += [double]([regex]::Match($l, "ms=([0-9.]+)").Groups[1].Value)
+foreach ($mode in @("lpac", "container")) {
+    $times = @()
+    for ($i = 0; $i -lt 20; $i++) {
+        $l = (& "$B\launcher.exe" $mode 128 "$B\probe.exe" noop) | Select-String "LAUNCH"
+        $times += [double]([regex]::Match($l, "ms=([0-9.]+)").Groups[1].Value)
+    }
+    $sorted = $times | Sort-Object
+    Log ("cold start {0} median_ms={1} min_ms={2}" -f $mode, $sorted[10], $sorted[0])
 }
-$sorted = $times | Sort-Object
-Log ("cold start container median_ms={0} min_ms={1}" -f $sorted[10], $sorted[0])
 $times = @()
 for ($i = 0; $i -lt 20; $i++) {
     $l = (& "$B\launcher.exe" none 128 "$B\probe.exe" noop) | Select-String "LAUNCH"
@@ -48,7 +50,7 @@ $sorted = $times | Sort-Object
 Log ("cold start plain median_ms={0} min_ms={1}" -f $sorted[10], $sorted[0])
 
 Log "== kill-on-close: kill the launcher, the sandboxed child must die with the job"
-$p = Start-Process -FilePath "$B\launcher.exe" -ArgumentList @("container", "128", "$B\probe.exe", "hang") -PassThru -WindowStyle Hidden
+$p = Start-Process -FilePath "$B\launcher.exe" -ArgumentList @("lpac", "128", "$B\probe.exe", "hang") -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 2
 $before = @(Get-Process probe -ErrorAction SilentlyContinue).Count
 Stop-Process -Id $p.Id -Force
