@@ -51,8 +51,11 @@ Log ("cold start plain median_ms={0} min_ms={1}" -f $sorted[10], $sorted[0])
 
 Log "== helper bench inside LPAC + Job (256 MiB)"
 $o = & "$B\launcher.exe" lpac 256 --bench "$B\helper.exe" "$B\bootstrap.js" 2>&1
+$code = $LASTEXITCODE
 $o | ForEach-Object { Log $_ }
-if (-not (($o -join "`n") -match "BENCH done") -or (($o -join "`n") -match "BENCH failed")) { $fail = 1 }
+Log "bench launcher exit=$code"
+# The helper must also shut down cleanly (exit 0), not only finish the measurements.
+if ($code -ne 0 -or -not (($o -join "`n") -match "BENCH done") -or (($o -join "`n") -match "BENCH failed")) { $fail = 1 }
 
 Log "== Job CPU rate hard cap (single busy thread, 2 s wall)"
 $cores = [Environment]::ProcessorCount
