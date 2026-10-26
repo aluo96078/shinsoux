@@ -121,12 +121,20 @@ int wmain(int argc, wchar_t **argv) {
     si.StartupInfo.hStdError = wr;
     si.lpAttributeList = attrs;
 
-    /* Minimal environment: nothing from the host besides what the CRT needs. */
-    wchar_t sysroot[MAX_PATH] = L"";
-    GetEnvironmentVariableW(L"SystemRoot", sysroot, MAX_PATH);
-    wchar_t env[1024];
-    int n = swprintf_s(env, 1024, L"SystemRoot=%s", sysroot);
-    env[n + 1] = 0;
+    /*
+     * Minimal environment: paths only, no host secrets. CreateProcess for an AppContainer derives the
+     * container's own LOCALAPPDATA/TEMP from these and fails with ERROR_ENVVAR_NOT_FOUND without them.
+     */
+    static const wchar_t *const keep[] = { L"SystemRoot", L"SystemDrive", L"USERPROFILE", L"LOCALAPPDATA", L"APPDATA", L"TEMP", L"TMP" };
+    wchar_t env[8192];
+    size_t pos = 0;
+    for (size_t k = 0; k < sizeof keep / sizeof keep[0]; k++) {
+        wchar_t value[MAX_PATH] = L"";
+        if (!GetEnvironmentVariableW(keep[k], value, MAX_PATH)) continue;
+        int n = swprintf_s(env + pos, 8192 - pos - 1, L"%ls=%ls", keep[k], value);
+        if (n > 0) pos += (size_t)n + 1;
+    }
+    env[pos] = 0;
 
     HANDLE job = use_job ? make_job(mem) : NULL;
     LARGE_INTEGER f, t0, t1;
