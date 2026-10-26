@@ -1,0 +1,19 @@
+backend native
+RESULT rss_per_instance_mb 1.52
+RESULT js_heap_per_instance_mb 1.03
+RESULT linear_per_instance_mb 0.00
+RESULT cold_first_ms 1.01
+RESULT cold_mean_ms 0.89
+RESULT cold_min_ms 0.86
+RESULT cold_create_only_mean_ms 0.05
+RESULT bridge_shim_us_per_call 0.37
+RESULT bridge_raw_us_per_call 0.04
+RESULT js_fib_ms 9.09
+RESULT js_loop_ms 53.95
+RESULT js_str_ms 10.94
+RESULT js_sort_ms 41.81
+RESULT js_json_ms 25.78
+RESULT html50k_ms 12.21
+INFO html50k items=514 result="514:8114" heap=4517032 linear=0
+RESULT html1m_ms 474.26
+INFO html1m items=10296 result="10296:174218" heap=17383624 linear=0

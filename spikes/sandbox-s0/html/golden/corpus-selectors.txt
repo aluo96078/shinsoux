@@ -1,0 +1,151 @@
+#bodywrap h2
+#chapterlistload li a
+#comic-reader img, .chapter-img img
+#comment_0 .c6
+#gd1 div
+#gd1 img
+#gdc a
+#gdc div, #gdc
+#gdd tr
+#gdt a
+#gj
+#gn
+#img
+#intro-all, #intro-cut
+#rating_label
+#taglist tr
+.addtags a.tagshow
+.author
+.banner_detail_form .cover img
+.banner_detail_form .info
+.banner_detail_form .info p.content
+.banner_detail_form .info p.subtitle a
+.banner_detail_form .info p.tip span.block
+.banner_detail_form .info p.title
+.book-list-info-bottom-item
+.book-list-info-bottom-right-font
+.book-list-info-desc
+.book-title h1
+.chapter-list a
+.chapterpay_tip, .read_ban
+.comic-contain__item, .comic-contain img, .comic-contain amp-img, img.comic-img
+.comicParticulars-tag a
+.comicParticulars-title-left img
+.comicParticulars-title-right a[href*='/author/']
+.comicParticulars-title-right h6
+.comicParticulars-title-right li
+.comics-card__title
+.comics-detail__author
+.comics-detail__cover amp-img[src], .comics-detail__cover img, .l-content amp-img[src], .l-content img
+.comics-detail__desc
+.comics-detail__title
+.comics-detail__update, .tag-list .tag
+.cover img
+.detail-desc
+.detail-list-title-1
+.detail-main-cover img, .detail-main-bg
+.detail-main-info-author a
+.detail-main-info-class a, .detail-main-info-class span
+.detail-main-info-title
+.exemptComic-box[list]
+.gdt1
+.gdt2
+.glink
+.glthumb img
+.manga-item
+.manga-list-2-cover img, .book-list-cover img, img
+.manga-list-2-title a, .book-list-cover a[href*='/manhua-'], a[href*='/manhua-']
+.manga-list-2-title, .book-list-info-title
+.mh-item-detali h2.title a
+.p-t-5.p-b-5
+.p-t-5.p-b-5:not(:has(a)), div[itemprop='description']
+.page-img img
+.rank-list li
+.row .col-xs-6.col-sm-4.col-md-3, .row .col-xs-6.col-md-3
+.scramble-page img[id^='album_photo_'], img[data-original][id^='album_photo_'], .center-block.img-responsive
+.searchnav a
+.synopsis
+.tag-list a, .comics-detail__tag span
+.thumb-overlay img, img[src*='/media/albums/'], img[data-original*='/media/albums/'], img[data-src*='/media/albums/']
+.title-truncate a[href*='/album/']
+.uwconn > p
+.uwconn label
+.uwthumb img
+.video-title
+.well.well-sm, div[id^='album_'], .list-col
+> div:first-child > div:first-child
+[data-flux-badge]
+[data-flux-heading]
+[data-flux-subheading]
+a
+a span
+a#dnext
+a#unext
+a.chapteritem[href^='/m']
+a.comics-card__poster amp-img[src], a.comics-card__poster img, amp-img[src], img
+a.comics-card__poster, a[href*='/comic/']
+a.comics-card__poster[href*='/comic/'], a[href*='/comic/']
+a.fold_open, a.fold_close
+a.next, .pagination .next
+a.next, a.prev:contains(下一頁), a:contains(下一頁), a:contains(下一页)
+a.next, a:contains(下一頁), a:contains(下一页), a:contains(Next)
+a.next-page
+a.prevnext:contains(下一頁), a.prevnext:contains(Next), ul.pagination li:last-child:not(.active) a
+a.title
+a[href*='/album/']
+a[href*='/comic/']
+a[href*='/comics/']
+a[href*='/g/']
+a[href*='filter%5Bauthor%5D'], a[href*='filter[author]']
+a[href*='manhua-']
+a[href*='photos-index-aid-']
+amp-img[src], img
+div.comics-card
+div.gl1t
+div.grid > div.group
+div.mh-item
+div.page-pagination a
+div[data-flux-card]
+div[data-flux-card] + div a[href*='/chapters/']
+div[data-flux-card] + div div[x-data]
+div[id*='chapter-list'] ul li a
+div[itemprop='author'], .panel-body .tag-block a[href*='author']
+h1
+h1[itemprop='name'], .panel-heading [itemprop='name'], div[itemprop='name'] h1
+h2.title a, .title a
+img
+img.lazy_img, img[data-original]
+img.object-cover, img
+img:not(.mh-tip-wrap img)
+img[alt][title]
+img[data-page]
+img[title], img[alt]
+img[x-ref], img.page
+li.status span span
+meta[name=description]
+meta[property='og:image'], meta[name='og:image']
+nav[role=navigation] a[rel=next], a[rel=next]
+p.hcover img
+p.intro
+p.mh-cover:not(.tip)
+script
+span
+span.video-title
+span:first-child a
+span:first-child strong
+span:nth-child(2) a
+span[itemprop='genre'] a, a[href*='/search/photos?search_query='], .tag-block a[data-type='tag']
+table > tbody > tr > td:nth-child(2) a[href*='/comics/']
+table.itg tr
+table.ptb
+table.ptb td.ptds + td a
+td.tc
+td:nth-child(2) a
+time[datetime]
+ul#contList li, .book-list li, li.cf
+ul.book-list > li
+ul.btn-toolbar a[href*='/photo/'], .episode a[href*='/photo/'], a.episode
+ul.detail-list li
+ul.manga-list-2 > li
+ul.mh-list > li
+ul.view-win-list li a, .detail-list-select li a

@@ -1,0 +1,13 @@
+ehentai-front	https://e-hentai.org/	fixtures/ehentai-front.html
+manhuagui-home	https://tw.manhuagui.com/	fixtures/manhuagui-home.html
+wnacg-home	https://www.wnacg.com/	fixtures/wnacg-home.html
+mangacopy-home	https://www.mangacopy.com/	fixtures/mangacopy-home.html
+bilimanga-home	https://bilimanga.net/	fixtures/bilimanga-home.html
+dm5-home	https://www.dm5.com/	fixtures/dm5-home.html
+edge-cases	https://example.test/dir/page.html?x=1	fixtures/edge-cases.html
+ehentai-gallery	https://e-hentai.org/g/4281212/5ebf7b8db9/	fixtures/ehentai-gallery.html
+manhuagui-comic	https://tw.manhuagui.com/comic/32602/	fixtures/manhuagui-comic.html
+wnacg-album	https://www.wnacg.com/photos-index-aid-390033.html	fixtures/wnacg-album.html
+mangacopy-comic	https://www.mangacopy.com/comic/buyaoxiaoqiaomianbaoa	fixtures/mangacopy-comic.html
+dm5-category	https://www.dm5.com/manhua-new/	fixtures/dm5-comic.html
+bilimanga-detail	https://www.bilimanga.net/detail/917.html	fixtures/bilimanga-detail.html

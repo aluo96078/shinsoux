@@ -1,0 +1,21 @@
+DEVICE iPhone18,2 27.0.1
+backend wamr-fast-ios
+RESULT rss_per_instance_mb 17.30
+RESULT js_heap_per_instance_mb 0.80
+RESULT linear_per_instance_mb 8.00
+RESULT cold_first_ms 17.80
+RESULT cold_mean_ms 17.28
+RESULT cold_min_ms 17.16
+RESULT cold_create_only_mean_ms 1.35
+RESULT bridge_shim_us_per_call 18.92
+RESULT bridge_raw_us_per_call 1.48
+RESULT js_fib_ms 276.07
+RESULT js_loop_ms 1511.03
+RESULT js_str_ms 291.54
+RESULT js_sort_ms 781.29
+RESULT js_json_ms 897.55
+RESULT html50k_ms 561.18
+INFO html50k items=514 result="514:8114" heap=2141928 linear=17563648
+RESULT html1m_ms 16798.95
+INFO html1m items=10296 result="10296:174218" heap=15173604 linear=19988480
+DONE rc=0

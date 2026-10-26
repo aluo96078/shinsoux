@@ -1,0 +1,3 @@
+WIDE n=60000 ok=0 result=4498384 ms=510 exc=Exception: terminated by user
+WIDE n=60000 result=30000 ms=13767
+WIDE n=60000 result=30000 ms=3271

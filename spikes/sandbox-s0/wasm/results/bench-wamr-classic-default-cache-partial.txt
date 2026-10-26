@@ -1,0 +1,12 @@
+backend wamr-classic
+RESULT rss_per_instance_mb 33.34
+RESULT js_heap_per_instance_mb 0.80
+RESULT linear_per_instance_mb 8.00
+RESULT cold_first_ms 477.43
+RESULT cold_mean_ms 476.29
+RESULT cold_min_ms 472.94
+RESULT cold_create_only_mean_ms 15.34
+RESULT bridge_shim_us_per_call 1968.66
+RESULT bridge_raw_us_per_call 387.27
+RESULT js_fib_ms 158092.08
+exit 143

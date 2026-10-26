@@ -1,0 +1,35 @@
+name: S0Bench
+options:
+  bundleIdPrefix: dev.aluo
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  S0Bench:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Resources
+        buildPhase: resources
+    info:
+      path: App/Info.plist
+      properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: SceneDelegate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.aluo.shinsoux.s0bench
+        DEVELOPMENT_TEAM: 5UKY38ZLK6
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/../build/ios-lib
+        OTHER_LDFLAGS: -ls0bench
+        ENABLE_BITCODE: NO

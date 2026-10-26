@@ -1,0 +1,253 @@
+-rwxr-xr-x@ 1 aluoexpiry  staff  1095506 Oct 26 02:15 /Users/aluoexpiry/project/shinsoux/spikes/sandbox-s0/build/wasm/shinsou_sandbox.wasm
+Import[2]:
+ - func[0] sig=1 <env.host_clock_ms> <- env.host_clock_ms
+ - func[1] sig=0 <env.host_bridge> <- env.host_bridge
+Export[12]:
+ - memory[0] -> "memory"
+ - func[3] <_initialize> -> "_initialize"
+ - func[36] <sw_alloc> -> "sw_alloc"
+ - func[37] <sw_free> -> "sw_free"
+ - func[38] <sw_new> -> "sw_new"
+ - func[46] <sw_init> -> "sw_init"
+ - func[47] <sw_invoke> -> "sw_invoke"
+ - func[48] <sw_result_ptr> -> "sw_result_ptr"
+ - func[49] <sw_result_len> -> "sw_result_len"
+ - func[50] <sw_memory_used> -> "sw_memory_used"
+ - func[51] <sw_bridge_calls> -> "sw_bridge_calls"
+ - func[52] <sw_free_runtime> -> "sw_free_runtime"
+Memory[1]:
+ - memory[0] pages: initial=128 max=2048
+import check OK
+-- WAMR version: 2.4.5
+-- Build Configurations:
+     Build as target AARCH64
+     Build for platform darwin
+     CMAKE_BUILD_TYPE Release
+     BUILD_SHARED_LIBS 
+     WAMR Interpreter enabled
+     Fast interpreter enabled
+     WAMR AOT disabled
+     WAMR Fast JIT disabled
+     WAMR LLVM ORC JIT disabled
+     Libc builtin disabled
+     Libc WASI disabled
+     Thread manager enabled
+     Multiple modules disabled
+     Wakeup of blocking operations enabled
+     GC performance profiling disabled
+     Shrunk memory enabled
+     Extended constant expression disabled
+-- About Wasm Proposals:
+     Always-on:
+       "Multi-value"
+       "Non-trapping float-to-int conversions"
+       "Sign-extension operators"
+       "WebAssembly C and C++ API"
+     Configurable. 0 is OFF. 1 is ON:
+       "Bulk Memory Operation" via WAMR_BUILD_BULK_MEMORY: 1
+       "Extended Constant Expressions" via WAMR_BUILD_EXTENDED_CONST_EXPR: 0
+       "Fixed-width SIMD" via WAMR_BUILD_SIMD: 0
+       "Garbage collection" via WAMR_BUILD_GC: 0
+       "Legacy Exception handling" via WAMR_BUILD_EXCE_HANDLING: 0
+       "Memory64" via WAMR_BUILD_MEMORY64: 0
+       "Multiple memories" via WAMR_BUILD_MULTI_MEMORY: 0
+       "Reference Types" via WAMR_BUILD_REF_TYPES: 1
+       "Reference-Typed Strings" via WAMR_BUILD_STRINGREF: 0
+       "Tail call" via WAMR_BUILD_TAIL_CALL: 0
+       "Threads" via WAMR_BUILD_SHARED_MEMORY: 0
+       "Typed Function References" via WAMR_BUILD_GC: 0
+     Unsupported (>= Phase4):
+       "Branch Hinting"
+       "Custom Annotation Syntax in the Text Format"
+       "Exception handling"
+       "Import/Export of Mutable Globals"
+       "JS String Builtins"
+       "Relaxed SIMD"
+
+-- WAMR version: 2.4.5
+-- Build Configurations:
+     Build as target AARCH64
+     Build for platform darwin
+     CMAKE_BUILD_TYPE Release
+     BUILD_SHARED_LIBS 
+     WAMR Interpreter enabled
+     Fast interpreter disabled
+     WAMR AOT disabled
+     WAMR Fast JIT disabled
+     WAMR LLVM ORC JIT disabled
+     Libc builtin disabled
+     Libc WASI disabled
+     Thread manager enabled
+     Multiple modules disabled
+     Wakeup of blocking operations enabled
+     GC performance profiling disabled
+     Shrunk memory enabled
+     Extended constant expression disabled
+-- About Wasm Proposals:
+     Always-on:
+       "Multi-value"
+       "Non-trapping float-to-int conversions"
+       "Sign-extension operators"
+       "WebAssembly C and C++ API"
+     Configurable. 0 is OFF. 1 is ON:
+       "Bulk Memory Operation" via WAMR_BUILD_BULK_MEMORY: 1
+       "Extended Constant Expressions" via WAMR_BUILD_EXTENDED_CONST_EXPR: 0
+       "Fixed-width SIMD" via WAMR_BUILD_SIMD: 0
+       "Garbage collection" via WAMR_BUILD_GC: 0
+       "Legacy Exception handling" via WAMR_BUILD_EXCE_HANDLING: 0
+       "Memory64" via WAMR_BUILD_MEMORY64: 0
+       "Multiple memories" via WAMR_BUILD_MULTI_MEMORY: 0
+       "Reference Types" via WAMR_BUILD_REF_TYPES: 1
+       "Reference-Typed Strings" via WAMR_BUILD_STRINGREF: 0
+       "Tail call" via WAMR_BUILD_TAIL_CALL: 0
+       "Threads" via WAMR_BUILD_SHARED_MEMORY: 0
+       "Typed Function References" via WAMR_BUILD_GC: 0
+     Unsupported (>= Phase4):
+       "Branch Hinting"
+       "Custom Annotation Syntax in the Text Format"
+       "Exception handling"
+       "Import/Export of Mutable Globals"
+       "JS String Builtins"
+       "Relaxed SIMD"
+
+===== wasm-native
+backend: native
+[functional]
+  parse -> {"mangas":[{"url":"/m/1","title":"One","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false},{"url":"/m/2","title":"Two","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false}],"hasNextPage":false}
+  globals -> "undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined"
+[limits]
+  infinite loop                          -> LIMIT_TIME       (301 ms)
+  try/catch swallowing interrupt         -> LIMIT_TIME       (301 ms)
+  catastrophic backtracking regex        -> LIMIT_TIME       (301 ms)
+  unbounded recursion (deep)             -> LIMIT_STACK      (0 ms)
+  memory bomb (JS heap limit 16 MiB)     -> LIMIT_MEMORY     (28 ms)
+  OOM caught then spin                   -> LIMIT_TIME       (801 ms)
+  bridge flood with catch                -> LIMIT_BRIDGE     (1 ms)
+  oversized result                       -> LIMIT_RESULT     (11 ms)
+  missing hook                           -> NO_SUCH_HOOK     (0 ms)
+  instance reusable after limits         -> OK               (0 ms)
+  JS heap after limit tests: 221616 bytes; linear memory: 0 bytes
+[cancel/terminate from another thread]
+  terminate(50 ms) during loop -> CANCELLED alive=1
+  runtime reusable after cancel          -> OK               (0 ms)
+[async]
+  fetchMany -> ["op-1","op-2","op-3","op-4","op-5","op-6","op-7","op-8","op-9","op-10"] (max in flight 6)
+  queueFull rejected -> 1
+  next invocation after late result      -> OK               (0 ms)
+  mixed sync+async -> ["op-82",true]
+  fetchMany with 30 ms latency -> ok in 80 ms (6 in flight, 10 req => ~2 waves)
+  never-settling promise                 -> PROMISE_STALLED  (0 ms)
+
+ALL PASSED
+===== wasm-fast
+backend: wamr-fast
+[functional]
+  parse -> {"mangas":[{"url":"/m/1","title":"One","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false},{"url":"/m/2","title":"Two","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false}],"hasNextPage":false}
+  globals -> "undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined"
+[limits]
+  infinite loop                          -> LIMIT_TIME       (301 ms)
+  try/catch swallowing interrupt         -> LIMIT_TIME       (301 ms)
+  catastrophic backtracking regex        -> LIMIT_TIME       (301 ms)
+  unbounded recursion (deep)             -> LIMIT_STACK      (1 ms)
+  memory bomb (JS heap limit 16 MiB)     -> LIMIT_MEMORY     (508 ms)
+  OOM caught then spin                   -> LIMIT_TIME       (801 ms)
+  bridge flood with catch                -> LIMIT_BRIDGE     (94 ms)
+  oversized result                       -> LIMIT_RESULT     (209 ms)
+  missing hook                           -> NO_SUCH_HOOK     (0 ms)
+  instance reusable after limits         -> OK               (0 ms)
+  JS heap after limit tests: 191756 bytes; linear memory: 8912896 bytes
+[cancel/terminate from another thread]
+  terminate(50 ms) during loop -> TRAPPED alive=0
+  rebuilt instance works                 -> OK               (0 ms)
+[async]
+  fetchMany -> ["op-1","op-2","op-3","op-4","op-5","op-6","op-7","op-8","op-9","op-10"] (max in flight 6)
+  queueFull rejected -> 1
+  next invocation after late result      -> OK               (0 ms)
+  mixed sync+async -> ["op-82",true]
+  fetchMany with 30 ms latency -> ok in 79 ms (6 in flight, 10 req => ~2 waves)
+  never-settling promise                 -> PROMISE_STALLED  (0 ms)
+[wasm: hard terminate / isolation]
+  watchdog 200 ms on loop (JS deadline 60 s) -> TRAPPED after 208 ms, alive=0
+  watchdog 200 ms while blocked in async wait -> TRAPPED after 217 ms
+  neighbour instance ran 100 ok / 0 bad calls (22 before the terminate)
+  engine-only stretch (sort 400k): 83 ms alone; terminate after 21 ms -> TRAPPED after 23 ms
+  linear memory cap 24 MiB (JS heap limit 256 MiB), memory bomb -> LIMIT_MEMORY (688 ms), linear=24 MiB, alive=1
+  instance usable after linear-cap OOM   -> OK               (0 ms)
+  create/destroy x50 -> 50 ok
+
+ALL PASSED
+===== wasm-classic
+backend: wamr-classic
+[functional]
+  parse -> {"mangas":[{"url":"/m/1","title":"One","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false},{"url":"/m/2","title":"Two","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false}],"hasNextPage":false}
+  globals -> "undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined"
+[limits]
+  infinite loop                          -> LIMIT_TIME       (6002 ms)
+  try/catch swallowing interrupt         -> LIMIT_TIME       (6001 ms)
+  catastrophic backtracking regex        -> LIMIT_TIME       (6001 ms)
+  unbounded recursion (deep)             -> LIMIT_STACK      (7 ms)
+  memory bomb (JS heap limit 16 MiB)     -> LIMIT_MEMORY     (1028 ms)
+  OOM caught then spin                   -> LIMIT_TIME       (16015 ms)
+  bridge flood with catch                -> LIMIT_BRIDGE     (352 ms)
+  oversized result                       -> LIMIT_RESULT     (446 ms)
+  missing hook                           -> NO_SUCH_HOOK     (0 ms)
+  instance reusable after limits         -> OK               (0 ms)
+  JS heap after limit tests: 191756 bytes; linear memory: 8912896 bytes
+[cancel/terminate from another thread]
+  terminate(50 ms) during loop -> TRAPPED alive=0
+  rebuilt instance works                 -> OK               (0 ms)
+[async]
+  fetchMany -> ["op-1","op-2","op-3","op-4","op-5","op-6","op-7","op-8","op-9","op-10"] (max in flight 6)
+  queueFull rejected -> 1
+  next invocation after late result      -> OK               (0 ms)
+  mixed sync+async -> ["op-82",true]
+  fetchMany with 30 ms latency -> ok in 77 ms (6 in flight, 10 req => ~2 waves)
+  never-settling promise                 -> PROMISE_STALLED  (0 ms)
+[wasm: hard terminate / isolation]
+  watchdog 200 ms on loop (JS deadline 60 s) -> TRAPPED after 210 ms, alive=0
+  watchdog 200 ms while blocked in async wait -> TRAPPED after 229 ms
+  neighbour instance ran 96 ok / 0 bad calls (8 before the terminate)
+  engine-only stretch (sort 400k): 189 ms alone; terminate after 48 ms -> TRAPPED after 57 ms
+  linear memory cap 24 MiB (JS heap limit 256 MiB), memory bomb -> LIMIT_MEMORY (1401 ms), linear=24 MiB, alive=1
+  instance usable after linear-cap OOM   -> OK               (1 ms)
+  create/destroy x50 -> 50 ok
+
+ALL PASSED
+===== wasm-w2c
+backend: wasm2c
+[functional]
+  parse -> {"mangas":[{"url":"/m/1","title":"One","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false},{"url":"/m/2","title":"Two","author":null,"artist":null,"description":null,"genre":null,"status":0,"thumbnailUrl":null,"initialized":false}],"hasNextPage":false}
+  globals -> "undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined"
+[limits]
+  infinite loop                          -> LIMIT_TIME       (301 ms)
+  try/catch swallowing interrupt         -> LIMIT_TIME       (301 ms)
+  catastrophic backtracking regex        -> LIMIT_TIME       (301 ms)
+  unbounded recursion (deep)             -> LIMIT_STACK      (0 ms)
+  memory bomb (JS heap limit 16 MiB)     -> LIMIT_MEMORY     (40 ms)
+  OOM caught then spin                   -> LIMIT_TIME       (801 ms)
+  bridge flood with catch                -> LIMIT_BRIDGE     (4 ms)
+  oversized result                       -> LIMIT_RESULT     (16 ms)
+  missing hook                           -> NO_SUCH_HOOK     (0 ms)
+  instance reusable after limits         -> OK               (0 ms)
+  JS heap after limit tests: 191756 bytes; linear memory: 8912896 bytes
+[cancel/terminate from another thread]
+  terminate(50 ms) during loop -> TRAPPED alive=0
+  rebuilt instance works                 -> OK               (0 ms)
+[async]
+  fetchMany -> ["op-1","op-2","op-3","op-4","op-5","op-6","op-7","op-8","op-9","op-10"] (max in flight 6)
+  queueFull rejected -> 1
+  next invocation after late result      -> OK               (0 ms)
+  mixed sync+async -> ["op-82",true]
+  fetchMany with 30 ms latency -> ok in 71 ms (6 in flight, 10 req => ~2 waves)
+  never-settling promise                 -> PROMISE_STALLED  (0 ms)
+[wasm: hard terminate / isolation]
+  watchdog 200 ms on loop (JS deadline 60 s) -> TRAPPED after 201 ms, alive=0
+  watchdog 200 ms while blocked in async wait -> TRAPPED after 212 ms
+  neighbour instance ran 99 ok / 0 bad calls (33 before the terminate)
+  engine-only stretch (sort 400k): 10 ms alone; terminate after 3 ms -> TRAPPED after 8 ms
+  linear memory cap 24 MiB (JS heap limit 256 MiB), memory bomb -> LIMIT_MEMORY (349 ms), linear=128 MiB, alive=1
+  instance usable after linear-cap OOM   -> OK               (0 ms)
+  create/destroy x50 -> 50 ok
+
+ALL PASSED
+exit 0

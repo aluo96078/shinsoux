@@ -1,0 +1,194 @@
+> Task :harness:preBuild UP-TO-DATE
+> Task :harness:preDebugBuild UP-TO-DATE
+> Task :harness:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :preBuild UP-TO-DATE
+> Task :preDebugBuild UP-TO-DATE
+> Task :compileDebugAidl UP-TO-DATE
+> Task :checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :generateDebugResValues UP-TO-DATE
+> Task :generateDebugResources UP-TO-DATE
+> Task :packageDebugResources UP-TO-DATE
+> Task :parseDebugLocalResources UP-TO-DATE
+> Task :generateDebugRFile UP-TO-DATE
+> Task :javaPreCompileDebug UP-TO-DATE
+> Task :harness:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :compileDebugLibraryResources UP-TO-DATE
+> Task :writeDebugAarMetadata UP-TO-DATE
+> Task :harness:checkDebugAarMetadata UP-TO-DATE
+> Task :harness:generateDebugResValues UP-TO-DATE
+> Task :harness:mapDebugSourceSetPaths UP-TO-DATE
+> Task :harness:generateDebugResources UP-TO-DATE
+> Task :harness:mergeDebugResources UP-TO-DATE
+> Task :harness:packageDebugResources UP-TO-DATE
+> Task :harness:parseDebugLocalResources UP-TO-DATE
+> Task :harness:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :extractDeepLinksDebug UP-TO-DATE
+> Task :processDebugManifest UP-TO-DATE
+> Task :harness:extractDeepLinksDebug UP-TO-DATE
+> Task :harness:processDebugMainManifest UP-TO-DATE
+> Task :harness:processDebugManifest UP-TO-DATE
+> Task :harness:processDebugManifestForPackage UP-TO-DATE
+> Task :harness:processDebugResources UP-TO-DATE
+> Task :harness:javaPreCompileDebug UP-TO-DATE
+> Task :mergeDebugShaders UP-TO-DATE
+> Task :compileDebugShaders NO-SOURCE
+> Task :generateDebugAssets UP-TO-DATE
+> Task :mergeDebugAssets UP-TO-DATE
+> Task :harness:mergeDebugShaders UP-TO-DATE
+> Task :harness:compileDebugShaders NO-SOURCE
+> Task :harness:copyBootstrap UP-TO-DATE
+> Task :harness:generateDebugAssets UP-TO-DATE
+> Task :harness:mergeDebugAssets UP-TO-DATE
+> Task :harness:compressDebugAssets UP-TO-DATE
+> Task :harness:desugarDebugFileDependencies UP-TO-DATE
+> Task :harness:checkDebugDuplicateClasses UP-TO-DATE
+> Task :harness:mergeExtDexDebug UP-TO-DATE
+> Task :configureCMakeDebug[arm64-v8a]
+> Task :buildCMakeDebug[arm64-v8a]
+> Task :configureCMakeDebug[x86_64]
+> Task :buildCMakeDebug[x86_64]
+> Task :mergeDebugJniLibFolders UP-TO-DATE
+> Task :harness:mergeDebugJniLibFolders UP-TO-DATE
+> Task :harness:validateSigningDebug UP-TO-DATE
+> Task :harness:writeDebugAppMetadata UP-TO-DATE
+> Task :harness:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :mergeDebugNativeLibs
+> Task :copyDebugJniLibsProjectOnly
+> Task :harness:mergeDebugNativeLibs
+> Task :harness:stripDebugDebugSymbols
+> Task :compileDebugKotlin
+> Task :compileDebugJavaWithJavac
+> Task :processDebugJavaRes UP-TO-DATE
+> Task :bundleLibRuntimeToJarDebug
+> Task :bundleLibCompileToJarDebug
+> Task :bundleLibRuntimeToDirDebug
+> Task :harness:mergeLibDexDebug
+> Task :harness:compileDebugKotlin
+> Task :harness:compileDebugJavaWithJavac NO-SOURCE
+> Task :harness:dexBuilderDebug
+> Task :harness:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :harness:processDebugJavaRes UP-TO-DATE
+> Task :harness:mergeDebugJavaResource UP-TO-DATE
+> Task :harness:mergeProjectDexDebug
+> Task :harness:packageDebug
+> Task :harness:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :harness:assembleDebug
+
+[Incubating] Problems report is available at: file:///Users/aluoexpiry/project/shinsoux/spikes/sandbox-s0/android/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.4.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 2s
+62 actionable tasks: 18 executed, 44 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html
+Performing Streamed Install
+Success
+Starting: Intent { cmp=dev.shinsou.sandbox.harness/.MainActivity (has extras) }
+== harness log
+--------- beginning of main
+10-26 23:08:15.269 26318 26339 I SSC-S0  : == S0 harness, strategy=PIPE, host pid=26318 uid=10070
+10-26 23:08:15.490 26318 26339 I SSC-S0  : pkg.alpha cold start (bind+load+first invoke): 216.6 ms status=0 -> "ok"
+10-26 23:08:15.595 26318 26339 I SSC-S0  : pkg.beta cold start (bind+load+first invoke): 105.1 ms status=0 -> "ok"
+10-26 23:08:15.596 26318 26339 I SSC-S0  : pkg.alpha: sandbox pid=26371 uid=90000 (host pid=26318 uid=10070) artHeap=2716 kB quickjs=230 kB
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe lockdown=seccomp
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe socket(AF_INET)=errno=1
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe socket(AF_INET6)=errno=1
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe open(app data dir)=errno=2
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe open(apk)=OK(unexpected)
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe open(/sdcard)=errno=13
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe open(/proc/net/tcp)=errno=13
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe spawn(/system/bin/sh)=IOException
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe thread=OK
+10-26 23:08:15.599 26318 26339 I SSC-S0  :   probe spawn(/system/bin/toybox)=IOException
+10-26 23:08:15.600 26318 26339 I SSC-S0  : pkg.beta: sandbox pid=26389 uid=90001 (host pid=26318 uid=10070) artHeap=2716 kB quickjs=230 kB
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe lockdown=seccomp
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe socket(AF_INET)=errno=1
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe socket(AF_INET6)=errno=1
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe open(app data dir)=errno=2
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe open(apk)=OK(unexpected)
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe open(/sdcard)=errno=13
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe open(/proc/net/tcp)=errno=13
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe spawn(/system/bin/sh)=IOException
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe thread=OK
+10-26 23:08:15.601 26318 26339 I SSC-S0  :   probe spawn(/system/bin/toybox)=IOException
+10-26 23:08:15.642 26318 26339 I SSC-S0  : result 65536 B: median 2.41 ms
+10-26 23:08:15.907 26318 26339 I SSC-S0  : result 524288 B: median 16.46 ms
+10-26 23:08:16.422 26318 26339 I SSC-S0  : result 1048576 B: median 32.02 ms
+10-26 23:08:18.518 26318 26339 I SSC-S0  : result 4194288 B: median 132.42 ms
+10-26 23:08:18.636 26318 26339 I SSC-S0  : result over 4 MiB -> status 6 after 118 ms (expect 6=LIMIT_RESULT)
+10-26 23:08:18.959 26318 26339 I SSC-S0  : bridge reply ~1 MiB host->sandbox: median 19.09 ms
+10-26 23:08:18.961 26318 26339 I SSC-S0  : fetch -> "hello"
+10-26 23:08:18.984 26318 26339 I SSC-S0  : host PSS 133457 kB (sandbox PSS: use `adb shell dumpsys meminfo` per README)
+10-26 23:08:28.987 26318 26339 I SSC-S0  : loop -> status 4 after 10003 ms (expect 4=LIMIT_TIME)
+10-26 23:08:29.489 26318 26339 I SSC-S0  : after kill: alpha status=101 (expect 101/100); manager blocked=false
+10-26 23:08:29.492 26318 26339 I SSC-S0  : after kill: beta status=0 json="ok" (host still alive)
+10-26 23:08:29.493 26318 26339 I SSC-S0  : DONE (host alive). Kill a sandbox with: adb shell kill <pid>, then re-run the invoke.
+== processes (each package should have its own pid and an isolated uid like u0i1234)
+u0_a70       26318  1641 177384 dev.shinsou.sandbox.harness
+== isolation probes (socket/open/exec must all be errno != OK)
+--------- beginning of main
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha lockdown=seccomp
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha socket(AF_INET)=errno=1
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha socket(AF_INET6)=errno=1
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha open(app data dir)=errno=2
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha open(apk)=OK(unexpected)
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha open(/sdcard)=errno=13
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha open(/proc/net/tcp)=errno=13
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha spawn(/system/bin/sh)=IOException
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha thread=OK
+10-26 23:08:15.599 26318 26339 I SSC-S0-PROBE: pkg.alpha spawn(/system/bin/toybox)=IOException
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta lockdown=seccomp
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta socket(AF_INET)=errno=1
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta socket(AF_INET6)=errno=1
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta open(app data dir)=errno=2
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta open(apk)=OK(unexpected)
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta open(/sdcard)=errno=13
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta open(/proc/net/tcp)=errno=13
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta spawn(/system/bin/sh)=IOException
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta thread=OK
+10-26 23:08:15.601 26318 26339 I SSC-S0-PROBE: pkg.beta spawn(/system/bin/toybox)=IOException
+== PSS per process
+Applications Memory Usage (in Kilobytes):
+Uptime: 714190 Realtime: 27519915
+
+** MEMINFO in pid 26318 [dev.shinsou.sandbox.harness] **
+                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap     7678     7644       12       16    11244    19584    11724     3183
+  Dalvik Heap    24681    24612        0       13    31736    27156     2580    24576
+ Dalvik Other     8785     1864        0        0    16208                           
+        Stack      648      648        0        0      656                           
+       Ashmem        9        0        0        0      852                           
+    Other dev       80        0       76        0     1160                           
+     .so mmap     2268      168      488        6    35948                           
+    .jar mmap     1941        0      248        0    47448                           
+    .apk mmap     2942        0     2820        0     4632                           
+    .ttf mmap       87        0       28        0      356                           
+    .dex mmap        6        0        0        0      752                           
+    .oat mmap       14        0        0        0     1280                           
+    .art mmap     8229     8080        0        0    23780                           
+   Other mmap      564      544        4        0     1596                           
+   EGL mtrack    72160    72160        0        0    72160                           
+    GL mtrack     4892     4892        0        0     4892                           
+      Unknown      611      548       60        4     2176                           
+        TOTAL   135634   121160     3736       39   256876    46740    14304    27759
+ 
+ App Summary
+                       Pss(KB)                        Rss(KB)
+                        ------                         ------
+           Java Heap:    32692                          55516
+         Native Heap:     7644                          11244
+                Code:     3988                         104492
+               Stack:      648                            656
+            Graphics:    77052                          77052
+       Private Other:     2872
+              System:    10738
+             Unknown:                                    7916
+ 
+           TOTAL PSS:   135634            TOTAL RSS:   256876       TOTAL SWAP PSS:       39
+ 

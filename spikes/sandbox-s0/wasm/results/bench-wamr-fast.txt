@@ -1,0 +1,19 @@
+backend wamr-fast
+RESULT rss_per_instance_mb 17.34
+RESULT js_heap_per_instance_mb 0.80
+RESULT linear_per_instance_mb 8.00
+RESULT cold_first_ms 18.47
+RESULT cold_mean_ms 18.79
+RESULT cold_min_ms 18.30
+RESULT cold_create_only_mean_ms 1.35
+RESULT bridge_shim_us_per_call 21.84
+RESULT bridge_raw_us_per_call 1.54
+RESULT js_fib_ms 288.50
+RESULT js_loop_ms 1463.04
+RESULT js_str_ms 296.36
+RESULT js_sort_ms 770.28
+RESULT js_json_ms 1020.63
+RESULT html50k_ms 599.57
+INFO html50k items=514 result="514:8114" heap=2141928 linear=17563648
+RESULT html1m_ms 17625.84
+INFO html1m items=10296 result="10296:174218" heap=15173604 linear=19988480

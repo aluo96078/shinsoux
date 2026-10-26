@@ -1,0 +1,139 @@
+div
+DIV
+*
+li
+.mh-item
+.MH-ITEM
+.home
+#list
+#LIST
+#top
+#Top
+li.mh-item.tip
+li.mh-item:not(.tip)
+a[href]
+a[HREF]
+a[href=/x]
+a[href='/x']
+a[href="/X"]
+a[href^=http]
+a[href^='HTTP']
+a[href$=.html]
+a[href*=comic]
+a[href*=COMIC]
+a[href~=comic]
+a[href|=en]
+a[href!=/x]
+[data-x]
+[data-x*='quoted']
+[data-y]
+[^data-]
+a:contains(下一頁)
+a:contains(next page)
+a:contains(NEXT)
+a:containsOwn(link)
+a:containsOwn(deep)
+div:contains(block in div)
+div:containsOwn(tail text)
+p:matches(para)
+p:matchesOwn(^para)
+li:eq(0)
+li:eq(2)
+li:lt(2)
+li:gt(2)
+li:nth-child(2)
+li:nth-child(odd)
+li:nth-child(even)
+li:nth-child(2n+1)
+li:nth-child(n+3)
+li:first-child
+li:last-child
+li:only-child
+li:nth-last-child(1)
+li:nth-of-type(2)
+li:first-of-type
+li:last-of-type
+td:nth-child(2)
+tr > td
+tr td
+ul > li
+ul li
+div > ul > li
+h2 + p
+h2 ~ p
+a + a
+a ~ a
+li:has(img)
+li:has(> a)
+li:has(a[href^=http])
+li:not(:has(img))
+div:has(> div)
+:has(img)
+:not(li)
+li:not(.tip):not(:first-child)
+img:not(div img)
+img:not(.mh-item img)
+:is(h2, p) a
+:root
+:empty
+span:empty
+span:not(:empty)
+> li
+> div
++ div
+~ div
+> ul > li:first-child
+ul.mh-list > li:first-child > a
+h2.title a, p.intro
+h2.title a , p.intro
+  li  >  a  
+li,
+,li
+li,,li
+a[
+a[href
+a[href=
+a:contains(
+a:foo
+a:nth-child(
+..x
+.
+#
+a..b
+a#
+li:eq(x)
+li:eq()
+html
+body
+head
+title
+script
+style
+base
+meta[charset]
+html > body
+:root > body
+html body > div
+select option
+option[selected]
+textarea
+pre
+br
+svg
+circle
+svg text
+text
+template
+template p
+noscript
+noscript img
+font
+center
+button
+b
+i
+em
+td
+tr
+table
+p

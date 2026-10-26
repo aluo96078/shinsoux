@@ -1,0 +1,19 @@
+backend wasm2c
+RESULT rss_per_instance_mb 1.42
+RESULT js_heap_per_instance_mb 0.80
+RESULT linear_per_instance_mb 8.00
+RESULT cold_first_ms 2.31
+RESULT cold_mean_ms 1.67
+RESULT cold_min_ms 1.51
+RESULT cold_create_only_mean_ms 0.20
+RESULT bridge_shim_us_per_call 0.91
+RESULT bridge_raw_us_per_call 0.13
+RESULT js_fib_ms 30.03
+RESULT js_loop_ms 112.07
+RESULT js_str_ms 22.88
+RESULT js_sort_ms 87.98
+RESULT js_json_ms 57.11
+RESULT html50k_ms 24.10
+INFO html50k items=514 result="514:8114" heap=3445344 linear=17563648
+RESULT html1m_ms 827.14
+INFO html1m items=10296 result="10296:174218" heap=16477020 linear=21299200

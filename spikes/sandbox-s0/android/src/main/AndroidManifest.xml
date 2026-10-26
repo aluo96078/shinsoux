@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          One isolated process per package, created with Context.bindIsolatedService(instanceName).
+          Isolated uid: no app permissions (so no INTERNET), no access to the app's data dir.
+          useAppZygote lets the process fork from a pre-warmed zygote (see SandboxZygotePreload).
+        -->
+        <service
+            android:name=".SandboxService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:useAppZygote="true" />
+        <!-- Required with useAppZygote: names the preload class (a ZygotePreload implementation). -->
+        <meta-data
+            android:name="android.app.zygote.preload_name"
+            android:value="dev.shinsou.sandbox.SandboxZygotePreload" />
+    </application>
+</manifest>

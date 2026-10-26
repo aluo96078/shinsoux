@@ -1,0 +1,35 @@
+https://a.test/dir/page.html?x=1#f	foo.html
+https://a.test/dir/page.html?x=1#f	/abs/path
+https://a.test/dir/page.html?x=1#f	//cdn.test/x.js
+https://a.test/dir/page.html?x=1#f	../up.html
+https://a.test/dir/page.html?x=1#f	../../../too/far.html
+https://a.test/dir/page.html?x=1#f	./same.html
+https://a.test/dir/page.html?x=1#f	?page=2
+https://a.test/dir/page.html?x=1#f	#frag
+https://a.test/dir/page.html?x=1#f	
+https://a.test/dir/page.html?x=1#f	http://other.test/a/../b
+https://a.test/dir/page.html?x=1#f	javascript:void(0)
+https://a.test/dir/page.html?x=1#f	data:image/gif;base64,AAA=
+https://a.test/dir/page.html?x=1#f	mailto:a@b.test
+https://a.test/dir/page.html?x=1#f	tel:+123
+https://a.test/dir/page.html?x=1#f	  spaced.html  
+https://a.test/dir/page.html?x=1#f	dir/with space.html
+https://a.test/dir/page.html?x=1#f	a/b/../c/./d.html
+https://a.test	/x
+https://a.test	x
+https://a.test	?q=1
+https://a.test/	.
+https://a.test/a/b/	..
+https://a.test/a/b/	../
+http://a.test:8080/a/b	c
+http://user@a.test/a	/c
+HTTP://A.TEST/a	b
+	http://abs.test/x
+	/relative
+	//proto-rel.test/x
+ftp://f.test/a/b.txt	c.txt
+file:///tmp/a/b.html	c.html
+not a url	foo
+https://a.test/a	\\evil.test/x
+https://a.test/a b/c	d
+https://a.test/dir/	x	y

@@ -1,0 +1,9 @@
+RESULT cold_first_ms 1.58
+RESULT bridge_raw_us_per_call 0.08
+RESULT js_fib_ms 18.57
+RESULT js_loop_ms 73.06
+RESULT js_str_ms 19.46
+RESULT js_sort_ms 63.88
+RESULT js_json_ms 44.88
+RESULT html50k_ms 20.34
+RESULT html1m_ms 697.13
