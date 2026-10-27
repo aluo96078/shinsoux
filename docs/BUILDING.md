@@ -12,6 +12,7 @@
 - iOS／iOS Simulator：需完整 Xcode（專案 deployment target 為 iOS 16）及 XcodeGen
 - Windows 11 x64：Windows Desktop 執行與 MSI／EXE 的權威建置環境
 - WiX Toolset 3.x：Compose Desktop／`jpackage` 建立 Windows MSI／EXE 時需要；`candle.exe` 與 `light.exe` 必須可由 `PATH` 找到
+- MSYS2 的 MinGW-w64 UCRT64 工具鏈（`mingw-w64-ucrt-x86_64-gcc`、`-cmake`、`-ninja`，`ucrt64\bin` 放進 `PATH`）與 Python 3：Windows Desktop 的資源準備與 MSI／EXE 以它編譯第三方套件沙箱 helper `shinsou-sandbox.exe`（ADR-0002 S3；sandbox-core 需要 pthreads 與 POSIX I/O，不能用 MSVC）。helper 執行時以 Low Privilege AppContainer＋Job object 重新啟動自己；`bash` 需可執行 `sandbox-core/scripts/fetch-deps.sh`（Git for Windows 內附）
 
 專案使用 Gradle Wrapper，不需要另外安裝 Gradle。若 shell 內的 `ANDROID_SDK_ROOT` 指向無效 SDK，可使用 `env -u ANDROID_SDK_ROOT` 讓 Android Gradle Plugin 改讀 `local.properties` 或預設 SDK 路徑。
 

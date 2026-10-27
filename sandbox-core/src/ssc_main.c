@@ -2,8 +2,8 @@
  * shinsou-sandbox: the desktop sandbox helper (ADR-0002 §4.4). Speaks SandboxProtocol v1 on
  * stdin/stdout and nothing else: QuickJS is built without quickjs-libc, so scripts have no file,
  * process, socket or environment access. Before reading anything it confines itself
- * (ssc_os_lockdown: macOS sandbox_init deny-all); on Windows the launcher applies LPAC + a Job
- * object instead (S3).
+ * (ssc_os_lockdown: macOS sandbox_init deny-all; Windows relaunches itself in an LPAC and a Job
+ * object, and this process then only waits for that confined copy).
  */
 #include <errno.h>
 #include <pthread.h>
@@ -12,6 +12,11 @@
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #include "ssc_driver.h"
 #include "ssc_os_sandbox.h"
@@ -56,15 +61,23 @@ static void *run(void *o) {
     return NULL;
 }
 
-int main(void) {
-    char err[64];
-    if (ssc_os_lockdown(err, sizeof err) != 0) {
+int main(int argc, char **argv) {
+    char err[96];
+    int launched_exit = 0;
+    int lockdown = ssc_os_lockdown(&argc, &argv, &launched_exit, err, sizeof err);
+    if (lockdown == SSC_OS_LAUNCHED) return launched_exit;
+    if (lockdown != SSC_OS_CONFINED) {
         /* Fail closed: not one frame is read, so no script is ever evaluated unconfined. */
         static const char msg[] = "shinsou-sandbox: lockdown failed\n";
         (void)!write(STDERR_FILENO, msg, sizeof msg - 1);
         return SSC_DRIVER_LOCKDOWN;
     }
+#ifdef _WIN32
+    /* Frames are bytes: no CRLF translation, no ^Z as end of file. */
+    if (_setmode(STDIN_FILENO, _O_BINARY) == -1 || _setmode(STDOUT_FILENO, _O_BINARY) == -1) return SSC_DRIVER_LOCKDOWN;
+#else
     signal(SIGPIPE, SIG_IGN); /* a vanished host shows up as a failed write, handled by the driver */
+#endif
     /* A dedicated thread with a known stack: the core's stack limit must fit inside it. */
     /* Fail closed if the stack cannot be had: QuickJS would trust a limit the thread lacks. */
     pthread_attr_t attr;

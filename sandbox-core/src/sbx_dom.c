@@ -1359,7 +1359,13 @@ static void rewrite_group_list(rw *r, char close, bool top) {
 static bool contains_str(const char *hay, size_t hl, const char *needle, size_t nl) {
     if (nl == 0) return true;
     if (nl > hl) return false;
-    return memmem(hay, hl, needle, nl) != NULL;
+    /* memmem is not in the Windows C runtime. */
+    for (const char *p = hay, *last = hay + (hl - nl); p <= last; p++) {
+        p = memchr(p, needle[0], (size_t)(last - p) + 1);
+        if (!p) return false;
+        if (memcmp(p, needle, nl) == 0) return true;
+    }
+    return false;
 }
 
 /* Index among element siblings in O(1): elements are visited in document order, so the previous

@@ -270,12 +270,20 @@ Host（App 程序，受信任）
   - 以 **Low Privilege AppContainer（LPAC）** 啟動：不給任何 capability（尤其是 `internetClient`），並以
     `PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT` 退出 `ALL APPLICATION PACKAGES` 群組。S0 實測一般
     AppContainer 仍可讀部分 HKCU（例如 Explorer 的最近文件紀錄），LPAC 才全部拒絕。
-  - helper 執行檔與其 DLL 放在只授予該 AppContainer SID read＋execute 的專屬目錄；子程序環境只帶
-    `SystemRoot`／`LOCALAPPDATA`／`TEMP` 等路徑變數（缺少時 `CreateProcess` 失敗），不帶 Host 其他環境變數。
+  - （S3 修訂）JVM 的 `ProcessBuilder` 無法建立 AppContainer 程序，所以 `shinsou-sandbox.exe` 先當 launcher：以 LPAC＋Job
+    重新啟動自己，只把自己的 stdin／stdout 交給被隔離的那一份，然後等待它結束；launcher 本身不讀任何輸入。被隔離的那一份
+    不相信命令列參數，讀 frame 前先檢查自己的 token（AppContainer、沒有 capability、不在 `ALL APPLICATION PACKAGES` 內）
+    與 Job 限制，不符就結束（§19.4）。
+  - **每個 package 一個 AppContainer**（`Shinsou.Sandbox.<SHA-256(package id) 前 16 bytes>`）：同一個 AppContainer 的程序
+    可以互相開啟，共用一個就等於讓套件讀其他套件的記憶體。
+  - helper 是單一靜態執行檔（不帶 DLL），只授予 `ALL RESTRICTED APPLICATION PACKAGES` 對它所在的私有目錄 read＋execute；
+    子程序環境只帶 `SystemRoot`／`LOCALAPPDATA`／`TEMP` 等路徑變數（缺少時 `CreateProcess` 失敗），不帶 Host 其他環境變數。
   - 只繼承 pipe（`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`），並以 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在建立時就加入
     Job（不留「已建立但不在 Job 內」的空窗）；建立後任何設定失敗都先終止子程序。
   - 指派 Job Object：`JOB_OBJECT_LIMIT_PROCESS_MEMORY`、CPU rate control（hard cap，S0 實測有效）、`KILL_ON_JOB_CLOSE`、
-    `ACTIVE_PROCESS_LIMIT = 1`（不能再開子程序）、UI restrictions。
+    `ACTIVE_PROCESS_LIMIT = 1`（不能再開子程序）、UI restrictions。（S3）另加 process mitigation（禁止 win32k 系統呼叫、
+    動態程式碼、遠端與低完整性映像、非系統字型、舊式擴充點；strict handle checks 等）。child process policy 會讓 LPAC
+    子程序在載入時就以 `STATUS_DLL_INIT_FAILED` 結束，所以不用；禁止子程序由 Job 的 `ACTIVE_PROCESS_LIMIT` 負責。
   - Host 結束時 job 一起結束，不留孤兒程序。
 - 打包：`shinsou-sandbox` 要為 macOS arm64／x64、Windows x64 交叉編譯並簽章／公證，納入 `docs/BUILDING.md`、
   `docs/RELEASING.md` 的流程。
@@ -1107,7 +1115,7 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
 | Host 結束不留孤兒程序 | ✅ helper 在 stdin end of stream 後 11–88 ms 內結束（即使正在跑無窮迴圈） | `sandbox-core/src/ssc_driver.c` |
 | macOS 公證 | ⏳ 需要 Developer ID 憑證（公開 DMG 目前仍為 ad-hoc 簽章、未公證）；helper 已以 hardened runtime 簽章，設定憑證後不需另外處理 | — |
 | macOS：Host 端 RSS 監控、CPU 時間上限（§7） | ⏳ 尚未實作；目前靠 QuickJS 的記憶體與 wall-time 上限 | — |
-| Windows：LPAC＋Job object | ⏳ 未開始 | — |
+| Windows：LPAC＋Job object | ✅ GitHub Actions Windows Server 2022／2025：隔離探測 15 項全擋、桌面 sandbox 測試全過（§19.4） | `sandbox-core/src/ssc_os_windows.c`、`DesktopSandboxTransport.kt` |
 | Windows 11 一般使用者帳號實機重跑 | ⏳ 需要使用者協助（§16.3） | — |
 
 ### 19.1 macOS helper 的鎖定
@@ -1135,7 +1143,7 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
 - `SandboxHelperLocator`：jpackage 安裝的 resources 沒有執行權限，所以每次執行把 helper 複製到只有使用者能進入的
   暫存目錄（目錄 0700、檔案 0500）。**打包後的 App 只使用自己 bundle 內的 helper**：`SHINSOU_SANDBOX_BIN` 與工作目錄
   下的建置輸出只在開發執行（沒有 resources 目錄）時生效，否則能控制啟動環境的人可以換上沒有鎖定的執行檔
-  （Codex 複審，嚴重）。找不到 helper 或不是 macOS 時一律拋出例外，不會退回未隔離的執行方式。
+  （Codex 複審，嚴重）。找不到 helper 或不是 macOS／Windows 時一律拋出例外，不會退回未隔離的執行方式。
 - `desktopTest` 把 `sandbox-core/build/release/shinsou-sandbox` 列為輸入：實作時一度因 helper 不是 task 輸入，Gradle
   沿用了舊的測試結果，時區問題晚了一步才被發現。
 
@@ -1146,6 +1154,70 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   helper 不帶任何 entitlement。CI 檢查 hardened runtime 旗標、沒有 entitlement、App 整體 `codesign --verify --deep
   --strict`；release workflow 另確認 DMG 內的 App 有通過驗證的 helper。
 - 實測 hardened runtime 不影響 `sandbox_init`。
+
+### 19.4 Windows helper：LPAC＋Job object
+
+- **自己當 launcher**：JVM 的 `ProcessBuilder` 不能建立 AppContainer 程序，所以 `shinsou-sandbox.exe` 第一次執行時只做
+  launcher：
+  - 建立（或取得）`Shinsou.Sandbox.<key>` AppContainer profile。key 由 Host 以 `--package-key` 傳入，是
+    SHA-256(package id) 的前 16 bytes。
+  - 授予 `ALL RESTRICTED APPLICATION PACKAGES` 對 helper 所在私有目錄的 read＋execute。
+  - 建立 Job：記憶體 384 MiB（核心自己的預算之上的保險）、`ACTIVE_PROCESS = 1`、`KILL_ON_JOB_CLOSE`、
+    `DIE_ON_UNHANDLED_EXCEPTION`、UI restrictions、CPU hard cap 一顆處理器。
+  - 以 LPAC＋Job（`PROC_THREAD_ATTRIBUTE_JOB_LIST`，建立時就在 Job 內）＋process mitigation 重新啟動自己，只繼承
+    stdin／stdout，工作目錄設為 helper 自己的目錄，然後等待它結束並回傳結束碼。
+  - launcher 不讀任何輸入。`userenv` 以 `LoadLibrary` 載入，所以被隔離的那一份只匯入 KERNEL32 與 ADVAPI32
+    （CI 檢查匯入表）。
+- **被隔離的那一份不相信參數**：讀 frame 前檢查以下各項，任何一項不符就以 `SSC_DRIVER_LOCKDOWN` 結束。
+  - token 是 AppContainer，沒有任何 capability。
+  - token 帶 `WIN://NOALLAPPPKG` 屬性，代表是 LPAC。
+  - 在 Job 內，且 Job 限制齊全。
+
+  CI 實測：拿掉 LPAC opt-out 時回報「not a Low Privilege AppContainer」，拿掉 Job 時回報「Job limits missing」。原本想以
+  `AccessCheck` 驗證不在 `ALL APPLICATION PACKAGES` 內，但在 LPAC token 上連對照組（授予自己的 AppContainer SID）也被拒，
+  所以改用 token 屬性。
+- **helper 目錄的授權對象**：read＋execute 授予 `ALL RESTRICTED APPLICATION PACKAGES`，而不是各 package 的 AppContainer SID
+  （Codex 複審提出，決定維持）。
+  - 理由：所有 package 共用同一份 helper，就算逐一授予各 package 的 SID，每個沙箱仍讀得到同一個目錄，只是讓 ACL 隨套件數增長。
+  - 目錄內只有公開的 helper 執行檔，沒有任何 package 的資料。
+  - 代價：本機其他 LPAC 程序也讀得到這個目錄。
+  - 因此 launcher 在授權前確認目錄只有 helper 本身，否則以「helper directory holds other files」拒絕啟動。這項
+    檢查由隔離探測（helper 旁放一個檔案）與 `onWindowsTheHelperRefusesADirectoryHoldingOtherFiles` 驗證；開發與測試
+    時也一律從只放 helper 的私有副本執行。
+- **每個 package 一個 AppContainer**：同一個 AppContainer 的程序可以互相開啟。隔離探測另外啟動一個不同 package 的
+  沙箱，被測的沙箱 `OpenProcess` 它被拒（5）。
+- **S3 實作時發現**：
+  - child process policy 讓子程序以 `STATUS_DLL_INIT_FAILED`（0xC0000142）結束，所以不用（§4.4）。
+  - 子程序繼承 launcher 的工作目錄，所以改為 helper 自己的目錄。
+  - repo 的 `* text=auto` 讓 quickjs patch 在 Windows checkout 時變成 CRLF，已在 `.gitattributes` 固定為 LF。
+  - `memmem` 不在 Windows C runtime，改為可攜的實作。
+  - Gradle 在 Windows 上找到的 `bash` 可能是 WSL 的啟動器，改用 Git for Windows 的 bash。
+- **隔離探測**（Windows Server 2022 與 2025 結果一致）：不隔離時 15 項全部成功。隔離後全部被擋：
+
+  | 探測項目 | 結果 |
+  |---|---|
+  | TCP connect、UDP sendto、bind | 10107：LPAC 下 Winsock 無法初始化 |
+  | 讀使用者檔案；在使用者目錄、helper 目錄、`C:\Windows\Temp` 建檔；列 `C:\Users`；讀 HKCU Explorer 機碼 | 5 |
+  | `CreateProcess(cmd.exe)` | 1816：Job 的程序數上限 |
+  | 讀 Host 的環境變數 | 拿不到 |
+  | `OpenProcess`（Host、另一個 package 的沙箱） | 5 |
+  | 使用繼承的 handle | strict handle checks 以 `STATUS_INVALID_HANDLE` 結束該程序 |
+  | commit 1 GiB 記憶體 | 1455 |
+
+  執行緒與一般記憶體配置仍可用。
+- **Host 端**：在 Windows 上，`DesktopSandboxTransport` 只把路徑類環境變數交給 launcher，launcher 再過濾一次。
+  `close()` 結束 launcher，Job 隨之關閉，被隔離的那一份跟著結束。新測試 `closingAHelperLeavesNoProcessBehind`
+  確認 launcher 與那一份都不存在。
+- **CI 實測**：
+  - Host 的 stdin 關閉後 10–11 ms 內 helper 結束，即使正在跑無窮迴圈。
+  - 取消需 1–2 ms。
+  - hook 往返中位數 435–689 µs（launcher 不轉送資料，pipe 直接交給被隔離的那一份）。
+  - 桌面 sandbox 測試全部通過，沒有任何 SKIPPED。
+- **打包**：
+  - `buildWindowsSandboxHelper` 以 MSYS2 UCRT64 的 MinGW-w64 靜態連結編譯（sandbox-core 需要 pthreads 與 POSIX I/O）。
+  - helper 放進 App resources 的 `windows/`；Windows CI 與 release workflow 都檢查 App image 內有 `shinsou-sandbox.exe`。
+  - Authenticode 簽章與 SmartScreen 仍隨 §11 的整體 Windows 簽章處理。
+- **仍待**：Windows 11 一般使用者帳號上的實機重跑（runner 都是管理員帳號）。
 
 ## 不接受的縮小範圍
 
