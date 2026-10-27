@@ -21,6 +21,10 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # Plugin fixtures are verified byte-for-byte; keep LF line endings on checkout.
+      - name: Disable Git line ending conversion
+        run: git config --global core.autocrlf false
+
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
