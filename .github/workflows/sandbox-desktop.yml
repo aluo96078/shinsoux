@@ -86,7 +86,7 @@ jobs:
           helper="$app/Contents/app/resources/shinsou-sandbox"
           [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
           codesign --verify --strict "$helper"
-          codesign -dv "$helper" 2>&1 | grep -q "flags=0x10000(runtime)" || { echo "::error::helper lacks the hardened runtime"; exit 1; }
+          codesign -dv "$helper" 2>&1 | grep -Eq "flags=0x[0-9a-f]+\([^)]*runtime" || { echo "::error::helper lacks the hardened runtime"; exit 1; }
           # No entitlements: the helper must gain nothing the deny-all profile takes away.
           if codesign -d --entitlements - "$helper" 2>/dev/null | grep -q "<key>"; then echo "::error::helper has entitlements"; exit 1; fi
           codesign --verify --deep --strict "$app"
