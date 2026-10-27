@@ -270,12 +270,19 @@ Host（App 程序，受信任）
   - 以 **Low Privilege AppContainer（LPAC）** 啟動：不給任何 capability（尤其是 `internetClient`），並以
     `PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT` 退出 `ALL APPLICATION PACKAGES` 群組。S0 實測一般
     AppContainer 仍可讀部分 HKCU（例如 Explorer 的最近文件紀錄），LPAC 才全部拒絕。
-  - helper 執行檔與其 DLL 放在只授予該 AppContainer SID read＋execute 的專屬目錄；子程序環境只帶
-    `SystemRoot`／`LOCALAPPDATA`／`TEMP` 等路徑變數（缺少時 `CreateProcess` 失敗），不帶 Host 其他環境變數。
+  - （S3 修訂）JVM 的 `ProcessBuilder` 無法建立 AppContainer 程序，所以 `shinsou-sandbox.exe` 先當 launcher：以 LPAC＋Job
+    重新啟動自己，只把自己的 stdin／stdout 交給被隔離的那一份，然後等待它結束；launcher 本身不讀任何輸入。被隔離的那一份
+    不相信命令列參數，讀 frame 前先檢查自己的 token（AppContainer、沒有 capability、不在 `ALL APPLICATION PACKAGES` 內）
+    與 Job 限制，不符就結束（§19.4）。
+  - **每個 package 一個 AppContainer**（`Shinsou.Sandbox.<SHA-256(package id) 前 16 bytes>`）：同一個 AppContainer 的程序
+    可以互相開啟，共用一個就等於讓套件讀其他套件的記憶體。
+  - helper 是單一靜態執行檔（不帶 DLL），只授予 `ALL RESTRICTED APPLICATION PACKAGES` 對它所在的私有目錄 read＋execute；
+    子程序環境只帶 `SystemRoot`／`LOCALAPPDATA`／`TEMP` 等路徑變數（缺少時 `CreateProcess` 失敗），不帶 Host 其他環境變數。
   - 只繼承 pipe（`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`），並以 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在建立時就加入
     Job（不留「已建立但不在 Job 內」的空窗）；建立後任何設定失敗都先終止子程序。
   - 指派 Job Object：`JOB_OBJECT_LIMIT_PROCESS_MEMORY`、CPU rate control（hard cap，S0 實測有效）、`KILL_ON_JOB_CLOSE`、
-    `ACTIVE_PROCESS_LIMIT = 1`（不能再開子程序）、UI restrictions。
+    `ACTIVE_PROCESS_LIMIT = 1`（不能再開子程序）、UI restrictions。（S3）另加 child process policy 與 process mitigation
+    （禁止 win32k 系統呼叫、動態程式碼、遠端與低完整性映像、非系統字型、舊式擴充點）。
   - Host 結束時 job 一起結束，不留孤兒程序。
 - 打包：`shinsou-sandbox` 要為 macOS arm64／x64、Windows x64 交叉編譯並簽章／公證，納入 `docs/BUILDING.md`、
   `docs/RELEASING.md` 的流程。
