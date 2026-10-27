@@ -147,10 +147,12 @@ jobs:
         run: |
           ./scripts/fetch-deps.sh
           all=$(( (1<<12)|(1<<16)|(1<<24)|(1<<28)|(1<<32)|(1<<36)|(1<<48)|(1<<52)|(1<<56) ))
+          which gcc cmake ninja python || true
           for spec in "none:0" "all:$all" $(for b in 12 16 24 28 32 36 48 52 56; do echo "without$b:$(( all & ~(1<<b) ))"; done) $(for b in 12 16 24 28 32 36 48 52 56; do echo "only$b:$(( 1<<b ))"; done); do
             name=${spec%%:*}; mask=${spec#*:}
-            cmake -S . -B build/diag-$name -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_MITIGATIONS=${mask}ULL" > /dev/null
-            cmake --build build/diag-$name --target isolation_probe shinsou-sandbox > /dev/null
+            cmake -S . -B build/diag-$name -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_MITIGATIONS=${mask}ULL" > cfg.txt 2>&1 || tail -20 cfg.txt
+            cmake --build build/diag-$name --target isolation_probe shinsou-sandbox > bld.txt 2>&1 || tail -20 bld.txt
+            ls build/diag-$name/*.exe || true
             probe=0; build/diag-$name/isolation_probe.exe --package-key diag --hang < /dev/null > diag.txt || probe=$?
             helper=0; build/diag-$name/shinsou-sandbox.exe < /dev/null || helper=$?
             echo "DIAG $name mask=$mask probe_exit=$probe probe_out='$(head -c 200 diag.txt)' helper_exit=$helper"
