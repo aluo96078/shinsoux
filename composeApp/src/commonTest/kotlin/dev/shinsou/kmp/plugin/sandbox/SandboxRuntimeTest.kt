@@ -26,6 +26,7 @@ import dev.shinsou.kmp.plugin.sandbox.FakeSandbox.HookOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -451,10 +452,14 @@ class SandboxRuntimeTest {
             scope = backgroundScope,
         )
 
-    private fun TestScope.fleet(lifecycle: SandboxLifecycle, hooks: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome>): Fleet {
+    private fun TestScope.fleet(
+        lifecycle: SandboxLifecycle,
+        hooks: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome>,
+        initFailure: () -> SandboxErrorCode? = { null },
+    ): Fleet {
         val opened = ArrayList<FakeSandbox>()
         val factory = SandboxRuntimeFactory(
-            transports = { FakeSandbox(backgroundScope, hooks = metadataHooks + hooks).also { opened += it } },
+            transports = { FakeSandbox(backgroundScope, initFailure = initFailure(), hooks = metadataHooks + hooks).also { opened += it } },
             lifecycle = lifecycle,
             pumpScope = backgroundScope,
         )
@@ -493,6 +498,23 @@ class SandboxRuntimeTest {
         assertFailsWith<SandboxDisabledException> { f.create() }
         assertEquals(opened, f.opened.size)
         assertEquals(0, lc.liveCount())
+    }
+
+    @Test
+    fun aScriptThatStopsLoadingIsDisabledInsteadOfRespawningForever() = runTest {
+        var broken = false
+        val f = fleet(
+            lifecycle(),
+            // Crash once; every restart from then on fails to load the script.
+            mapOf("getPopularManga" to { broken = true; die(); HookOutcome.Custom }),
+            initFailure = { if (broken) SandboxErrorCode.SCRIPT_ERROR else null },
+        )
+        val runtime = f.create()
+        assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) }
+        repeat(2) { assertFailsWith<SandboxInvocationException> { runtime.getPopularManga(1) } }
+        val opened = f.opened.size
+        assertFailsWith<SandboxDisabledException> { runtime.getPopularManga(1) }
+        assertEquals(opened, f.opened.size)
     }
 
     @Test
@@ -565,5 +587,46 @@ class SandboxRuntimeTest {
         assertTrue(f.opened[1].closed) // b went idle
         gate.complete(Unit)
         assertEquals(false, call.await().hasNextPage)
+    }
+
+    /** Holds the lifecycle lock until the returned deferred completes, so bookkeeping must wait. */
+    private suspend fun TestScope.holdLifecycle(lc: SandboxLifecycle): CompletableDeferred<Unit> {
+        val held = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        backgroundScope.launch { lc.holdForTest { held.complete(Unit); release.await() } }
+        held.await()
+        return release
+    }
+
+    @Test
+    fun aCloseCancelledWhileWaitingForTheLifecycleStillUnregisters() = runTest {
+        val lc = lifecycle()
+        val f = fleet(lc, emptyPage)
+        val runtime = f.create()
+        assertEquals(1, lc.liveCount())
+        val release = holdLifecycle(lc)
+        val closing = launch { runtime.close() }
+        runCurrent() // close() now waits for the lifecycle lock
+        closing.cancel()
+        release.complete(Unit)
+        closing.join()
+        assertTrue(f.opened.single().closed)
+        assertEquals(0, lc.liveCount())
+    }
+
+    @Test
+    fun aCallCancelledWhileWaitingForTheLifecycleStillUnregistersItsDeadSandbox() = runTest {
+        val lc = lifecycle()
+        val f = fleet(lc, mapOf("getPopularManga" to { awaitCancel(); die(); HookOutcome.Custom }))
+        val runtime = f.create()
+        val call = async { runtime.getPopularManga(1) }
+        runCurrent()
+        val release = holdLifecycle(lc)
+        call.cancel() // the sandbox dies on Cancel; the call's bookkeeping waits for the lock
+        runCurrent()
+        release.complete(Unit)
+        runCatching { call.await() }
+        assertTrue(f.opened.single().closed)
+        assertEquals(0, lc.liveCount())
     }
 }

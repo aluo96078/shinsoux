@@ -99,6 +99,9 @@ internal class SandboxLifecycle(
 
     internal suspend fun liveCount(): Int = lock.withLock { live.size }
 
+    /** Test hook: runs [block] holding the lifecycle lock, to make bookkeeping wait for it. */
+    internal suspend fun holdForTest(block: suspend () -> Unit) = lock.withLock { block() }
+
     internal suspend fun sweep() = lock.withLock {
         val now = nowMs()
         live.filter { now - it.lastUsed >= idleMs && it.resident.tryRelease() }.forEach { live -= it }

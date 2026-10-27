@@ -147,6 +147,7 @@ internal class SandboxScriptPluginRuntime(
 
     /** Guards [session]; held for a whole call, so a release never interrupts one. */
     private val sandboxLock = Mutex()
+    @Volatile // close() reads it without the lock, to kill a running call
     private var session: SandboxSession? = null
     private var script: String? = null
     @Volatile
@@ -267,7 +268,9 @@ internal class SandboxScriptPluginRuntime(
         closed = true
         generation += 1
         session?.close() // immediately, even mid-call
-        lifecycle?.stopped(this)
+        // Bookkeeping must finish even when the closing coroutine is cancelled, or a dead sandbox
+        // would keep counting against the live cap.
+        withContext(NonCancellable) { lifecycle?.stopped(this@SandboxScriptPluginRuntime) }
     }
 
     override fun tryRelease(): Boolean {
@@ -333,17 +336,21 @@ internal class SandboxScriptPluginRuntime(
         val json = sandboxLock.withLock {
             if (closed) throw SandboxBrokenException("closed")
             var current: SandboxSession? = session
+            var starting = false
             try {
                 lifecycle?.requireEnabled(packageId) // also stops a live sandbox once the package is disabled
                 if (current == null || current.isBroken) {
                     stopSandbox()
+                    starting = true
                     current = startSandbox()
+                    starting = false
                 }
                 lifecycle?.touch(this)
                 current.invoke(method, encoded, loginInvocation)
             } catch (e: SandboxInvocationException) {
-                val strike = e.code.strike() ?: SandboxStrike.CRASH.takeIf { current?.isBroken == true }
-                if (strike != null) lifecycle?.strike(packageId, strike)
+                // A script that cannot load would otherwise start a new process on every call.
+                val strike = e.code.strike() ?: SandboxStrike.CRASH.takeIf { starting || current?.isBroken == true }
+                if (strike != null) withContext(NonCancellable) { lifecycle?.strike(packageId, strike) }
                 throw when (e.code) {
                     SandboxErrorCode.LIMIT_MEMORY, SandboxErrorCode.LIMIT_STACK, SandboxErrorCode.LIMIT_TIME,
                     SandboxErrorCode.LIMIT_BRIDGE, SandboxErrorCode.LIMIT_RESULT,
@@ -351,17 +358,21 @@ internal class SandboxScriptPluginRuntime(
                     else -> e
                 }
             } catch (e: SandboxBrokenException) {
-                if (!closed) lifecycle?.strike(packageId, SandboxStrike.CRASH)
+                if (!closed) withContext(NonCancellable) { lifecycle?.strike(packageId, SandboxStrike.CRASH) }
                 throw e
             } catch (e: SandboxDisabledException) {
                 stopSandbox()
                 throw e
             } finally {
-                if (session == null || session?.isBroken == true) {
-                    stopSandbox()
-                    lifecycle?.stopped(this)
-                } else {
-                    lifecycle?.idle(this)
+                // Also on cancellation: the lifecycle must see every call end.
+                withContext(NonCancellable) {
+                    val self = this@SandboxScriptPluginRuntime
+                    if (session == null || session?.isBroken == true) {
+                        stopSandbox()
+                        lifecycle?.stopped(self)
+                    } else {
+                        lifecycle?.idle(self)
+                    }
                 }
             }
         }

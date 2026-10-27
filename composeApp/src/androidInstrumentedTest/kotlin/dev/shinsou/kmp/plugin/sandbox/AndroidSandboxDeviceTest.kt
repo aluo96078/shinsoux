@@ -242,7 +242,9 @@ class AndroidSandboxDeviceTest {
         val prefs = File(context.dataDir, "shared_prefs").apply { mkdirs() }
         val dbs = context.getDatabasePath("probe.db").apply { parentFile?.mkdirs(); writeText("db") }
         for (path in listOf(null, secret.path, prefs.path, dbs.path, context.dataDir.path, "/sdcard/", "/proc/net/tcp")) {
-            // bits: 1 inet socket, 2 inet6 socket, 4 open(path), 8 fork, 16 exec
+            // bits: 1 inet socket, 2 inet6 socket, 4 open(path), 8 fork, 16 exec, 32 netlink/packet/
+            // bluetooth/vsock socket, 64 AF_UNIX socketpair broken by the filter, 128 the seccomp
+            // filter did not answer socket(AF_INET) (only the uid did)
             assertEquals(0, a.probe(path), "sandbox could do something forbidden with $path")
         }
         secret.delete()

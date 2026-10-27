@@ -78,6 +78,24 @@ static int lockdown(void) {
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_vfork, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
 #endif
+#ifdef __NR_socketcall
+        /* The multiplexed socket entry point hides its arguments in memory: refuse it outright. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketcall, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOSYS),
+#endif
+        /*
+         * Network, on top of the isolated uid lacking the inet group: only AF_UNIX sockets (logd,
+         * socketpair) can be created; every other family (inet, netlink, packet, ...) fails with
+         * EAFNOSUPPORT, an answer the kernel never gives for AF_INET, so the self-check can tell
+         * this filter from SELinux (EACCES). The domain is argument 0 of socket and socketpair on
+         * every supported ABI.
+         */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 1, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 0, 4),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EAFNOSUPPORT),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_clone, 0, 4),
         /* clone flags are argument 0 (low 32 bits) on aarch64, arm and x86_64. */
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
@@ -180,6 +198,9 @@ enum {
     PROBE_OPEN_PATH = 1 << 2,
     PROBE_FORK = 1 << 3,
     PROBE_EXEC = 1 << 4,
+    PROBE_OTHER_SOCKET = 1 << 5,
+    PROBE_UNIX_SOCKET_BROKEN = 1 << 6,
+    PROBE_FILTER_SILENT = 1 << 7,
 };
 
 /*
@@ -191,10 +212,24 @@ enum {
 JNIEXPORT jint JNICALL Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeProbe(JNIEnv *env, jclass cls, jstring path) {
     (void)cls;
     int leaks = 0;
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s >= 0) { leaks |= PROBE_INET_SOCKET; close(s); }
-    s = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (s >= 0) { leaks |= PROBE_INET6_SOCKET; close(s); }
+    /*
+     * Raw syscalls, not libc: bionic's socket() asks netd's client library first and fails with
+     * EPERM without entering the kernel, which native code can simply skip. EAFNOSUPPORT shows the
+     * seccomp filter answered (SELinux alone says EACCES, the inet-group check EPERM).
+     */
+    long s = syscall(__NR_socket, AF_INET, SOCK_STREAM, 0);
+    if (s >= 0) { leaks |= PROBE_INET_SOCKET; close((int)s); }
+    else if (errno != EAFNOSUPPORT) leaks |= PROBE_FILTER_SILENT;
+    s = syscall(__NR_socket, AF_INET6, SOCK_DGRAM, 0);
+    if (s >= 0) { leaks |= PROBE_INET6_SOCKET; close((int)s); }
+    static const int other[] = { AF_NETLINK, AF_PACKET, AF_BLUETOOTH, AF_VSOCK };
+    for (size_t i = 0; i < sizeof other / sizeof other[0]; i++) {
+        s = syscall(__NR_socket, other[i], SOCK_DGRAM, 0);
+        if (s >= 0) { leaks |= PROBE_OTHER_SOCKET; close((int)s); }
+    }
+    /* The filter must leave AF_UNIX alone (logging, socketpair). */
+    int pair[2];
+    if (syscall(__NR_socketpair, AF_UNIX, SOCK_STREAM, 0, pair) == 0) { close(pair[0]); close(pair[1]); } else leaks |= PROBE_UNIX_SOCKET_BROKEN;
     const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL;
     if (p) {
         int fd = open(p, O_RDONLY | O_CLOEXEC);
