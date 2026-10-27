@@ -29,10 +29,16 @@ static char *bootstrap;
 static size_t bootstrap_len;
 static uint64_t gen = 1;
 
-#if defined(__has_feature)
+/* clang reports ASan through __has_feature, GCC through __SANITIZE_ADDRESS__. */
+#if defined(__SANITIZE_ADDRESS__)
+#define TEST_UNDER_ASAN 1
+#elif defined(__has_feature)
 #if __has_feature(address_sanitizer)
-#define TEST_STACK (4u << 20) /* ASan frames are several times larger */
+#define TEST_UNDER_ASAN 1
 #endif
+#endif
+#ifdef TEST_UNDER_ASAN
+#define TEST_STACK (4u << 20) /* ASan frames are several times larger */
 #endif
 #ifndef TEST_STACK
 #define TEST_STACK (1u << 20)

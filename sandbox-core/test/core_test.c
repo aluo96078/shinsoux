@@ -106,19 +106,29 @@ static void log_fn(void *o, const char *m, size_t l) { (void)m; (void)l; ((mock_
 static char *bootstrap;
 static size_t bootstrap_len;
 
-#if defined(__has_feature)
+/* clang reports ASan through __has_feature, GCC through __SANITIZE_ADDRESS__. */
+#if defined(__SANITIZE_ADDRESS__)
+#define TEST_UNDER_ASAN 1
+#elif defined(__has_feature)
 #if __has_feature(address_sanitizer)
-#define SSC_TEST_STACK (4u << 20) /* ASan frames are several times larger than release frames */
+#define TEST_UNDER_ASAN 1
 #endif
+#endif
+#ifdef TEST_UNDER_ASAN
+#define SSC_TEST_STACK (4u << 20) /* ASan frames are several times larger than release frames */
+#define SSC_TEST_INVOKE_MS 1500 /* allocation-heavy cases (the memory bomb) run ~10x slower */
 #endif
 #ifndef SSC_TEST_STACK
 #define SSC_TEST_STACK (1u << 20) /* ADR-0002 §7 */
+#endif
+#ifndef SSC_TEST_INVOKE_MS
+#define SSC_TEST_INVOKE_MS 300
 #endif
 
 static ssc_limits default_limits(void) {
     ssc_limits l = {
         .heap_limit_bytes = 16u << 20, .stack_limit_bytes = SSC_TEST_STACK,
-        .init_timeout_ms = 2000, .invoke_timeout_ms = 300, .max_bridge_calls = 4096,
+        .init_timeout_ms = 2000, .invoke_timeout_ms = SSC_TEST_INVOKE_MS, .max_bridge_calls = 4096,
         .max_async_inflight = 6, .max_async_queue = 64, .max_result_bytes = 1u << 20,
         .dom_max_nodes = 100000, .dom_max_depth = 512,
     };
