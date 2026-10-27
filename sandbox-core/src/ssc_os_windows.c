@@ -48,6 +48,9 @@
 #define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
 #endif
 
+#ifndef SSC_WIN_DIAG
+#define SSC_WIN_DIAG 0
+#endif
 #define CONFINED_FLAG_A "--ssc-confined"
 #define CONFINED_FLAG L"--ssc-confined"
 #define KEY_FLAG "--package-key"
@@ -191,9 +194,7 @@ static int container_sid(const char *key, PSID *sid, char *err, size_t len) {
  * An AppContainer reads only what grants it access. Grant read+execute on the helper's own
  * directory (the host's private copy) to ALL RESTRICTED APPLICATION PACKAGES, once; nothing else.
  */
-static int grant_directory(const wchar_t *dir, char *err, size_t len) {
-    PSID packages = NULL;
-    if (!ConvertStringSidToSidW(RESTRICTED_PACKAGES_SID, &packages)) return fail(err, len, "ConvertStringSidToSid");
+static int grant_directory(const wchar_t *dir, PSID packages, char *err, size_t len) {
     PACL old = NULL, acl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
     int rc = -1;
@@ -221,7 +222,6 @@ static int grant_directory(const wchar_t *dir, char *err, size_t len) {
 out:
     if (acl) LocalFree(acl);
     if (sd) LocalFree(sd);
-    LocalFree(packages);
     return rc;
 }
 
@@ -328,7 +328,12 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     }
 
     PSID sid = NULL;
-    if (container_sid(key, &sid, err, len) != 0 || grant_directory(dir, err, len) != 0) return -1;
+    PSID packages = NULL;
+    if (!ConvertStringSidToSidW(RESTRICTED_PACKAGES_SID, &packages)) return fail(err, len, "ConvertStringSidToSid");
+    int granted_dir = container_sid(key, &sid, err, len) == 0 && grant_directory(dir, packages, err, len) == 0;
+    LocalFree(packages);
+    if (!granted_dir) return -1;
+    if ((SSC_WIN_DIAG & 8) && grant_directory(dir, sid, err, len) != 0) return -1;
     HANDLE job = make_job(err, len);
     if (!job) return -1;
 
@@ -351,11 +356,11 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     if (!attrs || !InitializeProcThreadAttributeList(attrs, 6, 0, &attr_size)) return fail(err, len, "InitializeProcThreadAttributeList");
     /* Job membership is part of creation: the copy never runs, or waits suspended, outside it. */
     if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps, sizeof caps, NULL, NULL) ||
-        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac, sizeof lpac, NULL, NULL) ||
+        (!(SSC_WIN_DIAG & 16) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac, sizeof lpac, NULL, NULL)) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, (in == out ? 1 : 2) * sizeof(HANDLE), NULL, NULL) ||
-        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL) ||
-        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &child_policy, sizeof child_policy, NULL, NULL) ||
-        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations, sizeof mitigations, NULL, NULL))
+        (!(SSC_WIN_DIAG & 32) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL)) ||
+        (!(SSC_WIN_DIAG & 1) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &child_policy, sizeof child_policy, NULL, NULL)) ||
+        (!(SSC_WIN_DIAG & 2) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations, sizeof mitigations, NULL, NULL)))
         return fail(err, len, "UpdateProcThreadAttribute");
 
     STARTUPINFOEXW si;
@@ -370,10 +375,10 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     PROCESS_INFORMATION pi;
     if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
-                        env, NULL, &si.StartupInfo, &pi))
+                        env, (SSC_WIN_DIAG & 4) ? NULL : dir, &si.StartupInfo, &pi))
         return fail(err, len, "CreateProcess");
     BOOL in_job = FALSE;
-    if (!IsProcessInJob(pi.hProcess, job, &in_job) || !in_job || ResumeThread(pi.hThread) == (DWORD)-1) {
+    if (!((SSC_WIN_DIAG & 32) || (IsProcessInJob(pi.hProcess, job, &in_job) && in_job)) || ResumeThread(pi.hThread) == (DWORD)-1) {
         fail(err, len, "starting the confined helper");
         TerminateProcess(pi.hProcess, 1);
         return -1;
