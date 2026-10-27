@@ -42,7 +42,8 @@ if WINDOWS:
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     line = sibling.stdout.readline()
     if not line.startswith("PID "):
-        sys.exit(f"the sibling sandbox did not start: {line!r} (exit {sibling.poll()})")
+        code = sibling.wait(timeout=30)
+        sys.exit(f"the sibling sandbox did not start: {line!r} (exit {code} = {code & 0xFFFFFFFF:#010x})")
     extra.append(line.split()[1])
 
 
@@ -65,7 +66,7 @@ try:
     total = count(out)
     control_ok = total > 0 and len(allowed) == total  # each probe can detect a leak
     code, out = run(*(["--package-key", "probe"] if WINDOWS else []))
-    print("===== helper lockdown, exit", code)
+    print("===== helper lockdown, exit", code, f"({code & 0xFFFFFFFF:#010x})")
     print(out.rstrip())
     locked_ok = code == 0 and "RESULT PASS" in out and count(out) == total
 finally:
