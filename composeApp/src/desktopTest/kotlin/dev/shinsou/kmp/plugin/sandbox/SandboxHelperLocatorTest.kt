@@ -55,4 +55,21 @@ class SandboxHelperLocatorTest {
         assertTrue("missing" in error.message.orEmpty())
         assertFailsWith<IllegalStateException> { SandboxHelperLocator(overridePath = null, osName = "Windows 11").executable() }
     }
+
+    @Test
+    fun aPackagedAppIgnoresTheEnvironmentAndWorkingDirectoryOverrides() {
+        if (!isMac) { println("SKIPPED: the packaged helper ships on macOS only"); return }
+        val decoy = Files.createTempFile("decoy-", "").toString()
+        val elsewhere = Files.createTempDirectory("build-output-").resolve("shinsou-sandbox").also { Files.writeString(it, "x") }
+        // Packaged (a resources directory) without the helper: no override or build path may stand in.
+        val packaged = SandboxHelperLocator(
+            resourcesDirectory = Files.createTempDirectory("shinsou-resources-").toString(),
+            overridePath = decoy,
+            developmentCandidates = listOf(elsewhere),
+        )
+        assertFailsWith<IllegalStateException> { packaged.executable() }
+        // A development run (no resources directory) does honour them.
+        val development = SandboxHelperLocator(resourcesDirectory = null, overridePath = decoy, developmentCandidates = listOf(elsewhere))
+        assertEquals(decoy, development.executable().toString())
+    }
 }

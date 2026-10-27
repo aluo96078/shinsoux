@@ -74,6 +74,11 @@ internal class DesktopSandboxTransport(command: List<String>) : SandboxTransport
  * Finds the packaged helper and runs it from a private copy: jpackage installs application
  * resources without execute permission (the WKWebView helper does the same). The copy is made once
  * per run, in a directory only this user can enter.
+ *
+ * A packaged app (Compose sets [RESOURCES_PROPERTY]) only ever runs the helper inside its own
+ * signed bundle: `SHINSOU_SANDBOX_BIN` and build-output paths under the working directory would
+ * let whoever controls the launch environment substitute an unconfined binary, so they count only
+ * in development runs, which have no resources directory.
  */
 internal class SandboxHelperLocator(
     private val resourcesDirectory: String? = System.getProperty(RESOURCES_PROPERTY),
@@ -90,11 +95,13 @@ internal class SandboxHelperLocator(
     fun executable(): Path = copy ?: synchronized(this) { copy ?: prepare().also { copy = it } }
 
     private fun prepare(): Path {
-        overridePath?.takeIf(String::isNotBlank)?.let { return Path.of(it) } // development and tests
+        val packagedResources = resourcesDirectory?.takeIf(String::isNotBlank)
+        if (packagedResources == null) overridePath?.takeIf(String::isNotBlank)?.let { return Path.of(it) } // development and tests
         // Only macOS ships a helper that confines itself; elsewhere there is no sandbox yet (S3 Windows).
         check(osName.lowercase().contains("mac")) { "The plugin sandbox is not available on $osName yet" }
-        val source = (listOfNotNull(resourcesDirectory?.takeIf(String::isNotBlank)?.let { Path.of(it).resolve(HELPER_NAME) }) + developmentCandidates)
-            .firstOrNull(Files::isRegularFile) ?: throw IllegalStateException("The packaged plugin sandbox helper is missing")
+        val candidates = if (packagedResources != null) listOf(Path.of(packagedResources).resolve(HELPER_NAME)) else developmentCandidates
+        val source = candidates.firstOrNull(Files::isRegularFile)
+            ?: throw IllegalStateException("The packaged plugin sandbox helper is missing")
         val directory = Files.createTempDirectory("shinsou-sandbox-")
         val target = directory.resolve(HELPER_NAME)
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
