@@ -32,14 +32,8 @@
 #ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
 #define PROC_THREAD_ATTRIBUTE_JOB_LIST 0x0002000D
 #endif
-#ifndef PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY
-#define PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY 0x0002000E
-#endif
 #ifndef PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY
 #define PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY 0x0002000F
-#endif
-#ifndef PROCESS_CREATION_CHILD_PROCESS_RESTRICTED
-#define PROCESS_CREATION_CHILD_PROCESS_RESTRICTED 0x01
 #endif
 #ifndef PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT
 #define PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT 0x01
@@ -59,7 +53,7 @@
 #define JOB_MEMORY_BYTES ((SIZE_T)384 << 20)
 #define JOB_LIMITS (JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_ACTIVE_PROCESS | \
                     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION)
-/* Every LPAC process is in ALL RESTRICTED APPLICATION PACKAGES; ordinary AppContainers also in "AC". */
+/* Read+execute on the helper's directory for every LPAC process (ordinary AppContainers are also "AC"). */
 #define RESTRICTED_PACKAGES_SID L"S-1-15-2-2"
 
 /* Process mitigations for the copy (the PROCESS_CREATION_MITIGATION_POLICY_*_ALWAYS_ON bits). */
@@ -97,6 +91,35 @@ static int granted(HANDLE identity, const wchar_t *sddl) {
     return ok ? status != FALSE : -1;
 }
 
+/* The LPAC marker on the token (Windows sets it for PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT). */
+static int has_no_all_packages_attribute(HANDLE token) {
+    DWORD n = 0;
+    GetTokenInformation(token, TokenSecurityAttributes, NULL, 0, &n);
+    if (n == 0 || n > (1u << 16)) return 0;
+    CLAIM_SECURITY_ATTRIBUTES_INFORMATION *info = malloc(n);
+    int found = 0;
+    if (info && GetTokenInformation(token, TokenSecurityAttributes, info, n, &n)) {
+        for (DWORD i = 0; i < info->AttributeCount; i++) {
+            const CLAIM_SECURITY_ATTRIBUTE_V1 *a = &info->Attribute.pAttributeV1[i];
+            if (a->Name && _wcsicmp(a->Name, L"WIN://NOALLAPPPKG") == 0) found = 1;
+        }
+    }
+    free(info);
+    return found;
+}
+
+/* A descriptor granting Everyone and this process's own AppContainer SID. */
+static int own_container_sddl(HANDLE token, wchar_t *out, size_t cap) {
+    BYTE buf[256];
+    DWORD n = 0;
+    if (!GetTokenInformation(token, TokenAppContainerSid, buf, sizeof buf, &n)) return -1;
+    wchar_t *sid = NULL;
+    if (!ConvertSidToStringSidW(((TOKEN_APPCONTAINER_INFORMATION *)buf)->TokenAppContainer, &sid)) return -1;
+    int w = swprintf(out, cap, L"O:BAG:BAD:(A;;GA;;;WD)(A;;GA;;;%ls)", sid);
+    LocalFree(sid);
+    return w > 0 ? 0 : -1;
+}
+
 static int verify_token(char *err, size_t len) {
     HANDLE token = NULL, identity = NULL;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) return fail(err, len, "OpenProcessToken");
@@ -114,14 +137,17 @@ static int verify_token(char *err, size_t len) {
     }
     /*
      * LPAC: Windows grants ALL APPLICATION PACKAGES ("AC") parts of HKCU and more; an LPAC token is
-     * not in that group but is in ALL RESTRICTED APPLICATION PACKAGES. AppContainer checks need the
-     * user side too, hence Everyone ("WD") in both descriptors.
+     * not in that group and carries the WIN://NOALLAPPPKG attribute. The access checks need the
+     * user side too (Everyone, "WD"); one that grants the container's own SID shows they work.
      */
+    if (!has_no_all_packages_attribute(token)) { snprintf(err, len, "not a Low Privilege AppContainer"); goto out; }
     if (!DuplicateToken(token, SecurityIdentification, &identity)) { fail(err, len, "DuplicateToken"); goto out; }
+    wchar_t own_sddl[256];
+    if (own_container_sddl(token, own_sddl, 256) != 0) { fail(err, len, "TokenAppContainerSid"); goto out; }
     int ac = granted(identity, L"O:BAG:BAD:(A;;GA;;;WD)(A;;GA;;;AC)");
-    int rac = granted(identity, L"O:BAG:BAD:(A;;GA;;;WD)(A;;GA;;;" RESTRICTED_PACKAGES_SID L")");
-    if (ac != 0 || rac != 1) {
-        snprintf(err, len, "not a Low Privilege AppContainer (%d %d)", ac, rac);
+    int own = granted(identity, own_sddl);
+    if (ac != 0 || own != 1) {
+        snprintf(err, len, "ALL APPLICATION PACKAGES check failed (%d %d)", ac, own);
         goto out;
     }
     rc = 0;
@@ -348,18 +374,16 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     memset(&caps, 0, sizeof caps);
     caps.AppContainerSid = sid; /* CapabilityCount 0: in particular no internetClient */
     DWORD lpac = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
-    DWORD child_policy = PROCESS_CREATION_CHILD_PROCESS_RESTRICTED;
     DWORD64 mitigations = MITIGATIONS;
     SIZE_T attr_size = 0;
-    InitializeProcThreadAttributeList(NULL, 6, 0, &attr_size);
+    InitializeProcThreadAttributeList(NULL, 5, 0, &attr_size);
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = malloc(attr_size);
-    if (!attrs || !InitializeProcThreadAttributeList(attrs, 6, 0, &attr_size)) return fail(err, len, "InitializeProcThreadAttributeList");
+    if (!attrs || !InitializeProcThreadAttributeList(attrs, 5, 0, &attr_size)) return fail(err, len, "InitializeProcThreadAttributeList");
     /* Job membership is part of creation: the copy never runs, or waits suspended, outside it. */
     if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps, sizeof caps, NULL, NULL) ||
         (!(SSC_WIN_DIAG & 16) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac, sizeof lpac, NULL, NULL)) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, (in == out ? 1 : 2) * sizeof(HANDLE), NULL, NULL) ||
         (!(SSC_WIN_DIAG & 32) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL)) ||
-        (!(SSC_WIN_DIAG & 1) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &child_policy, sizeof child_policy, NULL, NULL)) ||
         (!(SSC_WIN_DIAG & 2) && !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations, sizeof mitigations, NULL, NULL)))
         return fail(err, len, "UpdateProcThreadAttribute");
 

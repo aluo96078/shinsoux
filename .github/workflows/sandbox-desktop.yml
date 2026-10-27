@@ -145,7 +145,7 @@ jobs:
         working-directory: shinsoux/sandbox-core
         run: |
           ./scripts/fetch-deps.sh
-          for d in 0 4 1 2 3 8 16 32 15 63; do
+          for d in 0 16 32 4; do
             cmake -S . -B build/diag-$d -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_DIAG=$d" > /dev/null
             cmake --build build/diag-$d --target isolation_probe > /dev/null
             python -I -c "import subprocess,sys; r=subprocess.run([sys.argv[1],'--package-key','diag','--hang'],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30); print('DIAG', sys.argv[2], hex(r.returncode & 0xFFFFFFFF), repr(r.stdout[:200]))" "build/diag-$d/isolation_probe.exe" "$d" || true
