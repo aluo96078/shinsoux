@@ -195,4 +195,8 @@ jobs:
           ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
           helper="composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
           [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          # The packaged helper starts confined (LPAC + Job, self-verified) from a private copy.
+          private=$(mktemp -d)
+          cp "$helper" "$private/"
+          "$private/shinsou-sandbox.exe" --package-key releasecheck < /dev/null || { echo "::error::the packaged helper did not start confined (exit $?)"; exit 1; }
           echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"

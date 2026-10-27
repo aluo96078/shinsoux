@@ -131,5 +131,18 @@ jobs:
           if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
             throw "The app must carry the plugin sandbox helper shinsou-sandbox.exe (ADR-0002 S3)."
           }
+          # It must start confined on this image: run it the way the app does (a private copy, path-only
+          # environment) with an empty input. 0 means the LPAC + Job copy started, verified its own
+          # token and Job, read the end of its input and exited; 5 means it refused to run unconfined.
+          $private = Join-Path ([IO.Path]::GetTempPath()) ("shinsou-sandbox-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $private | Out-Null
+          Copy-Item -LiteralPath $helper -Destination $private
+          $emptyInput = [IO.Path]::GetTempFileName() # zero bytes, outside the helper's directory
+          $probe = Start-Process -FilePath (Join-Path $private "shinsou-sandbox.exe") `
+            -ArgumentList "--package-key", "releasecheck" -RedirectStandardInput $emptyInput `
+            -NoNewWindow -Wait -PassThru
+          if ($probe.ExitCode -ne 0) {
+            throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
+          }
           & "scripts/ci/verify_windows_desktop_runtime.ps1" `
             -ApplicationPath $applications[0].FullName

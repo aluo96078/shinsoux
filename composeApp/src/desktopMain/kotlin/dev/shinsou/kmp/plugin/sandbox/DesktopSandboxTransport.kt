@@ -152,6 +152,7 @@ internal class SandboxHelperLocator(
         val source = candidates.firstOrNull(Files::isRegularFile)
             ?: throw IllegalStateException("The packaged plugin sandbox helper is missing")
         val directory = Files.createTempDirectory("shinsou-sandbox-")
+        if (windows) restrictToOwner(directory)
         val target = directory.resolve(helperName)
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
         if (!windows) {
@@ -161,6 +162,23 @@ internal class SandboxHelperLocator(
         directory.toFile().deleteOnExit()
         target.toFile().deleteOnExit()
         return target
+    }
+
+    /**
+     * Windows: only this user may touch the directory (its AppContainers get read and execute from
+     * the helper's launcher, nothing more). The launcher also pins the executable and checks the
+     * directory holds nothing else right before it starts the confined copy.
+     */
+    private fun restrictToOwner(directory: Path) {
+        val view = Files.getFileAttributeView(directory, java.nio.file.attribute.AclFileAttributeView::class.java) ?: return
+        val owner = view.owner
+        val entry = java.nio.file.attribute.AclEntry.newBuilder()
+            .setType(java.nio.file.attribute.AclEntryType.ALLOW)
+            .setPrincipal(owner)
+            .setPermissions(java.nio.file.attribute.AclEntryPermission.entries.toSet())
+            .setFlags(java.nio.file.attribute.AclEntryFlag.FILE_INHERIT, java.nio.file.attribute.AclEntryFlag.DIRECTORY_INHERIT)
+            .build()
+        view.acl = listOf(entry)
     }
 
     private companion object {

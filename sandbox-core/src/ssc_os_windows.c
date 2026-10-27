@@ -62,7 +62,8 @@
                      (1ULL << 36) /* no dynamic code: QuickJS has no JIT */ | \
                      (1ULL << 48) /* no non-system fonts */ | \
                      (1ULL << 52) /* no images from remote paths */ | \
-                     (1ULL << 56) /* no images with a low integrity label */)
+                     (1ULL << 56) /* no images with a low integrity label */ | \
+                     (1ULL << 60) /* DLLs from System32 before the helper's own directory */)
 
 static int fail(char *err, size_t len, const char *what) {
     snprintf(err, len, "%s failed (%lu)", what, (unsigned long)GetLastError());
@@ -342,21 +343,39 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
         }
     }
 
-    PSID sid = NULL;
-    PSID packages = NULL;
-    if (!ConvertStringSidToSidW(RESTRICTED_PACKAGES_SID, &packages)) return fail(err, len, "ConvertStringSidToSid");
-    int granted_dir = only_the_helper(dir, slash + 1, err, len) == 0 && container_sid(key, &sid, err, len) == 0 &&
-                      grant_directory(dir, packages, err, len) == 0;
-    LocalFree(packages);
-    if (!granted_dir) return -1;
-    HANDLE job = make_job(err, len);
-    if (!job) return -1;
+    /* Everything acquired below is released at `done`, on every path. */
+    int rc = -1;
+    PSID sid = NULL, packages = NULL;
+    HANDLE job = NULL;
+    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
+    int attrs_ready = 0;
+    wchar_t *env = NULL;
+    PROCESS_INFORMATION pi = { NULL, NULL, 0, 0 };
+    HANDLE in = INVALID_HANDLE_VALUE, out = INVALID_HANDLE_VALUE; /* closed at `done` */
+
+    /*
+     * Pin the executable from here until the copy exists: nobody may write, rename or delete it
+     * meanwhile, so what was checked is what runs. The directory is checked after pinning.
+     */
+    HANDLE pinned = CreateFileW(exe, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (pinned == INVALID_HANDLE_VALUE) return fail(err, len, "pinning the helper");
+    if (!ConvertStringSidToSidW(RESTRICTED_PACKAGES_SID, &packages)) { fail(err, len, "ConvertStringSidToSid"); goto done; }
+    if (only_the_helper(dir, slash + 1, err, len) != 0 || container_sid(key, &sid, err, len) != 0 ||
+        grant_directory(dir, packages, err, len) != 0) goto done;
+    /* Checked again right before launch: nothing may have appeared beside it in the meantime. */
+    if (only_the_helper(dir, slash + 1, err, len) != 0) goto done;
+    if (!(job = make_job(err, len))) goto done;
 
     /* Only stdin and stdout are inherited; the copy gets no stderr. */
-    HANDLE in = GetStdHandle(STD_INPUT_HANDLE), out = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (!in || in == INVALID_HANDLE_VALUE || !out || out == INVALID_HANDLE_VALUE) { snprintf(err, len, "no stdin/stdout"); return -1; }
+    in = GetStdHandle(STD_INPUT_HANDLE);
+    out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!in || in == INVALID_HANDLE_VALUE || !out || out == INVALID_HANDLE_VALUE) {
+        in = out = INVALID_HANDLE_VALUE; /* none we could own */
+        snprintf(err, len, "no stdin/stdout");
+        goto done;
+    }
     if (!SetHandleInformation(in, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) ||
-        !SetHandleInformation(out, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) return fail(err, len, "SetHandleInformation");
+        !SetHandleInformation(out, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) { fail(err, len, "SetHandleInformation"); goto done; }
     HANDLE inherit[2] = { in, out };
 
     SECURITY_CAPABILITIES caps;
@@ -366,15 +385,18 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     DWORD64 mitigations = MITIGATIONS;
     SIZE_T attr_size = 0;
     InitializeProcThreadAttributeList(NULL, 5, 0, &attr_size);
-    LPPROC_THREAD_ATTRIBUTE_LIST attrs = malloc(attr_size);
-    if (!attrs || !InitializeProcThreadAttributeList(attrs, 5, 0, &attr_size)) return fail(err, len, "InitializeProcThreadAttributeList");
+    attrs = malloc(attr_size);
+    if (!attrs || !InitializeProcThreadAttributeList(attrs, 5, 0, &attr_size)) { fail(err, len, "InitializeProcThreadAttributeList"); goto done; }
+    attrs_ready = 1;
     /* Job membership is part of creation: the copy never runs, or waits suspended, outside it. */
     if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps, sizeof caps, NULL, NULL) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &lpac, sizeof lpac, NULL, NULL) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, (in == out ? 1 : 2) * sizeof(HANDLE), NULL, NULL) ||
         !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof job, NULL, NULL) ||
-        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations, sizeof mitigations, NULL, NULL))
-        return fail(err, len, "UpdateProcThreadAttribute");
+        !UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations, sizeof mitigations, NULL, NULL)) {
+        fail(err, len, "UpdateProcThreadAttribute");
+        goto done;
+    }
 
     STARTUPINFOEXW si;
     memset(&si, 0, sizeof si);
@@ -383,33 +405,49 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     si.StartupInfo.hStdInput = in;
     si.StartupInfo.hStdOutput = out;
     si.lpAttributeList = attrs;
-    wchar_t *env = environment_block();
-    if (!env) { snprintf(err, len, "out of memory"); return -1; }
-    PROCESS_INFORMATION pi;
+    if (!(env = environment_block())) { snprintf(err, len, "out of memory"); goto done; }
     /* Started in its own directory, the only one it may open. */
     if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
-                        env, dir, &si.StartupInfo, &pi))
-        return fail(err, len, "CreateProcess");
+                        env, dir, &si.StartupInfo, &pi)) {
+        fail(err, len, "CreateProcess");
+        goto done;
+    }
+    CloseHandle(pinned);
+    pinned = INVALID_HANDLE_VALUE;
     BOOL in_job = FALSE;
     if (!IsProcessInJob(pi.hProcess, job, &in_job) || !in_job || ResumeThread(pi.hThread) == (DWORD)-1) {
         fail(err, len, "starting the confined helper");
-        TerminateProcess(pi.hProcess, 1);
-        return -1;
+        /* Still suspended (or outside the Job): end it here and wait until it is gone, so no copy
+         * outlives a failed launch. The launcher keeps waiting rather than return early. */
+        while (!TerminateProcess(pi.hProcess, 1) && WaitForSingleObject(pi.hProcess, 0) != WAIT_OBJECT_0) Sleep(10);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        goto done;
     }
-    CloseHandle(pi.hThread);
     /* The copy holds the pipes now: the host sees their end when the copy ends, not when we do. */
     CloseHandle(in);
-    CloseHandle(out);
-    DeleteProcThreadAttributeList(attrs);
-    free(attrs);
-    free(env);
-    FreeSid(sid);
+    if (out != in) CloseHandle(out);
+    in = out = INVALID_HANDLE_VALUE;
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
     *exit_code = (int)code;
-    return SSC_OS_LAUNCHED; /* the Job closes with this process */
+    rc = SSC_OS_LAUNCHED;
+done:
+    /* On a failure the pipes are ours to close, so the host sees their end at once. */
+    if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    if (out != INVALID_HANDLE_VALUE && out != in) CloseHandle(out);
+    if (pinned != INVALID_HANDLE_VALUE) CloseHandle(pinned);
+    if (pi.hThread) CloseHandle(pi.hThread);
+    if (pi.hProcess) CloseHandle(pi.hProcess);
+    free(env);
+    if (attrs_ready) DeleteProcThreadAttributeList(attrs);
+    free(attrs);
+    /* Closing the Job kills the copy if it is still there (only on a failure path). */
+    if (job) CloseHandle(job);
+    if (sid) FreeSid(sid);
+    if (packages) LocalFree(packages);
+    return rc;
 }
 
 int ssc_os_lockdown(int *argc, char ***argv, int *exit_code, char *err, size_t err_len) {
