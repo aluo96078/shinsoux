@@ -218,6 +218,7 @@ Host（App 程序，受信任）
   `android-minSdk`），所有裝置都使用每套件一個 isolated process 的完整隔離，不提供共用程序的降級路徑。
   代價是 Android 8～9（API 26–28）使用者之後無法再更新 App，只能停留在最後一個支援 API 26 的版本；
   這需要在 release notes 預告（§12 S2）。
+- （S2 修訂，§18.1）IPC 改為 AIDL 只負責啟動，協定 frame 走一組 pipe；下列兩項為原規劃。
 - IPC：AIDL `ISandbox`（Host → 沙箱）與 `IHostBridge`（沙箱 → Host）。Host 在 bind 時傳入每個 package
   專屬的 `IHostBridge` binder，該 binder 物件本身就是身分 capability；沙箱無法取得其他 package 的 binder。
 - Binder 單次交易約 1 MB 上限，現有 bridge 結果上限是 4 MiB：大 payload 改用
@@ -244,7 +245,7 @@ Host（App 程序，受信任）
   發生時恰好解除一次；SandboxManager 的帳務（移除項目、崩潰計數）在對外通知失敗之前完成。
 - （S0 實機）OEM 會凍結螢幕關閉或在背景的程序（Samsung Freecess），期間所有呼叫都會停住；S2 的逾時、看門狗與
   崩潰計數不得把凍結期間算成沙箱的錯。
-- （S0）`useAppZygote` 會多一個常駐的 zygote 程序，是否採用改由 S2 實機量測冷啟動與 PSS 後決定。
+- （S0）`useAppZygote` 會多一個常駐的 zygote 程序，是否採用改由 S2 實機量測冷啟動與 PSS 後決定。S2 已決定採用（§18.3）。
 - （S0）大 payload 預設採 `ParcelFileDescriptor.createPipe()` 串流 frame：與 §4.2 的 chunk frame 語意一致、天然有上限、
   不必處理對端改寫共享記憶體；除非實機量測顯示 `SharedMemory` 在 1–4 MiB 有兩倍以上的延遲優勢。
 
@@ -861,12 +862,12 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
 
 | 增量 | 狀態 | 位置 |
 |---|---|---|
-| (a) SandboxProtocol v1 codec | ✅ 完成：10 項單元測試；mutation fuzz 20 分鐘 3.64 億筆輸入無失敗（24 小時版本見 17.6）；Codex 複審後修正「大量 1 位元組 chunk 造成 Host 記憶體放大」，非最後一塊必須是滿額大小 | `composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt`、`SandboxCbor.kt` |
+| (a) SandboxProtocol v1 codec | ✅ 完成：10 項單元測試；mutation fuzz 20 分鐘 3.64 億筆輸入無失敗；24 小時 fuzz 171.6 億筆無失敗（17.6）；Codex 複審後修正「大量 1 位元組 chunk 造成 Host 記憶體放大」，非最後一塊必須是滿額大小 | `composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt`、`SandboxCbor.kt` |
 | (b) SandboxBridgeDispatcher（同步 bridge＋`net.fetch`） | ✅ 完成：11 項單元測試；Codex 複審後加入解析前的 JSON 形狀預檢（總節點、單一陣列／物件、深度，`pluginJsonShapeWithin`），最終判定 approve；完整 desktop 套件 1,485 項通過 | `…/sandbox/SandboxBridgeDispatcher.kt` |
 | (c1) 正式 `shinsou-sandbox-core`：C 端 codec、核心（§16.2 API 修訂）、frame driver、桌面 helper 入口 | ✅ 完成：C 測試（codec golden vector／惡意輸入／50 萬筆 fuzz、核心語料＋generation／保留進入點／請求預算、driver 端到端）在 Release 與 ASan＋UBSan 下通過；**Kotlin Host 驅動真正的 C 沙箱**的互通測試通過（真實腳本跑沙箱內 DOM、同步 bridge、並行 `net.fetch`、login 限縮；跨程序取消 3 ms、時間上限 3 秒）；Codex 五輪複審後判定 approve | `sandbox-core/` |
 | (c2) lexbor DOM 綁定進 JS（取代純 JS DOM bootstrap） | ✅ 完成：以 JS API 跑 S0 的 golden 語料（151＋邊界 selector × 13 份真實頁面），輸出與 S0 直接呼叫 C 的結果**逐位元組相同**（86,712 行），即官方語料與 jsoup 結果數量 0 差異；DOM 專屬測試 20 項；故障注入讓模組的 272 個配置點逐一失敗皆無崩潰；Release 與 ASan＋UBSan 全過；Codex 五輪複審後判定 approve | `sandbox-core/src/ssc_dom_js.c`、`sbx_dom.c` |
 | (d) `SandboxRuntime`／`SandboxRuntimeFactory`（`ScriptPluginRuntime` over transport，拒絕 provenance） | ✅ 完成：以「說協定的假沙箱」驅動 19 項測試（握手、版本不符、bridge 往返、非同步 fetch、各種協定違規、逾時、取消、login 限縮、結果上限、日誌、frame 洪水）；Codex 三輪複審後判定 approve | `…/sandbox/SandboxSession.kt`、`SandboxScriptPluginRuntime.kt`、`SandboxScriptJson.kt` |
-| (e) JVM 測試用 transport、官方語料 parity、2 個官方套件改寫為 `net.fetch`、24 小時 fuzz | ✅ 完成（24 小時 fuzz 結果見 17.6）：14 個官方來源的中繼資料／filter／偏好設定／stub 呼叫與 Rhino 0 差異；5 個 S0 錄製套件的完整 hook 鏈逐項相同；komiic、mangacopy 的 `net.fetch` 改寫版在錄製資料與 7 個合成情境（含失敗與提前結束）上與同步原版結果、請求序列皆相同。parity 抓到 **source-failure 標記遺失**，FAILURE frame 因此加入 marker 欄位（17.1）；Linux CI 首次建置抓到 libm 連結順序，LeakSanitizer 抓到 quickjs-ng 的 OOM 洩漏（以修補檔修正，17.6）；Codex 多輪複審 | `…/desktopTest/…/sandbox/SandboxOfficialParityTest.kt`、`desktopTest/resources/sandbox-netfetch/`、`sandbox-core/fuzz/`、`.github/workflows/sandbox-fuzz.yml` |
+| (e) JVM 測試用 transport、官方語料 parity、2 個官方套件改寫為 `net.fetch`、24 小時 fuzz | ✅ 完成（24 小時 fuzz 無 crash，見 17.6）：14 個官方來源的中繼資料／filter／偏好設定／stub 呼叫與 Rhino 0 差異；5 個 S0 錄製套件的完整 hook 鏈逐項相同；komiic、mangacopy 的 `net.fetch` 改寫版在錄製資料與 7 個合成情境（含失敗與提前結束）上與同步原版結果、請求序列皆相同。parity 抓到 **source-failure 標記遺失**，FAILURE frame 因此加入 marker 欄位（17.1）；Linux CI 首次建置抓到 libm 連結順序，LeakSanitizer 抓到 quickjs-ng 的 OOM 洩漏（以修補檔修正，17.6）；Codex 多輪複審 | `…/desktopTest/…/sandbox/SandboxOfficialParityTest.kt`、`desktopTest/resources/sandbox-netfetch/`、`sandbox-core/fuzz/`、`.github/workflows/sandbox-fuzz.yml` |
 
 ### 17.1 協定格式（修訂 §4.2）
 
@@ -976,9 +977,125 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
   讀取與移除節點）；Kotlin codec 以 `SandboxProtocolLongFuzzTest` 執行。`.github/workflows/sandbox-fuzz.yml` 先在
   Linux 跑 C 測試（Release、ASan＋UBSan＋LSan）與 Kotlin↔C 互通／parity，再以平行 shard 執行 fuzz：GitHub 的
   job 上限 6 小時，所以「24 小時」指每個 codec target 合計約 24 CPU 小時（5 × 290 分鐘），chunks_fuzz 另有 2 個 shard。
+- **driver 的 `reader_status`**（S2 Codex 複審）：讀取執行緒與 driver 執行緒共用的這個欄位改為全程在鎖內讀寫。原本只有在
+  driver 先結束、讀取執行緒仍在寫入時才有競爭，而那時這個值不會被使用，但仍是 C 的 data race。`driver_test` 以
+  ThreadSanitizer 執行無警告（TSan 先抓到的是測試 harness 自己重用堆疊結構的競爭，已改為每個沙箱獨立的 fd 欄位）。
+- **24 小時驗收結果**（2026-10-27，GitHub Actions run 40446938665，`ubuntu-24.04`）：每個 shard 跑滿 17,401 秒（290 分鐘），
+  全部 17 個 job 通過，沒有 crash、sanitizer 報告或洩漏。
+
+  | target | shard × 時間 | 輸入總數 |
+  |---|---|---:|
+  | `frames_fuzz`（C codec＋envelope 串流） | 5 × 17,401 s（24 h 10 min） | 6,576,943,903 |
+  | Kotlin codec（`SandboxProtocolLongFuzzTest`） | 5 × 17,400 s（24 h 10 min） | 17,155,100,000 |
+  | `dom_fuzz`（lexbor DOM） | 5 × 17,401 s（24 h 10 min） | 115,816,027 |
+  | `chunks_fuzz`（大型 chunk 重組） | 2 × 17,401 s（9 h 40 min） | 1,147,916 |
+
+  第一次正式執行（run 40446140260）在 fuzz 之前的 Linux 測試就停下：`core_test` 只用 clang 的 `__has_feature` 偵測 ASan，
+  GCC 要看 `__SANITIZE_ADDRESS__`，ASan 下的時間放寬因此沒有生效。修正偵測後重跑的就是上表這次。
 - **相依修補**：`sandbox-core/patches/` 內的修補由 `fetch-deps.sh` 套用在釘選版本上，每個修補檔說明原因。目前只有
   quickjs-ng v0.17.0 的 `JS_ToCStringLen2` 在 OOM 時洩漏字串參考（腳本可在接近 heap 上限時反覆觸發，讓洩漏量
   持續佔用自己的 heap 預算）。
+
+## 18. S2 進度與實作決策（Android isolated process）
+
+| 項目 | 狀態 | 位置 |
+|---|---|---|
+| (1) minSdk 26 → 29 | ✅ `android-minSdk = "29"`；程式碼沒有只為 API 26–28 存在的分支（僅有的兩個 `SDK_INT` 判斷是 API 30／33）。README、`docs/BUILDING.md` 已更新。minSdk 29 會讓 AGP 以不壓縮方式打包 dex 與 `.so`（APK 由約 40 MB 變成 106 MB），因為 APK 從 GitHub Release 下載、不經商店切分，改回壓縮打包（37 MB） | `gradle/libs.versions.toml`、`composeApp/build.gradle.kts` |
+| (2) release notes 預告 Android 8～9 停止更新 | ⏳ 需要使用者決定發佈時間與措辭（對外發佈） | — |
+| (3) `SandboxService`、`bindIsolatedService`、pipe 串流、非同步 frame | ✅ 實機（Galaxy S24 Ultra／Android 16）8 項裝置測試全過 | `androidMain/…/plugin/sandbox/`、`androidMain/aidl/`、`sandbox-core/src/ssc_android_jni.c` |
+| (3) 生命週期、LRU、crash-loop | ✅ commonMain 的 `SandboxLifecycle`（三平台共用）；commonTest 8 項＋實機 1 項 | `commonMain/…/sandbox/SandboxLifecycle.kt` |
+| 惡意語料、隔離探測、kill 不影響 Host | ✅ 實機 | `androidInstrumentedTest/…/AndroidSandboxDeviceTest.kt` |
+| API 29／最新版模擬器、Linux NDK 建置 | ✅ x86_64 模擬器 API 29 與 API 35 各 8 項裝置測試全過（冷啟動 62／311 ms，取消 3／8 ms）；Linux 以 NDK 建出三個 ABI。Android 單元測試只在 macOS 跑：Linux runner 載不到單元測試用的 libsodium 主機函式庫，90 項加密測試在開始前就失敗，與沙箱無關 | `.github/workflows/sandbox-android.yml` |
+
+### 18.1 IPC：協定 frame 直接走 pipe（修訂 §4.3）
+
+§4.3 原本規劃 AIDL `ISandbox`＋`IHostBridge` 兩個方向的 binder 介面，大 payload 另走 pipe。S1 完成後改為：
+**AIDL 只負責啟動**（`ISandboxProcess.start(fromHost, toHost)`），之後 SandboxProtocol v1 的 frame 全部走這兩條
+pipe，沙箱端由 sandbox-core 的 driver 處理，和桌面 helper 的 stdin／stdout 完全相同。理由：
+
+- 三個平台共用同一個 codec、同一個 `SandboxSession`，以及已做 24 小時 fuzz 的程式碼路徑；不需要第二套 binder 協定。
+- 沒有沙箱 → Host 的 binder 回呼，S0 記錄的幾類問題因此不存在：在 binder 執行緒上解碼不可信 payload、
+  fd 型 payload 的搶讀與 `O_NONBLOCK` 被清除、oneway 回呼卡住同一 binder 物件。沙箱只持有自己那一端
+  （Host 讀取端與寫入端不在沙箱手上），所以無法搶讀 Host 要讀的資料，也改不了 Host 端的檔案狀態旗標。
+- 身分 capability 由「每個 package 一組 pipe」提供：沙箱拿不到其他 package 的 pipe。
+- Host 端讀寫以 200 ms 為單位 `poll`，`close()` 不必關閉其他執行緒正在使用的 fd；寫入在 `POLLOUT` 後每次最多
+  `PIPE_BUF`（4,096）位元組，不會阻塞。逾時、看門狗與取消沿用 `SandboxSession`（S1 §17.3）。
+
+每次 `open` 都以新的 instance name 綁定（`s<序號>_<packageId>`；系統只接受英數、`_`、`.`），所以重啟後不會沿用
+已死或已關閉的程序。`start()` 依序檢查 `Process.isIsolated()`（manifest 設錯時不得在 App uid 執行腳本）、
+只能呼叫一次、載入 `.so`、安裝 seccomp；任何一步失敗都關閉 pipe 並回負值，不載入腳本。沒有建置 sandbox-core
+的 ABI 會因找不到 `.so` 而同樣 fail closed。
+
+### 18.2 生命週期與 crash-loop（§4.6、§7）
+
+- `SandboxLifecycle` 放在 commonMain，Android 用 LRU 4、閒置 60 秒；Desktop（8）與 iOS（3）之後直接沿用。
+- runtime 背後的沙箱可替換：崩潰、Host 強制終止或閒置回收後，下一次呼叫會啟動新沙箱並重新載入腳本與選擇來源
+  （腳本內的狀態和 App 重啟時一樣不保留）；只有 `close()` 是終點。回收只在沒有呼叫進行時發生（`tryLock`），
+  所以所有沙箱都在呼叫中時可以暫時超過上限。
+- 計入 crash-loop 的事件：沙箱崩潰／協定違規／Host 終止（`SandboxBrokenException`）、沙箱自己的上限
+  （記憶體、stack、bridge 次數、結果大小）、時間上限。10 分鐘內 3 次即停用該 package，直到 App 重啟；
+  停用時也會停止仍在執行的沙箱。重啟時腳本載入失敗也計入（否則每次呼叫都會再開一個程序）；hook 內的腳本錯誤、
+  `NO_SUCH_HOOK` 等不計入。
+- 生命週期帳務（`close()`、呼叫結束、strike）在 `NonCancellable` 內執行：呼叫端在等待生命週期鎖時被取消，也不會留下已死的
+  沙箱占用存活名額（Codex 複審；commonTest 兩項，拿掉修正時失敗）。
+- 時間上限只在 Host 能為時鐘背書時計入：Android 為「螢幕亮著且 App 在前景（含前景服務）」。OEM 凍結程序
+  （§4.3）期間的逾時不算套件的錯。停用的使用者提示屬於 S6／S7 的 UI 工作。
+
+### 18.3 程序啟動：採用 `useAppZygote`
+
+| 實機（S24 Ultra） | 沒有 app zygote | 有 app zygote |
+|---|---:|---:|
+| 啟動一個沙箱程序（bind＋lockdown） | 465–482 ms | 第一個 644 ms（含 zygote 啟動），之後 125–152 ms |
+| 第一次可用（含 bootstrap、腳本、metadata） | 493 ms | 127 ms |
+| 每個沙箱程序 PSS | 約 132 MB | 約 43 MB，另有 zygote 常駐約 36 MB |
+| 4 個同時存活 | 約 528 MB | 約 208 MB |
+
+`useAppZygote` 在啟動時間與記憶體上都明顯較好，**採用**。zygote 的 preload（`SandboxZygotePreload`）只載入
+`libshinsou_sandbox.so`；seccomp 在每個沙箱程序 fork 之後才安裝。app zygote 以 App 的 uid 執行，但只執行 preload
+這段 App 自己的程式碼，不執行任何套件腳本；沙箱程序 fork 後換成隔離 uid（實機 `u0_i0`、`u0_i1`…）。
+isolated process 會建立預設的 `Application`，App 沒有自訂 `Application` 類別，實機 logcat 也確認沙箱程序內沒有
+WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Application`，必須在 `onCreate` 以 `Process.isIsolated()` 直接返回。
+
+### 18.4 建置
+
+- `composeApp` 以 `externalNativeBuild` 建置 `../sandbox-core`（NDK 27.0.12077973、CMake 3.22.1），ABI 為
+  arm64-v8a、armeabi-v7a、x86_64（`abiFilters` 只限制 sandbox-core，相依函式庫仍保留自己的 ABI）。seccomp 過濾器
+  支援 aarch64、arm、x86_64，其他 ABI 編譯時就會失敗。
+- 所有 variant 都以 Release 最佳化編譯原生函式庫：GitHub Release 發佈的是 debug variant，而 `-O0` 的 QuickJS 慢很多。
+- seccomp 過濾器（S2 Codex 複審後）另外只允許 `AF_UNIX` 的 `socket`／`socketpair`（記錄 log 與 socketpair 需要），其他
+  位址族群（inet、netlink、packet、bluetooth、vsock…）一律回 `EAFNOSUPPORT`；`socketcall` 整個拒絕。網路原本已由隔離 uid
+  與 SELinux 擋下，這一層讓網路隔離不依賴平台政策。實機發現：bionic 的 `socket()` 會先詢問 netd client，直接回 `EPERM` 而
+  不進核心，所以先前的探測其實只測到 libc。探測改用原始 syscall，並要求 `socket(AF_INET)` 回 `EAFNOSUPPORT`：這個錯誤碼
+  核心與 SELinux 都不會給（SELinux 回 `EACCES`），可以證明是過濾器回應的。實測暫時拿掉這條規則時探測會失敗。
+- `nativeRun` 的 pipe 狀態與 `ssc_io` 是靜態的（每個程序只允許一次）：driver 因協定違規或 Host 失敗結束時，可能留下仍卡在
+  `read()` 的讀取執行緒，它會一直使用 io 表與輸入端 fd，直到程序結束（`nativeRun` 返回後立即結束）。因此輸入端不在
+  `nativeRun` 關閉（避免 fd 編號被重用到那個 `read` 底下），輸出端照常關閉讓 Host 立即看到 end of stream（S2 Codex 第三輪）。
+  裝置測試 `aProtocolViolationEndsTheSandboxWithoutANativeCrash` 走這條路徑（Init 前送 Invoke），確認程序結束且沒有原生崩潰；
+  舊程式的問題是未定義行為、不一定當場崩潰，所以這個測試是回歸防護，不是重現。
+- driver 執行緒的 16 MiB stack（Android `nativeRun` 與桌面 `shinsou-sandbox`）：`pthread_attr_init`／`setstacksize`／
+  `pthread_create` 任一失敗都不進 driver、回 `SSC_DRIVER_NOMEM`，在讀取任何輸入之前結束；QuickJS 不會以執行緒實際沒有的
+  stack 上限執行（S2 Codex 第四輪）。
+- `.so` 只匯出 3 個 JNI 進入點（`nativeLockdown`、`nativeRun`、`nativeProbe`）；`socket`／`fork`／`execve`／`open`
+  只出現在隔離自我檢查 `nativeProbe`。CI 檢查匯出符號，並拒絕 `connect`、`dlopen`、`getenv`、`system` 等匯入。
+- 第三方原始碼由 Gradle 的 `fetchSandboxCoreDeps` 在 CMake 前呼叫 `fetch-deps.sh` 取得；release workflow 安裝
+  NDK／CMake，並確認 APK 內三個 ABI 都有 `libshinsou_sandbox.so`。
+- 裝置測試必須加 `-PshinsouSandboxDeviceTest=true`，以 `dev.aluo.shinsoux.sandboxtest` 安裝，因為 connected 測試
+  結束時會解除安裝 App；沒有加這個屬性時 Gradle 拒絕執行，避免覆蓋或刪除使用者裝置上真正的安裝與書庫。
+
+### 18.5 實機結果（Galaxy S24 Ultra／Android 16）
+
+| 項目 | 結果 |
+|---|---|
+| 每個 package 一個程序 | ✅ 不同 pid、不同隔離 uid（`u0_i*`），與 Host（`u0_a*`）不同 |
+| 隔離探測（沙箱內 C 程式碼，socket 以原始 syscall） | ✅ `socket(AF_INET／AF_INET6／AF_NETLINK／AF_PACKET／AF_BLUETOOTH／AF_VSOCK)`（且 `AF_INET` 由 seccomp 回應）、開啟 `filesDir` 內檔案、`shared_prefs`、`databases`、`dataDir`、`/sdcard`、`/proc/net/tcp`、`fork`、`execve` 全數失敗；exec 以不存在的路徑探測，以 `EPERM`（seccomp）與 `ENOENT` 區分，不會真的換掉程序 |
+| 端到端 | ✅ 沙箱內 DOM、同步 bridge、並行 `net.fetch`、login 限縮、source-failure 標記 |
+| 惡意語料 | ✅ 無窮迴圈、深遞迴、陣列囤積、字串倍增、catastrophic backtracking、Proxy／getter 炸彈、竄改 bridge 與保留進入點、私有 IP／loopback／非 HTTPS、header injection、超大結果、bridge 洪水、200 個 `net.fetch` 洪水（超出 in-flight＋佇列的全部被 reject）、永不 settle 的 Promise、微任務洪水：都以穩定錯誤（上限、`SCRIPT_ERROR`、`PROMISE_STALLED`）在 3 秒內結束，之後同一 runtime 立即可用；竄改不影響 Host 端的 metadata |
+| 時間上限／取消 | 3,004–3,009 ms 回 `LIMIT_TIME`；取消 9–12 ms |
+| kill 沙箱（`am crash <pid>`） | ✅ 該 runtime 下一次呼叫回 `SandboxBrokenException`，其他套件與 Host 不受影響，再下一次呼叫自動啟動新沙箱 |
+| LRU／閒置 | ✅ 上限 2 時第三個啟動會回收最久未用的程序；閒置 3 秒（測試值）後程序消失，下次呼叫重新啟動 |
+| `close()` | ✅ 3 秒內程序結束 |
+| hook 往返 | 約 3.9–4.3 ms（中位數）；桌面同一路徑 171 µs。計時顯示沙箱端往返只有 0.2–0.4 ms，其餘是 Host 端協程切換在 debuggable 的 ART 上的成本，相對於網路請求可忽略，S7 以 release variant 再量 |
+| Android 單元測試 | ✅ 1,196 項（minSdk 29） |
 
 ## 不接受的縮小範圍
 

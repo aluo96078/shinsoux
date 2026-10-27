@@ -90,16 +90,22 @@ static size_t frame_bytes(const ssc_frame *f) { return f->text.len + f->text2.le
 static void on_frame(void *opaque, ssc_frame *f) {
     driver *d = opaque;
     node *n = malloc(sizeof *n);
-    if (!n) { ssc_frame_free(f); d->reader_status = SSC_DRIVER_NOMEM; return; }
+    if (!n) {
+        ssc_frame_free(f);
+        pthread_mutex_lock(&d->lock);
+        d->reader_status = SSC_DRIVER_NOMEM;
+        pthread_mutex_unlock(&d->lock);
+        return;
+    }
     n->frame = *f;
     n->next = NULL;
     pthread_mutex_lock(&d->lock);
     if (f->type == SSC_F_CANCEL && d->rt) ssc_cancel(d->rt, f->call_id);
     if (d->queued_count >= SSC_MAX_QUEUED_FRAMES || d->queued_bytes + frame_bytes(f) > SSC_MAX_QUEUED_BYTES) {
+        d->reader_status = SSC_DRIVER_VIOLATION; /* the host floods frames: stop reading */
         pthread_mutex_unlock(&d->lock);
         ssc_frame_free(&n->frame);
         free(n);
-        d->reader_status = SSC_DRIVER_VIOLATION; /* the host floods frames: stop reading */
         return;
     }
     d->queued_count++;
@@ -130,10 +136,10 @@ static void *reader_main(void *opaque) {
         if (n == 0) break;
         if (n < 0) { status = SSC_DRIVER_IO_ERROR; break; }
         if (ssc_reader_feed(r, buf, (size_t)n, on_frame, d) != SSC_FR_OK) status = SSC_DRIVER_VIOLATION;
+        /* reader_status is shared with the driver thread: only ever touched under the lock. */
         pthread_mutex_lock(&d->lock);
         if (d->reader_status) status = d->reader_status;
         pthread_mutex_unlock(&d->lock);
-        if (d->reader_status) status = d->reader_status;
     }
     if (status == SSC_DRIVER_EOF && r && !ssc_reader_idle(r)) status = SSC_DRIVER_VIOLATION; /* truncated */
     free(buf);

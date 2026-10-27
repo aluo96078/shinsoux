@@ -26,7 +26,10 @@ import dev.shinsou.kmp.plugin.sandbox.FakeSandbox.HookOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
@@ -362,7 +365,8 @@ class SandboxRuntimeTest {
         call.cancel()
         runCatching { call.await() } // must return: the Cancel write is bounded too
         assertTrue(s.sandbox.closed)
-        assertFailsWith<SandboxBrokenException> { s.runtime.getPopularManga(1) }
+        // The next call starts a fresh sandbox; this one stops reading too and its time limit kills it.
+        assertFailsWith<PluginResourceLimitException> { s.runtime.getPopularManga(1) }
     }
 
     @Test
@@ -433,5 +437,196 @@ class SandboxRuntimeTest {
         s.runtime.close()
         assertTrue(s.sandbox.closed)
         assertFailsWith<SandboxBrokenException> { s.runtime.getPopularManga(1) }
+    }
+
+    // ---- lifecycle (ADR-0002 §4.6, §7) ----
+
+    private class Fleet(val factory: SandboxRuntimeFactory, val opened: MutableList<FakeSandbox>)
+
+    private fun TestScope.lifecycle(maxLive: Int = 4, idleMs: Long = 60_000, countTimeouts: () -> Boolean = { true }) =
+        SandboxLifecycle(
+            maxLive = maxLive,
+            idleMs = idleMs,
+            nowMs = { testScheduler.currentTime },
+            countTimeouts = countTimeouts,
+            scope = backgroundScope,
+        )
+
+    private fun TestScope.fleet(
+        lifecycle: SandboxLifecycle,
+        hooks: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome>,
+        initFailure: () -> SandboxErrorCode? = { null },
+    ): Fleet {
+        val opened = ArrayList<FakeSandbox>()
+        val factory = SandboxRuntimeFactory(
+            transports = { FakeSandbox(backgroundScope, initFailure = initFailure(), hooks = metadataHooks + hooks).also { opened += it } },
+            lifecycle = lifecycle,
+            pumpScope = backgroundScope,
+        )
+        return Fleet(factory, opened)
+    }
+
+    private suspend fun Fleet.create(id: String = manifest.id): ScriptPluginRuntime =
+        factory.createForSource("var source = {};", manifest.copy(id = id), source, environment())
+
+    private val emptyPage: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome> =
+        mapOf("getPopularManga" to { HookOutcome.Ok("{\"mangas\":[]}") })
+
+    @Test
+    fun aCrashedSandboxIsReplacedOnTheNextCallWithTheScriptReloaded() = runTest {
+        var calls = 0
+        val f = fleet(lifecycle(), mapOf("getPopularManga" to {
+            if (++calls == 1) { die(); HookOutcome.Custom } else HookOutcome.Ok("{\"mangas\":[]}")
+        }))
+        val runtime = f.create()
+        assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) }
+        assertEquals(false, runtime.getPopularManga(1).hasNextPage)
+        assertEquals(2, f.opened.size)
+        assertTrue(f.opened[0].closed)
+        assertContains(f.opened[1].initScript.orEmpty(), "var source = {};")
+        assertTrue(f.opened[1].received.any { it is SandboxFrame.Invoke && it.method == "__shinsouSelectSource" })
+    }
+
+    @Test
+    fun repeatedCrashesDisableThePackageWithoutStartingAnotherSandbox() = runTest {
+        val lc = lifecycle()
+        val f = fleet(lc, mapOf("getPopularManga" to { die(); HookOutcome.Custom }))
+        val runtime = f.create()
+        repeat(3) { assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) } }
+        val opened = f.opened.size
+        assertFailsWith<SandboxDisabledException> { runtime.getPopularManga(1) }
+        assertFailsWith<SandboxDisabledException> { f.create() }
+        assertEquals(opened, f.opened.size)
+        assertEquals(0, lc.liveCount())
+    }
+
+    @Test
+    fun aScriptThatStopsLoadingIsDisabledInsteadOfRespawningForever() = runTest {
+        var broken = false
+        val f = fleet(
+            lifecycle(),
+            // Crash once; every restart from then on fails to load the script.
+            mapOf("getPopularManga" to { broken = true; die(); HookOutcome.Custom }),
+            initFailure = { if (broken) SandboxErrorCode.SCRIPT_ERROR else null },
+        )
+        val runtime = f.create()
+        assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) }
+        repeat(2) { assertFailsWith<SandboxInvocationException> { runtime.getPopularManga(1) } }
+        val opened = f.opened.size
+        assertFailsWith<SandboxDisabledException> { runtime.getPopularManga(1) }
+        assertEquals(opened, f.opened.size)
+    }
+
+    @Test
+    fun strikesOutsideTheWindowAreForgotten() = runTest {
+        val f = fleet(lifecycle(), mapOf("getPopularManga" to { die(); HookOutcome.Custom }))
+        val runtime = f.create()
+        repeat(2) { assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) } }
+        advanceTimeBy(10 * 60_000L)
+        // Counting the old strikes would have disabled the package after the first of these.
+        repeat(3) { assertFailsWith<SandboxBrokenException> { runtime.getPopularManga(1) } }
+        assertFailsWith<SandboxDisabledException> { runtime.getPopularManga(1) }
+    }
+
+    @Test
+    fun limitViolationsCountButTimeoutsTheHostCannotVouchForDoNot() = runTest {
+        var trustClock = false
+        val f = fleet(lifecycle(countTimeouts = { trustClock }), mapOf(
+            "getPopularManga" to { HookOutcome.Fail(SandboxErrorCode.LIMIT_TIME) },
+            "getLatestUpdates" to { HookOutcome.Fail(SandboxErrorCode.LIMIT_MEMORY) },
+        ))
+        val runtime = f.create()
+        repeat(5) { assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) } }
+        trustClock = true
+        repeat(2) { assertFailsWith<PluginResourceLimitException> { runtime.getPopularManga(1) } }
+        assertFailsWith<PluginResourceLimitException> { runtime.getLatestUpdates(1) }
+        // A disabled package's live sandbox is stopped too, not only future starts refused.
+        assertFailsWith<SandboxDisabledException> { runtime.getPopularManga(1) }
+        assertTrue(f.opened.single().closed)
+    }
+
+    @Test
+    fun idleSandboxesStopAndRestartOnDemand() = runTest {
+        val f = fleet(lifecycle(), emptyPage)
+        val runtime = f.create()
+        runtime.getPopularManga(1)
+        advanceTimeBy(59_000)
+        assertFalse(f.opened[0].closed)
+        advanceTimeBy(20_000)
+        assertTrue(f.opened[0].closed)
+        assertEquals(false, runtime.getPopularManga(1).hasNextPage)
+        assertEquals(2, f.opened.size)
+    }
+
+    @Test
+    fun theLeastRecentlyUsedIdleSandboxMakesRoom() = runTest {
+        val lc = lifecycle(maxLive = 2)
+        val f = fleet(lc, emptyPage)
+        val a = f.create("a")
+        advanceTimeBy(10)
+        f.create("b")
+        advanceTimeBy(10)
+        a.getPopularManga(1) // a is now more recent than b
+        advanceTimeBy(10)
+        f.create("c")
+        assertEquals(listOf(false, true, false), f.opened.map { it.closed })
+        assertEquals(2, lc.liveCount())
+    }
+
+    @Test
+    fun aBusySandboxIsNeverStoppedToMakeRoomOrForIdleness() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val lc = lifecycle(maxLive = 1, idleMs = 5_000)
+        val f = fleet(lc, mapOf("getPopularManga" to { gate.await(); HookOutcome.Ok("{\"mangas\":[]}") }))
+        val a = f.create("a")
+        val call = async { a.getPopularManga(1) }
+        runCurrent()
+        f.create("b") // over the cap, but a is mid-call
+        advanceTimeBy(10_000)
+        assertFalse(f.opened[0].closed)
+        assertTrue(f.opened[1].closed) // b went idle
+        gate.complete(Unit)
+        assertEquals(false, call.await().hasNextPage)
+    }
+
+    /** Holds the lifecycle lock until the returned deferred completes, so bookkeeping must wait. */
+    private suspend fun TestScope.holdLifecycle(lc: SandboxLifecycle): CompletableDeferred<Unit> {
+        val held = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        backgroundScope.launch { lc.holdForTest { held.complete(Unit); release.await() } }
+        held.await()
+        return release
+    }
+
+    @Test
+    fun aCloseCancelledWhileWaitingForTheLifecycleStillUnregisters() = runTest {
+        val lc = lifecycle()
+        val f = fleet(lc, emptyPage)
+        val runtime = f.create()
+        assertEquals(1, lc.liveCount())
+        val release = holdLifecycle(lc)
+        val closing = launch { runtime.close() }
+        runCurrent() // close() now waits for the lifecycle lock
+        closing.cancel()
+        release.complete(Unit)
+        closing.join()
+        assertTrue(f.opened.single().closed)
+        assertEquals(0, lc.liveCount())
+    }
+
+    @Test
+    fun aCallCancelledWhileWaitingForTheLifecycleStillUnregistersItsDeadSandbox() = runTest {
+        val lc = lifecycle()
+        val f = fleet(lc, mapOf("getPopularManga" to { awaitCancel(); die(); HookOutcome.Custom }))
+        val runtime = f.create()
+        val call = async { runtime.getPopularManga(1) }
+        runCurrent()
+        val release = holdLifecycle(lc)
+        call.cancel() // the sandbox dies on Cancel; the call's bookkeeping waits for the lock
+        runCurrent()
+        release.complete(Unit)
+        runCatching { call.await() }
+        assertTrue(f.opened.single().closed)
+        assertEquals(0, lc.liveCount())
     }
 }

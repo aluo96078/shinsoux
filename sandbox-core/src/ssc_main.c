@@ -57,11 +57,14 @@ static void *run(void *o) {
 int main(void) {
     signal(SIGPIPE, SIG_IGN); /* a vanished host shows up as a failed write, handled by the driver */
     /* A dedicated thread with a known stack: the core's stack limit must fit inside it. */
+    /* Fail closed if the stack cannot be had: QuickJS would trust a limit the thread lacks. */
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, SSC_DRIVER_THREAD_STACK);
     pthread_t t;
-    if (pthread_create(&t, &attr, run, NULL) != 0) return SSC_DRIVER_NOMEM;
+    if (pthread_attr_init(&attr) != 0) return SSC_DRIVER_NOMEM;
+    int rc = pthread_attr_setstacksize(&attr, SSC_DRIVER_THREAD_STACK);
+    if (rc == 0) rc = pthread_create(&t, &attr, run, NULL);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) return SSC_DRIVER_NOMEM; /* before a single byte of input is read */
     pthread_join(t, NULL);
     return status;
 }

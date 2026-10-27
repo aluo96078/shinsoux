@@ -81,7 +81,14 @@ static void start(host *h) {
     socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
     h->fd = fds[0];
     h->sb.fd = fds[1];
-    h->sb.io = (ssc_io){ &h->sb.fd, sock_read, sock_write, now_ms };
+    /* The driver may leave its reader thread blocked in read() (detached) when it stops on a
+     * violation; that thread still reads its descriptor after `h` is reused, so each sandbox gets
+     * its own never-reused slot instead of a pointer into `h`. */
+    static int fd_slots[256];
+    static int next_slot;
+    int *slot = &fd_slots[next_slot++ % 256];
+    *slot = fds[1];
+    h->sb.io = (ssc_io){ slot, sock_read, sock_write, now_ms };
     h->reader = ssc_reader_new(SSC_PEER_HOST, 8u << 20, NULL);
     /* The core trusts the stack limit it is given (1 MiB here): the thread that runs it must
      * really have that much and more. Secondary threads get 512 KiB by default on macOS. */

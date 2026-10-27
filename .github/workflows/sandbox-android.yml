@@ -1,0 +1,139 @@
+name: Sandbox Android
+
+# ADR-0002 S2: the isolated-process plugin sandbox. Builds sandbox-core with the NDK inside the app,
+# checks what the library exports and links against, and runs the device tests on emulators at the
+# oldest supported API (29) and a current one (§13 platform matrix). Real-hardware runs are local
+# (see AndroidSandboxDeviceTest). Run it by hand or by pushing a `sandbox-android/**` branch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["sandbox-android/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the APK with sandbox-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Android unit tests stay local (macOS): their libsodium host library does not load on the
+      # Linux runner, which fails every crypto test before it starts (unrelated to the sandbox).
+      - name: Build the APK
+        run: ./gradlew :composeApp:assembleDebug -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Check the sandbox library in the APK
+        run: |
+          apk=composeApp/build/outputs/apk/debug/composeApp-debug.apk
+          nm="$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          mkdir -p so && cd so
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -q -o "../$apk" "lib/$abi/libshinsou_sandbox.so"
+            lib="lib/$abi/libshinsou_sandbox.so"
+            # Only the three JNI entry points are exported.
+            exported=$("$nm" -D --defined-only "$lib" | awk '$2 ~ /^[TDB]$/ {print $3}' | sort | tr '\n' ' ')
+            echo "$abi exports: $exported"
+            [ "$exported" = "Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeLockdown Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeProbe Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeRun " ] \
+              || { echo "::error::unexpected exports on $abi"; exit 1; }
+            # Process, file and network calls exist only in the isolation probe (socket, fork, execve, open).
+            undefined=$("$nm" -D --undefined-only "$lib" | awk '{print $2}' | sed 's/@.*//')
+            for sym in connect bind sendto dlopen getenv system popen posix_spawn vfork execv execvp fopen; do
+              if echo "$undefined" | grep -qx "$sym"; then echo "::error::$abi imports $sym"; exit 1; fi
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-android-apk
+          path: composeApp/build/outputs/apk/debug/composeApp-debug.apk
+          retention-days: 7
+
+  device:
+    name: Device tests on API ${{ matrix.api }} (x86_64 emulator)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 35]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build the test APKs
+        run: >
+          ./gradlew :composeApp:assembleDebug :composeApp:assembleDebugAndroidTest
+          -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Run the device tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: ${{ matrix.api == 29 && 'default' || 'google_apis' }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: >
+            ./gradlew :composeApp:connectedDebugAndroidTest
+            -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
+            && (adb logcat -d -s SSC-S2 | tee composeApp/build/sandbox-device.log)
+
+      - name: Summarize
+        if: always()
+        run: |
+          r=$(ls composeApp/build/outputs/androidTest-results/connected/debug/*.xml 2>/dev/null | head -1)
+          [ -n "$r" ] && grep -o 'tests="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$r" | sed "s/^/API ${{ matrix.api }}: /" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -h "device:" composeApp/build/sandbox-device.log 2>/dev/null | sed 's/^.*SSC-S2 *: //' | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: device-test-results-api${{ matrix.api }}
+          path: |
+            composeApp/build/outputs/androidTest-results/
+            composeApp/build/reports/androidTests/

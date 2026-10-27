@@ -168,7 +168,13 @@ class SandboxNativeInteropTest {
             val cancelMs = (System.nanoTime() - c0) / 1_000_000
             assertTrue(cancelMs < 1_500, "cancel took $cancelMs ms")
             assertEquals(1, runtime.getFilterList().size)
-            println("interop: time limit $ms ms, cancel $cancelMs ms")
+            repeat(50) { runtime.invokeForTest("getFilterList") } // warm up
+            val rounds = (1..200).map {
+                val r0 = System.nanoTime()
+                runtime.invokeForTest("getFilterList")
+                (System.nanoTime() - r0) / 1_000
+            }.sorted()
+            println("interop: time limit $ms ms, cancel $cancelMs ms, hook round trip median ${rounds[100]} µs")
         } finally {
             runtime.close()
         }

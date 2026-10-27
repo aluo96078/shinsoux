@@ -126,7 +126,8 @@ jobs:
 
       - name: Install required Android SDK packages
         shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        # NDK and CMake build sandbox-core's libshinsou_sandbox.so (ADR-0002 S2).
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -210,6 +211,12 @@ jobs:
             echo "::error title=Unexpected version code::Found $actual_version_code; expected $RELEASE_VERSION_CODE."
             exit 1
           }
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "${apks[0]}" "lib/$abi/libshinsou_sandbox.so" > /dev/null || {
+              echo "::error title=Missing plugin sandbox::lib/$abi/libshinsou_sandbox.so is not in the APK."
+              exit 1
+            }
+          done
 
           mkdir -p build/release/android
           output="build/release/android/Shinsou-X-$RELEASE_VERSION-android-debug.apk"
