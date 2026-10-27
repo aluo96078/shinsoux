@@ -60,6 +60,9 @@
 #define RESTRICTED_PACKAGES_SID L"S-1-15-2-2"
 
 /* Process mitigations for the copy (the PROCESS_CREATION_MITIGATION_POLICY_*_ALWAYS_ON bits). */
+#ifdef SSC_WIN_MITIGATIONS /* build-time override, for finding which one a Windows version rejects */
+#define MITIGATIONS ((DWORD64)(SSC_WIN_MITIGATIONS))
+#else
 #define MITIGATIONS ((1ULL << 12) /* heap terminate on corruption */ | \
                      (1ULL << 16) /* bottom-up ASLR */ | \
                      (1ULL << 24) /* strict handle checks */ | \
@@ -69,6 +72,7 @@
                      (1ULL << 48) /* no non-system fonts */ | \
                      (1ULL << 52) /* no images from remote paths */ | \
                      (1ULL << 56) /* no images with a low integrity label */)
+#endif
 
 static int fail(char *err, size_t len, const char *what) {
     snprintf(err, len, "%s failed (%lu)", what, (unsigned long)GetLastError());

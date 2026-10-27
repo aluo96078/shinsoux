@@ -140,6 +140,21 @@ jobs:
         shell: pwsh
         run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
 
+      - name: "Diagnostics (temporary): which mitigation fails the confined copy"
+        continue-on-error: true
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          all=$(( (1<<12)|(1<<16)|(1<<24)|(1<<28)|(1<<32)|(1<<36)|(1<<48)|(1<<52)|(1<<56) ))
+          for spec in "none:0" "all:$all" $(for b in 12 16 24 28 32 36 48 52 56; do echo "without$b:$(( all & ~(1<<b) ))"; done) $(for b in 12 16 24 28 32 36 48 52 56; do echo "only$b:$(( 1<<b ))"; done); do
+            name=${spec%%:*}; mask=${spec#*:}
+            cmake -S . -B build/diag-$name -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_MITIGATIONS=${mask}ULL" > /dev/null
+            cmake --build build/diag-$name --target isolation_probe shinsou-sandbox > /dev/null
+            out=$(build/diag-$name/isolation_probe.exe --package-key diag --hang < /dev/null | head -1); probe=$?
+            build/diag-$name/shinsou-sandbox.exe < /dev/null; helper=$?
+            echo "DIAG $name mask=$mask probe_out='$out' helper_exit=$helper"
+          done
+
       - name: C tests and the isolation probe
         working-directory: shinsoux/sandbox-core
         run: |
