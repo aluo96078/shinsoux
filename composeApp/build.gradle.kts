@@ -54,8 +54,10 @@ val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
     .orElse(false)
+// Blank values (e.g. a shell that mangles `-P...=` arguments) fall back instead of breaking file().
 val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
-    .orElse(providers.systemProperty("shinsou.pluginRepo"))
+    .filter { it.isNotBlank() }
+    .orElse(providers.systemProperty("shinsou.pluginRepo").filter { it.isNotBlank() })
     .orElse("../../shinsou_plugin")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
