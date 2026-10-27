@@ -216,5 +216,7 @@ jobs:
           if ($probe.ExitCode -ne 0) {
             throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
           }
-          "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          $line = "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)"
+          Write-Output $line
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
           echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"
