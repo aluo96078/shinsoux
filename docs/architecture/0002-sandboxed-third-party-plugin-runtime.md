@@ -1060,6 +1060,9 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   `nativeRun` 關閉（避免 fd 編號被重用到那個 `read` 底下），輸出端照常關閉讓 Host 立即看到 end of stream（S2 Codex 第三輪）。
   裝置測試 `aProtocolViolationEndsTheSandboxWithoutANativeCrash` 走這條路徑（Init 前送 Invoke），確認程序結束且沒有原生崩潰；
   舊程式的問題是未定義行為、不一定當場崩潰，所以這個測試是回歸防護，不是重現。
+- driver 執行緒的 16 MiB stack（Android `nativeRun` 與桌面 `shinsou-sandbox`）：`pthread_attr_init`／`setstacksize`／
+  `pthread_create` 任一失敗都不進 driver、回 `SSC_DRIVER_NOMEM`，在讀取任何輸入之前結束；QuickJS 不會以執行緒實際沒有的
+  stack 上限執行（S2 Codex 第四輪）。
 - `.so` 只匯出 3 個 JNI 進入點（`nativeLockdown`、`nativeRun`、`nativeProbe`）；`socket`／`fork`／`execve`／`open`
   只出現在隔離自我檢查 `nativeProbe`。CI 檢查匯出符號，並拒絕 `connect`、`dlopen`、`getenv`、`system` 等匯入。
 - 第三方原始碼由 Gradle 的 `fetchSandboxCoreDeps` 在 CMake 前呼叫 `fetch-deps.sh` 取得；release workflow 安裝

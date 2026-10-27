@@ -187,16 +187,19 @@ JNIEXPORT jint JNICALL Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeR
     run_pipes = (pipes){ in_fd, out_fd, SSC_DRIVER_IO_ERROR };
     signal(SIGPIPE, SIG_IGN); /* a vanished host shows up as a failed write */
     /* A dedicated thread with a known stack: the core's stack limit must fit inside it. */
+    /* Fail closed if the stack cannot be had: QuickJS would trust a limit the thread lacks. */
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, SSC_DRIVER_THREAD_STACK);
     pthread_t t;
-    if (pthread_create(&t, &attr, run, NULL) != 0) {
+    if (pthread_attr_init(&attr) != 0) {
         run_pipes.status = SSC_DRIVER_NOMEM;
     } else {
-        pthread_join(t, NULL);
+        if (pthread_attr_setstacksize(&attr, SSC_DRIVER_THREAD_STACK) != 0 || pthread_create(&t, &attr, run, NULL) != 0) {
+            run_pipes.status = SSC_DRIVER_NOMEM;
+        } else {
+            pthread_join(t, NULL);
+        }
+        pthread_attr_destroy(&attr);
     }
-    pthread_attr_destroy(&attr);
     /*
      * The output end closes now, so the host sees end of stream at once. The input end stays open:
      * a detached reader may still be blocked on it, and closing it could hand its number to a new
