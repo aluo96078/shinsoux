@@ -115,7 +115,7 @@ class SandboxNativeInteropTest {
         lateinit var transport: DesktopSandboxTransport
         val env = environment()
         env.storage.setCredential(7, PluginCredential("alice", "old"))
-        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)).also { transport = it } })
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(sandboxHelperCommand(bin.toPath(), it)).also { transport = it } })
             .createForSource(script, manifest, source, env) as SandboxScriptPluginRuntime
         try {
             withTimeout(30_000) {
@@ -158,7 +158,7 @@ class SandboxNativeInteropTest {
     @Test
     fun cancellationAndTimeLimitsHoldAcrossTheProcessBoundary() = runBlocking {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
-        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)) })
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(sandboxHelperCommand(bin.toPath(), it)) })
             .createForSource(script, manifest, source, environment()) as SandboxScriptPluginRuntime
         try {
             // The sandbox's own wall-time limit (3 s) ends a busy loop with LIMIT_TIME.
@@ -192,23 +192,38 @@ class SandboxNativeInteropTest {
     fun theHelperDoesNotOutliveItsHostEvenMidHook() = runBlocking<Unit> {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
         lateinit var transport: DesktopSandboxTransport
-        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)).also { transport = it } })
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(sandboxHelperCommand(bin.toPath(), it)).also { transport = it } })
             .createForSource(script, manifest, source, environment()) as SandboxScriptPluginRuntime
         try {
             val call = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { runtime.invokeForTest("spin") } }
             delay(300)
             // The host's death closes the helper's stdin; the helper must stop the spinning hook at
             // once, not at its 3-second limit.
+            val processes = transport.processesForTest() // Windows: the launcher and its confined copy
             val t0 = System.nanoTime()
             transport.closeInputForTest()
-            while (transport.alive && System.nanoTime() - t0 < 5_000_000_000L) delay(10)
+            while (processes.any { it.isAlive } && System.nanoTime() - t0 < 5_000_000_000L) delay(10)
             val ms = (System.nanoTime() - t0) / 1_000_000
-            assertTrue(!transport.alive && ms < 1_000, "helper still alive $ms ms after its host went away")
+            assertTrue(processes.none { it.isAlive } && ms < 1_000, "helper still alive $ms ms after its host went away")
             call.cancel()
             println("interop: helper exited $ms ms after end of stream mid-hook")
         } finally {
             runtime.close()
         }
+    }
+
+    @Test
+    fun closingAHelperLeavesNoProcessBehind() = runBlocking<Unit> {
+        val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
+        val transport = DesktopSandboxTransport(sandboxHelperCommand(bin.toPath(), "dev.example.close"))
+        val t0 = System.nanoTime()
+        // Windows: wait for the launcher to start its confined copy, which close() must take down too.
+        while (isWindows() && transport.processesForTest().size < 2 && System.nanoTime() - t0 < 5_000_000_000L) delay(10)
+        val processes = transport.processesForTest()
+        assertEquals(if (isWindows()) 2 else 1, processes.size, "helper processes: $processes")
+        transport.close()
+        while (processes.any { it.isAlive } && System.nanoTime() - t0 < 10_000_000_000L) delay(10)
+        assertTrue(processes.none { it.isAlive }, "still running after close: ${processes.filter { it.isAlive }}")
     }
 
     @Test
@@ -218,7 +233,7 @@ class SandboxNativeInteropTest {
         val transports = ArrayList<DesktopSandboxTransport>()
         val lifecycle = SandboxLifecycle(maxLive = 2, nowMs = { System.nanoTime() / 1_000_000 }, scope = scope)
         val factory = SandboxRuntimeFactory(
-            transports = { DesktopSandboxTransport(listOf(bin.path)).also { synchronized(transports) { transports += it } } },
+            transports = { DesktopSandboxTransport(sandboxHelperCommand(bin.toPath(), it)).also { synchronized(transports) { transports += it } } },
             lifecycle = lifecycle,
         )
         val runtimes = (1..3).map { factory.createForSource(script, manifest.copy(id = "dev.example.lru$it"), source, environment()) }

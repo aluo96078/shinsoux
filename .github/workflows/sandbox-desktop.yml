@@ -1,10 +1,11 @@
 name: Sandbox desktop
 
-# ADR-0002 S3 (macOS): the shinsou-sandbox helper confines itself with sandbox_init. sandbox_init is
-# deprecated and its profile language private, so every run re-proves the confinement on the
-# runner's macOS (S0: re-check each major version): the isolation probe, the Kotlin host driving
-# the confined helper (interop, official-plugin parity), and the packaged app carrying a signed
-# helper. Run it by hand or by pushing a `sandbox-desktop/**` branch.
+# ADR-0002 S3: the shinsou-sandbox helper under OS confinement. macOS: it confines itself with
+# sandbox_init, which is deprecated and whose profile language is private. Windows: it relaunches
+# itself in a Low Privilege AppContainer and a Job object. Every run re-proves the confinement on
+# the runner's OS (S0: re-check each major version): the isolation probe, the Kotlin host driving
+# the confined helper (interop, official-plugin parity), and the packaged app carrying the helper.
+# Run it by hand or by pushing a `sandbox-desktop/**` branch.
 
 on:
   workflow_dispatch:
@@ -91,3 +92,104 @@ jobs:
           if codesign -d --entitlements - "$helper" 2>/dev/null | grep -q "<key>"; then echo "::error::helper has entitlements"; exit 1; fi
           codesign --verify --deep --strict "$app"
           echo "packaged helper: $(lipo -archs "$helper"), signed, hardened runtime, no entitlements" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows helper (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Byte-exact fixtures and scripts: no CRLF conversion on checkout.
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: Windows version
+        shell: pwsh
+        run: |
+          [Environment]::OSVersion.VersionString
+          (Get-CimInstance Win32_OperatingSystem).Caption
+
+      # sandbox-core needs pthreads and POSIX I/O: MinGW-w64 (UCRT runtime), not MSVC.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Put the UCRT64 toolchain on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
+
+      - name: C tests and the isolation probe
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
+          cmake --build build/release
+          cd build/release
+          ctest --output-on-failure
+          # Again verbosely, so the summary shows what each probe got.
+          python -I ../../test/run_isolation_probe.py ./isolation_probe.exe | tee probe.log
+          grep -h "BLOCKED\|ALLOWED\|ISOLATION PROBE" probe.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          # Nothing that maps win32k (user32, gdi32, shell32) or more: the copy runs without win32k.
+          objdump -p shinsou-sandbox.exe | grep "DLL Name" | tee imports.txt
+          if grep -v -i "KERNEL32.dll\|ADVAPI32.dll\|api-ms-win-crt-" imports.txt; then echo "::error::unexpected helper imports"; exit 1; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          architecture: x64
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install required Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest --rerun
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if any sandbox test was skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -ho "interop: [^<]*" TEST-dev.shinsou.kmp.plugin.sandbox.*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Package the app and check its helper
+        working-directory: shinsoux
+        run: |
+          ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
+          helper="composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
+          [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"

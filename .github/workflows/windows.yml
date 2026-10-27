@@ -95,6 +95,20 @@ jobs:
           }
           throw "$($failedCases.Count) desktop test(s) failed."
 
+      # ADR-0002 S3: the plugin sandbox helper is built with MinGW-w64 (UCRT64).
+      - name: Set up the sandbox helper toolchain
+        uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Put the UCRT64 toolchain on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
+
       - name: Compile desktop application
         working-directory: shinsoux
         run: .\gradlew.bat :composeApp:compileKotlinDesktop -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
@@ -112,6 +126,10 @@ jobs:
             -Filter "Shinsou X.exe" -File -Recurse -ErrorAction SilentlyContinue)
           if ($applications.Count -ne 1) {
             throw "Expected exactly one release application executable, found $($applications.Count)."
+          }
+          $helper = Join-Path $applications[0].Directory.FullName "app/resources/shinsou-sandbox.exe"
+          if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+            throw "The app must carry the plugin sandbox helper shinsou-sandbox.exe (ADR-0002 S3)."
           }
           & "scripts/ci/verify_windows_desktop_runtime.ps1" `
             -ApplicationPath $applications[0].FullName

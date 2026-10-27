@@ -264,7 +264,7 @@ Host（App 程序，受信任）
     的 `Info.plist`、會在 `~/Library/Containers/` 留下 container。
   - helper 仍以 Hardened Runtime 簽章，不允許 JIT（QuickJS 本身沒有 JIT）。
   - 記憶體：QuickJS 上限為主；Host 另以 `proc_pid_rusage` 監控 RSS 超限即 kill（macOS 不可靠支援 `RLIMIT_AS`）。
-  - `sandbox_init` 已 deprecated：每個 macOS 大版本都要在 CI 跑 S0 的隔離探測（`spikes/sandbox-s0/macos/`），
+  - `sandbox_init` 已 deprecated：每個 macOS 大版本都要在 CI 跑隔離探測（S3 起為 `sandbox-core/test/isolation_probe.c`，§19.1），
     若 Apple 移除該 API 再改走 App Sandbox entitlement 並另補「禁止子程序」的機制。
 - Windows：
   - 以 **Low Privilege AppContainer（LPAC）** 啟動：不給任何 capability（尤其是 `internetClient`），並以
@@ -1096,6 +1096,56 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
 | `close()` | ✅ 3 秒內程序結束 |
 | hook 往返 | 約 3.9–4.3 ms（中位數）；桌面同一路徑 171 µs。計時顯示沙箱端往返只有 0.2–0.4 ms，其餘是 Host 端協程切換在 debuggable 的 ART 上的成本，相對於網路請求可忽略，S7 以 release variant 再量 |
 | Android 單元測試 | ✅ 1,196 項（minSdk 29） |
+
+## 19. S3 進度與實作決策（Desktop helper）
+
+| 項目 | 狀態 | 位置 |
+|---|---|---|
+| macOS：helper 自行以 `sandbox_init` 鎖定 | ✅ 本機與 GitHub Actions macOS 14.8／15.7 的隔離探測全過 | `sandbox-core/src/ssc_os_sandbox.c`、`ssc_main.c` |
+| macOS：桌面 transport、生命週期（上限 8）、helper 定位 | ✅ 桌面 sandbox 測試 64 項 | `desktopMain/…/plugin/sandbox/DesktopSandboxTransport.kt` |
+| macOS：helper 打包與簽章 | ✅ hardened runtime、無 entitlement；App 通過 `codesign --verify --deep --strict` | `composeApp/build.gradle.kts`（`buildMacOsSandboxHelper`） |
+| Host 結束不留孤兒程序 | ✅ helper 在 stdin end of stream 後 11–88 ms 內結束（即使正在跑無窮迴圈） | `sandbox-core/src/ssc_driver.c` |
+| macOS 公證 | ⏳ 需要 Developer ID 憑證（公開 DMG 目前仍為 ad-hoc 簽章、未公證）；helper 已以 hardened runtime 簽章，設定憑證後不需另外處理 | — |
+| macOS：Host 端 RSS 監控、CPU 時間上限（§7） | ⏳ 尚未實作；目前靠 QuickJS 的記憶體與 wall-time 上限 | — |
+| Windows：LPAC＋Job object | ⏳ 未開始 | — |
+| Windows 11 一般使用者帳號實機重跑 | ⏳ 需要使用者協助（§16.3） | — |
+
+### 19.1 macOS helper 的鎖定
+
+- 依 §4.4 的啟動序列，`main` 讀第一個 frame 前呼叫 `ssc_os_lockdown()`：清空 environ、`tzset()` 預先載入系統時區、
+  `RLIMIT_CORE=0`、關閉 stderr 之後的所有 fd、套用 deny-all profile（`network*`、`system-socket`、`file*`、`process*`、
+  `mach*`、`ipc*`、`signal`；只允許 `sysctl-read`）。任何一步失敗回 `SSC_DRIVER_LOCKDOWN`（5）並結束，不讀任何輸入。
+- **時區**：鎖定後 libc 讀不到時區檔，腳本的本地時間會靜默變成 UTC，與 Host 的 Rhino 不一致。parity 測試在實作時就抓到
+  mangacopy 的章節日期不同；`tzset()` 移到鎖定前後一致。互通測試比對沙箱內外的 `getTimezoneOffset()`，拿掉
+  `tzset()` 時得到 `[0,0]`（Host 為 `[-480,-480]`），所以這項測試同時證明 helper 確實無法讀檔。
+- **隔離探測**（`sandbox-core/test/isolation_probe.c`＋`run_isolation_probe.py`，ctest 項目）：與 helper 用同一個
+  `ssc_os_lockdown()`，在本機 TCP listener、可讀的使用者檔案、可寫目錄、環境變數內的祕密、繼承的 fd 3 都備妥的
+  情況下嘗試 14 項操作。不鎖定時 14 項全部成功（證明每個探測都抓得到洩漏），鎖定後全部失敗：TCP connect、UDP
+  sendto、bind、連 `/var/run/syslog`、讀使用者檔案、讀 `/etc/hosts`、建立檔案、列 `/Users`、`fork`、`posix_spawn`、
+  `fork`＋`execv`、讀環境變數、`kill(parent, 0)`、使用繼承的 fd；執行緒與匿名 `mmap` 仍可用。`sandbox_init` 已
+  deprecated，所以 `.github/workflows/sandbox-desktop.yml` 每次都在 macOS 14 與 15 runner 上重跑。
+- **不留孤兒**：Host 死亡時 helper 的 stdin 收到 end of stream，但原本 driver 只在當前 invocation 結束後才離開，
+  正在跑無窮迴圈的 hook 要等到時間上限（實測 29.8 秒）。讀取執行緒在 end of stream 或協定違規時，現在會取消正在執行
+  的 invocation（`driver_test` 0–2 ms；實際 helper 11–88 ms）。Android 的 driver 同樣受益。
+
+### 19.2 Host 端
+
+- `DesktopSandboxTransport`（由測試程式移入 desktopMain）：每個 package 一個 helper 程序，環境變數清空、stderr 丟棄，
+  `close()` 以 `destroyForcibly` 結束程序，同時解除阻塞中的讀寫。生命週期沿用 §18.2 的 `SandboxLifecycle`，上限 8。
+- `SandboxHelperLocator`：jpackage 安裝的 resources 沒有執行權限，所以每次執行把 helper 複製到只有使用者能進入的
+  暫存目錄（目錄 0700、檔案 0500）。**打包後的 App 只使用自己 bundle 內的 helper**：`SHINSOU_SANDBOX_BIN` 與工作目錄
+  下的建置輸出只在開發執行（沒有 resources 目錄）時生效，否則能控制啟動環境的人可以換上沒有鎖定的執行檔
+  （Codex 複審，嚴重）。找不到 helper 或不是 macOS 時一律拋出例外，不會退回未隔離的執行方式。
+- `desktopTest` 把 `sandbox-core/build/release/shinsou-sandbox` 列為輸入：實作時一度因 helper 不是 task 輸入，Gradle
+  沿用了舊的測試結果，時區問題晚了一步才被發現。
+
+### 19.3 打包與簽章
+
+- `buildMacOsSandboxHelper` 以 CMake 依建置主機架構編譯（deployment target 12.0，與 WKWebView helper 相同），
+  複製到 App resources 前以 hardened runtime 簽章：有設定簽章身分時用該身分（Developer ID 可直接公證），否則 ad-hoc。
+  helper 不帶任何 entitlement。CI 檢查 hardened runtime 旗標、沒有 entitlement、App 整體 `codesign --verify --deep
+  --strict`；release workflow 另確認 DMG 內的 App 有通過驗證的 helper。
+- 實測 hardened runtime 不影響 `sandbox_init`。
 
 ## 不接受的縮小範圍
 

@@ -50,6 +50,7 @@ val androidPublicDebugSigningValues = listOf(
 val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+val isWindowsBuildHost = System.getProperty("os.name").lowercase().startsWith("windows")
 // Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
@@ -65,7 +66,10 @@ val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository"
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     // The sandbox tests run this helper: a rebuilt helper must rerun them, not reuse old results.
-    inputs.files(rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox"))
+    inputs.files(
+        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox"),
+        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox.exe"),
+    )
         .withPropertyName("sandboxHelper")
         .optional()
     systemProperty(
@@ -272,6 +276,35 @@ val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
     into(layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"))
 }
 
+// ADR-0002 S3 (Windows): the same helper, built with MinGW-w64 (UCRT64; sandbox-core needs
+// pthreads and POSIX I/O, so not MSVC) as one static executable. It relaunches itself in a Low
+// Privilege AppContainer and a Job object (sandbox-core/src/ssc_os_windows.c).
+val windowsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("windows").file("shinsou-sandbox.exe") }
+val buildWindowsSandboxHelper = if (isWindowsBuildHost) {
+    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-windows").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureWindowsSandboxHelper") {
+        dependsOn("fetchSandboxCoreDeps")
+        commandLine(
+            "cmake", "-S", sandboxCore, "-B", cmakeBuild, "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc",
+        )
+    }
+    val compile = tasks.register<Exec>("compileWindowsSandboxHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox")
+    }
+    tasks.register<Copy>("buildWindowsSandboxHelper") {
+        group = "build"
+        description = "Builds the plugin sandbox helper for the Windows app resources"
+        dependsOn(compile)
+        from(File(cmakeBuild, "shinsou-sandbox.exe"))
+        into(windowsSandboxHelper.map { it.asFile.parentFile })
+    }
+} else {
+    null
+}
+
 tasks.configureEach {
     if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
         dependsOn(prepareAndroidUnitTestLibsodiumResources)
@@ -283,6 +316,9 @@ tasks.configureEach {
     }
     if (buildMacOsSandboxHelper != null && name == "prepareAppResources") {
         dependsOn(buildMacOsSandboxHelper)
+    }
+    if (buildWindowsSandboxHelper != null && name == "prepareAppResources") {
+        dependsOn(buildWindowsSandboxHelper)
     }
 }
 
@@ -553,10 +589,10 @@ compose.desktop {
         }
 
         nativeDistributions {
-            if (isMacOsBuildHost) {
+            if (isMacOsBuildHost || isWindowsBuildHost) {
                 // Compose places OS-specific children of this directory in
-                // `compose.application.resources.dir`. The Kotlin host copies the signed helper
-                // to a private executable temporary directory before launch because jpackage
+                // `compose.application.resources.dir`. The Kotlin host copies the helpers to a
+                // private executable temporary directory before launch because jpackage
                 // intentionally installs application resources without executable permissions.
                 appResourcesRootDir.set(macOsWebChallengeResourcesRoot)
             }

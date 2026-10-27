@@ -1,8 +1,8 @@
 /*
  * The startup sequence of ADR-0002 §4.4 for the desktop helper. macOS: Seatbelt via sandbox_init,
  * which S0 found to be the only mechanism that also forbids fork/exec and reading system paths for
- * a helper (an App Sandbox entitlement alone allows both). Windows (LPAC + Job object) is applied by
- * the launcher instead, before the process runs at all.
+ * a helper (an App Sandbox entitlement alone allows both). Windows (LPAC + Job object):
+ * ssc_os_windows.c.
  */
 #include "ssc_os_sandbox.h"
 
@@ -58,7 +58,8 @@ static const char PROFILE[] =
     "(deny signal)\n"
     "(allow sysctl-read)\n";
 
-int ssc_os_lockdown(char *err, size_t err_len) {
+int ssc_os_lockdown(int *argc, char ***argv, int *exit_code, char *err, size_t err_len) {
+    (void)argc; (void)argv; (void)exit_code;
     harden();
     char *e = NULL;
     if (sandbox_init(PROFILE, 0, &e) != 0) {
@@ -66,15 +67,13 @@ int ssc_os_lockdown(char *err, size_t err_len) {
         if (e) sandbox_free_error(e); /* its text is not ours to print */
         return -1;
     }
-    return 0;
+    return SSC_OS_CONFINED;
 }
-
-int ssc_os_lockdown_confines(void) { return 1; }
-#elif defined(_WIN32)
-int ssc_os_lockdown(char *err, size_t err_len) { (void)err; (void)err_len; return 0; }
-int ssc_os_lockdown_confines(void) { return 0; }
-#else
+#elif !defined(_WIN32)
 /* Linux builds are for tests and CI; no desktop distribution ships them. */
-int ssc_os_lockdown(char *err, size_t err_len) { (void)err; (void)err_len; harden(); return 0; }
-int ssc_os_lockdown_confines(void) { return 0; }
+int ssc_os_lockdown(int *argc, char ***argv, int *exit_code, char *err, size_t err_len) {
+    (void)argc; (void)argv; (void)exit_code; (void)err; (void)err_len;
+    harden();
+    return SSC_OS_CONFINED;
+}
 #endif

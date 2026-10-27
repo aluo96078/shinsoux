@@ -8,5 +8,6 @@ import java.io.File
  * production [DesktopSandboxTransport].
  */
 internal fun sandboxHelperBinary(): File? =
-    (System.getenv("SHINSOU_SANDBOX_BIN")?.let(::File) ?: File("../sandbox-core/build/release/shinsou-sandbox"))
-        .takeIf { it.canExecute() }
+    (System.getenv("SHINSOU_SANDBOX_BIN")?.let(::File)
+        ?: File("../sandbox-core/build/release/" + if (isWindows()) "shinsou-sandbox.exe" else "shinsou-sandbox"))
+        .takeIf { it.isFile && it.canExecute() }
