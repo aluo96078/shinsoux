@@ -140,24 +140,6 @@ jobs:
         shell: pwsh
         run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
 
-      - name: "Diagnostics (temporary): which mitigation fails the confined copy"
-        continue-on-error: true
-        working-directory: shinsoux/sandbox-core
-        shell: bash --noprofile --norc {0}
-        run: |
-          ./scripts/fetch-deps.sh
-          all=$(( (1<<12)|(1<<16)|(1<<24)|(1<<28)|(1<<32)|(1<<36)|(1<<48)|(1<<52)|(1<<56) ))
-          which gcc cmake ninja python || true
-          for spec in "none:0" "all:$all" $(for b in 12 16 24 28 32 36 48 52 56; do echo "without$b:$(( all & ~(1<<b) ))"; done) $(for b in 12 16 24 28 32 36 48 52 56; do echo "only$b:$(( 1<<b ))"; done); do
-            name=${spec%%:*}; mask=${spec#*:}
-            cmake -S . -B build/diag-$name -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_MITIGATIONS=${mask}ULL" > cfg.txt 2>&1 || tail -20 cfg.txt
-            cmake --build build/diag-$name --target isolation_probe shinsou-sandbox > bld.txt 2>&1 || tail -20 bld.txt
-            ls build/diag-$name/*.exe || true
-            probe=0; build/diag-$name/isolation_probe.exe --package-key diag --hang < /dev/null > diag.txt || probe=$?
-            helper=0; build/diag-$name/shinsou-sandbox.exe < /dev/null || helper=$?
-            echo "DIAG $name mask=$mask probe_exit=$probe probe_out='$(head -c 200 diag.txt)' helper_exit=$helper"
-          done
-
       - name: C tests and the isolation probe
         working-directory: shinsoux/sandbox-core
         run: |
@@ -165,13 +147,15 @@ jobs:
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
           cmake --build build/release
           cd build/release
+          # Self-contained: the AppContainer reads system DLLs, not a toolchain's (libwinpthread etc.).
+          for exe in shinsou-sandbox.exe isolation_probe.exe; do
+            objdump -p "$exe" | grep "DLL Name" | sed "s/^/$exe: /" | tee -a imports.txt
+          done
+          if grep -v -i "KERNEL32.dll\|ADVAPI32.dll\|WS2_32.dll\|api-ms-win-crt-" imports.txt; then echo "::error::the helper needs non-system DLLs"; exit 1; fi
           ctest --output-on-failure
           # Again verbosely, so the summary shows what each probe got.
           python -I ../../test/run_isolation_probe.py ./isolation_probe.exe | tee probe.log
           grep -h "BLOCKED\|ALLOWED\|ISOLATION PROBE" probe.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
-          # Nothing that maps win32k (user32, gdi32, shell32) or more: the copy runs without win32k.
-          objdump -p shinsou-sandbox.exe | grep "DLL Name" | tee imports.txt
-          if grep -v -i "KERNEL32.dll\|ADVAPI32.dll\|api-ms-win-crt-" imports.txt; then echo "::error::unexpected helper imports"; exit 1; fi
 
       - uses: actions/setup-java@v4
         with:
