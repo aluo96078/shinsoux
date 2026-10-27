@@ -1,0 +1,170 @@
+name: Sandbox fuzz
+
+# ADR-0002 §13 / S1 acceptance: 24 h of protocol fuzz without a crash. GitHub-hosted jobs stop at
+# 6 h, so each target runs as parallel shards (default 5 × 290 min ≈ 24 CPU-hours per target).
+# Run it by hand (Actions → Sandbox fuzz) or by pushing a `sandbox-fuzz/**` branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Fuzz minutes per shard (max 330)
+        default: "290"
+  push:
+    branches: ["sandbox-fuzz/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FUZZ_MINUTES: ${{ github.event.inputs.minutes || '5' }}
+
+jobs:
+  test:
+    name: Build and test sandbox-core (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: Fetch pinned third-party sources
+        working-directory: shinsoux/sandbox-core
+        run: ./scripts/fetch-deps.sh
+
+      - name: C tests (Release)
+        working-directory: shinsoux/sandbox-core
+        run: |
+          cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release -j"$(nproc)"
+          cd build/release
+          ./frames_test && ./core_test bootstrap.js && ./driver_test && ./dom_js_test bootstrap.js && ./dom_fault_test
+
+      - name: C tests (ASan + UBSan)
+        working-directory: shinsoux/sandbox-core
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build/asan -DCMAKE_BUILD_TYPE=Debug -DSSC_SANITIZE=ON
+          cmake --build build/asan -j"$(nproc)"
+          cd build/asan
+          ./frames_test && ./core_test bootstrap.js && ./driver_test && ./dom_js_test bootstrap.js && ./dom_fault_test
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host ↔ C sandbox (interop and official-plugin parity)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if the native tests were skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          if grep -l "SKIPPED: shinsou-sandbox" TEST-*.xml; then echo "::error::sandbox helper not found"; exit 1; fi
+          if grep -l "SKIPPED: official plugin repository" TEST-*.xml; then echo "::error::plugin repository not found"; exit 1; fi
+          grep -h "parity: \|interop: " TEST-*.xml || true
+
+  fuzz-native:
+    name: libFuzzer ${{ matrix.target }} shard ${{ matrix.shard }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [frames_fuzz, dom_fuzz]
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        working-directory: sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/fuzz -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSSC_FUZZ=ON
+          cmake --build build/fuzz -j"$(nproc)" --target frames_fuzz dom_fuzz frames_seeds
+
+      - name: Fuzz
+        working-directory: sandbox-core/build/fuzz
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          mkdir -p corpus seeds crashes
+          if [ "${{ matrix.target }}" = frames_fuzz ]; then
+            ./frames_seeds seeds
+            extra="-max_len=4096"
+          else
+            cp ../../fuzz/dom-seeds/* seeds/
+            extra="-max_len=16384 -dict=../../fuzz/dom.dict"
+          fi
+          seed=$(( ${{ github.run_id }} % 100000 * 10 + ${{ matrix.shard }} ))
+          echo "libFuzzer seed $seed"
+          ./${{ matrix.target }} corpus seeds $extra -seed="$seed" \
+            -max_total_time=$(( FUZZ_MINUTES * 60 )) -timeout=20 -rss_limit_mb=2560 \
+            -artifact_prefix=crashes/ -print_final_stats=1 > fuzz.log 2>&1 && rc=0 || rc=$?
+          tail -n 150 fuzz.log
+          exit "$rc"
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}-${{ matrix.shard }}
+          path: |
+            sandbox-core/build/fuzz/crashes/
+            sandbox-core/build/fuzz/fuzz.log
+
+  fuzz-kotlin:
+    name: Kotlin codec fuzz shard ${{ matrix.shard }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Fuzz
+        run: |
+          export SHINSOU_SANDBOX_FUZZ_SECONDS=$(( FUZZ_MINUTES * 60 - 600 ))
+          export SHINSOU_SANDBOX_FUZZ_SEED=$(( ${{ matrix.shard }} * 1000000000000 + ${{ github.run_id }} ))
+          echo "seconds $SHINSOU_SANDBOX_FUZZ_SECONDS seed $SHINSOU_SANDBOX_FUZZ_SEED"
+          ./gradlew :composeApp:desktopTest --tests '*SandboxProtocolLongFuzzTest*' \
+            -Pkotlin.native.enableKlibsCrossCompilation=false
+          grep -h "SandboxProtocol fuzz:" composeApp/build/test-results/desktopTest/TEST-*LongFuzz*.xml
