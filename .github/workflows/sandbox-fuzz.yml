@@ -1,9 +1,10 @@
 name: Sandbox fuzz
 
 # ADR-0002 §13 / S1 acceptance: 24 h of protocol fuzz without a crash. GitHub-hosted jobs stop at
-# 6 h, so each codec target runs as parallel shards (default 5 × 290 min ≈ 24 CPU-hours per
-# target): frames_fuzz (C codec), the Kotlin codec, and dom_fuzz (lexbor DOM). chunks_fuzz (large
-# chunked frames, slow per input) adds 2 shards.
+# 6 h, so each codec target runs as parallel shards (default 5 × 290 min = 24 h 10 min per target):
+# frames_fuzz (C codec), the Kotlin codec, and dom_fuzz (lexbor DOM). chunks_fuzz (large chunked
+# frames, slow per input) adds 2 shards. Every shard checks it really fuzzed for the full time; a
+# run with fewer minutes is a smoke run, and the summary says whether it met the 24 h gate.
 # Run it by hand (Actions → Sandbox fuzz) or by pushing a `sandbox-fuzz/**` branch.
 
 on:
@@ -23,10 +24,22 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FUZZ_MINUTES: ${{ github.event.inputs.minutes || '5' }}
+  FUZZ_MINUTES: ${{ github.event.inputs.minutes || '290' }}
 
 jobs:
+  plan:
+    name: Check the fuzz budget
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          case "$FUZZ_MINUTES" in ''|*[!0-9]*) echo "::error::minutes must be a whole number"; exit 1;; esac
+          if [ "$FUZZ_MINUTES" -lt 1 ] || [ "$FUZZ_MINUTES" -gt 330 ]; then echo "::error::minutes must be 1..330"; exit 1; fi
+          total=$(( FUZZ_MINUTES * 5 ))
+          if [ "$total" -ge 1440 ]; then verdict="acceptance run (≥ 24 h per codec target)"; else verdict="smoke run, NOT the 24 h acceptance gate"; fi
+          echo "Fuzz budget: 5 shards × $FUZZ_MINUTES min = $total CPU-min per codec target — $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
+
   test:
+    needs: plan
     name: Build and test sandbox-core (Linux)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -77,7 +90,7 @@ jobs:
       - name: Kotlin host ↔ C sandbox (interop and official-plugin parity)
         working-directory: shinsoux
         run: >
-          ./gradlew :composeApp:desktopTest
+          ./gradlew :composeApp:desktopTest --rerun
           --tests 'dev.shinsou.kmp.plugin.sandbox.*'
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false
@@ -133,7 +146,13 @@ jobs:
             -max_total_time=$(( FUZZ_MINUTES * 60 )) -timeout=20 -rss_limit_mb=2560 \
             -artifact_prefix=crashes/ -print_final_stats=1 > fuzz.log 2>&1 && rc=0 || rc=$?
           tail -n 150 fuzz.log
-          exit "$rc"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          # libFuzzer ends with "Done N runs in S second(s)": the shard must have run its full time.
+          read -r runs secs <<< "$(sed -n 's/^Done \([0-9]*\) runs in \([0-9]*\) second.*/\1 \2/p' fuzz.log | tail -1)"
+          echo "${{ matrix.target }} shard ${{ matrix.shard }}: ${runs:-0} inputs in ${secs:-0} s" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${secs:-0}" -lt $(( FUZZ_MINUTES * 60 - 60 )) ] || [ "${runs:-0}" -lt 1 ]; then
+            echo "::error::fuzzed ${secs:-0} s, expected $(( FUZZ_MINUTES * 60 )) s"; exit 1
+          fi
 
       - name: Upload crashes
         if: failure()
@@ -167,9 +186,13 @@ jobs:
 
       - name: Fuzz
         run: |
-          export SHINSOU_SANDBOX_FUZZ_SECONDS=$(( FUZZ_MINUTES * 60 - 600 ))
+          export SHINSOU_SANDBOX_FUZZ_SECONDS=$(( FUZZ_MINUTES * 60 ))
           export SHINSOU_SANDBOX_FUZZ_SEED=$(( ${{ matrix.shard }} * 1000000000000 + ${{ github.run_id }} ))
           echo "seconds $SHINSOU_SANDBOX_FUZZ_SECONDS seed $SHINSOU_SANDBOX_FUZZ_SEED"
-          ./gradlew :composeApp:desktopTest --tests '*SandboxProtocolLongFuzzTest*' \
+          # --rerun: the duration and seed are environment variables, which Gradle does not treat as
+          # task inputs, so a cached or up-to-date result must never stand in for a real run.
+          ./gradlew :composeApp:desktopTest --rerun --tests '*SandboxProtocolLongFuzzTest*' \
             -Pkotlin.native.enableKlibsCrossCompilation=false
-          grep -h "SandboxProtocol fuzz:" composeApp/build/test-results/desktopTest/TEST-*LongFuzz*.xml
+          # The test fails on zero rounds; it prints the inputs it ran for the full duration.
+          grep -ho "SandboxProtocol fuzz: [^<]*" composeApp/build/test-results/desktopTest/TEST-*LongFuzz*.xml \
+            | sed "s/^/Kotlin shard ${{ matrix.shard }}: /" | tee -a "$GITHUB_STEP_SUMMARY"

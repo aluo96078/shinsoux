@@ -861,12 +861,12 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
 
 | 增量 | 狀態 | 位置 |
 |---|---|---|
-| (a) SandboxProtocol v1 codec | ✅ 完成：10 項單元測試；mutation fuzz 20 分鐘 3.64 億筆輸入無失敗（24 小時版本待 CI）；Codex 複審後修正「大量 1 位元組 chunk 造成 Host 記憶體放大」，非最後一塊必須是滿額大小 | `composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt`、`SandboxCbor.kt` |
+| (a) SandboxProtocol v1 codec | ✅ 完成：10 項單元測試；mutation fuzz 20 分鐘 3.64 億筆輸入無失敗（24 小時版本見 17.6）；Codex 複審後修正「大量 1 位元組 chunk 造成 Host 記憶體放大」，非最後一塊必須是滿額大小 | `composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt`、`SandboxCbor.kt` |
 | (b) SandboxBridgeDispatcher（同步 bridge＋`net.fetch`） | ✅ 完成：11 項單元測試；Codex 複審後加入解析前的 JSON 形狀預檢（總節點、單一陣列／物件、深度，`pluginJsonShapeWithin`），最終判定 approve；完整 desktop 套件 1,485 項通過 | `…/sandbox/SandboxBridgeDispatcher.kt` |
 | (c1) 正式 `shinsou-sandbox-core`：C 端 codec、核心（§16.2 API 修訂）、frame driver、桌面 helper 入口 | ✅ 完成：C 測試（codec golden vector／惡意輸入／50 萬筆 fuzz、核心語料＋generation／保留進入點／請求預算、driver 端到端）在 Release 與 ASan＋UBSan 下通過；**Kotlin Host 驅動真正的 C 沙箱**的互通測試通過（真實腳本跑沙箱內 DOM、同步 bridge、並行 `net.fetch`、login 限縮；跨程序取消 3 ms、時間上限 3 秒）；Codex 五輪複審後判定 approve | `sandbox-core/` |
 | (c2) lexbor DOM 綁定進 JS（取代純 JS DOM bootstrap） | ✅ 完成：以 JS API 跑 S0 的 golden 語料（151＋邊界 selector × 13 份真實頁面），輸出與 S0 直接呼叫 C 的結果**逐位元組相同**（86,712 行），即官方語料與 jsoup 結果數量 0 差異；DOM 專屬測試 20 項；故障注入讓模組的 272 個配置點逐一失敗皆無崩潰；Release 與 ASan＋UBSan 全過；Codex 五輪複審後判定 approve | `sandbox-core/src/ssc_dom_js.c`、`sbx_dom.c` |
 | (d) `SandboxRuntime`／`SandboxRuntimeFactory`（`ScriptPluginRuntime` over transport，拒絕 provenance） | ✅ 完成：以「說協定的假沙箱」驅動 19 項測試（握手、版本不符、bridge 往返、非同步 fetch、各種協定違規、逾時、取消、login 限縮、結果上限、日誌、frame 洪水）；Codex 三輪複審後判定 approve | `…/sandbox/SandboxSession.kt`、`SandboxScriptPluginRuntime.kt`、`SandboxScriptJson.kt` |
-| (e) JVM 測試用 in-process transport、官方語料 parity、2 個官方套件改寫為 `net.fetch`、24 小時 fuzz | 未開始 | — |
+| (e) JVM 測試用 transport、官方語料 parity、2 個官方套件改寫為 `net.fetch`、24 小時 fuzz | ✅ 完成（24 小時 fuzz 結果見 17.6）：14 個官方來源的中繼資料／filter／偏好設定／stub 呼叫與 Rhino 0 差異；5 個 S0 錄製套件的完整 hook 鏈逐項相同；komiic、mangacopy 的 `net.fetch` 改寫版在錄製資料與 7 個合成情境（含失敗與提前結束）上與同步原版結果、請求序列皆相同。parity 抓到 **source-failure 標記遺失**，FAILURE frame 因此加入 marker 欄位（17.1）；Linux CI 首次建置抓到 libm 連結順序，LeakSanitizer 抓到 quickjs-ng 的 OOM 洩漏（以修補檔修正，17.6）；Codex 多輪複審 | `…/desktopTest/…/sandbox/SandboxOfficialParityTest.kt`、`desktopTest/resources/sandbox-netfetch/`、`sandbox-core/fuzz/`、`.github/workflows/sandbox-fuzz.yml` |
 
 ### 17.1 協定格式（修訂 §4.2）
 
@@ -883,6 +883,11 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
 - Hook 參數、結果、bridge 參數與回覆仍是 JSON 文字（核心本來就用 JSON），由 Host 既有的有界 JSON 解碼重新驗證。
 - 錯誤碼：1–11 沿用核心的 `ssc_status`；32 起為 Host／transport 產生（`UNSUPPORTED_PROTOCOL`、`PERMISSION_DENIED`、
   `UNKNOWN_OPERATION`、`HOST_FAILURE`、`NETWORK_FAILED`、`REVOKED`）。
+- `Failure` 是 `[20, callId, code, marker]`（增量 e 加入）：`marker` 為 0 或 Host 擁有的 source-failure 標記編號
+  （1 `HTTP_CHALLENGE`、2 `HTTP_BLOCKED`、3 `HTTP_FORBIDDEN`、4 `HTTP_UNAVAILABLE`、5 `QUOTA_EXCEEDED`），只能搭配
+  `SCRIPT_ERROR`，其他組合兩端都拒絕。官方套件以 `throw new Error("SHINSOU_SOURCE_…")` 讓 App 顯示固定指引與復原
+  動作（`SourceFailureMarker.kt`）；沙箱只在丟出的值**恰好**是標記名稱時設定編號（字串，或 Error 自身的資料屬性
+  `message`；不執行 getter、不檢查 Proxy），Host 再還原成同一個標記訊息。除此之外腳本文字仍不離開沙箱。
 - 單元測試含固定位元組的 golden vector，C 端 codec（增量 c）必須通過同一組向量。
 
 ### 17.2 Bridge op 名稱與 sandbox tier 政策（修訂 §5.1）
@@ -952,6 +957,28 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
   上限 8 KiB。**殘餘風險（已接受）**：系統真的配不出記憶體時，lexbor 內的配置會讓沙箱程序以 `abort()` 結束，
   Host 當作崩潰處理（§4.6）；lexbor 本身不修改。
 - 已移除節點之後的 selector 標記改為走訪該元素實際所在的樹（含已分離的子樹）。
+
+### 17.6 Parity 與 fuzz（增量 e）
+
+- **JVM 測試用 transport**：不另做 in-process 的 C 綁定。協定行為由 commonTest 的「說協定的假沙箱」覆蓋，真實
+  行為由 desktopTest 以子程序 pipe 驅動 `shinsou-sandbox`（`SandboxProcessTransport`），兩者都不進產品程式碼。
+- **官方 parity**（`SandboxOfficialParityTest`）：比較 Rhino（同步原版）、沙箱（同一腳本）與沙箱跑 `net.fetch`
+  改寫版。hook 鏈為 popular → details → chapters → 最後一章的 pages；結果逐項相同、請求序列相同，只有四個 hook
+  都成功才算完成。失敗只比較類別（腳本錯誤／各種上限）與 source-failure 標記，因為兩個引擎的錯誤措辭不同；
+  `Date.now()` 產生的時間在 10 分鐘內視為相同。S0 錄製資料含真實網站內容，只在本機執行；CI 使用不含網站內容的
+  合成情境（`sandbox-netfetch/fixtures/`），而且任何「SKIPPED」都會讓 CI 失敗。
+- **`net.fetch` 改寫版**（`desktopTest/resources/sandbox-netfetch/`，不是發佈的產物）：hook 改為 `async`，請求改走
+  `bridge.net.fetch`，錯誤與狀態語意與同步 API 相同（任何狀態都回傳 body，失敗等同 `{error}`）。mangacopy 的章節
+  群組維持依序抓取：原版在第一個群組失敗時立即結束，並行會多送請求並改變失敗行為。
+- **Fuzz**（`sandbox-core/fuzz/`，libFuzzer＋ASan＋UBSan＋LeakSanitizer）：`frames_fuzz`（單一 body 與任意切割的
+  envelope 串流，判準為「接受即可重新編碼回相同位元組」與 reader 失敗後一律 BROKEN）、`chunks_fuzz`（把精簡輸入
+  展開成滿額 chunk 的大 frame 再變異；未變異時必須恰好重組出同一個 frame）、`dom_fuzz`（lexbor 解析、selector、
+  讀取與移除節點）；Kotlin codec 以 `SandboxProtocolLongFuzzTest` 執行。`.github/workflows/sandbox-fuzz.yml` 先在
+  Linux 跑 C 測試（Release、ASan＋UBSan＋LSan）與 Kotlin↔C 互通／parity，再以平行 shard 執行 fuzz：GitHub 的
+  job 上限 6 小時，所以「24 小時」指每個 codec target 合計約 24 CPU 小時（5 × 290 分鐘），chunks_fuzz 另有 2 個 shard。
+- **相依修補**：`sandbox-core/patches/` 內的修補由 `fetch-deps.sh` 套用在釘選版本上，每個修補檔說明原因。目前只有
+  quickjs-ng v0.17.0 的 `JS_ToCStringLen2` 在 OOM 時洩漏字串參考（腳本可在接近 heap 上限時反覆觸發，讓洩漏量
+  持續佔用自己的 heap 預算）。
 
 ## 不接受的縮小範圍
 

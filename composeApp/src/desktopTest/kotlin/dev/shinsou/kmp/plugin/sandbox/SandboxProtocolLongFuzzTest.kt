@@ -12,6 +12,7 @@ class SandboxProtocolLongFuzzTest {
     @Test
     fun fuzzForConfiguredDuration() {
         val seconds = System.getenv("SHINSOU_SANDBOX_FUZZ_SECONDS")?.toLongOrNull() ?: return
+        require(seconds > 0) { "SHINSOU_SANDBOX_FUZZ_SECONDS must be positive, was $seconds" }
         val end = System.nanoTime() + seconds * 1_000_000_000L
         var seed = System.getenv("SHINSOU_SANDBOX_FUZZ_SEED")?.toLongOrNull() ?: System.currentTimeMillis()
         var rounds = 0L
@@ -24,6 +25,7 @@ class SandboxProtocolLongFuzzTest {
             seed++
             rounds++
         }
+        check(rounds > 0) { "no fuzz round completed in $seconds s" }
         println("SandboxProtocol fuzz: ${rounds * 100_000} inputs in $seconds s, no failure")
     }
 }

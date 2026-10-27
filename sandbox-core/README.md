@@ -15,6 +15,8 @@ SandboxProtocol v1 的 frame 向 Host 要求。Host 端的對應實作在
 | `src/sbx_dom.{c,h}` | lexbor 之上的 jsoup 相容 DOM（S0 評估過的轉接層，加上 handle 重用、記憶體計帳與故障注入） |
 | `src/ssc_dom_js.{c,h}` | 把 DOM 綁進 QuickJS，並以 `SSC_DOM_SHIM` 取代 bootstrap 的純 JS 解析器 |
 | `scripts/embed-bootstrap.py` | 把相容 bootstrap（iOS 引擎的 bootstrap 原文）嵌成 C 字串 |
+| `fuzz/` | libFuzzer target：`frames_fuzz`（codec 與 envelope 串流）、`chunks_fuzz`（大型 chunk 重組）、`dom_fuzz`（DOM），以及 seed／字典 |
+| `patches/` | 套用在釘選相依上的修補（`fetch-deps.sh` 自動套用，每個檔案說明原因） |
 
 QuickJS 編譯時不含 `quickjs-libc`：沙箱內沒有檔案、程序、socket 或環境變數。
 
@@ -22,7 +24,7 @@ QuickJS 編譯時不含 `quickjs-libc`：沙箱內沒有檔案、程序、socket
 
 ```bash
 cd sandbox-core
-./scripts/fetch-deps.sh                      # quickjs-ng v0.17.0、lexbor v3.0.1（不納入版控）
+./scripts/fetch-deps.sh                      # quickjs-ng v0.17.0、lexbor v3.0.1（不納入版控）＋ patches/
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release && cmake --build build/release -j8
 (cd build/release && ./frames_test && ./core_test bootstrap.js && ./driver_test && ./dom_js_test bootstrap.js && ./dom_fault_test)
 cmake -S . -B build/asan -DCMAKE_BUILD_TYPE=Debug -DSSC_SANITIZE=ON && cmake --build build/asan -j8
@@ -36,13 +38,26 @@ G=../spikes/sandbox-s0/html
 python3 -I $G/scripts/compare_golden.py ../spikes/sandbox-s0/build/html-golden/expected.txt /tmp/golden-js.txt
 ```
 
-Kotlin↔C 端到端：建好 `build/release/shinsou-sandbox` 後執行
-`./gradlew :composeApp:desktopTest --tests '*SandboxNativeInteropTest*'`（找不到 binary 時該測試會略過並印出原因；
-也可用 `SHINSOU_SANDBOX_BIN` 指定路徑）。
+Kotlin↔C 端到端與官方套件 parity：建好 `build/release/shinsou-sandbox` 後執行
+`./gradlew :composeApp:desktopTest --tests 'dev.shinsou.kmp.plugin.sandbox.*'`（找不到 binary 或官方套件 repo 時
+相關測試會略過並印出原因；也可用 `SHINSOU_SANDBOX_BIN` 指定路徑）。加上
+`SHINSOU_SANDBOX_BENCH=../spikes/sandbox-s0/build/bench/fixtures` 會另外比對 S0 的錄製資料（只在本機）。
+
+Fuzz（需要含 libFuzzer 的 clang，例如 Homebrew LLVM；CI 見 `.github/workflows/sandbox-fuzz.yml`）：
+
+```bash
+cmake -S . -B build/fuzz -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSSC_FUZZ=ON
+cmake --build build/fuzz -j8 --target frames_fuzz chunks_fuzz dom_fuzz frames_seeds
+cd build/fuzz && mkdir -p seeds corpus/frames && ./frames_seeds seeds
+./frames_fuzz corpus/frames seeds -max_len=4096 -max_total_time=600
+./dom_fuzz corpus/dom ../../fuzz/dom-seeds -dict=../../fuzz/dom.dict -max_len=16384 -max_total_time=600
+```
 
 ## 規則（違反任何一條都是 bug）
 
 - 任何會執行腳本程式碼或 Host 回呼的呼叫之前，核心狀態必須已一致（ADR §16.2）。
+- 腳本文字不離開沙箱：失敗只回穩定代碼，唯一例外是 Host 擁有的 source-failure 標記編號（ADR §17.1），而且只在
+  丟出的值恰好是標記名稱時設定，不執行 getter 或 Proxy trap。
 - 跑核心的執行緒 stack 必須大於給 QuickJS 的 stack 上限：driver 拒絕超過 4 MiB 的上限，`shinsou-sandbox`
   在 16 MiB stack 的執行緒上執行 driver。
 - 沙箱外配置的記憶體都要有上限：排隊中的 `net.fetch` 請求（單筆 4 MiB、合計 8 MiB）、driver 收到但尚未處理的
