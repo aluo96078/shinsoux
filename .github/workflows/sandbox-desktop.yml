@@ -143,6 +143,7 @@ jobs:
       - name: "Diagnostics (temporary): which mitigation fails the confined copy"
         continue-on-error: true
         working-directory: shinsoux/sandbox-core
+        shell: bash --noprofile --norc {0}
         run: |
           ./scripts/fetch-deps.sh
           all=$(( (1<<12)|(1<<16)|(1<<24)|(1<<28)|(1<<32)|(1<<36)|(1<<48)|(1<<52)|(1<<56) ))
@@ -150,9 +151,9 @@ jobs:
             name=${spec%%:*}; mask=${spec#*:}
             cmake -S . -B build/diag-$name -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc "-DCMAKE_C_FLAGS=-DSSC_WIN_MITIGATIONS=${mask}ULL" > /dev/null
             cmake --build build/diag-$name --target isolation_probe shinsou-sandbox > /dev/null
-            out=$(build/diag-$name/isolation_probe.exe --package-key diag --hang < /dev/null | head -1); probe=$?
-            build/diag-$name/shinsou-sandbox.exe < /dev/null; helper=$?
-            echo "DIAG $name mask=$mask probe_out='$out' helper_exit=$helper"
+            probe=0; build/diag-$name/isolation_probe.exe --package-key diag --hang < /dev/null > diag.txt || probe=$?
+            helper=0; build/diag-$name/shinsou-sandbox.exe < /dev/null || helper=$?
+            echo "DIAG $name mask=$mask probe_exit=$probe probe_out='$(head -c 200 diag.txt)' helper_exit=$helper"
           done
 
       - name: C tests and the isolation probe
