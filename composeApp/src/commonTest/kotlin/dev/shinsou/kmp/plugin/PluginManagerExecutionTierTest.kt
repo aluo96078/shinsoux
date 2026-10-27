@@ -195,6 +195,87 @@ class PluginManagerExecutionTierTest {
         assertNull(host.manager.source(SOURCE_ID))
     }
 
+    @Test
+    fun aTrustPromptOnlyEverTrustsTheKeyItShowed() = runTest {
+        val first = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val second = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val repository = "https://signed.example/repo"
+        var presenting = first
+        suspend fun repoJson(key: dev.shinsou.kmp.sync.crypto.SodiumKeyPair, at: String) = signedPublisherEnvelope(
+            key, at, RepositorySignedDocumentType.REPOSITORY, "repo.json", 1,
+            kotlinx.serialization.json.buildJsonObject {
+                put("meta", kotlinx.serialization.json.buildJsonObject {
+                    put("name", kotlinx.serialization.json.JsonPrimitive("Signed"))
+                    put("signingKeyFingerprint", kotlinx.serialization.json.JsonPrimitive(publisherRoot(key).fingerprint))
+                })
+            },
+        ).toString()
+        val host = Host()
+        val client = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond("", io.ktor.http.HttpStatusCode.NotFound) }),
+            cacheToken = { 1L },
+            repositoryTrustPolicy = PublisherRepositoryTrustPolicy(host.publishers, host.blocklist, RepositoryTrustPolicies.REQUIRE_CONFIGURED_PIN),
+            repositorySecurityState = host.state,
+            repositoryHostResolver = PluginHostResolver { listOf("93.184.216.34") },
+            repositoryTransport = object : PluginHttpTransport {
+                override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = error("resolved transport only")
+                override suspend fun executeResolved(request: PluginHttpRequest, resolution: PluginHostResolution): PluginHttpResponse =
+                    if (request.url.substringBefore('?').endsWith("/repo.json")) {
+                        PluginHttpResponse(200, repoJson(presenting, request.url.substringBefore('?').removeSuffix("/repo.json")).encodeToByteArray())
+                    }
+                    else PluginHttpResponse(404, ByteArray(0))
+            },
+        )
+        val adapter = PluginBrowseAdapter(
+            manager = host.manager,
+            repositoryClient = client,
+            repositoryStore = KeyValueExtensionRepositoryStore(host.keyValues),
+            pluginStorage = host.storage,
+            keyValueStore = host.keyValues,
+            trustStore = KeyValuePluginTrustStore(host.keyValues),
+            packageSecurity = PluginPackageSecurity(host.publishers, host.revocations, host.blocklist, client),
+        )
+        val shownA = assertNotNull(adapter.inspectRepositoryTrust(repository))
+        assertEquals(publisherRoot(first).fingerprint, shownA.keyFingerprint)
+        // The repository now presents another key (another inspection, e.g. from a link).
+        presenting = second
+        val shownB = assertNotNull(adapter.inspectRepositoryTrust(repository))
+        assertFailsWith<IllegalStateException> { adapter.trustAndAddRepository(shownA, null) }
+        assertNull(host.publishers.publisherForRepository(repository), "the key shown first was not the one inspected last")
+        runCatching { adapter.trustAndAddRepository(shownB, null) } // adding may fail later (no index); trust is what counts
+        assertEquals(publisherRoot(second).fingerprint, host.publishers.publisherForRepository(repository)!!.currentFingerprint)
+        assertTrue(assertNotNull(adapter.inspectRepositoryTrust(repository)).alreadyTrusted)
+
+        // A link's fingerprint is enforced even when the dialog sends none or another one.
+        val other = "https://signed.example/other"
+        presenting = first
+        val linked = assertNotNull(adapter.inspectRepositoryTrust(other)).copy(linkedFingerprint = publisherRoot(second).fingerprint)
+        assertFailsWith<PublisherTrustException.FingerprintMismatch> { adapter.trustAndAddRepository(linked, null) }
+        assertFailsWith<PublisherTrustException.FingerprintMismatch> { adapter.trustAndAddRepository(linked, publisherRoot(first).fingerprint) }
+        assertNull(host.publishers.publisherForRepository(other))
+
+        // Unreachable is not "unsigned": a link must stay pending rather than be dropped.
+        val unreachable = PluginBrowseAdapter(
+            manager = host.manager,
+            repositoryClient = ExtensionRepositoryClient(
+                HttpClient(MockEngine { respond("", io.ktor.http.HttpStatusCode.NotFound) }),
+                cacheToken = { 1L },
+                repositoryHostResolver = PluginHostResolver { listOf("93.184.216.34") },
+                repositoryTransport = object : PluginHttpTransport {
+                    override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = error("resolved transport only")
+                    override suspend fun executeResolved(request: PluginHttpRequest, resolution: PluginHostResolution): PluginHttpResponse =
+                        PluginHttpResponse(503, ByteArray(0))
+                },
+            ),
+            repositoryStore = KeyValueExtensionRepositoryStore(host.keyValues),
+            pluginStorage = host.storage,
+            keyValueStore = host.keyValues,
+            trustStore = KeyValuePluginTrustStore(host.keyValues),
+            packageSecurity = PluginPackageSecurity(host.publishers, host.revocations, host.blocklist, client),
+        )
+        assertFailsWith<ExtensionRepositoryException.Http> { unreachable.inspectRepositoryTrust(other) }
+    }
+
     private fun entry(version: String = "1.0.0", versionCode: Int = 1) = PluginIndexEntry(
         id = PLUGIN_ID,
         name = "Tier fixture",

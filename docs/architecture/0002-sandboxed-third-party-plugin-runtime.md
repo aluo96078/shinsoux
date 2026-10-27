@@ -1336,10 +1336,22 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
     - 必須有撤回清單才能安裝。
     - URL 正規化。
     - 沒有沙箱時 fail closed。
-- **尚未完成**：
-  - `shinsou://` deep link 在各平台的註冊。
-  - ShuYue reviewed 路徑尚未經過封鎖名單。
-  - S6 的權限上限與 `COOKIE_READ`：`policyFor` 目前全部回傳預設值。
+- **`shinsou://add-repository?url=…&fp=…`**：
+  - 各平台原本就會把 `shinsou://` 連結送進 App：Android intent filter、iOS／macOS plist、桌面版 argv。
+  - `DeepLinkParser` 只接受 HTTPS URL 與完整指紋。
+  - 連結永遠不會自行加入 repository：
+    - 有簽章的 repository 顯示信任對話框；連結帶的指紋以唯讀方式顯示且一定會比對，清空或改成別的值都會被拒絕。
+    - 沒有簽章的 repository 需要使用者明確按「新增」。
+    - 帶指紋的連結遇到沒有金鑰的 repository，直接拒絕。
+  - 確認時只信任 prompt 顯示的那把金鑰（`keyFingerprint`）。之後再檢視一次若出示了別的金鑰，舊的 prompt 就失效。
+  - 連結只在加入成功、或使用者明確拒絕時才標記為已處理；連不上時會保留並再送一次。每個對話框只標記自己的那個連結。
+- **沒有發佈者的套件也能封鎖**：
+  - `PluginBlockEntry.Package` 以空的發佈者 ID 封鎖官方 catalog 與 reviewed ShuYue 套件。
+  - 交給 ShuYue coordinator 的 runtime factory 會先檢查封鎖名單。
+  - 信任狀態改變時，`reevaluateReviewedRuntimesV2()` 立即讓被封鎖的 ShuYue runtime 下線，解除封鎖後重建。
+- 以上兩項 Codex 複審 5 輪後 approve。
+- **下一個階段（S6，不屬於這次接入）**：tier 權限上限、`COOKIE_READ`（`policyFor` 目前全部回傳預設值）、一次性 login
+  沙箱、`SourceKey` v3 遷移。
 
 ## 21. S4 進度與實作決策（iOS WASM 沙箱）
 

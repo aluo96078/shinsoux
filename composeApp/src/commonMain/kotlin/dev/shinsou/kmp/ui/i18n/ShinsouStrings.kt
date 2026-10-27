@@ -943,6 +943,7 @@ private val TraditionalLongTranslations = mapOf(
     "Match" to "比對",
     "Blocked on this device" to "本機封鎖名單",
     "Nothing blocked" to "沒有封鎖任何項目",
+    "This repository presents no signing key to match the link's fingerprint." to "此儲存庫沒有可供比對連結指紋的簽章金鑰。",
     "Official" to "官方",
     "Update available" to "有可用更新",
     "Execution allowed" to "允許執行",

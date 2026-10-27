@@ -842,7 +842,11 @@ fun BrowseScreen(
                         launchOperation {
                             // ADR-0002 §8.2: a signed third-party repository shows its publisher key first.
                             val prompt = callbacks.inspectRepositoryTrust(url)
-                            if (prompt == null) callbacks.addRepository(url) else pendingRepositoryTrust = prompt
+                            when {
+                                prompt == null -> callbacks.addRepository(url) // unsigned: the URL the user typed
+                                prompt.alreadyTrusted -> callbacks.trustAndAddRepository(prompt, null)
+                                else -> pendingRepositoryTrust = prompt
+                            }
                         }
                     },
                     onOpenPackageSecurity = { launchOperation { packageSecurity = callbacks.packageSecurity() } },
@@ -1157,7 +1161,7 @@ fun BrowseScreen(
             prompt = prompt,
             onTrust = { fingerprint ->
                 pendingRepositoryTrust = null
-                launchOperation { callbacks.trustAndAddRepository(prompt.url, fingerprint) }
+                launchOperation { callbacks.trustAndAddRepository(prompt, fingerprint) }
             },
             onDismiss = { pendingRepositoryTrust = null },
         )
@@ -4183,9 +4187,7 @@ private fun ExtensionRow(
                         Text(strings.uninstall)
                     }
                     // ADR-0002 D5: the user's own block list; undone from Package security.
-                    if (!extension.reviewedShuYueV2) {
-                        TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }
-                    }
+                    TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }
                 }
                 else -> Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
             }

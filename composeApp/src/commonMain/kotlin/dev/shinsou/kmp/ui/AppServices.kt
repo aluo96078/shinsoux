@@ -723,6 +723,12 @@ sealed interface ShinsouDeepLink {
 
     /** One-time Cloudflare setup, invite, pairing, recovery, or operator handoff action. */
     data class OpenSyncLink(val payload: SyncLinkPayload) : ShinsouDeepLink
+
+    /**
+     * ADR-0002 §8.1 `shinsou://add-repository?url=…&fp=…`: a publisher's repository and, optionally,
+     * the full fingerprint to match. Nothing is trusted until the user confirms the key.
+     */
+    data class AddRepository(val repositoryUrl: String, val fingerprint: String?) : ShinsouDeepLink
 }
 
 /**
@@ -994,13 +1000,17 @@ interface BrowseCallbacks {
     suspend fun addRepository(url: String): BrowseRepository? = null
 
     /**
-     * ADR-0002 S5: a signed repository whose publisher is not trusted yet, for the user to confirm
-     * before [trustAndAddRepository]. Null when [addRepository] can take the URL as it is.
+     * ADR-0002 S5: a signed repository's key, for the user to confirm before [trustAndAddRepository].
+     * Null when the repository answered but is not signed ([addRepository] takes the URL as it is);
+     * throws when it could not be reached, so a caller can try again later.
      */
     suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt? = null
 
-    /** Trusts the inspected publisher key (with [fingerprint] when the user entered one) and adds the repository. */
-    suspend fun trustAndAddRepository(url: String, fingerprint: String?): BrowseRepository? = null
+    /**
+     * Trusts exactly the key [prompt] showed (refused if the repository presented another one since)
+     * — with [fingerprint] when the user entered one — and adds the repository.
+     */
+    suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository? = null
 
     suspend fun packageSecurity(): PackageSecuritySnapshot = PackageSecuritySnapshot()
 
@@ -1593,6 +1603,12 @@ data class RepositoryTrustPrompt(
     val displayFingerprint: String,
     /** The user chose to require a full fingerprint match (mode b). */
     val fingerprintRequired: Boolean,
+    /** From an add-repository link: the fingerprint the publisher handed out, to be matched. */
+    val linkedFingerprint: String? = null,
+    /** The full fingerprint of the key shown: confirming trusts this key and no other. */
+    val keyFingerprint: String = "",
+    /** The repository's publisher is already trusted with this key. */
+    val alreadyTrusted: Boolean = false,
 )
 
 enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_REPLACED }

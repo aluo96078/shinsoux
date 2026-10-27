@@ -353,38 +353,58 @@ public class PluginBrowseAdapter(
         val presentation = operationMutex.withLock {
             // Anything the regular path can already take (official, pinned, trusted publisher,
             // reviewed ShuYue) or that is not a signed repository goes through addRepository as before.
+            // Null only when the repository answered with something that is not a signed repo.json
+            // (an unsigned or reviewed ShuYue repository); a failure to reach it is an error, so a
+            // caller can tell "unsigned" from "try again".
             val inspected = try {
                 repositoryClient.inspectRepositoryKey(input)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (_: ExtensionRepositoryException.InvalidDocument) {
                 return@withLock null
+            } catch (_: ExtensionRepositoryException.InvalidUrl) {
+                return@withLock null // not a generic repository URL: addRepository decides (e.g. ShuYue)
+            } catch (missing: ExtensionRepositoryException.Http) {
+                if (missing.status == 404) return@withLock null // no repo.json: not a signed repository
+                throw missing
             }
-            val known = security.publishers.publisherForRepository(inspected.normalizedBaseUrl)
-            if (known != null && known.currentFingerprint == inspected.key.fingerprint) return@withLock null
             inspected.also { inspectedRepositoryKeys[it.normalizedBaseUrl] = it }
         } ?: return null
+        val known = security.publishers.publisherForRepository(presentation.normalizedBaseUrl)
         return RepositoryTrustPrompt(
             url = presentation.normalizedBaseUrl,
             name = presentation.name,
             displayFingerprint = presentation.displayFingerprint,
             fingerprintRequired = security.publishers.globalMode() == PublisherTrustMode.REQUIRE_FINGERPRINT_MATCH,
+            keyFingerprint = presentation.key.fingerprint,
+            alreadyTrusted = known?.currentFingerprint == presentation.key.fingerprint,
         )
     }
 
-    override suspend fun trustAndAddRepository(url: String, fingerprint: String?): BrowseRepository? {
+    override suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository? {
         val security = checkNotNull(packageSecurity) { "Publisher trust is unavailable" }
         operationMutex.withLock {
-            val presentation = checkNotNull(inspectedRepositoryKeys[url]) { "Inspect the repository again before trusting it" }
-            // The key the user saw, exactly: trusting re-reads nothing from the network.
+            val presentation = inspectedRepositoryKeys[prompt.url]
+            // The key this prompt showed, exactly: a later inspection presenting another key (or none)
+            // makes the prompt stale. Trusting re-reads nothing from the network.
+            check(presentation != null && presentation.key.fingerprint == prompt.keyFingerprint) {
+                "The repository's key changed; inspect it again before trusting it"
+            }
+            // A link's fingerprint binds the trust whatever the dialog sent: it cannot be cleared
+            // back to trust-on-first-use, and a different typed value is refused.
+            val typed = fingerprint?.takeIf(String::isNotBlank)
+            val linked = prompt.linkedFingerprint
+            if (linked != null && typed != null && PublisherFingerprint.parse(typed) != PublisherFingerprint.parse(linked)) {
+                throw PublisherTrustException.FingerprintMismatch()
+            }
             security.publishers.trustRepository(
                 presentation.normalizedBaseUrl,
                 presentation.key,
-                expectedFingerprint = fingerprint?.takeIf(String::isNotBlank),
+                expectedFingerprint = linked ?: typed,
             )
-            inspectedRepositoryKeys.remove(url)
+            inspectedRepositoryKeys.remove(prompt.url)
         }
-        return addRepository(url)
+        return addRepository(prompt.url)
     }
 
     override suspend fun packageSecurity(): PackageSecuritySnapshot {
@@ -412,7 +432,8 @@ public class PluginBrowseAdapter(
                 when (entry) {
                     is PluginBlockEntry.Package -> PackageBlock(
                         "package:${entry.publisherId}:${entry.packageId}",
-                        "${entry.packageId} · ${PublisherFingerprint.display(entry.publisherId).take(9)}",
+                        if (entry.publisherId == PluginBlockEntry.Package.NO_PUBLISHER) entry.packageId
+                        else "${entry.packageId} · ${PublisherFingerprint.display(entry.publisherId).take(9)}",
                     )
                     is PluginBlockEntry.Artifact -> PackageBlock("artifact:${entry.sha256}", "sha256 ${entry.sha256.take(12)}…")
                     is PluginBlockEntry.Publisher -> PackageBlock("publisher:${entry.publisherId}", PublisherFingerprint.display(entry.publisherId))
@@ -435,10 +456,9 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean): Unit = securityChange { security ->
-        val stored = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId }
-            ?: error("Extension '$extensionId' is not installed")
-        val entry = stored.metadata.publisherId?.let { PluginBlockEntry.Package(extensionId, it) }
-            ?: PluginBlockEntry.Artifact(stored.metadata.installedSha256)
+        // Packages without a publisher (the reviewed catalogues, reviewed ShuYue) are blocked by id.
+        val publisherId = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId }?.metadata?.publisherId
+        val entry = PluginBlockEntry.Package(extensionId, publisherId ?: PluginBlockEntry.Package.NO_PUBLISHER)
         if (blocked) security.blocklist.block(entry) else security.blocklist.unblock(entry)
     }
 
@@ -446,6 +466,8 @@ public class PluginBrowseAdapter(
         val entry = when {
             key.startsWith("artifact:") -> PluginBlockEntry.Artifact(key.removePrefix("artifact:"))
             key.startsWith("publisher:") -> PluginBlockEntry.Publisher(key.removePrefix("publisher:"))
+            key.startsWith("package::") ->
+                PluginBlockEntry.Package(key.removePrefix("package::"), PluginBlockEntry.Package.NO_PUBLISHER)
             key.startsWith("package:") -> {
                 // "package:<publisherId>:<packageId>"; publisher ids contain one colon ("sha256:…").
                 val rest = key.removePrefix("package:")
@@ -469,6 +491,7 @@ public class PluginBrowseAdapter(
         } finally {
             withContext(NonCancellable) {
                 manager.loadInstalled()
+                manager.reevaluateReviewedRuntimesV2()
                 rebuildSnapshot(errorMessage = null)
             }
         }

@@ -532,8 +532,13 @@ public data class PublisherRevocations(
 /** D5: what the user blocked on this device. Never signed, downloaded, backed up or synced. */
 @Serializable
 public sealed interface PluginBlockEntry {
+    /** [publisherId] is [NO_PUBLISHER] for packages without one (the reviewed catalogues, unsigned). */
     @Serializable
-    public data class Package(val packageId: String, val publisherId: String) : PluginBlockEntry
+    public data class Package(val packageId: String, val publisherId: String) : PluginBlockEntry {
+        public companion object {
+            public const val NO_PUBLISHER: String = ""
+        }
+    }
 
     @Serializable
     public data class Artifact(val sha256: String) : PluginBlockEntry
@@ -565,7 +570,8 @@ public class LocalPluginBlocklist(
         mutex.withLock {
             read().firstOrNull { entry ->
                 when (entry) {
-                    is PluginBlockEntry.Package -> entry.packageId == packageId && entry.publisherId == publisherId
+                    is PluginBlockEntry.Package ->
+                        entry.packageId == packageId && entry.publisherId == (publisherId ?: PluginBlockEntry.Package.NO_PUBLISHER)
                     is PluginBlockEntry.Artifact -> entry.sha256 == artifactSha256?.lowercase()
                     is PluginBlockEntry.Publisher -> entry.publisherId == publisherId
                 }

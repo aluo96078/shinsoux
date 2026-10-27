@@ -41,7 +41,8 @@ internal fun RepositoryTrustDialog(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
-    var fingerprint by remember(prompt) { mutableStateOf("") }
+    // A link's fingerprint is filled in: trusting then means matching it, not trusting on first use.
+    var fingerprint by remember(prompt) { mutableStateOf(prompt.linkedFingerprint.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(strings.text("Trust this publisher?")) },
@@ -58,9 +59,11 @@ internal fun RepositoryTrustDialog(
                 OutlinedTextField(
                     value = fingerprint,
                     onValueChange = { fingerprint = it },
+                    // A link's fingerprint is the one to match: shown, not editable.
+                    readOnly = prompt.linkedFingerprint != null,
                     label = {
                         Text(
-                            if (prompt.fingerprintRequired) strings.text("Full fingerprint (required)")
+                            if (prompt.fingerprintRequired || prompt.linkedFingerprint != null) strings.text("Full fingerprint (required)")
                             else strings.text("Full fingerprint (optional)"),
                         )
                     },
@@ -71,7 +74,7 @@ internal fun RepositoryTrustDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = !prompt.fingerprintRequired || fingerprint.isNotBlank(),
+                enabled = (!prompt.fingerprintRequired && prompt.linkedFingerprint == null) || fingerprint.isNotBlank(),
                 onClick = { onTrust(fingerprint.trim().takeIf(String::isNotEmpty)) },
             ) { Text(strings.text("Trust and add")) }
         },

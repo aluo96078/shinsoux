@@ -1565,11 +1565,97 @@ public class PluginManager(
             quarantineStore = quarantineStore,
             trustStore = approvalStore,
             permissionStore = approvalStore,
-            runtimeFactory = runtimeFactory,
+            runtimeFactory = blockListCheckedReviewedFactory(),
             environment = environment,
             credentialsResolver = credentialsResolver,
         )
         return ShuYueReviewedInstallCoordinatorV2(admission, approvalStore, this, installationStore)
+    }
+
+    /**
+     * The reviewed ShuYue runtimes are built outside [createScopedRuntime]; the user's block list
+     * (ADR-0002 D5) applies to them too: an exact reviewed artifact that is blocked is not built.
+     */
+    private fun blockListCheckedReviewedFactory(): ScriptPluginRuntimeFactory {
+        val gate = executionTierGate ?: return runtimeFactory
+        return object : ScriptPluginRuntimeFactory {
+            override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime {
+                requireReviewed(script, manifest)
+                return runtimeFactory.create(script, manifest, environment)
+            }
+
+            override suspend fun createForSource(
+                script: String,
+                manifest: PluginManifest,
+                source: SourceIndexEntry,
+                environment: ScriptPluginEnvironment,
+            ): ScriptPluginRuntime {
+                requireReviewed(script, manifest)
+                return runtimeFactory.createForSource(script, manifest, source, environment)
+            }
+
+            private suspend fun requireReviewed(script: String, manifest: PluginManifest) {
+                val tier = gate.resolve(
+                    ExecutionTierCandidate(
+                        packageId = manifest.id,
+                        artifactSha256 = Sha256.hex(script.encodeToByteArray()),
+                        publisherId = null,
+                        officialReviewedCatalogMatch = true,
+                        fromCanonicalOfficialUnsignedRepository = true,
+                        userAuthorized = true,
+                    ),
+                )
+                if (tier != ExecutionTier.ReviewedInProcess) {
+                    throw PluginExecutionInertException(manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
+                }
+            }
+        }
+    }
+
+    /**
+     * After a block-list change (ADR-0002 D5): reviewed ShuYue runtimes the user blocked are taken
+     * down now, and ones unblocked are rebuilt. Their reloaders and identities stay, so blocking
+     * is reversible without reinstalling.
+     */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun reevaluateReviewedRuntimesV2(): Unit = packageMutationMutex.withLock {
+        val gate = executionTierGate ?: return@withLock
+        for ((packageId, reloader) in reviewedReloaders.toMap()) {
+            val identity = nativeArtifactIdentities[packageId] ?: continue
+            val tier = gate.resolve(
+                ExecutionTierCandidate(
+                    packageId = packageId,
+                    artifactSha256 = identity.sha256,
+                    publisherId = null,
+                    officialReviewedCatalogMatch = true,
+                    fromCanonicalOfficialUnsignedRepository = true,
+                    userAuthorized = true,
+                ),
+            )
+            val live = extensionRegistryV2.packageFacade(packageId) != null
+            if (tier != ExecutionTier.ReviewedInProcess) {
+                if (live) {
+                    invalidateWebChallengeGrants()
+                    nativeLifecycleRuntimes.remove(packageId)
+                    extensionRegistryV2.uninstall(packageId)
+                }
+            } else if (!live) {
+                val runtime = try {
+                    reloader()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    continue // unavailable now; the next change or launch tries again
+                }
+                try {
+                    extensionRegistryV2.install(runtime, replace = true)
+                    (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let { nativeLifecycleRuntimes[packageId] = it }
+                } catch (error: Throwable) {
+                    if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
+                    throw error
+                }
+            }
+        }
     }
 
     public suspend fun uninstallExtensionRuntimeV2(packageId: String): Boolean =

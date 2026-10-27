@@ -701,6 +701,50 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
+    fun theUsersBlockListTakesAReviewedShuYuePackageDownAndBack() = runTest {
+        val keyValues = InMemoryPluginKeyValueStore()
+        val storage = KeyValuePluginStorage(keyValues)
+        val network = PluginNetworkClient(
+            transport = fixtureTransport(::fixtureResponse),
+            storage = storage,
+            hostResolver = FIXTURE_PUBLIC_HOST_RESOLVER,
+        )
+        val state = dev.shinsou.kmp.plugin.KeyValueRepositorySecurityStateStore(keyValues)
+        val publishers = dev.shinsou.kmp.plugin.PublisherTrustStore(keyValues, state)
+        val blocklist = dev.shinsou.kmp.plugin.LocalPluginBlocklist(keyValues)
+        val resolver = dev.shinsou.kmp.plugin.ExecutionTierResolver(
+            publishers, dev.shinsou.kmp.plugin.PublisherRevocationStore(keyValues, publishers, state), blocklist, nowEpochSeconds = { 0L },
+        )
+        val manager = PluginManager(
+            repositoryClient = ExtensionRepositoryClient(HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })),
+            packageStore = InMemoryPluginPackageStore(),
+            verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = ScriptPluginEnvironment(network, storage),
+            executionTierGate = dev.shinsou.kmp.plugin.PublisherExecutionTierGate(publishers, resolver),
+        )
+        val approvals = InMemoryShuYueExecutionApprovalsV2()
+        val admission = productionShuYueReviewedAdmissionV2(
+            quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
+            trustStore = approvals,
+            permissionStore = approvals,
+            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            environment = ScriptPluginEnvironment(network, storage),
+        )
+        manager.installReviewedShuYueRuntimeV2(admission, prepare("zh.biquge.tw", "biquge-tw.js", admission, approvals))
+        assertNotNull(manager.extensionFacadeV2("zh.biquge.tw"))
+
+        val entry = dev.shinsou.kmp.plugin.PluginBlockEntry.Package("zh.biquge.tw", dev.shinsou.kmp.plugin.PluginBlockEntry.Package.NO_PUBLISHER)
+        blocklist.block(entry)
+        manager.reevaluateReviewedRuntimesV2()
+        assertNull(manager.extensionFacadeV2("zh.biquge.tw"))
+
+        blocklist.unblock(entry)
+        manager.reevaluateReviewedRuntimesV2()
+        assertNotNull(manager.extensionFacadeV2("zh.biquge.tw"))
+    }
+
+    @Test
     fun reviewedBiqugeExecutesThroughProductionBrowseDetailContentCallbacks() = runTest {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
