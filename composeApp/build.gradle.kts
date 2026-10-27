@@ -545,10 +545,22 @@ android {
 }
 
 // sandbox-core's pinned third-party sources (quickjs-ng, lexbor) are fetched, not committed.
+// On Windows `bash` on PATH is often System32's WSL launcher: use the bash of Git for Windows.
+val sandboxCoreBash = if (isWindowsBuildHost) {
+    System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .map { File(it, "git.exe") }
+        .firstOrNull { it.isFile }
+        ?.let { File(it.parentFile.parentFile, "bin/bash.exe") }
+        ?.takeIf { it.isFile }
+        ?.absolutePath
+        ?: "C:/Program Files/Git/bin/bash.exe"
+} else {
+    "bash"
+}
 val fetchSandboxCoreDeps by tasks.registering(Exec::class) {
     description = "Fetches sandbox-core's pinned third-party sources and applies its patches"
     workingDir = rootProject.file("sandbox-core")
-    commandLine("bash", "scripts/fetch-deps.sh")
+    commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
 }
 tasks.configureEach {
     if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps)
