@@ -1463,12 +1463,7 @@ public class PluginNetworkClient(
         return if (seconds >= maximumSeconds) Long.MAX_VALUE else now + seconds * 1_000L
     }
 
-    private fun isPublicSuffix(domain: String): Boolean {
-        if ('.' !in domain || domain in COMMON_MULTI_LABEL_PUBLIC_SUFFIXES) return true
-        val labels = domain.split('.')
-        return labels.size == 2 && labels.last().length == 2 &&
-            labels.first() in COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES
-    }
+    private fun isPublicSuffix(domain: String): Boolean = isPluginCookiePublicSuffix(domain)
 
     private companion object {
         /** Maximum number of batch requests that may overlap. */
@@ -1481,21 +1476,33 @@ public class PluginNetworkClient(
             "referer",
             "user-agent",
         )
-        val COMMON_MULTI_LABEL_PUBLIC_SUFFIXES = setOf(
-            "ac.uk", "co.uk", "gov.uk", "ltd.uk", "me.uk", "net.uk", "org.uk", "plc.uk",
-            "asn.au", "com.au", "edu.au", "gov.au", "id.au", "net.au", "org.au",
-            "ac.jp", "co.jp", "go.jp", "ne.jp", "or.jp",
-            "ac.kr", "co.kr", "go.kr", "ne.kr", "or.kr",
-            "com.br", "com.cn", "com.hk", "com.mx", "com.sg", "com.tw",
-            "co.in", "firm.in", "gen.in", "ind.in", "net.in", "org.in",
-            "co.nz", "co.za", "com.ar", "com.tr", "com.ua",
-        )
-        val COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES = setOf(
-            "ac", "co", "com", "edu", "firm", "gen", "go", "gov", "id", "ind", "ltd",
-            "me", "mil", "ne", "net", "nom", "or", "org", "plc",
-        )
     }
 }
+
+/**
+ * Conservative public-suffix guard shared by the response cookie parser and the sandbox bridge:
+ * a cookie must never be scoped to a whole registry such as `com` or `co.uk`.
+ */
+internal fun isPluginCookiePublicSuffix(domain: String): Boolean {
+    if ('.' !in domain || domain in COMMON_MULTI_LABEL_PUBLIC_SUFFIXES) return true
+    val labels = domain.split('.')
+    return labels.size == 2 && labels.last().length == 2 &&
+        labels.first() in COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES
+}
+
+private val COMMON_MULTI_LABEL_PUBLIC_SUFFIXES = setOf(
+    "ac.uk", "co.uk", "gov.uk", "ltd.uk", "me.uk", "net.uk", "org.uk", "plc.uk",
+    "asn.au", "com.au", "edu.au", "gov.au", "id.au", "net.au", "org.au",
+    "ac.jp", "co.jp", "go.jp", "ne.jp", "or.jp",
+    "ac.kr", "co.kr", "go.kr", "ne.kr", "or.kr",
+    "com.br", "com.cn", "com.hk", "com.mx", "com.sg", "com.tw",
+    "co.in", "firm.in", "gen.in", "ind.in", "net.in", "org.in",
+    "co.nz", "co.za", "com.ar", "com.tr", "com.ua",
+)
+private val COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES = setOf(
+    "ac", "co", "com", "edu", "firm", "gen", "go", "gov", "id", "ind", "ltd",
+    "me", "mil", "ne", "net", "nom", "or", "org", "plc",
+)
 
 /**
  * Reviewed dynamic content host families used by the official readers.

@@ -864,7 +864,7 @@ private fun locateRepository(): Path? {
 private fun localIndexEntry(repository: Path, packageId: String): PluginIndexEntry =
     localIndexEntries(repository).single { it.id == packageId }
 
-private fun localIndexEntries(repository: Path): List<PluginIndexEntry> = runBlocking {
+internal fun localIndexEntries(repository: Path): List<PluginIndexEntry> = runBlocking {
     val http = HttpClient(MockEngine { request ->
         val relative = request.url.encodedPath.substringAfter("refs/heads/master/")
         respond(Files.readAllBytes(repository.resolve(relative)), HttpStatusCode.OK)

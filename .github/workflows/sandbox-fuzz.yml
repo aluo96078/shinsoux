@@ -1,0 +1,198 @@
+name: Sandbox fuzz
+
+# ADR-0002 §13 / S1 acceptance: 24 h of protocol fuzz without a crash. GitHub-hosted jobs stop at
+# 6 h, so each codec target runs as parallel shards (default 5 × 290 min = 24 h 10 min per target):
+# frames_fuzz (C codec), the Kotlin codec, and dom_fuzz (lexbor DOM). chunks_fuzz (large chunked
+# frames, slow per input) adds 2 shards. Every shard checks it really fuzzed for the full time; a
+# run with fewer minutes is a smoke run, and the summary says whether it met the 24 h gate.
+# Run it by hand (Actions → Sandbox fuzz) or by pushing a `sandbox-fuzz/**` branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Fuzz minutes per shard (max 330)
+        default: "290"
+  push:
+    branches: ["sandbox-fuzz/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FUZZ_MINUTES: ${{ github.event.inputs.minutes || '290' }}
+
+jobs:
+  plan:
+    name: Check the fuzz budget
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          case "$FUZZ_MINUTES" in ''|*[!0-9]*) echo "::error::minutes must be a whole number"; exit 1;; esac
+          if [ "$FUZZ_MINUTES" -lt 1 ] || [ "$FUZZ_MINUTES" -gt 330 ]; then echo "::error::minutes must be 1..330"; exit 1; fi
+          total=$(( FUZZ_MINUTES * 5 ))
+          if [ "$total" -ge 1440 ]; then verdict="acceptance run (≥ 24 h per codec target)"; else verdict="smoke run, NOT the 24 h acceptance gate"; fi
+          echo "Fuzz budget: 5 shards × $FUZZ_MINUTES min = $total CPU-min per codec target — $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  test:
+    needs: plan
+    name: Build and test sandbox-core (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: Fetch pinned third-party sources
+        working-directory: shinsoux/sandbox-core
+        run: ./scripts/fetch-deps.sh
+
+      - name: C tests (Release)
+        working-directory: shinsoux/sandbox-core
+        run: |
+          cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release -j"$(nproc)"
+          cd build/release
+          ./frames_test && ./core_test bootstrap.js && ./driver_test && ./dom_js_test bootstrap.js && ./dom_fault_test
+
+      - name: C tests (ASan + UBSan)
+        working-directory: shinsoux/sandbox-core
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build/asan -DCMAKE_BUILD_TYPE=Debug -DSSC_SANITIZE=ON
+          cmake --build build/asan -j"$(nproc)"
+          cd build/asan
+          ./frames_test && ./core_test bootstrap.js && ./driver_test && ./dom_js_test bootstrap.js && ./dom_fault_test
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host ↔ C sandbox (interop and official-plugin parity)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest --rerun
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if any native or parity test was skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -h "parity \|parity: \|interop: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml
+
+  fuzz-native:
+    name: libFuzzer ${{ matrix.target }} shard ${{ matrix.shard }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [frames_fuzz, dom_fuzz]
+        shard: [1, 2, 3, 4, 5]
+        include:
+          - { target: chunks_fuzz, shard: 1 }
+          - { target: chunks_fuzz, shard: 2 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        working-directory: sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/fuzz -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSSC_FUZZ=ON
+          cmake --build build/fuzz -j"$(nproc)" --target ${{ matrix.target }} frames_seeds
+
+      - name: Fuzz
+        working-directory: sandbox-core/build/fuzz
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          mkdir -p corpus seeds crashes
+          if [ "${{ matrix.target }}" != dom_fuzz ]; then
+            ./frames_seeds seeds
+            extra="-max_len=4096"
+          else
+            cp ../../fuzz/dom-seeds/* seeds/
+            extra="-max_len=16384 -dict=../../fuzz/dom.dict"
+          fi
+          seed=$(( ${{ github.run_id }} % 100000 * 10 + ${{ matrix.shard }} ))
+          echo "libFuzzer seed $seed"
+          ./${{ matrix.target }} corpus seeds $extra -seed="$seed" \
+            -max_total_time=$(( FUZZ_MINUTES * 60 )) -timeout=20 -rss_limit_mb=2560 \
+            -artifact_prefix=crashes/ -print_final_stats=1 > fuzz.log 2>&1 && rc=0 || rc=$?
+          tail -n 150 fuzz.log
+          [ "$rc" -eq 0 ] || exit "$rc"
+          # libFuzzer ends with "Done N runs in S second(s)": the shard must have run its full time.
+          read -r runs secs <<< "$(sed -n 's/^Done \([0-9]*\) runs in \([0-9]*\) second.*/\1 \2/p' fuzz.log | tail -1)"
+          echo "${{ matrix.target }} shard ${{ matrix.shard }}: ${runs:-0} inputs in ${secs:-0} s" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${secs:-0}" -lt $(( FUZZ_MINUTES * 60 - 60 )) ] || [ "${runs:-0}" -lt 1 ]; then
+            echo "::error::fuzzed ${secs:-0} s, expected $(( FUZZ_MINUTES * 60 )) s"; exit 1
+          fi
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}-${{ matrix.shard }}
+          path: |
+            sandbox-core/build/fuzz/crashes/
+            sandbox-core/build/fuzz/fuzz.log
+
+  fuzz-kotlin:
+    name: Kotlin codec fuzz shard ${{ matrix.shard }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Fuzz
+        run: |
+          export SHINSOU_SANDBOX_FUZZ_SECONDS=$(( FUZZ_MINUTES * 60 ))
+          export SHINSOU_SANDBOX_FUZZ_SEED=$(( ${{ matrix.shard }} * 1000000000000 + ${{ github.run_id }} ))
+          echo "seconds $SHINSOU_SANDBOX_FUZZ_SECONDS seed $SHINSOU_SANDBOX_FUZZ_SEED"
+          # --rerun: the duration and seed are environment variables, which Gradle does not treat as
+          # task inputs, so a cached or up-to-date result must never stand in for a real run.
+          ./gradlew :composeApp:desktopTest --rerun --tests '*SandboxProtocolLongFuzzTest*' \
+            -Pkotlin.native.enableKlibsCrossCompilation=false
+          # The test fails on zero rounds; it prints the inputs it ran for the full duration.
+          grep -ho "SandboxProtocol fuzz: [^<]*" composeApp/build/test-results/desktopTest/TEST-*LongFuzz*.xml \
+            | sed "s/^/Kotlin shard ${{ matrix.shard }}: /" | tee -a "$GITHUB_STEP_SUMMARY"
