@@ -376,6 +376,8 @@ fun BrowseScreen(
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
+    var pendingRepositoryTrust by remember { mutableStateOf<dev.shinsou.kmp.ui.RepositoryTrustPrompt?>(null) }
+    var packageSecurity by remember { mutableStateOf<dev.shinsou.kmp.ui.PackageSecuritySnapshot?>(null) }
     val extensionOperations = remember(scope) {
         ExtensionOperationRunner(scope, beforeWork = { withFrameNanos { } })
     }
@@ -836,7 +838,17 @@ fun BrowseScreen(
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages) &&
                             it.name.contains(query, ignoreCase = true)
                     },
-                    onAddRepository = { url -> launchOperation { callbacks.addRepository(url) } },
+                    onAddRepository = { url ->
+                        launchOperation {
+                            // ADR-0002 §8.2: a signed third-party repository shows its publisher key first.
+                            val prompt = callbacks.inspectRepositoryTrust(url)
+                            if (prompt == null) callbacks.addRepository(url) else pendingRepositoryTrust = prompt
+                        }
+                    },
+                    onOpenPackageSecurity = { launchOperation { packageSecurity = callbacks.packageSecurity() } },
+                    onBlock = { extension ->
+                        launchOperation { callbacks.setExtensionBlocked(extension.id, blocked = true) }
+                    },
                     onRemoveRepository = { id -> launchOperation { callbacks.removeRepository(id) } },
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
@@ -1137,6 +1149,33 @@ fun BrowseScreen(
             dismissButton = {
                 TextButton(onClick = { pendingReviewedInstall = null }) { Text(strings.cancel) }
             },
+        )
+    }
+
+    pendingRepositoryTrust?.let { prompt ->
+        RepositoryTrustDialog(
+            prompt = prompt,
+            onTrust = { fingerprint ->
+                pendingRepositoryTrust = null
+                launchOperation { callbacks.trustAndAddRepository(prompt.url, fingerprint) }
+            },
+            onDismiss = { pendingRepositoryTrust = null },
+        )
+    }
+
+    packageSecurity?.let { current ->
+        fun change(action: suspend () -> Unit) = launchOperation {
+            action()
+            packageSecurity = callbacks.packageSecurity()
+        }
+        PackageSecurityDialog(
+            snapshot = current,
+            enabled = extensionOperations.active == null,
+            onStrictMode = { strict -> change { callbacks.setStrictPublisherTrust(strict) } },
+            onPublisherBlocked = { id, blocked -> change { callbacks.setPublisherBlocked(id, blocked) } },
+            onConfirmFingerprint = { id, fingerprint -> change { callbacks.confirmPublisherFingerprint(id, fingerprint) } },
+            onUnblock = { key -> change { callbacks.unblockPackageEntry(key) } },
+            onDismiss = { packageSecurity = null },
         )
     }
 
@@ -3923,6 +3962,8 @@ private fun ExtensionsPane(
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
+    onOpenPackageSecurity: () -> Unit,
+    onBlock: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     var repositoryDialog by remember { mutableStateOf(false) }
@@ -3934,6 +3975,11 @@ private fun ExtensionsPane(
         item("repositories-title") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(strings.text("Repositories"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(enabled = operation == null, onClick = onOpenPackageSecurity) {
+                    Icon(Icons.Outlined.Security, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.text("Package security"))
+                }
                 TextButton(enabled = operation == null, onClick = { repositoryDialog = true }) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(17.dp))
                     Spacer(Modifier.width(4.dp))
@@ -4011,7 +4057,7 @@ private fun ExtensionsPane(
             }
         } else {
             items(extensions, key = { "extension-${it.id}" }) { extension ->
-                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust)
+                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock)
             }
         }
     }
@@ -4051,6 +4097,7 @@ private fun ExtensionRow(
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
+    onBlock: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     Surface(
@@ -4128,8 +4175,17 @@ private fun ExtensionRow(
                     Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.text("Update")) }
                     TextButton(enabled = operation == null, onClick = { onUninstall(extension) }) { Text(strings.uninstall) }
                 }
-                extension.installed -> OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
-                    Text(strings.uninstall)
+                extension.installed -> Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
+                        Text(strings.uninstall)
+                    }
+                    // ADR-0002 D5: the user's own block list; undone from Package security.
+                    if (!extension.reviewedShuYueV2) {
+                        TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }
+                    }
                 }
                 else -> Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
             }

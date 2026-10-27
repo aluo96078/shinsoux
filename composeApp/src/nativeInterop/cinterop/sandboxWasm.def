@@ -1,0 +1,5 @@
+# ADR-0002 §4.5: the iOS plugin sandbox host (sandbox-core/ios), with the WASM guest embedded.
+# Built per target by Gradle (buildIosSandboxHost*); its directory is passed as -libraryPath.
+headers = ssc_wasm_host.h
+package = dev.shinsou.interop.sandbox
+staticLibraries = libshinsou_wasm_host.a

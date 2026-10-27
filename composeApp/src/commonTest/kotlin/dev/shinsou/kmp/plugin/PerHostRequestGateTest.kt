@@ -81,4 +81,30 @@ class PerHostRequestGateTest {
         now = 10_000L
         assertEquals("other", gate.run("other.test") { "other" })
     }
+
+    @Test
+    fun idleHostAllowsABurstButKeepsTheSustainedRate() = runTest {
+        var now = 1_000L
+        val delays = mutableListOf<Long>()
+        val gate = PerHostRequestGate(
+            limits = PluginRateLimitProvider { PluginRateLimit(permits = 5, periodMillis = 1_000) },
+            nowEpochMillis = { now },
+            delayMillis = { wait ->
+                delays += wait
+                now += wait
+            },
+        )
+
+        // A visible grid's first covers start together instead of one every 200 ms.
+        repeat(5) { gate.run("cdn.example") { Unit } }
+        assertEquals(emptyList(), delays)
+        repeat(3) { gate.run("cdn.example") { Unit } }
+        assertEquals(listOf(200L, 200L, 200L), delays)
+
+        // The burst allowance refills only at the configured rate.
+        now += 400
+        delays.clear()
+        repeat(3) { gate.run("cdn.example") { Unit } }
+        assertEquals(listOf(200L), delays)
+    }
 }

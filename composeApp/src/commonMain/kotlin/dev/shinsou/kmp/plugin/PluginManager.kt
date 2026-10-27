@@ -419,6 +419,8 @@ public class PluginManager(
     /** Immutable startup admission for exact compiled-review artifacts from fixed loopback only. */
     private val reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy =
         ReviewedLocalRepositoryPolicy.DISABLED,
+    /** ADR-0002 §10.1: publisher trust, withdrawals and the user's block list decide each runtime's tier. */
+    private val executionTierGate: PluginExecutionTierGate? = null,
 ) {
     private val reviewedImagePermits = kotlinx.coroutines.sync.Semaphore(2)
     /** Serializes package mutations without blocking readers of the live source/runtime maps. */
@@ -626,6 +628,10 @@ public class PluginManager(
             }
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()
+            // The publisher is fixed by the repository's pinned key, never by what the index says.
+            // Keyed exactly as the client keys trust: an equivalent spelling must not miss the publisher.
+            val publisherId = executionTierGate?.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
+            if (publisherId != null) executionTierGate.requireInstallable(entry.id, publisherId, actualHash)
             val manifest = PluginManifest(
                 id = entry.id,
                 name = entry.name,
@@ -661,6 +667,7 @@ public class PluginManager(
                     installedSha256 = verified.sha256,
                     legacyTrustOnInstall = expectedHash == null,
                     legacyStorageMigrationAllowed = false,
+                    publisherId = publisherId,
                 ),
                 scriptBytes = scriptBytes,
             )
@@ -1057,6 +1064,11 @@ public class PluginManager(
                     "Extension package '$pluginId' is already loaded by the V2 runtime"
                 }
                 createRuntimeCandidates(stored)
+            } catch (inert: PluginExecutionInertException) {
+                // Publisher trust or the block list keeps it inert for now; that is reversible,
+                // so the user's grant stays.
+                lifecycleMutex.withLock { rollbackReservation(reservation) }
+                throw inert
             } catch (_: ScriptRuntimeUnavailableException) {
                 // A user trust toggle cannot override the host's in-process isolation boundary.
                 // Keep the verified package installed, but convert the old grant to a pending
@@ -1112,6 +1124,9 @@ public class PluginManager(
                         loadStored(stored)
                     } catch (error: CancellationException) {
                         throw error
+                    } catch (_: PluginExecutionInertException) {
+                        // Inert by publisher trust or the block list: reversible, so the grant stays
+                        // and the package runs again once the reason is gone.
                     } catch (_: ScriptRuntimeUnavailableException) {
                         // A durable exact-artifact grant may have been created on a host which
                         // could safely isolate this runtime. If the current host cannot, convert
@@ -1188,6 +1203,15 @@ public class PluginManager(
         locallyRevokedArtifacts.remove(stored.artifactIdentity())
         try {
             lifecycleMutex.withLock { loadStored(stored) }
+        } catch (inert: PluginExecutionInertException) {
+            if (inert.reason == InertReason.UNSIGNED) {
+                // Nothing will ever vouch for an unsigned artifact: same as an unreviewed one.
+                locallyRevokedArtifacts += stored.artifactIdentity()
+                quarantineUnavailableRuntime(requireNotNull(stored.eventGrantReview(includeEmpty = true)))
+                throw ExtensionArtifactNotReviewedException(pluginId)
+            }
+            // The approval stands; publisher trust or the block list holds the runtime back for now.
+            throw inert
         } catch (_: ScriptRuntimeUnavailableException) {
             // Approval is still a valid user decision, but this host cannot safely execute
             // the generic in-process engine. Keep the verified artifact installed and
@@ -2052,6 +2076,8 @@ public class PluginManager(
             try {
                 lifecycleMutex.withLock { loadStored(stored) }
                 if (sourceWhilePackageLocked(sourceKey) != null) disabledNativeSources.remove(sourceKey)
+            } catch (_: PluginExecutionInertException) {
+                // Reversible tier decision: keep the grant, build nothing.
             } catch (_: ScriptRuntimeUnavailableException) {
                 // Approval is still a valid user decision, but this host cannot safely execute
                 // the generic in-process engine. Keep the verified artifact installed and
@@ -2304,6 +2330,7 @@ public class PluginManager(
         val reviewedOfficialSource = OfficialShinsouReviewedCatalog.match(
             stored, source, reviewedLocalRepositoryPolicy,
         )
+        requireExecutionTier(stored, reviewedInProcess = reviewedOfficialSource != null)
         val boundStorage = PermissionFilteredPluginStorage(
             BoundPluginStorage(
                 delegate = environment.storage,
@@ -2366,6 +2393,31 @@ public class PluginManager(
             ))
         }
         return runtime
+    }
+
+    /**
+     * ADR-0002 §10.1, checked before every runtime is built (install, approval, startup, re-enable).
+     * Only reached after the exact-artifact grant, so the user's authorization holds here. A
+     * reviewed in-process artifact must still come out as reviewed (the block list and the official
+     * publisher's revocations apply to it too); anything else must come out as sandboxed, which the
+     * tiered factory then runs out of process.
+     */
+    private suspend fun requireExecutionTier(stored: StoredPlugin, reviewedInProcess: Boolean) {
+        val gate = executionTierGate ?: return
+        val tier = gate.resolve(
+            ExecutionTierCandidate(
+                packageId = stored.manifest.id,
+                artifactSha256 = stored.metadata.installedSha256,
+                publisherId = stored.metadata.publisherId,
+                officialReviewedCatalogMatch = reviewedInProcess,
+                fromCanonicalOfficialUnsignedRepository = reviewedInProcess && stored.metadata.publisherId == null,
+                userAuthorized = true,
+            ),
+        )
+        val allowed = if (reviewedInProcess) tier == ExecutionTier.ReviewedInProcess else tier is ExecutionTier.Sandboxed
+        if (!allowed) {
+            throw PluginExecutionInertException(stored.manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
+        }
     }
 
     private fun StoredPlugin.artifactIdentity(): PluginArtifactIdentity = PluginArtifactIdentity(

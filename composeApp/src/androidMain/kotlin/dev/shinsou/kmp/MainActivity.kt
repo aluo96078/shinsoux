@@ -25,6 +25,10 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.AndroidSandboxTransportProvider
+import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
 import dev.shinsou.kmp.sync.SnapshotSyncController
@@ -62,6 +66,8 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     private val platformScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Idle stops and LRU of the plugin sandboxes; ends with this activity's composition. */
+    private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val documentLauncher = ActivityDocumentLauncher()
     private lateinit var composition: ShinsouComposition
     private lateinit var appServices: AndroidAppServices
@@ -96,7 +102,15 @@ class MainActivity : FragmentActivity() {
             httpClient = httpClient,
             pluginKeyValueStore = AndroidPluginKeyValueStore(applicationContext),
             fileSystem = sharedState.fileSystem,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            // ADR-0002 §10.1: reviewed catalogue artifacts run in Rhino; trusted third-party packages
+            // run in an isolated process each (S2).
+            runtimeFactory = TieredScriptPluginRuntimeFactory(
+                inProcess = RhinoScriptPluginRuntimeFactory(),
+                sandbox = SandboxRuntimeFactory(
+                    transports = AndroidSandboxTransportProvider(applicationContext),
+                    lifecycle = androidSandboxLifecycle(applicationContext, sandboxScope),
+                ),
+            ),
             autoBackupService = sharedState.autoBackups,
             syncInfrastructure = syncInfrastructure,
             platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
@@ -249,6 +263,7 @@ class MainActivity : FragmentActivity() {
         localRepositoryTransport = null
         super.onDestroy()
         platformScope.cancel()
+        sandboxScope.cancel()
     }
 
     private fun handleIntent(intent: Intent?) {

@@ -4,6 +4,7 @@
  * SandboxSession does (Init -> Ready -> Result, Invoke with bridge round trips, Cancel, violations).
  */
 #include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -15,6 +16,9 @@
 
 #include "ssc_driver.h"
 #include "ssc_frames.h"
+#ifdef SSC_DRIVER_TEST_WASM
+#include "ssc_wasm_host.h"
+#endif
 
 extern const char ssc_bootstrap_js[];
 extern const size_t ssc_bootstrap_js_len;
@@ -37,6 +41,18 @@ static long sock_read(void *o, uint8_t *buf, size_t len) {
     }
 }
 
+/* The single-threaded driver's pull: what the WASM host's import does, here over the socket. */
+static long sock_read_wait(void *o, uint8_t *buf, size_t len, uint64_t timeout_ms) {
+    struct pollfd p = { *(int *)o, POLLIN, 0 };
+    for (;;) {
+        int r = poll(&p, 1, (int)timeout_ms);
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0) return -1;
+        if (r == 0) return SSC_IO_TIMEOUT;
+        return sock_read(o, buf, len);
+    }
+}
+
 static int sock_write(void *o, const uint8_t *buf, size_t len) {
     while (len) {
         ssize_t n = write(*(int *)o, buf, len);
@@ -52,8 +68,55 @@ typedef struct {
     ssc_io io;
     int status;
     pthread_t thread;
+#ifdef SSC_DRIVER_TEST_WASM
+    ssc_wasm_session *ws;
+#endif
 } sandbox;
 
+#ifdef SSC_DRIVER_TEST_WASM
+/* The iOS sandbox: the guest runs in WAMR; this thread and the next relay the socket to it. */
+static void *wasm_input(void *o) {
+    sandbox *s = o;
+    uint8_t buf[65536];
+    for (;;) {
+        ssize_t n = read(s->fd, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0 || ssc_wasm_session_send(s->ws, buf, (size_t)n) != 0) break;
+    }
+    ssc_wasm_session_close_input(s->ws); /* the host went away: end of stream for the guest */
+    return NULL;
+}
+
+static void *sandbox_main(void *o) {
+    sandbox *s = o;
+    char err[160];
+    s->ws = ssc_wasm_session_open(0, err, sizeof err);
+    if (!s->ws) {
+        fprintf(stderr, "wasm sandbox: %s\n", err);
+        s->status = -1;
+        shutdown(s->fd, SHUT_RDWR);
+        close(s->fd);
+        return NULL;
+    }
+    pthread_t input;
+    pthread_create(&input, NULL, wasm_input, s);
+    uint8_t buf[65536];
+    int status = -1; /* the host stopped reading: the guest is terminated, not ended */
+    for (;;) {
+        long n = ssc_wasm_session_receive(s->ws, buf, sizeof buf, 1000);
+        if (n == SSC_WASM_TIMEOUT) continue;
+        if (n == 0) { status = ssc_wasm_session_status(s->ws); break; }
+        if (n < 0 || sock_write(&s->fd, buf, (size_t)n) != 0) break;
+    }
+    /* Stop the relay before freeing the session it writes to. */
+    shutdown(s->fd, SHUT_RDWR);
+    pthread_join(input, NULL);
+    ssc_wasm_session_free(s->ws);
+    s->status = status;
+    close(s->fd);
+    return NULL;
+}
+#else
 static void *sandbox_main(void *o) {
     sandbox *s = o;
     s->status = ssc_driver_run(&s->io, ssc_bootstrap_js, ssc_bootstrap_js_len);
@@ -61,6 +124,7 @@ static void *sandbox_main(void *o) {
     close(s->fd);
     return NULL;
 }
+#endif
 
 typedef struct {
     int fd;
@@ -88,7 +152,7 @@ static void start(host *h) {
     static int next_slot;
     int *slot = &fd_slots[next_slot++ % 256];
     *slot = fds[1];
-    h->sb.io = (ssc_io){ slot, sock_read, sock_write, now_ms };
+    h->sb.io = (ssc_io){ slot, sock_read, sock_write, now_ms, sock_read_wait };
     h->reader = ssc_reader_new(SSC_PEER_HOST, 8u << 20, NULL);
     /* The core trusts the stack limit it is given (1 MiB here): the thread that runs it must
      * really have that much and more. Secondary threads get 512 KiB by default on macOS. */
@@ -300,7 +364,7 @@ static void test_version_mismatch(void) {
     send_frame(&h, &(ssc_frame){ .type = SSC_F_INIT, .call_id = 1, .version = 2, .api_level = 1,
                                  .limits = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, .text = S("x") });
     ssc_frame r = recv_frame(&h);
-    CHECK(r.type == SSC_F_READY && r.version == 1, "Ready carries the sandbox's version");
+    CHECK(r.type == SSC_F_READY && r.version == 1, "Ready carries the sandbox's version (type %d version %u)", r.type, (unsigned)r.version);
     ssc_frame_free(&r);
     int st = stop(&h);
     CHECK(st == SSC_DRIVER_EOF, "exit %d", st);
@@ -309,6 +373,7 @@ static void test_version_mismatch(void) {
 static void test_violations(void) {
     /* Garbage on the wire */
     host h;
+    int st;
     start(&h);
     sock_write(&h.fd, (const uint8_t *)"\x00\x00\x00\x02\x13\x00", 6);
     ssc_frame r = recv_frame(&h);
@@ -320,7 +385,8 @@ static void test_violations(void) {
     send_frame(&h, &(ssc_frame){ .type = SSC_F_INVOKE, .call_id = 2, .text = S("ok"), .text2 = S("[]") });
     r = recv_frame(&h);
     CHECK(r.type == SSC_F_CHUNK, "no answer to Invoke before Init");
-    CHECK(stop(&h) == SSC_DRIVER_VIOLATION, "Invoke before Init is a violation");
+    st = stop(&h);
+    CHECK(st == SSC_DRIVER_VIOLATION, "Invoke before Init is a violation (exit %d)", st);
 
     /* A BridgeResult for the wrong seq */
     start(&h);
@@ -357,6 +423,7 @@ static void test_host_gone_mid_hook(void) {
 
 int main(void) {
     signal(SIGPIPE, SIG_IGN); /* the sandbox may close first; writes then fail with EPIPE */
+    setvbuf(stdout, NULL, _IONBF, 0);
     printf("[driver]\n");
     test_init_metadata_and_bridge();
     test_bridge_waits_and_floods();

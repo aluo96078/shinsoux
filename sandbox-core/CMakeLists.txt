@@ -120,6 +120,31 @@ if(NOT WIN32) # socketpair harness; on Windows the Kotlin interop tests drive th
     add_executable(driver_test test/driver_test.c)
     target_link_libraries(driver_test ssc_driver)
     add_test(NAME driver_test COMMAND driver_test)
+    # The same suite against the single-threaded driver the iOS WASM guest uses (ADR-0002 §4.5).
+    add_library(ssc_driver_single STATIC src/ssc_driver.c ${CMAKE_BINARY_DIR}/ssc_bootstrap_js.c)
+    target_include_directories(ssc_driver_single PUBLIC src)
+    target_compile_definitions(ssc_driver_single PUBLIC SSC_DRIVER_SINGLE_THREAD)
+    target_link_libraries(ssc_driver_single PUBLIC ssc_core ssc_frames Threads::Threads)
+    target_compile_options(ssc_driver_single PRIVATE -Wall -Wextra)
+    add_executable(driver_test_single test/driver_test.c)
+    target_link_libraries(driver_test_single ssc_driver_single)
+    add_test(NAME driver_test_single COMMAND driver_test_single)
+endif()
+
+# The same suite once more against the WASM guest in WAMR, as iOS runs it (ADR-0002 §4.5). Needs
+# the guest: wasm/build-guest.sh <dir>, then -DSSC_WASM_MODULE=<dir>/shinsou_sandbox.wasm.
+set(SSC_WASM_MODULE "" CACHE FILEPATH "sandbox-core WASM guest for the WAMR host tests")
+if(APPLE AND SSC_WASM_MODULE)
+    set(SSC_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    enable_language(ASM)
+    include(ios/wamr.cmake)
+    add_executable(driver_test_wasm test/driver_test.c)
+    target_compile_definitions(driver_test_wasm PRIVATE SSC_DRIVER_TEST_WASM)
+    target_link_libraries(driver_test_wasm ssc_driver shinsou_wasm_host)
+    add_test(NAME driver_test_wasm COMMAND driver_test_wasm)
+    add_executable(wasm_host_test test/wasm_host_test.c)
+    target_link_libraries(wasm_host_test ssc_frames shinsou_wasm_host)
+    add_test(NAME wasm_host_test COMMAND wasm_host_test)
 endif()
 
 add_executable(dom_js_test test/dom_js_test.c)

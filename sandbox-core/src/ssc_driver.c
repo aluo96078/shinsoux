@@ -1,7 +1,9 @@
 #include "ssc_driver.h"
 
 #include <errno.h>
+#ifndef SSC_DRIVER_SINGLE_THREAD
 #include <pthread.h>
+#endif
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -45,6 +47,19 @@ static bool is_limit_code(uint32_t code) { return code >= 2 && code <= 6; }
 
 /* ---- frame queue (reader thread -> driver thread) --------------------------------------- */
 
+/* The WASM guest has no threads: there the "reader" is pump(), run by the driver thread itself. */
+#ifdef SSC_DRIVER_SINGLE_THREAD
+#define LOCK(d) ((void)0)
+#define UNLOCK(d) ((void)0)
+#define SIGNAL(d) ((void)0)
+/* How often a running hook looks for a Cancel or the end of the stream (ms). */
+#define SSC_POLL_INTERVAL_MS 20
+#else
+#define LOCK(d) pthread_mutex_lock(&(d)->lock)
+#define UNLOCK(d) pthread_mutex_unlock(&(d)->lock)
+#define SIGNAL(d) pthread_cond_broadcast(&(d)->cond)
+#endif
+
 typedef struct node {
     ssc_frame frame;
     struct node *next;
@@ -57,8 +72,14 @@ typedef struct {
     ssc_io io_copy;
     const ssc_io *io;
     _Atomic int refs;
+#ifdef SSC_DRIVER_SINGLE_THREAD
+    ssc_reader *reader;
+    uint8_t *read_buf;
+    uint64_t last_poll_ms;
+#else
     pthread_mutex_t lock;
     pthread_cond_t cond;
+#endif
     node *head, *tail;
     bool eof;
     int reader_status;
@@ -92,18 +113,18 @@ static void on_frame(void *opaque, ssc_frame *f) {
     node *n = malloc(sizeof *n);
     if (!n) {
         ssc_frame_free(f);
-        pthread_mutex_lock(&d->lock);
+        LOCK(d);
         d->reader_status = SSC_DRIVER_NOMEM;
-        pthread_mutex_unlock(&d->lock);
+        UNLOCK(d);
         return;
     }
     n->frame = *f;
     n->next = NULL;
-    pthread_mutex_lock(&d->lock);
+    LOCK(d);
     if (f->type == SSC_F_CANCEL && d->rt) ssc_cancel(d->rt, f->call_id);
     if (d->queued_count >= SSC_MAX_QUEUED_FRAMES || d->queued_bytes + frame_bytes(f) > SSC_MAX_QUEUED_BYTES) {
         d->reader_status = SSC_DRIVER_VIOLATION; /* the host floods frames: stop reading */
-        pthread_mutex_unlock(&d->lock);
+        UNLOCK(d);
         ssc_frame_free(&n->frame);
         free(n);
         return;
@@ -112,18 +133,66 @@ static void on_frame(void *opaque, ssc_frame *f) {
     d->queued_bytes += frame_bytes(f);
     if (d->tail) d->tail->next = n; else d->head = n;
     d->tail = n;
-    pthread_cond_broadcast(&d->cond);
-    pthread_mutex_unlock(&d->lock);
+    SIGNAL(d);
+    UNLOCK(d);
 }
 
 static void release(driver *d) {
     if (atomic_fetch_sub(&d->refs, 1) != 1) return;
     for (node *n = d->head; n;) { node *next = n->next; ssc_frame_free(&n->frame); free(n); n = next; }
+#ifdef SSC_DRIVER_SINGLE_THREAD
+    ssc_reader_free(d->reader);
+    free(d->read_buf);
+#else
     pthread_mutex_destroy(&d->lock);
     pthread_cond_destroy(&d->cond);
+#endif
     free(d);
 }
 
+#ifdef SSC_DRIVER_SINGLE_THREAD
+/*
+ * Reads what arrived within timeout_ms and parses it (on_frame queues frames and applies Cancel).
+ * At the end of the stream, an error or a violation it stops reading and cancels the running hook,
+ * exactly like the reader thread.
+ */
+static void pump(driver *d, uint64_t timeout_ms) {
+    if (d->eof) return;
+    long n = d->io->read_wait(d->io->opaque, d->read_buf, 64 * 1024, timeout_ms);
+    if (n == SSC_IO_TIMEOUT) return;
+    int status = SSC_DRIVER_EOF;
+    if (n < 0) status = SSC_DRIVER_IO_ERROR;
+    else if (n > 0 && ssc_reader_feed(d->reader, d->read_buf, (size_t)n, on_frame, d) != SSC_FR_OK) status = SSC_DRIVER_VIOLATION;
+    /* on_frame may have stopped reading too (a flood, out of memory). */
+    if (status == SSC_DRIVER_EOF) status = d->reader_status;
+    if (n > 0 && status == SSC_DRIVER_EOF) return;
+    if (n == 0 && status == SSC_DRIVER_EOF && !ssc_reader_idle(d->reader)) status = SSC_DRIVER_VIOLATION; /* truncated */
+    d->eof = true;
+    d->reader_status = status;
+    if (d->rt) ssc_cancel(d->rt, atomic_load(&d->current_call));
+}
+
+/* Next frame, or NULL at end of stream / after `deadline_ms` (0 = no deadline). */
+static node *next_frame(driver *d, uint64_t deadline_ms) {
+    while (!d->head && !d->eof) {
+        uint64_t wait = 1000;
+        if (deadline_ms) {
+            uint64_t now = d->io->now_ms(d->io->opaque);
+            if (now >= deadline_ms) break;
+            if (deadline_ms - now < wait) wait = deadline_ms - now;
+        }
+        pump(d, wait);
+    }
+    node *n = d->head;
+    if (n) {
+        d->head = n->next;
+        if (!d->head) d->tail = NULL;
+        d->queued_count--;
+        d->queued_bytes -= frame_bytes(&n->frame);
+    }
+    return n;
+}
+#else
 static void *reader_main(void *opaque) {
     driver *d = opaque;
     ssc_field_limits limits;
@@ -137,28 +206,28 @@ static void *reader_main(void *opaque) {
         if (n < 0) { status = SSC_DRIVER_IO_ERROR; break; }
         if (ssc_reader_feed(r, buf, (size_t)n, on_frame, d) != SSC_FR_OK) status = SSC_DRIVER_VIOLATION;
         /* reader_status is shared with the driver thread: only ever touched under the lock. */
-        pthread_mutex_lock(&d->lock);
+        LOCK(d);
         if (d->reader_status) status = d->reader_status;
-        pthread_mutex_unlock(&d->lock);
+        UNLOCK(d);
     }
     if (status == SSC_DRIVER_EOF && r && !ssc_reader_idle(r)) status = SSC_DRIVER_VIOLATION; /* truncated */
     free(buf);
     ssc_reader_free(r);
-    pthread_mutex_lock(&d->lock);
+    LOCK(d);
     d->eof = true;
     d->reader_status = status;
     /* Nobody can read an answer any more (the host closed the stream, died or broke the protocol):
      * stop a running hook now instead of at its deadline, so the sandbox exits with its host. */
     if (d->rt) ssc_cancel(d->rt, atomic_load(&d->current_call));
-    pthread_cond_broadcast(&d->cond);
-    pthread_mutex_unlock(&d->lock);
+    SIGNAL(d);
+    UNLOCK(d);
     release(d);
     return NULL;
 }
 
 /* Next frame, or NULL at end of stream / after `deadline_ms` (0 = no deadline). */
 static node *next_frame(driver *d, uint64_t deadline_ms) {
-    pthread_mutex_lock(&d->lock);
+    LOCK(d);
     while (!d->head && !d->eof) {
         if (deadline_ms == 0) {
             pthread_cond_wait(&d->cond, &d->lock);
@@ -181,9 +250,10 @@ static node *next_frame(driver *d, uint64_t deadline_ms) {
         d->queued_count--;
         d->queued_bytes -= frame_bytes(&n->frame);
     }
-    pthread_mutex_unlock(&d->lock);
+    UNLOCK(d);
     return n;
 }
+#endif
 
 static void drop(node *n) {
     ssc_frame_free(&n->frame);
@@ -218,7 +288,15 @@ static ssc_slice slice_of(const char *p, size_t n) { return (ssc_slice){ (const 
 
 static uint64_t cb_now(void *o) {
     driver *d = o;
-    return d->io->now_ms(d->io->opaque);
+    uint64_t now = d->io->now_ms(d->io->opaque);
+#ifdef SSC_DRIVER_SINGLE_THREAD
+    /* The core's interrupt handler asks for the time while a hook runs: look for a Cancel then. */
+    if (now - d->last_poll_ms >= SSC_POLL_INTERVAL_MS) {
+        d->last_poll_ms = now;
+        pump(d, 0);
+    }
+#endif
+    return now;
 }
 
 /* The host answers with a value (null allowed) or a stable code; scripts see the same JSON as on
@@ -235,9 +313,9 @@ static int cb_bridge(void *o, const char *method, const char *args, size_t args_
          * yields null and the core's interrupt handler ends the invocation (LIMIT_TIME/CANCELLED). */
         node *n = next_frame(d, d->deadline_ms ? d->deadline_ms : 1);
         if (!n) {
-            pthread_mutex_lock(&d->lock);
+            LOCK(d);
             bool eof = d->eof && !d->head;
-            pthread_mutex_unlock(&d->lock);
+            UNLOCK(d);
             return eof ? -1 : SSC_BRIDGE_ABORT; /* end of stream yields null; the deadline aborts */
         }
         ssc_frame *f = &n->frame;
@@ -363,10 +441,21 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
     if (!dp) return SSC_DRIVER_NOMEM;
     dp->io_copy = *io;
     dp->io = &dp->io_copy;
+    atomic_init(&dp->current_call, 0);
+#ifdef SSC_DRIVER_SINGLE_THREAD
+    atomic_init(&dp->refs, 1);
+    ssc_field_limits limits;
+    ssc_field_limits_default(&limits);
+    dp->reader = ssc_reader_new(SSC_PEER_SANDBOX, 16u << 20, &limits);
+    dp->read_buf = malloc(64 * 1024);
+    if (!io->read_wait || !dp->reader || !dp->read_buf) {
+        release(dp);
+        return SSC_DRIVER_NOMEM;
+    }
+#else
     atomic_init(&dp->refs, 2);
     pthread_mutex_init(&dp->lock, NULL);
     pthread_cond_init(&dp->cond, NULL);
-    atomic_init(&dp->current_call, 0);
     pthread_t reader;
     if (pthread_create(&reader, NULL, reader_main, dp) != 0) {
         pthread_mutex_destroy(&dp->lock);
@@ -374,6 +463,7 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
         free(dp);
         return SSC_DRIVER_NOMEM;
     }
+#endif
 #define d (*dp)
 
     ssc_runtime *rt = NULL;
@@ -386,6 +476,14 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
         node *n = next_frame(&d, 0);
         if (!n) break;
         ssc_frame *f = &n->frame;
+        if (f->type == SSC_F_INIT || f->type == SSC_F_INVOKE) {
+            /* Once the stream has ended nobody reads an answer: frames still queued from before
+             * the end must not start new work (the end only cancelled what was running then). */
+            LOCK(&d);
+            bool gone = d.eof;
+            UNLOCK(&d);
+            if (gone) { drop(n); break; }
+        }
         if (f->type == SSC_F_INIT) {
             if (rt) { d.violated = true; drop(n); continue; }
             ssc_frame ready = { .type = SSC_F_READY, .call_id = f->call_id, .version = SSC_PROTOCOL_VERSION };
@@ -407,9 +505,9 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
             invoke_timeout_ms = lim.invoke_timeout_ms;
             rt = ssc_new(&lim, &host);
             if (!rt) { reply(&d, f->call_id, SSC_ERR_INTERNAL, SSC_SOURCE_FAILURE_NONE, NULL, 0); drop(n); status = SSC_DRIVER_NOMEM; break; }
-            pthread_mutex_lock(&d.lock);
+            LOCK(&d);
             d.rt = rt;
-            pthread_mutex_unlock(&d.lock);
+            UNLOCK(&d);
             /* bootstrap + reserved entry points; the script itself is evaluated separately. */
             size_t blen = bootstrap_len + sizeof DRIVER_PRELUDE - 1;
             char *boot = malloc(blen);
@@ -443,14 +541,17 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
     }
     if (d.violated) status = SSC_DRIVER_VIOLATION;
     /* Unpublish under the reader's lock before freeing: no Cancel can reach a freed runtime. */
-    pthread_mutex_lock(&d.lock);
+    LOCK(&d);
     d.rt = NULL;
-    pthread_mutex_unlock(&d.lock);
+    UNLOCK(&d);
     ssc_free(rt);
-    pthread_mutex_lock(&d.lock);
+    LOCK(&d);
     bool reader_done = d.eof;
     int reader_status = d.reader_status;
-    pthread_mutex_unlock(&d.lock);
+    UNLOCK(&d);
+#ifdef SSC_DRIVER_SINGLE_THREAD
+    if (reader_done && status == SSC_DRIVER_EOF) status = reader_status;
+#else
     if (reader_done) {
         pthread_join(reader, NULL);
         if (status == SSC_DRIVER_EOF) status = reader_status;
@@ -459,6 +560,7 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
          * stream, or the process exits). */
         pthread_detach(reader);
     }
+#endif
     while (d.stash_head) { node *n = d.stash_head; d.stash_head = n->next; drop(n); }
 #undef d
     release(dp);

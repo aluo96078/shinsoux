@@ -4,7 +4,8 @@
  * (stdin/stdout) and by tests (socket pairs); the WASM build drives the core through host imports.
  *
  * Threads: a reader thread parses frames and applies Cancel immediately (ssc_cancel is
- * thread-safe); everything else, including every write, happens on the calling thread.
+ * thread-safe); everything else, including every write, happens on the calling thread. Built with
+ * SSC_DRIVER_SINGLE_THREAD (WASM has no threads) the driver pulls input itself (ssc_io.read_wait).
  */
 #ifndef SSC_DRIVER_H
 #define SSC_DRIVER_H
@@ -24,7 +25,16 @@ typedef struct {
     int (*write)(void *opaque, const uint8_t *buf, size_t len);
     /* Monotonic milliseconds. */
     uint64_t (*now_ms)(void *opaque);
+    /*
+     * Single-threaded builds only (SSC_DRIVER_SINGLE_THREAD, the iOS WASM guest): like read, but
+     * returns SSC_IO_TIMEOUT when nothing arrives within timeout_ms (0 = just poll). There is no
+     * reader thread there: the driver pulls input while it waits, and polls it from the interrupt
+     * handler while a hook runs, so a Cancel still stops it at once.
+     */
+    long (*read_wait)(void *opaque, uint8_t *buf, size_t len, uint64_t timeout_ms);
 } ssc_io;
+
+#define SSC_IO_TIMEOUT (-2L)
 
 enum {
     SSC_DRIVER_EOF = 0,        /* the host closed the stream: normal exit */

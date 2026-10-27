@@ -1219,6 +1219,183 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   - Authenticode 簽章與 SmartScreen 仍隨 §11 的整體 Windows 簽章處理。
 - **仍待**：Windows 11 一般使用者帳號上的實機重跑（runner 都是管理員帳號）。
 
+## 20. S5 進度與實作決策（發佈者信任）
+
+| 項目 | 狀態 | 位置 |
+|---|---|---|
+| publisher-keyed trust store、URL → 發佈者對應、鏡像 | ✅ | `commonMain/…/plugin/PublisherTrust.kt`（`PublisherTrustStore`） |
+| 兩種信任模式（D3）與 `verification` 欄位 | ✅ | 同上 |
+| key rotation（雙簽）、金鑰自我撤銷、遺失後明確替換 | ✅ | 同上 |
+| artifact 撤回與 `expiresAt`（過期只警示，D8） | ✅ | `PublisherRevocationStore` |
+| 本機封鎖名單（D5） | ✅ | `LocalPluginBlocklist` |
+| `ExecutionTierResolver`（§10.1） | ✅ 判斷邏輯與測試；尚未接到 `PluginManager` 的執行路徑 | `ExecutionTierResolver` |
+| 指紋顯示格式、`shinsou://add-repository` 解析 | ✅ 解析與格式；UI 與 deep link 註冊尚未做 | `PublisherFingerprint`、`AddRepositoryLink` |
+| 驗收測試（§12 S5） | ✅ `PublisherTrustTest` 13 項；`RepositoryTrustTest` 21 項不變 | `commonTest/…/plugin/PublisherTrustTest.kt` |
+
+### 20.1 信任記錄
+
+- **發佈者 ID**：發佈者以第一把金鑰的指紋（`sha256:` 加 base64url）作為 `publisherId`，rotation 後不變。
+  遺失金鑰後經 `replaceAfterExplicitApproval` 換上的新金鑰視為新的發佈者：
+  - 舊記錄標為 `replacedBy`，狀態 `KEY_REPLACED`。
+  - 舊發佈者的已安裝套件轉為 inert，需要重新授權（§8.3）。
+- **URL 對應**：一個 URL 對應一個發佈者；同一把金鑰從另一個 URL 出現時直接沿用，不重新 TOFU。
+  - 同一個 URL 出示另一把金鑰，一律 `KeySubstitution`。
+  - 已退休的金鑰從鏡像出現，也算替換。
+- **狀態**由記錄與當下的全域模式推導，不另外遷移：
+  - `TRUSTED`。
+  - `PENDING_FINGERPRINT_MATCH`：TOFU 信任，且全域或該發佈者適用模式 (b)。
+  - `KEY_REVOKED`。
+  - `KEY_REPLACED`。
+
+  所以從 (a) 切到 (b) 時，TOFU 發佈者立即顯示為「待比對」：已安裝套件繼續執行並帶警示，新安裝與更新被擋，
+  比對完整指紋後恢復。
+- **指紋**：
+  - 比對一律用完整值，接受 `sha256:` 形式或 64 位十六進位（忽略空白、冒號、連字號與大小寫）。
+  - UI 只顯示前 128 bit，4 個字元一組，這個顯示值不能拿來比對。
+- 所有狀態都存在 plugin key-value store。它屬於裝置本機，不進可攜備份或同步（§8.4）。
+
+### 20.2 簽章文件
+
+- 沿用 `shinsou-signed-envelope-v1`，新增三種 payload type：
+  - `publisher-key-rotation`：payload 為 `publisherId`、`newPublicKey`、`newKeyFingerprint`、`effectiveSequence`、
+    `newKeySignature`。
+  - `publisher-revocations`：payload 為 `publisherId`、`revokedArtifacts`（SHA-256 hex）、`expiresAt`（Unix 秒）。
+  - `publisher-key-revoked`：payload 為 `publisherId`、`revokedKeyFingerprint`。
+
+  欄位必須剛好是這些，多或少都拒絕。
+- **Rotation 雙簽**：
+  - envelope 由目前的金鑰簽署。
+  - 新金鑰另外簽署網域分隔的聲明 `dev.shinsou.publisher.rotation.v1\0` 加 canonical JSON，內容為 `publisherId`、
+    舊／新指紋、新公鑰與 `effectiveSequence`，表示同意接手。
+  - `effectiveSequence` 必須大於上次。
+  - 新金鑰不能已經屬於任何發佈者。
+- **金鑰自我撤銷**由被撤銷的那把金鑰簽署：
+  - 撤銷目前金鑰：發佈者 `KEY_REVOKED`，全部 inert，需要重新信任新金鑰。
+  - 撤銷已退休金鑰：只記錄，不影響發佈者。
+- **Watermark 改以發佈者為單位**：`RepositoryTrustDecision.RequirePinnedSignature` 新增 `stateScope`。發佈者信任的
+  repository 用 `publisher:<id>` 作為重播、equivocation 與 artifact 降版的 watermark key，所以一個鏡像不能重播另一個鏡像
+  已經取代的文件。
+  - 簽章訊息仍綁定取得文件的 URL（沿用 v1 格式）。
+  - 由於簽章綁定 URL，發佈者要對每個鏡像各簽一次，payload 相同。
+  - URL pin 的 repository 不變，仍以 URL 為 scope。
+- **撤回清單**：新的 `publisher-revocations` 整份取代舊的；sequence 只能前進，所以不能重播舊清單來取消撤回。
+- **到期（D8）**：過了 `expiresAt` 之後，該發佈者不能再安裝或更新任何套件；已安裝的套件不論過期多久都繼續執行，
+  只帶 `PUBLISHER_DOCUMENTS_EXPIRED` 警示。
+- **新鮮度必須證明**（Codex 複審）：新安裝與更新一律要求該發佈者已有驗證過、未過期的 `publisher-revocations`（可以是
+  空清單）。否則 repository 只要永遠不提供這份文件，凍結攻擊的到期防護就永遠不會啟動。所以每個發佈者都必須發佈並定期
+  重簽撤回清單；已安裝套件不受影響（D8）。
+
+### 20.3 Tier 判斷與接入
+
+- `ExecutionTierResolver.resolve` 依 §10.1 的順序判斷，只用本機狀態：
+  1. 封鎖名單最先檢查，連官方套件也能封鎖。
+  2. 官方：catalog 完全符合，且發佈者是內建官方金鑰（官方 repository 仍未簽章期間，暫時也接受來自標準官方 URL 的
+     catalog 套件），回傳 `ReviewedInProcess`。
+  3. 未簽章：只有開發者模式加本機來源會得到開發中的 `Sandboxed`，其餘 inert。
+  4. 發佈者未信任、金鑰被替換或撤銷、artifact 被撤回、使用者未授權：inert，並帶原因。
+  5. 其餘回傳 `Sandboxed`，可能附帶「待比對」或「已過期」警示。
+
+  另外有 `requireInstallable` 作為新安裝與更新的關卡：比 `resolve` 更嚴格，待比對或已過期的發佈者都不能安裝新東西。
+- `ShinsouComposition` 已組裝 `PublisherTrustStore`、`PublisherRevocationStore`、`LocalPluginBlocklist`、
+  `ExecutionTierResolver`，repository client 改用 `PublisherRepositoryTrustPolicy`：
+  - 對應到發佈者的 URL 要求該發佈者目前的金鑰。
+  - 被撤銷、被替換或被封鎖的發佈者在送出任何請求前就被拒絕。
+  - 其他 URL 沿用原本的 URL pin 與官方未簽章例外。
+
+  因為目前沒有任何流程會寫入發佈者記錄，正式行為不變。
+- **接進 App（S5 之後，接入階段）**：
+  - `PluginManager` 安裝時，用 client 正規化後的 repository URL 查詢發佈者，記錄在
+    `InstalledPluginMetadata.publisherId`，並先通過 `requireInstallable`。
+  - 每次建立 runtime 前（安裝、授權、啟動 rehydrate、重新啟用）都經過 `requireExecutionTier`。結果為 inert 時丟出
+    `PluginExecutionInertException`，這是可逆的：使用者的授權保留，解除封鎖或信任恢復後就能再執行。只有 UNSIGNED 會
+    與舊的「未審查」同樣處理，也就是撤銷授權。
+  - 用不在發佈者對應中的 URL 寫法安裝時，`publisherId` 為 null，只會被判為 UNSIGNED，永遠不會執行。
+  - `TieredScriptPluginRuntimeFactory`：
+    - 帶有 in-process provenance 的（官方 catalog、ShuYue）交給 Rhino／JSC。
+    - 其餘交給沙箱。
+    - 平台沒有沙箱時一律拒絕，絕不交給 in-process 引擎。
+  - 桌面版 `Main.kt` 用 `desktopSandboxRuntimeFactory`，在 macOS 與 Windows 提供 OS 隔離的 helper。
+  - **新增 repository**：`inspectRepositoryKey` 走嚴格的 transport，先取得 `repo.json`，確認它能以自己出示的金鑰驗證，
+    並顯示名稱與指紋。使用者確認後，以畫面上顯示的同一把金鑰呼叫 `trustRepository`，不再從網路重讀，然後才加入
+    repository。
+  - **「套件安全」**對話框：模式切換、發佈者清單（比對指紋、封鎖）、本機封鎖名單；已安裝的套件列可以直接封鎖。
+    任何變更都在 `NonCancellable` 中重新評估所有套件，即使操作在寫入後被取消，也會立即生效。
+  - **重新整理**時先同步各發佈者的 rotation、撤回清單與金鑰撤銷；只要儲存的狀態有變，就在 `finally` 裡重新評估。
+  - Codex 共複審 6 輪，最後一輪 approve。修正的問題依序為：
+    - 取消時的重新評估。
+    - 本機封鎖的取消。
+    - 必須有撤回清單才能安裝。
+    - URL 正規化。
+    - 沒有沙箱時 fail closed。
+- **尚未完成**：
+  - `shinsou://` deep link 在各平台的註冊。
+  - ShuYue reviewed 路徑尚未經過封鎖名單。
+  - S6 的權限上限與 `COOKIE_READ`：`policyFor` 目前全部回傳預設值。
+
+## 21. S4 進度與實作決策（iOS WASM 沙箱）
+
+| 項目 | 狀態 | 位置 |
+|---|---|---|
+| sandbox-core 編成 wasm32 guest，只匯入 4 個 Host 函式 | ✅ 建置時檢查 import | `sandbox-core/wasm/` |
+| driver 單執行緒模式（WASM 沒有執行緒） | ✅ 原生與 WAMR 兩種方式都跑整套 driver 測試 | `sandbox-core/src/ssc_driver.c`（`SSC_DRIVER_SINGLE_THREAD`） |
+| WAMR Host（iOS 靜態庫，每個 package 一個 instance＋執行緒） | ✅ macOS 上以 ctest 驗證，模擬器上以 Kotlin 驗證 | `sandbox-core/ios/`、`IosSandboxTransport.kt` |
+| App 接入（JSC＋WASM 沙箱分派） | ✅ | `MainViewController.kt` |
+| 實機測試 | ⏳ 交由使用者接手（S4 目標依使用者安排） | — |
+
+### 21.1 設計
+
+- **同一套協定**：iOS 不另做一套 bridge，而是把桌面版與 Android 用的 SandboxProtocol v1 driver 編進 WASM。Host 端沿用
+  `SandboxSession`／`SandboxLifecycle`／`SandboxRuntimeFactory`，只多一個 `IosSandboxTransport`。這樣與 S0 原型的
+  `host_bridge` frame 不同。
+- **Guest 的 import 只有四個**：
+  - `host_read(buf, len, timeout_ms)`：帶逾時的讀取。
+  - `host_write(buf, len)`。
+  - `host_now_ms(clock)`。
+  - `host_timezone_offset(time_ms)`。
+
+  wasi-libc 會碰到的 WASI 函式都由 guest 自己以 stub 定義；`check-imports.sh` 在每次建置時確認 import 剛好是這四個。
+- **單執行緒 driver**：
+  - 沒有 reader 執行緒，等待 frame 時由 driver 自己以 `read_wait` 拉取。
+  - hook 執行中，QuickJS 的 interrupt handler 每 20 ms 透過 `cb_now` 非阻塞地讀一次輸入，所以 Cancel 與 Host 消失仍會
+    立即生效（WAMR 上 17 ms／16 ms）。
+  - 這是編譯期選項；桌面版與 Android 的原生 driver 不受影響，但兩種模式都跑同一套 `driver_test`。
+- **時區**：wasi-libc 沒有時區。`patches/quickjs-wasi-timezone.patch` 在 `__wasi__` 時改由 Host 以裝置的 `localtime_r`
+  回答，本地日期與 JavaScriptCore 一致（模擬器測試比對 `NSTimeZone`）。
+- **WAMR**：
+  - 2.4.5，由 `fetch-deps.sh` 釘選。
+  - 只啟用 fast interpreter；開啟 THREAD_MGR，讓執行中的 instance 能被 terminate。
+  - 不含 WASI 與 libc builtins，並關閉硬體邊界檢查（iOS 拒絕；改用軟體檢查）。
+  - Host import 的 buffer 參數用 `*~` 簽名，由 WAMR 驗證位址範圍。
+  - linear memory 上限 160 MiB（模組宣告，instance 只能調低）。
+  - interpreter stack 8 MiB，執行緒 stack 8 MiB。
+- **Host 端的界線**：
+  - guest 尚未取走的輸入在 App 記憶體裡，不受 linear memory 限制，所以設 48 MiB 上限。超過時 session 直接失敗：
+    輸入關閉、待處理資料丟棄、guest 結束（Codex 複審）。
+  - 輸出上限 32 MiB。
+  - 關閉時先送 EOF，1 秒內未結束就 `wasm_runtime_terminate`。
+- **Kotlin 生命週期**：`IosSandboxTransport` 用單一 `AtomicInt` 記錄使用中的呼叫數與 CLOSED 旗標，close 自己也算一個
+  使用者；只有「已關閉且沒有人在用」時，才由 CAS 轉成 FREED 並釋放 native session。Codex 兩輪複審抓到兩個釋放時序的
+  問題，修正後 approve。
+- **EOF 之後不再開始新工作**（所有平台）：WASM 壓力測試發現，EOF 前已排進佇列的 Invoke 會在 EOF 之後才開始，而 EOF
+  只取消了當時正在執行的呼叫，所以它會一直跑到自己的時間上限。現在 driver 在串流結束後不再開始任何 Init／Invoke。
+- **建置**：
+  - Gradle `buildIosSandboxGuest` 執行 `wasm/build-guest.sh`。
+  - `buildIosSandboxHost{Iphoneos,Iphonesimulator}` 以 CMake 搭配 iOS SDK 建 `libshinsou_wasm_host.a`，guest 以 C 陣列
+    嵌入。
+  - cinterop `sandboxWasm` 連結這個靜態庫。
+  - 新增 `iosTest` source set。
+  - CI：`.github/workflows/sandbox-ios.yml`。
+
+### 21.2 結果（macOS／模擬器）
+
+- WAMR 上的整套 driver 測試全過：Cancel 17 ms、Host 消失後 16 ms 內結束、flood 與協定違規都被擋下。
+- 輸入上限在約 47 MiB 時拒絕，guest 在 15–17 ms 內結束（連續 5 次）。
+- 模擬器（iPhone 17 Pro、iOS 27）：
+  - 冷啟動 47–49 ms，DOM 解析與 bridge 正常。
+  - 時間上限 2000 ms；時區與裝置一致。
+  - close 與 send／receive 競爭 40 輪，沒有 crash。
+- guest 大小 1.69 MB。
+
 ## 不接受的縮小範圍
 
 - 讓第三方套件在 Rhino 或 JavaScriptCore in-process 執行，只加 instruction 計數或事後記憶體輪詢。

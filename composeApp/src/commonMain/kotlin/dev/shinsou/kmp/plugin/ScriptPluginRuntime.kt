@@ -207,7 +207,7 @@ public fun interface ScriptPluginRuntimeFactory {
     }
 }
 
-public class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
+public open class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
 
 /**
  * The user approved an exact artifact, but this app build still cannot execute it (for example the

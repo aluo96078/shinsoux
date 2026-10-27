@@ -10,6 +10,8 @@ fetch() { # name url tag
 }
 fetch quickjs https://github.com/quickjs-ng/quickjs.git v0.17.0
 fetch lexbor https://github.com/lexbor/lexbor.git v3.0.1
+# The iOS sandbox's interpreter (ADR-0002 §4.5); S0 measured this version on device.
+fetch wamr https://github.com/bytecodealliance/wasm-micro-runtime.git WAMR-2.4.5
 
 # Local fixes on top of the pinned tags (each patch says why); re-running is a no-op.
 apply_patch() { # name patch

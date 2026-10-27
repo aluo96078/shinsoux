@@ -8,6 +8,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
+import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,6 +47,19 @@ internal fun isWindows(osName: String = System.getProperty("os.name").orEmpty())
  * without them (S0). They are paths, not secrets; the helper's launcher passes on only these.
  */
 private val WINDOWS_HELPER_ENVIRONMENT = setOf("SystemRoot", "SystemDrive", "LOCALAPPDATA", "TEMP", "TMP", "USERPROFILE")
+
+/**
+ * The app's sandbox engine (ADR-0002 §4.4), or null on a desktop OS that ships no OS-confined helper
+ * (third-party packages then stay inert there).
+ */
+public fun desktopSandboxRuntimeFactory(scope: CoroutineScope): ScriptPluginRuntimeFactory? {
+    val osName = System.getProperty("os.name").orEmpty().lowercase()
+    if (!isWindows(osName) && !osName.contains("mac")) return null
+    return SandboxRuntimeFactory(
+        transports = DesktopSandboxTransportProvider(),
+        lifecycle = desktopSandboxLifecycle(scope),
+    )
+}
 
 /** The §4.6/§7 lifecycle with Desktop's values: at most 8 live helpers (S0: about 6 MiB each). */
 internal fun desktopSandboxLifecycle(scope: CoroutineScope): SandboxLifecycle = SandboxLifecycle(
