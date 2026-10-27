@@ -201,7 +201,7 @@ class SandboxOfficialParityTest {
         }
     }
 
-    private fun sandboxFactory(bin: File) = SandboxRuntimeFactory(transports = { SandboxProcessTransport(listOf(bin.path)) })
+    private fun sandboxFactory(bin: File) = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)) })
 
     private fun environment(source: SourceIndexEntry, respond: (PluginHttpRequest) -> PluginHttpResponse): ScriptPluginEnvironment {
         val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())

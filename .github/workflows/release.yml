@@ -328,6 +328,12 @@ jobs:
             exit 1
           fi
 
+          sandbox_helpers=("$mount_dir"/*.app/Contents/app/resources/shinsou-sandbox)
+          if (( ${#sandbox_helpers[@]} != 1 )) || ! codesign --verify --strict "${sandbox_helpers[0]}"; then
+            echo "::error title=Missing plugin sandbox::The app must carry a signed shinsou-sandbox helper (ADR-0002 S3)."
+            exit 1
+          fi
+
           sqlite_jars=("$mount_dir"/*.app/Contents/app/sqlite-jdbc-*.jar)
           if (( ${#sqlite_jars[@]} != 1 )); then
             echo "::error title=Unexpected SQLite runtime::Expected one sqlite-jdbc JAR, found ${#sqlite_jars[@]}."

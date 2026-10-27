@@ -20,6 +20,7 @@ import dev.shinsou.kmp.plugin.SourceIndexEntry
 import dev.shinsou.kmp.plugin.sourceFailureMarker
 import java.io.File
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -71,6 +72,7 @@ class SandboxNativeInteropTest {
           login: function (u, p) { return { loggedIn: bridge.getCredentialPassword() === 'old' && p === 'new' }; },
           getFilterList: function () { return [{ type: 'header', name: 'Hi' }]; },
           spin: function () { for (;;) {} },
+          zone: function () { return [new Date(2025, 0, 15, 12).getTimezoneOffset(), new Date(2025, 6, 15, 12).getTimezoneOffset()]; },
           challenge: async function () { await bridge.net.fetch('https://www.example.test/api/1'); throw new Error('SHINSOU_SOURCE_HTTP_CHALLENGE'); },
           plain: function () { throw new Error('SHINSOU_SOURCE_HTTP_CHALLENGE (with details)'); }
         };
@@ -110,10 +112,10 @@ class SandboxNativeInteropTest {
     @Test
     fun kotlinHostDrivesTheRealCSandbox() = runBlocking {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
-        lateinit var transport: SandboxProcessTransport
+        lateinit var transport: DesktopSandboxTransport
         val env = environment()
         env.storage.setCredential(7, PluginCredential("alice", "old"))
-        val runtime = SandboxRuntimeFactory(transports = { SandboxProcessTransport(listOf(bin.path)).also { transport = it } })
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)).also { transport = it } })
             .createForSource(script, manifest, source, env) as SandboxScriptPluginRuntime
         try {
             withTimeout(30_000) {
@@ -136,6 +138,12 @@ class SandboxNativeInteropTest {
 
                 assertEquals(1, runtime.getFilterList().size)
 
+                // The confined helper keeps the host's time zone (loaded before sandbox_init), so
+                // scripts' local dates match the host engine's.
+                val zone = java.util.TimeZone.getDefault()
+                fun offset(month: Int) = -zone.getOffset(java.time.LocalDateTime.of(2025, month, 15, 12, 0).atZone(zone.toZoneId()).toInstant().toEpochMilli()) / 60_000
+                assertEquals("[${offset(1)},${offset(7)}]", runtime.invokeForTest("zone").toString())
+
                 // Host-owned guidance markers cross the boundary as a number, nothing else does.
                 assertEquals("SHINSOU_SOURCE_HTTP_CHALLENGE", assertFailsWith<SandboxInvocationException> { runtime.invokeForTest("challenge") }.sourceFailureMarker())
                 assertEquals(null, assertFailsWith<SandboxInvocationException> { runtime.invokeForTest("plain") }.sourceFailureMarker())
@@ -150,7 +158,7 @@ class SandboxNativeInteropTest {
     @Test
     fun cancellationAndTimeLimitsHoldAcrossTheProcessBoundary() = runBlocking {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
-        val runtime = SandboxRuntimeFactory(transports = { SandboxProcessTransport(listOf(bin.path)) })
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)) })
             .createForSource(script, manifest, source, environment()) as SandboxScriptPluginRuntime
         try {
             // The sandbox's own wall-time limit (3 s) ends a busy loop with LIMIT_TIME.
@@ -177,6 +185,51 @@ class SandboxNativeInteropTest {
             println("interop: time limit $ms ms, cancel $cancelMs ms, hook round trip median ${rounds[100]} µs")
         } finally {
             runtime.close()
+        }
+    }
+
+    @Test
+    fun theHelperDoesNotOutliveItsHostEvenMidHook() = runBlocking<Unit> {
+        val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
+        lateinit var transport: DesktopSandboxTransport
+        val runtime = SandboxRuntimeFactory(transports = { DesktopSandboxTransport(listOf(bin.path)).also { transport = it } })
+            .createForSource(script, manifest, source, environment()) as SandboxScriptPluginRuntime
+        try {
+            val call = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { runtime.invokeForTest("spin") } }
+            delay(300)
+            // The host's death closes the helper's stdin; the helper must stop the spinning hook at
+            // once, not at its 3-second limit.
+            val t0 = System.nanoTime()
+            transport.closeInputForTest()
+            while (transport.alive && System.nanoTime() - t0 < 5_000_000_000L) delay(10)
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            assertTrue(!transport.alive && ms < 1_000, "helper still alive $ms ms after its host went away")
+            call.cancel()
+            println("interop: helper exited $ms ms after end of stream mid-hook")
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test
+    fun theDesktopLifecycleStopsTheLeastRecentlyUsedHelper() = runBlocking<Unit> {
+        val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        val transports = ArrayList<DesktopSandboxTransport>()
+        val lifecycle = SandboxLifecycle(maxLive = 2, nowMs = { System.nanoTime() / 1_000_000 }, scope = scope)
+        val factory = SandboxRuntimeFactory(
+            transports = { DesktopSandboxTransport(listOf(bin.path)).also { synchronized(transports) { transports += it } } },
+            lifecycle = lifecycle,
+        )
+        val runtimes = (1..3).map { factory.createForSource(script, manifest.copy(id = "dev.example.lru$it"), source, environment()) }
+        try {
+            delay(300)
+            assertEquals(listOf(false, true, true), transports.map { it.alive })
+            assertEquals(1, runtimes[0].getFilterList().size) // restarts on demand
+            assertEquals(4, transports.size)
+        } finally {
+            runtimes.forEach { it.close() }
+            scope.cancel()
         }
     }
 }

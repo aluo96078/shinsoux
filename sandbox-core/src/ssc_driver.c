@@ -147,6 +147,9 @@ static void *reader_main(void *opaque) {
     pthread_mutex_lock(&d->lock);
     d->eof = true;
     d->reader_status = status;
+    /* Nobody can read an answer any more (the host closed the stream, died or broke the protocol):
+     * stop a running hook now instead of at its deadline, so the sandbox exits with its host. */
+    if (d->rt) ssc_cancel(d->rt, atomic_load(&d->current_call));
     pthread_cond_broadcast(&d->cond);
     pthread_mutex_unlock(&d->lock);
     release(d);

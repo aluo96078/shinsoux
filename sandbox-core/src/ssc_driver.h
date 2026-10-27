@@ -31,6 +31,7 @@ enum {
     SSC_DRIVER_VIOLATION = 2,  /* the host broke the protocol */
     SSC_DRIVER_IO_ERROR = 3,
     SSC_DRIVER_NOMEM = 4,
+    SSC_DRIVER_LOCKDOWN = 5,   /* the helper could not confine itself and ran nothing */
 };
 
 /*

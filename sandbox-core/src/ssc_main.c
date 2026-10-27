@@ -1,8 +1,9 @@
 /*
  * shinsou-sandbox: the desktop sandbox helper (ADR-0002 §4.4). Speaks SandboxProtocol v1 on
  * stdin/stdout and nothing else: QuickJS is built without quickjs-libc, so scripts have no file,
- * process, socket or environment access. The OS sandbox (macOS sandbox_init, Windows LPAC + Job)
- * is applied by the platform launcher around this process (S3).
+ * process, socket or environment access. Before reading anything it confines itself
+ * (ssc_os_lockdown: macOS sandbox_init deny-all); on Windows the launcher applies LPAC + a Job
+ * object instead (S3).
  */
 #include <errno.h>
 #include <pthread.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 #include "ssc_driver.h"
+#include "ssc_os_sandbox.h"
 
 extern const char ssc_bootstrap_js[];
 extern const size_t ssc_bootstrap_js_len;
@@ -55,6 +57,13 @@ static void *run(void *o) {
 }
 
 int main(void) {
+    char err[64];
+    if (ssc_os_lockdown(err, sizeof err) != 0) {
+        /* Fail closed: not one frame is read, so no script is ever evaluated unconfined. */
+        static const char msg[] = "shinsou-sandbox: lockdown failed\n";
+        (void)!write(STDERR_FILENO, msg, sizeof msg - 1);
+        return SSC_DRIVER_LOCKDOWN;
+    }
     signal(SIGPIPE, SIG_IGN); /* a vanished host shows up as a failed write, handled by the driver */
     /* A dedicated thread with a known stack: the core's stack limit must fit inside it. */
     /* Fail closed if the stack cannot be had: QuickJS would trust a limit the thread lacks. */
