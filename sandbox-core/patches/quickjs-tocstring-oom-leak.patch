@@ -1,0 +1,17 @@
+quickjs-ng v0.17.0: JS_ToCStringLen2 leaks the string reference taken by js_force_tostring when
+the UTF-8 buffer allocation fails (out of memory). In the sandbox a script could repeat that near
+the heap limit and keep the leaked bytes counted against its own heap. Found by LeakSanitizer
+(core_test, result conversion near the heap limit).
+
+diff --git a/quickjs.c b/quickjs.c
+index 6ca030b..d9b44ba 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -4950,6 +4950,7 @@ const char *JS_ToCStringLen2(JSContext *ctx, size_t *plen, JSValueConst val1,
+         *plen = str_new->len;
+     return (const char *)str8(str_new);
+ fail:
++    JS_FreeValue(ctx, val); /* JS_EXCEPTION when js_force_tostring failed: a no-op */
+     if (plen)
+         *plen = 0;
+     return NULL;

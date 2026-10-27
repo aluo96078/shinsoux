@@ -539,6 +539,10 @@ int main(int argc, char **argv) {
             " other:function(){throw new Error('SHINSOU_SOURCE_SOMETHING_ELSE');},"
             " getter:function(){var e=new Error('x');Object.defineProperty(e,'message',{get:function(){globalThis.ran=1;return 'SHINSOU_SOURCE_HTTP_FORBIDDEN';}});throw e;},"
             " inherited:function(){var e=Object.create(new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN'));throw e;},"
+            " proxied:function(){var t=function(){globalThis.ran=1;};throw new Proxy(new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN'),"
+            "  {get:t,getOwnPropertyDescriptor:t,has:t,ownKeys:t,getPrototypeOf:t});},"
+            " proxiedAsync:async function(){await null;var t=function(){globalThis.ran=1;};"
+            "  throw new Proxy(new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN'),{get:t,getOwnPropertyDescriptor:t});},"
             " ran:function(){return !!globalThis.ran;},"
             " caught:function(){try{throw new Error('SHINSOU_SOURCE_QUOTA_EXCEEDED');}catch(e){} throw new Error('plain');},"
             " ok:function(){return 1;}};";
@@ -551,6 +555,8 @@ int main(int argc, char **argv) {
             { "other", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
             { "getter", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
             { "inherited", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "proxied", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "proxiedAsync", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
             { "caught", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
         };
         rt = make(&h, l, marker_script, async_wait);
@@ -563,7 +569,7 @@ int main(int argc, char **argv) {
         }
         out = NULL;
         st = run(rt, "ran", &out);
-        CHECK(st == SSC_OK && out && strcmp(out, "false") == 0, "the message getter must not run: %s", out ? out : "");
+        CHECK(st == SSC_OK && out && strcmp(out, "false") == 0, "no getter or proxy trap may run: %s", out ? out : "");
         free(out);
         printf("  source-failure markers         -> %zu cases\n", sizeof cases / sizeof cases[0]);
         ssc_free(rt);

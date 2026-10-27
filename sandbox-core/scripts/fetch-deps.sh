@@ -10,3 +10,14 @@ fetch() { # name url tag
 }
 fetch quickjs https://github.com/quickjs-ng/quickjs.git v0.17.0
 fetch lexbor https://github.com/lexbor/lexbor.git v3.0.1
+
+# Local fixes on top of the pinned tags (each patch says why); re-running is a no-op.
+apply_patch() { # name patch
+  if git -C "third_party/$1" apply --reverse --check "../../$2" 2>/dev/null; then
+    echo "$2 already applied"
+  else
+    git -C "third_party/$1" apply "../../$2"
+    echo "applied $2"
+  fi
+}
+for p in patches/quickjs-*.patch; do apply_patch quickjs "$p"; done

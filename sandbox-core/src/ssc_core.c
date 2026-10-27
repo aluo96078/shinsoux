@@ -110,6 +110,7 @@ static ssc_source_failure source_failure_of(JSContext *ctx, JSValueConst value) 
         JS_FreeCString(ctx, text);
         return marker;
     }
+    /* JS_IsError tests the value's own class: a Proxy (even around an Error) is never inspected. */
     if (!JS_IsError(value)) return marker;
     JSAtom atom = JS_NewAtom(ctx, "message");
     JSPropertyDescriptor desc;
