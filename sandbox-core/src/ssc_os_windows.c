@@ -185,8 +185,29 @@ static int container_sid(const char *key, PSID *sid, char *err, size_t len) {
 }
 
 /*
+ * The directory is readable by every LPAC process (see grant_directory), so it may hold the helper
+ * and nothing else: anything placed beside it would be readable by every package's sandbox.
+ */
+static int only_the_helper(const wchar_t *dir, const wchar_t *exe_name, char *err, size_t len) {
+    wchar_t pattern[32768];
+    if (swprintf(pattern, 32768, L"%ls\\*", dir) < 0) { snprintf(err, len, "helper path too long"); return -1; }
+    WIN32_FIND_DATAW f;
+    HANDLE h = FindFirstFileW(pattern, &f);
+    if (h == INVALID_HANDLE_VALUE) return fail(err, len, "FindFirstFile(helper directory)");
+    int rc = 0;
+    do {
+        if (wcscmp(f.cFileName, L".") == 0 || wcscmp(f.cFileName, L"..") == 0) continue;
+        if (_wcsicmp(f.cFileName, exe_name) != 0) { snprintf(err, len, "helper directory holds other files"); rc = -1; break; }
+    } while (FindNextFileW(h, &f));
+    FindClose(h);
+    return rc;
+}
+
+/*
  * An AppContainer reads only what grants it access. Grant read+execute on the helper's own
  * directory (the host's private copy) to ALL RESTRICTED APPLICATION PACKAGES, once; nothing else.
+ * That group rather than each package's AppContainer SID: the directory holds only the public
+ * helper binary (only_the_helper), so per-package ACEs would protect nothing and only grow the ACL.
  */
 static int grant_directory(const wchar_t *dir, PSID packages, char *err, size_t len) {
     PACL old = NULL, acl = NULL;
@@ -324,7 +345,8 @@ static int launch(int argc, char **argv, int *exit_code, char *err, size_t len) 
     PSID sid = NULL;
     PSID packages = NULL;
     if (!ConvertStringSidToSidW(RESTRICTED_PACKAGES_SID, &packages)) return fail(err, len, "ConvertStringSidToSid");
-    int granted_dir = container_sid(key, &sid, err, len) == 0 && grant_directory(dir, packages, err, len) == 0;
+    int granted_dir = only_the_helper(dir, slash + 1, err, len) == 0 && container_sid(key, &sid, err, len) == 0 &&
+                      grant_directory(dir, packages, err, len) == 0;
     LocalFree(packages);
     if (!granted_dir) return -1;
     HANDLE job = make_job(err, len);

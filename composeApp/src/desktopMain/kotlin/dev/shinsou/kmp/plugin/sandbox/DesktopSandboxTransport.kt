@@ -97,6 +97,9 @@ internal class DesktopSandboxTransport(command: List<String>, windows: Boolean =
         process.destroyForcibly()
     }
 
+    /** Test hook: the exit code of an ended helper. */
+    internal fun exitCodeForTest(): Int = process.exitValue()
+
     /** Test hook: closes the helper's stdin only, as the host's death would. */
     internal fun closeInputForTest() = output.close()
 }

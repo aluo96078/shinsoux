@@ -8,6 +8,7 @@ confined sandbox of another package. The control run (no lockdown) must be able 
 them, which shows the probes work; the locked-down run must use none.
 """
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -16,6 +17,10 @@ import tempfile
 WINDOWS = os.name == "nt"
 probe = os.path.abspath(sys.argv[1])
 work = tempfile.mkdtemp(prefix="ssc-probe-")
+if WINDOWS:
+    # The launcher refuses a directory holding anything but itself (every LPAC process may read it).
+    probe_dir = tempfile.mkdtemp(prefix="ssc-probe-bin-")
+    probe = shutil.copy2(probe, probe_dir)
 secret = os.path.join(work, "secret.txt")
 with open(secret, "w") as f:
     f.write("secret")
@@ -86,6 +91,16 @@ try:
     print("===== helper lockdown, exit", code, f"({code & 0xFFFFFFFF:#010x})")
     print(out.rstrip())
     locked_ok = code == 0 and "RESULT PASS" in out and count(out) == total
+    if WINDOWS:
+        # A helper beside other files must refuse to start: they would be readable by every sandbox.
+        crowded = tempfile.mkdtemp(prefix="ssc-probe-crowded-")
+        with open(os.path.join(crowded, "cookies.txt"), "w") as f:
+            f.write("secret")
+        c = subprocess.run([shutil.copy2(probe, crowded), "--package-key", "crowded", "--hang"],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        crowded_ok = c.returncode == 3 and "helper directory holds other files" in c.stdout
+        print("===== helper beside other files:", "REFUSED" if crowded_ok else f"NOT REFUSED (exit {c.returncode}) {c.stdout!r}")
+        locked_ok = locked_ok and crowded_ok
 finally:
     if sibling:
         sibling.stdin.close()

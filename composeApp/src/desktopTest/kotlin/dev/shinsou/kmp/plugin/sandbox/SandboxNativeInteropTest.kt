@@ -227,6 +227,27 @@ class SandboxNativeInteropTest {
     }
 
     @Test
+    fun onWindowsTheHelperRefusesADirectoryHoldingOtherFiles() = runBlocking<Unit> {
+        val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
+        if (!isWindows()) return@runBlocking // macOS confines the helper itself; its directory is not shared
+        // Every LPAC process may read the helper's directory, so nothing may sit beside the helper.
+        val directory = java.nio.file.Files.createTempDirectory("shinsou-sandbox-crowded-")
+        val helper = directory.resolve(bin.name)
+        java.nio.file.Files.copy(bin.toPath(), helper)
+        java.nio.file.Files.writeString(directory.resolve("cookies.txt"), "secret")
+        val transport = DesktopSandboxTransport(sandboxHelperCommand(helper, "dev.example.crowded"))
+        try {
+            val t0 = System.nanoTime()
+            while (transport.alive && System.nanoTime() - t0 < 10_000_000_000L) delay(10)
+            assertTrue(!transport.alive, "the launcher should refuse to start")
+            assertEquals(null, transport.receive(), "no frame from a refused helper")
+            assertEquals(5, transport.exitCodeForTest(), "SSC_DRIVER_LOCKDOWN")
+        } finally {
+            transport.close()
+        }
+    }
+
+    @Test
     fun theDesktopLifecycleStopsTheLeastRecentlyUsedHelper() = runBlocking<Unit> {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see class comment)"); return@runBlocking }
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
