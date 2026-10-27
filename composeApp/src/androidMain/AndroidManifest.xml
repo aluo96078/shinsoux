@@ -21,11 +21,24 @@
         android:label="Shinsou X"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:zygotePreloadName="dev.shinsou.kmp.plugin.sandbox.SandboxZygotePreload">
         <!-- Ask Play services to download the permissionless QR scanner module ahead of use. -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode_ui" />
+
+        <!--
+          ADR-0002 §4.3: third-party plugin sandbox. One isolated process per package, bound with
+          Context.bindIsolatedService and a unique instance name. Isolated uid: no app permissions
+          (no INTERNET), no access to the app's files; seccomp forbids exec and fork on top.
+        -->
+        <service
+            android:name="dev.shinsou.kmp.plugin.sandbox.SandboxProcessService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":sandbox"
+            android:useAppZygote="true" />
 
         <activity
             android:name="dev.shinsou.kmp.MainActivity"

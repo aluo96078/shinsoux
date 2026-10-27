@@ -54,6 +54,11 @@ val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
     .orElse(false)
+// Device tests install (and afterwards uninstall) the app: give that build its own application id
+// so a developer's or tester's real installation and its library are never touched.
+val sandboxDeviceTest = providers.gradleProperty("shinsouSandboxDeviceTest")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
 val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
     .orElse(providers.systemProperty("shinsou.pluginRepo"))
     .orElse("../../shinsou_plugin")
@@ -331,6 +336,16 @@ kotlin {
             }
         }
 
+        // Device tests (ADR-0002 S2: the isolated-process sandbox on real hardware).
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(libs.androidx.test.runner)
+                implementation(libs.androidx.test.ext.junit)
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+            }
+        }
+
         val iosMain by creating {
             dependsOn(commonMain.get())
             dependencies {
@@ -369,12 +384,27 @@ android {
     namespace = "dev.aluo.shinsoux"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
+    // ADR-0002 S2: libshinsou_sandbox.so (sandbox-core) for the isolated-process sandbox.
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "dev.aluo.shinsoux"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = releaseVersionCode.get()
         versionName = releaseDisplayVersion.get()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Only sandbox-core's ABIs are listed here: dependencies keep shipping all of theirs. On
+        // another ABI the library is missing and the sandbox fails closed.
+        externalNativeBuild.cmake.abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        // Optimized in every variant: the published APK is the debug variant, and an -O0 QuickJS
+        // is an order of magnitude slower.
+        externalNativeBuild.cmake.arguments += "-DCMAKE_BUILD_TYPE=Release"
+    }
+
+    externalNativeBuild.cmake {
+        path = file("../sandbox-core/CMakeLists.txt")
+        version = "3.22.1"
     }
 
     signingConfigs {
@@ -398,6 +428,7 @@ android {
 
     buildTypes {
         getByName("debug") {
+            if (sandboxDeviceTest.get()) applicationIdSuffix = ".sandboxtest"
             if (androidPublicDebugSigningConfigured) {
                 signingConfig = signingConfigs.getByName("publicDebug")
             }
@@ -410,12 +441,43 @@ android {
     }
 
     buildFeatures.compose = true
+    buildFeatures.aidl = true
+    // The AIDL stubs are Java; match Kotlin's JVM target.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 
     sourceSets.getByName("test").resources.srcDir(
         layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"),
     )
 
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    // minSdk 29 would store dex and native libraries uncompressed (about 2.5x the APK size). The
+    // APK is downloaded from GitHub Releases, not split by a store, so keep it compressed.
+    packaging.dex.useLegacyPackaging = true
+    packaging.jniLibs.useLegacyPackaging = true
+}
+
+// sandbox-core's pinned third-party sources (quickjs-ng, lexbor) are fetched, not committed.
+val fetchSandboxCoreDeps by tasks.registering(Exec::class) {
+    description = "Fetches sandbox-core's pinned third-party sources and applies its patches"
+    workingDir = rootProject.file("sandbox-core")
+    commandLine("bash", "scripts/fetch-deps.sh")
+}
+tasks.configureEach {
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps)
+}
+val deviceTestUsesOwnApplicationId = sandboxDeviceTest.get()
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        val ownApplicationId = deviceTestUsesOwnApplicationId // no script reference in the action
+        doFirst {
+            check(ownApplicationId) {
+                "Run device tests with -PshinsouSandboxDeviceTest=true: they uninstall the app afterwards"
+            }
+        }
+    }
 }
 
 compose.desktop {

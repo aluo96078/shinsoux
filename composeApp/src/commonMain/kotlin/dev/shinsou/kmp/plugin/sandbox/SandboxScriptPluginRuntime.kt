@@ -24,6 +24,8 @@ import dev.shinsou.kmp.plugin.requireRuntimePermission
 import dev.shinsou.kmp.plugin.sandbox.SandboxScriptJson.bool
 import dev.shinsou.kmp.plugin.sandbox.SandboxScriptJson.str
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlinx.serialization.json.JsonArray
@@ -43,9 +45,12 @@ internal fun interface SandboxTransportProvider {
  * The sandbox tier's [ScriptPluginRuntimeFactory] (ADR-0002 §4.1). Every runtime gets its own
  * sandbox; scripts never run in the host process. An environment carrying in-process provenance
  * (a reviewed-only capability) is refused, so reviewed profiles cannot be enabled here.
+ * With a [lifecycle], idle sandboxes are stopped and restarted on demand and crash loops disable
+ * the package (§4.6, §7).
  */
 internal class SandboxRuntimeFactory(
     private val transports: SandboxTransportProvider,
+    private val lifecycle: SandboxLifecycle? = null,
     /** Host permission records → sandbox-tier policy (e.g. the COOKIE_READ grant). */
     private val policyFor: (PluginManifest, SourceIndexEntry) -> SandboxBridgePolicy = { _, _ -> SandboxBridgePolicy() },
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -67,8 +72,9 @@ internal class SandboxRuntimeFactory(
         require(environment.inProcessScriptProvenance == null) { "Sandbox tier refuses in-process script provenance" }
         manifest.requireDeclaredExecutableSource(source)
         environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
-        val transport = transports.open(manifest.id)
-        val runtime = SandboxScriptPluginRuntime(manifest, source, environment, transport, policyFor(manifest, source), nowEpochMillis, pumpScope)
+        val runtime = SandboxScriptPluginRuntime(
+            manifest, source, environment, transports, policyFor(manifest, source), nowEpochMillis, pumpScope, lifecycle,
+        )
         try {
             runtime.initialize(script)
         } catch (e: Throwable) {
@@ -103,16 +109,21 @@ private const val SANDBOX_MAX_ASYNC_QUEUE = 64L
  * JSON shapes as the JavaScriptCore engine. Reserved bootstrap entry points, invoked like hooks:
  * `__shinsouSelectSource(id)`, `__shinsouMetadata()`, `__shinsouPreferences()` and
  * `__shinsouHasFunction(name)` (ADR-0002 §17.3).
+ *
+ * The sandbox behind it is replaceable: a call after a crash, a host kill or a lifecycle release
+ * starts a fresh sandbox and loads the script again (script state does not survive that, as it
+ * does not survive an app restart). Only [close] is final.
  */
 internal class SandboxScriptPluginRuntime(
     private val manifest: PluginManifest,
     private val source: SourceIndexEntry,
     private val environment: ScriptPluginEnvironment,
-    transport: SandboxTransport,
+    private val transports: SandboxTransportProvider,
     policy: SandboxBridgePolicy,
     nowEpochMillis: () -> Long,
-    pumpScope: kotlinx.coroutines.CoroutineScope? = null,
-) : ScriptPluginRuntime {
+    private val pumpScope: kotlinx.coroutines.CoroutineScope? = null,
+    private val lifecycle: SandboxLifecycle? = null,
+) : ScriptPluginRuntime, SandboxResident {
     private val limits = environment.executionLimits
 
     /** Bumped by [close]: bridge calls of an older generation are refused (§5.1). */
@@ -134,16 +145,15 @@ internal class SandboxScriptPluginRuntime(
         nowEpochMillis = nowEpochMillis,
     )
 
-    private val session = SandboxSession(
-        transport = transport,
-        dispatcher = dispatcher,
-        limits = limits.toSandboxLimits(),
-        generation = { generation },
-        onLog = ::appendLog,
-        pumpScope = pumpScope,
-    )
+    /** Guards [session]; held for a whole call, so a release never interrupts one. */
+    private val sandboxLock = Mutex()
+    private var session: SandboxSession? = null
+    private var script: String? = null
+    @Volatile
+    private var closed = false
 
     override val pluginId: String = manifest.id
+    override val packageId: String get() = manifest.id
     override val id: Long = source.id
     override val name: String = source.name
     override val lang: String = source.lang
@@ -167,13 +177,8 @@ internal class SandboxScriptPluginRuntime(
     override val recentLogs: List<String> get() = logs
 
     internal suspend fun initialize(script: String) {
-        val requestedId = source.canonicalSourceId ?: source.id.toString()
-        val prelude = "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(requestedId)};" +
-            "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
-            "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
-            "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};\n"
-        session.initialize(prelude + script)
-        call("__shinsouSelectSource", buildJsonArray { add(JsonPrimitive(requestedId)) })
+        this.script = script
+        // The first call starts the sandbox (and selects the source).
         val metadata = unwrapEncoded(call("__shinsouMetadata", JsonArray(emptyList()))) as? JsonObject ?: JsonObject(emptyMap())
         baseUrl = source.baseUrl ?: metadata.str("baseUrl").orEmpty()
         supportsLatest = metadata["supportsLatest"].bool()
@@ -259,8 +264,57 @@ internal class SandboxScriptPluginRuntime(
     }
 
     override suspend fun close() {
+        closed = true
         generation += 1
-        session.close()
+        session?.close() // immediately, even mid-call
+        lifecycle?.stopped(this)
+    }
+
+    override fun tryRelease(): Boolean {
+        if (!sandboxLock.tryLock()) return false
+        try {
+            stopSandbox()
+        } finally {
+            sandboxLock.unlock()
+        }
+        return true
+    }
+
+    /** Caller holds [sandboxLock]. Results of the old sandbox's generation are refused from now on. */
+    private fun stopSandbox() {
+        session?.let {
+            generation += 1
+            it.close()
+        }
+        session = null
+    }
+
+    /** Starts a sandbox and loads the script; caller holds [sandboxLock]. */
+    private suspend fun startSandbox(): SandboxSession {
+        val script = checkNotNull(script) { "not initialized" }
+        val requestedId = source.canonicalSourceId ?: source.id.toString()
+        val prelude = "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(requestedId)};" +
+            "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
+            "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
+            "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};\n"
+        val s = SandboxSession(
+            transport = transports.open(manifest.id),
+            dispatcher = dispatcher,
+            limits = limits.toSandboxLimits(),
+            generation = { generation },
+            onLog = ::appendLog,
+            pumpScope = pumpScope,
+        )
+        session = s
+        if (closed) s.close() // close() raced the start: never leave a sandbox behind
+        try {
+            s.initialize(prelude + script)
+            s.invoke("__shinsouSelectSource", buildJsonArray { add(JsonPrimitive(requestedId)) }.toString())
+        } catch (e: Throwable) {
+            stopSandbox() // a half-loaded script must never serve a call
+            throw e
+        }
+        return s
     }
 
     private suspend fun hasFunction(method: String): Boolean =
@@ -276,14 +330,39 @@ internal class SandboxScriptPluginRuntime(
         if (pluginUtf8ByteCountAtMost(encoded, limits.maxInvocationInputBytes) == null) {
             throw PluginResourceLimitException("Plugin '$pluginId' exceeded the ${limits.maxInvocationInputBytes}-byte invocation input limit")
         }
-        val json = try {
-            session.invoke(method, encoded, loginInvocation)
-        } catch (e: SandboxInvocationException) {
-            throw when (e.code) {
-                SandboxErrorCode.LIMIT_MEMORY, SandboxErrorCode.LIMIT_STACK, SandboxErrorCode.LIMIT_TIME,
-                SandboxErrorCode.LIMIT_BRIDGE, SandboxErrorCode.LIMIT_RESULT,
-                -> PluginResourceLimitException("Plugin '$pluginId' exceeded its ${e.code.name} limit")
-                else -> e
+        val json = sandboxLock.withLock {
+            if (closed) throw SandboxBrokenException("closed")
+            var current: SandboxSession? = session
+            try {
+                lifecycle?.requireEnabled(packageId) // also stops a live sandbox once the package is disabled
+                if (current == null || current.isBroken) {
+                    stopSandbox()
+                    current = startSandbox()
+                }
+                lifecycle?.touch(this)
+                current.invoke(method, encoded, loginInvocation)
+            } catch (e: SandboxInvocationException) {
+                val strike = e.code.strike() ?: SandboxStrike.CRASH.takeIf { current?.isBroken == true }
+                if (strike != null) lifecycle?.strike(packageId, strike)
+                throw when (e.code) {
+                    SandboxErrorCode.LIMIT_MEMORY, SandboxErrorCode.LIMIT_STACK, SandboxErrorCode.LIMIT_TIME,
+                    SandboxErrorCode.LIMIT_BRIDGE, SandboxErrorCode.LIMIT_RESULT,
+                    -> PluginResourceLimitException("Plugin '$pluginId' exceeded its ${e.code.name} limit")
+                    else -> e
+                }
+            } catch (e: SandboxBrokenException) {
+                if (!closed) lifecycle?.strike(packageId, SandboxStrike.CRASH)
+                throw e
+            } catch (e: SandboxDisabledException) {
+                stopSandbox()
+                throw e
+            } finally {
+                if (session == null || session?.isBroken == true) {
+                    stopSandbox()
+                    lifecycle?.stopped(this)
+                } else {
+                    lifecycle?.idle(this)
+                }
             }
         }
         return SandboxScriptJson.parseBoundedResult(json, limits, pluginId)
@@ -296,4 +375,13 @@ internal class SandboxScriptPluginRuntime(
         while (next.size > limits.maxLogEntries || total > limits.maxLogBytes) total -= next.removeFirst().encodeToByteArray().size
         logs = next.toList()
     }
+}
+
+/** Which invocation failures count toward the crash-loop limit (§7): the sandbox's own limits. */
+private fun SandboxErrorCode.strike(): SandboxStrike? = when (this) {
+    SandboxErrorCode.LIMIT_TIME -> SandboxStrike.TIMEOUT
+    SandboxErrorCode.LIMIT_MEMORY, SandboxErrorCode.LIMIT_STACK, SandboxErrorCode.LIMIT_BRIDGE,
+    SandboxErrorCode.LIMIT_RESULT,
+    -> SandboxStrike.LIMIT
+    else -> null
 }

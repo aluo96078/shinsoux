@@ -30,3 +30,6 @@ Pods/
 *.msi
 *.exe
 .DS_Store
+
+# NDK/CMake intermediates (sandbox-core in composeApp)
+.cxx/

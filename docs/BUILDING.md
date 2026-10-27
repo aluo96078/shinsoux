@@ -13,7 +13,7 @@
 
 專案使用 Gradle Wrapper，不需要另外安裝 Gradle。若 shell 內的 `ANDROID_SDK_ROOT` 指向無效 SDK，可使用 `env -u ANDROID_SDK_ROOT` 讓 Android Gradle Plugin 改讀 `local.properties` 或預設 SDK 路徑。
 
-主要版本可在 `gradle/libs.versions.toml` 查閱；目前 Android `minSdk` 26、`compileSdk`／`targetSdk` 36，Kotlin/JVM target 為 17。
+主要版本可在 `gradle/libs.versions.toml` 查閱；目前 Android `minSdk` 29、`compileSdk`／`targetSdk` 36，Kotlin/JVM target 為 17。
 
 Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 

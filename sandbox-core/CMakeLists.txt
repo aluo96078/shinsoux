@@ -5,6 +5,10 @@ project(shinsou_sandbox_core C)
 # scripts/fetch-deps.sh at pinned tags and are not committed.
 
 set(CMAKE_C_STANDARD 11)
+if(ANDROID)
+    # Hidden by default so --gc-sections can drop what the JNI entry points never reach.
+    add_compile_options(-fvisibility=hidden -ffunction-sections -fdata-sections)
+endif()
 set(QJS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs)
 set(BOOTSTRAP_KT ${CMAKE_CURRENT_SOURCE_DIR}/../composeApp/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt)
 
@@ -60,6 +64,17 @@ add_library(ssc_driver STATIC src/ssc_driver.c ${CMAKE_BINARY_DIR}/ssc_bootstrap
 target_include_directories(ssc_driver PUBLIC src)
 target_link_libraries(ssc_driver PUBLIC ssc_core ssc_frames Threads::Threads)
 target_compile_options(ssc_driver PRIVATE -Wall -Wextra)
+
+if(ANDROID)
+    # S2: the isolated process loads this from the app (composeApp's externalNativeBuild). Only the
+    # JNI entry points are exported; tests and tools are host-only.
+    add_library(shinsou_sandbox SHARED src/ssc_android_jni.c)
+    target_link_libraries(shinsou_sandbox PRIVATE ssc_driver)
+    target_compile_options(shinsou_sandbox PRIVATE -Wall -Wextra -Werror)
+    target_link_options(shinsou_sandbox PRIVATE
+        -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)
+    return()
+endif()
 
 add_executable(shinsou-sandbox src/ssc_main.c)
 target_link_libraries(shinsou-sandbox ssc_driver)
