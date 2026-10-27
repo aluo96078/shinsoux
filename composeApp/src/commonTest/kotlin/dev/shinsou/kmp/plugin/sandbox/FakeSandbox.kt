@@ -22,7 +22,7 @@ internal class FakeSandbox(
 ) : SandboxTransport {
     sealed interface HookOutcome {
         data class Ok(val json: String) : HookOutcome
-        data class Fail(val code: SandboxErrorCode) : HookOutcome
+        data class Fail(val code: SandboxErrorCode, val sourceFailure: SandboxSourceFailure? = null) : HookOutcome
         /** Sends nothing: the hook never answers (timeouts, cancellation). */
         data object Hang : HookOutcome
         /** The hook already wrote its own (possibly malicious) frames. */
@@ -67,7 +67,7 @@ internal class FakeSandbox(
                     val h = Hook(f.callId, buffered, ::next)
                     when (val outcome = if (hook == null) HookOutcome.Fail(SandboxErrorCode.NO_SUCH_HOOK) else h.hook(args)) {
                         is HookOutcome.Ok -> emit(SandboxFrame.Result(f.callId, outcome.json))
-                        is HookOutcome.Fail -> emit(SandboxFrame.Failure(f.callId, outcome.code))
+                        is HookOutcome.Fail -> emit(SandboxFrame.Failure(f.callId, outcome.code, outcome.sourceFailure))
                         HookOutcome.Hang -> awaitCancellation()
                         HookOutcome.Custom -> Unit
                     }

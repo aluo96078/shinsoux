@@ -335,7 +335,7 @@ static void cb_log(void *o, const char *message, size_t len) {
 
 /* ---- main loop -------------------------------------------------------------------------- */
 
-static void reply(driver *d, uint64_t call_id, ssc_status st, const char *json, size_t len) {
+static void reply(driver *d, uint64_t call_id, ssc_status st, ssc_source_failure marker, const char *json, size_t len) {
     if (d->violated) return; /* the host broke the protocol: it gets no further answers */
     ssc_frame f = { .call_id = call_id };
     if (st == SSC_OK) {
@@ -344,6 +344,7 @@ static void reply(driver *d, uint64_t call_id, ssc_status st, const char *json, 
     } else {
         f.type = SSC_F_FAILURE;
         f.code = (uint32_t)st;
+        f.marker = st == SSC_ERR_SCRIPT ? (uint32_t)marker : 0;
     }
     emit(d, &f);
 }
@@ -381,7 +382,7 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
             ssc_frame ready = { .type = SSC_F_READY, .call_id = f->call_id, .version = SSC_PROTOCOL_VERSION };
             emit(&d, &ready);
             if (f->version != SSC_PROTOCOL_VERSION) { drop(n); continue; } /* the host fails closed on Ready */
-            if (f->limits[1] > SSC_DRIVER_MAX_STACK_LIMIT) { reply(&d, f->call_id, SSC_ERR_BAD_ARGUMENT, NULL, 0); drop(n); continue; }
+            if (f->limits[1] > SSC_DRIVER_MAX_STACK_LIMIT) { reply(&d, f->call_id, SSC_ERR_BAD_ARGUMENT, SSC_SOURCE_FAILURE_NONE, NULL, 0); drop(n); continue; }
             ssc_limits lim = {
                 .heap_limit_bytes = (size_t)f->limits[0],
                 .stack_limit_bytes = (size_t)f->limits[1],
@@ -396,21 +397,21 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
             };
             invoke_timeout_ms = lim.invoke_timeout_ms;
             rt = ssc_new(&lim, &host);
-            if (!rt) { reply(&d, f->call_id, SSC_ERR_INTERNAL, NULL, 0); drop(n); status = SSC_DRIVER_NOMEM; break; }
+            if (!rt) { reply(&d, f->call_id, SSC_ERR_INTERNAL, SSC_SOURCE_FAILURE_NONE, NULL, 0); drop(n); status = SSC_DRIVER_NOMEM; break; }
             pthread_mutex_lock(&d.lock);
             d.rt = rt;
             pthread_mutex_unlock(&d.lock);
             /* bootstrap + reserved entry points; the script itself is evaluated separately. */
             size_t blen = bootstrap_len + sizeof DRIVER_PRELUDE - 1;
             char *boot = malloc(blen);
-            if (!boot) { reply(&d, f->call_id, SSC_ERR_INTERNAL, NULL, 0); drop(n); status = SSC_DRIVER_NOMEM; break; }
+            if (!boot) { reply(&d, f->call_id, SSC_ERR_INTERNAL, SSC_SOURCE_FAILURE_NONE, NULL, 0); drop(n); status = SSC_DRIVER_NOMEM; break; }
             memcpy(boot, bootstrap, bootstrap_len);
             memcpy(boot + bootstrap_len, DRIVER_PRELUDE, sizeof DRIVER_PRELUDE - 1);
             atomic_store(&d.current_call, f->call_id);
             d.deadline_ms = io->now_ms(io->opaque) + lim.init_timeout_ms;
             ssc_status st = ssc_init(rt, f->call_id, boot, blen, (const char *)f->text.ptr, f->text.len);
             free(boot);
-            reply(&d, f->call_id, st, NULL, 0);
+            reply(&d, f->call_id, st, ssc_last_source_failure(rt), NULL, 0);
         } else if (f->type == SSC_F_INVOKE) {
             if (!rt) { d.violated = true; drop(n); continue; }
             atomic_store(&d.current_call, f->call_id);
@@ -419,7 +420,7 @@ int ssc_driver_run(const ssc_io *io, const char *bootstrap, size_t bootstrap_len
             size_t len = 0;
             ssc_status st = ssc_invoke(rt, f->call_id, (const char *)f->text.ptr, f->text.len,
                                        (const char *)f->text2.ptr, f->text2.len, &json, &len);
-            reply(&d, f->call_id, st, json, len);
+            reply(&d, f->call_id, st, ssc_last_source_failure(rt), json, len);
             free(json);
             /* Results for this invocation's ops that arrive later are stale. */
             while (d.stash_head) { node *s = d.stash_head; d.stash_head = s->next; drop(s); }

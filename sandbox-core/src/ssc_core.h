@@ -55,6 +55,21 @@ typedef enum {
 
 const char *ssc_status_name(ssc_status status);
 
+/*
+ * Host-owned source-failure markers (SourceFailureMarker.kt): a script that throws (or rejects
+ * with) an Error whose own `message` is exactly one of these names fails with SSC_ERR_SCRIPT and
+ * this marker (a thrown string that is exactly the name counts too), so the host can show fixed
+ * guidance. No other script text ever leaves the sandbox.
+ */
+typedef enum {
+    SSC_SOURCE_FAILURE_NONE = 0,
+    SSC_SOURCE_FAILURE_HTTP_CHALLENGE = 1,
+    SSC_SOURCE_FAILURE_HTTP_BLOCKED = 2,
+    SSC_SOURCE_FAILURE_HTTP_FORBIDDEN = 3,
+    SSC_SOURCE_FAILURE_HTTP_UNAVAILABLE = 4,
+    SSC_SOURCE_FAILURE_QUOTA_EXCEEDED = 5,
+} ssc_source_failure;
+
 typedef struct {
     void *opaque;
     /* Monotonic milliseconds. The sandbox has no other clock source of its own. */
@@ -121,6 +136,9 @@ int ssc_deliver_async(ssc_runtime *rt, uint32_t op_id, int ok, const char *paylo
  * not started yet. A cancel for any other generation has no effect.
  */
 void ssc_cancel(ssc_runtime *rt, uint64_t gen);
+
+/* The marker of the last init/invoke when it ended with SSC_ERR_SCRIPT, else NONE. */
+ssc_source_failure ssc_last_source_failure(const ssc_runtime *rt);
 
 /* Tests only: raises the DOM handle/input/memory budgets for parity runs over large pages. */
 void ssc_set_dom_test_limits(ssc_runtime *rt, uint32_t max_handles, uint32_t max_input_bytes, size_t max_memory_bytes);

@@ -342,18 +342,12 @@ var source = {
             var chapters = [];
             var seenUrls = {};
             var groupKeys = Object.keys(groups);
-            // The groups load concurrently; their chapters are merged in group order as before.
-            var self = this;
-            var groupResults = await Promise.all(groupKeys.map(function(groupKey) {
-                var group = groups[groupKey] || {};
-                return self._getAllApiChapters(pathWord, group.path_word ? String(group.path_word) : groupKey);
-            }));
             for (var i = 0; i < groupKeys.length; i++) {
                 var groupKey = groupKeys[i];
                 var group = groups[groupKey] || {};
                 var groupPath = group.path_word ? String(group.path_word) : groupKey;
                 var scanlator = group.name ? String(group.name) : groupPath;
-                var groupChapters = groupResults[i];
+                var groupChapters = await this._getAllApiChapters(pathWord, groupPath);
                 if (groupChapters === null) return null;
                 for (var j = 0; j < groupChapters.length; j++) {
                     var item = groupChapters[j];

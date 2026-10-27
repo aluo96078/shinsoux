@@ -1,0 +1,513 @@
+{
+ "package": "zh.mangacopy",
+ "scenarios": [
+  {
+   "name": "two-chapter-groups",
+   "complete": true,
+   "routes": [
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comics?ordering=-popular&offset=50&limit=50",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "path_word": "synthetic-comic",
+         "name": "合成作品 0",
+         "cover": "/covers/0.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 0
+        },
+        {
+         "path_word": "synthetic-comic-1",
+         "name": "合成作品 1",
+         "cover": "/covers/1.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 1
+        }
+       ],
+       "total": 120,
+       "offset": 50,
+       "limit": 50
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "comic": {
+        "name": "合成作品 0",
+        "cover": "https://cdn.mangacopy.test/c.webp",
+        "author": [
+         {
+          "name": "甲"
+         }
+        ],
+        "brief": "簡介",
+        "theme": [
+         {
+          "name": "冒險"
+         },
+         {
+          "name": "喜劇"
+         },
+         {
+          "name": "冒險"
+         }
+        ],
+        "status": {
+         "value": 1,
+         "display": "已完結"
+        }
+       },
+       "groups": {
+        "default": {
+         "path_word": "default",
+         "name": "默認"
+        },
+        "tankobon": {
+         "path_word": "tankobon",
+         "name": "單行本"
+        }
+       }
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/group/default/chapters?limit=500&offset=0",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "uuid": "default-1",
+         "name": "第1話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 10,
+         "index": 1,
+         "datetime_created": "2025-11-02"
+        },
+        {
+         "uuid": "default-2",
+         "name": "第2話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 20,
+         "index": 2,
+         "datetime_created": "2025-11-03"
+        },
+        {
+         "uuid": "default-3",
+         "name": "第3話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 30,
+         "index": 3,
+         "datetime_created": "2025-11-04"
+        }
+       ],
+       "total": 3,
+       "offset": 0,
+       "limit": 500
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/group/tankobon/chapters?limit=500&offset=0",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "uuid": "tankobon-1",
+         "name": "第1話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 10,
+         "index": 1,
+         "datetime_created": "2025-11-02"
+        },
+        {
+         "uuid": "tankobon-2",
+         "name": "第2話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 20,
+         "index": 2,
+         "datetime_created": "2025-11-03"
+        }
+       ],
+       "total": 2,
+       "offset": 0,
+       "limit": 500
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/chapter/tankobon-1",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "chapter": {
+        "contents": [
+         {
+          "url": "https://hi.mangacopy.test/1.webp"
+         },
+         {
+          "url": "/rel/2.webp"
+         },
+         {
+          "imageUrl": "https://hi.mangacopy.test/3.webp"
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "first-group-fails",
+   "complete": false,
+   "routes": [
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comics?ordering=-popular&offset=50&limit=50",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "path_word": "synthetic-comic",
+         "name": "合成作品 0",
+         "cover": "/covers/0.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 0
+        },
+        {
+         "path_word": "synthetic-comic-1",
+         "name": "合成作品 1",
+         "cover": "/covers/1.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 1
+        }
+       ],
+       "total": 120,
+       "offset": 50,
+       "limit": 50
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "comic": {
+        "name": "合成作品 0",
+        "cover": "https://cdn.mangacopy.test/c.webp",
+        "author": [
+         {
+          "name": "甲"
+         }
+        ],
+        "brief": "簡介",
+        "theme": [
+         {
+          "name": "冒險"
+         },
+         {
+          "name": "喜劇"
+         },
+         {
+          "name": "冒險"
+         }
+        ],
+        "status": {
+         "value": 1,
+         "display": "已完結"
+        }
+       },
+       "groups": {
+        "default": {
+         "path_word": "default",
+         "name": "默認"
+        },
+        "tankobon": {
+         "path_word": "tankobon",
+         "name": "單行本"
+        }
+       }
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/group/tankobon/chapters?limit=500&offset=0",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "uuid": "tankobon-1",
+         "name": "第1話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 10,
+         "index": 1,
+         "datetime_created": "2025-11-02"
+        },
+        {
+         "uuid": "tankobon-2",
+         "name": "第2話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 20,
+         "index": 2,
+         "datetime_created": "2025-11-03"
+        }
+       ],
+       "total": 2,
+       "offset": 0,
+       "limit": 500
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/chapter/tankobon-1",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "chapter": {
+        "contents": [
+         {
+          "url": "https://hi.mangacopy.test/1.webp"
+         },
+         {
+          "url": "/rel/2.webp"
+         },
+         {
+          "imageUrl": "https://hi.mangacopy.test/3.webp"
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "api-code-error-on-pages-falls-back-to-web",
+   "complete": true,
+   "routes": [
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comics?ordering=-popular&offset=50&limit=50",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "path_word": "synthetic-comic",
+         "name": "合成作品 0",
+         "cover": "/covers/0.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 0
+        },
+        {
+         "path_word": "synthetic-comic-1",
+         "name": "合成作品 1",
+         "cover": "/covers/1.webp",
+         "author": [
+          {
+           "name": "甲"
+          },
+          {
+           "name": "乙"
+          }
+         ],
+         "status": 1
+        }
+       ],
+       "total": 120,
+       "offset": 50,
+       "limit": 50
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "comic": {
+        "name": "合成作品 0",
+        "cover": "https://cdn.mangacopy.test/c.webp",
+        "author": [
+         {
+          "name": "甲"
+         }
+        ],
+        "brief": "簡介",
+        "theme": [
+         {
+          "name": "冒險"
+         },
+         {
+          "name": "喜劇"
+         },
+         {
+          "name": "冒險"
+         }
+        ],
+        "status": {
+         "value": 1,
+         "display": "已完結"
+        }
+       },
+       "groups": {
+        "default": {
+         "path_word": "default",
+         "name": "默認"
+        },
+        "tankobon": {
+         "path_word": "tankobon",
+         "name": "單行本"
+        }
+       }
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/group/default/chapters?limit=500&offset=0",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "uuid": "default-1",
+         "name": "第1話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 10,
+         "index": 1,
+         "datetime_created": "2025-11-02"
+        },
+        {
+         "uuid": "default-2",
+         "name": "第2話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 20,
+         "index": 2,
+         "datetime_created": "2025-11-03"
+        },
+        {
+         "uuid": "default-3",
+         "name": "第3話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 30,
+         "index": 3,
+         "datetime_created": "2025-11-04"
+        }
+       ],
+       "total": 3,
+       "offset": 0,
+       "limit": 500
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/group/tankobon/chapters?limit=500&offset=0",
+     "status": 200,
+     "json": {
+      "code": 200,
+      "results": {
+       "list": [
+        {
+         "uuid": "tankobon-1",
+         "name": "第1話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 10,
+         "index": 1,
+         "datetime_created": "2025-11-02"
+        },
+        {
+         "uuid": "tankobon-2",
+         "name": "第2話",
+         "comic_path_word": "synthetic-comic",
+         "ordered": 20,
+         "index": 2,
+         "datetime_created": "2025-11-03"
+        }
+       ],
+       "total": 2,
+       "offset": 0,
+       "limit": 500
+      }
+     }
+    },
+    {
+     "method": "GET",
+     "url": "https://api.manga2026.xyz/api/v3/comic/synthetic-comic/chapter/tankobon-1",
+     "status": 200,
+     "json": {
+      "code": 210,
+      "message": "no"
+     }
+    }
+   ]
+  }
+ ]
+}

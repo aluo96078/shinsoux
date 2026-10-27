@@ -24,6 +24,8 @@ add_library(quickjs STATIC
 target_include_directories(quickjs PUBLIC ${QJS_DIR})
 target_compile_definitions(quickjs PRIVATE _GNU_SOURCE)
 target_compile_options(quickjs PRIVATE -w)
+# libm after quickjs on the link line (GNU ld resolves static archives in order).
+target_link_libraries(quickjs PUBLIC m)
 
 # lexbor: only the modules the DOM uses (no style/url/unicode/utils/engine).
 set(LXB ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lexbor/source)
@@ -60,7 +62,7 @@ target_link_libraries(ssc_driver PUBLIC ssc_core ssc_frames Threads::Threads)
 target_compile_options(ssc_driver PRIVATE -Wall -Wextra)
 
 add_executable(shinsou-sandbox src/ssc_main.c)
-target_link_libraries(shinsou-sandbox ssc_driver m)
+target_link_libraries(shinsou-sandbox ssc_driver)
 
 enable_testing()
 add_executable(frames_test test/frames_test.c)
@@ -73,23 +75,23 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract-bootstrap.py ${BOOTSTRAP_KT})
 add_custom_target(bootstrap_js ALL DEPENDS ${CMAKE_BINARY_DIR}/bootstrap.js)
 add_executable(core_test test/core_test.c)
-target_link_libraries(core_test ssc_core Threads::Threads m)
+target_link_libraries(core_test ssc_core Threads::Threads)
 add_test(NAME core_test COMMAND core_test ${CMAKE_BINARY_DIR}/bootstrap.js)
 
 add_executable(driver_test test/driver_test.c)
-target_link_libraries(driver_test ssc_driver m)
+target_link_libraries(driver_test ssc_driver)
 add_test(NAME driver_test COMMAND driver_test)
 
 add_executable(dom_js_test test/dom_js_test.c)
-target_link_libraries(dom_js_test ssc_core m)
+target_link_libraries(dom_js_test ssc_core)
 add_test(NAME dom_js_test COMMAND dom_js_test ${CMAKE_BINARY_DIR}/bootstrap.js)
 
 # jsoup parity through the script-visible API (needs spikes/sandbox-s0/html/golden fixtures).
 add_executable(golden_js test/golden_js.c)
-target_link_libraries(golden_js ssc_core m)
+target_link_libraries(golden_js ssc_core)
 
 add_executable(dom_fault_test test/dom_fault_test.c)
-target_link_libraries(dom_fault_test ssc_core m)
+target_link_libraries(dom_fault_test ssc_core)
 add_test(NAME dom_fault_test COMMAND dom_fault_test)
 
 # ADR-0002 §13 / S1: long-running fuzz (see .github/workflows/sandbox-fuzz.yml).
@@ -97,8 +99,12 @@ if(SSC_FUZZ)
     add_executable(frames_fuzz fuzz/frames_fuzz.c)
     target_link_libraries(frames_fuzz ssc_frames)
     target_link_options(frames_fuzz PRIVATE -fsanitize=fuzzer)
+    add_executable(chunks_fuzz fuzz/frames_fuzz.c)
+    target_compile_definitions(chunks_fuzz PRIVATE SSC_FUZZ_CHUNKS)
+    target_link_libraries(chunks_fuzz ssc_frames)
+    target_link_options(chunks_fuzz PRIVATE -fsanitize=fuzzer)
     add_executable(dom_fuzz fuzz/dom_fuzz.c)
-    target_link_libraries(dom_fuzz ssc_core m)
+    target_link_libraries(dom_fuzz ssc_core)
     target_link_options(dom_fuzz PRIVATE -fsanitize=fuzzer)
     add_executable(frames_seeds fuzz/frames_seeds.c)
     target_link_libraries(frames_seeds ssc_frames)

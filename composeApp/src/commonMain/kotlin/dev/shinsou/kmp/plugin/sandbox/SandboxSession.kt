@@ -44,8 +44,10 @@ internal interface SandboxTransport {
 }
 
 /** A sandbox-side failure surfaced to the caller with a stable code only. */
-internal class SandboxInvocationException(val code: SandboxErrorCode) :
-    IllegalStateException("Sandboxed plugin failed: ${code.name}")
+internal class SandboxInvocationException(
+    val code: SandboxErrorCode,
+    val sourceFailure: SandboxSourceFailure? = null,
+) : IllegalStateException(sourceFailure?.marker ?: "Sandboxed plugin failed: ${code.name}")
 
 /** The sandbox broke the protocol, went silent or died; the session is unusable. */
 internal class SandboxBrokenException(reason: String) : IllegalStateException("Sandbox terminated: $reason")
@@ -325,7 +327,7 @@ internal class SandboxSession(
                         }
                     }
                     is SandboxFrame.Result -> { requireOwn(f.callId); return f.valueJson }
-                    is SandboxFrame.Failure -> { requireOwn(f.callId); throw SandboxInvocationException(f.code) }
+                    is SandboxFrame.Failure -> { requireOwn(f.callId); throw SandboxInvocationException(f.code, f.sourceFailure) }
                     is SandboxFrame.LimitExceeded -> requireOwn(f.callId)
                     is SandboxFrame.Log -> { countLog(); onLog(f.bytes) }
                     is SandboxFrame.Ready -> violation("unexpected Ready")

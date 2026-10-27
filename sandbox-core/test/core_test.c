@@ -528,6 +528,45 @@ int main(int argc, char **argv) {
         st = ssc_invoke(rt, next_gen++, "notAHook", 8, "[]", 2, &out, &len);
         CHECK(st == SSC_ERR_NO_SUCH_HOOK, "global non-reserved -> %s", ssc_status_name(st));
         ssc_free(rt);
+
+        /* Source-failure markers: only an exact marker name, thrown or rejected, never via a getter. */
+        static const char marker_script[] =
+            "var source={"
+            " quota:function(){throw new Error('SHINSOU_SOURCE_QUOTA_EXCEEDED');},"
+            " challenge:async function(){await null;throw new Error('SHINSOU_SOURCE_HTTP_CHALLENGE');},"
+            " str:function(){throw 'SHINSOU_SOURCE_HTTP_BLOCKED';},"
+            " suffix:function(){throw new Error('SHINSOU_SOURCE_QUOTA_EXCEEDED: details');},"
+            " other:function(){throw new Error('SHINSOU_SOURCE_SOMETHING_ELSE');},"
+            " getter:function(){var e=new Error('x');Object.defineProperty(e,'message',{get:function(){globalThis.ran=1;return 'SHINSOU_SOURCE_HTTP_FORBIDDEN';}});throw e;},"
+            " inherited:function(){var e=Object.create(new Error('SHINSOU_SOURCE_HTTP_FORBIDDEN'));throw e;},"
+            " ran:function(){return !!globalThis.ran;},"
+            " caught:function(){try{throw new Error('SHINSOU_SOURCE_QUOTA_EXCEEDED');}catch(e){} throw new Error('plain');},"
+            " ok:function(){return 1;}};";
+        static const struct { const char *method; ssc_status st; ssc_source_failure marker; } cases[] = {
+            { "quota", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_QUOTA_EXCEEDED },
+            { "ok", SSC_OK, SSC_SOURCE_FAILURE_NONE }, /* reset by the next invocation */
+            { "challenge", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_HTTP_CHALLENGE },
+            { "str", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_HTTP_BLOCKED },
+            { "suffix", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "other", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "getter", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "inherited", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+            { "caught", SSC_ERR_SCRIPT, SSC_SOURCE_FAILURE_NONE },
+        };
+        rt = make(&h, l, marker_script, async_wait);
+        for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            out = NULL;
+            st = run(rt, cases[i].method, &out);
+            ssc_source_failure m = ssc_last_source_failure(rt);
+            CHECK(st == cases[i].st && m == cases[i].marker, "marker %s -> %s marker %d", cases[i].method, ssc_status_name(st), (int)m);
+            free(out);
+        }
+        out = NULL;
+        st = run(rt, "ran", &out);
+        CHECK(st == SSC_OK && out && strcmp(out, "false") == 0, "the message getter must not run: %s", out ? out : "");
+        free(out);
+        printf("  source-failure markers         -> %zu cases\n", sizeof cases / sizeof cases[0]);
+        ssc_free(rt);
     }
 
     printf(failures ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", failures);

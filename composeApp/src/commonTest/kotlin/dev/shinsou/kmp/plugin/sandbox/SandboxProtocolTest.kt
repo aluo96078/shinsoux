@@ -62,7 +62,8 @@ class SandboxProtocolTest {
             SandboxFrame.Ready(1, 1) to "83100101",
             SandboxFrame.BridgeResult(1, BridgeOutcome.Value(null)) to "840401f5f6",
             SandboxFrame.BridgeResult(1, BridgeOutcome.Error(SandboxErrorCode.PERMISSION_DENIED)) to "840401f41821",
-            SandboxFrame.Failure(1234, SandboxErrorCode.LIMIT_TIME) to "83141904d204",
+            SandboxFrame.Failure(1234, SandboxErrorCode.LIMIT_TIME) to "84141904d20400",
+            SandboxFrame.Failure(1234, SandboxErrorCode.SCRIPT_ERROR, SandboxSourceFailure.QUOTA_EXCEEDED) to "84141904d20105",
             SandboxFrame.BridgeCall(1, 2, "a", "{}") to "85110102616162 7b7d".hexClean(),
         )
         for ((frame, hex) in vectors) assertEquals(hex, SandboxFrameCodec.encodeBody(frame).hex(), "$frame")
@@ -112,8 +113,8 @@ class SandboxProtocolTest {
             "80" to "empty array",
             "8163" to "type is not an integer",
             "8118ff" to "unknown frame type",
-            "8314010101" to "trailing bytes",
-            "831401" to "truncated",
+            "841401010001" to "trailing bytes",
+            "84140101" to "truncated",
             "83130163" to "text length beyond the body",
             "821301" to "wrong arity for RESULT",
             "83130163ff5b5d" to "invalid UTF-8",
@@ -122,9 +123,9 @@ class SandboxProtocolTest {
             "831320605b5d" to "negative integer",
             "8313a0" to "map",
             "83131901" to "truncated 2-byte integer",
-            "8314011b8000000000000000" to "integer above 2^63-1",
-            "831401f97c00" to "float",
-            "831401c001" to "tag",
+            "8414011b800000000000000000" to "integer above 2^63-1",
+            "841401f97c0000" to "float",
+            "841401c00100" to "tag",
             "9b000000000000000213" to "array count far beyond the body",
             "83167f" to "indefinite text",
             // Same UTF-8 the C codec rejects (sandbox-core/test/frames_test.c): overlong, surrogate, above U+10FFFF.
@@ -133,7 +134,10 @@ class SandboxProtocolTest {
             "83130164f4908080" to "above U+10FFFF",
         )
         for ((hex, why) in bad) assertRejected(hex.unhex(), SandboxPeer.HOST, why)
-        assertRejected("8314011863".unhex(), SandboxPeer.HOST, "error code 99 is unknown")
+        assertRejected("841401186300".unhex(), SandboxPeer.HOST, "error code 99 is unknown")
+        assertRejected("83141904d204".unhex(), SandboxPeer.HOST, "FAILURE without the marker field")
+        assertRejected("84141904d20405".unhex(), SandboxPeer.HOST, "a marker on a non-script failure")
+        assertRejected("84141904d20106".unhex(), SandboxPeer.HOST, "marker 6 is unknown")
         assertRejected("831601ff".unhex(), SandboxPeer.HOST, "unknown limit kind")
         assertRejected("830001410a".unhex(), SandboxPeer.HOST, "chunk decoded as a frame")
     }

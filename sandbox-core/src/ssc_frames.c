@@ -88,7 +88,7 @@ int ssc_encode_body(const ssc_frame *f, ssc_buf *b) {
         w_arr(b, 5); w_uint(b, f->type); w_uint(b, f->call_id); w_uint(b, f->id); w_text(b, f->text); w_text(b, f->text2);
         break;
     case SSC_F_RESULT: w_arr(b, 3); w_uint(b, f->type); w_uint(b, f->call_id); w_text(b, f->text); break;
-    case SSC_F_FAILURE: w_arr(b, 3); w_uint(b, f->type); w_uint(b, f->call_id); w_uint(b, f->code); break;
+    case SSC_F_FAILURE: w_arr(b, 4); w_uint(b, f->type); w_uint(b, f->call_id); w_uint(b, f->code); w_uint(b, f->marker); break;
     case SSC_F_LOG: w_arr(b, 2); w_uint(b, f->type); w_bytes(b, f->text); break;
     case SSC_F_LIMIT_EXCEEDED: w_arr(b, 3); w_uint(b, f->type); w_uint(b, f->call_id); w_uint(b, f->code); break;
     default: return SSC_FR_MALFORMED;
@@ -289,11 +289,15 @@ int ssc_frame_decode(const uint8_t *body, size_t len, ssc_peer reader, const ssc
         break;
     case SSC_F_RESULT: ARITY(3); out->call_id = r_uint(&r, INT64_MAX); out->text = r_str(&r, MAJOR_TEXT, lim->max_json_bytes); break;
     case SSC_F_FAILURE: {
-        ARITY(3);
+        ARITY(4);
         out->call_id = r_uint(&r, INT64_MAX);
         uint64_t c = r_uint(&r, 0xffff);
         if (!r.bad && !known_error(c)) goto bad;
         out->code = (uint32_t)c;
+        uint64_t m = r_uint(&r, SSC_SOURCE_FAILURE_MAX);
+        /* Only a script's own throw can carry a marker. */
+        if (!r.bad && m != 0 && c != 1) goto bad;
+        out->marker = (uint32_t)m;
         break;
     }
     case SSC_F_LOG: ARITY(2); out->text = r_str(&r, MAJOR_BYTES, lim->max_log_bytes); break;

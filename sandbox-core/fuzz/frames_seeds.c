@@ -1,4 +1,7 @@
-/* Writes the seed corpus for frames_fuzz: one file per frame type, as a body and as envelopes. */
+/*
+ * Writes the seed corpus for frames_fuzz in its input format (see frames_fuzz.c): every frame type
+ * as a body and as a stream, plus chunk-mode seeds. Each seed is checked to decode first.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,15 +10,18 @@
 
 #define S(x) ((ssc_slice){ (const uint8_t *)(x), sizeof(x) - 1 })
 
-static void put(const char *dir, int n, uint8_t mode, const ssc_buf *b) {
+static void put(const char *dir, const char *name, const uint8_t *head, size_t head_len, const uint8_t *data, size_t len) {
     char path[1024];
-    snprintf(path, sizeof path, "%s/seed-%02d-%u", dir, n, mode);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); exit(1); }
-    fputc(mode, f);
-    fwrite(b->buf, 1, b->len, f);
+    fwrite(head, 1, head_len, f);
+    fwrite(data, 1, len, f);
     fclose(f);
 }
+
+static int frames_seen;
+static void count(void *opaque, ssc_frame *frame) { (void)opaque; frames_seen++; ssc_frame_free(frame); }
 
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: frames_seeds DIR\n"); return 2; }
@@ -37,7 +43,7 @@ int main(int argc, char **argv) {
     };
     int n = (int)(sizeof frames / sizeof frames[0]);
     for (int i = 0; i < n; i++) {
-        uint8_t peer = frames[i].type < 16 ? 0 : 1; /* bit 0: 1 = host reads (sandbox→host frames) */
+        uint8_t peer = frames[i].type < 16 ? 0 : 4; /* bit 2: the host reads sandbox→host frames */
         ssc_buf body = {0}, env = {0};
         if (ssc_encode_body(&frames[i], &body) != SSC_FR_OK || ssc_encode_envelopes(&frames[i], &env) != SSC_FR_OK) {
             fprintf(stderr, "encode failed for seed %d\n", i);
@@ -51,10 +57,31 @@ int main(int argc, char **argv) {
             return 1;
         }
         ssc_frame_free(&check);
-        put(argv[1], i, peer, &body);
-        put(argv[1], i, (uint8_t)(peer | 2), &env);
+        ssc_reader *r = ssc_reader_new(peer ? SSC_PEER_HOST : SSC_PEER_SANDBOX, 64u << 10, &l);
+        frames_seen = 0;
+        if (ssc_reader_feed(r, env.buf, env.len, count, NULL) != SSC_FR_OK || frames_seen != 1 || !ssc_reader_idle(r)) {
+            fprintf(stderr, "stream seed %d does not decode\n", i);
+            return 1;
+        }
+        ssc_reader_free(r);
+        char name[64];
+        uint8_t body_head[1] = { peer };
+        uint8_t stream_head[2] = { (uint8_t)(peer | 1), (uint8_t)(17 * i + 3) };
+        snprintf(name, sizeof name, "body-%02d", i);
+        put(argv[1], name, body_head, 1, body.buf, body.len);
+        snprintf(name, sizeof name, "stream-%02d", i);
+        put(argv[1], name, stream_head, 2, env.buf, env.len);
         ssc_buf_free(&body);
         ssc_buf_free(&env);
+    }
+    /* chunks_fuzz: 0..3 full-size chunks for both peers, no mutations (frames_fuzz reads them as bodies). */
+    for (int k = 0; k < 4; k++) {
+        for (int peer = 0; peer < 2; peer++) {
+            uint8_t head[4] = { (uint8_t)(2 | (peer ? 4 : 0)), (uint8_t)(k * 31 + 1), 0, (uint8_t)k };
+            char name[64];
+            snprintf(name, sizeof name, "chunks-%d-%d", k, peer);
+            put(argv[1], name, head, 4, (const uint8_t *)"{\"mangas\":[]}", 13);
+        }
     }
     return 0;
 }

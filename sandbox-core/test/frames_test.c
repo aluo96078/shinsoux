@@ -64,7 +64,8 @@ static void test_golden(void) {
     golden("ready", &(ssc_frame){ .type = SSC_F_READY, .call_id = 1, .version = 1 }, "83100101");
     golden("bridge result null", &(ssc_frame){ .type = SSC_F_BRIDGE_RESULT, .id = 1, .ok = 1, .has_value = 0 }, "840401f5f6");
     golden("bridge result error", &(ssc_frame){ .type = SSC_F_BRIDGE_RESULT, .id = 1, .ok = 0, .code = 33 }, "840401f41821");
-    golden("failure", &(ssc_frame){ .type = SSC_F_FAILURE, .call_id = 1234, .code = 4 }, "83141904d204");
+    golden("failure", &(ssc_frame){ .type = SSC_F_FAILURE, .call_id = 1234, .code = 4 }, "84141904d20400");
+    golden("failure with source marker", &(ssc_frame){ .type = SSC_F_FAILURE, .call_id = 1234, .code = 1, .marker = 5 }, "84141904d20105");
     golden("bridge call", &(ssc_frame){ .type = SSC_F_BRIDGE_CALL, .call_id = 1, .id = 2, .text = S("a"), .text2 = S("{}") }, "851101026161627b7d");
 
     ssc_buf env = {0};
@@ -103,10 +104,12 @@ static void test_round_trip(void) {
 
 static void test_malformed(void) {
     const char *bad[] = {
-        "", "80", "8163", "8118ff", "8314010101", "831401", "83130163", "821301", "83130163ff5b5d",
-        "8313180163", "9f1301", "831320605b5d", "8313a0", "83131901", "8314011b8000000000000000",
-        "831401f97c00", "831401c001", "9b000000000000000213", "83167f", "8314011863", "831601ff",
+        "", "80", "8163", "8118ff", "841401010001", "84140101", "83130163", "821301", "83130163ff5b5d",
+        "8313180163", "9f1301", "831320605b5d", "8313a0", "83131901", "8414011b800000000000000000",
+        "841401f97c0000", "841401c00100", "9b000000000000000213", "83167f", "841401186300", "831601ff",
         "830001410a",
+        /* FAILURE: the v1 three-field form, a marker without SCRIPT_ERROR, an unknown marker */
+        "83141904d204", "84141904d20405", "84141904d20106",
         /* UTF-8 the host also rejects: overlong, surrogate, above U+10FFFF */
         "83130162c0af", "83130163eda080", "83130164f4908080",
     };

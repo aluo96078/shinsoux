@@ -21,6 +21,7 @@ import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntime
 import dev.shinsou.kmp.plugin.SourceIndexEntry
 import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import dev.shinsou.kmp.plugin.sandbox.FakeSandbox.HookOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -37,6 +38,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SandboxRuntimeTest {
@@ -240,6 +242,20 @@ class SandboxRuntimeTest {
         // A failed hook does not poison the session.
         assertEquals(listOf<dev.shinsou.kmp.plugin.Filter>(dev.shinsou.kmp.plugin.Filter.Header("H")), s.runtime.getFilterList())
         assertFalse(s.sandbox.closed)
+    }
+
+    @Test
+    fun sourceFailureMarkersReachTheAppsGuidance() = runTest {
+        val s = start(hooks = mapOf(
+            "getPopularManga" to { HookOutcome.Fail(SandboxErrorCode.SCRIPT_ERROR, SandboxSourceFailure.HTTP_CHALLENGE) },
+            "getLatestUpdates" to { HookOutcome.Fail(SandboxErrorCode.SCRIPT_ERROR) },
+        ))
+        // The same recognition the browse screen and downloads use for Rhino errors.
+        val marked = assertFailsWith<SandboxInvocationException> { s.runtime.getPopularManga(1) }
+        assertEquals("SHINSOU_SOURCE_HTTP_CHALLENGE", marked.sourceFailureMarker())
+        assertNull(assertFailsWith<SandboxInvocationException> { s.runtime.getLatestUpdates(1) }.sourceFailureMarker())
+        // Every protocol marker is one the app recognises.
+        for (marker in SandboxSourceFailure.entries) assertEquals(marker.marker, sourceFailureMarker(marker.marker))
     }
 
     @Test

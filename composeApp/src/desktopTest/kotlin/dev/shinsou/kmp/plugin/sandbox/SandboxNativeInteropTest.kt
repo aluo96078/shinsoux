@@ -17,6 +17,7 @@ import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.SManga
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.SourceIndexEntry
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import java.io.File
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -69,7 +70,9 @@ class SandboxNativeInteropTest {
           getMangaDetails: function (m) { m.description = 'secret:' + JSON.stringify(bridge.getCredentialPassword()); return m; },
           login: function (u, p) { return { loggedIn: bridge.getCredentialPassword() === 'old' && p === 'new' }; },
           getFilterList: function () { return [{ type: 'header', name: 'Hi' }]; },
-          spin: function () { for (;;) {} }
+          spin: function () { for (;;) {} },
+          challenge: async function () { await bridge.net.fetch('https://www.example.test/api/1'); throw new Error('SHINSOU_SOURCE_HTTP_CHALLENGE'); },
+          plain: function () { throw new Error('SHINSOU_SOURCE_HTTP_CHALLENGE (with details)'); }
         };
     """.trimIndent()
 
@@ -132,7 +135,11 @@ class SandboxNativeInteropTest {
                 assertTrue(runtime.login("alice", "new"))
 
                 assertEquals(1, runtime.getFilterList().size)
-                assertTrue(requests.any { it.endsWith("/list?p=1") } && requests.count { "/api/" in it } == 2, "$requests")
+
+                // Host-owned guidance markers cross the boundary as a number, nothing else does.
+                assertEquals("SHINSOU_SOURCE_HTTP_CHALLENGE", assertFailsWith<SandboxInvocationException> { runtime.invokeForTest("challenge") }.sourceFailureMarker())
+                assertEquals(null, assertFailsWith<SandboxInvocationException> { runtime.invokeForTest("plain") }.sourceFailureMarker())
+                assertTrue(requests.any { it.endsWith("/list?p=1") } && requests.count { "/api/" in it } == 3, "$requests")
             }
         } finally {
             runtime.close()

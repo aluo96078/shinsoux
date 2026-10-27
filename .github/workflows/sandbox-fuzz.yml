@@ -1,7 +1,9 @@
 name: Sandbox fuzz
 
 # ADR-0002 §13 / S1 acceptance: 24 h of protocol fuzz without a crash. GitHub-hosted jobs stop at
-# 6 h, so each target runs as parallel shards (default 5 × 290 min ≈ 24 CPU-hours per target).
+# 6 h, so each codec target runs as parallel shards (default 5 × 290 min ≈ 24 CPU-hours per
+# target): frames_fuzz (C codec), the Kotlin codec, and dom_fuzz (lexbor DOM). chunks_fuzz (large
+# chunked frames, slow per input) adds 2 shards.
 # Run it by hand (Actions → Sandbox fuzz) or by pushing a `sandbox-fuzz/**` branch.
 
 on:
@@ -80,12 +82,12 @@ jobs:
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false
 
-      - name: Fail if the native tests were skipped
+      - name: Fail if any native or parity test was skipped
         working-directory: shinsoux/composeApp/build/test-results/desktopTest
         run: |
-          if grep -l "SKIPPED: shinsou-sandbox" TEST-*.xml; then echo "::error::sandbox helper not found"; exit 1; fi
-          if grep -l "SKIPPED: official plugin repository" TEST-*.xml; then echo "::error::plugin repository not found"; exit 1; fi
-          grep -h "parity: \|interop: " TEST-*.xml || true
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -h "parity \|parity: \|interop: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml
 
   fuzz-native:
     name: libFuzzer ${{ matrix.target }} shard ${{ matrix.shard }}
@@ -97,6 +99,9 @@ jobs:
       matrix:
         target: [frames_fuzz, dom_fuzz]
         shard: [1, 2, 3, 4, 5]
+        include:
+          - { target: chunks_fuzz, shard: 1 }
+          - { target: chunks_fuzz, shard: 2 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,7 +112,7 @@ jobs:
         run: |
           ./scripts/fetch-deps.sh
           cmake -S . -B build/fuzz -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSSC_FUZZ=ON
-          cmake --build build/fuzz -j"$(nproc)" --target frames_fuzz dom_fuzz frames_seeds
+          cmake --build build/fuzz -j"$(nproc)" --target ${{ matrix.target }} frames_seeds
 
       - name: Fuzz
         working-directory: sandbox-core/build/fuzz
@@ -115,7 +120,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           mkdir -p corpus seeds crashes
-          if [ "${{ matrix.target }}" = frames_fuzz ]; then
+          if [ "${{ matrix.target }}" != dom_fuzz ]; then
             ./frames_seeds seeds
             extra="-max_len=4096"
           else

@@ -22,6 +22,7 @@ import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.SourceIndexEntry
 import dev.shinsou.kmp.plugin.localIndexEntries
 import dev.shinsou.kmp.plugin.pluginOrigin
+import dev.shinsou.kmp.plugin.sourceFailureMarker
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -29,7 +30,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -41,9 +45,11 @@ import kotlin.test.assertTrue
  *
  * - Every installable official source (from `../shinsou_plugin`, or `-Dshinsou.pluginRepo`):
  *   metadata, filter list, preference definitions and a popular-page call against a stub network.
- * - Recorded fixtures (`SHINSOU_SANDBOX_BENCH=<spikes/sandbox-s0/build/bench/fixtures>`, made by
- *   `spikes/sandbox-s0/bench/record.py`): the S0 hook chain popular → details → chapters → last
- *   chapter's pages, compared result by result.
+ * - The S0 hook chain popular → details → chapters → last chapter's pages, compared result by
+ *   result and request by request, on synthetic scenarios (always) and on the S0 recordings
+ *   (`SHINSOU_SANDBOX_BENCH=<spikes/sandbox-s0/build/bench/fixtures>`, local only).
+ * - The `bridge.net.fetch` rewrites in `sandbox-netfetch/` (S1 acceptance: at least two official
+ *   extensions) on the same inputs: same results, same requests.
  *
  * Needs `shinsou-sandbox` (see [SandboxNativeInteropTest]); each part skips with a printed reason
  * when its inputs are missing.
@@ -78,50 +84,121 @@ class SandboxOfficialParityTest {
         assertTrue(mismatches.isEmpty(), mismatches.joinToString("\n"))
     }
 
+    /**
+     * Synthetic API responses (`sandbox-netfetch/fixtures/<package>.json`, no recorded site content) for
+     * the packages with a `bridge.net.fetch` rewrite, including failure scenarios. Runs wherever the
+     * helper and the plugin repository exist, CI included.
+     */
+    @Test
+    fun syntheticScenariosMatchRhino() = runBlocking {
+        val bin = binary ?: return@runBlocking println("SKIPPED: shinsou-sandbox not built")
+        val repository = locateRepository() ?: return@runBlocking println("SKIPPED: official plugin repository not found")
+        val packages = listOf("zh.komiic", "zh.mangacopy")
+        for (packageId in packages) {
+            val fixture = Json.parseToJsonElement(resource("/sandbox-netfetch/fixtures/$packageId.json")).jsonObject
+            assertEquals(packageId, fixture["package"]!!.jsonPrimitive.content)
+            val scenarios = fixture["scenarios"]!!.jsonArray
+            assertTrue(scenarios.any { it.jsonObject["complete"]!!.jsonPrimitive.boolean }, "$packageId has no complete scenario")
+            for (scenario in scenarios.map { it.jsonObject }) {
+                val routes = Routes(scenario["routes"]!!.jsonArray.map { it.jsonObject })
+                val label = "$packageId/${scenario["name"]!!.jsonPrimitive.content}"
+                compareTiers(bin, repository, packageId, label, routes.origins, routes::respond,
+                    requireVariant = true, expectComplete = scenario["complete"]!!.jsonPrimitive.boolean)
+            }
+        }
+    }
+
+    /** The S0 recordings (`SHINSOU_SANDBOX_BENCH`); local only, the responses are real site content. */
     @Test
     fun recordedFixturesMatchRhino() = runBlocking {
         val bin = binary ?: return@runBlocking println("SKIPPED: shinsou-sandbox not built")
         val fixtures = System.getenv("SHINSOU_SANDBOX_BENCH")?.let(Path::of)
-            ?: return@runBlocking println("SKIPPED: SHINSOU_SANDBOX_BENCH not set")
+            ?: return@runBlocking println("SKIPPED (local only): SHINSOU_SANDBOX_BENCH not set")
         val repository = locateRepository() ?: return@runBlocking println("SKIPPED: official plugin repository not found")
         val dirs = Files.list(fixtures).use { s -> s.filter { Files.isRegularFile(it.resolve("index.json")) }.sorted().toList() }
         assertTrue(dirs.isNotEmpty())
-        var netFetchVariants = 0
         for (dir in dirs) {
             val packageId = dir.fileName.toString()
-            val script = Files.readString(repository.resolve("plugins/$packageId.js"))
             val responses = recordedResponses(dir)
-            val baseUrl = Regex("""baseUrl:\s*"([^"]+)"""").find(script)?.groupValues?.get(1) ?: responses.origins.first()
-            val source = SourceIndexEntry(packageId, "zh", 1L, baseUrl, requestOrigins = responses.origins + pluginOrigin(io.ktor.http.Url(baseUrl)))
-            val manifest = PluginManifest(
-                id = packageId, name = packageId, version = "0", versionCode = 1, lang = "zh",
-                script = "$packageId.js", signature = Sha256.hex(script.encodeToByteArray()), sources = listOf(source),
-            )
-            val rhinoRequests = ArrayList<String>()
-            val rhinoChain = hookChain { RhinoScriptPluginRuntimeFactory.unsafeForTests().createForSource(script, manifest, source, environment(source, responses.logging(rhinoRequests))) }
-            val sandboxChain = hookChain { sandboxFactory(bin).createForSource(script, manifest, source, environment(source, responses::respond)) }
-            println("parity $packageId: ${rhinoChain.summary}")
-            assertEquals(4, rhinoChain.steps.size, "$packageId Rhino chain did not complete: ${rhinoChain.steps}")
-            assertSameChain(rhinoChain, sandboxChain, packageId)
-
-            // The bridge.net.fetch rewrite (S1 acceptance: at least two official extensions) must
-            // produce the same output from the same requests.
-            val variant = javaClass.getResource("/sandbox-netfetch/$packageId.js")?.readText() ?: continue
-            assertTrue(!Regex("""bridge\.http\w+\(""").containsMatchIn(variant), "$packageId variant still uses the synchronous bridge")
-            val variantManifest = manifest.copy(signature = Sha256.hex(variant.encodeToByteArray()))
-            val variantRequests = ArrayList<String>()
-            val variantChain = hookChain { sandboxFactory(bin).createForSource(variant, variantManifest, source, environment(source, responses.logging(variantRequests))) }
-            assertSameChain(rhinoChain, variantChain, "$packageId (net.fetch)")
-            assertEquals(rhinoRequests.sorted(), variantRequests.sorted(), "$packageId (net.fetch) requests")
-            netFetchVariants++
-            println("parity $packageId (net.fetch): ${variantChain.summary}")
+            compareTiers(bin, repository, packageId, packageId, responses.origins, responses::respond,
+                requireVariant = false, expectComplete = true)
         }
-        assertTrue(netFetchVariants >= 2, "only $netFetchVariants net.fetch variants had fixtures")
+    }
+
+    /**
+     * Rhino (synchronous original) vs the sandbox (same script) vs the sandbox running the
+     * `bridge.net.fetch` rewrite: same hook results and the same requests, in the same order for
+     * the synchronous tiers.
+     */
+    private suspend fun compareTiers(
+        bin: File,
+        repository: Path,
+        packageId: String,
+        label: String,
+        responseOrigins: Set<String>,
+        respond: (PluginHttpRequest) -> PluginHttpResponse,
+        requireVariant: Boolean,
+        expectComplete: Boolean,
+    ) {
+        val script = Files.readString(repository.resolve("plugins/$packageId.js"))
+        val baseUrl = Regex("""baseUrl:\s*"([^"]+)"""").find(script)!!.groupValues[1]
+        // Every origin the script may try (mirrors included), so policy denials cannot mask differences.
+        val scriptOrigins = Regex("""https://[A-Za-z0-9.-]+""").findAll(script).map { it.value }.toSet()
+        val source = SourceIndexEntry(packageId, "zh", 1L, baseUrl, requestOrigins = responseOrigins + scriptOrigins + pluginOrigin(io.ktor.http.Url(baseUrl)))
+        val manifest = PluginManifest(
+            id = packageId, name = packageId, version = "0", versionCode = 1, lang = "zh",
+            script = "$packageId.js", signature = Sha256.hex(script.encodeToByteArray()), sources = listOf(source),
+        )
+        val rhinoRequests = ArrayList<String>()
+        val rhino = hookChain { RhinoScriptPluginRuntimeFactory.unsafeForTests().createForSource(script, manifest, source, environment(source, logging(respond, rhinoRequests))) }
+        val sandboxRequests = ArrayList<String>()
+        val sandbox = hookChain { sandboxFactory(bin).createForSource(script, manifest, source, environment(source, logging(respond, sandboxRequests))) }
+        println("parity $label: ${rhino.summary}")
+        assertEquals(expectComplete, rhino.completed, "$label Rhino chain: ${rhino.steps.last()}")
+        assertSameChain(rhino, sandbox, label)
+        assertEquals(rhinoRequests, sandboxRequests, "$label requests")
+
+        val variant = javaClass.getResource("/sandbox-netfetch/$packageId.js")?.readText()
+        if (variant == null) {
+            assertTrue(!requireVariant, "$packageId has no net.fetch variant")
+            return
+        }
+        assertTrue(!Regex("""bridge\.http\w+\(""").containsMatchIn(variant), "$packageId variant still uses the synchronous bridge")
+        val variantRequests = ArrayList<String>()
+        val variantManifest = manifest.copy(signature = Sha256.hex(variant.encodeToByteArray()))
+        val fetched = hookChain { sandboxFactory(bin).createForSource(variant, variantManifest, source, environment(source, logging(respond, variantRequests))) }
+        println("parity $label (net.fetch): ${fetched.summary}")
+        assertSameChain(rhino, fetched, "$label (net.fetch)")
+        assertEquals(rhinoRequests, variantRequests, "$label (net.fetch) requests")
     }
 
     private fun assertSameChain(expected: Chain, actual: Chain, label: String) {
+        assertEquals(expected.completed, actual.completed, "$label completion: ${actual.steps.lastOrNull()}")
         expected.steps.zip(actual.steps).forEach { (r, s) -> assertEquals(normalizeNow(r), normalizeNow(s), label) }
         assertEquals(expected.steps.size, actual.steps.size, label)
+    }
+
+    private fun logging(respond: (PluginHttpRequest) -> PluginHttpResponse, into: MutableList<String>): (PluginHttpRequest) -> PluginHttpResponse = { request ->
+        synchronized(into) { into += key(request.method == "POST", request.url, request.body.decodeToString()) }
+        respond(request)
+    }
+
+    private fun resource(path: String): String = requireNotNull(javaClass.getResource(path)) { "missing test resource $path" }.readText()
+
+    /** Synthetic routes: first match by method, exact URL and optional body substring; else 599. */
+    private class Routes(private val routes: List<JsonObject>) {
+        val origins: Set<String> = routes.map { pluginOrigin(io.ktor.http.Url(it["url"]!!.jsonPrimitive.content)) }.toSet()
+
+        fun respond(request: PluginHttpRequest): PluginHttpResponse {
+            val body = request.body.decodeToString()
+            val route = routes.firstOrNull { route ->
+                route["method"]!!.jsonPrimitive.content == request.method &&
+                    route["url"]!!.jsonPrimitive.content == request.url &&
+                    route["bodyContains"]?.jsonPrimitive?.content?.let(body::contains) != false
+            } ?: return PluginHttpResponse(599, ByteArray(0), emptyMap())
+            val payload = route["json"]?.toString() ?: route["text"]!!.jsonPrimitive.content
+            return PluginHttpResponse(route["status"]!!.jsonPrimitive.int, payload.encodeToByteArray(), emptyMap())
+        }
     }
 
     private fun sandboxFactory(bin: File) = SandboxRuntimeFactory(transports = { SandboxProcessTransport(listOf(bin.path)) })
@@ -166,7 +243,8 @@ class SandboxOfficialParityTest {
         }
     }
 
-    private class Chain(val steps: List<String>, val summary: String)
+    /** Hook results in order; [completed] only when all four hooks returned. */
+    private class Chain(val steps: List<String>, val completed: Boolean, val summary: String)
 
     private suspend fun hookChain(create: suspend () -> ScriptPluginRuntime): Chain {
         val runtime = create()
@@ -177,12 +255,12 @@ class SandboxOfficialParityTest {
                 val details = runtime.getMangaDetails(popular.mangas.first()).also { steps += it.toString() }
                 val chapters = runtime.getChapterList(details).also { steps += it.toString() }
                 val pages = runtime.getPageList(chapters.last()).also { steps += it.toString() }
-                Chain(steps, "popular=${popular.mangas.size} chapters=${chapters.size} pages=${pages.size}")
+                Chain(steps, true, "popular=${popular.mangas.size} chapters=${chapters.size} pages=${pages.size}")
             }
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.TimeoutCancellationException) throw e
             steps += "failed: ${outcome(e)}"
-            return Chain(steps, steps.last())
+            return Chain(steps, false, "stopped after ${steps.size - 1} hooks: ${steps.last()}")
         } finally {
             runtime.close()
         }
@@ -190,11 +268,12 @@ class SandboxOfficialParityTest {
 
     /**
      * Failure category only: the engines word script errors differently (Rhino's
-     * JavaScriptException/EcmaError vs the sandbox's SCRIPT_ERROR code), but the category must match.
+     * JavaScriptException/EcmaError vs the sandbox's SCRIPT_ERROR code), but the category and any
+     * host-owned source-failure marker (the app's guidance, SourceFailureMarker.kt) must match.
      */
     private fun outcome(e: Throwable): String = when {
-        e is SandboxInvocationException && e.code == SandboxErrorCode.SCRIPT_ERROR -> "error(script)"
-        e is org.mozilla.javascript.RhinoException -> "error(script)"
+        e is SandboxInvocationException && e.code == SandboxErrorCode.SCRIPT_ERROR -> "error(script${e.sourceFailureMarker()?.let { ":$it" }.orEmpty()})"
+        e is org.mozilla.javascript.RhinoException -> "error(script${e.sourceFailureMarker()?.let { ":$it" }.orEmpty()})"
         e is SandboxInvocationException -> "error(${e.code})"
         else -> "error(${e::class.simpleName})"
     }
@@ -208,11 +287,6 @@ class SandboxOfficialParityTest {
     }
 
     private class Recorded(val byKey: Map<String, PluginHttpResponse>, val origins: Set<String>) {
-        fun logging(into: MutableList<String>): (PluginHttpRequest) -> PluginHttpResponse = { request ->
-            synchronized(into) { into += key(request.method == "POST", request.url, request.body.decodeToString()) }
-            respond(request)
-        }
-
         fun respond(request: PluginHttpRequest): PluginHttpResponse =
             byKey[key(request.method == "POST", request.url, request.body.decodeToString())] ?: PluginHttpResponse(599, ByteArray(0), emptyMap())
     }

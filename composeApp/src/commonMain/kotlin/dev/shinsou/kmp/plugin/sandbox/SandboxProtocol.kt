@@ -70,6 +70,24 @@ internal enum class SandboxPeer(val accepts: Set<FrameType>) {
  * Stable failure codes. 1–11 are the sandbox core's `ssc_status` values; the rest are produced
  * by the transport or the host dispatcher. Never carries host exception text.
  */
+/**
+ * Host-owned guidance markers a script raises with `throw new Error("SHINSOU_SOURCE_…")`
+ * (SourceFailureMarker.kt). FAILURE carries only this number (ADR-0002 §17.1), never script text;
+ * the host turns it back into the marker message the app already recognises.
+ */
+internal enum class SandboxSourceFailure(val code: Int, val marker: String) {
+    HTTP_CHALLENGE(1, "SHINSOU_SOURCE_HTTP_CHALLENGE"),
+    HTTP_BLOCKED(2, "SHINSOU_SOURCE_HTTP_BLOCKED"),
+    HTTP_FORBIDDEN(3, "SHINSOU_SOURCE_HTTP_FORBIDDEN"),
+    HTTP_UNAVAILABLE(4, "SHINSOU_SOURCE_HTTP_UNAVAILABLE"),
+    QUOTA_EXCEEDED(5, "SHINSOU_SOURCE_QUOTA_EXCEEDED"),
+    ;
+
+    companion object {
+        fun of(code: Int): SandboxSourceFailure? = entries.firstOrNull { it.code == code }
+    }
+}
+
 internal enum class SandboxErrorCode(val code: Int) {
     SCRIPT_ERROR(1),
     LIMIT_MEMORY(2),
@@ -197,7 +215,16 @@ internal sealed interface SandboxFrame {
         override val type get() = FrameType.RESULT
     }
 
-    data class Failure(val callId: Long, val code: SandboxErrorCode) : SandboxFrame {
+    /** [sourceFailure] only with [SandboxErrorCode.SCRIPT_ERROR]; the codec rejects anything else. */
+    data class Failure(
+        val callId: Long,
+        val code: SandboxErrorCode,
+        val sourceFailure: SandboxSourceFailure? = null,
+    ) : SandboxFrame {
+        init {
+            require(sourceFailure == null || code == SandboxErrorCode.SCRIPT_ERROR) { "source failure marker without SCRIPT_ERROR" }
+        }
+
         override val type get() = FrameType.FAILURE
     }
 
@@ -263,7 +290,8 @@ internal object SandboxFrameCodec {
             is SandboxFrame.BridgeCall -> w.array(5).uint(t).uint(frame.callId).uint(frame.seq).text(frame.op).text(frame.argsJson)
             is SandboxFrame.AsyncBridgeCall -> w.array(5).uint(t).uint(frame.callId).uint(frame.opId).text(frame.op).text(frame.argsJson)
             is SandboxFrame.Result -> w.array(3).uint(t).uint(frame.callId).text(frame.valueJson)
-            is SandboxFrame.Failure -> w.array(3).uint(t).uint(frame.callId).uint(frame.code.code.toLong())
+            is SandboxFrame.Failure -> w.array(4).uint(t).uint(frame.callId).uint(frame.code.code.toLong())
+                .uint(frame.sourceFailure?.code?.toLong() ?: 0)
             is SandboxFrame.Log -> w.array(2).uint(t).bytes(frame.bytes)
             is SandboxFrame.LimitExceeded -> w.array(3).uint(t).uint(frame.callId).uint(frame.kind.code.toLong())
         }
@@ -317,7 +345,15 @@ internal object SandboxFrameCodec {
                 SandboxFrame.AsyncBridgeCall(r.uint(), r.uint(), r.text(limits.maxMethodBytes), r.text(limits.maxJsonBytes))
             }
             FrameType.RESULT -> { arity(3); SandboxFrame.Result(r.uint(), r.text(limits.maxJsonBytes)) }
-            FrameType.FAILURE -> { arity(3); SandboxFrame.Failure(r.uint(), errorCode(r)) }
+            FrameType.FAILURE -> {
+                arity(4)
+                val callId = r.uint()
+                val code = errorCode(r)
+                val marker = r.uintAsInt(0xff)
+                val sourceFailure = if (marker == 0) null else SandboxSourceFailure.of(marker) ?: throw SandboxProtocolException("unknown source failure marker")
+                if (sourceFailure != null && code != SandboxErrorCode.SCRIPT_ERROR) throw SandboxProtocolException("source failure marker without SCRIPT_ERROR")
+                SandboxFrame.Failure(callId, code, sourceFailure)
+            }
             FrameType.LOG -> { arity(2); SandboxFrame.Log(r.bytes(limits.maxLogBytes)) }
             FrameType.LIMIT_EXCEEDED -> {
                 arity(3)

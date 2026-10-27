@@ -48,6 +48,7 @@ struct ssc_runtime {
     bool dom_limit_hit;    /* likewise for the DOM's node/depth/handle/memory budgets */
     bool poisoned; /* leftover jobs could not be discarded; the host must recreate the runtime */
     uint32_t bridge_calls;
+    ssc_source_failure source_failure; /* set with SSC_ERR_SCRIPT only */
     uint32_t next_op_id;
     uint32_t inflight;
     uint32_t queued;
@@ -81,6 +82,57 @@ static int interrupt_handler(JSRuntime *rt, void *opaque) {
         return 1;
     }
     return 0;
+}
+
+static const char *const source_failure_names[] = {
+    NULL, "SHINSOU_SOURCE_HTTP_CHALLENGE", "SHINSOU_SOURCE_HTTP_BLOCKED", "SHINSOU_SOURCE_HTTP_FORBIDDEN",
+    "SHINSOU_SOURCE_HTTP_UNAVAILABLE", "SHINSOU_SOURCE_QUOTA_EXCEEDED",
+};
+
+static ssc_source_failure source_failure_named(const char *text, size_t len) {
+    for (int i = 1; i <= (int)SSC_SOURCE_FAILURE_QUOTA_EXCEEDED; i++) {
+        if (len == strlen(source_failure_names[i]) && memcmp(text, source_failure_names[i], len) == 0) return (ssc_source_failure)i;
+    }
+    return SSC_SOURCE_FAILURE_NONE;
+}
+
+/*
+ * The thrown value is exactly a marker name: a string, or an Error whose own data property
+ * `message` is one (no getter or toString runs). Rhino reports both forms the same way.
+ */
+static ssc_source_failure source_failure_of(JSContext *ctx, JSValueConst value) {
+    ssc_source_failure marker = SSC_SOURCE_FAILURE_NONE;
+    if (JS_IsString(value)) {
+        size_t len;
+        const char *text = JS_ToCStringLen(ctx, &len, value);
+        if (!text) { JS_FreeValue(ctx, JS_GetException(ctx)); return marker; }
+        marker = source_failure_named(text, len);
+        JS_FreeCString(ctx, text);
+        return marker;
+    }
+    if (!JS_IsError(value)) return marker;
+    JSAtom atom = JS_NewAtom(ctx, "message");
+    JSPropertyDescriptor desc;
+    int found = JS_GetOwnProperty(ctx, &desc, value, atom);
+    JS_FreeAtom(ctx, atom);
+    if (found == 1) {
+        if (!(desc.flags & JS_PROP_GETSET) && JS_IsString(desc.value)) {
+            size_t len;
+            const char *text = JS_ToCStringLen(ctx, &len, desc.value);
+            if (text) {
+                marker = source_failure_named(text, len);
+                JS_FreeCString(ctx, text);
+            } else {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+            }
+        }
+        JS_FreeValue(ctx, desc.value);
+        JS_FreeValue(ctx, desc.getter);
+        JS_FreeValue(ctx, desc.setter);
+    } else if (found < 0) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    return marker;
 }
 
 /* Maps the pending exception to a stable code without exposing its text to the host. */
@@ -120,6 +172,7 @@ static ssc_status take_exception(ssc_runtime *s) {
         /* JS_ThrowOutOfMemory may leave a null exception when allocation of the error fails. */
         status = SSC_ERR_LIMIT_MEMORY;
     }
+    if (status == SSC_ERR_SCRIPT) s->source_failure = source_failure_of(s->ctx, exc);
     JS_FreeValue(s->ctx, exc);
     return status;
 }
@@ -477,6 +530,7 @@ static void begin(ssc_runtime *s, uint64_t gen, uint64_t timeout_ms) {
     s->current_gen = gen;
     s->stop = STOP_NONE;
     s->bridge_calls = 0;
+    s->source_failure = SSC_SOURCE_FAILURE_NONE;
     s->bridge_limit_hit = false;
     s->dom_limit_hit = false;
     s->deadline_ms = s->host.now_ms(s->host.opaque) + timeout_ms;
@@ -656,6 +710,7 @@ ssc_status ssc_invoke(ssc_runtime *s, uint64_t gen, const char *method, size_t m
     JSPromiseStateEnum state = JS_PromiseState(s->ctx, result);
     if (state == JS_PROMISE_REJECTED) {
         JSValue reason = JS_PromiseResult(s->ctx, result);
+        s->source_failure = source_failure_of(s->ctx, reason);
         JS_FreeValue(s->ctx, reason);
         st = SSC_ERR_SCRIPT;
         goto done;
@@ -687,6 +742,8 @@ done:
 }
 
 void ssc_cancel(ssc_runtime *s, uint64_t gen) { atomic_store(&s->cancel_gen, gen); }
+
+ssc_source_failure ssc_last_source_failure(const ssc_runtime *s) { return s->source_failure; }
 
 size_t ssc_memory_used(ssc_runtime *s) {
     JSMemoryUsage usage;

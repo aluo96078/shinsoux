@@ -23,6 +23,8 @@ extern "C" {
 #define SSC_MAX_FRAME_BYTES (1u << 20)
 #define SSC_CHUNK_PAYLOAD_BYTES (SSC_MAX_FRAME_BYTES - 16u)
 #define SSC_LIMIT_FIELDS 10
+/* FAILURE's source-failure marker (ADR-0002 §17.1): 0 = none, else SSC_SOURCE_FAILURE_*. */
+#define SSC_SOURCE_FAILURE_MAX 5u
 
 typedef enum {
     SSC_F_CHUNK = 0,
@@ -63,7 +65,7 @@ typedef struct {
  *   BRIDGE_CALL       call_id, id = seq,   text = op, text2 = args JSON
  *   ASYNC_BRIDGE_CALL call_id, id = op id, text = op, text2 = args JSON
  *   RESULT            call_id, text = value JSON
- *   FAILURE           call_id, code
+ *   FAILURE           call_id, code, marker
  *   LOG               text = bytes
  *   LIMIT_EXCEEDED    call_id, code = kind
  */
@@ -77,6 +79,7 @@ typedef struct {
     int ok;
     int has_value;
     uint32_t code;
+    uint32_t marker; /* FAILURE only: source-failure marker, non-zero only with SCRIPT_ERROR */
     ssc_slice text;
     ssc_slice text2;
     uint8_t *owned; /* the body buffer; freed by ssc_frame_free */
