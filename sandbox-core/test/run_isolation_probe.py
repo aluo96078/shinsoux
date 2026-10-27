@@ -47,11 +47,28 @@ if WINDOWS:
     extra.append(line.split()[1])
 
 
+STATUS_INVALID_HANDLE = 0xC0000008
+
+
 def run(*mode):
     args = [probe, *mode, port, secret, work] + (extra if WINDOWS else [])
     kwargs = dict(close_fds=False) if WINDOWS else dict(pass_fds=(3,))
     r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=60, **kwargs)
-    return r.returncode, r.stdout
+    if not WINDOWS:
+        return r.returncode, r.stdout
+    # The inherited handle is probed in a run of its own (see isolation_probe.c): strict handle
+    # checks end the confined copy at the first use of a handle it does not have.
+    h = subprocess.run([probe, *mode, "--handle", extra[0]], env=env, capture_output=True, text=True,
+                       timeout=60, **kwargs)
+    line = next((l for l in h.stdout.splitlines() if l.startswith("inherited handle ")), None)
+    if line is None and (h.returncode & 0xFFFFFFFF) == STATUS_INVALID_HANDLE:
+        line = "inherited handle BLOCKED error=STATUS_INVALID_HANDLE (strict handle checks)"
+    if line is None:
+        line = f"inherited handle ALLOWED (no verdict, exit {h.returncode & 0xFFFFFFFF:#010x})"
+    lines = [l for l in r.stdout.splitlines() if not l.startswith("PROBES ")]
+    if " ALLOWED" in line:
+        lines = [l.replace("RESULT PASS", "RESULT FAIL") for l in lines]
+    return r.returncode, "\n".join([line, *lines, f"PROBES {count(r.stdout) + 1}"]) + "\n"
 
 
 def count(out):

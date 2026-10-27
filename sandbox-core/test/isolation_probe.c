@@ -5,6 +5,7 @@
  *   POSIX:   isolation_probe [--control] <tcp-port> <secret-file> <writable-dir>
  *   Windows: isolation_probe [--control] [--package-key K] <tcp-port> <secret-file> <writable-dir>
  *                            <inherited-handle> <host-pid> <sibling-pid>
+ *            isolation_probe [--control] [--package-key K] --handle <inherited-handle>
  *            isolation_probe --package-key K --hang   (a confined sibling: prints its pid, waits for EOF)
  *
  * --control skips the lockdown, to show every probe can succeed. Prints "<name> BLOCKED|ALLOWED
@@ -58,10 +59,20 @@ int main(int argc, char **argv) {
         while (ReadFile(GetStdHandle(STD_INPUT_HANDLE), &c, 1, &got, NULL) && got) {}
         return 0;
     }
+    /*
+     * The inherited handle runs alone: under strict handle checks (one of the copy's mitigations)
+     * using a handle the process does not have ends it with STATUS_INVALID_HANDLE.
+     */
+    if (argc - ai == 2 && strcmp(argv[ai], "--handle") == 0) {
+        DWORD flags;
+        HANDLE inherited = (HANDLE)(uintptr_t)_strtoui64(argv[ai + 1], NULL, 10);
+        report("inherited handle", GetHandleInformation(inherited, &flags), GetLastError());
+        printf("PROBES %d\n", probes);
+        return allowed_count;
+    }
     if (argc - ai < 6) return 2;
     unsigned short port = (unsigned short)atoi(argv[ai]);
     const char *secret = argv[ai + 1], *dir = argv[ai + 2];
-    HANDLE inherited = (HANDLE)(uintptr_t)_strtoui64(argv[ai + 3], NULL, 10);
     DWORD host = (DWORD)strtoul(argv[ai + 4], NULL, 10), sibling = (DWORD)strtoul(argv[ai + 5], NULL, 10);
 
     /* LPAC: WSAStartup itself fails (S0), which blocks every socket below. */
@@ -129,8 +140,6 @@ int main(int argc, char **argv) {
     report("getenv(SHINSOU_SECRET_TOKEN)", GetEnvironmentVariableA("SHINSOU_SECRET_TOKEN", value, sizeof value) > 0, GetLastError());
     open_process("OpenProcess(host)", host);
     open_process("OpenProcess(other package's sandbox)", sibling);
-    DWORD flags;
-    report("inherited handle", GetHandleInformation(inherited, &flags), GetLastError());
     /* The Job's memory cap: committing far beyond it must fail. */
     void *big = VirtualAlloc(NULL, (SIZE_T)1 << 30, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     report("VirtualAlloc(1 GiB commit)", big != NULL, GetLastError());
