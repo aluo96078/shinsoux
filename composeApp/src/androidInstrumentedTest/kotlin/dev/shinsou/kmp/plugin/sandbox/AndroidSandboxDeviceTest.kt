@@ -343,6 +343,22 @@ class AndroidSandboxDeviceTest {
     }
 
     @Test
+    fun aProtocolViolationEndsTheSandboxWithoutANativeCrash() = runBlocking<Unit> {
+        // Invoke before Init: the driver stops on the violation while its reader is still blocked
+        // in read() (the host keeps its end open), so the reader is left behind as the process ends.
+        val t = provider.open("pkg.violation") as AndroidSandboxTransport
+        opened += t
+        SandboxFrameCodec.encode(SandboxFrame.Invoke(1, "getPopularManga", "[]")).forEach { t.send(it) }
+        val eof = withTimeout(5_000) { generateSequence { 0 }.forEach { _ -> t.receive() ?: return@withTimeout true }; false }
+        assertTrue(eof)
+        val deadline = SystemClock.elapsedRealtime() + 3_000
+        while (t.pid in appProcesses() && SystemClock.elapsedRealtime() < deadline) delay(100)
+        assertTrue(t.pid !in appProcesses(), "sandbox ${t.pid} still alive after the violation")
+        val log = shell("logcat -d --pid=${t.pid}")
+        assertTrue("Fatal signal" !in log && "SIGSEGV" !in log && "SIGABRT" !in log, log.takeLast(2_000))
+    }
+
+    @Test
     fun closingTheRuntimeEndsTheProcess() = runBlocking<Unit> {
         val runtime = runtime()
         val pid = opened.single().pid

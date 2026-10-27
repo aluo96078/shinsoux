@@ -977,6 +977,9 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
   讀取與移除節點）；Kotlin codec 以 `SandboxProtocolLongFuzzTest` 執行。`.github/workflows/sandbox-fuzz.yml` 先在
   Linux 跑 C 測試（Release、ASan＋UBSan＋LSan）與 Kotlin↔C 互通／parity，再以平行 shard 執行 fuzz：GitHub 的
   job 上限 6 小時，所以「24 小時」指每個 codec target 合計約 24 CPU 小時（5 × 290 分鐘），chunks_fuzz 另有 2 個 shard。
+- **driver 的 `reader_status`**（S2 Codex 複審）：讀取執行緒與 driver 執行緒共用的這個欄位改為全程在鎖內讀寫。原本只有在
+  driver 先結束、讀取執行緒仍在寫入時才有競爭，而那時這個值不會被使用，但仍是 C 的 data race。`driver_test` 以
+  ThreadSanitizer 執行無警告（TSan 先抓到的是測試 harness 自己重用堆疊結構的競爭，已改為每個沙箱獨立的 fd 欄位）。
 - **相依修補**：`sandbox-core/patches/` 內的修補由 `fetch-deps.sh` 套用在釘選版本上，每個修補檔說明原因。目前只有
   quickjs-ng v0.17.0 的 `JS_ToCStringLen2` 在 OOM 時洩漏字串參考（腳本可在接近 heap 上限時反覆觸發，讓洩漏量
   持續佔用自己的 heap 預算）。
@@ -987,7 +990,7 @@ S1 依相依順序切成可各自驗證的增量；每個增量完成時更新�
 |---|---|---|
 | (1) minSdk 26 → 29 | ✅ `android-minSdk = "29"`；程式碼沒有只為 API 26–28 存在的分支（僅有的兩個 `SDK_INT` 判斷是 API 30／33）。README、`docs/BUILDING.md` 已更新。minSdk 29 會讓 AGP 以不壓縮方式打包 dex 與 `.so`（APK 由約 40 MB 變成 106 MB），因為 APK 從 GitHub Release 下載、不經商店切分，改回壓縮打包（37 MB） | `gradle/libs.versions.toml`、`composeApp/build.gradle.kts` |
 | (2) release notes 預告 Android 8～9 停止更新 | ⏳ 需要使用者決定發佈時間與措辭（對外發佈） | — |
-| (3) `SandboxService`、`bindIsolatedService`、pipe 串流、非同步 frame | ✅ 實機（Galaxy S24 Ultra／Android 16）7 項裝置測試全過 | `androidMain/…/plugin/sandbox/`、`androidMain/aidl/`、`sandbox-core/src/ssc_android_jni.c` |
+| (3) `SandboxService`、`bindIsolatedService`、pipe 串流、非同步 frame | ✅ 實機（Galaxy S24 Ultra／Android 16）8 項裝置測試全過 | `androidMain/…/plugin/sandbox/`、`androidMain/aidl/`、`sandbox-core/src/ssc_android_jni.c` |
 | (3) 生命週期、LRU、crash-loop | ✅ commonMain 的 `SandboxLifecycle`（三平台共用）；commonTest 8 項＋實機 1 項 | `commonMain/…/sandbox/SandboxLifecycle.kt` |
 | 惡意語料、隔離探測、kill 不影響 Host | ✅ 實機 | `androidInstrumentedTest/…/AndroidSandboxDeviceTest.kt` |
 | API 29／最新版模擬器、Linux NDK 建置 | ✅ x86_64 模擬器 API 29 與 API 35 各 7 項裝置測試全過（冷啟動 62／311 ms，取消 3／8 ms）；Linux 以 NDK 建出三個 ABI。Android 單元測試只在 macOS 跑：Linux runner 載不到單元測試用的 libsodium 主機函式庫，90 項加密測試在開始前就失敗，與沙箱無關 | `.github/workflows/sandbox-android.yml` |
@@ -1021,6 +1024,8 @@ pipe，沙箱端由 sandbox-core 的 driver 處理，和桌面 helper 的 stdin�
   （記憶體、stack、bridge 次數、結果大小）、時間上限。10 分鐘內 3 次即停用該 package，直到 App 重啟；
   停用時也會停止仍在執行的沙箱。重啟時腳本載入失敗也計入（否則每次呼叫都會再開一個程序）；hook 內的腳本錯誤、
   `NO_SUCH_HOOK` 等不計入。
+- 生命週期帳務（`close()`、呼叫結束、strike）在 `NonCancellable` 內執行：呼叫端在等待生命週期鎖時被取消，也不會留下已死的
+  沙箱占用存活名額（Codex 複審；commonTest 兩項，拿掉修正時失敗）。
 - 時間上限只在 Host 能為時鐘背書時計入：Android 為「螢幕亮著且 App 在前景（含前景服務）」。OEM 凍結程序
   （§4.3）期間的逾時不算套件的錯。停用的使用者提示屬於 S6／S7 的 UI 工作。
 
@@ -1045,6 +1050,16 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   arm64-v8a、armeabi-v7a、x86_64（`abiFilters` 只限制 sandbox-core，相依函式庫仍保留自己的 ABI）。seccomp 過濾器
   支援 aarch64、arm、x86_64，其他 ABI 編譯時就會失敗。
 - 所有 variant 都以 Release 最佳化編譯原生函式庫：GitHub Release 發佈的是 debug variant，而 `-O0` 的 QuickJS 慢很多。
+- seccomp 過濾器（S2 Codex 複審後）另外只允許 `AF_UNIX` 的 `socket`／`socketpair`（記錄 log 與 socketpair 需要），其他
+  位址族群（inet、netlink、packet、bluetooth、vsock…）一律回 `EAFNOSUPPORT`；`socketcall` 整個拒絕。網路原本已由隔離 uid
+  與 SELinux 擋下，這一層讓網路隔離不依賴平台政策。實機發現：bionic 的 `socket()` 會先詢問 netd client，直接回 `EPERM` 而
+  不進核心，所以先前的探測其實只測到 libc。探測改用原始 syscall，並要求 `socket(AF_INET)` 回 `EAFNOSUPPORT`：這個錯誤碼
+  核心與 SELinux 都不會給（SELinux 回 `EACCES`），可以證明是過濾器回應的。實測暫時拿掉這條規則時探測會失敗。
+- `nativeRun` 的 pipe 狀態與 `ssc_io` 是靜態的（每個程序只允許一次）：driver 因協定違規或 Host 失敗結束時，可能留下仍卡在
+  `read()` 的讀取執行緒，它會一直使用 io 表與輸入端 fd，直到程序結束（`nativeRun` 返回後立即結束）。因此輸入端不在
+  `nativeRun` 關閉（避免 fd 編號被重用到那個 `read` 底下），輸出端照常關閉讓 Host 立即看到 end of stream（S2 Codex 第三輪）。
+  裝置測試 `aProtocolViolationEndsTheSandboxWithoutANativeCrash` 走這條路徑（Init 前送 Invoke），確認程序結束且沒有原生崩潰；
+  舊程式的問題是未定義行為、不一定當場崩潰，所以這個測試是回歸防護，不是重現。
 - `.so` 只匯出 3 個 JNI 進入點（`nativeLockdown`、`nativeRun`、`nativeProbe`）；`socket`／`fork`／`execve`／`open`
   只出現在隔離自我檢查 `nativeProbe`。CI 檢查匯出符號，並拒絕 `connect`、`dlopen`、`getenv`、`system` 等匯入。
 - 第三方原始碼由 Gradle 的 `fetchSandboxCoreDeps` 在 CMake 前呼叫 `fetch-deps.sh` 取得；release workflow 安裝
@@ -1057,7 +1072,7 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
 | 項目 | 結果 |
 |---|---|
 | 每個 package 一個程序 | ✅ 不同 pid、不同隔離 uid（`u0_i*`），與 Host（`u0_a*`）不同 |
-| 隔離探測（沙箱內 C 程式碼） | ✅ `socket(AF_INET／AF_INET6)`、開啟 `filesDir` 內檔案、`shared_prefs`、`databases`、`dataDir`、`/sdcard`、`/proc/net/tcp`、`fork`、`execve` 全數失敗；exec 以不存在的路徑探測，以 `EPERM`（seccomp）與 `ENOENT` 區分，不會真的換掉程序 |
+| 隔離探測（沙箱內 C 程式碼，socket 以原始 syscall） | ✅ `socket(AF_INET／AF_INET6／AF_NETLINK／AF_PACKET／AF_BLUETOOTH／AF_VSOCK)`（且 `AF_INET` 由 seccomp 回應）、開啟 `filesDir` 內檔案、`shared_prefs`、`databases`、`dataDir`、`/sdcard`、`/proc/net/tcp`、`fork`、`execve` 全數失敗；exec 以不存在的路徑探測，以 `EPERM`（seccomp）與 `ENOENT` 區分，不會真的換掉程序 |
 | 端到端 | ✅ 沙箱內 DOM、同步 bridge、並行 `net.fetch`、login 限縮、source-failure 標記 |
 | 惡意語料 | ✅ 無窮迴圈、深遞迴、陣列囤積、字串倍增、catastrophic backtracking、Proxy／getter 炸彈、竄改 bridge 與保留進入點、私有 IP／loopback／非 HTTPS、header injection、超大結果、bridge 洪水、200 個 `net.fetch` 洪水（超出 in-flight＋佇列的全部被 reject）、永不 settle 的 Promise、微任務洪水：都以穩定錯誤（上限、`SCRIPT_ERROR`、`PROMISE_STALLED`）在 3 秒內結束，之後同一 runtime 立即可用；竄改不影響 Host 端的 metadata |
 | 時間上限／取消 | 3,004–3,009 ms 回 `LIMIT_TIME`；取消 9–12 ms |

@@ -9,6 +9,7 @@
 #include <jni.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -125,6 +126,16 @@ typedef struct {
     int status;
 } pipes;
 
+/*
+ * Static, not on a stack: when the driver stops on a violation or host failure it may detach its
+ * reader thread while that thread is still blocked in read(), and the reader keeps using the io
+ * table and the input descriptor until the process exits (right after nativeRun returns). One
+ * run per process (SandboxProcessService.start allows a single start).
+ */
+static pipes run_pipes;
+static ssc_io run_io;
+static atomic_flag run_started = ATOMIC_FLAG_INIT;
+
 static long read_fd(void *o, uint8_t *buf, size_t len) {
     pipes *p = o;
     for (;;) {
@@ -154,40 +165,45 @@ static uint64_t now_ms(void *o) {
 }
 
 static void *run(void *o) {
-    pipes *p = o;
-    ssc_io io = { p, read_fd, write_fd, now_ms };
-    p->status = ssc_driver_run(&io, ssc_bootstrap_js, ssc_bootstrap_js_len);
+    (void)o;
+    run_io = (ssc_io){ &run_pipes, read_fd, write_fd, now_ms };
+    run_pipes.status = ssc_driver_run(&run_io, ssc_bootstrap_js, ssc_bootstrap_js_len);
     return NULL;
 }
 
 /*
  * Runs the driver until the host closes its end; takes ownership of both descriptors. Refuses
- * (without reading a byte, so no script is ever evaluated) unless the lockdown is in place.
+ * (without reading a byte, so no script is ever evaluated) unless the lockdown is in place and
+ * this is the process's first run. The caller exits the process when it returns.
  */
 JNIEXPORT jint JNICALL Java_dev_shinsou_kmp_plugin_sandbox_SandboxNative_nativeRun(
     JNIEnv *env, jclass cls, jint in_fd, jint out_fd) {
     (void)env; (void)cls;
-    pipes p = { in_fd, out_fd, SSC_DRIVER_IO_ERROR };
-    if (lockdown_status != 0) {
+    if (lockdown_status != 0 || atomic_flag_test_and_set(&run_started)) {
         close(in_fd);
         close(out_fd);
         return -1;
     }
+    run_pipes = (pipes){ in_fd, out_fd, SSC_DRIVER_IO_ERROR };
     signal(SIGPIPE, SIG_IGN); /* a vanished host shows up as a failed write */
     /* A dedicated thread with a known stack: the core's stack limit must fit inside it. */
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, SSC_DRIVER_THREAD_STACK);
     pthread_t t;
-    if (pthread_create(&t, &attr, run, &p) != 0) {
-        p.status = SSC_DRIVER_NOMEM;
+    if (pthread_create(&t, &attr, run, NULL) != 0) {
+        run_pipes.status = SSC_DRIVER_NOMEM;
     } else {
         pthread_join(t, NULL);
     }
     pthread_attr_destroy(&attr);
-    close(in_fd);
+    /*
+     * The output end closes now, so the host sees end of stream at once. The input end stays open:
+     * a detached reader may still be blocked on it, and closing it could hand its number to a new
+     * descriptor under that read. It goes when the process exits.
+     */
     close(out_fd);
-    return p.status;
+    return run_pipes.status;
 }
 
 /* ---- isolation self-check ---------------------------------------------------------------- */
