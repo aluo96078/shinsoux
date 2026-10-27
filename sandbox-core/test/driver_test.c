@@ -334,6 +334,27 @@ static void test_violations(void) {
     printf("  version mismatch and violations: done\n");
 }
 
+static uint64_t mono_ms(void) { return now_ms(NULL); }
+
+/* The host closes its end (or dies) while a hook spins: the driver must stop it right away, not at
+ * its 30-second deadline, so a sandbox never outlives its host for long (ADR-0002 S3). */
+static void test_host_gone_mid_hook(void) {
+    host h;
+    start(&h);
+    ssc_frame f = { .type = SSC_F_INIT, .call_id = 1, .version = 1, .api_level = 1,
+                    .limits = { 16u << 20, 1u << 20, 2000, 30000, 64, 6, 64, 1u << 20, 100000, 512 }, .text = S(SCRIPT) };
+    send_frame(&h, &f);
+    for (int i = 0; i < 2; i++) { ssc_frame r = recv_frame(&h); ssc_frame_free(&r); } /* Ready, Result */
+    send_frame(&h, &(ssc_frame){ .type = SSC_F_INVOKE, .call_id = 2, .text = S("loop"), .text2 = S("[]") });
+    usleep(200 * 1000);
+    uint64_t t0 = mono_ms();
+    int st = stop(&h);
+    uint64_t ms = mono_ms() - t0;
+    CHECK(ms < 2000, "the driver outlived its host by %llu ms", (unsigned long long)ms);
+    CHECK(st == SSC_DRIVER_EOF, "exit %d", st);
+    printf("  host gone mid-hook: driver exited %llu ms after end of stream\n", (unsigned long long)ms);
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN); /* the sandbox may close first; writes then fail with EPIPE */
     printf("[driver]\n");
@@ -341,6 +362,7 @@ int main(void) {
     test_bridge_waits_and_floods();
     test_version_mismatch();
     test_violations();
+    test_host_gone_mid_hook();
     printf(failures ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", failures);
     return failures ? 1 : 0;
 }

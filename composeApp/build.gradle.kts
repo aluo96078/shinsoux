@@ -64,6 +64,10 @@ val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository"
     .orElse("../../shinsou_plugin")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    // The sandbox tests run this helper: a rebuilt helper must rerun them, not reuse old results.
+    inputs.files(rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox"))
+        .withPropertyName("sandboxHelper")
+        .optional()
     systemProperty(
         "shinsou.pluginRepo",
         shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
@@ -153,6 +157,48 @@ val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
     null
 }
 
+// ADR-0002 S3: the plugin sandbox helper (sandbox-core's shinsou-sandbox), built for the host
+// architecture and shipped next to the WKWebView helper. It confines itself with sandbox_init at
+// startup; the signature carries no entitlements, so it gains nothing the deny-all profile removes.
+val macOsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("macos").file("shinsou-sandbox") }
+val buildMacOsSandboxHelper = if (isMacOsBuildHost) {
+    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-macos").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureMacOsSandboxHelper") {
+        dependsOn("fetchSandboxCoreDeps")
+        commandLine(
+            "cmake", "-S", sandboxCore, "-B", cmakeBuild,
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_OSX_ARCHITECTURES=$macOsBuildArchitecture",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+        )
+    }
+    val compile = tasks.register<Exec>("compileMacOsSandboxHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox", "-j", "8")
+    }
+    tasks.register<Exec>("buildMacOsSandboxHelper") {
+        group = "build"
+        description = "Builds and signs the plugin sandbox helper for the macOS app resources"
+        dependsOn(compile, "prepareMacOsWebChallengeHelperOutput")
+        val output = macOsSandboxHelper.get().asFile.absolutePath
+        outputs.file(output)
+        outputs.upToDateWhen { false }
+        // Hardened runtime, no entitlements. The configured identity when there is one (so a
+        // Developer ID build can be notarized), ad-hoc otherwise.
+        val identity = macOsSigningIdentity ?: "-"
+        val keychain = macOsSigningKeychain?.let { listOf("--keychain", it) }.orEmpty()
+        commandLine(
+            "/bin/sh", "-c",
+            "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
+            "sign-helper", "$cmakeBuild/shinsou-sandbox", output,
+            *keychain.toTypedArray(), "--sign", identity, output,
+        )
+    }
+} else {
+    null
+}
+
 // JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
 // artifacts use the build host classifier; release CI already builds DMG and MSI on their native
 // hosts, so each installer receives only its own browser runtime.
@@ -234,6 +280,9 @@ tasks.configureEach {
         name in setOf("desktopTest", "prepareAppResources")
     ) {
         dependsOn(compileMacOsWebChallengeHelper)
+    }
+    if (buildMacOsSandboxHelper != null && name == "prepareAppResources") {
+        dependsOn(buildMacOsSandboxHelper)
     }
 }
 

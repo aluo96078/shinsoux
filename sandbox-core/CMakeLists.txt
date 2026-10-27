@@ -76,8 +76,16 @@ if(ANDROID)
     return()
 endif()
 
-add_executable(shinsou-sandbox src/ssc_main.c)
+add_executable(shinsou-sandbox src/ssc_main.c src/ssc_os_sandbox.c)
 target_link_libraries(shinsou-sandbox ssc_driver)
+
+# S3 isolation probe (test only, never shipped): the helper's lockdown, then every forbidden operation.
+add_executable(isolation_probe test/isolation_probe.c src/ssc_os_sandbox.c)
+target_include_directories(isolation_probe PRIVATE src)
+target_link_libraries(isolation_probe Threads::Threads)
+if(APPLE)
+    add_test(NAME isolation_probe COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/test/run_isolation_probe.py $<TARGET_FILE:isolation_probe>)
+endif()
 
 enable_testing()
 add_executable(frames_test test/frames_test.c)

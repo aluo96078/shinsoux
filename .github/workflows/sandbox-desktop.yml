@@ -1,0 +1,93 @@
+name: Sandbox desktop
+
+# ADR-0002 S3 (macOS): the shinsou-sandbox helper confines itself with sandbox_init. sandbox_init is
+# deprecated and its profile language private, so every run re-proves the confinement on the
+# runner's macOS (S0: re-check each major version): the isolation probe, the Kotlin host driving
+# the confined helper (interop, official-plugin parity), and the packaged app carrying a signed
+# helper. Run it by hand or by pushing a `sandbox-desktop/**` branch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["sandbox-desktop/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS helper (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: macOS version
+        run: sw_vers
+
+      - name: C tests and the isolation probe
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release -j"$(sysctl -n hw.ncpu)"
+          cd build/release
+          ctest --output-on-failure
+          # Again verbosely, so the summary shows what each probe got.
+          python3 -I ../../test/run_isolation_probe.py ./isolation_probe | tee probe.log
+          grep -h "BLOCKED\|ALLOWED\|ISOLATION PROBE" probe.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest --rerun
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if any sandbox test was skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -ho "interop: [^<]*" TEST-dev.shinsou.kmp.plugin.sandbox.*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Package the app and check its helper
+        working-directory: shinsoux
+        run: |
+          ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
+          app="composeApp/build/compose/binaries/main/app/Shinsou X.app"
+          helper="$app/Contents/app/resources/shinsou-sandbox"
+          [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          codesign --verify --strict "$helper"
+          codesign -dv "$helper" 2>&1 | grep -q "flags=0x10000(runtime)" || { echo "::error::helper lacks the hardened runtime"; exit 1; }
+          # No entitlements: the helper must gain nothing the deny-all profile takes away.
+          if codesign -d --entitlements - "$helper" 2>/dev/null | grep -q "<key>"; then echo "::error::helper has entitlements"; exit 1; fi
+          codesign --verify --deep --strict "$app"
+          echo "packaged helper: $(lipo -archs "$helper"), signed, hardened runtime, no entitlements" | tee -a "$GITHUB_STEP_SUMMARY"
