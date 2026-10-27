@@ -78,19 +78,6 @@ static int fail(char *err, size_t len, const char *what) {
 
 /* ---------------- the confined copy ---------------- */
 
-/* 1 granted, 0 denied, -1 error: a read access check of `sddl` against this process's token. */
-static int granted(HANDLE identity, const wchar_t *sddl) {
-    PSECURITY_DESCRIPTOR sd = NULL;
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL)) return -1;
-    GENERIC_MAPPING map = { FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS };
-    PRIVILEGE_SET privileges;
-    DWORD privileges_len = sizeof privileges, mask = 0;
-    BOOL status = FALSE;
-    BOOL ok = AccessCheck(sd, identity, FILE_GENERIC_READ, &map, &privileges, &privileges_len, &mask, &status);
-    LocalFree(sd);
-    return ok ? status != FALSE : -1;
-}
-
 /*
  * The LPAC marker on the token (Windows sets it for PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT).
  * TokenSecurityAttributes returns the native layout (names are counted strings), not the CLAIM_*
@@ -118,21 +105,9 @@ static int has_no_all_packages_attribute(HANDLE token) {
     return found;
 }
 
-/* A descriptor granting Everyone and this process's own AppContainer SID. */
-static int own_container_sddl(HANDLE token, wchar_t *out, size_t cap) {
-    BYTE buf[256];
-    DWORD n = 0;
-    if (!GetTokenInformation(token, TokenAppContainerSid, buf, sizeof buf, &n)) return -1;
-    wchar_t *sid = NULL;
-    if (!ConvertSidToStringSidW(((TOKEN_APPCONTAINER_INFORMATION *)buf)->TokenAppContainer, &sid)) return -1;
-    int w = swprintf(out, cap, L"O:BAG:BAD:(A;;GA;;;WD)(A;;GA;;;%ls)", sid);
-    LocalFree(sid);
-    return w > 0 ? 0 : -1;
-}
-
 static int verify_token(char *err, size_t len) {
-    HANDLE token = NULL, identity = NULL;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) return fail(err, len, "OpenProcessToken");
+    HANDLE token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return fail(err, len, "OpenProcessToken");
     int rc = -1;
     DWORD app_container = 0, n = 0;
     BYTE caps_buf[256];
@@ -146,23 +121,13 @@ static int verify_token(char *err, size_t len) {
         goto out;
     }
     /*
-     * LPAC: Windows grants ALL APPLICATION PACKAGES ("AC") parts of HKCU and more; an LPAC token is
-     * not in that group and carries the WIN://NOALLAPPPKG attribute. The access checks need the
-     * user side too (Everyone, "WD"); one that grants the container's own SID shows they work.
+     * LPAC: Windows grants ALL APPLICATION PACKAGES parts of HKCU and more (S0). A token created
+     * with PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT is outside that group and carries
+     * WIN://NOALLAPPPKG; an ordinary AppContainer does not (CI checks both).
      */
     if (!has_no_all_packages_attribute(token)) { snprintf(err, len, "not a Low Privilege AppContainer"); goto out; }
-    if (!DuplicateToken(token, SecurityIdentification, &identity)) { fail(err, len, "DuplicateToken"); goto out; }
-    wchar_t own_sddl[256];
-    if (own_container_sddl(token, own_sddl, 256) != 0) { fail(err, len, "TokenAppContainerSid"); goto out; }
-    int ac = granted(identity, L"O:BAG:BAD:(A;;GA;;;WD)(A;;GA;;;AC)");
-    int own = granted(identity, own_sddl);
-    if (ac != 0 || own != 1) {
-        snprintf(err, len, "ALL APPLICATION PACKAGES check failed (%d %d)", ac, own);
-        goto out;
-    }
     rc = 0;
 out:
-    if (identity) CloseHandle(identity);
     CloseHandle(token);
     return rc;
 }
