@@ -91,17 +91,27 @@ static int granted(HANDLE identity, const wchar_t *sddl) {
     return ok ? status != FALSE : -1;
 }
 
-/* The LPAC marker on the token (Windows sets it for PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT). */
+/*
+ * The LPAC marker on the token (Windows sets it for PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT).
+ * TokenSecurityAttributes returns the native layout (names are counted strings), not the CLAIM_*
+ * structures of winnt.h.
+ */
+typedef struct { USHORT length, maximum_length; PWSTR buffer; } ssc_counted_string;
+typedef struct { ssc_counted_string name; USHORT value_type, reserved; ULONG flags, value_count; void *values; } ssc_token_attribute;
+typedef struct { USHORT version, reserved; ULONG count; ssc_token_attribute *attributes; } ssc_token_attributes;
+
 static int has_no_all_packages_attribute(HANDLE token) {
+    static const wchar_t marker[] = L"WIN://NOALLAPPPKG";
+    const size_t marker_len = sizeof marker / sizeof marker[0] - 1;
     DWORD n = 0;
     GetTokenInformation(token, TokenSecurityAttributes, NULL, 0, &n);
-    if (n == 0 || n > (1u << 16)) return 0;
-    CLAIM_SECURITY_ATTRIBUTES_INFORMATION *info = malloc(n);
+    if (n < sizeof(ssc_token_attributes) || n > (1u << 16)) return 0;
+    ssc_token_attributes *info = malloc(n);
     int found = 0;
     if (info && GetTokenInformation(token, TokenSecurityAttributes, info, n, &n)) {
-        for (DWORD i = 0; i < info->AttributeCount; i++) {
-            const CLAIM_SECURITY_ATTRIBUTE_V1 *a = &info->Attribute.pAttributeV1[i];
-            if (a->Name && _wcsicmp(a->Name, L"WIN://NOALLAPPPKG") == 0) found = 1;
+        for (ULONG i = 0; i < info->count; i++) {
+            const ssc_counted_string *name = &info->attributes[i].name;
+            if (name->buffer && name->length == marker_len * sizeof(wchar_t) && _wcsnicmp(name->buffer, marker, marker_len) == 0) found = 1;
         }
     }
     free(info);
