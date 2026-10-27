@@ -1217,6 +1217,15 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   - `buildWindowsSandboxHelper` 以 MSYS2 UCRT64 的 MinGW-w64 靜態連結編譯（sandbox-core 需要 pthreads 與 POSIX I/O）。
   - helper 放進 App resources 的 `windows/`；Windows CI 與 release workflow 都檢查 App image 內有 `shinsou-sandbox.exe`。
   - Authenticode 簽章與 SmartScreen 仍隨 §11 的整體 Windows 簽章處理。
+- **接進 App 後的補強**（Codex 複審，第 20.3 節的接入階段）：
+  - 暫存副本所在目錄改為只有擁有者能存取的 ACL。
+  - launcher 以「只允許共用讀取」的方式鎖住自己的執行檔：從檢查目錄開始，直到被隔離的那一份建立完成，期間沒有人能
+    改寫、改名或刪除它。
+  - `CreateProcess` 前再檢查一次目錄只有 helper。
+  - 子程序加上「DLL 優先從 System32 載入」的 mitigation。
+  - launcher 的所有失敗路徑都經過同一個清理出口；建立後若失敗，會先確認子程序已經結束才返回。
+  - `windows.yml` 與 release 不再只檢查 helper 是否存在，而是以私有副本實際啟動打包好的 helper（空輸入），必須以 0
+    結束，代表 LPAC＋Job 建立並通過自我驗證。
 - **仍待**：Windows 11 一般使用者帳號上的實機重跑（runner 都是管理員帳號）。
 
 ## 20. S5 進度與實作決策（發佈者信任）

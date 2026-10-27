@@ -199,4 +199,22 @@ jobs:
           private=$(mktemp -d)
           cp "$helper" "$private/"
           "$private/shinsou-sandbox.exe" --package-key releasecheck < /dev/null || { echo "::error::the packaged helper did not start confined (exit $?)"; exit 1; }
+
+      # The release job's PowerShell form of the same check (release.yml, windows.yml).
+      - name: Packaged helper starts confined (release check)
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $helper = "composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
+          $private = Join-Path ([IO.Path]::GetTempPath()) ("shinsou-sandbox-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $private | Out-Null
+          Copy-Item -LiteralPath $helper -Destination $private
+          $emptyInput = [IO.Path]::GetTempFileName() # zero bytes, outside the helper's directory
+          $probe = Start-Process -FilePath (Join-Path $private "shinsou-sandbox.exe") `
+            -ArgumentList "--package-key", "releasecheck" -RedirectStandardInput $emptyInput `
+            -NoNewWindow -Wait -PassThru
+          if ($probe.ExitCode -ne 0) {
+            throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
+          }
+          "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
           echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"

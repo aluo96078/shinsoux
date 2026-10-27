@@ -28,6 +28,13 @@ jobs:
           path: shinsoux
           persist-credentials: false
 
+      # Compose links iOS 26 APIs (UIViewLayoutRegion): use the newest Xcode on the runner.
+      - name: Newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: WASM toolchain
         run: brew install llvm lld wasi-libc wasi-runtimes wabt
 
