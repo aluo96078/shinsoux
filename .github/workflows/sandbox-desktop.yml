@@ -199,6 +199,7 @@ jobs:
           private=$(mktemp -d)
           cp "$helper" "$private/"
           "$private/shinsou-sandbox.exe" --package-key releasecheck < /dev/null || { echo "::error::the packaged helper did not start confined (exit $?)"; exit 1; }
+          echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The release job's PowerShell form of the same check (release.yml, windows.yml).
       - name: Packaged helper starts confined (release check)
@@ -219,4 +220,3 @@ jobs:
           $line = "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)"
           Write-Output $line
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
-          echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"
