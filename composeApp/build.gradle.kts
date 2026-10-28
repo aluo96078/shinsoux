@@ -14,14 +14,14 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.8")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.108")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.9")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.109")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600108)
+    .orElse(25600109)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
