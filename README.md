@@ -22,8 +22,8 @@
 
 - 書庫分類、搜尋、篩選、排序、批次操作與閱讀進度管理
 - LTR、RTL、直向、Webtoon 等閱讀模式，支援縮放、濾鏡、預取與離線閱讀
-- 可驗證、安裝與管理的來源擴充套件，以及來源登入、Cookie、偏好與網路設定；production 只執行
-  Host 內建 catalog 精確審核的 ShuYue JavaScript artifact
+- 可驗證、安裝與管理的來源擴充套件，以及來源登入、Cookie、偏好與網路設定；所有擴充套件一律在
+  隔離的沙箱中執行（Android isolated process、macOS／Windows OS 隔離 helper、iOS WebAssembly）
 - 下載佇列、本地 TXT／ZIP／CBZ／完整 EPUB／圖片匯入、備份還原與端對端加密事件同步
 - 多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
 - Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
@@ -48,8 +48,8 @@
 - Reader 的 LTR、RTL、直向、Webtoon、縮放、濾鏡、章節清單、章末切換、錯誤重試與預取
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
-- Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；generic artifact 在
-  production 保持 inert，來源瀏覽只由 Host-reviewed ShuYue runtime 提供；repository 設定納入可攜 snapshot
+- Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；Host 審核與受信任發行者的
+  套件皆在沙箱中執行，其餘套件保持 inert；repository 設定納入可攜 snapshot
 - [ShuYue](https://github.com/aluo96078/shuyue) v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
@@ -72,12 +72,12 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 
 ## 擴充套件與網路
 
-JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Plugin 的 Browse/API request plane 與 Reader／Download 的 host content plane 已分離：後者只接受 manifest 宣告的 exact `contentOrigins`、`GET`／`HEAD` 與安全 headers，不帶 Cookie、Authorization、proxy API key 或其他認證／代理秘密；Host 取得 bytes 後交給 Coil 或相應內容 consumer。Cookie、Referer、User-Agent 與 proxy route 不會沿用到 content plane。每個來源仍可為 API request plane 將 Cloudflare Worker Proxy 設為「跟隨全域」、「強制啟用」或「強制關閉」。
+所有擴充套件（包含 Host 內建審核的官方與 ShuYue 套件）一律在 [`sandbox-core`](sandbox-core/README.md) 的 QuickJS 沙箱中執行，每個套件各自隔離：Android 為每個套件一個 isolated process，macOS 為 `sandbox_init` deny-all 的 helper，Windows 為 Low Privilege AppContainer＋Job object 的 helper，iOS 為 WAMR WebAssembly 直譯器。沙箱沒有網路、檔案與子程序權限，只能經 SandboxProtocol v1 的 bridge 向 Host 請求；審核套件的身分在進入沙箱前仍須逐 byte 比對，並保留其審核過的資源上限、網路範圍與 cookie 讀取權。架構與取捨見 [ADR-0002](docs/architecture/0002-sandboxed-third-party-plugin-runtime.md)。Plugin 的 Browse/API request plane 與 Reader／Download 的 host content plane 已分離：後者只接受 manifest 宣告的 exact `contentOrigins`、`GET`／`HEAD` 與安全 headers，不帶 Cookie、Authorization、proxy API key 或其他認證／代理秘密；Host 取得 bytes 後交給 Coil 或相應內容 consumer。Cookie、Referer、User-Agent 與 proxy route 不會沿用到 content plane。每個來源仍可為 API request plane 將 Cloudflare Worker Proxy 設為「跟隨全域」、「強制啟用」或「強制關閉」。
 
 完整的 repository 格式、package／SourceKey、安裝與撤銷生命週期、四層權限、reviewed ShuYue admission、平台 Web challenge 與資料邊界，統一整理於[插件系統總覽](docs/PLUGIN_SYSTEM.md)。以下只列出容易影響使用與測試的 production 邊界：
 
-- Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 的官方腳本並在 Rhino 初始化；這不會連正式來源網站。
-- iOS Simulator test 覆蓋 JavaScriptCore 的同步 extension contract；任意第三方 Promise／async／`fetch` 腳本不保證相容。
+- Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 的官方腳本並在 Rhino 與沙箱中各執行一次比對；這不會連正式來源網站。Rhino／JavaScriptCore 只保留於測試比對，正式 App 不再以 in-process 引擎執行擴充套件。
+- 沙箱支援 Promise／async 與 `bridge.net.fetch`；fetch 佇列有界，超出 in-flight 與排隊上限的請求會被拒絕而不是無限緩衝。
 - V2 schema 可描述 `IMAGE_SEQUENCE`、`PLAIN_TEXT`、`EPUB_SPINE`，也能描述同包漫畫與小說；但目前 generic Shinsou adapter 與 reviewed ShuYue 安裝路徑尚未完整支援任意 mixed package。官方 `example.dual` 是 `referenceOnly: true`、`installable: false` 的契約範例，可安裝的漫畫與小說來源目前採分包發布。
 - `AppSnapshot.extensionRepositories` 是可攜的 repository source of truth。升級時只會一次性遷移舊 KV 清單；之後 add／remove／default、備份還原與同步結果都會精確鏡像回 KV，不會再把 stale KV 無條件 union 回 snapshot。
 - Extension 的 execution trust token 綁定 `{pluginId}:{versionCode}:{SHA-256}`，只代表 exact artifact 已獲本機執行核准；不能與 repository 的 pinned author trust 混為一談。System-event grant 另以完整的 `(packageId, version, versionCode, SHA-256, SourceKey)` artifact／來源身分核准。撤銷會立即卸載 runtime、保留 package 供重新授權或卸載；啟動時不會只因 bytes 仍符合 manifest digest 就重建已撤銷的授權。
@@ -88,15 +88,15 @@ JVM（Android／Desktop）使用 Rhino，iOS 使用 JavaScriptCore。Plugin 的 
 - DNS over HTTPS 設定目前只會保存，不會改變 runtime DNS。專案刻意不採「直接連 IP 再覆寫 Host」的作法，因其無法安全保留 HTTPS SNI／憑證語義。
 - Production repository 必須使用 pinned Ed25519 signed envelope；Host 會檢查 sequence replay／equivocation、payload SHA-256 與 size。Unsigned repository 僅能在明示啟用的 local/developer 相容流程使用，不能宣稱為官方簽章；目前未宣稱官方簽章已部署，正式發布前仍須配置並分發 out-of-band trust root、產生 envelope、完成 key rotation／撤銷與跨平台驗證。
 - JVM（Android／Desktop）對 plugin DNS 解析結果做 socket-level pinning，並沿用 OkHttp shared connection pool；iOS production generic plugin network／repository transport 在無法安全 pinning 時 fail closed。`BROWSER_CHALLENGE` 只有在 exact artifact 的 runtime permission 獲准，且請求 origin 命中 `browserSessionOrigins` 時才可使用。
-- Plugin runtime、repository 與 content body 都受有界 resource limits（index／script／sidecar、package/source 數、redirect、response bytes、logs、頁面／資源／文字大小）；超限或不符 exact artifact／SourceKey／permission approval 會拒絕或 fail closed。Rhino／JavaScriptCore 沒有可靠的 per-runtime heap isolation，因此 production generic repository JavaScript 維持 inert；只有 Host 內建 catalog 精確審核、且 provenance 綁定最終 evaluated bytes 與 exact source 的 ShuYue artifact 可進入 in-process engine。
+- Plugin runtime、repository 與 content body 都受有界 resource limits（index／script／sidecar、package/source 數、redirect、response bytes、logs、頁面／資源／文字大小）；超限或不符 exact artifact／SourceKey／permission approval 會拒絕或 fail closed。沙箱為每個套件提供獨立的記憶體、時間與 bridge 呼叫上限；未經審核或未受信任發行者的 repository JavaScript 維持 inert，審核套件的 provenance 仍綁定最終 evaluated bytes 與 exact source。
 - Package store V2 以 script SHA-256 content-addressing 與 atomic metadata commit 保存套件；write/readback 會驗證 SHA-256、strict UTF-8 與 metadata。Host bounds 為 script 8 MiB、metadata 512 KiB、256 packages、每包 256 sources、128 KiB index、1,024 discovered files；corrupt V2 不會 fallback 到 V1 split keys。Response headers 另限 128 fields、256B name、16KiB value、64KiB aggregate、64 `Set-Cookie`、32 cookie attributes，且 `Location` 必須唯一並限 4KiB。
 - Plugin batch POST 限 128 items、最多 32 個同時 in flight；每 item 的 decoded response 上限為 128 KiB，整批保留上限為 4 MiB，transport read-ahead 加上已接收結果的 decoded peak 約 8 MiB。批次超限會整批失敗，不回傳部分結果；需要較大單一文件時必須走普通單次請求。
 - Response body 以 bounded streaming 讀取，並在讀取前後檢查 declared `Content-Length`、允許的 `Content-Encoding`（identity／gzip／deflate）與 decoded-byte cap；header、body 與 HTTP framing 超限、矛盾或非法時 fail closed，不以事後截斷代替限制。
 - Runtime identity 是由 exact artifact 與 exact `SourceKey` 推導的 stable logical ID；每次載入仍有遞增 generation，舊 generation 的 handle／事件會失效。只有 reviewed ShuYue compatibility path 會移除 legacy `Connection` header；repository／generic plugin 不能設定或繞過 transport-owned framing／hop-by-hop headers。
-- Exact reviewed ShuYue runtime 才會把 default invocation instruction budget 由 100M 提高至 500M、result string 由 1 MiB 提高至 8 MiB、result envelope 由 4 MiB 提高至 17 MiB；caller 明示的更嚴值保留，任何非 default 的 raised value 仍 capped，generic runtime 的 default 不變。4–8 MiB 的多頁文本因此可讀，超過 8 MiB 仍 fail closed。
+- Exact reviewed ShuYue runtime 才會把 default invocation instruction budget 由 100M 提高至 500M、result string 由 1 MiB 提高至 8 MiB、result envelope 由 4 MiB 提高至 17 MiB；caller 明示的更嚴值保留，任何非 default 的 raised value 仍 capped，generic runtime 的 default 不變。沙箱回傳單一結果時另受 SandboxProtocol 的 4 MiB 欄位上限限制，因此單一章節文字超過 4 MiB（約 130 萬個中文字）會以「結果過大」失敗，不會讓套件被判定為當機。
 - ShuYue 大文本以 64 KiB chunk 的單次、可取消 stream 傳遞；pending 與 active stream 的 aggregate reservation 合計最多 8 MiB。這些放寬只存在 exact reviewed runtime，最壞情況仍可能同時有 JS String、JSON 與 Kotlin copies，並使用較高 CPU instruction budget；不改變 generic runtime 的 steady-state 記憶體或效能。
 - System-event grant 是單一 durable exact-artifact／`SourceKey`／permissions record（`PENDING`／`GRANTED`／`REVOKED`）；legacy split migration、bounds、更新與 revoke 都 fail closed，撤銷 write 失敗也不會在本程序復活舊 authority。
-- 這些邊界會增加 DNS、SHA-256、Ed25519 驗證與 admission 成本；host-fetch 會多一次 bytes 取得及快取路徑，但避免 plugin 直接接觸內容秘密。SourceKey 及 content identity 變更可能觸發 migration／cache SourceKey 更新；OkHttp shared pool 會降低重建 client 的連線與執行緒成本。Legacy synchronous Rhino／JavaScriptCore contract、Mihon metadata-only 與 mixed-package 限制仍是相容性邊界。
+- 這些邊界會增加 DNS、SHA-256、Ed25519 驗證與 admission 成本；host-fetch 會多一次 bytes 取得及快取路徑，但避免 plugin 直接接觸內容秘密。SourceKey 及 content identity 變更可能觸發 migration／cache SourceKey 更新；OkHttp shared pool 會降低重建 client 的連線與執行緒成本。每個套件的沙箱程序會增加約數 MiB 記憶體與跨程序序列化成本，Host 以 LRU 與閒置回收限制同時存活的沙箱數量。Mihon metadata-only 與 mixed-package 限制仍是相容性邊界。
 
 ## Desktop
 
@@ -118,8 +118,9 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 - `composeApp/src/commonMain`：跨平台資料模型、repository、網路／外掛 runtime、下載、備份、同步與 Compose UI
 - `composeApp/src/androidMain`：Android Activity、文件選擇器、Biometric、WebView、WorkManager 與持久化接線
-- `composeApp/src/iosMain`：iOS framework entry、JavaScriptCore、Keychain、WKWebView、iCloud Drive、BGTask、文件選擇器與 Widget payload
-- `composeApp/src/jvmCommonMain`：Android／Desktop 共用 Rhino JavaScript runtime
+- `composeApp/src/iosMain`：iOS framework entry、WASM 沙箱接線、Keychain、WKWebView、iCloud Drive、BGTask、文件選擇器與 Widget payload
+- `composeApp/src/jvmCommonMain`：Android／Desktop 共用的 Rhino runtime（僅供相容性測試比對）
+- `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
 - `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
 - `syncWorker`：Cloudflare Worker、D1 migrations、隔離的 checkpoint／content-body R2、WorkspaceHub Durable Object、部署／備份工具與伺服器測試
