@@ -35,6 +35,26 @@ import kotlin.test.assertTrue
 
 class ShuYueReviewedExtensionV2Test {
     @Test
+    fun everyReviewedLoginSourceSendsItsCookiesToItsOwnOriginOnly() {
+        val linovelib = ShuYueReviewedPluginCatalogV2.profiles
+            .single { it.identity.packageId == "zh.bilimanga" && it.identity.version == "1.6.0" }
+            .sourceProfiles.single()
+        assertEquals(
+            setOf("https://tw.linovelib.com"),
+            reviewedCredentialOrigins(linovelib, setOf(ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS)),
+        )
+        assertEquals(emptySet(), reviewedCredentialOrigins(linovelib, setOf(ShuYueExecutionPermissionV2.NETWORK)))
+
+        ShuYueReviewedPluginCatalogV2.profiles
+            .filter { ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS in it.requiredPermissions }
+            .flatMap { it.sourceProfiles }
+            .forEach { source ->
+                val origins = reviewedCredentialOrigins(source, setOf(ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS))
+                assertTrue(origins.isNotEmpty() && origins.all(source.requestOrigins::contains), source.sourceId)
+            }
+    }
+
+    @Test
     fun quarantineNeverExecutesAndAdmissionRequiresExactTrustDigestAndPermissions() = runTest {
         val script = "reviewed fixture script".encodeToByteArray()
         val profile = profile(Sha256.hex(script))

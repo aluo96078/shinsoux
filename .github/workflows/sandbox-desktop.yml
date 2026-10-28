@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: aluo96078/shinsou_plugin
-          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
           path: shinsou_plugin
           persist-credentials: false
 
@@ -127,7 +127,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: aluo96078/shinsou_plugin
-          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
           path: shinsou_plugin
           persist-credentials: false
 

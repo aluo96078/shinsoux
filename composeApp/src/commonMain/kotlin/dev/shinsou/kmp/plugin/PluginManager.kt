@@ -2845,10 +2845,16 @@ public class PluginManager(
         canonicalOrigin: String,
     ): PluginCookie {
         val origin = io.ktor.http.Url(canonicalOrigin)
-        val domain = canonicalCookieDomain(cookie.domain)
-        // Imported browser state is narrowed to the exact reviewed host. Domain cookies for a
-        // parent/public suffix or sibling host must never become a cross-origin cookie injector.
-        require(domain == origin.host.lowercase().trimEnd('.')) {
+        val host = origin.host.lowercase().trimEnd('.')
+        val domain = canonicalCookieDomain(cookie.domain).trimEnd('.')
+        // Imported browser state is narrowed to the exact reviewed host. A site's login cookie is
+        // often set for its parent domain (.linovelib.com for tw.linovelib.com); it is kept, but
+        // stored host-only for the reviewed host, so it never reaches a sibling or the parent.
+        // The parent must pass the same rules as a response cookie's Domain attribute (no IP
+        // host, no public suffix); a cookie for a sibling or unrelated host is still refused.
+        val parentDomain = domain != host && host.endsWith(".$domain") && !isCookieIpAddress(host) &&
+            isValidCookieDomainSyntax(domain) && !isPluginCookiePublicSuffix(domain)
+        require(domain == host || parentDomain) {
             "Browser cookie is outside the reviewed challenge origin"
         }
         require(cookie.path.startsWith('/') && cookie.path.none(Char::isISOControl)) {
@@ -2859,7 +2865,7 @@ public class PluginManager(
                 PluginCookie(
                     name = cookie.name,
                     value = cookie.value,
-                    domain = domain,
+                    domain = host,
                     path = cookie.path,
                     expiresAtEpochMillis = cookie.expiresAtEpochMillis,
                     secure = true,

@@ -23,10 +23,9 @@ import dev.shinsou.kmp.plugin.PublisherExecutionTierGate
 import dev.shinsou.kmp.plugin.PublisherRevocationStore
 import dev.shinsou.kmp.plugin.PublisherTrustStore
 import dev.shinsou.kmp.plugin.RepositoryTrustPolicies
-import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.SourceIndexEntry
-import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.approveCurrentEventGrantReview
 import dev.shinsou.kmp.plugin.publisherRoot
 import dev.shinsou.kmp.plugin.signedRevocations
@@ -95,9 +94,8 @@ class SandboxAppIntegrationTest {
             ),
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = TieredScriptPluginRuntimeFactory(
-                inProcess = RhinoScriptPluginRuntimeFactory(),
-                sandbox = SandboxRuntimeFactory(
+            runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
+                SandboxRuntimeFactory(
                     transports = DesktopSandboxTransportProvider { bin.toPath() },
                     lifecycle = desktopSandboxLifecycle(scope),
                 ),

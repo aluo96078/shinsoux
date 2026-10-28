@@ -624,7 +624,7 @@ App 不會因為作者或任何第三方的判斷而遠端停用使用者安裝�
 
 ```text
 if 發佈者金鑰 == App 內建官方金鑰 && OfficialShinsouReviewedCatalog（或 reviewed ShuYue catalog）exact match:
-    REVIEWED_IN_PROCESS（現有 Rhino／JSC 路徑，InProcessScriptProvenance 照舊）
+    REVIEWED_IN_PROCESS（保留 reviewed 的網路範圍與執行上限，但同樣在沙箱執行，見 §22）
 else if 簽章有效 && 發佈者已信任 && 不在使用者本機封鎖名單 && 未被發佈者撤銷 && 使用者已授權:
     SANDBOXED
 else if 開發者模式 && 來源為允許的 loopback／LAN:
@@ -1319,9 +1319,8 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
     `PluginExecutionInertException`，這是可逆的：使用者的授權保留，解除封鎖或信任恢復後就能再執行。只有 UNSIGNED 會
     與舊的「未審查」同樣處理，也就是撤銷授權。
   - 用不在發佈者對應中的 URL 寫法安裝時，`publisherId` 為 null，只會被判為 UNSIGNED，永遠不會執行。
-  - `TieredScriptPluginRuntimeFactory`：
-    - 帶有 in-process provenance 的（官方 catalog、ShuYue）交給 Rhino／JSC。
-    - 其餘交給沙箱。
+  - `SandboxOnlyScriptPluginRuntimeFactory`（取代原本的 `TieredScriptPluginRuntimeFactory`，見 §22）：
+    - 所有套件都交給沙箱，包括官方 catalog 與 ShuYue。
     - 平台沒有沙箱時一律拒絕，絕不交給 in-process 引擎。
   - 桌面版 `Main.kt` 用 `desktopSandboxRuntimeFactory`，在 macOS 與 Windows 提供 OS 隔離的 helper。
   - **新增 repository**：`inspectRepositoryKey` 走嚴格的 transport，先取得 `repo.json`，確認它能以自己出示的金鑰驗證，
@@ -1416,6 +1415,36 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   - 時間上限 2000 ms；時區與裝置一致。
   - close 與 send／receive 競爭 40 輪，沒有 crash。
 - guest 大小 1.69 MB。
+
+## 22. 所有套件一律在沙箱執行
+
+- **決策（使用者要求）**：不再依套件區分執行引擎。官方 catalog、reviewed ShuYue 與第三方套件都在各平台的沙箱執行：
+  - macOS／Windows：OS 隔離的 shinsou-sandbox helper。
+  - Android：每個套件一個 isolated process。
+  - iOS：WASM 沙箱。
+
+  正式 App 不再使用 Rhino／JavaScriptCore 執行套件程式碼；兩者只留在測試與 parity 比對中。
+- **tier 只決定能不能執行、以及用哪些 host 權限**，不再決定引擎：
+  - `ReviewedInProcess` 仍代表「經 Host 審核的 catalog artifact」，保留 reviewed 的網路範圍
+    （`forReviewedInProcessArtifact`）與 reviewed 執行上限。
+  - `SandboxOnlyScriptPluginRuntimeFactory` 只負責把所有套件交給沙箱。`SandboxRuntimeFactory` 收到帶
+    `InProcessScriptProvenance` 的環境時：
+    1. 先以 `requireExactMatch` 比對實際執行的位元組、manifest 與 source；不符就拒絕，不會開沙箱。
+    2. 採用 provenance 內的 reviewed 執行上限。
+    3. 開放 cookie 讀取（`allowCookieRead`），與原本 in-process 時一樣，仍需要 `COOKIE_STORAGE` 權限。
+       第三方套件的 cookie 讀取維持關閉，留給 S6 的 `COOKIE_READ` 授權。
+    4. provenance 本身不會傳進沙箱。
+  - 封鎖名單、發佈者撤銷與重新評估的流程都不變。
+- **結果大小**：
+  - 協定的 Result 以單一 JSON 欄位傳回，上限 4 MiB（`SandboxFieldLimits.maxJsonBytes`）；reviewed ShuYue 原本允許 17 MiB。
+  - 交給沙箱的 `maxResultBytes` 因此限制在 4 MiB 以內。超過時在沙箱內以 `LIMIT_RESULT` 失敗，視為一般的資源上限，
+    不再變成協定違規並被記為 crash strike。
+  - 代價：單一章節超過 4 MiB 的文字（約 130 萬個中文字）無法讀取。原本的 4–8 MiB 分段串流在沙箱中不會被用到。
+    真實章節遠小於此上限。
+- **驗證**：
+  - reviewed ShuYue 整套測試（20 項）以 Rhino 與桌面沙箱 helper 各跑一次，全部通過
+    （`ProductionShuYueReviewedRuntimeV2SandboxTest`）。超過 4 MiB 的測試在沙箱中改為驗證 `LIMIT_RESULT`。
+  - 官方套件的沙箱 parity 測試（`SandboxOfficialParityTest`）與原本相同。
 
 ## 不接受的縮小範圍
 

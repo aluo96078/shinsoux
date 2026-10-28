@@ -43,8 +43,9 @@ internal fun interface SandboxTransportProvider {
 
 /**
  * The sandbox tier's [ScriptPluginRuntimeFactory] (ADR-0002 §4.1). Every runtime gets its own
- * sandbox; scripts never run in the host process. An environment carrying in-process provenance
- * (a reviewed-only capability) is refused, so reviewed profiles cannot be enabled here.
+ * sandbox; scripts never run in the host process. Host-reviewed catalogue artifacts run here too
+ * (§22): their provenance must match the exact script and source, and brings the reviewed limits
+ * and the cookie read the review covers; the capability itself never reaches the sandbox.
  * With a [lifecycle], idle sandboxes are stopped and restarted on demand and crash loops disable
  * the package (§4.6, §7).
  */
@@ -69,11 +70,20 @@ internal class SandboxRuntimeFactory(
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
     ): ScriptPluginRuntime {
-        require(environment.inProcessScriptProvenance == null) { "Sandbox tier refuses in-process script provenance" }
+        // Checked before any sandbox opens: provenance for other bytes or another source is refused.
+        val provenance = environment.inProcessScriptProvenance
+        val reviewedLimits = provenance?.requireExactMatch(script, manifest, source)
+        val sandboxEnvironment = if (provenance == null) environment else environment.copy(
+            executionLimits = reviewedLimits ?: environment.executionLimits,
+            inProcessScriptProvenance = null,
+        )
+        // In process a reviewed artifact read cookies with COOKIE_STORAGE alone; the dispatcher still
+        // requires that permission. Other packages keep the policy's COOKIE_READ decision (S6).
+        val policy = policyFor(manifest, source).let { if (provenance != null) it.copy(allowCookieRead = true) else it }
         manifest.requireDeclaredExecutableSource(source)
-        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        sandboxEnvironment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
         val runtime = SandboxScriptPluginRuntime(
-            manifest, source, environment, transports, policyFor(manifest, source), nowEpochMillis, pumpScope, lifecycle,
+            manifest, source, sandboxEnvironment, transports, policy, nowEpochMillis, pumpScope, lifecycle,
         )
         try {
             runtime.initialize(script)
@@ -94,7 +104,10 @@ internal fun PluginExecutionLimits.toSandboxLimits(): SandboxLimits = SandboxLim
     maxBridgeCalls = maxBridgeCallsPerInvocation.toLong(),
     maxAsyncInflight = SANDBOX_MAX_ASYNC_INFLIGHT,
     maxAsyncQueue = SANDBOX_MAX_ASYNC_QUEUE,
-    maxResultBytes = maxResultBytes.toLong(),
+    // A Result frame carries the JSON as one field of at most maxJsonBytes; a larger result (the
+    // reviewed ShuYue profile allows 17 MiB) must fail as LIMIT_RESULT inside the sandbox, not as an
+    // oversized frame that the host treats as a protocol violation and a crash strike.
+    maxResultBytes = minOf(maxResultBytes, SandboxFieldLimits().maxJsonBytes).toLong(),
     domMaxNodes = maxDomNodes.toLong(),
     domMaxDepth = maxDomDepth.toLong(),
 )

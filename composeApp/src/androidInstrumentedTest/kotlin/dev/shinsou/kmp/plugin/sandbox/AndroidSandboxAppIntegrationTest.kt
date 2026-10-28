@@ -32,10 +32,9 @@ import dev.shinsou.kmp.plugin.RepositorySignedDocumentType
 import dev.shinsou.kmp.plugin.RepositorySignedDocumentVerifier
 import dev.shinsou.kmp.plugin.RepositoryTrustPolicies
 import dev.shinsou.kmp.plugin.RepositoryTrustRoot
-import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.SourceIndexEntry
-import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
@@ -105,12 +104,6 @@ class AndroidSandboxAppIntegrationTest {
         val transports = SandboxTransportProvider { packageId ->
             (androidTransports.open(packageId) as AndroidSandboxTransport).also { opened += it }
         }
-        var inProcessCalls = 0
-        val rhino = RhinoScriptPluginRuntimeFactory()
-        val inProcess = object : dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory {
-            override suspend fun create(script: String, manifest: dev.shinsou.kmp.plugin.PluginManifest, environment: ScriptPluginEnvironment) =
-                rhino.create(script, manifest, environment).also { inProcessCalls++ }
-        }
         val manager = PluginManager(
             repositoryClient = ExtensionRepositoryClient(
                 HttpClient(MockEngine { respond(script) }),
@@ -119,9 +112,8 @@ class AndroidSandboxAppIntegrationTest {
             ),
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = TieredScriptPluginRuntimeFactory(
-                inProcess = inProcess,
-                sandbox = SandboxRuntimeFactory(transports, androidSandboxLifecycle(context, scope)),
+            runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
+                SandboxRuntimeFactory(transports, androidSandboxLifecycle(context, scope)),
             ),
             environment = ScriptPluginEnvironment(
                 network = PluginNetworkClient(transport = sites, storage = storage, hostResolver = PluginHostResolver { listOf("93.184.216.34") }),
@@ -144,8 +136,7 @@ class AndroidSandboxAppIntegrationTest {
             manager.approveEventGrantReview(entry.id, review, review.requestedPermissions)
             val page = manager.source(SOURCE_ID)!!.getPopularManga(1)
             assertEquals(listOf("沙箱一", "Two"), page.mangas.map { it.title })
-            // It ran in a separate isolated process, never in the app's own engine.
-            assertEquals(0, inProcessCalls)
+            // It ran in a separate isolated process.
             val sandbox = opened.single()
             kotlin.test.assertNotEquals(android.os.Process.myPid(), sandbox.pid)
             val user = userOf(sandbox.pid)

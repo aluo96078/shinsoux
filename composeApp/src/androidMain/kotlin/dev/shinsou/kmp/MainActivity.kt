@@ -24,8 +24,7 @@ import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.network.createPlatformHttpClient
-import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.AndroidSandboxTransportProvider
 import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
@@ -102,11 +101,10 @@ class MainActivity : FragmentActivity() {
             httpClient = httpClient,
             pluginKeyValueStore = AndroidPluginKeyValueStore(applicationContext),
             fileSystem = sharedState.fileSystem,
-            // ADR-0002 §10.1: reviewed catalogue artifacts run in Rhino; trusted third-party packages
-            // run in an isolated process each (S2).
-            runtimeFactory = TieredScriptPluginRuntimeFactory(
-                inProcess = RhinoScriptPluginRuntimeFactory(),
-                sandbox = SandboxRuntimeFactory(
+            // ADR-0002 §10.1: every package, reviewed or third-party, runs in an isolated process
+            // of its own (S2).
+            runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
+                SandboxRuntimeFactory(
                     transports = AndroidSandboxTransportProvider(applicationContext),
                     lifecycle = androidSandboxLifecycle(applicationContext, sandboxScope),
                 ),

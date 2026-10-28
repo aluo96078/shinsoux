@@ -617,6 +617,10 @@ public class PublisherRepositoryTrustPolicy(
 
 /** §10.1: where a package's code runs. Decided from local state only, never from what a repository says. */
 public sealed interface ExecutionTier {
+    /**
+     * A host-reviewed catalogue artifact: it keeps its reviewed network scope and limits, but like
+     * every other package it runs in the sandbox ([SandboxOnlyScriptPluginRuntimeFactory]).
+     */
     public data object ReviewedInProcess : ExecutionTier
     public data class Sandboxed(val development: Boolean = false, val warnings: Set<ExecutionTierWarning> = emptySet()) : ExecutionTier
     public data class Inert(val reason: InertReason) : ExecutionTier
@@ -760,30 +764,27 @@ public class PluginExecutionInertException(public val pluginId: String, public v
     ScriptRuntimeUnavailableException("Plugin '$pluginId' cannot run: $reason")
 
 /**
- * Picks the engine by what [PluginManager] decided: an environment carrying in-process provenance
- * (the reviewed official and ShuYue catalogues) runs in [inProcess]; everything else runs in
- * [sandbox]. Without a sandbox on this platform everything else is refused here, never handed to
- * the in-process engine, and the package stays inert.
+ * Every package runs in [sandbox], whatever its tier: the tier only decides whether it may run and
+ * with which host privileges, never the engine (ADR-0002 §22). A reviewed artifact's provenance
+ * goes to the sandbox, which matches it against the exact bytes before adopting the reviewed
+ * profile. Without a sandbox on this platform nothing runs and the package stays inert; no script
+ * ever reaches an in-process engine.
  */
-public class TieredScriptPluginRuntimeFactory(
-    private val inProcess: ScriptPluginRuntimeFactory,
+public class SandboxOnlyScriptPluginRuntimeFactory(
     private val sandbox: ScriptPluginRuntimeFactory?,
 ) : ScriptPluginRuntimeFactory {
     override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime =
-        engineFor(environment).create(script, manifest, environment)
+        requireSandbox().create(script, manifest, environment)
 
     override suspend fun createForSource(
         script: String,
         manifest: PluginManifest,
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime = engineFor(environment).createForSource(script, manifest, source, environment)
+    ): ScriptPluginRuntime = requireSandbox().createForSource(script, manifest, source, environment)
 
-    private fun engineFor(environment: ScriptPluginEnvironment): ScriptPluginRuntimeFactory = when {
-        environment.inProcessScriptProvenance != null -> inProcess
-        sandbox != null -> sandbox
-        else -> throw ScriptRuntimeUnavailableException("No plugin sandbox on this platform")
-    }
+    private fun requireSandbox(): ScriptPluginRuntimeFactory =
+        sandbox ?: throw ScriptRuntimeUnavailableException("No plugin sandbox on this platform")
 }
 
 /** What [ExtensionRepositoryClient.inspectRepositoryKey] found: shown to the user before trusting. */

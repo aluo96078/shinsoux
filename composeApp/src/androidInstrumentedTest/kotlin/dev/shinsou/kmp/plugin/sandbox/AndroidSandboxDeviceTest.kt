@@ -124,7 +124,8 @@ class AndroidSandboxDeviceTest {
             return r.filter(function (x) { return x === 'rejected'; }).length;
           },
           neverSettles: function () { return new Promise(function () {}); },
-          events: async function () { for (var i = 0; i < 1e7; i++) await null; return 'done'; }
+          // Unbounded: a fast emulator finishes any fixed count inside the time limit.
+          events: async function () { for (;;) await null; }
         };
     """.trimIndent()
 

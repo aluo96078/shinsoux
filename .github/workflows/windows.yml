@@ -21,6 +21,10 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # Plugin fixtures are verified byte-for-byte; keep LF line endings on checkout.
+      - name: Disable Git line ending conversion
+        run: git config --global core.autocrlf false
+
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
@@ -31,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: aluo96078/shinsou_plugin
-          ref: 724c0d691d251cf188ace06030dae7544c541b8a
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
           path: shinsou_plugin
           persist-credentials: false
 
@@ -60,7 +64,7 @@ jobs:
         id: desktop_tests
         continue-on-error: true
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:desktopTest -PshinsouPluginRepository=..\..\shinsou_plugin -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: .\gradlew.bat :composeApp:desktopTest '-PshinsouPluginRepository=..\..\shinsou_plugin' '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
 
       - name: Report desktop test failures
         if: steps.desktop_tests.outcome == 'failure'
@@ -111,11 +115,11 @@ jobs:
 
       - name: Compile desktop application
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:compileKotlinDesktop -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: .\gradlew.bat :composeApp:compileKotlinDesktop '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
 
       - name: Build release app image
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:createReleaseDistributable -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: .\gradlew.bat :composeApp:createReleaseDistributable '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
 
       - name: Verify packaged desktop runtime with Windows Access Bridge
         working-directory: shinsoux

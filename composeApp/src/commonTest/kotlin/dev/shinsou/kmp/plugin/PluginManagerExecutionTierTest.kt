@@ -16,17 +16,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** ADR-0002 §10.1 inside [PluginManager]: the publisher-trust tier decides which engine, if any, runs a package. */
+/** ADR-0002 §10.1 inside [PluginManager]: the publisher-trust tier decides whether a package runs; it only ever runs in the sandbox. */
 class PluginManagerExecutionTierTest {
     @BeforeTest
     fun initializeCrypto() = runTest { SodiumSyncPrimitives.initialize() }
 
-    private class Engine(private val name: String) : ScriptPluginRuntimeFactory {
+    private class Engine : ScriptPluginRuntimeFactory {
         val created = mutableListOf<String>()
         override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime {
-            if (name == "in-process" && environment.inProcessScriptProvenance == null) {
-                throw ScriptRuntimeUnavailableException("not reviewed")
-            }
             created += manifest.id
             return NoopScriptPluginRuntimeFactory.create(script, manifest, environment)
         }
@@ -37,9 +34,7 @@ class PluginManagerExecutionTierTest {
         val packages: PluginPackageStore = InMemoryPluginPackageStore(),
         withSandbox: Boolean = true,
     ) {
-        /** An engine that would run anything: the tiered factory alone must keep third parties out of it. */
-        val inProcess = Engine("permissive")
-        val sandbox = Engine("sandbox")
+        val sandbox = Engine()
         val state = KeyValueRepositorySecurityStateStore(keyValues)
         val publishers = PublisherTrustStore(keyValues, state)
         val revocations = PublisherRevocationStore(keyValues, publishers, state)
@@ -54,7 +49,7 @@ class PluginManagerExecutionTierTest {
             repositoryClient = client,
             packageStore = packages,
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = TieredScriptPluginRuntimeFactory(inProcess, sandbox.takeIf { withSandbox }),
+            runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(sandbox.takeIf { withSandbox }),
             environment = ScriptPluginEnvironment(
                 network = PluginNetworkClient(transport = PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) }, storage = storage),
                 storage = storage,
@@ -89,7 +84,6 @@ class PluginManagerExecutionTierTest {
         assertTrue(host.sandbox.created.isEmpty(), "nothing runs before the user approves")
         host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
         assertEquals(listOf(PLUGIN_ID), host.sandbox.created)
-        assertTrue(host.inProcess.created.isEmpty())
         assertNotNull(host.manager.source(SOURCE_ID))
     }
 
@@ -181,17 +175,16 @@ class PluginManagerExecutionTierTest {
             assertNull(host.packages.get(PLUGIN_ID)!!.metadata.publisherId, spelling)
             runCatching { host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet()) }
             assertNull(host.manager.source(SOURCE_ID), "$spelling runs without a revocation list")
-            assertTrue(host.sandbox.created.isEmpty() && host.inProcess.created.isEmpty(), spelling)
+            assertTrue(host.sandbox.created.isEmpty(), spelling)
         }
     }
 
     @Test
-    fun withoutASandboxATrustedPackageNeverReachesTheInProcessEngine() = runTest {
+    fun withoutASandboxATrustedPackageDoesNotRun() = runTest {
         val host = Host(withSandbox = false)
         host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
         assertFailsWith<ExtensionArtifactNotReviewedException> { host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet()) }
-        assertTrue(host.inProcess.created.isEmpty())
         assertNull(host.manager.source(SOURCE_ID))
     }
 

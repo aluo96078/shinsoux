@@ -40,8 +40,7 @@ import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.DesktopReviewedLocalRepositoryTransport
 import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.plugin.isReviewedLocalRepositoryEnabled
-import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
@@ -130,12 +129,9 @@ fun main(args: Array<String>) {
                 httpClient = httpClient,
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
-                // ADR-0002 §10.1: reviewed catalogue artifacts run in Rhino; trusted third-party
-                // packages run in the OS-confined shinsou-sandbox helper.
-                runtimeFactory = TieredScriptPluginRuntimeFactory(
-                    inProcess = RhinoScriptPluginRuntimeFactory(),
-                    sandbox = desktopSandboxRuntimeFactory(sandboxScope),
-                ),
+                // ADR-0002 §10.1: every package, reviewed or third-party, runs in the OS-confined
+                // shinsou-sandbox helper.
+                runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(desktopSandboxRuntimeFactory(sandboxScope)),
                 syncInfrastructure = syncInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),

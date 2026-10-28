@@ -53,7 +53,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -65,9 +65,18 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class ProductionShuYueReviewedRuntimeV2Test {
+open class ProductionShuYueReviewedRuntimeV2Test {
+    /** The engine the reviewed runtimes run in; [ProductionShuYueReviewedRuntimeV2SandboxTest] runs the suite in the sandbox. */
+    protected open fun reviewedEngine(): ScriptPluginRuntimeFactory = RhinoScriptPluginRuntimeFactory()
+
+    /**
+     * Whether one content result may exceed the 4 MiB inline limit. The sandbox carries a result
+     * as one protocol field of at most 4 MiB, so there a larger chapter fails as LIMIT_RESULT.
+     */
+    protected open val largeResultsSupported: Boolean = true
+
     @Test
-    fun reviewedThumbnailUsesExactLiveScopeAndStripsCredentialMetadata() = runTest {
+    fun reviewedThumbnailUsesExactLiveScopeAndStripsCredentialMetadata() = runBlocking<Unit> {
         val requests = CopyOnWriteArrayList<PluginHttpRequest>()
         val fixture = installedReviewedSource(
             packageId = "zh.biquge.tw",
@@ -194,7 +203,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun productionReviewedAdapterPreservesRuntimeLoginFailureMessage() = runTest {
+    fun productionReviewedAdapterPreservesRuntimeLoginFailureMessage() = runBlocking<Unit> {
         val script = """
             var source = {
               id: "fixture.login",
@@ -244,7 +253,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = environment,
             credentialsResolver = LegacyLoginCredentialsResolverV2 {
                 LegacyLoginCredentialsV2("alice", "wrong")
@@ -277,7 +286,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedImageContentDecodesLegacyFragmentIntoV2RequestHeaders() = runTest {
+    fun reviewedImageContentDecodesLegacyFragmentIntoV2RequestHeaders() = runBlocking<Unit> {
         val script = """
             var source = {
               id: "fixture.images",
@@ -341,7 +350,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = environment,
             executionScopes = ShuYueExecutionScopeResolverV2 { _, _ -> 42L },
             reviewedProfiles = listOf(profile),
@@ -379,7 +388,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun addingShuYueGitHubBaseUsesReviewedIndexInsteadOfLegacyRepoJson() = runTest {
+    fun addingShuYueGitHubBaseUsesReviewedIndexInsteadOfLegacyRepoJson() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -394,7 +403,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         val callbacks = PluginBrowseAdapter(
@@ -439,7 +448,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenkuApiSourceSettingsSupportLoginThroughBrowseCallbacks() = runTest {
+    fun reviewedWenkuApiSourceSettingsSupportLoginThroughBrowseCallbacks() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -456,7 +465,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         val callbacks = PluginBrowseAdapter(
@@ -516,7 +525,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun productionRepositoryCallbacksExposeExplicitReviewedInstallAndUninstallFlow() = runTest {
+    fun productionRepositoryCallbacksExposeExplicitReviewedInstallAndUninstallFlow() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -531,7 +540,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         val callbacks = PluginBrowseAdapter(
@@ -583,7 +592,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedCoordinatorInstallsEveryCanonicalSourceWithIndependentLegacyScopes() = runTest {
+    fun reviewedCoordinatorInstallsEveryCanonicalSourceWithIndependentLegacyScopes() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -600,7 +609,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         val bytes = DUAL_SOURCE_REVIEWED_SCRIPT.encodeToByteArray()
@@ -645,7 +654,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
             reviewedProfiles = listOf(profile),
             executionScopes = ShuYueExecutionScopeResolverV2 { _, sourceKey ->
@@ -701,7 +710,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun theUsersBlockListTakesAReviewedShuYuePackageDownAndBack() = runTest {
+    fun theUsersBlockListTakesAReviewedShuYuePackageDownAndBack() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -719,7 +728,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = ExtensionRepositoryClient(HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })),
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
             executionTierGate = dev.shinsou.kmp.plugin.PublisherExecutionTierGate(publishers, resolver),
         )
@@ -728,7 +737,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         manager.installReviewedShuYueRuntimeV2(admission, prepare("zh.biquge.tw", "biquge-tw.js", admission, approvals))
@@ -745,7 +754,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedBiqugeExecutesThroughProductionBrowseDetailContentCallbacks() = runTest {
+    fun reviewedBiqugeExecutesThroughProductionBrowseDetailContentCallbacks() = runBlocking<Unit> {
         val keyValues = InMemoryPluginKeyValueStore()
         val storage = KeyValuePluginStorage(keyValues)
         val network = PluginNetworkClient(
@@ -760,7 +769,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
         val approvals = InMemoryShuYueExecutionApprovalsV2()
@@ -768,7 +777,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(network, storage),
         )
 
@@ -825,7 +834,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedLargeTextUsesOneUseBoundedCursorStreamAndSupportsCancellation() = runTest {
+    fun reviewedLargeTextUsesOneUseBoundedCursorStreamAndSupportsCancellation() = runBlocking<Unit> {
         val firstPageText = "界".repeat(700_000)
         val secondPageText = "界".repeat(700_000)
         val largeText = "$firstPageText\n\n$secondPageText"
@@ -847,6 +856,13 @@ class ProductionShuYueReviewedRuntimeV2Test {
             },
         )
 
+        if (!largeResultsSupported) {
+            val failure = assertFailsWith<PluginResourceLimitException> {
+                fixture.source.content("https://www.biquge.tw/book/123.html", "https://www.biquge.tw/book/123/456.html")
+            }
+            assertTrue("LIMIT_RESULT" in failure.message.orEmpty(), failure.message)
+            return@runBlocking
+        }
         val first = fixture.source.content(
             "https://www.biquge.tw/book/123.html",
             "https://www.biquge.tw/book/123/456.html",
@@ -921,7 +937,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun productionReviewedLargeTextFailsClosedAboveEightMiBAcrossBoundedPages() = runTest {
+    fun productionReviewedLargeTextFailsClosedAboveEightMiBAcrossBoundedPages() = runBlocking<Unit> {
         val pageText = "界".repeat(950_000)
         val fixture = installedReviewedSource(
             packageId = "zh.biquge.tw",
@@ -958,7 +974,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8HtmlExecutesBrowseDetailUnitsContentLoginAndFavorite() = runTest {
+    fun reviewedWenku8HtmlExecutesBrowseDetailUnitsContentLoginAndFavorite() = runBlocking<Unit> {
         val requests = mutableListOf<PluginHttpRequest>()
         val fixture = installedReviewedSource(
             packageId = "zh.wenku8",
@@ -1001,7 +1017,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8ApiExecutesBrowseDetailUnitsAndContentButRejectsRemoteFavorite() = runTest {
+    fun reviewedWenku8ApiExecutesBrowseDetailUnitsAndContentButRejectsRemoteFavorite() = runBlocking<Unit> {
         val innerRequests = mutableListOf<String>()
         val favoriteRequests = mutableListOf<PluginHttpRequest>()
         val fixture = installedReviewedSource(
@@ -1059,7 +1075,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8ApiBrowseBookcaseLoadsRemoteCollectionWithoutSearchFallback() = runTest {
+    fun reviewedWenku8ApiBrowseBookcaseLoadsRemoteCollectionWithoutSearchFallback() = runBlocking<Unit> {
         val innerRequests = mutableListOf<String>()
         val fixture = installedReviewedSource(
             packageId = "zh.wenku8.api",
@@ -1090,7 +1106,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8ApiBookcaseRequestsV2LoginBeforeNetworkAccess() = runTest {
+    fun reviewedWenku8ApiBookcaseRequestsV2LoginBeforeNetworkAccess() = runBlocking<Unit> {
         val loginReasons = mutableListOf<String?>()
         val contextRegistry = PluginEventContextRegistry(
             handleFactory = { "ctx-bookcase-login-${loginReasons.size}" },
@@ -1150,7 +1166,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedWenku8BrowseOptionsExposeLegacyFiltersAndRouteSelection() = runTest {
+    fun reviewedWenku8BrowseOptionsExposeLegacyFiltersAndRouteSelection() = runBlocking<Unit> {
         val innerRequests = mutableListOf<String>()
         val fixture = installedReviewedSource(
             packageId = "zh.wenku8.api",
@@ -1177,7 +1193,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedNativeSourceDisableRevokesGenerationAndReenableReloadsRuntime() = runTest {
+    fun reviewedNativeSourceDisableRevokesGenerationAndReenableReloadsRuntime() = runBlocking<Unit> {
         val sourceKey = SourceKey(2, "zh.wenku8.api", "zh.wenku8.api")
         var contextOrdinal = 0
         val contextRegistry = PluginEventContextRegistry(
@@ -1228,7 +1244,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
         val repositoryClient = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) }),
         )
-        val capturingFactory = CapturingScriptPluginRuntimeFactory()
+        val capturingFactory = CapturingScriptPluginRuntimeFactory(reviewedEngine())
         val environment = ScriptPluginEnvironment(
             network = network,
             storage = storage,
@@ -1331,7 +1347,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
     }
 
     @Test
-    fun reviewedPublicationMetadataNormalizesLegacyDescriptionBeforeV2Validation() = runTest {
+    fun reviewedPublicationMetadataNormalizesLegacyDescriptionBeforeV2Validation() = runBlocking<Unit> {
         val rawDescription = "第一段\n第二段\u0000" + "長".repeat(700)
         val fixture = installedReviewedSource(
             packageId = "zh.wenku8.api",
@@ -1407,7 +1423,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             repositoryClient = repositoryClient,
             packageStore = InMemoryPluginPackageStore(),
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(
                 network = network,
                 storage = storage,
@@ -1420,7 +1436,7 @@ class ProductionShuYueReviewedRuntimeV2Test {
             quarantineStore = InMemoryShuYueScriptQuarantineStoreV2(),
             trustStore = approvals,
             permissionStore = approvals,
-            runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+            runtimeFactory = reviewedEngine(),
             environment = ScriptPluginEnvironment(
                 network = network,
                 storage = storage,

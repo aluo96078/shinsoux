@@ -208,13 +208,7 @@ public class ProductionShuYueReviewedRuntimeFactoryV2(
                     id = executionScope,
                     baseUrl = sourceDescriptor.baseUrl,
                     requestOrigins = requestOrigins,
-                    credentialOrigins = if (
-                        ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS in artifact.grantedPermissions
-                    ) {
-                        reviewedSourceProfile.credentialOrigins
-                    } else {
-                        emptySet()
-                    },
+                    credentialOrigins = reviewedCredentialOrigins(reviewedSourceProfile, artifact.grantedPermissions),
                     contentOrigins = reviewedSourceProfile.contentOrigins,
                     browserSessionOrigins = browserSessionOrigins,
                     originPolicyVersion = 2,
@@ -1268,3 +1262,18 @@ private val REVIEWED_IMAGE_SAFE_HEADER_HINTS: Set<String> = setOf(
     "x-requested-with",
     "x-image-ticket",
 )
+
+/**
+ * The origins a reviewed source may send account cookies to: none without CREDENTIAL_ACCESS.
+ * As `profile(login = true)` does, a login source whose profile lists none gets its own base
+ * origin only; otherwise cookies imported by Web verification would never reach the site.
+ */
+internal fun reviewedCredentialOrigins(
+    profile: ShuYueReviewedSourceProfileV2,
+    granted: Set<ShuYueExecutionPermissionV2>,
+): Set<String> = when {
+    ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS !in granted -> emptySet()
+    else -> profile.credentialOrigins.ifEmpty {
+        setOfNotNull(dev.shinsou.kmp.plugin.pluginHttpsOriginOrNull(profile.baseUrl))
+    }
+}
