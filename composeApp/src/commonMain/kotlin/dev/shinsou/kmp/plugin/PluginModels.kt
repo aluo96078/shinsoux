@@ -380,6 +380,11 @@ public data class InstalledPluginMetadata(
      * inherit a previous package's state.
      */
     val legacyStorageMigrationAllowed: Boolean = true,
+    /**
+     * ADR-0002 S5: the trusted publisher whose key signed the repository this artifact came from,
+     * fixed at install. Null for unsigned sources and for installs that predate publisher trust.
+     */
+    val publisherId: String? = null,
 )
 
 public data class StoredPlugin(

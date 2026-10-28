@@ -5,12 +5,22 @@ name: Sandbox desktop
 # itself in a Low Privilege AppContainer and a Job object. Every run re-proves the confinement on
 # the runner's OS (S0: re-check each major version): the isolation probe, the Kotlin host driving
 # the confined helper (interop, official-plugin parity), and the packaged app carrying the helper.
-# Run it by hand or by pushing a `sandbox-desktop/**` branch.
+# It runs on pull requests that touch the sandbox, on master, by hand, and on `sandbox-desktop/**` pushes.
 
 on:
   workflow_dispatch:
   push:
-    branches: ["sandbox-desktop/**"]
+    branches: ["sandbox-desktop/**", "master"]
+  # Gate every change to the code this platform ships, not only the sandbox test branches.
+  pull_request:
+    paths:
+      - "sandbox-core/**"
+      - "composeApp/build.gradle.kts"
+      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "gradle/**"
+      - "composeApp/src/desktopMain/**"
+      - "composeApp/src/desktopTest/**"
+      - ".github/workflows/sandbox-desktop.yml"
 
 permissions:
   contents: read
@@ -195,4 +205,28 @@ jobs:
           ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
           helper="composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
           [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          # The packaged helper starts confined (LPAC + Job, self-verified) from a private copy.
+          private=$(mktemp -d)
+          cp "$helper" "$private/"
+          "$private/shinsou-sandbox.exe" --package-key releasecheck < /dev/null || { echo "::error::the packaged helper did not start confined (exit $?)"; exit 1; }
           echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The release job's PowerShell form of the same check (release.yml, windows.yml).
+      - name: Packaged helper starts confined (release check)
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $helper = "composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
+          $private = Join-Path ([IO.Path]::GetTempPath()) ("shinsou-sandbox-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $private | Out-Null
+          Copy-Item -LiteralPath $helper -Destination $private
+          $emptyInput = [IO.Path]::GetTempFileName() # zero bytes, outside the helper's directory
+          $probe = Start-Process -FilePath (Join-Path $private "shinsou-sandbox.exe") `
+            -ArgumentList "--package-key", "releasecheck" -RedirectStandardInput $emptyInput `
+            -NoNewWindow -Wait -PassThru
+          if ($probe.ExitCode -ne 0) {
+            throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
+          }
+          $line = "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)"
+          Write-Output $line
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line

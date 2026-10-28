@@ -1,0 +1,26 @@
+quickjs-ng v0.17.0, Shinsou sandbox only (ADR-0002 §4.5): WASI has no time zones, so in the iOS
+WASM guest every local date would silently be UTC, unlike the host's engine. Under __wasi__ the
+offset comes from the host through the guest's ssc_wasm_timezone_offset (an import answered with the
+device's own time zone).
+
+diff --git a/quickjs.c b/quickjs.c
+index 6ca030b..76d8e5b 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -49126,8 +49126,15 @@ static const JSCFunctionListEntry js_math_obj[] = {
+ 
+ /* OS dependent. d = argv[0] is in ms from 1970. Return the difference
+    between UTC time and local time 'd' in minutes */
++#if defined(__wasi__)
++/* Shinsou sandbox (ADR-0002 §4.5): WASI has no time zones; the host answers instead. */
++extern int ssc_wasm_timezone_offset(int64_t time_ms);
++#endif
++
+ static int getTimezoneOffset(int64_t time) {
+-#if defined(_WIN32)
++#if defined(__wasi__)
++    return ssc_wasm_timezone_offset(time);
++#elif defined(_WIN32)
+     DWORD r;
+     TIME_ZONE_INFORMATION t;
+     r = GetTimeZoneInformation(&t);

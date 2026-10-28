@@ -18,6 +18,15 @@ public enum class RepositorySignedDocumentType(public val wireValue: String) {
     INDEX("repository-index"),
     LEGACY_INDEX("repository-legacy-index"),
     SIDECAR("plugin-sidecar"),
+
+    /** ADR-0002 §8.3: the current key hands over to a new one (double-signed). */
+    PUBLISHER_KEY_ROTATION("publisher-key-rotation"),
+
+    /** ADR-0002 §8.4: artifacts the publisher has withdrawn, plus the document's expiry. */
+    REVOCATIONS("publisher-revocations"),
+
+    /** ADR-0002 §8.4: a key revokes itself; anyone holding it may do so. */
+    KEY_REVOKED("publisher-key-revoked"),
 }
 
 /** A trust root configured by the application, never learned from the downloaded repository. */
@@ -27,8 +36,16 @@ public data class RepositoryTrustRoot(
 )
 
 public sealed interface RepositoryTrustDecision {
-    /** Require an Ed25519 envelope whose key exactly matches this locally configured root. */
-    public data class RequirePinnedSignature(val root: RepositoryTrustRoot) : RepositoryTrustDecision
+    /**
+     * Require an Ed25519 envelope whose key exactly matches this locally configured root.
+     * [stateScope] keys the replay and downgrade watermarks: a publisher's mirrors share one scope
+     * (ADR-0002 §8.5), so one mirror cannot replay what another has already superseded. Null keeps
+     * the per-URL watermarks of URL-pinned repositories.
+     */
+    public data class RequirePinnedSignature(
+        val root: RepositoryTrustRoot,
+        val stateScope: String? = null,
+    ) : RepositoryTrustDecision
 
     /**
      * Explicit escape hatch for local development and migration only. This provides transport and
@@ -346,6 +363,10 @@ internal fun RepositorySecurityStateStore.requireDurableFor(decision: Repository
     }
 }
 
+/** The watermark scope of [decision] for documents and artifacts fetched from [normalizedBaseUrl]. */
+internal fun repositoryStateScope(decision: RepositoryTrustDecision, normalizedBaseUrl: String): String =
+    (decision as? RepositoryTrustDecision.RequirePinnedSignature)?.stateScope ?: normalizedBaseUrl
+
 /** Whether this configured store should track optional unsigned developer traffic. */
 internal fun RepositorySecurityStateStore.isConfigured(): Boolean =
     this !== RepositorySecurityStateStore.RequireDurableState &&
@@ -512,15 +533,21 @@ internal class RepositorySignedDocumentVerifier(
             expectedDocumentId,
             requireNotNull(envelope),
             selectedDecision.root,
+            selectedDecision.stateScope ?: normalizedBaseUrl,
         )
     }
 
-    private suspend fun verifyEnvelope(
+    /**
+     * Verifies [envelope] against exactly [pinned] (which may be a publisher's retired key, for a
+     * key revocation) and checks its replay watermark in [stateScope] without advancing it.
+     */
+    suspend fun verifyEnvelope(
         normalizedBaseUrl: String,
         expectedType: RepositorySignedDocumentType,
         expectedDocumentId: String,
         envelope: JsonObject,
         pinned: RepositoryTrustRoot,
+        stateScope: String,
     ): VerifiedRepositoryPayload {
         try {
             SodiumSyncPrimitives.initialize()
@@ -567,7 +594,7 @@ internal class RepositorySignedDocumentVerifier(
             }
             val payloadSha = Sha256.hex(canonicalSyncJson(payload).encodeToByteArray())
             val admission = RepositoryDocumentAdmission(
-                normalizedBaseUrl,
+                stateScope,
                 expectedType,
                 expectedDocumentId,
                 sequence,
@@ -658,6 +685,7 @@ internal data class VerifiedRepositoryPayload(
 )
 
 internal data class RepositoryDocumentAdmission(
+    /** The watermark scope: the base URL, or a publisher's scope for publisher-trusted repositories. */
     val normalizedBaseUrl: String,
     val type: RepositorySignedDocumentType,
     val documentId: String,
@@ -667,7 +695,7 @@ internal data class RepositoryDocumentAdmission(
     val keyFingerprint: String,
 )
 
-private object RepositoryTrustRootValidation {
+internal object RepositoryTrustRootValidation {
     suspend fun requireValid(root: RepositoryTrustRoot) {
         SodiumSyncPrimitives.initialize()
         val publicKey = canonicalBase64Url(root.publicKeyBase64Url, 32)

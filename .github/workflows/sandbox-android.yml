@@ -3,12 +3,22 @@ name: Sandbox Android
 # ADR-0002 S2: the isolated-process plugin sandbox. Builds sandbox-core with the NDK inside the app,
 # checks what the library exports and links against, and runs the device tests on emulators at the
 # oldest supported API (29) and a current one (§13 platform matrix). Real-hardware runs are local
-# (see AndroidSandboxDeviceTest). Run it by hand or by pushing a `sandbox-android/**` branch.
+# (see AndroidSandboxDeviceTest). It runs on pull requests that touch the sandbox, on master, by hand, and on `sandbox-android/**` pushes.
 
 on:
   workflow_dispatch:
   push:
-    branches: ["sandbox-android/**"]
+    branches: ["sandbox-android/**", "master"]
+  # Gate every change to the code this platform ships, not only the sandbox test branches.
+  pull_request:
+    paths:
+      - "sandbox-core/**"
+      - "composeApp/build.gradle.kts"
+      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "gradle/**"
+      - "composeApp/src/androidMain/**"
+      - "composeApp/src/androidInstrumentedTest/**"
+      - ".github/workflows/sandbox-android.yml"
 
 permissions:
   contents: read

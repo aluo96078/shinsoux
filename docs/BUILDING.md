@@ -7,6 +7,10 @@
 - JDK 17（Desktop 安裝包需使用包含 `jpackage` 的完整 JDK）
 - Android SDK Platform 36、Build Tools 與 platform-tools
 - macOS Desktop：`run`、`desktopTest`、資源準備與 DMG 會使用 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView challenge helper，因此需要 Xcode Command Line Tools、可用的 macOS SDK 與 Swift compiler
+- iOS 的第三方套件沙箱（ADR-0002 S4）：sandbox-core 編成 WASM，在 App 內以 WAMR 直譯器執行。建置 iOS target 時，Gradle 會：
+  - 以 `sandbox-core/wasm/build-guest.sh` 編譯 guest。需要可編譯 wasm32 的 clang／lld、wasi-libc 與其 builtins，以及 `wasm-objdump`：`brew install llvm lld wasi-libc wasi-runtimes wabt`。
+  - 依 SDK 各編一份 `libshinsou_wasm_host.a`，需要 CMake 與 Xcode。
+  - guest 只能匯入四個 Host 函式，建置時會檢查。
 - macOS Desktop 的資源準備與 DMG 另以 CMake（≥ 3.20）與 Python 3 編譯第三方套件沙箱 helper `shinsou-sandbox`（`sandbox-core/`，ADR-0002 S3）；第一次建置會由 `sandbox-core/scripts/fetch-deps.sh` 取得釘選版本的 quickjs-ng 與 lexbor。設定簽章身分時 helper 以該身分加 hardened runtime 簽章，否則為 ad-hoc
 - Android APK 會以 NDK 27.0.12077973 與 CMake 3.22.1 編譯 `libshinsou_sandbox.so`（ADR-0002 S2）
 - iOS／iOS Simulator：需完整 Xcode（專案 deployment target 為 iOS 16）及 XcodeGen

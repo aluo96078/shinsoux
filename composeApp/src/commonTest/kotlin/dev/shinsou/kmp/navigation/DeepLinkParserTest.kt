@@ -115,4 +115,21 @@ class DeepLinkParserTest {
         assertNull(DeepLinkParser.parse("https://example.com/manga/42"))
         assertNull(DeepLinkParser.parse("shinsou://manga/not-a-number"))
     }
+
+    @Test
+    fun addRepositoryLinksCarryAnHttpsRepositoryAndAFullFingerprintOnly() = kotlinx.coroutines.test.runTest {
+        dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives.initialize()
+        val hex = "ab".repeat(32)
+        val link = DeepLinkParser.parse("shinsou://add-repository?url=https%3A%2F%2Frepo.example%2Fx&fp=$hex")
+        val parsed = link as ShinsouDeepLink.AddRepository
+        assertEquals("https://repo.example/x", parsed.repositoryUrl)
+        assertEquals(dev.shinsou.kmp.plugin.PublisherFingerprint.parse(hex), parsed.fingerprint)
+        assertEquals(
+            ShinsouDeepLink.AddRepository("https://repo.example/x", null),
+            DeepLinkParser.parse("shinsou://add-repository?url=https://repo.example/x"),
+        )
+        assertNull(DeepLinkParser.parse("shinsou://add-repository?url=http://repo.example/x"))
+        assertNull(DeepLinkParser.parse("shinsou://add-repository?url=https://repo.example/x&fp=1234"))
+        assertNull(DeepLinkParser.parse("shinsou://add-repository"))
+    }
 }

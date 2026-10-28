@@ -419,6 +419,8 @@ public class PluginManager(
     /** Immutable startup admission for exact compiled-review artifacts from fixed loopback only. */
     private val reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy =
         ReviewedLocalRepositoryPolicy.DISABLED,
+    /** ADR-0002 §10.1: publisher trust, withdrawals and the user's block list decide each runtime's tier. */
+    private val executionTierGate: PluginExecutionTierGate? = null,
 ) {
     private val reviewedImagePermits = kotlinx.coroutines.sync.Semaphore(2)
     /** Serializes package mutations without blocking readers of the live source/runtime maps. */
@@ -626,6 +628,10 @@ public class PluginManager(
             }
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()
+            // The publisher is fixed by the repository's pinned key, never by what the index says.
+            // Keyed exactly as the client keys trust: an equivalent spelling must not miss the publisher.
+            val publisherId = executionTierGate?.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
+            if (publisherId != null) executionTierGate.requireInstallable(entry.id, publisherId, actualHash)
             val manifest = PluginManifest(
                 id = entry.id,
                 name = entry.name,
@@ -661,6 +667,7 @@ public class PluginManager(
                     installedSha256 = verified.sha256,
                     legacyTrustOnInstall = expectedHash == null,
                     legacyStorageMigrationAllowed = false,
+                    publisherId = publisherId,
                 ),
                 scriptBytes = scriptBytes,
             )
@@ -1057,6 +1064,11 @@ public class PluginManager(
                     "Extension package '$pluginId' is already loaded by the V2 runtime"
                 }
                 createRuntimeCandidates(stored)
+            } catch (inert: PluginExecutionInertException) {
+                // Publisher trust or the block list keeps it inert for now; that is reversible,
+                // so the user's grant stays.
+                lifecycleMutex.withLock { rollbackReservation(reservation) }
+                throw inert
             } catch (_: ScriptRuntimeUnavailableException) {
                 // A user trust toggle cannot override the host's in-process isolation boundary.
                 // Keep the verified package installed, but convert the old grant to a pending
@@ -1112,6 +1124,9 @@ public class PluginManager(
                         loadStored(stored)
                     } catch (error: CancellationException) {
                         throw error
+                    } catch (_: PluginExecutionInertException) {
+                        // Inert by publisher trust or the block list: reversible, so the grant stays
+                        // and the package runs again once the reason is gone.
                     } catch (_: ScriptRuntimeUnavailableException) {
                         // A durable exact-artifact grant may have been created on a host which
                         // could safely isolate this runtime. If the current host cannot, convert
@@ -1188,6 +1203,15 @@ public class PluginManager(
         locallyRevokedArtifacts.remove(stored.artifactIdentity())
         try {
             lifecycleMutex.withLock { loadStored(stored) }
+        } catch (inert: PluginExecutionInertException) {
+            if (inert.reason == InertReason.UNSIGNED) {
+                // Nothing will ever vouch for an unsigned artifact: same as an unreviewed one.
+                locallyRevokedArtifacts += stored.artifactIdentity()
+                quarantineUnavailableRuntime(requireNotNull(stored.eventGrantReview(includeEmpty = true)))
+                throw ExtensionArtifactNotReviewedException(pluginId)
+            }
+            // The approval stands; publisher trust or the block list holds the runtime back for now.
+            throw inert
         } catch (_: ScriptRuntimeUnavailableException) {
             // Approval is still a valid user decision, but this host cannot safely execute
             // the generic in-process engine. Keep the verified artifact installed and
@@ -1541,11 +1565,97 @@ public class PluginManager(
             quarantineStore = quarantineStore,
             trustStore = approvalStore,
             permissionStore = approvalStore,
-            runtimeFactory = runtimeFactory,
+            runtimeFactory = blockListCheckedReviewedFactory(),
             environment = environment,
             credentialsResolver = credentialsResolver,
         )
         return ShuYueReviewedInstallCoordinatorV2(admission, approvalStore, this, installationStore)
+    }
+
+    /**
+     * The reviewed ShuYue runtimes are built outside [createScopedRuntime]; the user's block list
+     * (ADR-0002 D5) applies to them too: an exact reviewed artifact that is blocked is not built.
+     */
+    private fun blockListCheckedReviewedFactory(): ScriptPluginRuntimeFactory {
+        val gate = executionTierGate ?: return runtimeFactory
+        return object : ScriptPluginRuntimeFactory {
+            override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime {
+                requireReviewed(script, manifest)
+                return runtimeFactory.create(script, manifest, environment)
+            }
+
+            override suspend fun createForSource(
+                script: String,
+                manifest: PluginManifest,
+                source: SourceIndexEntry,
+                environment: ScriptPluginEnvironment,
+            ): ScriptPluginRuntime {
+                requireReviewed(script, manifest)
+                return runtimeFactory.createForSource(script, manifest, source, environment)
+            }
+
+            private suspend fun requireReviewed(script: String, manifest: PluginManifest) {
+                val tier = gate.resolve(
+                    ExecutionTierCandidate(
+                        packageId = manifest.id,
+                        artifactSha256 = Sha256.hex(script.encodeToByteArray()),
+                        publisherId = null,
+                        officialReviewedCatalogMatch = true,
+                        fromCanonicalOfficialUnsignedRepository = true,
+                        userAuthorized = true,
+                    ),
+                )
+                if (tier != ExecutionTier.ReviewedInProcess) {
+                    throw PluginExecutionInertException(manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
+                }
+            }
+        }
+    }
+
+    /**
+     * After a block-list change (ADR-0002 D5): reviewed ShuYue runtimes the user blocked are taken
+     * down now, and ones unblocked are rebuilt. Their reloaders and identities stay, so blocking
+     * is reversible without reinstalling.
+     */
+    @OptIn(ExtensionImplementationApi::class)
+    public suspend fun reevaluateReviewedRuntimesV2(): Unit = packageMutationMutex.withLock {
+        val gate = executionTierGate ?: return@withLock
+        for ((packageId, reloader) in reviewedReloaders.toMap()) {
+            val identity = nativeArtifactIdentities[packageId] ?: continue
+            val tier = gate.resolve(
+                ExecutionTierCandidate(
+                    packageId = packageId,
+                    artifactSha256 = identity.sha256,
+                    publisherId = null,
+                    officialReviewedCatalogMatch = true,
+                    fromCanonicalOfficialUnsignedRepository = true,
+                    userAuthorized = true,
+                ),
+            )
+            val live = extensionRegistryV2.packageFacade(packageId) != null
+            if (tier != ExecutionTier.ReviewedInProcess) {
+                if (live) {
+                    invalidateWebChallengeGrants()
+                    nativeLifecycleRuntimes.remove(packageId)
+                    extensionRegistryV2.uninstall(packageId)
+                }
+            } else if (!live) {
+                val runtime = try {
+                    reloader()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    continue // unavailable now; the next change or launch tries again
+                }
+                try {
+                    extensionRegistryV2.install(runtime, replace = true)
+                    (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let { nativeLifecycleRuntimes[packageId] = it }
+                } catch (error: Throwable) {
+                    if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
+                    throw error
+                }
+            }
+        }
     }
 
     public suspend fun uninstallExtensionRuntimeV2(packageId: String): Boolean =
@@ -2052,6 +2162,8 @@ public class PluginManager(
             try {
                 lifecycleMutex.withLock { loadStored(stored) }
                 if (sourceWhilePackageLocked(sourceKey) != null) disabledNativeSources.remove(sourceKey)
+            } catch (_: PluginExecutionInertException) {
+                // Reversible tier decision: keep the grant, build nothing.
             } catch (_: ScriptRuntimeUnavailableException) {
                 // Approval is still a valid user decision, but this host cannot safely execute
                 // the generic in-process engine. Keep the verified artifact installed and
@@ -2304,6 +2416,7 @@ public class PluginManager(
         val reviewedOfficialSource = OfficialShinsouReviewedCatalog.match(
             stored, source, reviewedLocalRepositoryPolicy,
         )
+        requireExecutionTier(stored, reviewedInProcess = reviewedOfficialSource != null)
         val boundStorage = PermissionFilteredPluginStorage(
             BoundPluginStorage(
                 delegate = environment.storage,
@@ -2366,6 +2479,31 @@ public class PluginManager(
             ))
         }
         return runtime
+    }
+
+    /**
+     * ADR-0002 §10.1, checked before every runtime is built (install, approval, startup, re-enable).
+     * Only reached after the exact-artifact grant, so the user's authorization holds here. A
+     * reviewed in-process artifact must still come out as reviewed (the block list and the official
+     * publisher's revocations apply to it too); anything else must come out as sandboxed, which the
+     * tiered factory then runs out of process.
+     */
+    private suspend fun requireExecutionTier(stored: StoredPlugin, reviewedInProcess: Boolean) {
+        val gate = executionTierGate ?: return
+        val tier = gate.resolve(
+            ExecutionTierCandidate(
+                packageId = stored.manifest.id,
+                artifactSha256 = stored.metadata.installedSha256,
+                publisherId = stored.metadata.publisherId,
+                officialReviewedCatalogMatch = reviewedInProcess,
+                fromCanonicalOfficialUnsignedRepository = reviewedInProcess && stored.metadata.publisherId == null,
+                userAuthorized = true,
+            ),
+        )
+        val allowed = if (reviewedInProcess) tier == ExecutionTier.ReviewedInProcess else tier is ExecutionTier.Sandboxed
+        if (!allowed) {
+            throw PluginExecutionInertException(stored.manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
+        }
     }
 
     private fun StoredPlugin.artifactIdentity(): PluginArtifactIdentity = PluginArtifactIdentity(

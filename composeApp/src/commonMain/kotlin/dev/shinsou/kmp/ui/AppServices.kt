@@ -484,6 +484,12 @@ sealed interface ShinsouDeepLink {
 
     /** One-time Cloudflare setup, invite, pairing, recovery, or operator handoff action. */
     data class OpenSyncLink(val payload: SyncLinkPayload) : ShinsouDeepLink
+
+    /**
+     * ADR-0002 §8.1 `shinsou://add-repository?url=…&fp=…`: a publisher's repository and, optionally,
+     * the full fingerprint to match. Nothing is trusted until the user confirms the key.
+     */
+    data class AddRepository(val repositoryUrl: String, val fingerprint: String?) : ShinsouDeepLink
 }
 
 /**
@@ -753,6 +759,31 @@ interface BrowseCallbacks {
     suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean) = Unit
 
     suspend fun addRepository(url: String): BrowseRepository? = null
+
+    /**
+     * ADR-0002 S5: a signed repository's key, for the user to confirm before [trustAndAddRepository].
+     * Null when the repository answered but is not signed ([addRepository] takes the URL as it is);
+     * throws when it could not be reached, so a caller can try again later.
+     */
+    suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt? = null
+
+    /**
+     * Trusts exactly the key [prompt] showed (refused if the repository presented another one since)
+     * — with [fingerprint] when the user entered one — and adds the repository.
+     */
+    suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository? = null
+
+    suspend fun packageSecurity(): PackageSecuritySnapshot = PackageSecuritySnapshot()
+
+    suspend fun setStrictPublisherTrust(strict: Boolean) = Unit
+
+    suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String) = Unit
+
+    suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean) = Unit
+
+    suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean) = Unit
+
+    suspend fun unblockPackageEntry(key: String) = Unit
 
     suspend fun removeRepository(repositoryId: String) = Unit
 
@@ -1322,4 +1353,41 @@ data class MigrationCandidate(
     val thumbnailUrl: String? = null,
     val currentSourceName: String,
     val suggestions: List<BrowseManga> = emptyList(),
+)
+
+/** ADR-0002 S5: a repository presenting a publisher key the user has not trusted yet. */
+data class RepositoryTrustPrompt(
+    val url: String,
+    /** As the repository names itself: not verified. */
+    val name: String,
+    /** First 128 bits, grouped for reading; the full value is what gets compared. */
+    val displayFingerprint: String,
+    /** The user chose to require a full fingerprint match (mode b). */
+    val fingerprintRequired: Boolean,
+    /** From an add-repository link: the fingerprint the publisher handed out, to be matched. */
+    val linkedFingerprint: String? = null,
+    /** The full fingerprint of the key shown: confirming trusts this key and no other. */
+    val keyFingerprint: String = "",
+    /** The repository's publisher is already trusted with this key. */
+    val alreadyTrusted: Boolean = false,
+)
+
+enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_REPLACED }
+
+data class PackagePublisher(
+    val id: String,
+    val displayFingerprint: String,
+    val state: PublisherTrustState,
+    /** Trusted by a matched fingerprint or built into the app, rather than on first use. */
+    val fingerprintVerified: Boolean,
+    val official: Boolean,
+    val blocked: Boolean,
+)
+
+data class PackageBlock(val key: String, val label: String)
+
+data class PackageSecuritySnapshot(
+    val strictMode: Boolean = false,
+    val publishers: List<PackagePublisher> = emptyList(),
+    val blocks: List<PackageBlock> = emptyList(),
 )

@@ -166,7 +166,7 @@ static uint64_t now_ms(void *o) {
 
 static void *run(void *o) {
     (void)o;
-    run_io = (ssc_io){ &run_pipes, read_fd, write_fd, now_ms };
+    run_io = (ssc_io){ &run_pipes, read_fd, write_fd, now_ms, NULL };
     run_pipes.status = ssc_driver_run(&run_io, ssc_bootstrap_js, ssc_bootstrap_js_len);
     return NULL;
 }

@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.navigation
 
+import dev.shinsou.kmp.plugin.AddRepositoryLink
+
 import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.SyncLinkAction
@@ -28,6 +30,9 @@ object DeepLinkParser {
                 ShinsouDeepLink.OpenChapter(mangaId = mangaId, chapterId = chapterId)
             }
             "sync" -> parseSyncLink(route, routeValue.substringAfter('?', missingDelimiterValue = ""))
+            "add-repository" -> AddRepositoryLink.parse(trimmed)?.let {
+                ShinsouDeepLink.AddRepository(it.repositoryUrl, it.fingerprint)
+            }
             else -> null
         }
     }

@@ -19,6 +19,8 @@ import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.iosSandboxRuntimeFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -135,12 +137,20 @@ internal object IosApplicationContainer {
         ReviewedLocalRepositoryPolicy.DISABLED
     }
 
+    /** Idle stops and LRU of the plugin sandboxes; lives as long as the app. */
+    private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private val composition = ShinsouComposition(
         repository = repository,
         httpClient = httpClient,
         pluginKeyValueStore = IosPluginKeyValueStore(),
         fileSystem = IosAppFileSystem(),
-        runtimeFactory = JavaScriptCoreScriptPluginRuntimeFactory(),
+        // ADR-0002 §10.1: reviewed catalogue artifacts run in JavaScriptCore; trusted third-party
+        // packages run in the WASM sandbox (§4.5), one interpreter instance each.
+        runtimeFactory = TieredScriptPluginRuntimeFactory(
+            inProcess = JavaScriptCoreScriptPluginRuntimeFactory(),
+            sandbox = iosSandboxRuntimeFactory(sandboxScope),
+        ),
         syncInfrastructure = syncInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),

@@ -56,7 +56,7 @@ static int status;
 
 static void *run(void *o) {
     (void)o;
-    ssc_io io = { NULL, read_fd, write_fd, now_ms };
+    ssc_io io = { NULL, read_fd, write_fd, now_ms, NULL };
     status = ssc_driver_run(&io, ssc_bootstrap_js, ssc_bootstrap_js_len);
     return NULL;
 }

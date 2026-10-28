@@ -51,6 +51,9 @@ val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { 
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
 val isWindowsBuildHost = System.getProperty("os.name").lowercase().startsWith("windows")
+fun iosSandboxSdk(target: org.jetbrains.kotlin.konan.target.KonanTarget): String =
+    if (target == org.jetbrains.kotlin.konan.target.KonanTarget.IOS_ARM64) "iphoneos" else "iphonesimulator"
+fun iosSandboxHostDir(sdk: String): File = layout.buildDirectory.dir("sandbox-ios-$sdk").get().asFile
 // Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
@@ -305,6 +308,47 @@ val buildWindowsSandboxHelper = if (isWindowsBuildHost) {
     null
 }
 
+// ADR-0002 S4 (iOS): the sandbox-core WASM guest and, per Apple SDK, the WAMR host library the
+// iOS targets link through the `sandboxWasm` cinterop. Needs clang/lld with the wasm32 target,
+// wasi-libc and its builtins (Homebrew: llvm lld wasi-libc wasi-runtimes wabt), CMake and Xcode.
+val iosSandboxGuest = layout.buildDirectory.file("sandbox-wasm/shinsou_sandbox.wasm")
+val buildIosSandboxGuest = tasks.register<Exec>("buildIosSandboxGuest") {
+    group = "build"
+    description = "Builds the sandbox-core WASM guest for the iOS plugin sandbox"
+    dependsOn("fetchSandboxCoreDeps")
+    val core = rootProject.layout.projectDirectory.dir("sandbox-core")
+    inputs.dir(core.dir("src"))
+    inputs.dir(core.dir("wasm"))
+    inputs.file(layout.projectDirectory.file("src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt"))
+    outputs.file(iosSandboxGuest)
+    commandLine("sh", core.file("wasm/build-guest.sh").asFile.absolutePath, iosSandboxGuest.get().asFile.parentFile.absolutePath)
+}
+listOf("iphoneos", "iphonesimulator").forEach { sdk ->
+    val dir = iosSandboxHostDir(sdk).absolutePath
+    tasks.register<Exec>("buildIosSandboxHost${sdk.replaceFirstChar(Char::uppercase)}") {
+        group = "build"
+        description = "Builds the iOS plugin sandbox host library for $sdk"
+        dependsOn(buildIosSandboxGuest)
+        val core = rootProject.layout.projectDirectory.dir("sandbox-core")
+        inputs.dir(core.dir("ios"))
+        inputs.file(iosSandboxGuest)
+        outputs.file("$dir/libshinsou_wasm_host.a")
+        commandLine(
+            "/bin/sh", "-c",
+            "cmake -S \"$1\" -B \"$2\" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS " +
+                "-DCMAKE_OSX_SYSROOT=$3 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 " +
+                "-DSSC_WASM_MODULE=\"$4\" && cmake --build \"$2\" --target shinsou_wasm_host -j 8",
+            "build-ios-sandbox-host", core.dir("ios").asFile.absolutePath, dir, sdk, iosSandboxGuest.get().asFile.absolutePath,
+        )
+    }
+}
+tasks.configureEach {
+    when {
+        name.startsWith("cinteropSandboxWasmIosArm64") -> dependsOn("buildIosSandboxHostIphoneos")
+        name.startsWith("cinteropSandboxWasmIosSimulatorArm64") -> dependsOn("buildIosSandboxHostIphonesimulator")
+    }
+}
+
 tasks.configureEach {
     if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
         dependsOn(prepareAndroidUnitTestLibsodiumResources)
@@ -344,6 +388,12 @@ kotlin {
         compilations.getByName("main").cinterops.create("networkReceive") {
             defFile(project.file("src/nativeInterop/cinterop/networkReceive.def"))
             includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
+        // ADR-0002 §4.5: the plugin sandbox host (WAMR + the sandbox-core WASM guest).
+        compilations.getByName("main").cinterops.create("sandboxWasm") {
+            defFile(project.file("src/nativeInterop/cinterop/sandboxWasm.def"))
+            includeDirs(rootProject.file("sandbox-core/ios"))
+            extraOpts("-libraryPath", iosSandboxHostDir(iosSandboxSdk(konanTarget)).absolutePath)
         }
         binaries.all {
             linkerOpts("-lsqlite3")
@@ -428,6 +478,7 @@ kotlin {
                 implementation(libs.androidx.test.ext.junit)
                 implementation(libs.kotlin.test)
                 implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.ktor.client.mock)
             }
         }
 
@@ -441,6 +492,12 @@ kotlin {
 
         iosArm64Main.get().dependsOn(iosMain)
         iosSimulatorArm64Main.get().dependsOn(iosMain)
+        // ADR-0002 S4: iOS-only tests (the WASM sandbox on the simulator).
+        val iosTest by creating {
+            dependsOn(commonTest.get())
+        }
+        iosArm64Test.get().dependsOn(iosTest)
+        iosSimulatorArm64Test.get().dependsOn(iosTest)
 
         val desktopMain by getting {
             dependsOn(jvmCommonMain)

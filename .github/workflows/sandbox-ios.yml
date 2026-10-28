@@ -1,0 +1,79 @@
+name: Sandbox iOS
+
+# ADR-0002 §4.5 (S4): the iOS plugin sandbox is sandbox-core compiled to WASM and run by the WAMR
+# interpreter inside the app. Every run checks the guest imports nothing but its four host
+# functions, runs the driver suite against it in WAMR, builds the device library and Kotlin, and
+# drives it from the Kotlin host on the simulator. It runs on pull requests that touch the sandbox, on master, by hand, and on `sandbox-ios/**` pushes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["sandbox-ios/**", "master"]
+  # Gate every change to the code this platform ships, not only the sandbox test branches.
+  pull_request:
+    paths:
+      - "sandbox-core/**"
+      - "composeApp/build.gradle.kts"
+      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "gradle/**"
+      - "composeApp/src/iosMain/**"
+      - "composeApp/src/iosTest/**"
+      - "composeApp/src/nativeInterop/**"
+      - ".github/workflows/sandbox-ios.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: WASM sandbox (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      # Compose links iOS 26 APIs (UIViewLayoutRegion): use the newest Xcode on the runner.
+      - name: Newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: WASM toolchain
+        run: brew install llvm lld wasi-libc wasi-runtimes wabt
+
+      - name: Guest, its imports, and the driver suite in WAMR
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          ./wasm/build-guest.sh build/wasm | tee -a "$GITHUB_STEP_SUMMARY"
+          cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DSSC_WASM_MODULE="$PWD/build/wasm/shinsou_sandbox.wasm"
+          cmake --build build/release -j"$(sysctl -n hw.ncpu)"
+          cd build/release
+          ctest --output-on-failure
+          ./driver_test_wasm | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Device library and Kotlin (iosArm64)
+        working-directory: shinsoux
+        run: ./gradlew :composeApp:compileKotlinIosArm64 -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: The Kotlin host and the WASM sandbox on the simulator
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:iosSimulatorArm64Test
+          --tests 'dev.shinsou.kmp.plugin.sandbox.IosSandboxInteropTest'
+          -Pkotlin.native.enableKlibsCrossCompilation=false

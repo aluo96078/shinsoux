@@ -41,6 +41,8 @@ import dev.shinsou.kmp.plugin.DesktopReviewedLocalRepositoryTransport
 import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.plugin.isReviewedLocalRepositoryEnabled
 import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.TieredScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
@@ -121,13 +123,19 @@ fun main(args: Array<String>) {
         DisposableEffect(localRepositoryTransport) {
             onDispose { localRepositoryTransport?.close() }
         }
+        val sandboxScope = rememberCoroutineScope()
         val composition = remember {
             ShinsouComposition(
                 repository = repository,
                 httpClient = httpClient,
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
-                runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+                // ADR-0002 §10.1: reviewed catalogue artifacts run in Rhino; trusted third-party
+                // packages run in the OS-confined shinsou-sandbox helper.
+                runtimeFactory = TieredScriptPluginRuntimeFactory(
+                    inProcess = RhinoScriptPluginRuntimeFactory(),
+                    sandbox = desktopSandboxRuntimeFactory(sandboxScope),
+                ),
                 syncInfrastructure = syncInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
