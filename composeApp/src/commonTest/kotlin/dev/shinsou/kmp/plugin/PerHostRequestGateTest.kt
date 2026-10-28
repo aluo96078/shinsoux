@@ -81,4 +81,93 @@ class PerHostRequestGateTest {
         now = 10_000L
         assertEquals("other", gate.run("other.test") { "other" })
     }
+
+    @Test
+    fun idleHostAllowsABurstButKeepsTheSustainedRate() = runTest {
+        var now = 1_000L
+        val delays = mutableListOf<Long>()
+        val gate = PerHostRequestGate(
+            limits = PluginRateLimitProvider { PluginRateLimit(permits = 5, periodMillis = 1_000) },
+            nowEpochMillis = { now },
+            delayMillis = { wait ->
+                delays += wait
+                now += wait
+            },
+        )
+
+        // A visible grid's first covers start together instead of one every 200 ms.
+        repeat(5) { gate.run("cdn.example") { Unit } }
+        assertEquals(emptyList(), delays)
+        repeat(3) { gate.run("cdn.example") { Unit } }
+        assertEquals(listOf(200L, 200L, 200L), delays)
+
+        // The burst allowance refills only at the configured rate.
+        now += 400
+        delays.clear()
+        repeat(3) { gate.run("cdn.example") { Unit } }
+        assertEquals(listOf(200L), delays)
+    }
+
+    @Test
+    fun periodShorterThanThePermitCountStillLimitsTheRate() = runTest {
+        var now = 1_000L
+        val delays = mutableListOf<Long>()
+        val gate = PerHostRequestGate(
+            limits = PluginRateLimitProvider { PluginRateLimit(permits = 5, periodMillis = 1) },
+            nowEpochMillis = { now },
+            delayMillis = { wait ->
+                delays += wait
+                now += wait
+            },
+        )
+
+        // Floor division made the spacing zero, so every request started at once forever.
+        repeat(8) { gate.run("cdn.example") { Unit } }
+
+        assertEquals(listOf(1L, 1L, 1L), delays)
+    }
+
+    @Test
+    fun zeroPeriodRemainsUnlimited() = runTest {
+        val delays = mutableListOf<Long>()
+        val gate = PerHostRequestGate(
+            limits = PluginRateLimitProvider { PluginRateLimit(permits = 5, periodMillis = 0) },
+            nowEpochMillis = { 1_000L },
+            delayMillis = { delays += it },
+        )
+
+        repeat(20) { gate.run("cdn.example") { Unit } }
+
+        assertEquals(emptyList(), delays)
+    }
+
+    @Test
+    fun ratePeriodsThatCouldOverflowTheScheduleAreRejected() {
+        assertFailsWith<IllegalArgumentException> { PluginRateLimit(permits = 2, periodMillis = Long.MAX_VALUE) }
+        assertFailsWith<IllegalArgumentException> {
+            PluginRateLimit(permits = 1, periodMillis = PluginRateLimit.MAX_PERIOD_MILLIS + 1)
+        }
+        assertFailsWith<IllegalArgumentException> { PluginRateLimit(permits = 1, periodMillis = -1) }
+    }
+
+    @Test
+    fun longestAllowedPeriodWithManyPermitsStillSchedulesCorrectly() = runTest {
+        var now = 1_800_000_000_000L
+        val delays = mutableListOf<Long>()
+        val gate = PerHostRequestGate(
+            limits = PluginRateLimitProvider {
+                PluginRateLimit(permits = Int.MAX_VALUE, periodMillis = PluginRateLimit.MAX_PERIOD_MILLIS)
+            },
+            nowEpochMillis = { now },
+            delayMillis = { wait ->
+                delays += wait
+                now += wait
+            },
+        )
+
+        repeat(10) { gate.run("cdn.example") { Unit } }
+
+        // The burst allowance is huge but finite; nothing wrapped into a negative or giant wait.
+        assertEquals(emptyList(), delays)
+    }
 }

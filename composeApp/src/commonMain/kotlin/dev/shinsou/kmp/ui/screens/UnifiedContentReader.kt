@@ -605,8 +605,12 @@ private fun ImageSequenceHorizontalPager(
         ) ?: return@LaunchedEffect
         val physicalTarget = readerPhysicalPageIndex(target, pageCount, settings.readingMode)
         if (pagerState.currentPage != physicalTarget || pagerState.currentPageOffsetFraction != 0f) {
-            if (settings.animatePageTransitions) pagerState.animateScrollToPage(physicalTarget)
-            else pagerState.scrollToPage(physicalTarget)
+            // Slider seeks jump directly; only adjacent turns animate through intermediate pages.
+            if (readerPageSeekAnimates(pagerState.currentPage, physicalTarget, settings.animatePageTransitions)) {
+                pagerState.animateScrollToPage(physicalTarget)
+            } else {
+                pagerState.scrollToPage(physicalTarget)
+            }
         }
     }
     LaunchedEffect(session, navigationRequestKey, pagerState, settings.readingMode) {
@@ -707,8 +711,11 @@ private fun ImageSequenceVerticalPager(
             pageCount = pageCount,
         ) ?: return@LaunchedEffect
         if (pagerState.currentPage != target || pagerState.currentPageOffsetFraction != 0f) {
-            if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
-            else pagerState.scrollToPage(target)
+            if (readerPageSeekAnimates(pagerState.currentPage, target, settings.animatePageTransitions)) {
+                pagerState.animateScrollToPage(target)
+            } else {
+                pagerState.scrollToPage(target)
+            }
         }
     }
     LaunchedEffect(session, navigationRequestKey, pagerState) {
@@ -813,8 +820,12 @@ private fun ImageSequenceContinuousReader(
             target != null &&
             (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset != 0)
         ) {
-            if (settings.animatePageTransitions) listState.animateScrollToItem(target)
-            else listState.scrollToItem(target)
+            // Unloaded pages have placeholder heights, so a long animated scroll can stop short.
+            if (readerPageSeekAnimates(listState.firstVisibleItemIndex, target, settings.animatePageTransitions)) {
+                listState.animateScrollToItem(target)
+            } else {
+                listState.scrollToItem(target)
+            }
         }
     }
     LaunchedEffect(session, navigationRequestKey, listState) {

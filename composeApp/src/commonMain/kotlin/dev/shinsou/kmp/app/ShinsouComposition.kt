@@ -98,6 +98,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
+import dev.shinsou.kmp.plugin.v2.extensionUnitPageProgress
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
 import dev.shinsou.kmp.tracking.TrackerDescriptor
 import dev.shinsou.kmp.tracking.TrackerManager
@@ -728,9 +729,15 @@ public class ShinsouComposition(
                         .filter { it.read }
                         .mapNotNull { typedLocalChapterUnitKey(it.url) }
                         .toSet()
-                    val latest = snapshot.histories
+                    val histories = snapshot.histories.filter { it.chapterId in chapterById }
+                    val inProgress = histories.mapNotNull { history ->
+                        val chapter = chapterById[history.chapterId] ?: return@mapNotNull null
+                        if (chapter.read) return@mapNotNull null
+                        val unitKey = typedLocalChapterUnitKey(chapter.url) ?: return@mapNotNull null
+                        unitKey to extensionUnitPageProgress(chapter.lastPageRead, history.lastPageCount)
+                    }.toMap()
+                    val latest = histories
                         .asSequence()
-                        .filter { it.chapterId in chapterById }
                         .maxWithOrNull(
                             compareBy<History> { it.lastRead }
                                 .thenBy { it.id },
@@ -742,6 +749,7 @@ public class ShinsouComposition(
                     ExtensionLocalUnitProgressV2(
                         completedUnitKeys = completed,
                         lastReadUnitKey = latest,
+                        inProgressUnits = inProgress,
                     )
                 },
             )

@@ -41,10 +41,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -74,8 +76,11 @@ import coil3.request.ImageRequest
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.PluginImageLoader
+import dev.shinsou.kmp.ui.PluginImageRequest
+import dev.shinsou.kmp.ui.PluginImageResult
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 val LocalPluginImageLoader = staticCompositionLocalOf { PluginImageLoader.None }
 
@@ -103,33 +108,47 @@ fun CoverImage(
         ?: sourceKey?.let { pluginImages.load(it, url, headers) }
         ?: sourceId?.let { pluginImages.load(it, url, headers) }
     val currentProtectedLoader by rememberUpdatedState(protectedLoader)
+    val cachedRequest = protectedLoader as? PluginImageRequest
     val explicitLoaderKey = loadBytes.takeIf { sourceId == null && sourceKey == null }
-    var imageError by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
+    val initialAuthority = remember(pluginImages) { pluginImages.currentAuthority() }
+    val authority by remember(pluginImages) { pluginImages.authority }.collectAsState(initialAuthority)
+    // Bytes held by a mounted cover belong to the authority they were fetched under; a source
+    // install, removal, update or trust change discards them and reloads through the host.
+    val authorityKey = authority.takeIf { cachedRequest != null }
+    var imageError by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey, authorityKey) {
         mutableStateOf(false)
     }
-    var loadedBytes by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
-        mutableStateOf<ByteArray?>(null)
+    var loaded by remember(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey, authorityKey) {
+        // A cover that was already fetched renders in its first frame instead of flashing the
+        // placeholder while the (cached) load round-trips through the effect.
+        mutableStateOf(if (bytes == null) cachedRequest?.cached()?.let { LoadedCover(cachedRequest, it) } else null)
     }
-    LaunchedEffect(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey) {
+    LaunchedEffect(url, headers, bytes, sourceId, sourceKey, pluginImages, explicitLoaderKey, authorityKey) {
         if (bytes != null) {
-            loadedBytes = null
+            loaded = null
             imageError = false
             return@LaunchedEffect
         }
+        if (loaded != null) return@LaunchedEffect
         val loader = currentProtectedLoader
-        loadedBytes = if (loader == null) {
+        loaded = if (loader == null) {
             null
         } else {
             try {
-                loader()
+                if (loader is PluginImageRequest) {
+                    loader.load()?.let { LoadedCover(loader, it) }
+                } else {
+                    loader()?.let { LoadedCover(it, memoryCacheKey = null) }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
                 null
             }
         }
-        imageError = loadedBytes == null && loader != null
+        imageError = loaded == null && loader != null
     }
+    val loadedBytes = loaded?.bytes
     val imageBytes = bytes ?: loadedBytes
     // A plugin URL is intentionally replaced by null while the host loader runs (and on
     // failure), so Coil cannot create an unreviewed second network path.
@@ -138,13 +157,19 @@ fun CoverImage(
     } else {
         imageBytes ?: url?.takeIf(String::isNotBlank)
     }
-    val imageRequest = remember(imageData, headers, platformContext) {
+    // ByteArray models have no Coil keyer, so without an explicit key every re-entry would decode
+    // again. The key was fixed with the bytes, including the authority generation they belong to.
+    val memoryCacheKey = loaded?.memoryCacheKey
+        ?.takeIf { bytes == null && imageData != null && imageData === loadedBytes }
+    val evictionScope = rememberCoroutineScope()
+    val imageRequest = remember(imageData, headers, platformContext, memoryCacheKey) {
         val networkHeaders = NetworkHeaders.Builder().apply {
             headers.forEach { (name, value) -> set(name, value) }
         }.build()
         ImageRequest.Builder(platformContext)
             .data(imageData)
             .httpHeaders(networkHeaders)
+            .memoryCacheKey(memoryCacheKey)
             .build()
     }
     Box(
@@ -166,7 +191,11 @@ fun CoverImage(
                 contentScale = contentScale,
                 onLoading = { imageError = false },
                 onSuccess = { imageError = false },
-                onError = { imageError = true },
+                onError = {
+                    imageError = true
+                    // Undecodable host bytes must not stay cached and be served again.
+                    if (memoryCacheKey != null) evictionScope.launch { cachedRequest?.evict() }
+                },
             )
         }
         if (selected) {
@@ -177,6 +206,12 @@ fun CoverImage(
             )
         }
     }
+}
+
+/** Bytes held by a mounted cover, with the Coil key decided when they were obtained. */
+private class LoadedCover(val bytes: ByteArray, val memoryCacheKey: String?) {
+    constructor(request: PluginImageRequest, result: PluginImageResult) :
+        this(result.bytes, request.memoryCacheKey(result))
 }
 
 @Composable

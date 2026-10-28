@@ -738,7 +738,13 @@ public class StickyPluginUserAgentProvider(
 public data class PluginRateLimit(val permits: Int = 5, val periodMillis: Long = 1_000L) {
     init {
         require(permits > 0)
-        require(periodMillis >= 0)
+        // Bounded so every schedule computed from epoch milliseconds (spacing, burst tolerance,
+        // theoretical arrival time) fits in a Long instead of wrapping and disabling the limit.
+        require(periodMillis in 0..MAX_PERIOD_MILLIS) { "Plugin rate-limit period must be between 0 and one day" }
+    }
+
+    public companion object {
+        public const val MAX_PERIOD_MILLIS: Long = 24L * 60 * 60 * 1_000
     }
 }
 
@@ -750,7 +756,10 @@ public fun interface PluginRateLimitProvider {
     }
 }
 
-/** Spaces request starts per host without holding the reservation lock during network transport. */
+/**
+ * Rate-limits request starts per host (a burst of up to `permits`, then `permits` per period)
+ * without holding the reservation lock during network transport.
+ */
 public class PerHostRequestGate(
     private val limits: PluginRateLimitProvider = PluginRateLimitProvider.Default,
     private val nowEpochMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -760,6 +769,8 @@ public class PerHostRequestGate(
     private data class HostState(
         val mutex: Mutex = Mutex(),
         var nextRequestAt: Long = 0L,
+        /** Never-decreasing start time, so a delay that is not reflected by the clock still counts. */
+        var lastStartAt: Long = 0L,
         var users: Int = 0,
         var lastUsed: Long = 0L,
     )
@@ -795,10 +806,20 @@ public class PerHostRequestGate(
         try {
             state.mutex.withLock {
                 val rate = limits.limit(key)
-                val wait = state.nextRequestAt - nowEpochMillis()
+                // Round up (without overflow) so a period shorter than its permit count still
+                // spaces starts by at least 1 ms instead of silently disabling the limit.
+                val spacing = rate.periodMillis / rate.permits +
+                    if (rate.periodMillis % rate.permits == 0L) 0L else 1L
+                // GCRA: nextRequestAt is the theoretical arrival time. After an idle period up to
+                // `permits` requests may start together (e.g. the covers of one visible grid),
+                // while the sustained start rate still never exceeds permits per period.
+                val burstTolerance = spacing * (rate.permits - 1)
+                val now = maxOf(nowEpochMillis(), state.lastStartAt)
+                val wait = state.nextRequestAt - burstTolerance - now
                 if (wait > 0) delayMillis(wait)
-                val spacing = if (rate.periodMillis == 0L) 0L else rate.periodMillis / rate.permits
-                state.nextRequestAt = nowEpochMillis() + spacing
+                val startedAt = maxOf(nowEpochMillis(), now + maxOf(wait, 0L))
+                state.lastStartAt = startedAt
+                state.nextRequestAt = maxOf(state.nextRequestAt, startedAt) + spacing
             }
         } finally {
             stateMutex.withLock {

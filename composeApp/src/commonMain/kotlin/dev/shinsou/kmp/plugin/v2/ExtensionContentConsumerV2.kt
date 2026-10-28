@@ -119,12 +119,33 @@ public data class ExtensionContentMaterializationV2(
 public data class ExtensionLocalReadingStateV2(
     val completedRemoteUnitIds: Set<String> = emptySet(),
     val lastReadRemoteUnitId: String? = null,
+    /** Last visual page of started but unfinished units, keyed by the source's opaque unit id. */
+    val inProgressRemoteUnits: Map<String, ExtensionUnitPageProgressV2> = emptyMap(),
 )
+
+/** Zero-based last visual page; [pageCount] is absent when the rendition never reported one. */
+public data class ExtensionUnitPageProgressV2(
+    val pageIndex: Int,
+    val pageCount: Int? = null,
+) {
+    init {
+        require(pageIndex >= 0) { "Unit page index must be non-negative" }
+        require(pageCount == null || pageCount > pageIndex) { "Unit page must be inside its page count" }
+    }
+}
+
+/** Clamps persisted chapter/history values, which may predate a re-paginated rendition. */
+public fun extensionUnitPageProgress(lastPageRead: Int, lastPageCount: Int?): ExtensionUnitPageProgressV2 {
+    val pageIndex = lastPageRead.coerceAtLeast(0)
+    val pageCount = lastPageCount?.takeIf { it > pageIndex }
+    return ExtensionUnitPageProgressV2(pageIndex, pageCount)
+}
 
 /** App compatibility keys used to join local history to the typed extension graph. */
 public data class ExtensionLocalUnitProgressV2(
     val completedUnitKeys: Set<UnitKey> = emptySet(),
     val lastReadUnitKey: UnitKey? = null,
+    val inProgressUnits: Map<UnitKey, ExtensionUnitPageProgressV2> = emptyMap(),
 )
 
 /** Exact rights-gated reader input for one materialized extension representation. */
@@ -306,6 +327,10 @@ public class ExtensionContentConsumerV2(
                 remoteIdByUnitKey[it]
             },
             lastReadRemoteUnitId = localProgress.lastReadUnitKey?.let(remoteIdByUnitKey::get),
+            inProgressRemoteUnits = localProgress.inProgressUnits
+                .filterKeys { it !in localProgress.completedUnitKeys }
+                .mapNotNull { (unitKey, progress) -> remoteIdByUnitKey[unitKey]?.let { it to progress } }
+                .toMap(),
         )
     }
 

@@ -98,11 +98,30 @@ class SourceWebChallengeCookiesTest {
     fun appleContentRulesBlockNetworkByDefaultThenAllowOnlyReviewedOrigins() {
         val rules = reviewedChallengeRequest().appleWebChallengeContentRuleList().orEmpty()
 
-        assertTrue(rules.contains("^(?:https?|wss?|ftp)://"))
-        assertTrue(rules.contains("^https://example\\\\.test(?::443)?(?:[/?#]|$)"))
-        assertTrue(rules.contains("^https://cdn\\\\.example\\\\.test(?::443)?(?:[/?#]|$)"))
+        assertTrue(rules.contains(WEB_CHALLENGE_BLOCK_ALL_NETWORK_FILTER))
+        assertTrue(rules.contains("^https://example\\\\.test[/?#]"))
+        assertTrue(rules.contains("^https://cdn\\\\.example\\\\.test[/?#]"))
         assertFalse(rules.contains("127.0.0.1"))
         assertFalse(rules.contains("metadata.google.internal"))
+    }
+
+    @Test
+    fun appleContentRuleFiltersStayInsideWebKitRegexSubset() {
+        // WKContentRuleListStore rejects the whole list if any filter uses a disjunction, a
+        // non-capturing group, or `$` before the end; iOS then shows a blank challenge page.
+        val filters = listOf(
+            WEB_CHALLENGE_BLOCK_ALL_NETWORK_FILTER,
+            webChallengeOriginUrlFilter("https://www.linovelib.com"),
+            webChallengeOriginUrlFilter("https://a-b.example.test:8443"),
+        )
+        filters.forEach { filter ->
+            assertFalse('|' in filter, filter)
+            assertFalse("(?" in filter, filter)
+            assertFalse('{' in filter, filter)
+            assertFalse('$' in filter.dropLast(1), filter)
+        }
+        assertEquals("^https://www\\.linovelib\\.com[/?#]", filters[1])
+        assertEquals("^https://a-b\\.example\\.test:8443[/?#]", filters[2])
     }
 
     @Test

@@ -154,6 +154,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.ExtensionUnitPageProgressV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
@@ -2001,6 +2002,9 @@ internal fun ExtensionV2PublicationPane(
     var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var resumeUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var inProgressUnits by remember(item.identityKey) {
+        mutableStateOf<Map<String, ExtensionUnitPageProgressV2>>(emptyMap())
+    }
     var bookmarkedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var chapterFilter by remember(item.identityKey) { mutableStateOf(ExtensionChapterFilter.ALL) }
@@ -2100,6 +2104,17 @@ internal fun ExtensionV2PublicationPane(
                 readerSession = null
                 readerUnitId = null
                 onReaderVisibilityChanged(false)
+                // The shell calls back only after local progress is durable. Merge it so the
+                // chapter list shows the page just reached; unsaved manual read marks survive.
+                runCatching {
+                    callbacks.extensionLocalReadingStateV2(
+                        extensionPublicationKey(sourceKey, remotePublicationId),
+                    )
+                }.getOrNull()?.let { localReading ->
+                    readUnitIds = readUnitIds + localReading.completedRemoteUnitIds
+                    resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
+                    inProgressUnits = localReading.inProgressRemoteUnits
+                }
             },
             onOpenUnit = { selection -> materialize(selection, openReader = true) },
             session = openedReader,
@@ -2229,6 +2244,7 @@ internal fun ExtensionV2PublicationPane(
             )
             readUnitIds = localReading.completedRemoteUnitIds
             resumeUnitId = localReading.lastReadRemoteUnitId
+            inProgressUnits = localReading.inProgressRemoteUnits
             loadInitialUnitDirectory()
             unitDirectoryComplete = true
         } catch (cancelled: CancellationException) {
@@ -2306,6 +2322,15 @@ internal fun ExtensionV2PublicationPane(
             resumeUnitId = resumeUnitId,
         )?.let { target -> units.firstOrNull { it.unit.remoteId == target } }
     }
+    val continueDetail = continueUnit
+        ?.takeIf { it.unit.remoteId == resumeUnitId || it.unit.remoteId in inProgressUnits }
+        ?.let { unit ->
+            extensionContinueReadingDetail(
+                strings = strings,
+                unitTitle = unit.unit.title,
+                progress = inProgressUnits[unit.unit.remoteId]?.takeIf { unit.unit.remoteId !in readUnitIds },
+            )
+        }
     val continueLabel = when {
         continueUnit == null -> null
         resumeUnitId != null && continueUnit.unit.remoteId == resumeUnitId -> strings.continueReading
@@ -2373,6 +2398,7 @@ internal fun ExtensionV2PublicationPane(
                         showClose = true,
                         hasChapters = units.isNotEmpty() || hasNextPage,
                         continueLabel = continueLabel,
+                        continueDetail = continueDetail,
                         onToggleFavorite = ::toggleFavorite,
                         onRefresh = ::refreshPublication,
                         onShare = {
@@ -2398,6 +2424,7 @@ internal fun ExtensionV2PublicationPane(
                         units = units,
                         selectedUnitIds = selectedUnitIds,
                         readUnitIds = readUnitIds,
+                        inProgressUnits = inProgressUnits,
                         bookmarkedUnitIds = bookmarkedUnitIds,
                         downloadedUnitIds = downloadedUnitIds,
                         chapterFilter = chapterFilter,
@@ -2452,6 +2479,7 @@ internal fun ExtensionV2PublicationPane(
                             showClose = false,
                             hasChapters = units.isNotEmpty() || hasNextPage,
                             continueLabel = continueLabel,
+                        continueDetail = continueDetail,
                             onToggleFavorite = ::toggleFavorite,
                             onRefresh = ::refreshPublication,
                             onShare = {
@@ -2478,6 +2506,7 @@ internal fun ExtensionV2PublicationPane(
                             units = units,
                             selectedUnitIds = selectedUnitIds,
                             readUnitIds = readUnitIds,
+                        inProgressUnits = inProgressUnits,
                             bookmarkedUnitIds = bookmarkedUnitIds,
                             downloadedUnitIds = downloadedUnitIds,
                             chapterFilter = chapterFilter,
@@ -2560,6 +2589,7 @@ private fun ExtensionV2PublicationInfoPane(
     showClose: Boolean,
     hasChapters: Boolean,
     continueLabel: String?,
+    continueDetail: String?,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
@@ -2682,6 +2712,17 @@ private fun ExtensionV2PublicationInfoPane(
                 Spacer(Modifier.width(7.dp))
                 Text(if (continueReadingLoading) strings.text("Loading") else continueLabel)
             }
+            continueDetail?.let { detail ->
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         Spacer(Modifier.height(18.dp))
         publication.status?.takeIf(String::isNotBlank)?.let { status ->
@@ -2764,6 +2805,7 @@ private fun ExtensionV2ChapterPane(
     units: List<ExtensionUnitSelectionV2>,
     selectedUnitIds: Set<String>,
     readUnitIds: Set<String>,
+    inProgressUnits: Map<String, ExtensionUnitPageProgressV2>,
     bookmarkedUnitIds: Set<String>,
     downloadedUnitIds: Set<String>,
     chapterFilter: ExtensionChapterFilter,
@@ -2991,6 +3033,19 @@ private fun ExtensionV2ChapterPane(
                                     Spacer(Modifier.width(5.dp))
                                     Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
                                 }
+                            }
+                            val unitProgress = inProgressUnits[unitId]?.takeIf { unitId !in readUnitIds }
+                            when {
+                                unitProgress != null -> Text(
+                                    readingProgressPageLabel(strings, unitProgress.pageIndex, unitProgress.pageCount),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                unitId in readUnitIds -> Text(
+                                    strings.text("Read"),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                         if (unitId in downloadedUnitIds) {

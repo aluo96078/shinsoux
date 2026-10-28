@@ -1489,6 +1489,8 @@ private val TraditionalReaderTranslations = mapOf(
     "Choose content format" to "選擇內容格式",
     "The operation could not be completed." to "無法完成操作。",
     "Format: {0}" to "格式：{0}",
+    "Page {0} / {1}" to "第 {0} / {1} 頁",
+    "Last read: {0}" to "上次讀到：{0}",
 )
 
 private val SimplifiedReaderTranslations = mapOf(
@@ -1545,6 +1547,8 @@ private val SimplifiedReaderTranslations = mapOf(
     "Choose content format" to "选择内容格式",
     "The operation could not be completed." to "无法完成操作。",
     "Format: {0}" to "格式：{0}",
+    "Page {0} / {1}" to "第 {0} / {1} 页",
+    "Last read: {0}" to "上次读到：{0}",
 )
 
 private val JapaneseReaderTranslations = mapOf(
@@ -1601,6 +1605,8 @@ private val JapaneseReaderTranslations = mapOf(
     "Choose content format" to "コンテンツ形式を選択",
     "The operation could not be completed." to "操作を完了できませんでした。",
     "Format: {0}" to "形式：{0}",
+    "Page {0} / {1}" to "{0} / {1} ページ",
+    "Last read: {0}" to "前回の続き：{0}",
 )
 
 private val KoreanReaderTranslations = mapOf(
@@ -1657,6 +1663,8 @@ private val KoreanReaderTranslations = mapOf(
     "Choose content format" to "콘텐츠 형식 선택",
     "The operation could not be completed." to "작업을 완료할 수 없습니다.",
     "Format: {0}" to "형식: {0}",
+    "Page {0} / {1}" to "{0} / {1}페이지",
+    "Last read: {0}" to "마지막으로 읽음: {0}",
 )
 
 private val FrenchReaderTranslations = mapOf(
@@ -1713,6 +1721,8 @@ private val FrenchReaderTranslations = mapOf(
     "Choose content format" to "Choisir le format du contenu",
     "The operation could not be completed." to "L’opération n’a pas pu être effectuée.",
     "Format: {0}" to "Format : {0}",
+    "Page {0} / {1}" to "Page {0} / {1}",
+    "Last read: {0}" to "Dernière lecture : {0}",
 )
 
 private val GermanReaderTranslations = mapOf(
@@ -1769,6 +1779,8 @@ private val GermanReaderTranslations = mapOf(
     "Choose content format" to "Inhaltsformat auswählen",
     "The operation could not be completed." to "Der Vorgang konnte nicht abgeschlossen werden.",
     "Format: {0}" to "Inhaltsformat: {0}",
+    "Page {0} / {1}" to "Seite {0} / {1}",
+    "Last read: {0}" to "Zuletzt gelesen: {0}",
 )
 
 private val SpanishReaderTranslations = mapOf(
@@ -1825,6 +1837,8 @@ private val SpanishReaderTranslations = mapOf(
     "Choose content format" to "Elegir formato de contenido",
     "The operation could not be completed." to "No se pudo completar la operación.",
     "Format: {0}" to "Formato: {0}",
+    "Page {0} / {1}" to "Página {0} / {1}",
+    "Last read: {0}" to "Última lectura: {0}",
 )
 
 private val PortugueseReaderTranslations = mapOf(
@@ -1881,6 +1895,8 @@ private val PortugueseReaderTranslations = mapOf(
     "Choose content format" to "Escolher formato do conteúdo",
     "The operation could not be completed." to "Não foi possível concluir a operação.",
     "Format: {0}" to "Formato: {0}",
+    "Page {0} / {1}" to "Página {0} / {1}",
+    "Last read: {0}" to "Última leitura: {0}",
 )
 
 private val TraditionalPortabilityTranslations = mapOf(
