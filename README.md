@@ -13,7 +13,7 @@
 
 | 平台 | 最低目標／產物 | 平台整合 |
 |------|---------------|----------|
-| Android | Android 8.0（API 26）以上；GitHub Release 提供測試用 Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
+| Android | Android 10（API 29）以上；GitHub Release 提供測試用 Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
 | iOS／iPadOS | iOS 16 以上；僅提供原始碼，需在 macOS／Xcode 自行建置 App＋Widget | Keychain、iCloud Drive、BGTask、WKWebView、Widget |
 | macOS | Compose Desktop App／DMG；目前打包目標為 Apple Silicon | Menu Bar、快捷鍵、系統文件選擇器、macOS Keychain |
 | Windows | Windows 10／11 x64；MSI／EXE | `%USERPROFILE%` 資料根目錄、使用者範圍 DPAPI、Ctrl 快捷鍵、原生文件選擇器 |

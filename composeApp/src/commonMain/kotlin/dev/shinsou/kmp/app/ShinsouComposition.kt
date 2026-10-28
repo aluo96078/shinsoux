@@ -39,7 +39,14 @@ import dev.shinsou.kmp.plugin.KeyValuePluginPackageStore
 import dev.shinsou.kmp.plugin.KeyValuePluginStorage
 import dev.shinsou.kmp.plugin.MigratingPluginStorage
 import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
+import dev.shinsou.kmp.plugin.ExecutionTierResolver
 import dev.shinsou.kmp.plugin.KeyValueRepositorySecurityStateStore
+import dev.shinsou.kmp.plugin.LocalPluginBlocklist
+import dev.shinsou.kmp.plugin.PluginPackageSecurity
+import dev.shinsou.kmp.plugin.PublisherExecutionTierGate
+import dev.shinsou.kmp.plugin.PublisherRepositoryTrustPolicy
+import dev.shinsou.kmp.plugin.PublisherRevocationStore
+import dev.shinsou.kmp.plugin.PublisherTrustStore
 import dev.shinsou.kmp.plugin.KeyValueRepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.ConfiguredRepositoryTrustPolicy
 import dev.shinsou.kmp.plugin.createPlatformPinnedPluginHttpTransport
@@ -91,6 +98,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
+import dev.shinsou.kmp.plugin.v2.extensionUnitPageProgress
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
 import dev.shinsou.kmp.tracking.TrackerDescriptor
 import dev.shinsou.kmp.tracking.TrackerManager
@@ -263,14 +271,38 @@ public class ShinsouComposition(
     public val repositoryTrustRootStore: RepositoryTrustRootStore =
         KeyValueRepositoryTrustRootStore(pluginKeyValueStore)
     private val repositorySecurityState = KeyValueRepositorySecurityStateStore(pluginKeyValueStore)
+
+    /** ADR-0002 S5: trusted publisher keys, their trust mode, rotation and self-revocation. */
+    public val publisherTrustStore: PublisherTrustStore = PublisherTrustStore(pluginKeyValueStore, repositorySecurityState)
+
+    /** ADR-0002 S5: artifacts publishers withdrew, and when their signed documents expire. */
+    public val publisherRevocationStore: PublisherRevocationStore =
+        PublisherRevocationStore(pluginKeyValueStore, publisherTrustStore, repositorySecurityState)
+
+    /** ADR-0002 D5: the user's own block list, device-local. */
+    public val pluginBlocklist: LocalPluginBlocklist = LocalPluginBlocklist(pluginKeyValueStore)
+
+    /** ADR-0002 §10.1: the formal basis for where a package's code runs. */
+    public val executionTierResolver: ExecutionTierResolver = ExecutionTierResolver(
+        publishers = publisherTrustStore,
+        revocations = publisherRevocationStore,
+        blocklist = pluginBlocklist,
+        nowEpochSeconds = { kotlin.time.Clock.System.now().epochSeconds },
+    )
     private val repositoryClient = ExtensionRepositoryClient(
         client = httpClient,
-        repositoryTrustPolicy = ConfiguredRepositoryTrustPolicy(
-            roots = repositoryTrustRootStore,
-            // Temporary compatibility for the unsigned official publication only. URL
-            // normalization happens before this exact predicate; every other unpinned public
-            // repository remains rejected before transport.
-            allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
+        // A repository mapped to a trusted publisher requires that publisher's current key; any
+        // other URL keeps the configured pins.
+        repositoryTrustPolicy = PublisherRepositoryTrustPolicy(
+            publishers = publisherTrustStore,
+            blocklist = pluginBlocklist,
+            fallback = ConfiguredRepositoryTrustPolicy(
+                roots = repositoryTrustRootStore,
+                // Temporary compatibility for the unsigned official publication only. URL
+                // normalization happens before this exact predicate; every other unpinned public
+                // repository remains rejected before transport.
+                allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
+            ),
         ),
         repositorySecurityState = repositorySecurityState,
         repositoryHostResolver = platformPluginHostResolver,
@@ -422,6 +454,7 @@ public class ShinsouComposition(
         eventGrantAdmission = pluginEventGrantAdmission,
         reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
         reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
+        executionTierGate = PublisherExecutionTierGate(publisherTrustStore, executionTierResolver),
     )
     private val coordinator = RepositoryPluginCoordinator(
         repository = repository,
@@ -670,6 +703,7 @@ public class ShinsouComposition(
         loginRequestCoordinator = pluginLoginRequests,
         logoutRequestCoordinator = pluginLogoutRequests,
         exactSourceRefreshInvalidations = pluginSourceInvalidations,
+        packageSecurity = PluginPackageSecurity(publisherTrustStore, publisherRevocationStore, pluginBlocklist, repositoryClient),
         extensionContentConsumerV2 = contentFoundation?.let { foundation ->
             ExtensionContentConsumerV2(
                 gateway = ExtensionBrowseContentGatewayV2(
@@ -695,9 +729,15 @@ public class ShinsouComposition(
                         .filter { it.read }
                         .mapNotNull { typedLocalChapterUnitKey(it.url) }
                         .toSet()
-                    val latest = snapshot.histories
+                    val histories = snapshot.histories.filter { it.chapterId in chapterById }
+                    val inProgress = histories.mapNotNull { history ->
+                        val chapter = chapterById[history.chapterId] ?: return@mapNotNull null
+                        if (chapter.read) return@mapNotNull null
+                        val unitKey = typedLocalChapterUnitKey(chapter.url) ?: return@mapNotNull null
+                        unitKey to extensionUnitPageProgress(chapter.lastPageRead, history.lastPageCount)
+                    }.toMap()
+                    val latest = histories
                         .asSequence()
-                        .filter { it.chapterId in chapterById }
                         .maxWithOrNull(
                             compareBy<History> { it.lastRead }
                                 .thenBy { it.id },
@@ -709,6 +749,7 @@ public class ShinsouComposition(
                     ExtensionLocalUnitProgressV2(
                         completedUnitKeys = completed,
                         lastReadUnitKey = latest,
+                        inProgressUnits = inProgress,
                     )
                 },
             )

@@ -50,15 +50,33 @@ val androidPublicDebugSigningValues = listOf(
 val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
 
 val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
+val isWindowsBuildHost = System.getProperty("os.name").lowercase().startsWith("windows")
+fun iosSandboxSdk(target: org.jetbrains.kotlin.konan.target.KonanTarget): String =
+    if (target == org.jetbrains.kotlin.konan.target.KonanTarget.IOS_ARM64) "iphoneos" else "iphonesimulator"
+fun iosSandboxHostDir(sdk: String): File = layout.buildDirectory.dir("sandbox-ios-$sdk").get().asFile
 // Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
 val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
     .map { it.toBooleanStrict() }
     .orElse(false)
+// Device tests install (and afterwards uninstall) the app: give that build its own application id
+// so a developer's or tester's real installation and its library are never touched.
+val sandboxDeviceTest = providers.gradleProperty("shinsouSandboxDeviceTest")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+// Blank values (e.g. a shell that mangles `-P...=` arguments) fall back instead of breaking file().
 val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
-    .orElse(providers.systemProperty("shinsou.pluginRepo"))
+    .filter { it.isNotBlank() }
+    .orElse(providers.systemProperty("shinsou.pluginRepo").filter { it.isNotBlank() })
     .orElse("../../shinsou_plugin")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    // The sandbox tests run this helper: a rebuilt helper must rerun them, not reuse old results.
+    inputs.files(
+        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox"),
+        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox.exe"),
+    )
+        .withPropertyName("sandboxHelper")
+        .optional()
     systemProperty(
         "shinsou.pluginRepo",
         shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
@@ -148,6 +166,48 @@ val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
     null
 }
 
+// ADR-0002 S3: the plugin sandbox helper (sandbox-core's shinsou-sandbox), built for the host
+// architecture and shipped next to the WKWebView helper. It confines itself with sandbox_init at
+// startup; the signature carries no entitlements, so it gains nothing the deny-all profile removes.
+val macOsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("macos").file("shinsou-sandbox") }
+val buildMacOsSandboxHelper = if (isMacOsBuildHost) {
+    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-macos").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureMacOsSandboxHelper") {
+        dependsOn("fetchSandboxCoreDeps")
+        commandLine(
+            "cmake", "-S", sandboxCore, "-B", cmakeBuild,
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_OSX_ARCHITECTURES=$macOsBuildArchitecture",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+        )
+    }
+    val compile = tasks.register<Exec>("compileMacOsSandboxHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox", "-j", "8")
+    }
+    tasks.register<Exec>("buildMacOsSandboxHelper") {
+        group = "build"
+        description = "Builds and signs the plugin sandbox helper for the macOS app resources"
+        dependsOn(compile, "prepareMacOsWebChallengeHelperOutput")
+        val output = macOsSandboxHelper.get().asFile.absolutePath
+        outputs.file(output)
+        outputs.upToDateWhen { false }
+        // Hardened runtime, no entitlements. The configured identity when there is one (so a
+        // Developer ID build can be notarized), ad-hoc otherwise.
+        val identity = macOsSigningIdentity ?: "-"
+        val keychain = macOsSigningKeychain?.let { listOf("--keychain", it) }.orEmpty()
+        commandLine(
+            "/bin/sh", "-c",
+            "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
+            "sign-helper", "$cmakeBuild/shinsou-sandbox", output,
+            *keychain.toTypedArray(), "--sign", identity, output,
+        )
+    }
+} else {
+    null
+}
+
 // JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
 // artifacts use the build host classifier; release CI already builds DMG and MSI on their native
 // hosts, so each installer receives only its own browser runtime.
@@ -221,6 +281,76 @@ val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
     into(layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"))
 }
 
+// ADR-0002 S3 (Windows): the same helper, built with MinGW-w64 (UCRT64; sandbox-core needs
+// pthreads and POSIX I/O, so not MSVC) as one static executable. It relaunches itself in a Low
+// Privilege AppContainer and a Job object (sandbox-core/src/ssc_os_windows.c).
+val windowsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("windows").file("shinsou-sandbox.exe") }
+val buildWindowsSandboxHelper = if (isWindowsBuildHost) {
+    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-windows").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureWindowsSandboxHelper") {
+        dependsOn("fetchSandboxCoreDeps")
+        commandLine(
+            "cmake", "-S", sandboxCore, "-B", cmakeBuild, "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc",
+        )
+    }
+    val compile = tasks.register<Exec>("compileWindowsSandboxHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox")
+    }
+    tasks.register<Copy>("buildWindowsSandboxHelper") {
+        group = "build"
+        description = "Builds the plugin sandbox helper for the Windows app resources"
+        dependsOn(compile)
+        from(File(cmakeBuild, "shinsou-sandbox.exe"))
+        into(windowsSandboxHelper.map { it.asFile.parentFile })
+    }
+} else {
+    null
+}
+
+// ADR-0002 S4 (iOS): the sandbox-core WASM guest and, per Apple SDK, the WAMR host library the
+// iOS targets link through the `sandboxWasm` cinterop. Needs clang/lld with the wasm32 target,
+// wasi-libc and its builtins (Homebrew: llvm lld wasi-libc wasi-runtimes wabt), CMake and Xcode.
+val iosSandboxGuest = layout.buildDirectory.file("sandbox-wasm/shinsou_sandbox.wasm")
+val buildIosSandboxGuest = tasks.register<Exec>("buildIosSandboxGuest") {
+    group = "build"
+    description = "Builds the sandbox-core WASM guest for the iOS plugin sandbox"
+    dependsOn("fetchSandboxCoreDeps")
+    val core = rootProject.layout.projectDirectory.dir("sandbox-core")
+    inputs.dir(core.dir("src"))
+    inputs.dir(core.dir("wasm"))
+    inputs.file(layout.projectDirectory.file("src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt"))
+    outputs.file(iosSandboxGuest)
+    commandLine("sh", core.file("wasm/build-guest.sh").asFile.absolutePath, iosSandboxGuest.get().asFile.parentFile.absolutePath)
+}
+listOf("iphoneos", "iphonesimulator").forEach { sdk ->
+    val dir = iosSandboxHostDir(sdk).absolutePath
+    tasks.register<Exec>("buildIosSandboxHost${sdk.replaceFirstChar(Char::uppercase)}") {
+        group = "build"
+        description = "Builds the iOS plugin sandbox host library for $sdk"
+        dependsOn(buildIosSandboxGuest)
+        val core = rootProject.layout.projectDirectory.dir("sandbox-core")
+        inputs.dir(core.dir("ios"))
+        inputs.file(iosSandboxGuest)
+        outputs.file("$dir/libshinsou_wasm_host.a")
+        commandLine(
+            "/bin/sh", "-c",
+            "cmake -S \"$1\" -B \"$2\" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS " +
+                "-DCMAKE_OSX_SYSROOT=$3 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 " +
+                "-DSSC_WASM_MODULE=\"$4\" && cmake --build \"$2\" --target shinsou_wasm_host -j 8",
+            "build-ios-sandbox-host", core.dir("ios").asFile.absolutePath, dir, sdk, iosSandboxGuest.get().asFile.absolutePath,
+        )
+    }
+}
+tasks.configureEach {
+    when {
+        name.startsWith("cinteropSandboxWasmIosArm64") -> dependsOn("buildIosSandboxHostIphoneos")
+        name.startsWith("cinteropSandboxWasmIosSimulatorArm64") -> dependsOn("buildIosSandboxHostIphonesimulator")
+    }
+}
+
 tasks.configureEach {
     if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
         dependsOn(prepareAndroidUnitTestLibsodiumResources)
@@ -229,6 +359,12 @@ tasks.configureEach {
         name in setOf("desktopTest", "prepareAppResources")
     ) {
         dependsOn(compileMacOsWebChallengeHelper)
+    }
+    if (buildMacOsSandboxHelper != null && name == "prepareAppResources") {
+        dependsOn(buildMacOsSandboxHelper)
+    }
+    if (buildWindowsSandboxHelper != null && name == "prepareAppResources") {
+        dependsOn(buildWindowsSandboxHelper)
     }
 }
 
@@ -254,6 +390,12 @@ kotlin {
         compilations.getByName("main").cinterops.create("networkReceive") {
             defFile(project.file("src/nativeInterop/cinterop/networkReceive.def"))
             includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
+        // ADR-0002 §4.5: the plugin sandbox host (WAMR + the sandbox-core WASM guest).
+        compilations.getByName("main").cinterops.create("sandboxWasm") {
+            defFile(project.file("src/nativeInterop/cinterop/sandboxWasm.def"))
+            includeDirs(rootProject.file("sandbox-core/ios"))
+            extraOpts("-libraryPath", iosSandboxHostDir(iosSandboxSdk(konanTarget)).absolutePath)
         }
         binaries.all {
             linkerOpts("-lsqlite3")
@@ -331,6 +473,17 @@ kotlin {
             }
         }
 
+        // Device tests (ADR-0002 S2: the isolated-process sandbox on real hardware).
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(libs.androidx.test.runner)
+                implementation(libs.androidx.test.ext.junit)
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.ktor.client.mock)
+            }
+        }
+
         val iosMain by creating {
             dependsOn(commonMain.get())
             dependencies {
@@ -341,6 +494,12 @@ kotlin {
 
         iosArm64Main.get().dependsOn(iosMain)
         iosSimulatorArm64Main.get().dependsOn(iosMain)
+        // ADR-0002 S4: iOS-only tests (the WASM sandbox on the simulator).
+        val iosTest by creating {
+            dependsOn(commonTest.get())
+        }
+        iosArm64Test.get().dependsOn(iosTest)
+        iosSimulatorArm64Test.get().dependsOn(iosTest)
 
         val desktopMain by getting {
             dependsOn(jvmCommonMain)
@@ -369,12 +528,27 @@ android {
     namespace = "dev.aluo.shinsoux"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
+    // ADR-0002 S2: libshinsou_sandbox.so (sandbox-core) for the isolated-process sandbox.
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "dev.aluo.shinsoux"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = releaseVersionCode.get()
         versionName = releaseDisplayVersion.get()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Only sandbox-core's ABIs are listed here: dependencies keep shipping all of theirs. On
+        // another ABI the library is missing and the sandbox fails closed.
+        externalNativeBuild.cmake.abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        // Optimized in every variant: the published APK is the debug variant, and an -O0 QuickJS
+        // is an order of magnitude slower.
+        externalNativeBuild.cmake.arguments += "-DCMAKE_BUILD_TYPE=Release"
+    }
+
+    externalNativeBuild.cmake {
+        path = file("../sandbox-core/CMakeLists.txt")
+        version = "3.22.1"
     }
 
     signingConfigs {
@@ -398,6 +572,7 @@ android {
 
     buildTypes {
         getByName("debug") {
+            if (sandboxDeviceTest.get()) applicationIdSuffix = ".sandboxtest"
             if (androidPublicDebugSigningConfigured) {
                 signingConfig = signingConfigs.getByName("publicDebug")
             }
@@ -410,12 +585,55 @@ android {
     }
 
     buildFeatures.compose = true
+    buildFeatures.aidl = true
+    // The AIDL stubs are Java; match Kotlin's JVM target.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 
     sourceSets.getByName("test").resources.srcDir(
         layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"),
     )
 
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    // minSdk 29 would store dex and native libraries uncompressed (about 2.5x the APK size). The
+    // APK is downloaded from GitHub Releases, not split by a store, so keep it compressed.
+    packaging.dex.useLegacyPackaging = true
+    packaging.jniLibs.useLegacyPackaging = true
+}
+
+// sandbox-core's pinned third-party sources (quickjs-ng, lexbor) are fetched, not committed.
+// On Windows `bash` on PATH is often System32's WSL launcher: use the bash of Git for Windows.
+val sandboxCoreBash = if (isWindowsBuildHost) {
+    System.getenv("PATH").orEmpty().split(File.pathSeparator)
+        .map { File(it, "git.exe") }
+        .firstOrNull { it.isFile }
+        ?.let { File(it.parentFile.parentFile, "bin/bash.exe") }
+        ?.takeIf { it.isFile }
+        ?.absolutePath
+        ?: "C:/Program Files/Git/bin/bash.exe"
+} else {
+    "bash"
+}
+val fetchSandboxCoreDeps by tasks.registering(Exec::class) {
+    description = "Fetches sandbox-core's pinned third-party sources and applies its patches"
+    workingDir = rootProject.file("sandbox-core")
+    commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
+}
+tasks.configureEach {
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps)
+}
+val deviceTestUsesOwnApplicationId = sandboxDeviceTest.get()
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        val ownApplicationId = deviceTestUsesOwnApplicationId // no script reference in the action
+        doFirst {
+            check(ownApplicationId) {
+                "Run device tests with -PshinsouSandboxDeviceTest=true: they uninstall the app afterwards"
+            }
+        }
+    }
 }
 
 compose.desktop {
@@ -442,10 +660,10 @@ compose.desktop {
         }
 
         nativeDistributions {
-            if (isMacOsBuildHost) {
+            if (isMacOsBuildHost || isWindowsBuildHost) {
                 // Compose places OS-specific children of this directory in
-                // `compose.application.resources.dir`. The Kotlin host copies the signed helper
-                // to a private executable temporary directory before launch because jpackage
+                // `compose.application.resources.dir`. The Kotlin host copies the helpers to a
+                // private executable temporary directory before launch because jpackage
                 // intentionally installs application resources without executable permissions.
                 appResourcesRootDir.set(macOsWebChallengeResourcesRoot)
             }

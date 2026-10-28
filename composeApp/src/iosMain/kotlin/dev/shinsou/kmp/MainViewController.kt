@@ -11,7 +11,6 @@ import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
-import dev.shinsou.kmp.plugin.JavaScriptCoreScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.IosReviewedLanRepositoryTransport
 import dev.shinsou.kmp.plugin.REVIEWED_IOS_LAN_SHINSOU_REPOSITORY_BASE_URL
@@ -19,6 +18,8 @@ import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.iosSandboxRuntimeFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -135,12 +136,17 @@ internal object IosApplicationContainer {
         ReviewedLocalRepositoryPolicy.DISABLED
     }
 
+    /** Idle stops and LRU of the plugin sandboxes; lives as long as the app. */
+    private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private val composition = ShinsouComposition(
         repository = repository,
         httpClient = httpClient,
         pluginKeyValueStore = IosPluginKeyValueStore(),
         fileSystem = IosAppFileSystem(),
-        runtimeFactory = JavaScriptCoreScriptPluginRuntimeFactory(),
+        // ADR-0002 §10.1: every package, reviewed or third-party, runs in the WASM sandbox (§4.5),
+        // one interpreter instance each.
+        runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(iosSandboxRuntimeFactory(sandboxScope)),
         syncInfrastructure = syncInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),

@@ -40,7 +40,8 @@ import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.DesktopReviewedLocalRepositoryTransport
 import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.plugin.isReviewedLocalRepositoryEnabled
-import dev.shinsou.kmp.plugin.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
@@ -121,13 +122,16 @@ fun main(args: Array<String>) {
         DisposableEffect(localRepositoryTransport) {
             onDispose { localRepositoryTransport?.close() }
         }
+        val sandboxScope = rememberCoroutineScope()
         val composition = remember {
             ShinsouComposition(
                 repository = repository,
                 httpClient = httpClient,
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
-                runtimeFactory = RhinoScriptPluginRuntimeFactory(),
+                // ADR-0002 §10.1: every package, reviewed or third-party, runs in the OS-confined
+                // shinsou-sandbox helper.
+                runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(desktopSandboxRuntimeFactory(sandboxScope)),
                 syncInfrastructure = syncInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),

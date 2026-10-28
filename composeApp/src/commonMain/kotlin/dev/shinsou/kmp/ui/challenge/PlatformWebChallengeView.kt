@@ -65,13 +65,17 @@ internal fun SourceWebChallengeRequest.allowsWebChallengeInternalResource(
  * WKWebView has no general HTTP(S) request interceptor. Install this native content-blocker list
  * before the first load: block every network URL, then narrowly undo that rule for reviewed exact
  * origins. Navigation delegates remain a separate top-level/popup boundary.
+ *
+ * WebKit's content-blocker regex dialect rejects disjunctions (`|`), non-terminal `$`, and
+ * non-capturing groups; one invalid filter makes the whole list fail to compile. Keep every
+ * filter in the supported subset (mirrors the macOS helper in `ShinsouWebChallenge/main.swift`).
  */
 internal fun SourceWebChallengeRequest.appleWebChallengeContentRuleList(): String? {
     if (!allowsEmbeddedWebChallenge()) return null
     val rules = buildList {
         add(
             mapOf(
-                "trigger" to mapOf("url-filter" to "^(?:https?|wss?|ftp)://"),
+                "trigger" to mapOf("url-filter" to WEB_CHALLENGE_BLOCK_ALL_NETWORK_FILTER),
                 "action" to mapOf("type" to "block"),
             ),
         )
@@ -99,16 +103,23 @@ private fun webChallengeOrigin(value: String?): String? = value?.let { raw ->
     }.getOrNull()
 }
 
-private fun webChallengeOriginUrlFilter(origin: String): String {
+/** Any `scheme://` URL; `data:`/`blob:`/`about:` have no authority and stay unaffected. */
+internal const val WEB_CHALLENGE_BLOCK_ALL_NETWORK_FILTER = "^[A-Za-z][A-Za-z0-9+.-]*://"
+
+/**
+ * WebKit normalizes URLs before matching (default port dropped, empty path becomes `/`), so the
+ * authority is always followed by `/`, `?` or `#`.
+ */
+internal fun webChallengeOriginUrlFilter(origin: String): String {
     val parsed = Url(origin)
     val escapedHost = buildString {
         parsed.host.lowercase().trimEnd('.').forEach { character ->
-            if (character in "\\.^$|?*+()[]{}-") append('\\')
+            if (character in "\\.^$|?*+()[]{}") append('\\')
             append(character)
         }
     }
-    val authority = if (parsed.port == 443) "$escapedHost(?::443)?" else "$escapedHost:${parsed.port}"
-    return "^https://$authority(?:[/?#]|$)"
+    val authority = if (parsed.port == 443) escapedHost else "$escapedHost:${parsed.port}"
+    return "^https://$authority[/?#]"
 }
 
 private val WEB_CHALLENGE_CONTRACT_JSON = Json { encodeDefaults = true }

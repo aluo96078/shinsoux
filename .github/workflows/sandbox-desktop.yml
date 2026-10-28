@@ -1,0 +1,232 @@
+name: Sandbox desktop
+
+# ADR-0002 S3: the shinsou-sandbox helper under OS confinement. macOS: it confines itself with
+# sandbox_init, which is deprecated and whose profile language is private. Windows: it relaunches
+# itself in a Low Privilege AppContainer and a Job object. Every run re-proves the confinement on
+# the runner's OS (S0: re-check each major version): the isolation probe, the Kotlin host driving
+# the confined helper (interop, official-plugin parity), and the packaged app carrying the helper.
+# It runs on pull requests that touch the sandbox, on master, by hand, and on `sandbox-desktop/**` pushes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["sandbox-desktop/**", "master"]
+  # Gate every change to the code this platform ships, not only the sandbox test branches.
+  pull_request:
+    paths:
+      - "sandbox-core/**"
+      - "composeApp/build.gradle.kts"
+      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "gradle/**"
+      - "composeApp/src/desktopMain/**"
+      - "composeApp/src/desktopTest/**"
+      - ".github/workflows/sandbox-desktop.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS helper (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: macOS version
+        run: sw_vers
+
+      - name: C tests and the isolation probe
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release -j"$(sysctl -n hw.ncpu)"
+          cd build/release
+          ctest --output-on-failure
+          # Again verbosely, so the summary shows what each probe got.
+          python3 -I ../../test/run_isolation_probe.py ./isolation_probe | tee probe.log
+          grep -h "BLOCKED\|ALLOWED\|ISOLATION PROBE" probe.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest --rerun
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if any sandbox test was skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -ho "interop: [^<]*" TEST-dev.shinsou.kmp.plugin.sandbox.*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Package the app and check its helper
+        working-directory: shinsoux
+        run: |
+          ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
+          app="composeApp/build/compose/binaries/main/app/Shinsou X.app"
+          helper="$app/Contents/app/resources/shinsou-sandbox"
+          [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          codesign --verify --strict "$helper"
+          codesign -dv "$helper" 2>&1 | grep -Eq "flags=0x[0-9a-f]+\([^)]*runtime" || { echo "::error::helper lacks the hardened runtime"; exit 1; }
+          # No entitlements: the helper must gain nothing the deny-all profile takes away.
+          if codesign -d --entitlements - "$helper" 2>/dev/null | grep -q "<key>"; then echo "::error::helper has entitlements"; exit 1; fi
+          codesign --verify --deep --strict "$app"
+          echo "packaged helper: $(lipo -archs "$helper"), signed, hardened runtime, no entitlements" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows helper (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Byte-exact fixtures and scripts: no CRLF conversion on checkout.
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugins
+        uses: actions/checkout@v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - name: Windows version
+        shell: pwsh
+        run: |
+          [Environment]::OSVersion.VersionString
+          (Get-CimInstance Win32_OperatingSystem).Caption
+
+      # sandbox-core needs pthreads and POSIX I/O: MinGW-w64 (UCRT runtime), not MSVC.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Put the UCRT64 toolchain on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
+
+      - name: C tests and the isolation probe
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
+          cmake --build build/release
+          cd build/release
+          # Self-contained: the AppContainer reads system DLLs, not a toolchain's (libwinpthread etc.).
+          for exe in shinsou-sandbox.exe isolation_probe.exe; do
+            objdump -p "$exe" | grep "DLL Name" | sed "s/^/$exe: /" | tee -a imports.txt
+          done
+          if grep -v -i "KERNEL32.dll\|ADVAPI32.dll\|WS2_32.dll\|api-ms-win-crt-" imports.txt; then echo "::error::the helper needs non-system DLLs"; exit 1; fi
+          ctest --output-on-failure
+          # Again verbosely, so the summary shows what each probe got.
+          python -I ../../test/run_isolation_probe.py ./isolation_probe.exe | tee probe.log
+          grep -h "BLOCKED\|ALLOWED\|ISOLATION PROBE" probe.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          architecture: x64
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install required Android SDK packages
+        shell: pwsh
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
+        working-directory: shinsoux
+        run: >
+          ./gradlew :composeApp:desktopTest --rerun
+          --tests 'dev.shinsou.kmp.plugin.sandbox.*'
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false
+
+      - name: Fail if any sandbox test was skipped
+        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        run: |
+          # Only the S0 recordings are local-only (real site content); every other skip is a failure.
+          if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
+          grep -ho "interop: [^<]*" TEST-dev.shinsou.kmp.plugin.sandbox.*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Package the app and check its helper
+        working-directory: shinsoux
+        run: |
+          ./gradlew :composeApp:createDistributable -Pkotlin.native.enableKlibsCrossCompilation=false
+          helper="composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
+          [ -f "$helper" ] || { echo "::error::the app carries no sandbox helper"; exit 1; }
+          # The packaged helper starts confined (LPAC + Job, self-verified) from a private copy.
+          private=$(mktemp -d)
+          cp "$helper" "$private/"
+          "$private/shinsou-sandbox.exe" --package-key releasecheck < /dev/null || { echo "::error::the packaged helper did not start confined (exit $?)"; exit 1; }
+          echo "packaged helper: $(objdump -f "$helper" | grep -o 'file format .*')" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The release job's PowerShell form of the same check (release.yml, windows.yml).
+      - name: Packaged helper starts confined (release check)
+        working-directory: shinsoux
+        shell: pwsh
+        run: |
+          $helper = "composeApp/build/compose/binaries/main/app/Shinsou X/app/resources/shinsou-sandbox.exe"
+          $private = Join-Path ([IO.Path]::GetTempPath()) ("shinsou-sandbox-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $private | Out-Null
+          Copy-Item -LiteralPath $helper -Destination $private
+          $emptyInput = [IO.Path]::GetTempFileName() # zero bytes, outside the helper's directory
+          $probe = Start-Process -FilePath (Join-Path $private "shinsou-sandbox.exe") `
+            -ArgumentList "--package-key", "releasecheck" -RedirectStandardInput $emptyInput `
+            -NoNewWindow -Wait -PassThru
+          if ($probe.ExitCode -ne 0) {
+            throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
+          }
+          $line = "packaged helper started confined (PowerShell check): exit $($probe.ExitCode)"
+          Write-Output $line
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line

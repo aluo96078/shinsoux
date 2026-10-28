@@ -116,6 +116,56 @@ public class ExtensionRepositoryClient(
         return repository
     }
 
+    /**
+     * ADR-0002 §8.1: what a repository the user is about to add presents — its name and the key
+     * that signed its `repo.json` — so the user can confirm the fingerprint before anything is
+     * trusted. The envelope must verify under its own key (proving the repository holds it); that
+     * proves nothing about who the publisher is, and nothing here is admitted or remembered.
+     */
+    public suspend fun inspectRepositoryKey(baseUrl: String): RepositoryKeyPresentation {
+        val normalized = normalizeBaseUrl(baseUrl)
+        val url = resolve(normalized, "repo.json", cacheBust = false)
+        // The strict (pinned) transport path, before any key is known: SSRF checks on every hop.
+        val bytes = requestBytes(normalized, url, MAX_REPOSITORY_BYTES, INSPECTION_DECISION)
+        return try {
+            val envelope = parseRoot(url, bytes) as? JsonObject ?: error("repo.json is not a signed envelope")
+            val publicKey = envelope["publicKey"]?.jsonPrimitive?.content ?: error("repo.json is not signed")
+            val decoded = RepositoryTrustRootValidation.canonicalBase64Url(publicKey, 32)
+            val presented = RepositoryTrustRoot(publicKey, PublisherFingerprint.of(decoded))
+            val verified = RepositorySignedDocumentVerifier(RepositoryTrustPolicies.REQUIRE_CONFIGURED_PIN, RepositorySecurityStateStore.Disabled)
+                .verifyEnvelope(normalized, RepositorySignedDocumentType.REPOSITORY, "repo.json", envelope, presented, normalized)
+            val document = decodeElement<RepositoryDocument>(url, verified.payload)
+            RepositoryKeyPresentation(normalized, document.meta.name, presented)
+        } catch (error: ExtensionRepositoryException) {
+            throw error
+        } catch (error: Throwable) {
+            throw ExtensionRepositoryException.InvalidDocument(url, error)
+        }
+    }
+
+    /**
+     * An optional signed publisher document (§8.3/§8.4: rotation, revocations, key revocation) from
+     * a repository pinned to a key, as a raw envelope for the publisher stores to verify; null when
+     * the repository does not publish it.
+     */
+    public suspend fun fetchPublisherDocument(baseUrl: String, path: String): JsonObject? {
+        val normalized = normalizeBaseUrl(baseUrl)
+        validateRelativePath(path)
+        val decision = trustDecisionFor(normalized)
+        if (decision !is RepositoryTrustDecision.RequirePinnedSignature) return null
+        val url = resolve(normalized, path, cacheBust = true)
+        val bytes = try {
+            requestBytes(normalized, url, MAX_REPOSITORY_BYTES, decision)
+        } catch (missing: ExtensionRepositoryException.Http) {
+            if (missing.status == 404) return null
+            throw missing
+        }
+        return parseRoot(url, bytes) as? JsonObject ?: throw ExtensionRepositoryException.InvalidDocument(url, IllegalArgumentException("not an envelope"))
+    }
+
+    /** The canonical form every trust lookup is keyed by; throws for a URL this client would refuse. */
+    public fun canonicalBaseUrl(baseUrl: String): String = normalizeBaseUrl(baseUrl)
+
     public suspend fun fetchPluginIndex(baseUrl: String): List<PluginIndexEntry> {
         val normalized = normalizeBaseUrl(baseUrl)
         val url = resolve(normalized, "index.json", cacheBust = true)
@@ -620,7 +670,7 @@ public class ExtensionRepositoryClient(
             repositorySecurityState.isConfigured()
         ) {
             repositorySecurityState.requireArtifactNotDowngraded(
-                normalized,
+                repositoryStateScope(trustDecision, normalized),
                 entry.id,
                 entry.versionCode,
                 digest,
@@ -713,7 +763,7 @@ public class ExtensionRepositoryClient(
                     trustDecision,
                 )
                 repositorySecurityState.admitArtifact(
-                    normalized,
+                    repositoryStateScope(trustDecision, normalized),
                     entry.id,
                     entry.versionCode,
                     actual,
@@ -1321,6 +1371,11 @@ public class ExtensionRepositoryClient(
 
     private companion object {
         const val MAX_REPOSITORY_BYTES = 256L * 1024
+
+        /** Selects the strict transport for [inspectRepositoryKey]; its key is never used to verify. */
+        private val INSPECTION_DECISION = RepositoryTrustDecision.RequirePinnedSignature(
+            RepositoryTrustRoot("inspection", "inspection"),
+        )
         const val MAX_INDEX_BYTES = 2L * 1024 * 1024
         const val MAX_SIDECAR_BYTES = 512L * 1024
         const val MAX_SCRIPT_BYTES = 8L * 1024 * 1024

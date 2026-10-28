@@ -154,6 +154,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
+import dev.shinsou.kmp.plugin.v2.ExtensionUnitPageProgressV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
@@ -376,6 +377,8 @@ fun BrowseScreen(
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
+    var pendingRepositoryTrust by remember { mutableStateOf<dev.shinsou.kmp.ui.RepositoryTrustPrompt?>(null) }
+    var packageSecurity by remember { mutableStateOf<dev.shinsou.kmp.ui.PackageSecuritySnapshot?>(null) }
     val extensionOperations = remember(scope) {
         ExtensionOperationRunner(scope, beforeWork = { withFrameNanos { } })
     }
@@ -836,7 +839,21 @@ fun BrowseScreen(
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages) &&
                             it.name.contains(query, ignoreCase = true)
                     },
-                    onAddRepository = { url -> launchOperation { callbacks.addRepository(url) } },
+                    onAddRepository = { url ->
+                        launchOperation {
+                            // ADR-0002 §8.2: a signed third-party repository shows its publisher key first.
+                            val prompt = callbacks.inspectRepositoryTrust(url)
+                            when {
+                                prompt == null -> callbacks.addRepository(url) // unsigned: the URL the user typed
+                                prompt.alreadyTrusted -> callbacks.trustAndAddRepository(prompt, null)
+                                else -> pendingRepositoryTrust = prompt
+                            }
+                        }
+                    },
+                    onOpenPackageSecurity = { launchOperation { packageSecurity = callbacks.packageSecurity() } },
+                    onBlock = { extension ->
+                        launchOperation { callbacks.setExtensionBlocked(extension.id, blocked = true) }
+                    },
                     onRemoveRepository = { id -> launchOperation { callbacks.removeRepository(id) } },
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
@@ -1137,6 +1154,33 @@ fun BrowseScreen(
             dismissButton = {
                 TextButton(onClick = { pendingReviewedInstall = null }) { Text(strings.cancel) }
             },
+        )
+    }
+
+    pendingRepositoryTrust?.let { prompt ->
+        RepositoryTrustDialog(
+            prompt = prompt,
+            onTrust = { fingerprint ->
+                pendingRepositoryTrust = null
+                launchOperation { callbacks.trustAndAddRepository(prompt, fingerprint) }
+            },
+            onDismiss = { pendingRepositoryTrust = null },
+        )
+    }
+
+    packageSecurity?.let { current ->
+        fun change(action: suspend () -> Unit) = launchOperation {
+            action()
+            packageSecurity = callbacks.packageSecurity()
+        }
+        PackageSecurityDialog(
+            snapshot = current,
+            enabled = extensionOperations.active == null,
+            onStrictMode = { strict -> change { callbacks.setStrictPublisherTrust(strict) } },
+            onPublisherBlocked = { id, blocked -> change { callbacks.setPublisherBlocked(id, blocked) } },
+            onConfirmFingerprint = { id, fingerprint -> change { callbacks.confirmPublisherFingerprint(id, fingerprint) } },
+            onUnblock = { key -> change { callbacks.unblockPackageEntry(key) } },
+            onDismiss = { packageSecurity = null },
         )
     }
 
@@ -1958,6 +2002,9 @@ internal fun ExtensionV2PublicationPane(
     var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var resumeUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
+    var inProgressUnits by remember(item.identityKey) {
+        mutableStateOf<Map<String, ExtensionUnitPageProgressV2>>(emptyMap())
+    }
     var bookmarkedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var chapterFilter by remember(item.identityKey) { mutableStateOf(ExtensionChapterFilter.ALL) }
@@ -2057,6 +2104,17 @@ internal fun ExtensionV2PublicationPane(
                 readerSession = null
                 readerUnitId = null
                 onReaderVisibilityChanged(false)
+                // The shell calls back only after local progress is durable. Merge it so the
+                // chapter list shows the page just reached; unsaved manual read marks survive.
+                runCatching {
+                    callbacks.extensionLocalReadingStateV2(
+                        extensionPublicationKey(sourceKey, remotePublicationId),
+                    )
+                }.getOrNull()?.let { localReading ->
+                    readUnitIds = readUnitIds + localReading.completedRemoteUnitIds
+                    resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
+                    inProgressUnits = localReading.inProgressRemoteUnits
+                }
             },
             onOpenUnit = { selection -> materialize(selection, openReader = true) },
             session = openedReader,
@@ -2186,6 +2244,7 @@ internal fun ExtensionV2PublicationPane(
             )
             readUnitIds = localReading.completedRemoteUnitIds
             resumeUnitId = localReading.lastReadRemoteUnitId
+            inProgressUnits = localReading.inProgressRemoteUnits
             loadInitialUnitDirectory()
             unitDirectoryComplete = true
         } catch (cancelled: CancellationException) {
@@ -2263,6 +2322,15 @@ internal fun ExtensionV2PublicationPane(
             resumeUnitId = resumeUnitId,
         )?.let { target -> units.firstOrNull { it.unit.remoteId == target } }
     }
+    val continueDetail = continueUnit
+        ?.takeIf { it.unit.remoteId == resumeUnitId || it.unit.remoteId in inProgressUnits }
+        ?.let { unit ->
+            extensionContinueReadingDetail(
+                strings = strings,
+                unitTitle = unit.unit.title,
+                progress = inProgressUnits[unit.unit.remoteId]?.takeIf { unit.unit.remoteId !in readUnitIds },
+            )
+        }
     val continueLabel = when {
         continueUnit == null -> null
         resumeUnitId != null && continueUnit.unit.remoteId == resumeUnitId -> strings.continueReading
@@ -2330,6 +2398,7 @@ internal fun ExtensionV2PublicationPane(
                         showClose = true,
                         hasChapters = units.isNotEmpty() || hasNextPage,
                         continueLabel = continueLabel,
+                        continueDetail = continueDetail,
                         onToggleFavorite = ::toggleFavorite,
                         onRefresh = ::refreshPublication,
                         onShare = {
@@ -2355,6 +2424,7 @@ internal fun ExtensionV2PublicationPane(
                         units = units,
                         selectedUnitIds = selectedUnitIds,
                         readUnitIds = readUnitIds,
+                        inProgressUnits = inProgressUnits,
                         bookmarkedUnitIds = bookmarkedUnitIds,
                         downloadedUnitIds = downloadedUnitIds,
                         chapterFilter = chapterFilter,
@@ -2409,6 +2479,7 @@ internal fun ExtensionV2PublicationPane(
                             showClose = false,
                             hasChapters = units.isNotEmpty() || hasNextPage,
                             continueLabel = continueLabel,
+                        continueDetail = continueDetail,
                             onToggleFavorite = ::toggleFavorite,
                             onRefresh = ::refreshPublication,
                             onShare = {
@@ -2435,6 +2506,7 @@ internal fun ExtensionV2PublicationPane(
                             units = units,
                             selectedUnitIds = selectedUnitIds,
                             readUnitIds = readUnitIds,
+                        inProgressUnits = inProgressUnits,
                             bookmarkedUnitIds = bookmarkedUnitIds,
                             downloadedUnitIds = downloadedUnitIds,
                             chapterFilter = chapterFilter,
@@ -2517,6 +2589,7 @@ private fun ExtensionV2PublicationInfoPane(
     showClose: Boolean,
     hasChapters: Boolean,
     continueLabel: String?,
+    continueDetail: String?,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
@@ -2639,6 +2712,17 @@ private fun ExtensionV2PublicationInfoPane(
                 Spacer(Modifier.width(7.dp))
                 Text(if (continueReadingLoading) strings.text("Loading") else continueLabel)
             }
+            continueDetail?.let { detail ->
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         Spacer(Modifier.height(18.dp))
         publication.status?.takeIf(String::isNotBlank)?.let { status ->
@@ -2721,6 +2805,7 @@ private fun ExtensionV2ChapterPane(
     units: List<ExtensionUnitSelectionV2>,
     selectedUnitIds: Set<String>,
     readUnitIds: Set<String>,
+    inProgressUnits: Map<String, ExtensionUnitPageProgressV2>,
     bookmarkedUnitIds: Set<String>,
     downloadedUnitIds: Set<String>,
     chapterFilter: ExtensionChapterFilter,
@@ -2948,6 +3033,19 @@ private fun ExtensionV2ChapterPane(
                                     Spacer(Modifier.width(5.dp))
                                     Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
                                 }
+                            }
+                            val unitProgress = inProgressUnits[unitId]?.takeIf { unitId !in readUnitIds }
+                            when {
+                                unitProgress != null -> Text(
+                                    readingProgressPageLabel(strings, unitProgress.pageIndex, unitProgress.pageCount),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                unitId in readUnitIds -> Text(
+                                    strings.text("Read"),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                         if (unitId in downloadedUnitIds) {
@@ -3923,6 +4021,8 @@ private fun ExtensionsPane(
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
+    onOpenPackageSecurity: () -> Unit,
+    onBlock: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     var repositoryDialog by remember { mutableStateOf(false) }
@@ -3934,6 +4034,11 @@ private fun ExtensionsPane(
         item("repositories-title") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(strings.text("Repositories"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(enabled = operation == null, onClick = onOpenPackageSecurity) {
+                    Icon(Icons.Outlined.Security, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.text("Package security"))
+                }
                 TextButton(enabled = operation == null, onClick = { repositoryDialog = true }) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(17.dp))
                     Spacer(Modifier.width(4.dp))
@@ -4011,7 +4116,7 @@ private fun ExtensionsPane(
             }
         } else {
             items(extensions, key = { "extension-${it.id}" }) { extension ->
-                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust)
+                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock)
             }
         }
     }
@@ -4051,6 +4156,7 @@ private fun ExtensionRow(
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
+    onBlock: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     Surface(
@@ -4128,8 +4234,15 @@ private fun ExtensionRow(
                     Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.text("Update")) }
                     TextButton(enabled = operation == null, onClick = { onUninstall(extension) }) { Text(strings.uninstall) }
                 }
-                extension.installed -> OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
-                    Text(strings.uninstall)
+                extension.installed -> Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
+                        Text(strings.uninstall)
+                    }
+                    // ADR-0002 D5: the user's own block list; undone from Package security.
+                    TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }
                 }
                 else -> Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
             }

@@ -161,6 +161,15 @@ fun MangaDetailScreen(
         chapters.any { !it.read } -> strings.text("Start reading")
         else -> strings.text("Read again")
     }
+    // Only a partially read chapter is "last read"; the next unread chapter keeps the plain label.
+    val continueDetail = continueChapter
+        ?.takeIf { chapter -> !chapter.read && chapter.lastPageRead > 0 }
+        ?.let { chapter ->
+            strings.text(
+                "Last read: {0}",
+                "${chapter.name} · ${readingProgressPageLabel(strings, chapter.lastPageRead, null)}",
+            )
+        }
     val allChapterIds = remember(chapters) { chapters.mapTo(linkedSetOf()) { it.id } }
 
     val chapterPane: @Composable () -> Unit = {
@@ -224,6 +233,7 @@ fun MangaDetailScreen(
                 hasChapters = allChapterIds.isNotEmpty(),
                 continueLabel = continueLabel,
                 onContinueReading = continueChapter?.let { chapter -> { onReadChapter(chapter.id) } },
+                continueDetail = continueDetail,
                 refreshingFromSource = refreshingFromSource,
                 scrollable = true,
                 modifier = Modifier.width(330.dp).fillMaxHeight(),
@@ -252,6 +262,7 @@ fun MangaDetailScreen(
                     hasChapters = allChapterIds.isNotEmpty(),
                     continueLabel = continueLabel,
                     onContinueReading = continueChapter?.let { chapter -> { onReadChapter(chapter.id) } },
+                    continueDetail = continueDetail,
                     refreshingFromSource = refreshingFromSource,
                     scrollable = false,
                     modifier = Modifier.fillMaxWidth(),
@@ -281,6 +292,7 @@ private fun MangaInfoPane(
     hasChapters: Boolean,
     continueLabel: String?,
     onContinueReading: (() -> Unit)?,
+    continueDetail: String? = null,
     refreshingFromSource: Boolean,
     scrollable: Boolean,
     modifier: Modifier = Modifier,
@@ -365,6 +377,17 @@ private fun MangaInfoPane(
                 Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(7.dp))
                 Text(continueLabel)
+            }
+            continueDetail?.let { detail ->
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         Spacer(Modifier.height(18.dp))

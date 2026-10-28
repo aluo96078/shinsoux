@@ -297,6 +297,18 @@ private fun ShinsouAppContent(
     val pluginImages = LocalPluginImageLoader.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    /** ADR-0002 §8.1: a repository opened from an add-repository link, waiting for the user. */
+    var linkedRepositoryTrust by remember { mutableStateOf<RepositoryTrustPrompt?>(null) }
+    /** An add-repository link to a repository without a signing key: added only once confirmed. */
+    var linkedUnsignedRepository by remember { mutableStateOf<String?>(null) }
+    /** The add-repository link behind those dialogs: stays pending until added or declined. */
+    var pendingRepositoryLink by remember { mutableStateOf<ShinsouDeepLink?>(null) }
+    /** Acknowledges exactly [link] (the one a dialog was opened for), never whatever came later. */
+    fun repositoryLinkDone(link: ShinsouDeepLink?) {
+        link?.let(appServices::deepLinkHandled)
+        if (pendingRepositoryLink == link) pendingRepositoryLink = null
+    }
+    val linkScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     var section by remember { mutableStateOf(snapshot.settings.general.defaultStartingScreen) }
@@ -1117,6 +1129,28 @@ private fun ShinsouAppContent(
                         moreBackRequest = 0L
                         moreDestination = MoreDestination.Settings
                     }
+                    is ShinsouDeepLink.AddRepository -> {
+                        // The queue re-emits its head whenever another link arrives: this one is
+                        // already waiting for the user.
+                        if (link == pendingRepositoryLink) return@collect
+                        // A link never adds anything by itself: the user confirms every one. A link's
+                        // fingerprint is matched against the key the repository presents.
+                        selectSection(MainSection.BROWSE)
+                        val prompt = appServices.browse.inspectRepositoryTrust(link.repositoryUrl)
+                        when {
+                            prompt != null -> linkedRepositoryTrust = prompt.copy(linkedFingerprint = link.fingerprint)
+                            link.fingerprint != null -> {
+                                // A definite refusal: report it and let the next link through.
+                                appServices.deepLinkHandled(link)
+                                snackbar.showSnackbar(strings.text("This repository presents no signing key to match the link's fingerprint."))
+                                return@collect
+                            }
+                            else -> linkedUnsignedRepository = link.repositoryUrl
+                        }
+                        // Acknowledged by the dialog: once added, or once the user declines.
+                        pendingRepositoryLink = link
+                        return@collect
+                    }
                     is ShinsouDeepLink.OpenSyncLink -> {
                         // Navigate first so the controller's progress and any safe diagnostic are
                         // visible while claim/checkpoint verification runs. The payload never
@@ -1147,6 +1181,61 @@ private fun ShinsouAppContent(
                 snackbar.showSnackbar(failure.message ?: strings.text("Unable to open this link."))
             }
         }
+    }
+    linkedRepositoryTrust?.let { prompt ->
+        val forLink = pendingRepositoryLink
+        dev.shinsou.kmp.ui.screens.RepositoryTrustDialog(
+            prompt = prompt,
+            onTrust = { fingerprint ->
+                linkedRepositoryTrust = null
+                linkScope.launch {
+                    try {
+                        appServices.browse.trustAndAddRepository(prompt, fingerprint)
+                        repositoryLinkDone(forLink)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        snackbar.showSnackbar(failure.message ?: strings.text("Unable to open this link."))
+                    }
+                }
+            },
+            onDismiss = {
+                linkedRepositoryTrust = null
+                repositoryLinkDone(forLink) // declined
+            },
+        )
+    }
+    linkedUnsignedRepository?.let { url ->
+        val forLink = pendingRepositoryLink
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                linkedUnsignedRepository = null
+                repositoryLinkDone(forLink) // declined
+            },
+            title = { Text(strings.text("Add repository")) },
+            text = { Text(url) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    linkedUnsignedRepository = null
+                    linkScope.launch {
+                        try {
+                            appServices.browse.addRepository(url)
+                            repositoryLinkDone(forLink)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            snackbar.showSnackbar(failure.message ?: strings.text("Unable to open this link."))
+                        }
+                    }
+                }) { Text(strings.text("Add")) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    linkedUnsignedRepository = null
+                    repositoryLinkDone(forLink) // declined
+                }) { Text(strings.cancel) }
+            },
+        )
     }
 
     val systemBackHandler = rememberUpdatedState {

@@ -1,0 +1,507 @@
+{
+ "package": "zh.komiic",
+ "scenarios": [
+  {
+   "name": "complete",
+   "complete": true,
+   "routes": [
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "hotComics",
+     "status": 200,
+     "json": {
+      "data": {
+       "hotComics": [
+        {
+         "id": "9001",
+         "title": "合成漫畫 1",
+         "status": "ONGOING",
+         "dateUpdated": "2026-01-01T00:00:00Z",
+         "imageUrl": "/images/9001.jpg",
+         "authors": [
+          {
+           "id": "a1",
+           "name": "作者1"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        },
+        {
+         "id": "9002",
+         "title": "合成漫畫 2",
+         "status": "END",
+         "dateUpdated": "2026-01-02T00:00:00Z",
+         "imageUrl": "/images/9002.jpg",
+         "authors": [
+          {
+           "id": "a2",
+           "name": "作者2"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "comicById",
+     "status": 200,
+     "json": {
+      "data": {
+       "comicById": {
+        "id": "9001",
+        "title": "合成漫畫 1",
+        "status": "ONGOING",
+        "dateUpdated": "2026-01-01T00:00:00Z",
+        "imageUrl": "/images/9001.jpg",
+        "authors": [
+         {
+          "id": "a1",
+          "name": "作者1"
+         }
+        ],
+        "categories": [
+         {
+          "id": "c1",
+          "name": "冒險"
+         }
+        ]
+       }
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "chaptersByComicId",
+     "status": 200,
+     "json": {
+      "data": {
+       "chaptersByComicId": [
+        {
+         "id": "501",
+         "serial": "1",
+         "type": "book",
+         "dateCreated": "2025-12-01T00:00:00Z",
+         "dateUpdated": "2025-12-01T00:00:00Z",
+         "size": 20
+        },
+        {
+         "id": "502",
+         "serial": "2",
+         "type": "chapter",
+         "dateCreated": "2025-12-08T00:00:00Z",
+         "dateUpdated": "2025-12-08T12:30:00Z",
+         "size": 18
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "imageTicketsByChapterId",
+     "status": 200,
+     "json": {
+      "data": {
+       "imageTicketsByChapterId": [
+        {
+         "url": "https://img.komiic.test/502/1.jpg",
+         "ticket": "t/1+=",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        },
+        {
+         "url": "https://img.komiic.test/502/2.jpg",
+         "ticket": "t 2",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "graphql-error-on-details",
+   "complete": false,
+   "routes": [
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "hotComics",
+     "status": 200,
+     "json": {
+      "data": {
+       "hotComics": [
+        {
+         "id": "9001",
+         "title": "合成漫畫 1",
+         "status": "ONGOING",
+         "dateUpdated": "2026-01-01T00:00:00Z",
+         "imageUrl": "/images/9001.jpg",
+         "authors": [
+          {
+           "id": "a1",
+           "name": "作者1"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        },
+        {
+         "id": "9002",
+         "title": "合成漫畫 2",
+         "status": "END",
+         "dateUpdated": "2026-01-02T00:00:00Z",
+         "imageUrl": "/images/9002.jpg",
+         "authors": [
+          {
+           "id": "a2",
+           "name": "作者2"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "comicById",
+     "status": 200,
+     "json": {
+      "errors": [
+       {
+        "message": "boom"
+       }
+      ]
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "chaptersByComicId",
+     "status": 200,
+     "json": {
+      "data": {
+       "chaptersByComicId": [
+        {
+         "id": "501",
+         "serial": "1",
+         "type": "book",
+         "dateCreated": "2025-12-01T00:00:00Z",
+         "dateUpdated": "2025-12-01T00:00:00Z",
+         "size": 20
+        },
+        {
+         "id": "502",
+         "serial": "2",
+         "type": "chapter",
+         "dateCreated": "2025-12-08T00:00:00Z",
+         "dateUpdated": "2025-12-08T12:30:00Z",
+         "size": 18
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "imageTicketsByChapterId",
+     "status": 200,
+     "json": {
+      "data": {
+       "imageTicketsByChapterId": [
+        {
+         "url": "https://img.komiic.test/502/1.jpg",
+         "ticket": "t/1+=",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        },
+        {
+         "url": "https://img.komiic.test/502/2.jpg",
+         "ticket": "t 2",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "network-failure-on-chapters",
+   "complete": false,
+   "routes": [
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "hotComics",
+     "status": 200,
+     "json": {
+      "data": {
+       "hotComics": [
+        {
+         "id": "9001",
+         "title": "合成漫畫 1",
+         "status": "ONGOING",
+         "dateUpdated": "2026-01-01T00:00:00Z",
+         "imageUrl": "/images/9001.jpg",
+         "authors": [
+          {
+           "id": "a1",
+           "name": "作者1"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        },
+        {
+         "id": "9002",
+         "title": "合成漫畫 2",
+         "status": "END",
+         "dateUpdated": "2026-01-02T00:00:00Z",
+         "imageUrl": "/images/9002.jpg",
+         "authors": [
+          {
+           "id": "a2",
+           "name": "作者2"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "comicById",
+     "status": 200,
+     "json": {
+      "data": {
+       "comicById": {
+        "id": "9001",
+        "title": "合成漫畫 1",
+        "status": "ONGOING",
+        "dateUpdated": "2026-01-01T00:00:00Z",
+        "imageUrl": "/images/9001.jpg",
+        "authors": [
+         {
+          "id": "a1",
+          "name": "作者1"
+         }
+        ],
+        "categories": [
+         {
+          "id": "c1",
+          "name": "冒險"
+         }
+        ]
+       }
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "imageTicketsByChapterId",
+     "status": 200,
+     "json": {
+      "data": {
+       "imageTicketsByChapterId": [
+        {
+         "url": "https://img.komiic.test/502/1.jpg",
+         "ticket": "t/1+=",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        },
+        {
+         "url": "https://img.komiic.test/502/2.jpg",
+         "ticket": "t 2",
+         "kid": "k",
+         "width": 800,
+         "height": 1200
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "quota-exceeded-on-pages",
+   "complete": false,
+   "routes": [
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "hotComics",
+     "status": 200,
+     "json": {
+      "data": {
+       "hotComics": [
+        {
+         "id": "9001",
+         "title": "合成漫畫 1",
+         "status": "ONGOING",
+         "dateUpdated": "2026-01-01T00:00:00Z",
+         "imageUrl": "/images/9001.jpg",
+         "authors": [
+          {
+           "id": "a1",
+           "name": "作者1"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        },
+        {
+         "id": "9002",
+         "title": "合成漫畫 2",
+         "status": "END",
+         "dateUpdated": "2026-01-02T00:00:00Z",
+         "imageUrl": "/images/9002.jpg",
+         "authors": [
+          {
+           "id": "a2",
+           "name": "作者2"
+          }
+         ],
+         "categories": [
+          {
+           "id": "c1",
+           "name": "冒險"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "comicById",
+     "status": 200,
+     "json": {
+      "data": {
+       "comicById": {
+        "id": "9001",
+        "title": "合成漫畫 1",
+        "status": "ONGOING",
+        "dateUpdated": "2026-01-01T00:00:00Z",
+        "imageUrl": "/images/9001.jpg",
+        "authors": [
+         {
+          "id": "a1",
+          "name": "作者1"
+         }
+        ],
+        "categories": [
+         {
+          "id": "c1",
+          "name": "冒險"
+         }
+        ]
+       }
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "chaptersByComicId",
+     "status": 200,
+     "json": {
+      "data": {
+       "chaptersByComicId": [
+        {
+         "id": "501",
+         "serial": "1",
+         "type": "book",
+         "dateCreated": "2025-12-01T00:00:00Z",
+         "dateUpdated": "2025-12-01T00:00:00Z",
+         "size": 20
+        },
+        {
+         "id": "502",
+         "serial": "2",
+         "type": "chapter",
+         "dateCreated": "2025-12-08T00:00:00Z",
+         "dateUpdated": "2025-12-08T12:30:00Z",
+         "size": 18
+        }
+       ]
+      }
+     }
+    },
+    {
+     "method": "POST",
+     "url": "https://komiic.com/api/query",
+     "bodyContains": "imageTicketsByChapterId",
+     "status": 200,
+     "json": {
+      "errors": [
+       {
+        "extensions": {
+         "code": "QUOTA_EXCEEDED"
+        }
+       }
+      ],
+      "data": null
+     }
+    }
+   ]
+  }
+ ]
+}

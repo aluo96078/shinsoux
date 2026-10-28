@@ -182,6 +182,53 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
+    fun localReadingStateReportsPageProgressOnlyForUnfinishedUnits() = runTest {
+        withFoundation { foundation ->
+            val unitKeys = mutableMapOf<String, UnitKey>()
+            val source = FixtureSource(
+                payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
+                unitItems = {
+                    listOf(
+                        RemoteUnitV2("unit-a", "Unit A"),
+                        RemoteUnitV2("unit-b", "Unit B"),
+                    )
+                },
+            )
+            val consumer = consumer(
+                foundation = foundation,
+                source = source,
+                localUnitProgress = {
+                    ExtensionLocalUnitProgressV2(
+                        completedUnitKeys = setOfNotNull(unitKeys["unit-a"]),
+                        lastReadUnitKey = unitKeys["unit-b"],
+                        inProgressUnits = buildMap {
+                            // A completed unit never also reports a resumable page.
+                            unitKeys["unit-a"]?.let { put(it, extensionUnitPageProgress(9, 10)) }
+                            unitKeys["unit-b"]?.let { put(it, extensionUnitPageProgress(4, 18)) }
+                        },
+                    )
+                },
+            )
+            val selections = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID)
+                .units.associateBy { it.unit.remoteId }
+            unitKeys["unit-a"] = consumer.materialize(selections.getValue("unit-a")).unitKey
+            unitKeys["unit-b"] = consumer.materialize(selections.getValue("unit-b")).unitKey
+
+            val state = consumer.localReadingState(extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID))
+            assertEquals(setOf("unit-a"), state.completedRemoteUnitIds)
+            assertEquals("unit-b", state.lastReadRemoteUnitId)
+            assertEquals(mapOf("unit-b" to ExtensionUnitPageProgressV2(4, 18)), state.inProgressRemoteUnits)
+        }
+    }
+
+    @Test
+    fun persistedPageProgressIsClampedInsteadOfRejected() {
+        assertEquals(ExtensionUnitPageProgressV2(0, 5), extensionUnitPageProgress(-3, 5))
+        assertEquals(ExtensionUnitPageProgressV2(7, null), extensionUnitPageProgress(7, 7))
+        assertEquals(ExtensionUnitPageProgressV2(2, 8), extensionUnitPageProgress(2, 8))
+    }
+
+    @Test
     fun fetchedTextSizeOrDigestMismatchFailsBeforeAnyBlobOrMetadataCommit() = runTest {
         val bytes = "verified remote body".encodeToByteArray()
         listOf(

@@ -918,6 +918,32 @@ private val TraditionalLongTranslations = mapOf(
     "Refresh the selected repository or try a different language." to "請重新整理選取的儲存庫，或嘗試其他語言。",
     "Add repository" to "新增儲存庫",
     "Repository URL" to "儲存庫 URL",
+    "Trust this publisher?" to "信任此發佈者？",
+    "Publisher key fingerprint" to "發佈者金鑰指紋",
+    "Its packages run in the sandbox with only the permissions you approve. Compare the fingerprint with the one the publisher shows on their own site." to "此發佈者的套件會在沙箱中執行，只取得你核准的權限。請與發佈者在自己網站上公布的指紋比對。",
+    "Full fingerprint (required)" to "完整指紋（必填）",
+    "Full fingerprint (optional)" to "完整指紋（選填）",
+    "Trust and add" to "信任並新增",
+    "Package security" to "套件安全",
+    "Always require a fingerprint match" to "一律要求比對指紋",
+    "Publishers trusted on first use stay pending until matched; they install nothing new." to "首次使用即信任的發佈者會維持「待比對」，比對完成前不會安裝新套件或更新。",
+    "Publishers" to "發佈者",
+    "No trusted publishers" to "沒有已信任的發佈者",
+    "Trusted" to "已信任",
+    "Pending fingerprint match" to "待比對指紋",
+    "Key revoked by the publisher" to "發佈者已撤銷金鑰",
+    "Key replaced" to "金鑰已替換",
+    "Official" to "官方",
+    "Fingerprint matched" to "指紋已比對",
+    "Trusted on first use" to "首次使用信任",
+    "Blocked" to "已封鎖",
+    "Block" to "封鎖",
+    "Unblock" to "解除封鎖",
+    "Match fingerprint" to "比對指紋",
+    "Match" to "比對",
+    "Blocked on this device" to "本機封鎖名單",
+    "Nothing blocked" to "沒有封鎖任何項目",
+    "This repository presents no signing key to match the link's fingerprint." to "此儲存庫沒有可供比對連結指紋的簽章金鑰。",
     "Official" to "官方",
     "Update available" to "有可用更新",
     "Execution allowed" to "允許執行",
@@ -1463,6 +1489,8 @@ private val TraditionalReaderTranslations = mapOf(
     "Choose content format" to "選擇內容格式",
     "The operation could not be completed." to "無法完成操作。",
     "Format: {0}" to "格式：{0}",
+    "Page {0} / {1}" to "第 {0} / {1} 頁",
+    "Last read: {0}" to "上次讀到：{0}",
 )
 
 private val SimplifiedReaderTranslations = mapOf(
@@ -1519,6 +1547,8 @@ private val SimplifiedReaderTranslations = mapOf(
     "Choose content format" to "选择内容格式",
     "The operation could not be completed." to "无法完成操作。",
     "Format: {0}" to "格式：{0}",
+    "Page {0} / {1}" to "第 {0} / {1} 页",
+    "Last read: {0}" to "上次读到：{0}",
 )
 
 private val JapaneseReaderTranslations = mapOf(
@@ -1575,6 +1605,8 @@ private val JapaneseReaderTranslations = mapOf(
     "Choose content format" to "コンテンツ形式を選択",
     "The operation could not be completed." to "操作を完了できませんでした。",
     "Format: {0}" to "形式：{0}",
+    "Page {0} / {1}" to "{0} / {1} ページ",
+    "Last read: {0}" to "前回の続き：{0}",
 )
 
 private val KoreanReaderTranslations = mapOf(
@@ -1631,6 +1663,8 @@ private val KoreanReaderTranslations = mapOf(
     "Choose content format" to "콘텐츠 형식 선택",
     "The operation could not be completed." to "작업을 완료할 수 없습니다.",
     "Format: {0}" to "형식: {0}",
+    "Page {0} / {1}" to "{0} / {1}페이지",
+    "Last read: {0}" to "마지막으로 읽음: {0}",
 )
 
 private val FrenchReaderTranslations = mapOf(
@@ -1687,6 +1721,8 @@ private val FrenchReaderTranslations = mapOf(
     "Choose content format" to "Choisir le format du contenu",
     "The operation could not be completed." to "L’opération n’a pas pu être effectuée.",
     "Format: {0}" to "Format : {0}",
+    "Page {0} / {1}" to "Page {0} / {1}",
+    "Last read: {0}" to "Dernière lecture : {0}",
 )
 
 private val GermanReaderTranslations = mapOf(
@@ -1743,6 +1779,8 @@ private val GermanReaderTranslations = mapOf(
     "Choose content format" to "Inhaltsformat auswählen",
     "The operation could not be completed." to "Der Vorgang konnte nicht abgeschlossen werden.",
     "Format: {0}" to "Inhaltsformat: {0}",
+    "Page {0} / {1}" to "Seite {0} / {1}",
+    "Last read: {0}" to "Zuletzt gelesen: {0}",
 )
 
 private val SpanishReaderTranslations = mapOf(
@@ -1799,6 +1837,8 @@ private val SpanishReaderTranslations = mapOf(
     "Choose content format" to "Elegir formato de contenido",
     "The operation could not be completed." to "No se pudo completar la operación.",
     "Format: {0}" to "Formato: {0}",
+    "Page {0} / {1}" to "Página {0} / {1}",
+    "Last read: {0}" to "Última lectura: {0}",
 )
 
 private val PortugueseReaderTranslations = mapOf(
@@ -1855,6 +1895,8 @@ private val PortugueseReaderTranslations = mapOf(
     "Choose content format" to "Escolher formato do conteúdo",
     "The operation could not be completed." to "Não foi possível concluir a operação.",
     "Format: {0}" to "Formato: {0}",
+    "Page {0} / {1}" to "Página {0} / {1}",
+    "Last read: {0}" to "Última leitura: {0}",
 )
 
 private val TraditionalPortabilityTranslations = mapOf(

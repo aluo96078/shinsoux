@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -741,6 +742,7 @@ fun ReaderScreen(
                 -> ReaderHorizontalPager(
                     pages = pages,
                     currentPage = currentPage,
+                    viewportRequestSerial = viewportRequestSerial,
                     settings = settings,
                     onPageChanged = { logicalPage ->
                         currentPosition = pagedReaderPosition(
@@ -756,6 +758,7 @@ fun ReaderScreen(
                 ReadingMode.PAGER_VERTICAL -> ReaderVerticalPager(
                     pages = pages,
                     currentPage = currentPage,
+                    viewportRequestSerial = viewportRequestSerial,
                     settings = settings,
                     onPageChanged = { logicalPage ->
                         currentPosition = pagedReaderPosition(
@@ -944,6 +947,7 @@ private fun ReaderVolumeKeyRegistration(
 private fun ReaderHorizontalPager(
     pages: List<ReaderPage>,
     currentPage: Int,
+    viewportRequestSerial: Long,
     settings: ReaderSettings,
     onPageChanged: (Int) -> Unit,
     onTap: (ReaderTapAction) -> Unit,
@@ -953,12 +957,12 @@ private fun ReaderHorizontalPager(
         initialPage = readerPhysicalPageIndex(currentPage, pages.size, mode),
     ) { pages.size }
 
-    LaunchedEffect(currentPage, pages.size, mode, settings.animatePageTransitions) {
+    // Scroll only for explicit requests (taps, keys, the progress slider, restores). Keying this on
+    // the observed page let every intermediate page of a multi-page animation cancel the seek, so
+    // slider jumps stopped early or left the pager between pages.
+    LaunchedEffect(viewportRequestSerial, pages.size, mode) {
         val target = readerPhysicalPageIndex(currentPage, pages.size, mode)
-        if (pagerState.currentPage != target) {
-            if (settings.animatePageTransitions) pagerState.animateScrollToPage(target)
-            else pagerState.scrollToPage(target)
-        }
+        pagerState.seekReaderPage(target, settings.animatePageTransitions)
     }
     LaunchedEffect(pagerState, mode) {
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect {
@@ -985,16 +989,14 @@ private fun ReaderHorizontalPager(
 private fun ReaderVerticalPager(
     pages: List<ReaderPage>,
     currentPage: Int,
+    viewportRequestSerial: Long,
     settings: ReaderSettings,
     onPageChanged: (Int) -> Unit,
     onTap: (ReaderTapAction) -> Unit,
 ) {
     val pagerState = rememberPagerState(initialPage = currentPage) { pages.size }
-    LaunchedEffect(currentPage, pages.size, settings.animatePageTransitions) {
-        if (pagerState.currentPage != currentPage) {
-            if (settings.animatePageTransitions) pagerState.animateScrollToPage(currentPage)
-            else pagerState.scrollToPage(currentPage)
-        }
+    LaunchedEffect(viewportRequestSerial, pages.size) {
+        pagerState.seekReaderPage(currentPage, settings.animatePageTransitions)
     }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect(onPageChanged)
@@ -1013,6 +1015,24 @@ private fun ReaderVerticalPager(
         )
     }
 }
+
+private suspend fun PagerState.seekReaderPage(target: Int, animatePageTransitions: Boolean) {
+    if (pageCount <= 0) return
+    val safeTarget = target.coerceIn(0, pageCount - 1)
+    if (currentPage == safeTarget && currentPageOffsetFraction == 0f) return
+    if (readerPageSeekAnimates(currentPage, safeTarget, animatePageTransitions)) {
+        animateScrollToPage(safeTarget)
+    } else {
+        scrollToPage(safeTarget)
+    }
+}
+
+internal fun readerSliderPage(value: Float, pageCount: Int): Int? =
+    if (pageCount <= 0) null else value.roundToInt().coerceIn(0, pageCount - 1)
+
+/** Adjacent page turns animate; slider jumps land immediately instead of flipping every page. */
+internal fun readerPageSeekAnimates(fromPage: Int, toPage: Int, animatePageTransitions: Boolean): Boolean =
+    animatePageTransitions && abs(toPage - fromPage) <= 1
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -1409,6 +1429,10 @@ private fun ReaderControls(
     onSettings: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
+    // The thumb follows the finger while dragging; the reader position catches up through
+    // onPageChange instead of snapping the thumb back to the page the pager has reached so far.
+    var sliderDragValue by remember(chapter.id, visible) { mutableStateOf<Float?>(null) }
+    val sliderMax = (pageCount - 1).coerceAtLeast(1).toFloat()
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
         Box(Modifier.fillMaxSize()) {
             Column(
@@ -1474,9 +1498,16 @@ private fun ReaderControls(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("${page + 1}", color = Color.White, style = MaterialTheme.typography.labelLarge)
                     Slider(
-                        value = page.toFloat(),
-                        onValueChange = { onPageChange(it.toInt()) },
-                        valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
+                        value = (sliderDragValue ?: page.toFloat()).coerceIn(0f, sliderMax),
+                        onValueChange = { value ->
+                            val previous = readerSliderPage(sliderDragValue ?: page.toFloat(), pageCount)
+                            sliderDragValue = value
+                            val target = readerSliderPage(value, pageCount)
+                            if (target != null && target != previous) onPageChange(target)
+                        },
+                        onValueChangeFinished = { sliderDragValue = null },
+                        enabled = pageCount > 1,
+                        valueRange = 0f..sliderMax,
                         modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                     )
                     Text("$pageCount", color = Color.White, style = MaterialTheme.typography.labelLarge)
@@ -1545,6 +1576,8 @@ internal fun NovelReaderProgressControls(
     val safePage = page.coerceIn(0, safePageCount - 1)
     val sliderEnabled = interactionEnabled && safePageCount > 1
     val sliderInteractionSource = remember { MutableInteractionSource() }
+    // Follow the finger while dragging; the reader reports intermediate pages while it seeks.
+    var sliderDragValue by remember { mutableStateOf<Float?>(null) }
     val sliderColors = SliderDefaults.colors(
         thumbColor = MaterialTheme.colorScheme.primary,
         activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -1579,10 +1612,14 @@ internal fun NovelReaderProgressControls(
                 modifier = Modifier.width(28.dp),
             )
             Slider(
-                value = safePage.toFloat(),
-                onValueChange = {
-                    onPageChange(it.roundToInt().coerceIn(0, safePageCount - 1))
+                value = sliderDragValue ?: safePage.toFloat(),
+                onValueChange = { value ->
+                    val previous = readerSliderPage(sliderDragValue ?: safePage.toFloat(), safePageCount)
+                    sliderDragValue = value
+                    val target = readerSliderPage(value, safePageCount)
+                    if (target != null && target != previous) onPageChange(target)
                 },
+                onValueChangeFinished = { sliderDragValue = null },
                 valueRange = 0f..(safePageCount - 1).coerceAtLeast(1).toFloat(),
                 enabled = sliderEnabled,
                 colors = sliderColors,

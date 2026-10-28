@@ -126,7 +126,8 @@ jobs:
 
       - name: Install required Android SDK packages
         shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        # NDK and CMake build sandbox-core's libshinsou_sandbox.so (ADR-0002 S2).
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -210,6 +211,12 @@ jobs:
             echo "::error title=Unexpected version code::Found $actual_version_code; expected $RELEASE_VERSION_CODE."
             exit 1
           }
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "${apks[0]}" "lib/$abi/libshinsou_sandbox.so" > /dev/null || {
+              echo "::error title=Missing plugin sandbox::lib/$abi/libshinsou_sandbox.so is not in the APK."
+              exit 1
+            }
+          done
 
           mkdir -p build/release/android
           output="build/release/android/Shinsou-X-$RELEASE_VERSION-android-debug.apk"
@@ -318,6 +325,12 @@ jobs:
           applications=("$mount_dir"/*.app/Contents/MacOS/"Shinsou X")
           if (( ${#applications[@]} != 1 )) || [[ ! -x "${applications[0]}" ]]; then
             echo "::error title=Unexpected DMG application::Expected one executable, found ${#applications[@]}."
+            exit 1
+          fi
+
+          sandbox_helpers=("$mount_dir"/*.app/Contents/app/resources/shinsou-sandbox)
+          if (( ${#sandbox_helpers[@]} != 1 )) || ! codesign --verify --strict "${sandbox_helpers[0]}"; then
+            echo "::error title=Missing plugin sandbox::The app must carry a signed shinsou-sandbox helper (ADR-0002 S3)."
             exit 1
           fi
 
@@ -457,6 +470,20 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # ADR-0002 S3: the plugin sandbox helper is built with MinGW-w64 (UCRT64).
+      - name: Set up the sandbox helper toolchain
+        uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Put the UCRT64 toolchain on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
+
       - name: Build Windows installers
         shell: pwsh
         run: |
@@ -478,6 +505,23 @@ jobs:
             -Filter "Shinsou X.exe" -File -Recurse -ErrorAction SilentlyContinue)
           if ($applications.Count -ne 1) {
             throw "Expected exactly one release application executable, found $($applications.Count)."
+          }
+          $helper = Join-Path $applications[0].Directory.FullName "app/resources/shinsou-sandbox.exe"
+          if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+            throw "The app must carry the plugin sandbox helper shinsou-sandbox.exe (ADR-0002 S3)."
+          }
+          # It must start confined on this image: run it the way the app does (a private copy, path-only
+          # environment) with an empty input. 0 means the LPAC + Job copy started, verified its own
+          # token and Job, read the end of its input and exited; 5 means it refused to run unconfined.
+          $private = Join-Path ([IO.Path]::GetTempPath()) ("shinsou-sandbox-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $private | Out-Null
+          Copy-Item -LiteralPath $helper -Destination $private
+          $emptyInput = [IO.Path]::GetTempFileName() # zero bytes, outside the helper's directory
+          $probe = Start-Process -FilePath (Join-Path $private "shinsou-sandbox.exe") `
+            -ArgumentList "--package-key", "releasecheck" -RedirectStandardInput $emptyInput `
+            -NoNewWindow -Wait -PassThru
+          if ($probe.ExitCode -ne 0) {
+            throw "The packaged plugin sandbox helper did not start confined (exit $($probe.ExitCode))."
           }
           & "scripts/ci/verify_windows_desktop_runtime.ps1" `
             -ApplicationPath $applications[0].FullName

@@ -1214,6 +1214,57 @@ class PluginSubsystemTest {
     }
 
     @Test
+    fun webChallengeImportNarrowsAParentDomainCookieToTheReviewedHost() = runTest {
+        val fixture = reviewedBiliMangaWebChallengeRollbackFixture()
+        try {
+            val authorization = assertNotNull(fixture.manager.issueWebChallenge(fixture.sourceKey))
+            fixture.manager.importWebChallengeSession(
+                sourceKey = fixture.sourceKey,
+                capability = authorization.capability,
+                cookies = listOf(
+                    dev.shinsou.kmp.ui.SourceCookie(
+                        name = "member",
+                        value = "parent-cookie",
+                        domain = ".bilimanga.net",
+                        hostOnly = false,
+                    ),
+                ),
+                userAgent = "browser-agent",
+                localStorage = mapOf("token" to "token"),
+            )
+            val stored = fixture.storage.getCookies(authorization.storageId).single()
+            assertEquals("parent-cookie", stored.value)
+            assertEquals("www.bilimanga.net", stored.domain)
+            assertTrue(stored.hostOnly)
+
+            // A sibling, a public suffix, a non-label suffix and a malformed parent stay refused.
+            listOf("api.bilimanga.net", ".net", "net", "limanga.net", "bili_manga.net", "-bilimanga.net").forEach { domain ->
+                val refused = assertNotNull(fixture.manager.issueWebChallenge(fixture.sourceKey))
+                assertFailsWith<IllegalArgumentException>(domain) {
+                    fixture.manager.importWebChallengeSession(
+                        sourceKey = fixture.sourceKey,
+                        capability = refused.capability,
+                        cookies = listOf(
+                            dev.shinsou.kmp.ui.SourceCookie(
+                                name = "member",
+                                value = "refused-cookie",
+                                domain = domain,
+                                hostOnly = false,
+                            ),
+                        ),
+                        userAgent = "browser-agent",
+                        localStorage = mapOf("token" to "token"),
+                    )
+                }
+            }
+            assertTrue(fixture.storage.getCookies(authorization.storageId).none { it.value == "refused-cookie" })
+        } finally {
+            fixture.manager.close()
+            fixture.http.close()
+        }
+    }
+
+    @Test
     fun webChallengeImportRollbackRestoresAbsentOptionalStorageAfterMidCommitFailure() = runTest {
         val fixture = reviewedBiliMangaWebChallengeRollbackFixture()
         try {

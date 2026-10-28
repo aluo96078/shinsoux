@@ -161,6 +161,88 @@ internal fun pluginJsonArrayCountsAtMost(
     return !inString && containers.isEmpty()
 }
 
+/**
+ * Rejects JSON whose shape exceeds the result budgets before a parser materializes it: total
+ * values (object keys count as values, so this is conservative), per-array elements, per-object
+ * entries and nesting depth. Only the shape is checked; syntax is left to the real parser.
+ */
+internal fun pluginJsonShapeWithin(
+    value: String,
+    maxTotalValues: Int,
+    maxArrayElements: Int,
+    maxObjectEntries: Int,
+    maxDepth: Int,
+): Boolean {
+    require(maxTotalValues >= 0 && maxArrayElements >= 0 && maxObjectEntries >= 0 && maxDepth > 0)
+    val kinds = CharArray(maxDepth)
+    val counts = IntArray(maxDepth)
+    val hasValue = BooleanArray(maxDepth)
+    var depth = 0
+    var total = 0
+    var inString = false
+    var escaped = false
+    var inScalar = false
+
+    fun startValue(): Boolean {
+        total += 1
+        if (total > maxTotalValues) return false
+        if (depth > 0) hasValue[depth - 1] = true
+        return true
+    }
+
+    fun limitOf(kind: Char) = if (kind == '[') maxArrayElements else maxObjectEntries
+
+    for (character in value) {
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                character == '\\' -> escaped = true
+                character == '"' -> inString = false
+            }
+            continue
+        }
+        when (character) {
+            '"' -> {
+                // An object key is a string too; ':' below keeps it in the same entry.
+                if (!startValue()) return false
+                inString = true
+                inScalar = false
+            }
+            '[', '{' -> {
+                if (!startValue()) return false
+                if (depth >= maxDepth) return false
+                kinds[depth] = character
+                counts[depth] = 0
+                hasValue[depth] = false
+                depth += 1
+                inScalar = false
+            }
+            ']', '}' -> {
+                if (depth == 0 || kinds[depth - 1] != (if (character == ']') '[' else '{')) return false
+                val count = counts[depth - 1] + if (hasValue[depth - 1]) 1 else 0
+                if (count > limitOf(kinds[depth - 1])) return false
+                depth -= 1
+                inScalar = false
+            }
+            ',' -> {
+                if (depth == 0 || !hasValue[depth - 1]) return false
+                counts[depth - 1] += 1
+                if (counts[depth - 1] >= limitOf(kinds[depth - 1])) return false
+                hasValue[depth - 1] = false
+                inScalar = false
+            }
+            ':' -> inScalar = false
+            else -> if (character.isWhitespace()) {
+                inScalar = false
+            } else if (!inScalar) {
+                if (!startValue()) return false
+                inScalar = true
+            }
+        }
+    }
+    return !inString && depth == 0
+}
+
 /** Stable error used when a plugin exceeds a host-owned resource boundary. */
 public class PluginResourceLimitException(message: String) : IllegalStateException(message)
 
