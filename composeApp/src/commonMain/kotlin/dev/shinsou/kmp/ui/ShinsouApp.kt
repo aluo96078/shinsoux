@@ -139,6 +139,8 @@ import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
 import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
 import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.isPlaceholderPublicationTitle
+import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
 import dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
@@ -349,7 +351,13 @@ private fun ShinsouAppContent(
     val appVolumeKeyPressTracker = remember { ReaderVolumeKeyPressTracker() }
     var selectedLibraryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedChapterIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var downloadsPaused by remember { mutableStateOf(false) }
+    // Paused rows survive a restart, so the toggle must start from them rather than "running".
+    var downloadsPaused by remember {
+        mutableStateOf(
+            snapshot.downloadQueue.any { it.state == DownloadState.PAUSED } &&
+                snapshot.downloadQueue.none { it.state == DownloadState.QUEUED || it.state == DownloadState.DOWNLOADING },
+        )
+    }
     val securityCapabilities = appServices.securityCapabilities
     val appLockAuthenticationAvailable = securityCapabilities.appLock.available
     val effectiveAppLockEnabled = securityFeatureEnabled(
@@ -472,6 +480,7 @@ private fun ShinsouAppContent(
         publication: RemotePublicationV2,
         favorite: Boolean,
     ) {
+        val publication = publication.withoutScriptObjectText()
         val sourceKey = requireNotNull(item.sourceKey) { "Publication is missing its source identity" }
         val remoteId = requireNotNull(item.remotePublicationId) {
             "Publication is missing its remote identity"
@@ -516,10 +525,18 @@ private fun ShinsouAppContent(
                 stored.copy(
                     url = localUrl,
                     favorite = favorite,
-                    title = publication.title,
+                    // Never replace a real title with a source's "Name #id" stand-in.
+                    title = if (
+                        isPlaceholderPublicationTitle(publication.title, remoteId) &&
+                        !isPlaceholderPublicationTitle(stored.title, remoteId)
+                    ) {
+                        stored.title
+                    } else {
+                        publication.title
+                    },
                     author = publication.author ?: stored.author,
                     artist = publication.artist ?: stored.artist,
-                    description = publication.description ?: stored.description,
+                    description = publication.description ?: stored.description.withoutScriptObjectText(),
                     genre = publication.genre ?: stored.genre,
                     thumbnailUrl = publication.thumbnailUrl ?: stored.thumbnailUrl,
                     initialized = true,
@@ -528,6 +545,12 @@ private fun ShinsouAppContent(
                     version = stored.version + 1,
                 )
             }
+        }
+        // Like manga, a title leaving the library takes its pending downloads with it.
+        if (!favorite) {
+            appServices.browse.removeExtensionPublicationDownloadsV2(sourceKey, remoteId)
+            // Free the offline copy too; a purge failure must not break unfavoriting.
+            runCatching { appServices.browse.purgeExtensionPublicationContentV2(sourceKey, remoteId) }
         }
     }
 
@@ -2015,7 +2038,7 @@ private fun ShinsouAppContent(
                     DesktopSidebar(
                         selected = section,
                         onSelect = ::selectSection,
-                        downloadCount = snapshot.downloadQueue.count { it.state != DownloadState.DOWNLOADED },
+                        downloadCount = pendingDownloadCount(snapshot.downloadQueue, appServices),
                         modifier = Modifier.width(228.dp).fillMaxHeight(),
                     )
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
@@ -2493,6 +2516,7 @@ private fun SectionPane(
                                 queue = snapshot.downloadQueue,
                                 mangaIds = ids,
                             )
+                            forgetExtensionTitles(appServices, snapshot.mangas.filter { it.id in ids })
                             ids.forEach { repository.patchManga(it, MangaPatch(favorite = false)) }
                         }
                     },
@@ -2624,7 +2648,7 @@ private fun SectionPane(
                 },
             )
             MainSection.MORE -> MoreScreen(
-                downloadCount = snapshot.downloadQueue.count { it.state != DownloadState.DOWNLOADED },
+                downloadCount = pendingDownloadCount(snapshot.downloadQueue, appServices),
                 lastBackupLabel = snapshot.backupState.lastFileName,
                 incognitoMode = snapshot.settings.security.incognitoMode,
                 downloadOnlyMode = snapshot.settings.library.downloadOnly,
@@ -2779,6 +2803,15 @@ private fun DetailPane(
             // Clear and immediately re-enter through the guarded action to launch the request.
             refreshingFromSource = false
             refreshFromSource()
+        } else if (manga.favorite) {
+            // Library titles show their stored details and chapters at once, then pick up source
+            // changes quietly on every visit; offline the stored copy simply stays.
+            try {
+                appServices.content.refreshManga(manga.id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
         }
     }
     fun withOriginalUrl(action: (String) -> Unit) {
@@ -2909,6 +2942,24 @@ private suspend fun markChaptersRead(
     ).forEach { downloadId -> appServices.content.removeDownload(downloadId) }
 }
 
+/** Novel titles leaving the library also leave the download queue and the offline copy. */
+private suspend fun forgetExtensionTitles(appServices: ShinsouAppServices, mangas: List<Manga>) {
+    mangas.forEach { manga ->
+        val binding = decodeExtensionLibraryPublicationUrl(manga.url)
+            ?: decodeTypedLocalPublicationUrl(manga.url)?.let(appServices.browse::extensionLibraryBindingV2)
+            ?: return@forEach
+        runCatching {
+            appServices.browse.removeExtensionPublicationDownloadsV2(binding.sourceKey, binding.remotePublicationId)
+        }
+        runCatching {
+            appServices.browse.purgeExtensionPublicationContentV2(binding.sourceKey, binding.remotePublicationId)
+        }
+        runCatching {
+            appServices.browse.forgetCachedExtensionPublicationV2(binding.sourceKey, binding.remotePublicationId)
+        }
+    }
+}
+
 private suspend fun removeDownloadsForMangas(
     appServices: ShinsouAppServices,
     queue: List<DownloadQueueItem>,
@@ -2969,9 +3020,13 @@ private fun MoreDestinationPane(
         if (destination != MoreDestination.Settings) onBack()
     }
 
+    val extensionDownloads by appServices.browse.extensionDownloadsV2.collectAsState()
     when (destination) {
         MoreDestination.Downloads -> DownloadsScreen(
             queue = snapshot.downloadQueue.filter { it.visibleInQueue },
+            extensionQueue = extensionDownloads,
+            onRetryExtension = { id -> mutate { appServices.browse.retryExtensionDownloadV2(id) } },
+            onRemoveExtension = { id -> mutate { appServices.browse.removeExtensionDownloadV2(id) } },
             mangaById = snapshot.mangas.associateBy { it.id },
             chapterById = snapshot.chapters.associateBy { it.id },
             paused = downloadsPaused,
@@ -2980,6 +3035,7 @@ private fun MoreDestinationPane(
                 onDownloadsPausedChange(paused)
                 mutate {
                     appServices.content.pauseDownloads(paused)
+                    appServices.browse.pauseExtensionDownloadsV2(paused)
                 }
             },
             onRetry = { id ->
@@ -3000,7 +3056,12 @@ private fun MoreDestinationPane(
                     mutate { appServices.content.reorderDownloads(ordered) }
                 }
             },
-            onClearCompleted = { mutate { appServices.content.clearCompletedDownloads() } },
+            onClearCompleted = {
+                mutate {
+                    appServices.content.clearCompletedDownloads()
+                    appServices.browse.clearCompletedExtensionDownloadsV2()
+                }
+            },
         )
         MoreDestination.Statistics -> StatisticsScreen(
             library = remember(snapshot.revision) { repository.libraryItems() },
@@ -3045,7 +3106,7 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.9"),
+                        repository.createBackupEnvelope(createdAt, appVersion = "1.0.1-beta.10"),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3313,6 +3374,17 @@ private fun PortabilityUnavailablePane(
     }
 }
 
+/** Manga and novel downloads that still need work; both queues feed the same Downloads screen. */
+@Composable
+private fun pendingDownloadCount(queue: List<DownloadQueueItem>, appServices: ShinsouAppServices): Int {
+    val extensionDownloads by appServices.browse.extensionDownloadsV2.collectAsState()
+    // "Queued or active": failed rows wait for the user, not the queue.
+    fun DownloadState.waiting() =
+        this == DownloadState.QUEUED || this == DownloadState.DOWNLOADING || this == DownloadState.PAUSED
+    return queue.count { it.visibleInQueue && it.state.waiting() } +
+        extensionDownloads.count { it.state.waiting() }
+}
+
 @Composable
 private fun DesktopSidebar(
     selected: MainSection,
@@ -3385,7 +3457,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Text(
-                strings.text("Shinsou X 1.0.1-beta.9"),
+                strings.text("Shinsou X 1.0.1-beta.10"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(11.dp),

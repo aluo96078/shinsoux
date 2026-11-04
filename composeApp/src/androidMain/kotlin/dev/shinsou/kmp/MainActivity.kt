@@ -56,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -65,59 +66,18 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     private val platformScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    /** Idle stops and LRU of the plugin sandboxes; ends with this activity's composition. */
-    private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val documentLauncher = ActivityDocumentLauncher()
     private lateinit var composition: ShinsouComposition
     private lateinit var appServices: AndroidAppServices
-    private var localRepositoryTransport: dev.shinsou.kmp.plugin.JvmReviewedLocalRepositoryTransport? = null
     private val readerVolumeKeyPressTracker = ReaderVolumeKeyPressTracker()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val sharedState = AndroidSharedState.get(applicationContext)
-        val repository = sharedState.repository
-        // Coil creates its own Ktor client by default. On the Android emulator that client
-        // inherits the system's stale 10.0.2.2 proxy, while the app's source client explicitly
-        // bypasses it. Reuse the same configured client for images so covers follow the exact
-        // networking policy used by source requests.
-        val httpClient = createPlatformHttpClient()
-        installConfiguredImageLoader(httpClient) {
-            add(dev.shinsou.kmp.network.AndroidAvifDecoder.Factory())
-        }
-        val syncInfrastructure = AndroidSyncInfrastructure(applicationContext)
-        val localRepositoryPolicy = if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.EXACT_ANDROID_LAN_192_168_50_193_18081
-        } else {
-            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED
-        }
-        localRepositoryTransport = if (localRepositoryPolicy !=
-            dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED
-        ) dev.shinsou.kmp.plugin.JvmReviewedLocalRepositoryTransport(localRepositoryPolicy) else null
-        composition = ShinsouComposition(
-            repository = repository,
-            httpClient = httpClient,
-            pluginKeyValueStore = AndroidPluginKeyValueStore(applicationContext),
-            fileSystem = sharedState.fileSystem,
-            // ADR-0002 §10.1: every package, reviewed or third-party, runs in an isolated process
-            // of its own (S2).
-            runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
-                SandboxRuntimeFactory(
-                    transports = AndroidSandboxTransportProvider(applicationContext),
-                    lifecycle = androidSandboxLifecycle(applicationContext, sandboxScope),
-                ),
-            ),
-            autoBackupService = sharedState.autoBackups,
-            syncInfrastructure = syncInfrastructure,
-            platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
-            shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
-            pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
-            platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
-            reviewedLocalRepositoryPolicy = localRepositoryPolicy,
-            reviewedLocalRepositoryTransport = localRepositoryTransport,
-        )
+        val runtime = AndroidAppRuntime.get(applicationContext)
+        val repository = runtime.repository
+        composition = runtime.composition
         val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
             activity = this,
@@ -130,13 +90,7 @@ class MainActivity : FragmentActivity() {
             syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
             portableContentBackupV2 = composition.portableContentBackupV2,
             shuYueMigration = composition.shuYueMigration,
-            stringsProvider = {
-                val preference = repository.snapshot.value.settings.general.languagePreference
-                val tag = preference
-                    ?.takeUnless { it.equals("system", ignoreCase = true) }
-                    ?: Locale.getDefault().toLanguageTag()
-                shinsouStringsFor(tag)
-            },
+            stringsProvider = runtime::strings,
             snapshotSync = SnapshotSyncController(
                 repository = repository,
                 transport = UnavailableSnapshotSyncTransport(
@@ -182,7 +136,7 @@ class MainActivity : FragmentActivity() {
                 interactionReady = syncBoundaryReady,
             )
         }
-        platformScope.launch { composition.start() }
+        platformScope.launch { runtime.start() }
         platformScope.launch {
             repository.snapshot
                 .map { snapshot ->
@@ -246,6 +200,7 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         if (::appServices.isInitialized) appServices.emitForeground()
         if (::composition.isInitialized) platformScope.launch { composition.onForeground() }
+        AndroidDownloadService.ensureRunning(applicationContext)
     }
 
     override fun onStop() {
@@ -256,12 +211,10 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
-        if (::composition.isInitialized) runCatching { runBlocking { composition.close() } }
-        localRepositoryTransport?.close()
-        localRepositoryTransport = null
+        // The core is process-wide (AndroidAppRuntime): closing it here stopped downloads whenever
+        // the activity went away. The process ending releases it.
         super.onDestroy()
         platformScope.cancel()
-        sandboxScope.cancel()
     }
 
     private fun handleIntent(intent: Intent?) {

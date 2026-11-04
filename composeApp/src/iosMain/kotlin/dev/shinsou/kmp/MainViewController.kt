@@ -25,7 +25,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -196,10 +198,20 @@ internal object IosApplicationContainer {
         snapshotSync = snapshotSync,
     )
 
+    private val downloadKeeper = IosDownloadBackgroundKeeper(
+        browse = composition.browse,
+        mangaQueue = repository.snapshot
+            .map { it.downloadQueue }
+            .stateIn(applicationScope, SharingStarted.Eagerly, repository.currentSnapshot.downloadQueue),
+        pauseManga = composition.content::pauseDownloads,
+        scope = applicationScope,
+    )
+
     private var started = false
 
     fun setApplicationForeground(foreground: Boolean) {
         services.setApplicationForeground(foreground)
+        downloadKeeper.setForeground(foreground)
         applicationScope.launch {
             if (foreground) composition.onForeground() else composition.onBackground()
         }
@@ -208,6 +220,7 @@ internal object IosApplicationContainer {
     suspend fun start() = startupMutex.withLock {
         if (started) return@withLock
         composition.start()
+        downloadKeeper.start()
         applicationScope.launch {
             repository.snapshot.collectLatest(IosWidgetPublisher::publish)
         }

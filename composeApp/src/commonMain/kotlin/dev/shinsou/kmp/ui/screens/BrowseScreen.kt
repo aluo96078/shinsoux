@@ -89,6 +89,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import dev.shinsou.kmp.domain.model.DownloadState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -156,6 +157,8 @@ import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitPageProgressV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
+import dev.shinsou.kmp.plugin.v2.overKnownDetails
+import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
 import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
 import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2
@@ -1975,12 +1978,16 @@ internal fun ExtensionV2PublicationPane(
     var refreshedPublication by remember(item.identityKey) {
         mutableStateOf<RemotePublicationV2?>(null)
     }
+    /** True only when [refreshedPublication] came from the source, not from the saved copy. */
+    var detailsFresh by remember(item.identityKey) { mutableStateOf(false) }
     var units by remember(item.identityKey) {
         mutableStateOf<List<ExtensionUnitSelectionV2>>(emptyList())
     }
     var nextPage by remember(item.identityKey) { mutableStateOf(0) }
     var hasNextPage by remember(item.identityKey) { mutableStateOf(false) }
     var unitDirectoryComplete by remember(item.identityKey) { mutableStateOf(false) }
+    // A later page that came back empty may be a failed fetch; such a list must not replace the cache.
+    var unitDirectoryPartial by remember(item.identityKey) { mutableStateOf(false) }
     var loading by remember(item.identityKey) { mutableStateOf(true) }
     var loadingMore by remember(item.identityKey) { mutableStateOf(false) }
     var loadError by remember(item.identityKey) { mutableStateOf<String?>(null) }
@@ -2023,7 +2030,7 @@ internal fun ExtensionV2PublicationPane(
             description = item.description,
             genre = item.genre,
             status = item.status,
-        )
+        ).withoutScriptObjectText()
     }
 
     fun materialize(
@@ -2047,6 +2054,8 @@ internal fun ExtensionV2PublicationPane(
                         null
                     }
                 }
+                // Reading a chapter stores its body offline as well.
+                downloadedUnitIds = downloadedUnitIds + selection.unit.remoteId
                 if (opened != null) {
                     readerSession = opened
                     readerUnitId = selection.unit.remoteId
@@ -2056,7 +2065,6 @@ internal fun ExtensionV2PublicationPane(
                     // pane while the novel reader is already visible.
                     onReaderVisibilityChanged(true)
                 } else {
-                    downloadedUnitIds = downloadedUnitIds + selection.unit.remoteId
                     operationMessage = strings.text("Content saved for offline reading.")
                 }
             } catch (cancelled: CancellationException) {
@@ -2162,6 +2170,7 @@ internal fun ExtensionV2PublicationPane(
             "Extension publication identity changed"
         }
         check(loaded.page == requestedPage) { "Extension unit page identity changed" }
+        if (append && loaded.units.isEmpty()) unitDirectoryPartial = true
         publicationPage = if (append) publicationPage ?: loaded else loaded
         units = if (append) {
             (units + loaded.units).distinctBy { it.unit.remoteId }
@@ -2169,7 +2178,8 @@ internal fun ExtensionV2PublicationPane(
             loaded.units
         }
         nextPage = requestedPage + 1
-        hasNextPage = loaded.hasNextPage
+        // An empty later page ends pagination; following its hasNextPage could loop forever.
+        hasNextPage = loaded.hasNextPage && !(append && loaded.units.isEmpty())
     }
 
     suspend fun loadInitialUnitDirectory() {
@@ -2187,55 +2197,128 @@ internal fun ExtensionV2PublicationPane(
         }
     }
 
+    // Downloads run in the app-scoped queue so leaving this title does not cancel them.
+    val extensionDownloads by callbacks.extensionDownloadsV2.collectAsState()
+    val publicationDownloads = remember(extensionDownloads, sourceKey, remotePublicationId) {
+        extensionDownloads.filter { it.sourceKey == sourceKey && it.remotePublicationId == remotePublicationId }
+    }
+    val queuedUnitIds = remember(publicationDownloads) {
+        publicationDownloads
+            .filter { it.state == DownloadState.QUEUED || it.state == DownloadState.DOWNLOADING }
+            .mapTo(hashSetOf()) { it.remoteUnitId }
+    }
+    LaunchedEffect(publicationDownloads) {
+        val finished = publicationDownloads
+            .filter { it.state == DownloadState.DOWNLOADED }
+            .mapTo(hashSetOf()) { it.remoteUnitId }
+        if (!downloadedUnitIds.containsAll(finished)) downloadedUnitIds = downloadedUnitIds + finished
+    }
+
     fun downloadUnits(selections: List<ExtensionUnitSelectionV2>) {
-        val pending = selections.distinctBy { it.unit.remoteId }
-        if (pending.isEmpty() || busyUnitId != null) return
+        // Chapters already offline or already queued are skipped; the queue re-checks storage too.
+        val pending = selections
+            .distinctBy { it.unit.remoteId }
+            .filter { it.unit.remoteId !in downloadedUnitIds && it.unit.remoteId !in queuedUnitIds }
         operationMessage = null
         operationFailed = false
+        if (pending.isEmpty()) {
+            if (selections.isNotEmpty()) {
+                operationMessage = strings.text("The selected chapters are already downloaded or queued.")
+            }
+            return
+        }
         scope.launch {
-            withFrameNanos { }
             try {
-                pending.forEach { selection ->
-                    busyUnitId = selection.unit.remoteId
-                    withContext(Dispatchers.Default) {
-                        callbacks.materializeExtensionContentV2(selection)
-                    }
-                    downloadedUnitIds = downloadedUnitIds + selection.unit.remoteId
-                }
-                operationMessage = strings.text("{0} chapters saved for offline reading.", pending.size)
+                callbacks.enqueueExtensionDownloadsV2(pending)
+                operationMessage = strings.text("{0} chapters added to the download queue.", pending.size)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (required: ExtensionContentConsumerException.RepresentationSelectionRequired) {
-                pendingRepresentation = PendingExtensionRepresentationSelection(
-                    selection = pending.firstOrNull { it.unit.remoteId == busyUnitId } ?: pending.first(),
-                    representationIds = required.availableIds,
-                    openReader = false,
-                )
             } catch (error: Throwable) {
                 operationFailed = true
                 operationMessage = error.localizedDiagnosticMessage(strings)
-            } finally {
-                busyUnitId = null
             }
+        }
+    }
+
+    // Library titles keep their details and full chapter list on disk, refreshed on every
+    // successful visit, so they open instantly and still work offline.
+    suspend fun cacheLibraryCopy() {
+        val page = publicationPage ?: return
+        if (!localLibrary || !favorite) return
+        // Details and the unit list are saved independently: a source whose chapter list failed
+        // (or came from the offline copy) must still be able to update the saved introduction.
+        val freshDetails = refreshedPublication?.takeIf { detailsFresh }
+        val unitsFresh = unitDirectoryComplete && !unitDirectoryPartial && !page.offline
+        if (freshDetails == null && !unitsFresh) return
+        try {
+            val cached = callbacks.cachedExtensionPublicationPageV2(sourceKey, remotePublicationId)
+            val savedUnits = if (unitsFresh) units.map { it.unit } else cached?.units?.map { it.unit } ?: return
+            // Without fresh details keep the cached ones; the unit page only carries the list hint.
+            val details = freshDetails ?: cached?.publication ?: page.publication
+            val stored = details.withFallbackThumbnail(cataloguePublication.thumbnailUrl).withoutScriptObjectText()
+            callbacks.cacheExtensionPublicationV2(
+                sourceKey = sourceKey,
+                publication = stored,
+                units = savedUnits,
+            )
+            // The library row keeps whatever title it was added with (sometimes a placeholder like
+            // "Source #id"); bring it up to date so the library reads right offline.
+            if (freshDetails != null && (
+                    stored.title != item.title ||
+                        (stored.thumbnailUrl != null && stored.thumbnailUrl != item.thumbnailUrl) ||
+                        (stored.author != null && stored.author != item.author) ||
+                        stored.description != item.description
+                    )
+            ) {
+                onToggleLocalLibrary(item, stored, true)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // The cache is a convenience; the next successful visit writes it again.
         }
     }
 
     LaunchedEffect(item.identityKey, refreshGeneration) {
         loading = true
         unitDirectoryComplete = false
+        unitDirectoryPartial = false
         loadError = null
         refreshedPublication = null
+        detailsFresh = false
+        if (localLibrary && favorite) {
+            val cached = try {
+                callbacks.cachedExtensionPublicationPageV2(sourceKey, remotePublicationId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            if (cached != null && publicationPage == null) {
+                publicationPage = cached
+                units = cached.units
+                refreshedPublication = cached.publication
+                nextPage = 1
+                hasNextPage = false
+                loading = false
+            }
+        }
         // Keep the units request on the critical path. Wenku8 fetches the long introduction in
         // the full details call, so refresh metadata only after the first chapter page is ready.
         val detailsRefresh = launch(start = CoroutineStart.LAZY) {
             try {
-                refreshedPublication = withContext(Dispatchers.Default) {
+                val fresh = withContext(Dispatchers.Default) {
                     callbacks.extensionDetailsV2(sourceKey, remotePublicationId)
                 }
+                // A source may answer offline with a placeholder title and no introduction.
+                refreshedPublication = fresh.overKnownDetails(
+                    refreshedPublication ?: publicationPage?.publication ?: cataloguePublication,
+                )
+                detailsFresh = true
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
-                // Catalogue metadata remains a valid fallback if the background refresh fails.
+                // Catalogue (or cached) metadata remains if the background refresh fails.
             }
         }
         try {
@@ -2245,6 +2328,22 @@ internal fun ExtensionV2PublicationPane(
             readUnitIds = localReading.completedRemoteUnitIds
             resumeUnitId = localReading.lastReadRemoteUnitId
             inProgressUnits = localReading.inProgressRemoteUnits
+            // Offline bodies are durable; only the markers were screen-local before. Recover them
+            // beside the chapter request and merge, so downloads finished meanwhile are kept.
+            launch {
+                val stored = try {
+                    withContext(Dispatchers.Default) {
+                        callbacks.extensionDownloadedUnitIdsV2(
+                            extensionPublicationKey(sourceKey, remotePublicationId),
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    emptySet()
+                }
+                downloadedUnitIds = downloadedUnitIds + stored
+            }
             loadInitialUnitDirectory()
             unitDirectoryComplete = true
         } catch (cancelled: CancellationException) {
@@ -2256,6 +2355,7 @@ internal fun ExtensionV2PublicationPane(
             detailsRefresh.start()
         }
         detailsRefresh.join()
+        cacheLibraryCopy()
     }
 
     // A details endpoint is allowed to omit the cover even when the catalogue supplied one.
@@ -2264,6 +2364,7 @@ internal fun ExtensionV2PublicationPane(
     val publication = refreshedPublication ?: publicationPage?.publication
     val displayPublication = publication
         ?.withFallbackThumbnail(cataloguePublication.thumbnailUrl)
+        ?.withoutScriptObjectText()
         ?: cataloguePublication
     val targetUrl = (displayPublication.url ?: item.url).takeIf {
         it.startsWith("http://") || it.startsWith("https://")
@@ -2275,13 +2376,16 @@ internal fun ExtensionV2PublicationPane(
             loadError = null
             publicationPage = null
             refreshedPublication = null
+            detailsFresh = false
             units = emptyList()
             nextPage = 0
             hasNextPage = false
             unitDirectoryComplete = false
+            unitDirectoryPartial = false
             try {
                 loadInitialUnitDirectory()
                 unitDirectoryComplete = true
+                cacheLibraryCopy()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -2362,6 +2466,13 @@ internal fun ExtensionV2PublicationPane(
                     )
                 }
                 favorite = next
+                if (localLibrary) {
+                    if (next) {
+                        cacheLibraryCopy()
+                    } else {
+                        runCatching { callbacks.forgetCachedExtensionPublicationV2(sourceKey, remotePublicationId) }
+                    }
+                }
                 operationMessage = if (next) {
                     if (localLibrary) strings.text("Added to app library.")
                     else strings.text("Added to source favorites.")
@@ -2436,6 +2547,7 @@ internal fun ExtensionV2PublicationPane(
                         operationMessage = operationMessage,
                         operationFailed = operationFailed,
                         busyUnitId = busyUnitId,
+                        queuedUnitIds = queuedUnitIds,
                         openingReaderUnitId = openingReaderUnitId,
                         onRetry = ::retryInitialPage,
                         onLoadMore = ::loadMore,
@@ -2518,6 +2630,7 @@ internal fun ExtensionV2PublicationPane(
                             operationMessage = operationMessage,
                             operationFailed = operationFailed,
                             busyUnitId = busyUnitId,
+                            queuedUnitIds = queuedUnitIds,
                             openingReaderUnitId = openingReaderUnitId,
                             onRetry = ::retryInitialPage,
                             onLoadMore = ::loadMore,
@@ -2818,6 +2931,7 @@ private fun ExtensionV2ChapterPane(
     operationFailed: Boolean,
     busyUnitId: String?,
     openingReaderUnitId: String?,
+    queuedUnitIds: Set<String>,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
@@ -3053,9 +3167,9 @@ private fun ExtensionV2ChapterPane(
                         }
                         IconButton(
                             onClick = { onDownloadUnits(listOf(selection)) },
-                            enabled = busyUnitId == null,
+                            enabled = busyUnitId == null && unitId !in queuedUnitIds,
                         ) {
-                            if (busyUnitId == unitId && openingReaderUnitId == null) {
+                            if (unitId in queuedUnitIds || (busyUnitId == unitId && openingReaderUnitId == null)) {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Outlined.Download, strings.download)

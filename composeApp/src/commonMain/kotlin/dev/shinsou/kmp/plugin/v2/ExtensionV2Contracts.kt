@@ -1401,7 +1401,59 @@ internal fun String.toBoundedRemoteMetadata(): String = buildString(minOf(length
 }.trim()
 
 internal fun String?.toOptionalBoundedRemoteMetadata(): String? =
-    this?.toBoundedRemoteMetadata()?.takeIf(String::isNotBlank)
+    this?.toBoundedRemoteMetadata()?.takeIf(String::isNotBlank).withoutScriptObjectText()
+
+private val SCRIPT_OBJECT_TEXT = Regex("""\[object [A-Za-z]*\]""")
+
+/**
+ * A script source that hands over an object where text belongs ends up with JavaScript's
+ * "[object Object]". That is never real metadata, so it reads as absent.
+ */
+public fun String?.withoutScriptObjectText(): String? = this?.takeUnless { SCRIPT_OBJECT_TEXT.matches(it.trim()) }
+
+/** [RemotePublicationV2] with script-object placeholders dropped; also cleans copies saved earlier. */
+public fun RemotePublicationV2.withoutScriptObjectText(): RemotePublicationV2 = copy(
+    author = author.withoutScriptObjectText(),
+    artist = artist.withoutScriptObjectText(),
+    description = description.withoutScriptObjectText(),
+    status = status.withoutScriptObjectText(),
+    genre = genre?.mapNotNull { it.withoutScriptObjectText() }?.takeIf { it.isNotEmpty() },
+)
+
+private val PLACEHOLDER_TITLE_ID = Regex("""#\s*([A-Za-z0-9_]+)\s*$""")
+private val ID_SEGMENT_SEPARATOR = Regex("""[^A-Za-z0-9_]+""")
+
+/**
+ * True for the stand-in a source names a publication it could not read, such as "Wenku8 #2161":
+ * the title ends in "#" and one whole segment of the publication's own id, so "Volume #1" for
+ * ".../book/2161.htm" stays a real title.
+ */
+public fun isPlaceholderPublicationTitle(title: String, remoteId: String): Boolean {
+    if (title.isBlank()) return true
+    val id = PLACEHOLDER_TITLE_ID.find(title)?.groupValues?.get(1) ?: return false
+    return remoteId.split(ID_SEGMENT_SEPARATOR).any { it == id }
+}
+
+/**
+ * Some sources answer a failed details request (offline, blocked) with a degraded copy instead of
+ * an error: a placeholder title and no author or introduction. Such a copy keeps the known values
+ * where it has nothing better; any other answer is the source's word and is returned as is, so a
+ * source can still clear a field.
+ */
+public fun RemotePublicationV2.overKnownDetails(known: RemotePublicationV2?): RemotePublicationV2 {
+    if (known == null || !isPlaceholderPublicationTitle(title, remoteId)) return this
+    fun String?.orKnown(value: String?) = this?.takeIf(String::isNotBlank) ?: value
+    return copy(
+        title = known.title,
+        url = url.orKnown(known.url),
+        thumbnailUrl = thumbnailUrl.orKnown(known.thumbnailUrl),
+        author = author.orKnown(known.author),
+        artist = artist.orKnown(known.artist),
+        description = description.orKnown(known.description),
+        genre = genre?.takeIf { it.isNotEmpty() } ?: known.genre,
+        status = status.orKnown(known.status),
+    )
+}
 
 private fun requireMediaType(value: String, label: String) {
     require(value.length <= 256 && MEDIA_TYPE_PATTERN.matches(value)) { "$label is invalid" }

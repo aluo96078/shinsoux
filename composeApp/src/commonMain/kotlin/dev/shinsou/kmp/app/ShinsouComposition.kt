@@ -795,6 +795,15 @@ public class ShinsouComposition(
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
             try {
+                // Shown (and kept alive by the platform download service) right away; the
+                // downloads themselves start after browse.refresh() below has loaded the sources.
+                browse.restoreExtensionDownloadsV2()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Same as the manga queue: a damaged saved queue just starts empty.
+            }
+            try {
                 legacyPublicationStartupMigration?.migrate(repository.currentSnapshot)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -832,6 +841,7 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // PluginBrowseAdapter publishes its actionable error in BrowseSnapshot.
             }
+            browse.openExtensionDownloadsV2()
             try {
                 // Do not turn a readable local reviewed favorite into an unavailable remote row.
                 // Installed-source hydration happens at the start of browse.refresh(), even when
@@ -874,6 +884,13 @@ public class ShinsouComposition(
 
     /** Performs immediate catch-up and restores realtime delivery after a platform foreground edge. */
     public suspend fun onForeground() {
+        try {
+            browse.resumeExtensionDownloadsAfterFailuresV2()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // The Downloads screen still offers retry.
+        }
         // Body bytes are strictly background-only. Cancellation is restart-safe because the
         // uploader persists its intent/receipt around every remote commit boundary.
         val previousBodyDrain = contentBlobDrainJob
@@ -1189,7 +1206,7 @@ public class ShinsouComposition(
         const val MAX_CONTENT_OUTBOX_DRAIN_BATCHES = 8
         const val MAX_ANNOTATION_RECONCILIATION_SLICES = 4
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.9"
+        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.10"
         const val DEFAULT_SYNC_USER_NAME = "Shinsou X user"
         const val CLOUDFLARE_DEPLOY_URL =
             "https://deploy.workers.cloudflare.com/?url=https://github.com/aluo96078/shinsoux/tree/master/syncWorker"

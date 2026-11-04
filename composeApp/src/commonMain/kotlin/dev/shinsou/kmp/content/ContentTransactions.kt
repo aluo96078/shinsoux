@@ -669,6 +669,23 @@ public sealed class ContentTransactionException(message: String) : IllegalArgume
         ContentTransactionException("Active v1 sync cannot represent content drafts: ${draftIds.joinToString()}")
 }
 
+/**
+ * Outcome of a local-only body purge. [removedBlobs] are the blob references that were detached
+ * from the purged publication; they may still be shared by another attachment, so the caller must
+ * only delete them through a guarded path such as [ContentBlobStore.deleteUnreferencedNow].
+ */
+public data class ContentLocalBodyPurgeResult(
+    val removedBlobs: List<BlobRef> = emptyList(),
+    val purgedUnitCount: Int = 0,
+)
+
+/** Same publication graph with every stored manifest revision dropped; identity/bindings stay. */
+internal fun Publication.withoutManifestRevisions(): Publication = copy(
+    acquisitions = acquisitions.map { acquisition ->
+        acquisition.copy(units = acquisition.units.map { unit -> unit.copy(manifestRevisions = emptyList()) })
+    },
+)
+
 public interface SharedContentTransactionStore<D : Any> {
     public fun commit(batch: ContentCommitBatch<D>): ContentCommitResult
 
@@ -703,6 +720,22 @@ public interface SharedContentTransactionStore<D : Any> {
         require(intentIds.isEmpty()) { "This content transaction store has no blob removal intents" }
         return 0
     }
+
+    /**
+     * Local-only removal of a publication's stored bodies: manifest attachments are detached and
+     * every unit's manifest revisions are dropped, while the publication, acquisitions, unit
+     * bindings and rights stay. Emits no outbox/sync draft and never touches replica cursors.
+     * [forgetCommitIdsOf] names the journal entries that would otherwise turn a re-download into a
+     * replay; outbox drafts whose id starts with [draftIdPrefixOf] of one of them and that were not
+     * drained yet are dropped too (they describe the state being discarded, and would sync it out
+     * or collide with a re-download's drafts). Both are evaluated on the publication as read inside
+     * the purge transaction, so a download committed just before cannot slip past.
+     */
+    public fun purgeLocalPublicationBodies(
+        publicationKey: PublicationKey,
+        forgetCommitIdsOf: (Publication) -> Set<String>,
+        draftIdPrefixOf: (commitId: String) -> String? = { null },
+    ): ContentLocalBodyPurgeResult = ContentLocalBodyPurgeResult()
 
     /**
      * Atomically retires authority-bound replica cursors, replay journal entries and GC hints.
@@ -831,6 +864,47 @@ public class InMemorySharedContentTransactionStore<D : Any>(
         val existing = intentIds.count(blobRemovalIntents::containsKey)
         intentIds.forEach(blobRemovalIntents::remove)
         existing
+    }
+
+    override fun purgeLocalPublicationBodies(
+        publicationKey: PublicationKey,
+        forgetCommitIdsOf: (Publication) -> Set<String>,
+        draftIdPrefixOf: (commitId: String) -> String?,
+    ): ContentLocalBodyPurgeResult = withTransactionLock {
+        publicationKey.validate()
+        val publication = publications[publicationKey] ?: return@withTransactionLock ContentLocalBodyPurgeResult()
+        val forgetCommitIds = forgetCommitIdsOf(publication)
+        val forgetDraftIdPrefixes = forgetCommitIds.mapNotNullTo(linkedSetOf(), draftIdPrefixOf)
+        val purgedUnits = publication.acquisitions.sumOf { acquisition ->
+            acquisition.units.count { it.manifestRevisions.isNotEmpty() }
+        }
+        if (purgedUnits == 0) return@withTransactionLock ContentLocalBodyPurgeResult()
+        blobStore.withExclusiveTransaction {
+            val blobRollback = blobStore.snapshotForTransactionLocked()
+            val publicationSnapshot = LinkedHashMap(publications)
+            val blobSyncJobSnapshot = LinkedHashMap(blobSyncJobs)
+            val commitSnapshot = LinkedHashMap(commits)
+            val outboxSnapshot = LinkedHashMap(outbox)
+            try {
+                val detached = blobStore.detachManifestAttachmentsLocked(publicationKey)
+                outbox.keys.removeAll { id -> forgetDraftIdPrefixes.any(id::startsWith) }
+                publications[publicationKey] = publication.withoutManifestRevisions()
+                blobSyncJobs.entries.removeAll { (_, job) -> job.owner.publicationKey == publicationKey }
+                forgetCommitIds.forEach(commits::remove)
+                maybeFail(ContentTransactionFailurePoint.AFTER_JOURNAL_WRITE)
+                ContentLocalBodyPurgeResult(
+                    removedBlobs = detached.flatMap(BlobAttachment::blobs).distinct(),
+                    purgedUnitCount = purgedUnits,
+                )
+            } catch (error: Throwable) {
+                blobRollback.rollback()
+                restore(publications, publicationSnapshot)
+                restore(blobSyncJobs, blobSyncJobSnapshot)
+                restore(commits, commitSnapshot)
+                restore(outbox, outboxSnapshot)
+                throw error
+            }
+        }
     }
 
     override fun detachReplicaAuthority(

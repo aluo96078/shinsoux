@@ -419,6 +419,110 @@ class SqlDriverContentFoundationRestartTest {
     }
 
     @Test
+    fun localBodyPurgeStripsManifestsButKeepsGraphRightsAndCursorsAndRollsBackOnFailure() {
+        withDatabase("content-local-body-purge") { database ->
+            val sqlDriver = driver(database)
+            val blobs = SqlDriverContentBlobStore(sqlDriver, clock = { 100L })
+            val receipt = blobs.put("purgeable body".encodeToByteArray(), "text/plain")
+            val fixture = publicationFixture(receipt.reference)
+            val store = transactionStore(sqlDriver, blobs)
+            store.commit(
+                ContentCommitBatch(
+                    commitId = "local-purge-commit",
+                    receipts = listOf(receipt),
+                    attachments = listOf(fixture.attachment),
+                    publications = listOf(ContentPublicationMutation(fixture.publication)),
+                    rightsGrants = listOf(ContentRightsGrantMutation(fixture.grant)),
+                ),
+            )
+            val before = store.state
+
+            // A failure at the last write boundary rolls the whole purge back, including the blob ledger.
+            store.failureInjection = ContentTransactionFailurePoint.AFTER_JOURNAL_WRITE
+            assertFailsWith<IllegalStateException> {
+                store.purgeLocalPublicationBodies(fixture.publication.key, { setOf("local-purge-commit") })
+            }
+            store.failureInjection = null
+            assertEquals(before, store.state)
+            assertNotNull(blobs.attached(fixture.attachment.owner, fixture.attachment.manifest))
+
+            val purge = store.purgeLocalPublicationBodies(fixture.publication.key, { setOf("local-purge-commit") })
+            assertEquals(listOf(receipt.reference), purge.removedBlobs)
+            assertEquals(1, purge.purgedUnitCount)
+            val after = store.state
+            val unit = after.publications.getValue(fixture.publication.key).acquisitions.single().units.single()
+            assertTrue(unit.manifestRevisions.isEmpty())
+            assertEquals(fixture.publication.withoutManifestRevisions(), after.publications[fixture.publication.key])
+            assertEquals(before.rightsGrants, after.rightsGrants)
+            assertEquals(before.outbox, after.outbox)
+            assertEquals(before.publicationReplicaCursors, after.publicationReplicaCursors)
+            assertTrue(after.attachments.isEmpty())
+            assertFalse("local-purge-commit" in after.committedIds)
+            assertNull(blobs.attached(fixture.attachment.owner, fixture.attachment.manifest))
+            // Nothing left to purge the second time.
+            assertEquals(
+                ContentLocalBodyPurgeResult(),
+                store.purgeLocalPublicationBodies(fixture.publication.key, { emptySet() }),
+            )
+
+            // An open read lease pins the detached blob until it is closed.
+            val lease = assertNotNull(blobs.openRead(receipt.reference))
+            assertEquals(0, blobs.deleteUnreferencedNow(purge.removedBlobs))
+            assertTrue(blobs.contains(receipt.reference))
+            lease.close()
+            assertEquals(1, blobs.deleteUnreferencedNow(purge.removedBlobs))
+            assertFalse(blobs.contains(receipt.reference))
+            sqlDriver.close()
+
+            // The purged state is what a reopened process sees.
+            val reopenedDriver = driver(database)
+            val reopened = transactionStore(reopenedDriver, SqlDriverContentBlobStore(reopenedDriver))
+            assertEquals(after.publications, reopened.state.publications)
+            assertEquals(after.rightsGrants, reopened.state.rightsGrants)
+            reopenedDriver.close()
+        }
+    }
+
+    @Test
+    fun deleteUnreferencedNowSparesSharedBlobsPendingReceiptsAndOpenReaders() {
+        withDatabase("content-delete-unreferenced") { database ->
+            val sqlDriver = driver(database)
+            val blobs = SqlDriverContentBlobStore(sqlDriver, clock = { 100L })
+            val shared = blobs.put("shared body".encodeToByteArray(), "text/plain")
+            val fixture = publicationFixture(shared.reference)
+            val store = transactionStore(sqlDriver, blobs)
+            // The same content-addressed blob is also held by a second, unrelated owner.
+            store.commit(
+                ContentCommitBatch(
+                    commitId = "shared-blob-commit",
+                    receipts = listOf(shared),
+                    attachments = listOf(fixture.attachment),
+                    auxiliaryAttachments = listOf(
+                        AuxiliaryBlobAttachment(
+                            ownerId = "other-owner",
+                            purpose = AuxiliaryBlobPurpose.PLUGIN_QUARANTINE,
+                            blobs = listOf(shared.reference),
+                        ),
+                    ),
+                    publications = listOf(ContentPublicationMutation(fixture.publication)),
+                    rightsGrants = listOf(ContentRightsGrantMutation(fixture.grant)),
+                ),
+            )
+            val purge = store.purgeLocalPublicationBodies(fixture.publication.key, { setOf("shared-blob-commit") })
+            assertEquals(listOf(shared.reference), purge.removedBlobs)
+            assertEquals(0, blobs.deleteUnreferencedNow(purge.removedBlobs))
+            assertTrue(blobs.contains(shared.reference))
+
+            // An unreferenced blob with a pending receipt is not deleted either.
+            val pending = blobs.put("pending body".encodeToByteArray(), "text/plain")
+            assertEquals(0, blobs.deleteUnreferencedNow(listOf(pending.reference)))
+            assertTrue(blobs.contains(pending.reference))
+
+            sqlDriver.close()
+        }
+    }
+
+    @Test
     fun quarantineAuxiliaryAttachmentSurvivesReopenAndProtectsScriptBytes() {
         withDatabase("content-quarantine-restart") { database ->
             val script = "export default { id: 'legacy' }".encodeToByteArray()

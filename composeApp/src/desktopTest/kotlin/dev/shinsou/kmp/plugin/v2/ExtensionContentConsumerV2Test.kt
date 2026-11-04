@@ -222,6 +222,150 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
+    fun downloadedUnitsAreRecoveredFromStoredContentByAFreshConsumer() = runTest {
+        withFoundation { foundation ->
+            val source = FixtureSource(
+                payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
+                unitItems = {
+                    listOf(
+                        RemoteUnitV2("unit-a", "Unit A"),
+                        RemoteUnitV2("unit-b", "Unit B"),
+                    )
+                },
+            )
+            val publicationKey = extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID)
+            val first = consumer(foundation = foundation, source = source)
+            assertEquals(emptySet(), first.downloadedRemoteUnitIds(publicationKey))
+            val selections = first.publicationPage(SOURCE_KEY, PUBLICATION_ID)
+                .units.associateBy { it.unit.remoteId }
+            val materialized = first.materialize(selections.getValue("unit-a"))
+
+            // A new consumer stands in for reopening the detail screen: nothing screen-local remains.
+            val reopened = consumer(foundation = foundation, source = source)
+            assertEquals(setOf("unit-a"), reopened.downloadedRemoteUnitIds(publicationKey))
+
+            // Offline: the stored chapters form the unit list and open without the source.
+            val offlinePage = assertNotNull(
+                reopened.storedPublicationPage(SOURCE_KEY, RemotePublicationV2(PUBLICATION_ID, "Exact publication")),
+            )
+            assertEquals(listOf("unit-a" to "Unit A"), offlinePage.units.map { it.unit.remoteId to it.unit.title })
+            assertFalse(offlinePage.hasNextPage)
+            val stored = assertNotNull(reopened.storedMaterialization(offlinePage.units.single()))
+            assertEquals(materialized.manifestId, stored.manifestId)
+            assertEquals(materialized.contentRepresentationId, stored.contentRepresentationId)
+            reopened.open(stored)
+            // The id a stored reopen returns can be passed back in.
+            assertEquals(
+                stored.manifestId,
+                reopened.storedMaterialization(offlinePage.units.single(), stored.representationId)?.manifestId,
+            )
+            val unitB = reopened.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single { it.unit.remoteId == "unit-b" }
+            assertEquals(null, reopened.storedMaterialization(unitB))
+            assertEquals(null, reopened.storedMaterialization(offlinePage.units.single(), representationId = "other"))
+
+            // A cached library copy lists every chapter, downloaded or not, and opens downloaded ones.
+            val cachedPage = reopened.cachedPublicationPage(
+                SOURCE_KEY,
+                CachedExtensionPublicationV2(
+                    sourceCanonicalId = SOURCE_KEY.canonicalId,
+                    publication = RemotePublicationV2(PUBLICATION_ID, "Exact publication"),
+                    units = listOf(RemoteUnitV2("unit-a", "Unit A"), RemoteUnitV2("unit-b", "Unit B")),
+                    updatedAtEpochMillis = 1,
+                ),
+            )
+            assertTrue(cachedPage.offline)
+            assertEquals(listOf("unit-a", "unit-b"), cachedPage.units.map { it.unit.remoteId })
+            assertEquals(stored.manifestId, reopened.storedMaterialization(cachedPage.units.first())?.manifestId)
+        }
+    }
+
+    @Test
+    fun purgingStoredContentFreesBodiesButKeepsReadingStateAndAllowsRedownload() = runTest {
+        withFoundation { foundation ->
+            var completedUnitKey: UnitKey? = null
+            val source = FixtureSource(
+                payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
+                unitItems = {
+                    listOf(
+                        RemoteUnitV2("unit-a", "Unit A"),
+                        RemoteUnitV2("unit-b", "Unit B"),
+                    )
+                },
+            )
+            val progress: (dev.shinsou.kmp.domain.model.PublicationKey) -> ExtensionLocalUnitProgressV2 = {
+                ExtensionLocalUnitProgressV2(completedUnitKeys = setOfNotNull(completedUnitKey))
+            }
+            val publicationKey = extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID)
+            val consumer = consumer(foundation = foundation, source = source, localUnitProgress = progress)
+            val selections = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID)
+                .units.associateBy { it.unit.remoteId }
+            val first = consumer.materialize(selections.getValue("unit-a"))
+            completedUnitKey = first.unitKey
+            consumer.materialize(selections.getValue("unit-b"))
+            assertEquals(setOf("unit-a", "unit-b"), consumer.downloadedRemoteUnitIds(publicationKey))
+            assertTrue(foundation.blobStore.count > 0)
+
+            val readingBefore = consumer.localReadingState(publicationKey)
+            val bindingBefore = assertNotNull(consumer.extensionLibraryBinding(publicationKey))
+            // The sync bridge has drained the download's drafts; the purge must add none of its own.
+            foundation.transactions.acknowledgeOutbox(
+                foundation.transactions.pendingOutbox().mapTo(linkedSetOf()) { it.draftId },
+            )
+            val outboxBefore = foundation.transactions.pendingOutbox()
+            assertEquals(emptyList(), outboxBefore)
+
+            assertEquals(2, consumer.purgeStoredContent(SOURCE_KEY, PUBLICATION_ID))
+
+            assertEquals(emptySet(), consumer.downloadedRemoteUnitIds(publicationKey))
+            assertEquals(null, consumer.storedMaterialization(selections.getValue("unit-a")))
+            assertEquals(0, foundation.blobStore.count)
+            assertEquals(readingBefore, consumer.localReadingState(publicationKey))
+            assertEquals(bindingBefore, consumer.extensionLibraryBinding(publicationKey))
+            assertEquals(outboxBefore, foundation.transactions.pendingOutbox())
+            // A purge of an already empty publication is a no-op.
+            assertEquals(0, consumer.purgeStoredContent(SOURCE_KEY, PUBLICATION_ID))
+
+            // A fresh consumer sees the same state, and the unit downloads again like the first time.
+            val fresh = consumer(foundation = foundation, source = source, localUnitProgress = progress)
+            assertEquals(emptySet(), fresh.downloadedRemoteUnitIds(publicationKey))
+            assertEquals(readingBefore, fresh.localReadingState(publicationKey))
+            assertEquals(bindingBefore, fresh.extensionLibraryBinding(publicationKey))
+            val again = fresh.materialize(
+                fresh.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single { it.unit.remoteId == "unit-a" },
+            )
+            assertEquals(setOf("unit-a"), fresh.downloadedRemoteUnitIds(publicationKey))
+            assertEquals(first.manifestId, again.manifestId)
+            assertFalse(again.commit.replayed)
+            fresh.open(assertNotNull(fresh.storedMaterialization(
+                fresh.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single { it.unit.remoteId == "unit-a" },
+            )))
+        }
+    }
+
+    @Test
+    fun purgeDropsUndrainedDownloadDraftsSoNothingSyncsOutAndRedownloadDoesNotCollide() = runTest {
+        withFoundation { foundation ->
+            val source = FixtureSource(
+                payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
+                unitItems = { listOf(RemoteUnitV2("unit-a", "Unit A")) },
+            )
+            val publicationKey = extensionPublicationKey(SOURCE_KEY, PUBLICATION_ID)
+            val consumer = consumer(foundation = foundation, source = source)
+            val selection = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single()
+            consumer.materialize(selection)
+            // Not drained yet (offline, or the purge comes right after the download).
+            assertTrue(foundation.transactions.pendingOutbox().isNotEmpty())
+
+            assertEquals(1, consumer.purgeStoredContent(SOURCE_KEY, PUBLICATION_ID))
+            assertEquals(emptyList(), foundation.transactions.pendingOutbox())
+
+            val again = consumer.materialize(consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single())
+            assertFalse(again.commit.replayed)
+            assertEquals(setOf("unit-a"), consumer.downloadedRemoteUnitIds(publicationKey))
+        }
+    }
+
+    @Test
     fun persistedPageProgressIsClampedInsteadOfRejected() {
         assertEquals(ExtensionUnitPageProgressV2(0, 5), extensionUnitPageProgress(-3, 5))
         assertEquals(ExtensionUnitPageProgressV2(7, null), extensionUnitPageProgress(7, 7))

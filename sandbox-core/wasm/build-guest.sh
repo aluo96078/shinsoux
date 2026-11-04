@@ -7,11 +7,25 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 CORE=$(dirname "$HERE")
 OUT=${1:?usage: build-guest.sh <out_dir>}
-LLVM=${LLVM_PREFIX:-/opt/homebrew/opt/llvm}
-LLD=${LLD_PREFIX:-/opt/homebrew/opt/lld}
-SYS=${WASI_SYSROOT:-$(ls -d /opt/homebrew/Cellar/wasi-libc/*/share/wasi-sysroot | tail -1)}
-RT=${WASI_RT:-$(ls /opt/homebrew/Cellar/wasi-runtimes/*/share/wasi-runtimes/lib/wasm32-unknown-wasip1/libclang_rt.builtins.a | tail -1)}
-export PATH="$LLVM/bin:$LLD/bin:$PATH"
+# Xcode build phases may run without Homebrew on PATH, so fall back to its default prefixes.
+BREW=$(brew --prefix 2>/dev/null || { [ -d /opt/homebrew ] && echo /opt/homebrew; } || echo /usr/local)
+LLVM=${LLVM_PREFIX:-$BREW/opt/llvm}
+LLD=${LLD_PREFIX:-$BREW/opt/lld}
+SYS=${WASI_SYSROOT:-$BREW/opt/wasi-libc/share/wasi-sysroot}
+RT=${WASI_RT:-$BREW/opt/wasi-runtimes/share/wasi-runtimes/lib/wasm32-unknown-wasip1/libclang_rt.builtins.a}
+missing=
+[ -x "$LLVM/bin/clang" ] || missing="$missing llvm"
+[ -x "$LLD/bin/wasm-ld" ] || missing="$missing lld"
+[ -f "$SYS/include/wasm32-wasip1/stdlib.h" ] || [ -f "$SYS/include/stdlib.h" ] || missing="$missing wasi-libc"
+[ -f "$RT" ] || missing="$missing wasi-runtimes"
+[ -n "${WASM_OBJDUMP:-}" ] || command -v wasm-objdump >/dev/null 2>&1 || [ -x "$BREW/bin/wasm-objdump" ] || missing="$missing wabt"
+if [ -n "$missing" ]; then
+  echo "build-guest.sh: missing iOS sandbox toolchain:$missing" >&2
+  echo "  install with: brew install$missing" >&2
+  echo "  (or point LLVM_PREFIX, LLD_PREFIX, WASI_SYSROOT, WASI_RT, WASM_OBJDUMP at existing copies)" >&2
+  exit 1
+fi
+export PATH="$LLVM/bin:$LLD/bin:$PATH:$BREW/bin"
 Q=$CORE/third_party/quickjs
 L=$CORE/third_party/lexbor/source
 # Shadow stack above the 4 MiB JS stack ceiling the driver accepts; linear memory capped at 160 MiB

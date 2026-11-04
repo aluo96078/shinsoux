@@ -287,6 +287,13 @@ private class SyncAuthorityCoordinatedContentTransactions(
     override fun acknowledgeBlobRemovalIntents(intentIds: Set<String>): Int =
         delegate.acknowledgeBlobRemovalIntents(intentIds)
 
+    override fun purgeLocalPublicationBodies(
+        publicationKey: PublicationKey,
+        forgetCommitIdsOf: (Publication) -> Set<String>,
+        draftIdPrefixOf: (commitId: String) -> String?,
+    ): ContentLocalBodyPurgeResult =
+        delegate.purgeLocalPublicationBodies(publicationKey, forgetCommitIdsOf, draftIdPrefixOf)
+
     override fun detachReplicaAuthority(
         authority: ContentReplicaAuthority,
     ): ContentReplicaAuthorityDepartureResult = delegate.detachReplicaAuthority(authority)

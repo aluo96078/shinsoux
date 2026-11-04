@@ -288,6 +288,14 @@ public interface ContentBlobStore {
     /** Applies a previously planned sweep, re-checking pins and pending receipts at sweep time. */
     public fun sweepRecovery(plan: BlobRecoveryPlan): Int
 
+    /**
+     * Best-effort immediate removal of bodies the caller just detached from their last manifest.
+     * Every candidate is re-checked against the same guards as [sweepRecovery] (attached anywhere,
+     * pending receipt, active reader), so a content-addressed blob that is still shared survives.
+     * Returns how many were deleted; anything skipped is left to the age-gated orphan recovery.
+     */
+    public fun deleteUnreferencedNow(refs: List<BlobRef>): Int = 0
+
     /** Lists unreferenced blobs selected by an explicit recovery boundary. */
     public fun recoverOrphans(boundary: RecoveryBoundary): List<BlobRef> =
         planRecovery(boundary).candidateReferences
@@ -886,6 +894,29 @@ public class InMemoryContentBlobStore(
                 }) { "A swept blob retained a pending receipt" }
                 removed++
             }
+        }
+        removed
+    }
+
+    override fun deleteUnreferencedNow(refs: List<BlobRef>): Int = withStateLock {
+        var removed = 0
+        refs.distinctBy(BlobRef::blobId).forEach { reference ->
+            val stored = blobs[reference.blobId] ?: return@forEach
+            val stillSafe = stored.reference == reference &&
+                !hasPendingReceiptLocked(stored) && !isAttachedLocked(stored) && !isPinnedLocked(stored) &&
+                stored.generation <= currentGeneration
+            if (!stillSafe) return@forEach
+            // Best effort, SQL row first and file second inside the durability adapter. A failure
+            // leaves at worst an orphan file/row that the age-gated recovery pass collects, so the
+            // in-memory entry is dropped either way and a re-download starts from a clean slate.
+            val deleted = try {
+                durability?.delete(stored.toDurableBlob(includePayload = false))
+                true
+            } catch (_: Exception) {
+                false
+            }
+            blobs.remove(reference.blobId)
+            if (deleted) removed++
         }
         removed
     }

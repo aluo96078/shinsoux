@@ -52,6 +52,8 @@ private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 private val emptySourceLoginRequests = MutableStateFlow<List<SourceLoginRequest>>(emptyList())
 private val emptySourceRefreshInvalidations = MutableStateFlow<Map<SourceKey, Long>>(emptyMap())
 private val emptyLogoutConfirmations = MutableStateFlow<List<PluginLogoutConfirmation>>(emptyList())
+private val emptyExtensionDownloads =
+    MutableStateFlow<List<dev.shinsou.kmp.plugin.v2.ExtensionDownloadEntryV2>>(emptyList())
 
 /**
  * Host content-plane bridge used by image composables. Plugin-controlled URLs are classified by
@@ -1117,6 +1119,9 @@ interface BrowseCallbacks {
     ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
         dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
 
+    /** Source unit ids of a typed extension publication whose content is stored offline. */
+    fun extensionDownloadedUnitIdsV2(publicationKey: PublicationKey): Set<String> = emptySet()
+
     /**
      * Best-effort repair for beta-era UUID-only extension favorites. Implementations must return
      * a binding only after the deterministic publication UUID matches an authoritative search row.
@@ -1169,6 +1174,45 @@ interface BrowseCallbacks {
     ): ExtensionPublicationPageV2 = extensionPublicationPageV2(sourceKey, remotePublicationId, page)
 
     /** Acquires one explicitly selected representation into the shared content transaction. */
+    /** Cached details and full unit list of a library title, as an offline unit page. */
+    suspend fun cachedExtensionPublicationPageV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+    ): ExtensionPublicationPageV2? = null
+
+    /** Records a library title's details and complete unit list for offline and instant display. */
+    suspend fun cacheExtensionPublicationV2(
+        sourceKey: SourceKey,
+        publication: RemotePublicationV2,
+        units: List<dev.shinsou.kmp.plugin.v2.RemoteUnitV2>,
+    ) = Unit
+
+    suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String) = Unit
+
+    /** App-scoped extension (novel) chapter downloads; they outlive the detail screen. */
+    val extensionDownloadsV2: StateFlow<List<dev.shinsou.kmp.plugin.v2.ExtensionDownloadEntryV2>>
+        get() = emptyExtensionDownloads
+
+    suspend fun enqueueExtensionDownloadsV2(
+        selections: List<dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2>,
+    ): Unit = throw UnsupportedOperationException("Extension downloads are unavailable")
+
+    suspend fun retryExtensionDownloadV2(id: String) = Unit
+
+    suspend fun removeExtensionDownloadV2(id: String) = Unit
+
+    suspend fun clearCompletedExtensionDownloadsV2() = Unit
+    /** Removes every queued or finished download row of one title (when the title is deleted). */
+    suspend fun removeExtensionPublicationDownloadsV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String) = Unit
+
+    /**
+     * Deletes the stored chapter bodies of a title that left the library, keeping its reading
+     * progress and library binding. Local only: nothing is propagated through sync.
+     */
+    suspend fun purgeExtensionPublicationContentV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String) = Unit
+
+    suspend fun pauseExtensionDownloadsV2(paused: Boolean) = Unit
+
     suspend fun materializeExtensionContentV2(
         selection: ExtensionUnitSelectionV2,
         representationId: String? = null,

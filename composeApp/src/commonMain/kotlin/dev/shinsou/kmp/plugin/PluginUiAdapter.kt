@@ -9,6 +9,12 @@ import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
+import dev.shinsou.kmp.plugin.v2.CachedExtensionPublicationV2
+import dev.shinsou.kmp.plugin.v2.ExtensionDownloadEntryV2
+import dev.shinsou.kmp.plugin.v2.ExtensionPublicationCacheV2
+import dev.shinsou.kmp.plugin.v2.ExtensionDownloadQueueFileStoreV2
+import dev.shinsou.kmp.plugin.v2.ExtensionDownloadQueueV2
+import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
 import dev.shinsou.kmp.plugin.v2.ExtensionCapability
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
@@ -22,6 +28,7 @@ import dev.shinsou.kmp.plugin.v2.PagedResultV2
 import dev.shinsou.kmp.plugin.v2.PreferenceV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
+import kotlin.time.Clock
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
 import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
@@ -654,6 +661,27 @@ public class PluginBrowseAdapter(
         url: String,
         headers: Map<String, String>,
     ): ByteArray? {
+        val live = try {
+            fetchExtensionThumbnailV2(sourceKey, url, headers)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            publicationCacheV2?.readCover(sourceKey, url)?.let { return it }
+            throw error
+        }
+        if (live == null) return publicationCacheV2?.readCover(sourceKey, url)
+        // A library cover kept for offline use follows the source when its artwork changes.
+        publicationCacheV2?.let { cache ->
+            if (cache.hasCover(sourceKey, url)) runCatching { cache.writeCover(sourceKey, url, live) }
+        }
+        return live
+    }
+
+    private suspend fun fetchExtensionThumbnailV2(
+        sourceKey: SourceKey,
+        url: String,
+        headers: Map<String, String>,
+    ): ByteArray? {
         val descriptor = manager.extensionSourceV2(sourceKey)?.descriptor ?: return null
         val metadata = PageRequestMetadata.parse(url)
         val resolved = resolveSourceHttpUrl(descriptor.baseUrl, metadata.cleanUrl) ?: return null
@@ -730,11 +758,54 @@ public class PluginBrowseAdapter(
         sourceKey: SourceKey,
         remotePublicationId: String,
     ): RemotePublicationV2 = withContext(Dispatchers.Default) {
+        // Always the source's answer: the detail screen shows (and keeps) the cached copy itself,
+        // and must be able to tell fresh details from cached ones before saving them.
         manager.withUserInteractionContext(sourceKey) {
             manager.withVisibleEventContext(sourceKey, remotePublicationId) {
                 extensionGatewayV2.details(sourceKey, remotePublicationId)
             }
+        }.withoutScriptObjectText()
+    }
+
+    private val publicationCacheV2 = fileSystem?.let(::ExtensionPublicationCacheV2)
+
+    override suspend fun cachedExtensionPublicationPageV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+    ): ExtensionPublicationPageV2? = withContext(Dispatchers.Default) {
+        val consumer = extensionContentConsumerV2 ?: return@withContext null
+        publicationCacheV2?.read(sourceKey, remotePublicationId)?.let { consumer.cachedPublicationPage(sourceKey, it) }
+    }
+
+    override suspend fun cacheExtensionPublicationV2(
+        sourceKey: SourceKey,
+        publication: RemotePublicationV2,
+        units: List<RemoteUnitV2>,
+    ) {
+        val cache = publicationCacheV2 ?: return
+        withContext(Dispatchers.Default) {
+            cache.write(
+                sourceKey,
+                CachedExtensionPublicationV2(
+                    sourceCanonicalId = sourceKey.canonicalId,
+                    publication = publication,
+                    units = units,
+                    updatedAtEpochMillis = Clock.System.now().toEpochMilliseconds(),
+                ),
+            )
+            // Keep the cover too: offline the library would otherwise show a blank placeholder.
+            val cover = publication.thumbnailUrl?.takeIf(String::isNotBlank) ?: return@withContext
+            if (!cache.hasCover(sourceKey, cover)) {
+                runCatching { fetchExtensionThumbnailV2(sourceKey, cover, emptyMap()) }
+                    .getOrNull()
+                    ?.let { cache.writeCover(sourceKey, cover, it) }
+            }
         }
+    }
+
+    override suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String) {
+        val cache = publicationCacheV2 ?: return
+        withContext(Dispatchers.Default) { cache.delete(sourceKey, remotePublicationId) }
     }
 
     override fun extensionLibraryBindingV2(
@@ -747,6 +818,10 @@ public class PluginBrowseAdapter(
     ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
         extensionContentConsumerV2?.localReadingState(publicationKey)
             ?: dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
+
+    override fun extensionDownloadedUnitIdsV2(
+        publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
+    ): Set<String> = extensionContentConsumerV2?.downloadedRemoteUnitIds(publicationKey).orEmpty()
 
     override suspend fun recoverExtensionLibraryBindingV2(
         publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
@@ -854,11 +929,100 @@ public class PluginBrowseAdapter(
         requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.let { consumer ->
-            manager.withUserInteractionContext(sourceKey) {
-                consumer.publicationUnitsPage(sourceKey, remotePublicationId, publication, page)
+            // Offline (or a source that comes back empty), the first page falls back to the
+            // library cache, then to the stored chapters, so downloaded content stays reachable.
+            val stored: suspend () -> ExtensionPublicationPageV2? = {
+                if (page != 0) {
+                    null
+                } else {
+                    publicationCacheV2?.read(sourceKey, remotePublicationId)
+                        ?.let { consumer.cachedPublicationPage(sourceKey, it) }
+                        ?: consumer.storedPublicationPage(sourceKey, publication)
+                }
             }
+            val remote = try {
+                manager.withUserInteractionContext(sourceKey) {
+                    consumer.publicationUnitsPage(sourceKey, remotePublicationId, publication, page)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                return@let stored() ?: throw error
+            }
+            if (remote.units.isEmpty()) stored() ?: remote else remote
         }
     }
+
+    private val extensionDownloadQueueV2 by lazy {
+        ExtensionDownloadQueueV2(
+            materialize = { selection ->
+                try {
+                    materializeExtensionContentV2(selection, null)
+                } catch (choice: dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException.RepresentationSelectionRequired) {
+                    // A background download has nobody to ask; keep the source's first offering,
+                    // which is also what offline reading opens by default.
+                    materializeExtensionContentV2(selection, choice.availableIds.firstOrNull() ?: throw choice)
+                }
+            },
+            isStored = { selection ->
+                extensionContentConsumerV2
+                    ?.downloadedRemoteUnitIds(
+                        dev.shinsou.kmp.plugin.v2.extensionPublicationKey(
+                            selection.sourceKey,
+                            selection.remotePublicationId,
+                        ),
+                    )
+                    ?.contains(selection.unit.remoteId) == true
+            },
+            store = fileSystem?.let(::ExtensionDownloadQueueFileStoreV2),
+            // Sources load during startup; downloads begin once [openExtensionDownloadsV2] runs.
+            startOpen = false,
+        )
+    }
+
+    /**
+     * Brings back novel downloads left by the previous run. Called early in startup so the
+     * queue (and the Android download service) is visible at once; the work itself waits for
+     * [openExtensionDownloadsV2].
+     */
+    public suspend fun restoreExtensionDownloadsV2() {
+        val consumer = extensionContentConsumerV2 ?: return
+        extensionDownloadQueueV2.restore(consumer::restoredSelection)
+    }
+
+    /** Sources are loaded: queued novel downloads may run. */
+    public fun openExtensionDownloadsV2() {
+        extensionDownloadQueueV2.open()
+    }
+
+    /** The app is back on screen: retry downloads that stopped on repeated (network) failures. */
+    public suspend fun resumeExtensionDownloadsAfterFailuresV2() {
+        extensionDownloadQueueV2.resumeAfterFailures()
+    }
+
+    override val extensionDownloadsV2: StateFlow<List<ExtensionDownloadEntryV2>>
+        get() = extensionDownloadQueueV2.entries
+
+    override suspend fun enqueueExtensionDownloadsV2(selections: List<ExtensionUnitSelectionV2>) {
+        requireNotNull(extensionContentConsumerV2) { "Extension v2 content storage is unavailable" }
+        extensionDownloadQueueV2.enqueue(selections)
+    }
+
+    override suspend fun retryExtensionDownloadV2(id: String) = extensionDownloadQueueV2.retry(id)
+
+    override suspend fun removeExtensionDownloadV2(id: String) = extensionDownloadQueueV2.remove(id)
+
+    override suspend fun clearCompletedExtensionDownloadsV2() = extensionDownloadQueueV2.clearCompleted()
+
+    override suspend fun removeExtensionPublicationDownloadsV2(sourceKey: SourceKey, remotePublicationId: String) =
+        extensionDownloadQueueV2.removePublication(sourceKey, remotePublicationId)
+
+    override suspend fun purgeExtensionPublicationContentV2(sourceKey: SourceKey, remotePublicationId: String) {
+        val consumer = extensionContentConsumerV2 ?: return
+        withContext(Dispatchers.Default) { consumer.purgeStoredContent(sourceKey, remotePublicationId) }
+    }
+
+    override suspend fun pauseExtensionDownloadsV2(paused: Boolean) = extensionDownloadQueueV2.setPaused(paused)
 
     override suspend fun materializeExtensionContentV2(
         selection: ExtensionUnitSelectionV2,
@@ -868,9 +1032,11 @@ public class PluginBrowseAdapter(
         requireNotNull(extensionContentConsumerV2) {
             "Extension v2 content storage is unavailable"
         }.let { consumer ->
-            manager.withUserInteractionContext(selection.sourceKey) {
-                consumer.materialize(selection, representationId)
-            }
+            // A stored chapter opens from disk, so downloads read offline and skip the network.
+            consumer.storedMaterialization(selection, representationId)
+                ?: manager.withUserInteractionContext(selection.sourceKey) {
+                    consumer.materialize(selection, representationId)
+                }
         }
     }
 

@@ -23,6 +23,7 @@ import dev.shinsou.kmp.content.ContentBlobStoreException
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.ContentCommitResult
 import dev.shinsou.kmp.content.ContentFoundationRuntime
+import dev.shinsou.kmp.content.ContentLocalBodyPurgeResult
 import dev.shinsou.kmp.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentMetadataMutation
@@ -89,6 +90,8 @@ public class ExtensionPublicationPageV2 internal constructor(
     units: List<ExtensionUnitSelectionV2>,
     public val page: Int,
     public val hasNextPage: Boolean,
+    /** True when built from local copies (cache or stored chapters) because the source was not used. */
+    public val offline: Boolean = false,
 ) {
     public val units: List<ExtensionUnitSelectionV2> = units.toList()
 }
@@ -331,6 +334,187 @@ public class ExtensionContentConsumerV2(
                 .filterKeys { it !in localProgress.completedUnitKeys }
                 .mapNotNull { (unitKey, progress) -> remoteIdByUnitKey[unitKey]?.let { it to progress } }
                 .toMap(),
+        )
+    }
+
+    /**
+     * Source unit ids that have a stored content revision. Every materialization persists the
+     * unit, so this survives leaving the detail screen and restarts. Bodies are not re-hashed here
+     * (that would read every downloaded byte); opening a damaged one still fails closed.
+     */
+    public fun downloadedRemoteUnitIds(publicationKey: PublicationKey): Set<String> {
+        val publication = foundation.publications.find(publicationKey) ?: return emptySet()
+        return publication.acquisitions
+            .asSequence()
+            .flatMap { it.units.asSequence() }
+            .filter { it.manifestRevisions.isNotEmpty() }
+            .mapNotNullTo(linkedSetOf()) { unit ->
+                unit.sourceBinding?.takeIf { it.entityKind == RemoteEntityKind.UNIT }?.remoteId
+            }
+    }
+
+    /**
+     * Drops every downloaded chapter body of a title that left the library, freeing its disk space.
+     * Reading progress, the library binding, the unit graph and rights stay, nothing is sent
+     * through sync, and a later download of the same unit works as the first one did. Returns the
+     * number of units whose stored content was removed.
+     */
+    public fun purgeStoredContent(sourceKey: SourceKey, remotePublicationId: String): Int {
+        val key = extensionPublicationKey(sourceKey, remotePublicationId)
+        if (foundation.publications.find(key) == null) return 0
+        var result: ContentLocalBodyPurgeResult? = null
+        repeat(MAX_GRAPH_COMMIT_ATTEMPTS) { attempt ->
+            if (result != null) return@repeat
+            try {
+                result = foundation.transactions.purgeLocalPublicationBodies(
+                    publicationKey = key,
+                    // `materialize` journals each graph change under a deterministic id; forget
+                    // them so a re-download commits again instead of replaying the old entry.
+                    forgetCommitIdsOf = { publication ->
+                        publication.acquisitions
+                            .flatMap { it.units }
+                            .flatMap { it.manifestRevisions }
+                            .mapTo(linkedSetOf()) { "extension-v2:${it.manifestId}" }
+                    },
+                    draftIdPrefixOf = ContentPublicationSyncDraftFactory::draftIdPrefix,
+                )
+            } catch (busy: IllegalStateException) {
+                if (!busy.message.orEmpty().startsWith("Concurrent content transaction must retry") ||
+                    attempt == MAX_GRAPH_COMMIT_ATTEMPTS - 1
+                ) {
+                    throw busy
+                }
+            }
+        }
+        val purged = result ?: return 0
+        // Blobs are content-addressed and may be shared; the store re-checks every guard per blob.
+        foundation.blobStore.deleteUnreferencedNow(purged.removedBlobs)
+        return purged.purgedUnitCount
+    }
+
+    /**
+     * The stored (downloaded or read) units of a publication as a unit page, for when the source
+     * cannot be reached. Null when nothing of this publication is stored.
+     */
+    public fun storedPublicationPage(
+        sourceKey: SourceKey,
+        publication: RemotePublicationV2,
+    ): ExtensionPublicationPageV2? {
+        val stored = foundation.publications.find(extensionPublicationKey(sourceKey, publication.remoteId))
+            ?: return null
+        val units = stored.acquisitions
+            .asSequence()
+            .flatMap { it.units.asSequence() }
+            .filter { it.manifestRevisions.isNotEmpty() }
+            .mapNotNull { unit ->
+                val remoteId = unit.sourceBinding?.takeIf { it.entityKind == RemoteEntityKind.UNIT }?.remoteId
+                    ?: return@mapNotNull null
+                unit to remoteId
+            }
+            .distinctBy { it.second }
+            .sortedWith(compareBy(nullsLast()) { it.first.ordinal })
+            .map { (unit, remoteId) ->
+                ExtensionUnitSelectionV2(
+                    sourceKey = sourceKey,
+                    remotePublicationId = publication.remoteId,
+                    publicationTitle = publication.title,
+                    unit = RemoteUnitV2(remoteId, unit.title),
+                    ownerToken = ownerToken,
+                )
+            }
+            .toList()
+        if (units.isEmpty()) return null
+        return ExtensionPublicationPageV2(
+            sourceKey = sourceKey,
+            publication = publication,
+            units = units,
+            page = 0,
+            hasNextPage = false,
+            offline = true,
+        )
+    }
+
+    /** The cached details and full unit list of a library title, as one offline unit page. */
+    public fun cachedPublicationPage(
+        sourceKey: SourceKey,
+        cached: CachedExtensionPublicationV2,
+    ): ExtensionPublicationPageV2 {
+        require(cached.sourceCanonicalId == sourceKey.canonicalId) { "Cached publication source changed" }
+        return ExtensionPublicationPageV2(
+            sourceKey = sourceKey,
+            publication = cached.publication,
+            units = cached.units.distinctBy(RemoteUnitV2::remoteId).map { unit ->
+                ExtensionUnitSelectionV2(
+                    sourceKey = sourceKey,
+                    remotePublicationId = cached.publication.remoteId,
+                    publicationTitle = cached.publication.title,
+                    unit = unit,
+                    ownerToken = ownerToken,
+                )
+            },
+            page = 0,
+            hasNextPage = false,
+            offline = true,
+        )
+    }
+
+    /** Reissues a selection for a download queued by an earlier run of this app. */
+    public fun restoredSelection(record: ExtensionDownloadRecordV2): ExtensionUnitSelectionV2 =
+        ExtensionUnitSelectionV2(
+            sourceKey = record.sourceKey,
+            remotePublicationId = record.remotePublicationId,
+            publicationTitle = record.publicationTitle,
+            unit = record.unit,
+            ownerToken = ownerToken,
+        )
+
+    /**
+     * Opens an already stored unit without contacting the source, so downloaded chapters read
+     * offline. Null when the unit has no stored revision (or [representationId] asks for one
+     * that was not stored); the caller then materializes from the source.
+     */
+    public fun storedMaterialization(
+        selection: ExtensionUnitSelectionV2,
+        representationId: String? = null,
+    ): ExtensionContentMaterializationV2? {
+        if (selection.ownerToken !== ownerToken) throw ExtensionContentConsumerException.ForeignSelection()
+        val publication = foundation.publications.find(publicationKey(selection)) ?: return null
+        val acquisitionId = acquisitionId(selection)
+        val acquisition = publication.acquisitions.singleOrNull { it.id == acquisitionId } ?: return null
+        val unit = acquisition.units.firstOrNull { unit ->
+            unit.sourceBinding?.takeIf { it.entityKind == RemoteEntityKind.UNIT }?.remoteId == selection.unit.remoteId
+        } ?: return null
+        val manifest = unit.manifestRevisions.maxByOrNull { it.contentRevision } ?: return null
+        val representation = if (representationId == null) {
+            // Each materialization stores the one representation that was chosen, so the first
+            // stored one is the user's choice; never fall back to the source just to ask again.
+            manifest.representations.firstOrNull() ?: return null
+        } else {
+            // Accept the source's representation id or the stored id this method returns.
+            val hashed = extensionId("representation", selection, selection.unit.remoteId, representationId)
+            manifest.representations.singleOrNull {
+                it.representationId == hashed || it.representationId == representationId
+            } ?: return null
+        }
+        return ExtensionContentMaterializationV2(
+            sourceKey = selection.sourceKey,
+            remotePublicationId = selection.remotePublicationId,
+            remoteUnitId = selection.unit.remoteId,
+            representationId = representationId ?: representation.representationId,
+            publicationKey = publication.key,
+            acquisitionId = acquisition.id,
+            unitKey = unit.key,
+            manifestId = manifest.manifestId,
+            contentRepresentationId = representation.representationId,
+            // Nothing was committed; this reopens the revision an earlier commit stored.
+            commit = ContentCommitResult(
+                commitId = manifest.manifestId,
+                replayed = true,
+                deferred = false,
+                committedGeneration = null,
+                attachedOwnerIds = emptyList(),
+                outboxDraftIds = emptyList(),
+            ),
         )
     }
 

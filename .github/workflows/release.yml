@@ -601,7 +601,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.6' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.7' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.8' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.9'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.9' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.10'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -648,6 +649,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.8"
             $expectedHash = "a14cafecf036d82e27eb36d9161589067e99adff8501dbbedfea84bb57021ed6"
             $baselineProductCode = "{34F7AB28-CA1B-34CF-990F-8D030DC104F0}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.10") {
+            $baselineVersion = "1.0.1-beta.9"
+            $expectedHash = "48d9acd1157b3601f6fb3b4e68099cf29b27abbc3780aa09a6d8877544b2509e"
+            $baselineProductCode = "{FBB0DBAB-C12B-3600-AB8C-90B2A79A7676}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -875,7 +880,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.6 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.7 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.8 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.9 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.9 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.10 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -926,6 +932,12 @@ jobs:
                 "Sandbox note: every extension now runs in a sandbox (an isolated process on Android, an OS-confined helper on macOS and Windows, WebAssembly on iOS); reviewed extensions keep their reviewed limits. Android now requires Android 10 (API 29) or later." \
                 "Login note: Web verification keeps parent-domain login cookies, and BiliManga/Linovelib send them, so works that require an account open after signing in." \
                 "Reader note: the manga reader slider seeks pages, source browsing and details show reading progress, and iOS Web verification opens its isolated browser."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.10 ]]; then
+              printf '%s\n' \
+                "Download note: novel downloads are saved across restarts, keep running in the background (an Android foreground service; on iOS until the system's background time runs out, then they resume on return), pause after repeated failures, and can be filtered by queued or downloaded." \
+                "Library note: removing or unfavoriting a novel also removes its queued and downloaded chapters from this device while keeping reading progress." \
+                "Offline note: library novels keep their title, cover and introduction offline, and a source's placeholder answer no longer replaces them."
             fi
           } > release-notes.md
 

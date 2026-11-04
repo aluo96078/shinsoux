@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,12 +76,14 @@ import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
+import dev.shinsou.kmp.plugin.v2.ExtensionDownloadEntryV2
 import dev.shinsou.kmp.domain.model.LibraryItem
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
+import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
@@ -391,37 +395,67 @@ fun DownloadsScreen(
     onMove: (String, Int) -> Unit,
     onClearCompleted: () -> Unit,
     modifier: Modifier = Modifier,
+    extensionQueue: List<ExtensionDownloadEntryV2> = emptyList(),
+    onRetryExtension: (String) -> Unit = {},
+    onRemoveExtension: (String) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     var confirmClear by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf(DownloadFilter.ALL) }
+    val states = queue.map { it.state } + extensionQueue.map { it.state }
+    val activeCount = states.count { it == DownloadState.DOWNLOADING }
+    val waitingCount = states.count { it == DownloadState.QUEUED || it == DownloadState.PAUSED }
+    val doneCount = states.count { it == DownloadState.DOWNLOADED }
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.downloads,
-            subtitle = strings.text("{0} active · {1} total", queue.count { it.state == DownloadState.DOWNLOADING }, queue.size),
+            subtitle = strings.text("{0} active · {1} queued · {2} done", activeCount, waitingCount, doneCount),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
             actions = {
                 IconButton(onClick = { onPauseChange(!paused) }) {
                     Icon(if (paused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause, if (paused) strings.text("Resume") else strings.text("Pause"))
                 }
-                if (queue.any { it.state == DownloadState.DOWNLOADED }) {
+                if (
+                    queue.any { it.state == DownloadState.DOWNLOADED } ||
+                    extensionQueue.any { it.state == DownloadState.DOWNLOADED }
+                ) {
                     IconButton(onClick = { confirmClear = true }) {
                         Icon(Icons.Outlined.Delete, strings.text("Clear completed"))
                     }
                 }
             },
         )
-        if (queue.isEmpty()) {
+        if (queue.isEmpty() && extensionQueue.isEmpty()) {
             EmptyState(
                 title = strings.text("Download queue is empty"),
                 message = strings.text("Download chapters from a title to read them offline."),
                 icon = { Icon(Icons.Outlined.CloudDownload, null, Modifier.size(30.dp)) },
             )
         } else {
+            val shownQueue = queue.filter { filter.accepts(it.state) }.sortedBy { it.position }
+            val shownExtension = extensionQueue.filter { filter.accepts(it.state) }
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(DownloadFilter.entries.toList()) { option ->
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = { filter = option },
+                        label = {
+                            Text(
+                                "${option.label(strings)} ${states.count { option.accepts(it) }}",
+                                maxLines = 1,
+                            )
+                        },
+                    )
+                }
+            }
             LazyColumn(
                 contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(queue.sortedBy { it.position }, key = { it.id }) { item ->
+                items(shownQueue, key = { it.id }) { item ->
                     DownloadRow(
                         item = item,
                         mangaTitle = mangaById[item.mangaId]?.title ?: strings.text("Unknown title"),
@@ -430,6 +464,13 @@ fun DownloadsScreen(
                         onRemove = { onRemove(item.id) },
                         onMoveUp = { onMove(item.id, -1) },
                         onMoveDown = { onMove(item.id, 1) },
+                    )
+                }
+                items(shownExtension, key = { "extension:${it.id}" }) { entry ->
+                    ExtensionDownloadRow(
+                        entry = entry,
+                        onRetry = { onRetryExtension(entry.id) },
+                        onRemove = { onRemoveExtension(entry.id) },
                     )
                 }
             }
@@ -446,6 +487,25 @@ fun DownloadsScreen(
             },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(strings.cancel) } },
         )
+    }
+}
+
+/** Downloads screen filter: everything, work still waiting (including failures), or finished. */
+private enum class DownloadFilter {
+    ALL,
+    IN_QUEUE,
+    DOWNLOADED;
+
+    fun accepts(state: DownloadState): Boolean = when (this) {
+        ALL -> true
+        IN_QUEUE -> state != DownloadState.DOWNLOADED
+        DOWNLOADED -> state == DownloadState.DOWNLOADED
+    }
+
+    fun label(strings: ShinsouStrings): String = when (this) {
+        ALL -> strings.all
+        IN_QUEUE -> strings.text("In queue")
+        DOWNLOADED -> strings.text("Downloaded")
     }
 }
 
@@ -505,6 +565,61 @@ private fun DownloadRow(
                     modifier = Modifier.weight(1f),
                 )
                 if (item.state == DownloadState.ERROR) {
+                    TextButton(onClick = onRetry) { Text(strings.retry) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionDownloadRow(
+    entry: ExtensionDownloadEntryV2,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DownloadStateIcon(entry.state)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(entry.publicationTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        entry.unitTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                IconButton(onClick = onRemove) { Icon(Icons.Outlined.Delete, strings.remove) }
+            }
+            if (entry.state == DownloadState.DOWNLOADING) {
+                Spacer(Modifier.height(7.dp))
+                // Text chapters arrive in one response, so there is no page count to report.
+                LinearProgressIndicator(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)))
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (entry.state) {
+                        DownloadState.QUEUED -> strings.text("Queued")
+                        DownloadState.DOWNLOADING -> strings.text("Downloading")
+                        DownloadState.PAUSED -> strings.text("Paused")
+                        DownloadState.DOWNLOADED -> strings.text("Downloaded")
+                        DownloadState.ERROR -> entry.errorMessage?.localizedSourceFailure(strings)
+                            ?: entry.errorMessage ?: strings.text("Download failed")
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (entry.state == DownloadState.ERROR) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                if (entry.state == DownloadState.ERROR) {
                     TextButton(onClick = onRetry) { Text(strings.retry) }
                 }
             }
@@ -1168,7 +1283,7 @@ fun AboutScreen(
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.about,
-            subtitle = strings.text("Shinsou X · version 1.0.1-beta.9"),
+            subtitle = strings.text("Shinsou X · version 1.0.1-beta.10"),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
         )
         LazyColumn(

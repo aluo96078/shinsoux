@@ -320,6 +320,71 @@ public class SqlDriverContentTransactionStore<D : Any>(
         mutation.result
     }
 
+    override fun purgeLocalPublicationBodies(
+        publicationKey: PublicationKey,
+        forgetCommitIdsOf: (Publication) -> Set<String>,
+        draftIdPrefixOf: (commitId: String) -> String?,
+    ): ContentLocalBodyPurgeResult = withTransactionLock {
+        publicationKey.validate()
+        val publication = findPublication(publicationKey)
+            ?: return@withTransactionLock ContentLocalBodyPurgeResult()
+        val forgetCommitIds = forgetCommitIdsOf(publication)
+        val forgetDraftIdPrefixes = forgetCommitIds.mapNotNullTo(linkedSetOf(), draftIdPrefixOf)
+        forgetCommitIds.forEach { requireSafeSqlKey(it, "Purged commit id") }
+        forgetDraftIdPrefixes.forEach { requireSafeSqlKey(it, "Purged draft id prefix") }
+        val purgedUnits = publication.acquisitions.sumOf { acquisition ->
+            acquisition.units.count { it.manifestRevisions.isNotEmpty() }
+        }
+        if (purgedUnits == 0) return@withTransactionLock ContentLocalBodyPurgeResult()
+        val result = blobParticipant.withExclusiveTransaction {
+            val blobRollback = blobParticipant.snapshotForTransactionLocked()
+            try {
+                transactions.transactionWithResult<ContentLocalBodyPurgeResult>(false) {
+                    // Same mechanics as a replica tombstone, but local-only: no cursor, removal
+                    // intent or outbox row is written, and the publication graph is re-installed
+                    // below without its manifests so reading state and bindings survive.
+                    val rights = loadRightsGrantsForPublication(publicationKey)
+                    val durableAttachments = loadPublicationAttachments(publicationKey)
+                        .map(ManifestAttachment::asBlobAttachment)
+                        .sortedBy(BlobAttachment::attachmentKey)
+                    val participantAttachments = blobParticipant
+                        .detachManifestAttachmentsLocked(publicationKey)
+                        .sortedBy(BlobAttachment::attachmentKey)
+                    check(participantAttachments == durableAttachments) {
+                        "SQLite/blob participant publication attachment ledger mismatch"
+                    }
+                    deletePublicationReplicaRows(publicationKey)
+                    writePublications(
+                        listOf(ContentPublicationMutation(publication.withoutManifestRevisions())),
+                    )
+                    writeRightsGrants(rights.map { ContentRightsGrantMutation(it) })
+                    forgetCommitIds.forEach { commitId ->
+                        execute("DELETE FROM $TABLE_COMMITS WHERE commit_id = ?", 1) {
+                            bindString(0, commitId)
+                        }
+                    }
+                    // Exact prefix match (substr, not LIKE) so '_' or '%' in ids are literal.
+                    forgetDraftIdPrefixes.forEach { prefix ->
+                        execute("DELETE FROM $TABLE_OUTBOX WHERE substr(draft_id, 1, ?) = ?", 2) {
+                            bindLong(0, prefix.length.toLong())
+                            bindString(1, prefix)
+                        }
+                    }
+                    maybeFail(ContentTransactionFailurePoint.AFTER_JOURNAL_WRITE)
+                    ContentLocalBodyPurgeResult(
+                        removedBlobs = durableAttachments.flatMap(BlobAttachment::blobs).distinct(),
+                        purgedUnitCount = purgedUnits,
+                    )
+                }
+            } catch (error: Throwable) {
+                blobRollback.rollback()
+                throw error
+            }
+        }
+        forgetCommitIds.forEach(activeReceiptObjects::remove)
+        result
+    }
+
     private fun commitLocked(batch: ContentCommitBatch<D>): ContentCommitResult {
         val authoritativeSyncMode = syncModeProvider()
         val replacingPortableGraph =

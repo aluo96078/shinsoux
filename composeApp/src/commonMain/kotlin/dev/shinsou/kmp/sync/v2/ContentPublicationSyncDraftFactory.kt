@@ -241,6 +241,10 @@ public data class ContentPublicationSyncDraftPlan(
 
 /** Builds deterministic, re-clockable metadata drafts for one complete publication graph. */
 public object ContentPublicationSyncDraftFactory {
+    /** Every draft of one operation starts with this, so a local purge can drop them together. */
+    public fun draftIdPrefix(operationNamespace: String): String =
+        "content-v2:${Sha256.hex(operationNamespace.encodeToByteArray())}:"
+
     public fun build(
         publication: Publication,
         rightsGrants: List<RightsGrant>,
@@ -277,13 +281,11 @@ public object ContentPublicationSyncDraftFactory {
                 }
             }
         }
-        val namespaceHash = Sha256.hex(operationNamespace.encodeToByteArray())
+        val prefix = draftIdPrefix(operationNamespace)
         val drafts = CanonicalSyncDraftPacker.pack(
             mutations = mutations,
             createdAtMillis = createdAtMillis,
-            draftId = { index ->
-                "content-v2:$namespaceHash:${index.toString().padStart(6, '0')}"
-            },
+            draftId = { index -> "$prefix${index.toString().padStart(6, '0')}" },
         )
         return ContentPublicationSyncDraftPlan(drafts)
     }
