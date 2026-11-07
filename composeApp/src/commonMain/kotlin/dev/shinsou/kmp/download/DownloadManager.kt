@@ -8,7 +8,11 @@ import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.sourceFailureMarker
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +62,8 @@ class DownloadManager(
     private val schedulerMutex = Mutex()
     private val progressMutex = Mutex()
     private val active = linkedMapOf<String, Job>()
+    /** Entries being removed; the scheduler must not start them while their files are deleted. */
+    private val removing = linkedMapOf<String, CompletableDeferred<Unit>>()
     private var globallyPaused = false
 
     suspend fun restoreQueue() {
@@ -129,7 +135,9 @@ class DownloadManager(
     }
 
     suspend fun pause(itemId: String) {
-        schedulerMutex.withLock { active.remove(itemId) }?.cancelAndJoin()
+        // Workers stay in [active] until they have stopped (they remove themselves), so a
+        // concurrent removal always finds and waits for them.
+        schedulerMutex.withLock { active[itemId] }?.cancelAndJoin()
         repository.setDownloadState(itemId, DownloadState.PAUSED, updatedAt = now())
         schedule()
     }
@@ -142,7 +150,7 @@ class DownloadManager(
     suspend fun pauseAll(paused: Boolean) {
         val running = schedulerMutex.withLock {
             globallyPaused = paused
-            if (paused) active.values.toList().also { active.clear() } else emptyList()
+            if (paused) active.values.toList() else emptyList()
         }
         if (paused) {
             running.forEach { it.cancelAndJoin() }
@@ -159,12 +167,76 @@ class DownloadManager(
         }
     }
 
-    suspend fun remove(itemId: String) {
-        schedulerMutex.withLock { active.remove(itemId) }?.cancelAndJoin()
-        val item = repository.currentSnapshot.downloadQueue.firstOrNull { it.id == itemId } ?: return
-        fileSystem.deleteTree(directory(item.mangaId, item.chapterId))
-        repository.removeDownload(itemId)
+    /**
+     * A pause the system asked for: exactly [ids] (saved by the caller beforehand) stop. The
+     * global pause is left alone, so a pause the user chose is never lifted by recovery.
+     */
+    suspend fun pauseForSystem(ids: Set<String>) {
+        // Waiting entries are paused under the scheduler lock so none of them starts meanwhile.
+        val running = schedulerMutex.withLock {
+            repository.currentSnapshot.downloadQueue
+                .filter { it.id in ids && it.state == DownloadState.QUEUED && it.id !in active }
+                .forEach { repository.setDownloadState(it.id, DownloadState.PAUSED, updatedAt = now()) }
+            ids.mapNotNull { active[it] }
+        }
+        // Running ones are stopped first; otherwise a progress update could overwrite PAUSED.
+        running.forEach { it.cancelAndJoin() }
+        repository.currentSnapshot.downloadQueue
+            .filter { it.id in ids && (it.state == DownloadState.DOWNLOADING || it.state == DownloadState.QUEUED) }
+            .forEach { repository.setDownloadState(it.id, DownloadState.PAUSED, updatedAt = now()) }
+    }
+
+    /** Undoes [pauseForSystem] for [ids] (null: every paused entry); entries the user paused stay. */
+    suspend fun resumeAfterSystem(ids: Set<String>?) {
+        repository.currentSnapshot.downloadQueue
+            .filter { it.state == DownloadState.PAUSED && (ids == null || it.id in ids) }
+            .forEach { repository.setDownloadState(it.id, DownloadState.QUEUED, updatedAt = now()) }
         schedule()
+    }
+
+    suspend fun remove(itemId: String) = removeEntry(itemId, keepIfDownloaded = false)
+
+    /**
+     * Bulk removal of waiting or failed chapters. The running download is stopped first, and its
+     * state is read only after it has fully stopped, so a chapter that finished in the meantime
+     * keeps its files and queue entry.
+     */
+    suspend fun removeUnfinished(itemId: String) = removeEntry(itemId, keepIfDownloaded = true)
+
+    private suspend fun removeEntry(itemId: String, keepIfDownloaded: Boolean) {
+        val done = CompletableDeferred<Unit>()
+        // A second removal of the same entry waits for the first (and shares its outcome)
+        // instead of racing it.
+        val (owner, running) = schedulerMutex.withLock {
+            removing[itemId]?.let { return@withLock it to null }
+            removing[itemId] = done
+            done to active[itemId]
+        }
+        if (owner !== done) {
+            owner.await()
+            return
+        }
+        var failure: Throwable? = null
+        try {
+            running?.cancelAndJoin()
+            val item = repository.currentSnapshot.downloadQueue.firstOrNull { it.id == itemId } ?: return
+            if (keepIfDownloaded && item.state == DownloadState.DOWNLOADED) return
+            fileSystem.deleteTree(directory(item.mangaId, item.chapterId))
+            repository.removeDownload(itemId)
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            // Must run even when this caller is cancelled, or the entry stays reserved for good.
+            withContext(NonCancellable) {
+                // A cancelled caller stops joining early; the worker must be gone before another
+                // removal or download may touch this chapter's files.
+                running?.join()
+                schedulerMutex.withLock { removing.remove(itemId) }
+                failure?.let(done::completeExceptionally) ?: done.complete(Unit)
+                schedule()
+            }
+        }
     }
 
     suspend fun downloadedPages(mangaId: Long, chapterId: Long): List<String> =
@@ -186,8 +258,10 @@ class DownloadManager(
                 continue
             }
 
+            // An entry being removed is never started, so it is not work to wait for.
+            val beingRemoved = schedulerMutex.withLock { removing.keys.toSet() }
             val hasQueuedWork = repository.currentSnapshot.downloadQueue.any {
-                it.state == DownloadState.QUEUED
+                it.state == DownloadState.QUEUED && it.id !in beingRemoved
             }
             if (globallyPaused || !hasQueuedWork) return
             schedule()
@@ -204,12 +278,14 @@ class DownloadManager(
             if (available <= 0) return
             val candidates = repository.currentSnapshot.downloadQueue
                 .asSequence()
-                .filter { it.state == DownloadState.QUEUED && it.id !in active }
+                .filter { it.state == DownloadState.QUEUED && it.id !in active && it.id !in removing }
                 .sortedBy { it.position }
                 .take(available)
                 .toList()
             candidates.forEach { item ->
-                active[item.id] = scope.launch {
+                // ATOMIC: the body (and its finally) always runs, even for a worker cancelled before
+                // it was dispatched; otherwise that worker would hold its [active] slot for good.
+                active[item.id] = scope.launch(start = CoroutineStart.ATOMIC) {
                     try {
                         download(item)
                     } catch (cancelled: CancellationException) {
@@ -222,8 +298,11 @@ class DownloadManager(
                             errorMessage = error.sourceFailureMarker() ?: error.message ?: "Download failed",
                         )
                     } finally {
-                        schedulerMutex.withLock { active.remove(item.id) }
-                        schedule()
+                        // Also when cancelled: an entry left in [active] could never run again.
+                        withContext(NonCancellable) {
+                            schedulerMutex.withLock { active.remove(item.id) }
+                            schedule()
+                        }
                     }
                 }
             }

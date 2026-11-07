@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 14+: downloads run as a user-initiated data transfer job. -->
+    <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Google Code Scanner owns camera access, so Shinsou X does not request CAMERA itself. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
@@ -42,11 +45,16 @@
             android:process=":sandbox"
             android:useAppZygote="true" />
 
-        <!-- Keeps novel downloads running while the app is in the background. -->
+        <!-- Keeps downloads running in the background on Android 10–13 (and as a fallback). -->
         <service
             android:name="dev.shinsou.kmp.AndroidDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Android 14+: user-initiated data transfer job for background downloads. -->
+        <service
+            android:name="dev.shinsou.kmp.AndroidDownloadJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <activity
             android:name="dev.shinsou.kmp.MainActivity"

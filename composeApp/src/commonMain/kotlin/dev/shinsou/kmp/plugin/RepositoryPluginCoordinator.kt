@@ -158,6 +158,10 @@ public class RepositoryPluginCoordinator(
         requireDownloadManager().remove(itemId)
     }
 
+    override suspend fun removeUnfinishedDownload(itemId: String) {
+        requireDownloadManager().removeUnfinished(itemId)
+    }
+
     override suspend fun reorderDownloads(orderedIds: List<String>) {
         repository.reorderDownloads(orderedIds)
     }

@@ -19,6 +19,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
+import androidx.compose.ui.window.Notification
+import androidx.compose.ui.window.Tray
+import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -62,6 +65,8 @@ import java.awt.Frame
 import java.awt.Toolkit
 import java.awt.desktop.AppForegroundEvent
 import java.awt.desktop.AppForegroundListener
+import java.awt.desktop.AppReopenedEvent
+import java.awt.desktop.AppReopenedListener
 import java.awt.desktop.OpenURIHandler
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -73,7 +78,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.resources.painterResource
 
@@ -98,6 +109,33 @@ fun main(args: Array<String>) {
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
+    // Windows and Linux start a new process on every launch; hand it to the running one instead
+    // (its window may be hidden while downloads continue). Startup probes run on their own.
+    val singleInstance: DesktopSingleInstance? = if (desktopPlatform != DesktopPlatform.MAC_OS && !verifyDesktopStartup) {
+        // Fails closed: when the lock cannot be established, a second process might already have
+        // the database open, so this one must not start.
+        val launch = runCatching { DesktopSingleInstance.acquire(DesktopAppDirectories.dataRoot, args.toList()) }
+        val warning = when (launch.getOrNull()) {
+            is DesktopSingleInstance.Companion.Launch.Primary -> null
+            DesktopSingleInstance.Companion.Launch.HandedOff -> exitProcess(0)
+            DesktopSingleInstance.Companion.Launch.RunningButUnreachable ->
+                "Shinsou X is already running but is not responding. Close it in Task Manager, then open Shinsou X again."
+            null -> "Shinsou X could not confirm that no other copy is running, so it did not start. {0}"
+        }
+        if (warning != null) {
+            val strings = shinsouStringsFor(Locale.getDefault().toLanguageTag())
+            JOptionPane.showMessageDialog(
+                null,
+                strings.text(warning, launch.exceptionOrNull()?.message.orEmpty()).trim(),
+                "Shinsou X",
+                JOptionPane.WARNING_MESSAGE,
+            )
+            exitProcess(1)
+        }
+        (launch.getOrNull() as DesktopSingleInstance.Companion.Launch.Primary).instance
+    } else {
+        null
+    }
     val httpClient = createPlatformHttpClient()
     installConfiguredImageLoader(httpClient) {
         add(DesktopAvifDecoder.Factory())
@@ -155,6 +193,13 @@ fun main(args: Array<String>) {
         val closed = remember { AtomicBoolean(false) }
         val closePromptOpen = remember { AtomicBoolean(false) }
         var hostFrame by remember { mutableStateOf<Frame?>(null) }
+        // Closing the window while chapters are downloading only hides it; the downloads go on,
+        // shown in the menu bar / system tray, and the app quits once they are done.
+        var windowVisible by remember { mutableStateOf(true) }
+        var backgroundNoticeShown by remember { mutableStateOf(false) }
+        val trayState = rememberTrayState()
+        val downloadStatus by composition.backgroundDownloads.status.collectAsState()
+        val keepAwake = remember { DesktopKeepAwake.forPlatform(desktopPlatform) }
         lateinit var services: DesktopAppServices
 
         fun closeImmediately() {
@@ -184,6 +229,89 @@ fun main(args: Array<String>) {
                 }
             }
             if (SwingUtilities.isEventDispatchThread()) confirmAndClose() else SwingUtilities.invokeLater(confirmAndClose)
+        }
+
+        fun showWindow() {
+            windowVisible = true
+            hostFrame?.let { frame ->
+                if (frame.extendedState and Frame.ICONIFIED != 0) {
+                    frame.extendedState = frame.extendedState and Frame.ICONIFIED.inv()
+                }
+                frame.toFront()
+                frame.requestFocus()
+            }
+            runCatching {
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_REQUEST_FOREGROUND)) {
+                    Desktop.getDesktop().requestForeground(true)
+                }
+            }
+        }
+
+        fun closeWindow() {
+            if (closed.get()) return
+            // Before startup has restored the queues, an empty queue proves nothing: hide now and
+            // let the auto-quit below decide once they are restored.
+            if (composition.isStartupComplete() && composition.backgroundDownloads.currentStatus() == null) {
+                requestClose()
+                return
+            }
+            windowVisible = false
+            if (!backgroundNoticeShown && composition.backgroundDownloads.currentStatus() != null) {
+                backgroundNoticeShown = true
+                trayState.sendNotification(
+                    Notification(
+                        title = "Shinsou X",
+                        message = strings.text("Downloads continue in the background. Shinsou X quits when they finish."),
+                    ),
+                )
+            }
+        }
+
+        // Held only while chapters are queued or downloading.
+        LaunchedEffect(composition, keepAwake) {
+            composition.backgroundDownloads.status
+                .map { it != null }
+                .distinctUntilChanged()
+                .collect { downloading ->
+                    withContext(Dispatchers.IO) {
+                        if (downloading) keepAwake.hold("Downloading chapters") else keepAwake.release()
+                    }
+                }
+        }
+        DisposableEffect(keepAwake) { onDispose { keepAwake.release() } }
+
+        // The window was closed during downloads: quit once they are done (a short grace period
+        // covers a queue that briefly empties between two works).
+        LaunchedEffect(windowVisible) {
+            if (windowVisible) return@LaunchedEffect
+            while (!composition.isStartupComplete()) {
+                composition.awaitStartup()
+                delay(100)
+            }
+            composition.backgroundDownloads.liveStatus.collectLatest { value ->
+                if (value == null) {
+                    delay(3_000)
+                    // Re-read the queues themselves: work queued in the meantime keeps the app open.
+                    if (!windowVisible && composition.backgroundDownloads.currentStatus() == null) closeImmediately()
+                }
+            }
+        }
+
+        if (downloadStatus != null || !windowVisible) {
+            val shown = downloadStatus
+            val progress = shown?.let { strings.text("Downloading {0} / {1}", it.done, it.total) }
+            Tray(
+                icon = painterResource(Res.drawable.shinsou_icon),
+                state = trayState,
+                tooltip = listOfNotNull("Shinsou X", progress).joinToString(" · "),
+                onAction = ::showWindow,
+            ) {
+                if (progress != null) Item(progress, enabled = false, onClick = {})
+                shown?.current?.let { Item(it, enabled = false, onClick = {}) }
+                if (shown != null) Separator()
+                Item(strings.text("Open Shinsou X"), onClick = ::showWindow)
+                Item(strings.text("Quit Shinsou X"), onClick = ::requestClose)
+            }
         }
 
         services = remember(composition) {
@@ -219,7 +347,8 @@ fun main(args: Array<String>) {
         val state = rememberWindowState(width = 1280.dp, height = 820.dp)
         val applicationIcon = painterResource(Res.drawable.shinsou_icon)
         Window(
-            onCloseRequest = ::requestClose,
+            onCloseRequest = ::closeWindow,
+            visible = windowVisible,
             title = "Shinsou X",
             icon = applicationIcon,
             state = state,
@@ -269,6 +398,13 @@ fun main(args: Array<String>) {
             LaunchedEffect(services, initialDeepLink) {
                 initialDeepLink?.let(services::emitDeepLink)
             }
+            LaunchedEffect(services, singleInstance) {
+                // The app was launched again: bring the window back and follow its deep link.
+                singleInstance?.activations?.collect { arguments ->
+                    showWindow()
+                    arguments.firstNotNullOfOrNull(DeepLinkParser::parse)?.let(services::emitDeepLink)
+                }
+            }
             LaunchedEffect(autoBackupScheduler) { autoBackupScheduler.start() }
             DisposableEffect(composition) {
                 onDispose {
@@ -277,7 +413,12 @@ fun main(args: Array<String>) {
                 }
             }
             DisposableEffect(services) {
-                val listener = object : AppForegroundListener {
+                val listener = object : AppForegroundListener, AppReopenedListener {
+                    // Clicking the Dock icon while the window is hidden for background downloads.
+                    override fun appReopened(event: AppReopenedEvent) {
+                        if (!windowVisible) SwingUtilities.invokeLater(::showWindow)
+                    }
+
                     override fun appRaisedToForeground(event: AppForegroundEvent) {
                         services.emitForeground()
                         autoBackupScope.launch { composition.onForeground() }

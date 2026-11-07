@@ -1,5 +1,9 @@
 package dev.shinsou.kmp
 
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.os.PowerManager
+
 import android.Manifest
 import android.app.Activity
 import android.app.KeyguardManager
@@ -227,6 +231,23 @@ internal class AndroidAppServices(
 
     /** Returns whether the common navigation stack consumed the Android system-back request. */
     fun dispatchSystemBack(): Boolean = systemBackHandler?.invoke() == true
+
+    fun notificationsAllowed(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun backgroundDownloadsRestricted(): Boolean =
+        !activity.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(activity.packageName)
+
+    override fun openBackgroundDownloadSettings() {
+        val direct = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${activity.packageName}"),
+        )
+        runCatching { activity.startActivity(direct) }
+            .recoverCatching { activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+    }
 
     override fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -64,6 +64,8 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - dev.aluo.shinsoux.backup
           - dev.aluo.shinsoux.update
+          - dev.aluo.shinsoux.downloads
+          - dev.aluo.shinsoux.downloads.catchup
         NSUbiquitousContainers:
           iCloud.dev.aluo.shinsoux:
             NSUbiquitousContainerIsDocumentScopePublic: true
@@ -92,6 +94,9 @@ targets:
           - "$(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
         OTHER_LDFLAGS:
           - "$(inherited)"
+          # BGContinuedProcessingTask is iOS 26+; weak so iOS 16-25 still launch (the code checks first).
+          - "-weak_framework"
+          - "BackgroundTasks"
           - "-framework"
           - "ShinsouKit"
         LD_RUNPATH_SEARCH_PATHS:

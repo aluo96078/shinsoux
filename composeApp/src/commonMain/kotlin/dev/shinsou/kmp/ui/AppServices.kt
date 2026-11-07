@@ -511,6 +511,12 @@ interface ShinsouAppServices {
 
     fun requestNotificationPermission() = Unit
 
+    /** True when a platform setting the user can change (Android battery optimization) may stop background downloads. */
+    fun backgroundDownloadsRestricted(): Boolean = false
+
+    /** Opens the setting that lifts [backgroundDownloadsRestricted]. */
+    fun openBackgroundDownloadSettings() = Unit
+
     suspend fun authenticate(reason: String): Boolean = false
 
     /** Called after common navigation has applied the event. */
@@ -899,6 +905,9 @@ interface ContentCallbacks {
     suspend fun retryDownload(itemId: String) = Unit
 
     suspend fun removeDownload(itemId: String) = Unit
+
+    /** Removes a queue entry unless it finished downloading by the time the removal runs. */
+    suspend fun removeUnfinishedDownload(itemId: String) = removeDownload(itemId)
 
     suspend fun reorderDownloads(orderedIds: List<String>) = Unit
 

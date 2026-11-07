@@ -21,8 +21,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -98,10 +96,17 @@ internal class AndroidAppRuntime private constructor(context: Context) {
     /** Starts the core once per process; later activities only reattach. */
     suspend fun start() {
         if (progressPublished.compareAndSet(false, true)) {
+            AndroidBackgroundDownloads.systemStop = {
+                val stoppedRun = AndroidBackgroundDownloads.currentRun()
+                scope.launch {
+                    composition.backgroundDownloads.suspendForSystem(
+                        stillApplies = { AndroidBackgroundDownloads.currentRun() == stoppedRun },
+                    )
+                }
+            }
             scope.launch {
-                combine(repository.snapshot, composition.browse.extensionDownloadsV2, ::downloadProgress)
-                    .distinctUntilChanged()
-                    .collect { progress -> AndroidDownloadService.publish(applicationContext, progress, strings()) }
+                composition.backgroundDownloads.status
+                    .collect { progress -> AndroidBackgroundDownloads.publish(applicationContext, progress, strings()) }
             }
         }
         if (!started.compareAndSet(false, true)) return

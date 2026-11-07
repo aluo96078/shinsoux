@@ -272,6 +272,8 @@ public class LocalContentManager(
 
     override suspend fun removeDownload(itemId: String) = remote.removeDownload(itemId)
 
+    override suspend fun removeUnfinishedDownload(itemId: String) = remote.removeUnfinishedDownload(itemId)
+
     override suspend fun reorderDownloads(orderedIds: List<String>) = remote.reorderDownloads(orderedIds)
 
     override suspend fun clearCompletedDownloads() = remote.clearCompletedDownloads()

@@ -352,12 +352,15 @@ private fun ShinsouAppContent(
     var selectedLibraryIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedChapterIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     // Paused rows survive a restart, so the toggle must start from them rather than "running".
-    var downloadsPaused by remember {
-        mutableStateOf(
-            snapshot.downloadQueue.any { it.state == DownloadState.PAUSED } &&
-                snapshot.downloadQueue.none { it.state == DownloadState.QUEUED || it.state == DownloadState.DOWNLOADING },
-        )
+    val novelDownloadStates by appServices.browse.extensionDownloadsV2.collectAsState()
+    // Follows the queues, so a pause or resume made by the system (background limits) shows too.
+    val queuesPaused = remember(snapshot.downloadQueue, novelDownloadStates) {
+        val states = snapshot.downloadQueue.map { it.state } + novelDownloadStates.map { it.state }
+        states.any { it == DownloadState.PAUSED } &&
+            states.none { it == DownloadState.QUEUED || it == DownloadState.DOWNLOADING }
     }
+    var downloadsPaused by remember { mutableStateOf(queuesPaused) }
+    LaunchedEffect(queuesPaused) { downloadsPaused = queuesPaused }
     val securityCapabilities = appServices.securityCapabilities
     val appLockAuthenticationAvailable = securityCapabilities.appLock.available
     val effectiveAppLockEnabled = securityFeatureEnabled(
@@ -2997,7 +3000,9 @@ private fun MoreDestinationPane(
     }
     var settingsNestedBackAvailable by remember(destination) { mutableStateOf(false) }
     var handledSystemBackRequest by remember(destination) { mutableStateOf(systemBackRequest) }
-    val nestedBackAvailable = destination == MoreDestination.Settings && settingsNestedBackAvailable
+    var openedDownloadWork by remember(destination) { mutableStateOf<String?>(null) }
+    val nestedBackAvailable = (destination == MoreDestination.Settings && settingsNestedBackAvailable) ||
+        (destination == MoreDestination.Downloads && openedDownloadWork != null)
     val currentNestedBackCallback = rememberUpdatedState(onNestedBackAvailabilityChanged)
     LaunchedEffect(nestedBackAvailable) {
         currentNestedBackCallback.value(nestedBackAvailable)
@@ -3017,14 +3022,33 @@ private fun MoreDestinationPane(
         // section is open.  Do not let this parent observe the transient state change
         // and pop the whole More destination in the same frame; that briefly reveals
         // the parent screen during a return gesture.
-        if (destination != MoreDestination.Settings) onBack()
+        when {
+            destination == MoreDestination.Settings -> Unit
+            // Back from one title's chapters returns to the title list first.
+            destination == MoreDestination.Downloads && openedDownloadWork != null -> openedDownloadWork = null
+            else -> onBack()
+        }
     }
 
     val extensionDownloads by appServices.browse.extensionDownloadsV2.collectAsState()
+    var backgroundDownloadsRestricted by remember(destination) { mutableStateOf(false) }
+    if (destination == MoreDestination.Downloads) {
+        // Re-checked while the screen is open, so returning from the system setting updates it.
+        LaunchedEffect(appServices) {
+            while (true) {
+                backgroundDownloadsRestricted = appServices.backgroundDownloadsRestricted()
+                kotlinx.coroutines.delay(2_000)
+            }
+        }
+    }
     when (destination) {
         MoreDestination.Downloads -> DownloadsScreen(
             queue = snapshot.downloadQueue.filter { it.visibleInQueue },
             extensionQueue = extensionDownloads,
+            openedWorkKey = openedDownloadWork,
+            onOpenWork = { openedDownloadWork = it },
+            backgroundRestricted = backgroundDownloadsRestricted,
+            onLiftBackgroundRestriction = appServices::openBackgroundDownloadSettings,
             onRetryExtension = { id -> mutate { appServices.browse.retryExtensionDownloadV2(id) } },
             onRemoveExtension = { id -> mutate { appServices.browse.removeExtensionDownloadV2(id) } },
             mangaById = snapshot.mangas.associateBy { it.id },
@@ -3042,6 +3066,7 @@ private fun MoreDestinationPane(
                 mutate { appServices.content.retryDownload(id) }
             },
             onRemove = { mutate { appServices.content.removeDownload(it) } },
+            onRemoveUnfinished = { mutate { appServices.content.removeUnfinishedDownload(it) } },
             onMove = { id, delta ->
                 val ordered = snapshot.downloadQueue
                     .filter { it.visibleInQueue }

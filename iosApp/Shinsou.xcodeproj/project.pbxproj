@@ -368,6 +368,8 @@
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
+					"-weak_framework",
+					BackgroundTasks,
 					"-framework",
 					ShinsouKit,
 				);
@@ -474,6 +476,8 @@
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
+					"-weak_framework",
+					BackgroundTasks,
 					"-framework",
 					ShinsouKit,
 				);

@@ -25,12 +25,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
+import platform.Foundation.NSLocale
+import platform.Foundation.preferredLanguages
 import platform.UIKit.UIViewController
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.Platform
@@ -114,6 +115,11 @@ public fun handleSystemBackGestureSettled(committed: Boolean): Boolean =
 /** Called synchronously from the SwiftUI App initializer, before any suspend startup work. */
 public fun registerAutomaticBackupBackgroundTask(): Boolean =
     IosApplicationContainer.autoBackupScheduler.register()
+
+/** Called synchronously from the SwiftUI App initializer, like the backup task above. */
+public fun registerBackgroundDownloadTasks() {
+    IosApplicationContainer.registerBackgroundDownloadTasks()
+}
 
 /** Re-submits the earliest-begin-date hint when the scene moves to the background. */
 public fun scheduleAutomaticBackupBackgroundTask(): Boolean =
@@ -199,13 +205,24 @@ internal object IosApplicationContainer {
     )
 
     private val downloadKeeper = IosDownloadBackgroundKeeper(
-        browse = composition.browse,
-        mangaQueue = repository.snapshot
-            .map { it.downloadQueue }
-            .stateIn(applicationScope, SharingStarted.Eagerly, repository.currentSnapshot.downloadQueue),
-        pauseManga = composition.content::pauseDownloads,
+        downloads = composition.backgroundDownloads,
         scope = applicationScope,
+        startApp = {
+            start()
+            composition.awaitStartup()
+        },
+        strings = {
+            val preference = repository.currentSnapshot.settings.general.languagePreference
+            val tag = preference
+                ?.takeUnless { it.equals("system", ignoreCase = true) }
+                ?: (NSLocale.preferredLanguages.firstOrNull() as? String)
+                ?: "en"
+            shinsouStringsFor(tag)
+        },
     )
+
+    /** Called synchronously at launch, before the app finishes launching. */
+    fun registerBackgroundDownloadTasks() = downloadKeeper.registerTasks()
 
     private var started = false
 
@@ -217,7 +234,7 @@ internal object IosApplicationContainer {
         }
     }
 
-    suspend fun start() = startupMutex.withLock {
+    suspend fun start(): Unit = startupMutex.withLock {
         if (started) return@withLock
         composition.start()
         downloadKeeper.start()

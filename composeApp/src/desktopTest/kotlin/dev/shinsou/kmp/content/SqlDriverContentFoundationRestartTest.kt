@@ -143,6 +143,49 @@ class SqlDriverContentFoundationRestartTest {
     }
 
     @Test
+    fun publicationAndAcquisitionRowsKeepOnlyTheOutlineAndOlderFullRowsStillRead() {
+        withDatabase("content-publication-outline") { database ->
+            val driver = driver(database)
+            val blobs = SqlDriverContentBlobStore(
+                driver,
+                blobIdFactory = { BLOB_ID },
+                commitTokenFactory = { "outline-token" },
+                storeInstanceIdFactory = { "outline-store" },
+                clock = { 100L },
+            )
+            val receipt = blobs.put("durable body".encodeToByteArray(), "text/plain")
+            val fixture = publicationFixture(receipt.reference)
+            transactionStore(driver, blobs).commit(
+                ContentCommitBatch(
+                    commitId = "outline-publication",
+                    receipts = listOf(receipt),
+                    attachments = listOf(fixture.attachment),
+                    publications = listOf(ContentPublicationMutation(fixture.publication)),
+                    rightsGrants = listOf(ContentRightsGrantMutation(fixture.grant)),
+                ),
+            )
+            // A long series used to overflow these rows: each repeated every chapter's manifest.
+            val publicationJson = scalarString(driver, "SELECT publication_json FROM content_publications")
+            val acquisitionJson = scalarString(driver, "SELECT acquisition_json FROM content_acquisitions")
+            assertFalse(MANIFEST_ID in publicationJson)
+            assertFalse(MANIFEST_ID in acquisitionJson)
+            assertTrue(MANIFEST_ID in scalarString(driver, "SELECT unit_json FROM content_units"))
+            assertEquals(fixture.publication, transactionStore(driver, blobs).findPublicationDirect(fixture.publication.key))
+
+            // Rows written before the outline format still carry the manifests and read the same.
+            val json = Json { encodeDefaults = true }
+            driver.execute(null, "UPDATE content_publications SET publication_json = ?", 1) {
+                bindString(0, json.encodeToString(Publication.serializer(), fixture.publication))
+            }.value
+            driver.execute(null, "UPDATE content_acquisitions SET acquisition_json = ?", 1) {
+                bindString(0, json.encodeToString(Acquisition.serializer(), fixture.publication.acquisitions.single()))
+            }.value
+            assertEquals(fixture.publication, transactionStore(driver, blobs).findPublicationDirect(fixture.publication.key))
+            driver.close()
+        }
+    }
+
+    @Test
     fun blobAttachmentTypedPublicationAndRightsGrantSurviveReopenAndStayGcProtected() {
         withDatabase("content-foundation-restart") { database ->
             val body = "durable body".encodeToByteArray()

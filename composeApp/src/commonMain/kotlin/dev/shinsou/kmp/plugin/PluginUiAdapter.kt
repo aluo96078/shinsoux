@@ -1008,6 +1008,17 @@ public class PluginBrowseAdapter(
         extensionDownloadQueueV2.enqueue(selections)
     }
 
+    /** System pause of exactly [ids] in the novel queue. */
+    public suspend fun pauseExtensionDownloadsForSystemV2(ids: Set<String>): Unit =
+        extensionDownloadQueueV2.pauseForSystem(ids)
+
+    /** Resumes only [ids] (null: all) after a system pause. */
+    public suspend fun resumeExtensionDownloadsAfterSystemV2(ids: Set<String>?): Unit =
+        extensionDownloadQueueV2.resumeAfterSystem(ids)
+
+    /** Writes the novel queue to disk now; throws if it could not be saved. */
+    public suspend fun flushExtensionDownloadsV2(): Unit = extensionDownloadQueueV2.flush()
+
     override suspend fun retryExtensionDownloadV2(id: String) = extensionDownloadQueueV2.retry(id)
 
     override suspend fun removeExtensionDownloadV2(id: String) = extensionDownloadQueueV2.remove(id)
@@ -2751,6 +2762,7 @@ public class PluginContentAdapter(
         delegate.enqueueDownload(mangaId, chapterId)
     override suspend fun retryDownload(itemId: String) = delegate.retryDownload(itemId)
     override suspend fun removeDownload(itemId: String) = delegate.removeDownload(itemId)
+    override suspend fun removeUnfinishedDownload(itemId: String) = delegate.removeUnfinishedDownload(itemId)
     override suspend fun reorderDownloads(orderedIds: List<String>) = delegate.reorderDownloads(orderedIds)
     override suspend fun clearCompletedDownloads() = delegate.clearCompletedDownloads()
     override suspend fun pauseDownloads(paused: Boolean) = delegate.pauseDownloads(paused)

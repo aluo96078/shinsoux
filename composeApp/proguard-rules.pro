@@ -30,6 +30,11 @@
 -keep interface dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$Kernel32Library { *; }
 -keep class dev.shinsou.kmp.desktop.JnaWindowsDpapiApi$DataBlob { *; }
 
+# Background downloads hold an NSProcessInfo activity through the Objective-C runtime;
+# objc_msgSend and friends are resolved from these method names.
+-keep interface dev.shinsou.kmp.desktop.MacOsActivityKeepAwake$ObjC { *; }
+-keep interface dev.shinsou.kmp.desktop.WindowsExecutionStateKeepAwake$Kernel32 { *; }
+
 # BiliManga serves page images as AVIF. Compose Desktop's Skia decoder does not
 # understand that format, so macOS decodes it through ImageIO/CoreGraphics via
 # JNA. Preserve native method and Structure field names in release images.

@@ -6,6 +6,8 @@
 	<array>
 		<string>dev.aluo.shinsoux.backup</string>
 		<string>dev.aluo.shinsoux.update</string>
+		<string>dev.aluo.shinsoux.downloads</string>
+		<string>dev.aluo.shinsoux.downloads.catchup</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

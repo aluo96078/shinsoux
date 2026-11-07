@@ -158,6 +158,7 @@ import dev.shinsou.kmp.ui.portability.ShuYueSecretImportAction
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.RightsDecision
 import dev.shinsou.kmp.rights.RightsScope
+import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
 import kotlin.time.Clock
 
 /** Shared dependency graph used unchanged by Android, iOS and Desktop. */
@@ -773,6 +774,32 @@ public class ShinsouComposition(
 
     public val content: ContentCallbacks = localContent
 
+    /** Both download queues as one piece of background work for the platform keep-alives. */
+    public val backgroundDownloads: BackgroundDownloadCoordinator = BackgroundDownloadCoordinator(
+        snapshot = repository.snapshot,
+        novels = browse.extensionDownloadsV2,
+        // Each change is on disk before the coordinator updates its own mark, so the two never
+        // disagree after the process is killed.
+        pauseManga = { ids ->
+            downloads.pauseForSystem(ids)
+            repository.flushPersistence()
+        },
+        resumeManga = { ids ->
+            downloads.resumeAfterSystem(ids)
+            repository.flushPersistence()
+        },
+        pauseNovels = { ids ->
+            browse.pauseExtensionDownloadsForSystemV2(ids)
+            browse.flushExtensionDownloadsV2()
+        },
+        resumeNovels = { ids ->
+            browse.resumeExtensionDownloadsAfterSystemV2(ids)
+            browse.flushExtensionDownloadsV2()
+        },
+        fileSystem = fileSystem,
+        scope = trackingScope,
+    )
+
     /** App-private, recoverable backups shared by foreground UI and platform schedulers. */
     public val autoBackups: AutoBackupService = autoBackupService ?: AutoBackupService(
         repository = repository,
@@ -794,6 +821,7 @@ public class ShinsouComposition(
         scheduleContentOutboxDrain()
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
+            val stopsAtStart = backgroundDownloads.stopCount()
             try {
                 // Shown (and kept alive by the platform download service) right away; the
                 // downloads themselves start after browse.refresh() below has loaded the sources.
@@ -803,6 +831,9 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // Same as the manga queue: a damaged saved queue just starts empty.
             }
+            // Its downloads are still held back here; a system stop that came while it loaded
+            // pauses them before they can start.
+            backgroundDownloads.novelQueueRestored()
             try {
                 legacyPublicationStartupMigration?.migrate(repository.currentSnapshot)
             } catch (cancelled: CancellationException) {
@@ -879,11 +910,34 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // A corrupt queue entry must not prevent the rest of the app from opening.
             }
+            // Queues the system stopped before the process died pick up where they left off,
+            // unless the system stopped them again while this startup was running.
+            backgroundDownloads.resumeAfterSystem(unlessStoppedSince = stopsAtStart)
         }
+    }
+
+    /** True once start() has run and both download queues are restored; before that an empty queue means nothing. */
+    public fun isStartupComplete(): Boolean = startupHydrationJob?.isCompleted == true
+
+    /** Suspends until start()'s background hydration (both download queues restored) has finished. */
+    public suspend fun awaitStartup() {
+        startupHydrationJob?.join()
     }
 
     /** Performs immediate catch-up and restores realtime delivery after a platform foreground edge. */
     public suspend fun onForeground() {
+        // Returning to the app resumes what the system paused. During startup the queues are not
+        // restored yet, so the resume waits for it; a system stop after this moment still wins.
+        val startup = startupHydrationJob
+        if (startup == null || startup.isCompleted) {
+            backgroundDownloads.resumeAfterSystem()
+        } else {
+            val stopsNow = backgroundDownloads.stopCount()
+            trackingScope.launch {
+                startup.join()
+                backgroundDownloads.resumeAfterSystem(unlessStoppedSince = stopsNow)
+            }
+        }
         try {
             browse.resumeExtensionDownloadsAfterFailuresV2()
         } catch (cancelled: CancellationException) {

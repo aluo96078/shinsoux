@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
@@ -233,6 +234,95 @@ class ExtensionDownloadQueueV2Test {
     }
 
     @Test
+    fun flushSavesAPauseImmediately() = runBlocking {
+        val store = object : ExtensionDownloadQueueStoreV2 {
+            var saved: List<ExtensionDownloadRecordV2> = emptyList()
+            override suspend fun load() = saved
+            override suspend fun save(records: List<ExtensionDownloadRecordV2>) { saved = records }
+        }
+        val scope = CoroutineScope(SupervisorJob())
+        val queue = ExtensionDownloadQueueV2(materialize = { }, scope = scope, store = store, startOpen = false)
+        queue.restore { it.toSelection() }
+        queue.enqueue(listOf(selection("a")))
+        queue.setPaused(true)
+        // No waiting for the debounce: a pause the system made must be on disk before it returns.
+        queue.flush()
+        assertEquals(listOf(DownloadState.PAUSED), store.saved.map { it.state })
+        scope.cancel()
+    }
+
+    @Test
+    fun aSlowOlderSaveNeverOverwritesANewerFlush() = runBlocking {
+        val firstSaveStarted = CompletableDeferred<Unit>()
+        val releaseFirstSave = CompletableDeferred<Unit>()
+        val store = object : ExtensionDownloadQueueStoreV2 {
+            var saved: List<ExtensionDownloadRecordV2> = emptyList()
+            var saves = 0
+            override suspend fun load() = saved
+            override suspend fun save(records: List<ExtensionDownloadRecordV2>) {
+                if (saves++ == 0) {
+                    firstSaveStarted.complete(Unit)
+                    releaseFirstSave.await()
+                }
+                saved = records
+            }
+        }
+        val scope = CoroutineScope(SupervisorJob())
+        val queue = ExtensionDownloadQueueV2(materialize = { }, scope = scope, store = store, startOpen = false)
+        queue.restore { it.toSelection() }
+        queue.enqueue(listOf(selection("a")))
+        queue.setPaused(true)
+        firstSaveStarted.await() // the debounced writer is stuck saving PAUSED
+        queue.setPaused(false)
+        val flushed = scope.launch { queue.flush() }
+        kotlinx.coroutines.delay(50)
+        releaseFirstSave.complete(Unit)
+        flushed.join()
+
+        assertEquals(listOf(DownloadState.QUEUED), store.saved.map { it.state })
+        scope.cancel()
+    }
+
+    @Test
+    fun flushFailsWhenTheQueueWasNeverRestored() = runBlocking {
+        val store = object : ExtensionDownloadQueueStoreV2 {
+            override suspend fun load(): List<ExtensionDownloadRecordV2> = error("unreadable")
+            override suspend fun save(records: List<ExtensionDownloadRecordV2>) = error("must not save")
+        }
+        val scope = CoroutineScope(SupervisorJob())
+        val queue = ExtensionDownloadQueueV2(materialize = { }, scope = scope, store = store, startOpen = false)
+        queue.restore { it.toSelection() }
+
+        assertTrue(runCatching { queue.flush() }.isFailure)
+        scope.cancel()
+    }
+
+    @Test
+    fun aSystemPauseStopsOnlyTheGivenEntriesAndTheyStayPaused() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val queue = ExtensionDownloadQueueV2(
+            materialize = { if (it.unit.remoteId == "a" && !release.isCompleted) { started.complete(Unit); release.await() } },
+            scope = scope,
+        )
+        queue.enqueue(listOf(selection("a"), selection("b")))
+        started.await()
+        val a = queue.entries.value.first { it.remoteUnitId == "a" }.id
+        val b = queue.entries.value.first { it.remoteUnitId == "b" }.id
+        queue.pauseForSystem(setOf(a, b))
+        kotlinx.coroutines.delay(100)
+        // The cancelled download does not fall back to "queued" and start again.
+        assertEquals(mapOf("a" to DownloadState.PAUSED, "b" to DownloadState.PAUSED), queue.states())
+
+        release.complete(Unit)
+        queue.resumeAfterSystem(setOf(a, b))
+        queue.awaitSettled()
+        assertEquals(mapOf("a" to DownloadState.DOWNLOADED, "b" to DownloadState.DOWNLOADED), queue.states())
+        scope.cancel()
+    }
+
+    @Test
     fun aClosedQueueHoldsWorkUntilOpened() = runBlocking {
         val scope = CoroutineScope(SupervisorJob())
         val fetched = mutableListOf<String>()
@@ -247,6 +337,9 @@ class ExtensionDownloadQueueV2Test {
         assertEquals(listOf("a"), fetched)
         scope.cancel()
     }
+
+    private fun ExtensionDownloadRecordV2.toSelection() =
+        ExtensionUnitSelectionV2(sourceKey, remotePublicationId, publicationTitle, unit, owner)
 
     private companion object {
         val SOURCE_KEY = SourceKey(2, "fixture.extension", "opaque-source")

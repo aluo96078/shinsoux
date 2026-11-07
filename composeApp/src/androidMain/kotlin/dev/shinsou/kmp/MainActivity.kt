@@ -58,6 +58,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -138,6 +139,15 @@ class MainActivity : FragmentActivity() {
         }
         platformScope.launch { runtime.start() }
         platformScope.launch {
+            // Without notifications the download progress is invisible and the work looks
+            // ignorable to the system; ask once per process, when downloads first start.
+            composition.backgroundDownloads.status.first { it != null }
+            if (!notificationsRequested) {
+                notificationsRequested = true
+                if (!appServices.notificationsAllowed()) appServices.requestNotificationPermission()
+            }
+        }
+        platformScope.launch {
             repository.snapshot
                 .map { snapshot ->
                     snapshot.backupState.let { state ->
@@ -199,8 +209,9 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         if (::appServices.isInitialized) appServices.emitForeground()
+        AndroidBackgroundDownloads.newRun()
         if (::composition.isInitialized) platformScope.launch { composition.onForeground() }
-        AndroidDownloadService.ensureRunning(applicationContext)
+        AndroidBackgroundDownloads.ensureRunning(applicationContext)
     }
 
     override fun onStop() {
@@ -512,6 +523,12 @@ class MainActivity : FragmentActivity() {
             }.distinct()
             return values.ifEmpty { listOf("*/*") }.toTypedArray()
         }
+    }
+
+    private companion object {
+        /** Per process: the system itself stops asking after the user declines twice. */
+        @Volatile
+        var notificationsRequested = false
     }
 }
 

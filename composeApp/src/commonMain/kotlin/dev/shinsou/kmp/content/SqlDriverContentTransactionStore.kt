@@ -921,7 +921,8 @@ public class SqlDriverContentTransactionStore<D : Any>(
             TABLE_PUBLICATIONS,
             "publication_json WHERE publication_id = '${sqlLiteral(key.value)}'",
         ).singleOrNull() ?: return null
-        val publication = decodeJson(Publication.serializer(), requireNotNull(row[0]))
+        // Older rows may still carry every manifest; either way only the outline is authoritative here.
+        val publication = decodeJson(Publication.serializer(), requireNotNull(row[0])).withoutManifestRevisions()
         check(publication.key == key) { "Publication key/body mismatch" }
 
         val acquisitions = queryRows(
@@ -932,6 +933,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
             val acquisitionId = requireNotNull(acquisitionRow[0])
             check(requireNotNull(acquisitionRow[1]) == key.value) { "Acquisition publication scope mismatch" }
             val acquisition = decodeJson(Acquisition.serializer(), requireNotNull(acquisitionRow[2]))
+                .withoutManifestRevisions()
             check(acquisition.id == acquisitionId) { "Acquisition key/body mismatch" }
             acquisitionId to acquisition
         }
@@ -962,12 +964,16 @@ public class SqlDriverContentTransactionStore<D : Any>(
             val acquisitionId = requireNotNull(unitRow[2])
             val unit = decodeJson(PublicationUnit.serializer(), requireNotNull(unitRow[3]))
             check(unit.key.value == unitId && unit.key.publicationKey == key) { "Unit key/body mismatch" }
-            check(acquisitions[acquisitionId]?.units?.any { it == unit } == true) {
+            val outline = unit.copy(manifestRevisions = emptyList())
+            check(acquisitions[acquisitionId]?.units?.any { it == outline } == true) {
                 "Unit acquisition scope mismatch"
             }
             unitId to unit
         }
-        check(units == publication.acquisitions.flatMap(Acquisition::units).associateBy { it.key.value }) {
+        check(
+            units.mapValues { (_, unit) -> unit.copy(manifestRevisions = emptyList()) } ==
+                publication.acquisitions.flatMap(Acquisition::units).associateBy { it.key.value },
+        ) {
             "Publication unit ledger mismatch"
         }
 
@@ -984,7 +990,13 @@ public class SqlDriverContentTransactionStore<D : Any>(
             link
         }
         check(workLinks == publication.workLinks) { "Publication work-link ledger mismatch" }
-        return publication
+        // Manifests live only in the unit rows, so the outline rows stay small however many chapters
+        // are downloaded.
+        return publication.copy(
+            acquisitions = publication.acquisitions.map { acquisition ->
+                acquisition.copy(units = acquisition.units.map { units.getValue(it.key.value) })
+            },
+        )
     }
 
     private fun findPublicationReplicaCursor(
@@ -1431,14 +1443,14 @@ public class SqlDriverContentTransactionStore<D : Any>(
                     2,
                 ) {
                     bindString(0, publication.key.value)
-                    bindString(1, encodeJson(Publication.serializer(), publication))
+                    bindString(1, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
                 }
             } else {
                 execute(
                     "UPDATE $TABLE_PUBLICATIONS SET publication_json = ? WHERE publication_id = ?",
                     2,
                 ) {
-                    bindString(0, encodeJson(Publication.serializer(), publication))
+                    bindString(0, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
                     bindString(1, publication.key.value)
                 }
             }
@@ -1458,7 +1470,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
                     ) {
                         bindString(0, acquisition.id)
                         bindString(1, publication.key.value)
-                        bindString(2, encodeJson(Acquisition.serializer(), acquisition))
+                        bindString(2, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
                     }
                 } else if (durableAcquisition != acquisition) {
                     execute(
@@ -1468,7 +1480,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
                         """.trimIndent(),
                         3,
                     ) {
-                        bindString(0, encodeJson(Acquisition.serializer(), acquisition))
+                        bindString(0, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
                         bindString(1, acquisition.id)
                         bindString(2, publication.key.value)
                     }
@@ -2573,3 +2585,7 @@ private val ContentTransactionJson = Json {
     ignoreUnknownKeys = false
     allowStructuredMapKeys = true
 }
+
+/** Publication and acquisition rows store this outline; each unit row holds its own manifests. */
+private fun Acquisition.withoutManifestRevisions(): Acquisition =
+    copy(units = units.map { unit -> unit.copy(manifestRevisions = emptyList()) })

@@ -78,6 +78,7 @@ public class ExtensionDownloadQueueV2(
     public val entries: StateFlow<List<ExtensionDownloadEntryV2>> = _entries.asStateFlow()
 
     private val lock = Mutex()
+    private val saving = Mutex()
     private val selections = mutableMapOf<String, ExtensionUnitSelectionV2>()
     private var worker: Job? = null
     private var activeId: String? = null
@@ -145,29 +146,49 @@ public class ExtensionDownloadQueueV2(
     @OptIn(FlowPreview::class)
     private suspend fun persist(store: ExtensionDownloadQueueStoreV2) {
         // Debounced: a chapter finishing every second must not rewrite the file every second.
-        combine(_entries, saveRequests) { list, _ -> list }.debounce(PERSIST_DEBOUNCE_MS).collect { list ->
-            val records = lock.withLock {
-                list.mapNotNull { entry ->
-                    val selection = selections[entry.id] ?: return@mapNotNull null
-                    ExtensionDownloadRecordV2(
-                        sourceKey = selection.sourceKey,
-                        remotePublicationId = selection.remotePublicationId,
-                        publicationTitle = selection.publicationTitle,
-                        unit = selection.unit,
-                        state = entry.state,
-                        errorMessage = entry.errorMessage,
-                        autoPaused = pausedAfterFailures &&
-                            (entry.id in failureStreak || entry.state == DownloadState.PAUSED),
-                    )
-                }.let { live ->
-                    // Saved records whose unit is live again are represented by the live entry.
-                    val liveKeys = live.mapTo(mutableSetOf()) { it.key() }
-                    live + unissued.filterNot { it.key() in liveKeys }.distinctBy { it.key() }
-                }
-            }
-            runCatching { store.save(records) }
+        combine(_entries, saveRequests) { list, _ -> list }.debounce(PERSIST_DEBOUNCE_MS).collect {
+            runCatching { saveNow(store) }
         }
     }
+
+    /**
+     * Saves are serialized and each one captures the queue inside that order, so a slow older
+     * save can never land after (and overwrite) a newer one.
+     */
+    private suspend fun saveNow(store: ExtensionDownloadQueueStoreV2) = saving.withLock {
+        store.save(lock.withLock { recordsLocked(_entries.value) })
+    }
+
+    /**
+     * Saves the queue now instead of after the debounce; throws if it could not be saved. Used
+     * where a caller must know the current state is on disk (a pause the system made).
+     */
+    public suspend fun flush() {
+        val target = store ?: return
+        // Nothing was restored (or the read failed): saving now would replace the saved queue,
+        // and reporting success would tell the caller a state is saved that is not.
+        check(lock.withLock { persisting }) { "The download queue was not restored" }
+        saveNow(target)
+    }
+
+    private fun recordsLocked(list: List<ExtensionDownloadEntryV2>): List<ExtensionDownloadRecordV2> =
+        list.mapNotNull { entry ->
+            val selection = selections[entry.id] ?: return@mapNotNull null
+            ExtensionDownloadRecordV2(
+                sourceKey = selection.sourceKey,
+                remotePublicationId = selection.remotePublicationId,
+                publicationTitle = selection.publicationTitle,
+                unit = selection.unit,
+                state = entry.state,
+                errorMessage = entry.errorMessage,
+                autoPaused = pausedAfterFailures &&
+                    (entry.id in failureStreak || entry.state == DownloadState.PAUSED),
+            )
+        }.let { live ->
+            // Saved records whose unit is live again are represented by the live entry.
+            val liveKeys = live.mapTo(mutableSetOf()) { it.key() }
+            live + unissued.filterNot { it.key() in liveKeys }.distinctBy { it.key() }
+        }
 
     public suspend fun enqueue(units: List<ExtensionUnitSelectionV2>) {
         lock.withLock {
@@ -283,6 +304,31 @@ public class ExtensionDownloadQueueV2(
         }
     }
 
+    /**
+     * A pause the system asked for: exactly [ids] (saved by the caller beforehand) stop. The
+     * queue-wide pause flag is left alone, so a pause the user chose is never lifted by recovery.
+     */
+    public suspend fun pauseForSystem(ids: Set<String>): Unit = lock.withLock {
+        _entries.update { list ->
+            list.map {
+                if (it.id in ids && (it.state == DownloadState.QUEUED || it.state == DownloadState.DOWNLOADING)) {
+                    it.copy(state = DownloadState.PAUSED)
+                } else it
+            }
+        }
+        if (activeId in ids) activeJob?.cancel()
+    }
+
+    /** Undoes [pauseForSystem] for [ids] (null: every paused entry); entries the user paused stay. */
+    public suspend fun resumeAfterSystem(ids: Set<String>?): Unit = lock.withLock {
+        _entries.update { list ->
+            list.map {
+                if (it.state == DownloadState.PAUSED && (ids == null || it.id in ids)) it.copy(state = DownloadState.QUEUED) else it
+            }
+        }
+        startWorkerLocked()
+    }
+
     private fun startWorkerLocked() {
         if (paused || worker?.isActive == true) return
         worker = scope.launch { drain() }
@@ -349,7 +395,9 @@ public class ExtensionDownloadQueueV2(
                         when {
                             selections[id]?.let { runCatching { isStored(it) }.getOrDefault(false) } == true ->
                                 DownloadState.DOWNLOADED
-                            paused -> DownloadState.PAUSED
+                            // Paused for the whole queue, or this entry alone (a system pause).
+                            paused || _entries.value.firstOrNull { it.id == id }?.state == DownloadState.PAUSED ->
+                                DownloadState.PAUSED
                             else -> DownloadState.QUEUED
                         },
                     )

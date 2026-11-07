@@ -9,6 +9,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.files.AppFileSystem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -95,6 +96,266 @@ class DownloadManagerTest {
         manager.awaitIdle()
         assertEquals(DownloadState.ERROR, repository.currentSnapshot.downloadQueue.single().state)
         assertTrue(repository.currentSnapshot.downloadQueue.single().errorMessage?.contains("boom") == true)
+        manager.close()
+    }
+
+    @Test
+    fun bulkRemovalKeepsAChapterThatFinishedFirst() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One"), Chapter(id = 4, mangaId = 1, name = "Two")),
+            ),
+        )
+        val files = MemoryFileSystem()
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher { DownloadedPage(byteArrayOf(1, 2, 3), "image/jpeg") },
+            now = { 20 },
+        )
+        val finished = manager.enqueue(1, 3)
+        manager.awaitIdle()
+        // The bulk "remove waiting" was confirmed while this chapter was still downloading.
+        manager.removeUnfinished(finished.id)
+        assertEquals(DownloadState.DOWNLOADED, repository.currentSnapshot.downloadQueue.single().state)
+        assertEquals(1, manager.downloadedPages(1, 3).size)
+
+        manager.pauseAll(true)
+        val waiting = manager.enqueue(1, 4)
+        manager.removeUnfinished(waiting.id)
+        assertEquals(listOf(finished.id), repository.currentSnapshot.downloadQueue.map { it.id })
+        manager.close()
+    }
+
+    @Test
+    fun aChapterBeingRemovedIsNotStartedByAnotherCompletion() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One"), Chapter(id = 4, mangaId = 1, name = "Two")),
+            ),
+        )
+        val deleting = CompletableDeferred<Unit>()
+        val releaseDelete = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val started = mutableListOf<Long>()
+        val files = object : AppFileSystem by MemoryFileSystem() {
+            override suspend fun deleteTree(relativeDirectory: String): Boolean {
+                if (relativeDirectory == DownloadCompletionManifests.directory(1, 4)) {
+                    deleting.complete(Unit)
+                    releaseDelete.await()
+                }
+                return true
+            }
+        }
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, chapterId -> started += chapterId; listOf(DownloadPage(0, "page-$chapterId")) },
+            DownloadPageFetcher { page ->
+                if (page.url == "page-3") releaseFirst.await()
+                DownloadedPage(byteArrayOf(1), "image/jpeg")
+            },
+            now = { 20 },
+        )
+        repository.updateSettings { it.copy(downloads = it.downloads.copy(parallelDownloads = 1)) }
+        manager.enqueue(1, 3) // occupies the only slot
+        val second = manager.enqueue(1, 4)
+        val removal = backgroundScope.launch { manager.removeUnfinished(second.id) }
+        deleting.await()
+        releaseFirst.complete(Unit) // the first finishes and asks the scheduler for more work
+        manager.awaitIdle()
+        releaseDelete.complete(Unit)
+        removal.join()
+
+        assertEquals(listOf(3L), started)
+        assertEquals(1, repository.currentSnapshot.downloadQueue.size)
+        manager.close()
+    }
+
+    @Test
+    fun aSecondRemovalOfTheSameEntryWaitsForTheFirst() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One")),
+            ),
+        )
+        val deleting = CompletableDeferred<Unit>()
+        val releaseDelete = CompletableDeferred<Unit>()
+        var deletes = 0
+        val files = object : AppFileSystem by MemoryFileSystem() {
+            override suspend fun deleteTree(relativeDirectory: String): Boolean {
+                deletes++
+                deleting.complete(Unit)
+                releaseDelete.await()
+                return true
+            }
+        }
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher { DownloadedPage(byteArrayOf(1), "image/jpeg") },
+            now = { 20 },
+        )
+        manager.pauseAll(true)
+        val item = manager.enqueue(1, 3)
+        val first = backgroundScope.launch { manager.remove(item.id) }
+        deleting.await()
+        val second = backgroundScope.launch { manager.remove(item.id) }
+        testScheduler.advanceUntilIdle()
+        // The second call neither deletes on its own nor finishes before the first.
+        assertTrue(second.isActive)
+        releaseDelete.complete(Unit)
+        first.join()
+        second.join()
+
+        assertEquals(1, deletes)
+        assertTrue(repository.currentSnapshot.downloadQueue.isEmpty())
+        manager.close()
+    }
+
+    @Test
+    fun aCancelledOrFailedRemovalReleasesTheEntryAndReportsTheFailure() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One")),
+            ),
+        )
+        val deleting = CompletableDeferred<Unit>()
+        var mode = "block"
+        val files = object : AppFileSystem by MemoryFileSystem() {
+            override suspend fun deleteTree(relativeDirectory: String): Boolean = when (mode) {
+                "block" -> { deleting.complete(Unit); kotlinx.coroutines.awaitCancellation() }
+                "fail" -> error("disk unavailable")
+                else -> true
+            }
+        }
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher { DownloadedPage(byteArrayOf(1), "image/jpeg") },
+            now = { 20 },
+        )
+        manager.pauseAll(true)
+        val item = manager.enqueue(1, 3)
+
+        val cancelled = backgroundScope.launch { manager.remove(item.id) }
+        deleting.await()
+        cancelled.cancel()
+        cancelled.join()
+
+        // Not left reserved: a failing removal runs for real and its failure reaches the caller.
+        mode = "fail"
+        assertTrue(runCatching { manager.remove(item.id) }.isFailure)
+        mode = "ok"
+        manager.remove(item.id)
+        assertTrue(repository.currentSnapshot.downloadQueue.isEmpty())
+        manager.close()
+    }
+
+    @Test
+    fun aRemovalDuringPauseWaitsForTheWorkerItRemoves() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One"), Chapter(id = 4, mangaId = 1, name = "Two")),
+            ),
+        )
+        val fetching = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Unit>()
+        val manager = DownloadManager(
+            repository,
+            MemoryFileSystem(),
+            ChapterPageProvider { _, chapterId -> listOf(DownloadPage(0, "page-$chapterId")) },
+            DownloadPageFetcher { page ->
+                if (page.url == "page-4") {
+                    fetching.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        stopped.complete(Unit)
+                    }
+                }
+                DownloadedPage(byteArrayOf(1), "image/jpeg")
+            },
+            now = { 20 },
+        )
+        repository.updateSettings { it.copy(downloads = it.downloads.copy(parallelDownloads = 2)) }
+        manager.pauseAll(true)
+        val second = manager.enqueue(1, 4)
+        manager.pauseAll(false)
+        fetching.await()
+        // Pause and removal overlap; the removal must still find the worker and wait for it.
+        val pausing = backgroundScope.launch { manager.pauseAll(true) }
+        manager.removeUnfinished(second.id)
+        pausing.join()
+
+        assertTrue(stopped.isCompleted)
+        assertTrue(repository.currentSnapshot.downloadQueue.none { it.id == second.id })
+        manager.close()
+    }
+
+    @Test
+    fun pausingRightAfterEnqueueNeverStallsTheQueue() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = (1L..20L).map { Chapter(id = it, mangaId = 1, name = "C$it") },
+            ),
+        )
+        val manager = DownloadManager(
+            repository,
+            MemoryFileSystem(),
+            ChapterPageProvider { _, chapterId -> listOf(DownloadPage(0, "page-$chapterId")) },
+            DownloadPageFetcher { DownloadedPage(byteArrayOf(1), "image/jpeg") },
+            now = { 20 },
+        )
+        repository.updateSettings { it.copy(downloads = it.downloads.copy(parallelDownloads = 1)) }
+        // Cancel workers as close to their registration as possible, before most are dispatched.
+        for (chapter in 1L..20L) {
+            manager.enqueue(1, chapter)
+            manager.pauseAll(true)
+            manager.pauseAll(false)
+        }
+        manager.awaitIdle()
+
+        assertTrue(repository.currentSnapshot.downloadQueue.all { it.state == DownloadState.DOWNLOADED })
+        manager.close()
+    }
+
+    @Test
+    fun systemRecoveryNeverLiftsTheUsersPause() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(Chapter(id = 3, mangaId = 1, name = "One")),
+            ),
+        )
+        val manager = DownloadManager(
+            repository,
+            MemoryFileSystem(),
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher { DownloadedPage(byteArrayOf(1), "image/jpeg") },
+            now = { 20 },
+        )
+        manager.pauseAll(true)
+        val item = manager.enqueue(1, 3)
+        manager.pauseForSystem(setOf(item.id))
+        assertEquals(DownloadState.PAUSED, repository.currentSnapshot.downloadQueue.single().state)
+        manager.resumeAfterSystem(setOf(item.id))
+        manager.awaitIdle()
+        // Queued again, but the user's pause still holds it.
+        assertEquals(DownloadState.QUEUED, repository.currentSnapshot.downloadQueue.single().state)
+
+        manager.pauseAll(false)
+        manager.awaitIdle()
+        assertEquals(DownloadState.DOWNLOADED, repository.currentSnapshot.downloadQueue.single().state)
         manager.close()
     }
 

@@ -14,6 +14,7 @@ struct ShinsouIOSApp: App {
 
         // BGTaskScheduler registration must happen during launch, before Compose suspend startup.
         _ = MainViewControllerKt.registerAutomaticBackupBackgroundTask()
+        MainViewControllerKt.registerBackgroundDownloadTasks()
 
         // Match the original Shinsou singleton lifetime and prewarm from the durable KMP setting.
         // This runs independently of SwiftUI/Compose notification ordering on a cold launch.

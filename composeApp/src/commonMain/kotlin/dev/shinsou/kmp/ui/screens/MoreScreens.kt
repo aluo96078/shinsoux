@@ -37,6 +37,11 @@ import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -398,42 +403,131 @@ fun DownloadsScreen(
     extensionQueue: List<ExtensionDownloadEntryV2> = emptyList(),
     onRetryExtension: (String) -> Unit = {},
     onRemoveExtension: (String) -> Unit = {},
+    /** Bulk removal: skips a chapter that finished downloading before the removal ran. */
+    onRemoveUnfinished: (String) -> Unit = onRemove,
+    /** The title whose chapters are shown; null lists the titles. Owned by the caller so system back closes it. */
+    openedWorkKey: String? = null,
+    onOpenWork: (String?) -> Unit = {},
+    /** A platform setting (Android battery optimization) may stop downloads in the background. */
+    backgroundRestricted: Boolean = false,
+    onLiftBackgroundRestriction: () -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     var confirmClear by remember { mutableStateOf(false) }
+    /** Keys and the state they must still be in; re-checked on confirm, since downloads keep running. */
+    var pendingRemoval by remember { mutableStateOf<Pair<Set<String>, DownloadFilter>?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(DownloadFilter.ALL) }
-    val states = queue.map { it.state } + extensionQueue.map { it.state }
-    val activeCount = states.count { it == DownloadState.DOWNLOADING }
-    val waitingCount = states.count { it == DownloadState.QUEUED || it == DownloadState.PAUSED }
-    val doneCount = states.count { it == DownloadState.DOWNLOADED }
+    val unknownTitle = strings.text("Unknown title")
+    val unknownChapter = strings.text("Unknown chapter")
+    val lines = remember(queue, extensionQueue, mangaById, chapterById, unknownTitle, unknownChapter) {
+        queue.sortedBy { it.position }.map { item ->
+            DownloadLine(
+                workKey = "manga:${item.mangaId}",
+                workTitle = mangaById[item.mangaId]?.title ?: unknownTitle,
+                state = item.state,
+                manga = item,
+                chapterTitle = chapterById[item.chapterId]?.name ?: unknownChapter,
+            )
+        } + extensionQueue.map { entry ->
+            DownloadLine(
+                workKey = "extension:${entry.sourceKey.canonicalId}:${entry.remotePublicationId}",
+                workTitle = entry.publicationTitle,
+                state = entry.state,
+                extension = entry,
+                chapterTitle = entry.unitTitle,
+            )
+        }
+    }
+    val works = remember(lines) {
+        lines.groupBy { it.workKey }.map { (key, items) -> DownloadWork(key, items.first().workTitle, items) }
+            .sortedBy { work -> work.lines.minOf { it.state.attentionOrder() } }
+    }
+    val opened = openedWorkKey?.let { key -> works.firstOrNull { it.key == key } }
+    // The title left the queue (everything removed): fall back to the list.
+    LaunchedEffect(openedWorkKey, opened == null) {
+        if (openedWorkKey != null && opened == null) onOpenWork(null)
+    }
+    val scopeLines = opened?.lines ?: lines
+    fun retry(targets: List<DownloadLine>) = targets.filter { it.state == DownloadState.ERROR }.forEach { line ->
+        line.manga?.let { onRetry(it.id) }
+        line.extension?.let { onRetryExtension(it.id) }
+    }
+    fun remove(targets: List<DownloadLine>) = targets.forEach { line ->
+        line.manga?.let { onRemoveUnfinished(it.id) }
+        line.extension?.let { onRemoveExtension(it.id) }
+    }
+    val failed = scopeLines.filter { it.state == DownloadState.ERROR }
+    val waiting = scopeLines.filter { it.state.waiting() }
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
-            title = strings.downloads,
-            subtitle = strings.text("{0} active · {1} queued · {2} done", activeCount, waitingCount, doneCount),
-            leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
+            title = opened?.title ?: strings.downloads,
+            subtitle = scopeLines.summary(strings),
+            leading = {
+                IconButton(onClick = { if (opened != null) onOpenWork(null) else onBack() }) {
+                    Icon(Icons.Outlined.ArrowBack, strings.text("Back"))
+                }
+            },
             actions = {
                 IconButton(onClick = { onPauseChange(!paused) }) {
                     Icon(if (paused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause, if (paused) strings.text("Resume") else strings.text("Pause"))
                 }
-                if (
-                    queue.any { it.state == DownloadState.DOWNLOADED } ||
-                    extensionQueue.any { it.state == DownloadState.DOWNLOADED }
-                ) {
-                    IconButton(onClick = { confirmClear = true }) {
-                        Icon(Icons.Outlined.Delete, strings.text("Clear completed"))
+                if (failed.isNotEmpty()) {
+                    IconButton(onClick = { retry(failed) }) {
+                        Icon(Icons.Outlined.Refresh, strings.text("Retry failed"))
+                    }
+                }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Outlined.MoreVert, strings.text("More actions")) }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Retry failed")) },
+                            enabled = failed.isNotEmpty(),
+                            onClick = { menuOpen = false; retry(failed) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Remove failed")) },
+                            enabled = failed.isNotEmpty(),
+                            onClick = { menuOpen = false; pendingRemoval = failed.mapTo(hashSetOf()) { it.key } to DownloadFilter.FAILED },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Remove waiting")) },
+                            enabled = waiting.isNotEmpty(),
+                            onClick = { menuOpen = false; pendingRemoval = waiting.mapTo(hashSetOf()) { it.key } to DownloadFilter.IN_QUEUE },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Clear completed")) },
+                            enabled = opened == null && lines.any { it.state == DownloadState.DOWNLOADED },
+                            onClick = { menuOpen = false; confirmClear = true },
+                        )
                     }
                 }
             },
         )
-        if (queue.isEmpty() && extensionQueue.isEmpty()) {
+        if (lines.isEmpty()) {
             EmptyState(
                 title = strings.text("Download queue is empty"),
                 message = strings.text("Download chapters from a title to read them offline."),
                 icon = { Icon(Icons.Outlined.CloudDownload, null, Modifier.size(30.dp)) },
             )
         } else {
-            val shownQueue = queue.filter { filter.accepts(it.state) }.sortedBy { it.position }
-            val shownExtension = extensionQueue.filter { filter.accepts(it.state) }
+            if (backgroundRestricted && lines.any { it.state.waiting() }) {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp),
+                ) {
+                    Row(Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            strings.text("Battery optimization may pause downloads while Shinsou X is in the background."),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onLiftBackgroundRestriction) { Text(strings.text("Allow")) }
+                    }
+                }
+            }
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -444,7 +538,7 @@ fun DownloadsScreen(
                         onClick = { filter = option },
                         label = {
                             Text(
-                                "${option.label(strings)} ${states.count { option.accepts(it) }}",
+                                "${option.label(strings)} ${scopeLines.count { option.accepts(it.state) }}",
                                 maxLines = 1,
                             )
                         },
@@ -455,23 +549,35 @@ fun DownloadsScreen(
                 contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(shownQueue, key = { it.id }) { item ->
-                    DownloadRow(
-                        item = item,
-                        mangaTitle = mangaById[item.mangaId]?.title ?: strings.text("Unknown title"),
-                        chapterName = chapterById[item.chapterId]?.name ?: strings.text("Unknown chapter"),
-                        onRetry = { onRetry(item.id) },
-                        onRemove = { onRemove(item.id) },
-                        onMoveUp = { onMove(item.id, -1) },
-                        onMoveDown = { onMove(item.id, 1) },
-                    )
-                }
-                items(shownExtension, key = { "extension:${it.id}" }) { entry ->
-                    ExtensionDownloadRow(
-                        entry = entry,
-                        onRetry = { onRetryExtension(entry.id) },
-                        onRemove = { onRemoveExtension(entry.id) },
-                    )
+                if (opened == null) {
+                    items(works.filter { work -> work.lines.any { filter.accepts(it.state) } }, key = { it.key }) { work ->
+                        DownloadWorkRow(
+                            work = work,
+                            onOpen = { onOpenWork(work.key) },
+                            onRetryFailed = { retry(work.lines) },
+                        )
+                    }
+                } else {
+                    items(opened.lines.filter { filter.accepts(it.state) }, key = { it.key }) { line ->
+                        line.manga?.let { item ->
+                            DownloadRow(
+                                item = item,
+                                mangaTitle = line.workTitle,
+                                chapterName = line.chapterTitle,
+                                onRetry = { onRetry(item.id) },
+                                onRemove = { onRemove(item.id) },
+                                onMoveUp = { onMove(item.id, -1) },
+                                onMoveDown = { onMove(item.id, 1) },
+                            )
+                        }
+                        line.extension?.let { entry ->
+                            ExtensionDownloadRow(
+                                entry = entry,
+                                onRetry = { onRetryExtension(entry.id) },
+                                onRemove = { onRemoveExtension(entry.id) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -488,23 +594,120 @@ fun DownloadsScreen(
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(strings.cancel) } },
         )
     }
+    pendingRemoval?.let { (keys, stillIn) ->
+        // A chapter that finished meanwhile is no longer eligible, so its files are never removed here.
+        val targets = lines.filter { it.key in keys && stillIn.accepts(it.state) }
+        AlertDialog(
+            modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text(strings.text("Remove {0} items from the queue?", targets.size)) },
+            text = { Text(strings.text("Downloaded chapters stay on this device.")) },
+            confirmButton = {
+                TextButton(onClick = { remove(targets); pendingRemoval = null }) { Text(strings.remove) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text(strings.cancel) } },
+        )
+    }
 }
 
-/** Downloads screen filter: everything, work still waiting (including failures), or finished. */
+/** One chapter in either download queue, with the title it belongs to. */
+private class DownloadLine(
+    val workKey: String,
+    val workTitle: String,
+    val chapterTitle: String,
+    val state: DownloadState,
+    val manga: DownloadQueueItem? = null,
+    val extension: ExtensionDownloadEntryV2? = null,
+) {
+    val key: String get() = manga?.let { "manga:${it.id}" } ?: "extension:${extension?.id}"
+}
+
+private class DownloadWork(val key: String, val title: String, val lines: List<DownloadLine>)
+
+private fun DownloadState.waiting() =
+    this == DownloadState.QUEUED || this == DownloadState.DOWNLOADING || this == DownloadState.PAUSED
+
+/** Titles needing attention come first: running, then waiting, then failed, then finished. */
+private fun DownloadState.attentionOrder() = when (this) {
+    DownloadState.DOWNLOADING -> 0
+    DownloadState.QUEUED -> 1
+    DownloadState.PAUSED -> 2
+    DownloadState.ERROR -> 3
+    DownloadState.DOWNLOADED -> 4
+}
+
+private fun List<DownloadLine>.summary(strings: ShinsouStrings): String = strings.text(
+    "{0} chapters · {1} waiting · {2} failed · {3} done",
+    size,
+    count { it.state.waiting() },
+    count { it.state == DownloadState.ERROR },
+    count { it.state == DownloadState.DOWNLOADED },
+)
+
+@Composable
+private fun DownloadWorkRow(
+    work: DownloadWork,
+    onOpen: () -> Unit,
+    onRetryFailed: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val done = work.lines.count { it.state == DownloadState.DOWNLOADED }
+    val failed = work.lines.count { it.state == DownloadState.ERROR }
+    val state = work.lines.minOf { it.state.attentionOrder() }.let { order ->
+        work.lines.first { it.state.attentionOrder() == order }.state
+    }
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DownloadStateIcon(if (failed > 0 && state != DownloadState.DOWNLOADING) DownloadState.ERROR else state)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(work.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        work.lines.summary(strings),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (failed > 0) {
+                    TextButton(onClick = onRetryFailed) { Text(strings.retry) }
+                }
+                Icon(Icons.Outlined.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { done.toFloat() / work.lines.size },
+                modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+            )
+        }
+    }
+}
+
+/** Downloads screen filter over chapter states. */
 private enum class DownloadFilter {
     ALL,
     IN_QUEUE,
+    FAILED,
     DOWNLOADED;
 
     fun accepts(state: DownloadState): Boolean = when (this) {
         ALL -> true
-        IN_QUEUE -> state != DownloadState.DOWNLOADED
+        IN_QUEUE -> state.waiting()
+        FAILED -> state == DownloadState.ERROR
         DOWNLOADED -> state == DownloadState.DOWNLOADED
     }
 
     fun label(strings: ShinsouStrings): String = when (this) {
         ALL -> strings.all
         IN_QUEUE -> strings.text("In queue")
+        FAILED -> strings.text("Failed to download")
         DOWNLOADED -> strings.text("Downloaded")
     }
 }
