@@ -132,4 +132,14 @@ class DeepLinkParserTest {
         assertNull(DeepLinkParser.parse("shinsou://add-repository?url=https://repo.example/x&fp=1234"))
         assertNull(DeepLinkParser.parse("shinsou://add-repository"))
     }
+
+    @Test
+    fun addDevRepositoryLinksFromTheCliCarryTheServerUrl() {
+        assertEquals(
+            ShinsouDeepLink.AddDevRepository("http://127.0.0.1:8787"),
+            DeepLinkParser.parse("shinsou://add-dev-repository?url=http%3A%2F%2F127.0.0.1%3A8787"),
+        )
+        assertNull(DeepLinkParser.parse("shinsou://add-dev-repository?url=ftp://127.0.0.1"))
+        assertNull(DeepLinkParser.parse("shinsou://add-dev-repository"))
+    }
 }

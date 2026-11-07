@@ -751,6 +751,13 @@ sealed interface ShinsouDeepLink {
      * the full fingerprint to match. Nothing is trusted until the user confirms the key.
      */
     data class AddRepository(val repositoryUrl: String, val fingerprint: String?) : ShinsouDeepLink
+
+    /**
+     * `shinsou://add-dev-repository?url=…` from `shinsou-plugin serve` (ADR-0002 §8.1): an
+     * unsigned development server. Shown for confirmation; it is admitted only while developer
+     * mode is on and the address is this device or one the user entered.
+     */
+    data class AddDevRepository(val repositoryUrl: String) : ShinsouDeepLink
 }
 
 /**

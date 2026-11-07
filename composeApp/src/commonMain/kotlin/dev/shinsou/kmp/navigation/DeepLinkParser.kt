@@ -33,8 +33,16 @@ object DeepLinkParser {
             "add-repository" -> AddRepositoryLink.parse(trimmed)?.let {
                 ShinsouDeepLink.AddRepository(it.repositoryUrl, it.fingerprint)
             }
+            "add-dev-repository" -> parseDevRepositoryLink(trimmed)
             else -> null
         }
+    }
+
+    private fun parseDevRepositoryLink(link: String): ShinsouDeepLink? {
+        val url = runCatching { io.ktor.http.Url(link) }.getOrNull() ?: return null
+        val repository = url.parameters.getAll("url")?.singleOrNull() ?: return null
+        if (!repository.startsWith("http://") && !repository.startsWith("https://")) return null
+        return ShinsouDeepLink.AddDevRepository(repository)
     }
 
     private fun parseSyncLink(route: List<String>, rawQuery: String): ShinsouDeepLink? {

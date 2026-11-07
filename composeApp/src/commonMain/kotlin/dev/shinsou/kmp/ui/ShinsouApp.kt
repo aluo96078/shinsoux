@@ -1178,6 +1178,20 @@ private fun ShinsouAppContent(
                         pendingRepositoryLink = link
                         return@collect
                     }
+                    is ShinsouDeepLink.AddDevRepository -> {
+                        if (link == pendingRepositoryLink) return@collect
+                        selectSection(MainSection.BROWSE)
+                        val developer = appServices.browse.packageSecurity().developerMode
+                        if (developer?.enabled != true) {
+                            appServices.deepLinkHandled(link)
+                            snackbar.showSnackbar(strings.text("Turn on developer mode in Package security to add a development server."))
+                            return@collect
+                        }
+                        // Confirmed like any unsigned repository; admission still checks the address.
+                        linkedUnsignedRepository = link.repositoryUrl
+                        pendingRepositoryLink = link
+                        return@collect
+                    }
                     is ShinsouDeepLink.OpenSyncLink -> {
                         // Navigate first so the controller's progress and any safe diagnostic are
                         // visible while claim/checkpoint verification runs. The payload never
