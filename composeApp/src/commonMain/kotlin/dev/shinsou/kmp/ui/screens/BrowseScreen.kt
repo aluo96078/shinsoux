@@ -380,6 +380,10 @@ fun BrowseScreen(
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
+    // Source settings → permissions (ADR-0002 §6.5): the granted plugin whose items are being edited.
+    var editingPluginPermissions by remember {
+        mutableStateOf<Pair<BrowseExtension, dev.shinsou.kmp.ui.InstalledPluginPermissions>?>(null)
+    }
     var pendingRepositoryTrust by remember { mutableStateOf<dev.shinsou.kmp.ui.RepositoryTrustPrompt?>(null) }
     var packageSecurity by remember { mutableStateOf<dev.shinsou.kmp.ui.PackageSecuritySnapshot?>(null) }
     val extensionOperations = remember(scope) {
@@ -866,6 +870,14 @@ fun BrowseScreen(
                             if (extension.installed) "Updating…" else "Installing…",
                             onSuccess = { review ->
                                 pendingPluginEventGrant = review?.let { PendingPluginEventGrant(extension, it) }
+                                // An update that asked for nothing new kept the previous grant (D4): say so.
+                                if (review == null && extension.installed) {
+                                    scope.launch {
+                                        operationSnackbar.showSnackbar(
+                                            strings.text("{0} was updated and kept the permissions you granted before.", extension.name),
+                                        )
+                                    }
+                                }
                             },
                         ) {
                             callbacks.installExtension(extension.id)
@@ -880,6 +892,15 @@ fun BrowseScreen(
                                 callbacks.uninstallExtension(extension.id)
                             }
                         }
+                    },
+                    onPermissions = { extension ->
+                        launchExtensionOperation(
+                            extension,
+                            "Loading permissions…",
+                            onSuccess = { permissions: dev.shinsou.kmp.ui.InstalledPluginPermissions? ->
+                                editingPluginPermissions = permissions?.let { extension to it }
+                            },
+                        ) { callbacks.installedPluginPermissions(extension.id) }
                     },
                     onTrust = { extension, trusted ->
                         launchExtensionOperation(
@@ -1188,40 +1209,42 @@ fun BrowseScreen(
     }
 
     pendingPluginEventGrant?.let { pending ->
-        AlertDialog(
-            onDismissRequest = { pendingPluginEventGrant = null },
-            title = { Text(strings.text("Review host permissions")) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
-                    Text(strings.text("SHA-256: {0}", pending.review.artifact.sha256), style = MaterialTheme.typography.labelSmall)
-                    Text(strings.text("Required permissions"), fontWeight = FontWeight.SemiBold)
-                    pending.review.requestedPermissions.sortedBy { it.name }.forEach { permission ->
-                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    pending.review.requestedRuntimePermissions.sortedBy { it.name }.forEach { permission ->
-                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text(
-                        strings.text("Host event and runtime permissions remain blocked until you approve this exact version and digest."),
-                        style = MaterialTheme.typography.bodySmall,
+        var details by remember(pending) { mutableStateOf<dev.shinsou.kmp.ui.PluginPermissionDetails?>(null) }
+        LaunchedEffect(pending) {
+            details = runCatching { callbacks.pluginPermissionDetails(pending.extension.id, pending.review) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+        }
+        PluginPermissionReviewDialog(
+            review = pending.review,
+            details = details,
+            onConfirm = { selection ->
+                if (launchExtensionOperation(pending.extension, "Applying permissions…") {
+                    callbacks.approvePluginEventGrantReview(
+                        pending.extension.id,
+                        pending.review,
+                        selection.hostPermissions,
+                        selection,
                     )
-                }
+                }) pendingPluginEventGrant = null
             },
-            confirmButton = {
-                Button(onClick = {
-                    if (launchExtensionOperation(pending.extension, "Applying permissions…") {
-                        callbacks.approvePluginEventGrantReview(
-                            pending.extension.id,
-                            pending.review,
-                            pending.review.requestedPermissions,
-                        )
-                    }) pendingPluginEventGrant = null
-                }) { Text(strings.text("Approve")) }
+            onDismiss = { pendingPluginEventGrant = null },
+        )
+    }
+
+    editingPluginPermissions?.let { (extension, permissions) ->
+        PluginPermissionReviewDialog(
+            review = permissions.review,
+            details = permissions.details,
+            current = permissions.granted,
+            onConfirm = { selection ->
+                if (selection == permissions.granted) {
+                    editingPluginPermissions = null
+                } else if (launchExtensionOperation(extension, "Applying permissions…") {
+                    callbacks.narrowPluginPermissions(extension.id, selection)
+                }) editingPluginPermissions = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingPluginEventGrant = null }) { Text(strings.cancel) }
-            },
+            onDismiss = { editingPluginPermissions = null },
         )
     }
 }
@@ -4182,6 +4205,7 @@ private fun ExtensionsPane(
     onTrust: (BrowseExtension, Boolean) -> Unit,
     onOpenPackageSecurity: () -> Unit,
     onBlock: (BrowseExtension) -> Unit,
+    onPermissions: (BrowseExtension) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     var repositoryDialog by remember { mutableStateOf(false) }
@@ -4275,7 +4299,7 @@ private fun ExtensionsPane(
             }
         } else {
             items(extensions, key = { "extension-${it.id}" }) { extension ->
-                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock)
+                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock, onPermissions)
             }
         }
     }
@@ -4316,6 +4340,7 @@ private fun ExtensionRow(
     onUninstall: (BrowseExtension) -> Unit,
     onTrust: (BrowseExtension, Boolean) -> Unit,
     onBlock: (BrowseExtension) -> Unit,
+    onPermissions: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     Surface(
@@ -4399,6 +4424,11 @@ private fun ExtensionRow(
                 ) {
                     OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
                         Text(strings.uninstall)
+                    }
+                    if (!extension.reviewedShuYueV2 && extension.trusted) {
+                        TextButton(enabled = operation == null, onClick = { onPermissions(extension) }) {
+                            Text(strings.text("Permissions"))
+                        }
                     }
                     // ADR-0002 D5: the user's own block list; undone from Package security.
                     TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }

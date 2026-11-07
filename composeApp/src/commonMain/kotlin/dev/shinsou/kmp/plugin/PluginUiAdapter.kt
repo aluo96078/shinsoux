@@ -1197,15 +1197,67 @@ public class PluginBrowseAdapter(
         extensionId: String,
         expectedReview: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
         permissions: Set<dev.shinsou.kmp.plugin.events.PluginHostPermission>,
+        selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection?,
     ): Unit = withContext(Dispatchers.Default) {
         // Approval can synchronously read durable package/admission state and construct the
         // platform runtime. Keep that work off the UI dispatcher, and share the adapter's
         // operation lock so a queued uninstall cannot revoke the artifact halfway through its
         // exact-digest approval/reload transaction.
         operationMutex.withLock {
-            manager.approveEventGrantReview(extensionId, expectedReview, permissions)
+            manager.approveEventGrantReview(extensionId, expectedReview, permissions, selection)
             rebuildSnapshot(errorMessage = null, reuseUnchangedSources = true)
         }
+    }
+
+    override suspend fun pluginPermissionDetails(
+        extensionId: String,
+        review: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
+    ): dev.shinsou.kmp.ui.PluginPermissionDetails? = withContext(Dispatchers.Default) {
+        val stored = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId } ?: return@withContext null
+        if (stored.metadata.installedSha256 != review.artifact.sha256) return@withContext null
+        permissionDetails(stored)
+    }
+
+    override suspend fun installedPluginPermissions(extensionId: String): dev.shinsou.kmp.ui.InstalledPluginPermissions? =
+        withContext(Dispatchers.Default) {
+            val stored = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId } ?: return@withContext null
+            val granted = manager.grantedSelection(extensionId) ?: return@withContext null
+            val review = manager.currentEventGrantReview(extensionId) ?: return@withContext null
+            dev.shinsou.kmp.ui.InstalledPluginPermissions(review, granted, permissionDetails(stored))
+        }
+
+    override suspend fun narrowPluginPermissions(
+        extensionId: String,
+        selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
+    ): Unit = withContext(Dispatchers.Default) {
+        operationMutex.withLock {
+            manager.narrowGrant(extensionId, selection)
+            rebuildSnapshot(errorMessage = null, reuseUnchangedSources = true)
+        }
+    }
+
+    private suspend fun permissionDetails(stored: StoredPlugin): dev.shinsou.kmp.ui.PluginPermissionDetails {
+        val sources = stored.manifest.sources.orEmpty()
+        val policies = sources.map { it.networkPolicy() }
+        val publisher = stored.metadata.publisherId?.let { id -> packageSecurity?.publishers?.publisher(id) }
+        val mode = packageSecurity?.publishers?.globalMode()
+        return dev.shinsou.kmp.ui.PluginPermissionDetails(
+            packageName = stored.manifest.name,
+            version = stored.manifest.version,
+            publisherDisplayFingerprint = publisher?.let { PublisherFingerprint.display(it.currentFingerprint) },
+            publisherState = if (publisher == null || mode == null) null else when (publisher.status(mode)) {
+                PublisherTrustStatus.TRUSTED -> PublisherTrustState.TRUSTED
+                PublisherTrustStatus.PENDING_FINGERPRINT_MATCH -> PublisherTrustState.PENDING_FINGERPRINT
+                PublisherTrustStatus.KEY_REVOKED -> PublisherTrustState.KEY_REVOKED
+                PublisherTrustStatus.KEY_REPLACED -> PublisherTrustState.KEY_REPLACED
+            },
+            fingerprintVerified = publisher != null && publisher.verification != PublisherVerification.TOFU,
+            repositoryUrl = stored.metadata.repositoryBaseUrl,
+            requestOrigins = sources.flatMap { it.declaredRequestOrigins() }.distinct().sorted(),
+            contentOrigins = policies.flatMap { it.contentOrigins }.distinct().sorted(),
+            credentialOrigins = policies.flatMap { it.credentialOrigins }.distinct().sorted(),
+            browserSessionOrigins = policies.flatMap { it.browserSessionOrigins }.distinct().sorted(),
+        )
     }
 
     override suspend fun uninstallExtension(extensionId: String): Unit = withContext(Dispatchers.Default) {

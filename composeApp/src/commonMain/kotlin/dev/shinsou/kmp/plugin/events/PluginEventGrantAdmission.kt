@@ -19,7 +19,35 @@ public data class PluginEventGrantReview(
     val requestedPermissions: Set<PluginHostPermission>,
     /** Sensitive runtime services shown and approved with this exact artifact review. */
     val requestedRuntimePermissions: Set<PluginRuntimePermission> = emptySet(),
+    /** Dynamic content CDN families the package declares (ADR-0002 §6.2); each one is approved separately. */
+    val requestedContentHostSuffixes: Set<String> = emptySet(),
 )
+
+/**
+ * What the user actually granted from a [PluginEventGrantReview] (ADR-0002 §6.3, §6.5): always a
+ * subset of what it requested. Ordinary runtime permissions (running the script, its declared
+ * origins) come with the installation; every sensitive item is granted on its own.
+ */
+@Serializable
+public data class PluginGrantSelection(
+    val hostPermissions: Set<PluginHostPermission>,
+    val runtimePermissions: Set<PluginRuntimePermission>,
+    val contentHostSuffixes: Set<String>,
+) {
+    public fun isWithin(review: PluginEventGrantReview): Boolean =
+        review.requestedPermissions.containsAll(hostPermissions) &&
+            review.requestedRuntimePermissions.containsAll(runtimePermissions) &&
+            review.requestedContentHostSuffixes.containsAll(contentHostSuffixes)
+
+    public companion object {
+        /** Everything [review] requested: what an approval meant before items could be declined. */
+        public fun all(review: PluginEventGrantReview): PluginGrantSelection = PluginGrantSelection(
+            review.requestedPermissions,
+            review.requestedRuntimePermissions,
+            review.requestedContentHostSuffixes,
+        )
+    }
+}
 
 @Serializable
 private enum class PluginEventAdmissionState {
@@ -39,6 +67,8 @@ private data class PluginEventAdmissionRecord(
     val artifact: PluginArtifactIdentity,
     val state: PluginEventAdmissionState,
     val review: PluginEventGrantReview? = null,
+    /** The user's per-item choice for a GRANTED record; absent in records that granted everything. */
+    val grant: PluginGrantSelection? = null,
 )
 
 /** Decoder retained only for fail-closed migration of the former split grant representation. */
@@ -95,9 +125,14 @@ public class KeyValuePluginEventGrantAdmission(
         isGrantedLocked(review)
     }
 
+    /**
+     * Grants the pending review of [artifact]. [selection] says which requested items the user
+     * granted (default: all of them); anything outside the review is refused.
+     */
     public suspend fun approve(
         artifact: PluginArtifactIdentity,
         permissions: Set<PluginHostPermission>,
+        selection: PluginGrantSelection? = null,
     ): Unit = mutex.withLock {
         val record = readAuthoritativeRecord(artifact)
         val review = when {
@@ -117,21 +152,57 @@ public class KeyValuePluginEventGrantAdmission(
         requireNotNull(review) { "No exact plugin event grant review is pending" }
         requireValidReview(review)
         require(review.artifact == artifact) { "Pending review artifact identity does not match approval" }
-        require(permissions == review.requestedPermissions) {
-            "Approval must match the verified artifact's requested permission set"
+        val granted = selection ?: PluginGrantSelection.all(review)
+        require(permissions == granted.hostPermissions) {
+            "Approval host permissions must match the granted selection"
+        }
+        require(granted.isWithin(review)) {
+            "Approval must stay within the verified artifact's requested permissions"
         }
 
         // This single put is the grant commit point. Nothing reaches the live authorizer first.
-        writeRecord(grantedRecord(review))
+        writeRecord(grantedRecord(review, granted.takeUnless { it == PluginGrantSelection.all(review) }))
         locallyRevokedArtifacts.remove(artifact)
         cleanupLegacyKeys(artifact)
-        grantLive(review)
+        grantLive(review, granted)
+    }
+
+    /** The granted items of [artifact], or null unless it is currently GRANTED. */
+    public suspend fun grantedSelection(artifact: PluginArtifactIdentity): PluginGrantSelection? = mutex.withLock {
+        if (artifact in locallyRevokedArtifacts) return@withLock null
+        val record = readAuthoritativeRecord(artifact).record
+            ?.takeIf { it.state == PluginEventAdmissionState.GRANTED }
+            ?: return@withLock null
+        record.grant ?: record.review?.let(PluginGrantSelection::all)
+    }
+
+    /**
+     * Withdraws items from a GRANTED [artifact] (source settings → permissions, §6.5). Only ever
+     * narrows: [selection] must be within the current grant. The caller reloads the runtime.
+     */
+    public suspend fun narrow(artifact: PluginArtifactIdentity, selection: PluginGrantSelection): Unit = mutex.withLock {
+        require(artifact !in locallyRevokedArtifacts) { "Plugin grant was revoked" }
+        val record = requireNotNull(
+            readAuthoritativeRecord(artifact).record?.takeIf { it.state == PluginEventAdmissionState.GRANTED },
+        ) { "Plugin is not granted" }
+        val review = requireNotNull(record.review)
+        val current = record.grant ?: PluginGrantSelection.all(review)
+        require(
+            current.hostPermissions.containsAll(selection.hostPermissions) &&
+                current.runtimePermissions.containsAll(selection.runtimePermissions) &&
+                current.contentHostSuffixes.containsAll(selection.contentHostSuffixes),
+        ) { "A permission change from settings can only withdraw items" }
+        // Durable first: a failed write changes nothing (the previous grant stays both stored and
+        // live). Once it is stored, the live authority is narrowed to match.
+        writeRecord(grantedRecord(review, selection.takeUnless { it == PluginGrantSelection.all(review) }))
+        grantLive(review, selection)
     }
 
     public suspend fun hydrate(review: PluginEventGrantReview): Unit = mutex.withLock {
         requireValidReview(review)
         if (isGrantedLocked(review)) {
-            grantLive(review)
+            val record = readAuthoritativeRecord(review.artifact).record
+            grantLive(review, record?.grant ?: PluginGrantSelection.all(review))
             return@withLock
         }
 
@@ -245,13 +316,13 @@ public class KeyValuePluginEventGrantAdmission(
             .orEmpty()
     }
 
-    private fun grantLive(review: PluginEventGrantReview) {
+    private fun grantLive(review: PluginEventGrantReview, selection: PluginGrantSelection) {
         val keys = grantKeys(review)
         liveGrantKeys[review.artifact]
             .orEmpty()
             .filterNotTo(linkedSetOf()) { it in keys }
             .forEach(authorizer::revoke)
-        keys.forEach { authorizer.grant(it, review.requestedPermissions) }
+        keys.forEach { authorizer.grant(it, selection.hostPermissions) }
         liveGrantKeys[review.artifact] = keys
     }
 
@@ -318,10 +389,10 @@ public class KeyValuePluginEventGrantAdmission(
     private fun PluginEventAdmissionRecord.isValidFor(expectedArtifact: PluginArtifactIdentity): Boolean {
         if (schemaVersion != EVENT_ADMISSION_SCHEMA_VERSION || artifact != expectedArtifact) return false
         return when (state) {
-            PluginEventAdmissionState.PENDING,
-            PluginEventAdmissionState.GRANTED,
-            -> review?.let { it.artifact == artifact && isValidReview(it) } == true
-            PluginEventAdmissionState.REVOKED -> review == null
+            PluginEventAdmissionState.PENDING -> grant == null && review?.let { it.artifact == artifact && isValidReview(it) } == true
+            PluginEventAdmissionState.GRANTED ->
+                review?.let { it.artifact == artifact && isValidReview(it) && (grant == null || grant.isWithin(it)) } == true
+            PluginEventAdmissionState.REVOKED -> review == null && grant == null
         }
     }
 
@@ -352,11 +423,12 @@ public class KeyValuePluginEventGrantAdmission(
             review = review,
         )
 
-    private fun grantedRecord(review: PluginEventGrantReview): PluginEventAdmissionRecord =
+    private fun grantedRecord(review: PluginEventGrantReview, grant: PluginGrantSelection? = null): PluginEventAdmissionRecord =
         PluginEventAdmissionRecord(
             artifact = review.artifact,
             state = PluginEventAdmissionState.GRANTED,
             review = review,
+            grant = grant,
         )
 
     private suspend fun writeRecord(record: PluginEventAdmissionRecord) {

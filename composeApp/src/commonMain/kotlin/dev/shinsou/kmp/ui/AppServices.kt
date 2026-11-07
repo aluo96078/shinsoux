@@ -1270,7 +1270,17 @@ interface BrowseCallbacks {
         extensionId: String,
         expectedReview: PluginEventGrantReview,
         permissions: Set<PluginHostPermission>,
+        selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection? = null,
     ) = Unit
+
+    /** Who published [review]'s artifact and where it connects: what the permission page shows (ADR-0002 §6.5). */
+    suspend fun pluginPermissionDetails(extensionId: String, review: PluginEventGrantReview): PluginPermissionDetails? = null
+
+    /** The granted plugin's current permissions, for source settings; null when not granted. */
+    suspend fun installedPluginPermissions(extensionId: String): InstalledPluginPermissions? = null
+
+    /** Withdraws sensitive items from a granted plugin and reloads it. */
+    suspend fun narrowPluginPermissions(extensionId: String, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection) = Unit
 
     suspend fun uninstallExtension(extensionId: String) = Unit
 
@@ -1679,6 +1689,32 @@ data class RepositoryTrustPrompt(
 )
 
 enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_REPLACED }
+
+/**
+ * Everything the permission page shows for one exact artifact (ADR-0002 §6.5). The publisher's
+ * key is the identity: a package name can be anything, so the page puts the publisher first.
+ */
+data class PluginPermissionDetails(
+    val packageName: String,
+    val version: String,
+    /** Null for a package without a publisher key (it cannot run). */
+    val publisherDisplayFingerprint: String?,
+    val publisherState: PublisherTrustState?,
+    val fingerprintVerified: Boolean,
+    val repositoryUrl: String?,
+    val requestOrigins: List<String>,
+    val contentOrigins: List<String>,
+    /** Where cookies and, for login, the account password may be sent. */
+    val credentialOrigins: List<String>,
+    val browserSessionOrigins: List<String>,
+)
+
+/** A granted plugin's review and the items currently granted from it (source settings → permissions). */
+data class InstalledPluginPermissions(
+    val review: PluginEventGrantReview,
+    val granted: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
+    val details: PluginPermissionDetails,
+)
 
 data class PackagePublisher(
     val id: String,

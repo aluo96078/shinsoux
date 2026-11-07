@@ -23,8 +23,10 @@ class PluginManagerExecutionTierTest {
 
     private class Engine : ScriptPluginRuntimeFactory {
         val created = mutableListOf<String>()
+        val permissions = mutableListOf<Set<PluginRuntimePermission>>()
         override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime {
             created += manifest.id
+            permissions += environment.runtimePermissions
             return NoopScriptPluginRuntimeFactory.create(script, manifest, environment)
         }
     }
@@ -85,6 +87,76 @@ class PluginManagerExecutionTierTest {
         host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
         assertEquals(listOf(PLUGIN_ID), host.sandbox.created)
         assertNotNull(host.manager.source(SOURCE_ID))
+    }
+
+    @Test
+    fun onlyGrantedItemsReachTheRuntimeAndAnUpdateAskingNothingNewKeepsThem() = runTest {
+        val host = Host()
+        host.trustPublisher()
+        val first = entry().copy(
+            runtimePermissions = setOf(
+                PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK,
+                PluginRuntimePermission.COOKIE_STORAGE, PluginRuntimePermission.COOKIE_READ,
+            ),
+        )
+        host.manager.install(REPOSITORY, first)
+        val review = assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        // The user turns COOKIE_READ off.
+        val selection = dev.shinsou.kmp.plugin.events.PluginGrantSelection(
+            hostPermissions = emptySet(),
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK, PluginRuntimePermission.COOKIE_STORAGE),
+            contentHostSuffixes = emptySet(),
+        )
+        host.manager.approveEventGrantReview(PLUGIN_ID, review, emptySet(), selection)
+        assertEquals(selection.runtimePermissions, host.sandbox.permissions.last())
+
+        // D4: same publisher, nothing new requested — it runs at once and the choice is kept.
+        host.manager.install(REPOSITORY, first.copy(version = "1.1.0", versionCode = 2))
+        assertNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        assertEquals(selection, host.manager.grantedSelection(PLUGIN_ID))
+        assertEquals(selection.runtimePermissions, host.sandbox.permissions.last())
+        assertNotNull(host.manager.source(SOURCE_ID))
+
+        // Settings withdraw an item: the runtime is rebuilt without it.
+        val narrower = selection.copy(runtimePermissions = selection.runtimePermissions - PluginRuntimePermission.COOKIE_STORAGE)
+        host.manager.narrowGrant(PLUGIN_ID, narrower)
+        assertEquals(narrower.runtimePermissions, host.sandbox.permissions.last())
+
+        // An update asking for something new waits for a fresh review and does not run.
+        host.manager.install(
+            REPOSITORY,
+            first.copy(version = "1.2.0", versionCode = 3, runtimePermissions = first.runtimePermissions!! + PluginRuntimePermission.CREDENTIAL_ACCESS),
+        )
+        assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        assertNull(host.manager.source(SOURCE_ID))
+    }
+
+    @Test
+    fun aDeclinedCdnFamilyIsUnreachableFromTheReaderAndDownloadClientsToo() = runTest {
+        val host = Host()
+        host.trustPublisher()
+        val withCdn = entry().copy(
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK),
+            sources = listOf(
+                SourceIndexEntry(
+                    name = "Tier fixture", lang = "all", id = SOURCE_ID, baseUrl = "https://source.example",
+                    contentHostSuffixes = setOf("cdn.example.net"), originPolicyVersion = 2,
+                ),
+            ),
+        )
+        host.manager.install(REPOSITORY, withCdn)
+        val review = assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        assertEquals(setOf("cdn.example.net"), review.requestedContentHostSuffixes)
+        // Approved without the CDN family.
+        host.manager.approveEventGrantReview(
+            PLUGIN_ID, review, emptySet(),
+            dev.shinsou.kmp.plugin.events.PluginGrantSelection(emptySet(), review.requestedRuntimePermissions, emptySet()),
+        )
+        val content = assertNotNull(host.manager.contentNetworkForSource(SOURCE_ID))
+        val refused = assertFailsWith<IllegalArgumentException> {
+            content.execute(SOURCE_ID, PluginHttpRequest("GET", "https://img1.cdn.example.net/a.jpg", ByteArray(0), emptyMap()))
+        }
+        assertTrue(refused.message.orEmpty().contains("not declared"), refused.message)
     }
 
     @Test

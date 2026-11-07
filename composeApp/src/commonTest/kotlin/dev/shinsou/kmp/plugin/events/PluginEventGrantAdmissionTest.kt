@@ -331,6 +331,66 @@ class PluginEventGrantAdmissionTest {
         assertFailsWith<IllegalArgumentException> { admission.stage(tooMany) }
     }
 
+    @Test
+    fun aGrantCanDeclineItemsAndSettingsCanOnlyWithdrawMore() = runTest {
+        val store = InMemoryPluginKeyValueStore()
+        val authorizer = MutablePluginSystemEventAuthorizer()
+        val admission = KeyValuePluginEventGrantAdmission(store, authorizer)
+        val review = review().copy(
+            requestedRuntimePermissions = setOf(
+                dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT,
+                dev.shinsou.kmp.plugin.PluginRuntimePermission.NETWORK,
+                dev.shinsou.kmp.plugin.PluginRuntimePermission.COOKIE_READ,
+            ),
+            requestedContentHostSuffixes = setOf("cdn.example.com"),
+        )
+        admission.stage(review)
+        // Anything outside the review is refused.
+        assertFailsWith<IllegalArgumentException> {
+            admission.approve(
+                review.artifact, emptySet(),
+                PluginGrantSelection(emptySet(), setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.CREDENTIAL_ACCESS), emptySet()),
+            )
+        }
+        val partial = PluginGrantSelection(
+            hostPermissions = emptySet(),
+            runtimePermissions = setOf(
+                dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT,
+                dev.shinsou.kmp.plugin.PluginRuntimePermission.NETWORK,
+            ),
+            contentHostSuffixes = emptySet(),
+        )
+        admission.approve(review.artifact, partial.hostPermissions, partial)
+        assertTrue(admission.isGranted(review))
+        assertEquals(partial, admission.grantedSelection(review.artifact))
+        // A declined host permission is not live.
+        assertFalse(allowed(authorizer, review))
+
+        // The choice survives a restart.
+        val restarted = KeyValuePluginEventGrantAdmission(store, MutablePluginSystemEventAuthorizer())
+        restarted.hydrate(review)
+        assertEquals(partial, restarted.grantedSelection(review.artifact))
+
+        // Settings can withdraw, never add.
+        assertFailsWith<IllegalArgumentException> {
+            restarted.narrow(review.artifact, partial.copy(contentHostSuffixes = setOf("cdn.example.com")))
+        }
+        val narrower = partial.copy(runtimePermissions = setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT))
+        restarted.narrow(review.artifact, narrower)
+        assertEquals(narrower, restarted.grantedSelection(review.artifact))
+    }
+
+    @Test
+    fun aRecordWithoutItemChoicesStillMeansEverythingWasGranted() = runTest {
+        val admission = KeyValuePluginEventGrantAdmission(InMemoryPluginKeyValueStore(), MutablePluginSystemEventAuthorizer())
+        val review = review()
+        admission.stage(review)
+        admission.approve(review.artifact, review.requestedPermissions)
+        assertEquals(PluginGrantSelection.all(review), admission.grantedSelection(review.artifact))
+        admission.revoke(review.artifact)
+        assertNull(admission.grantedSelection(review.artifact))
+    }
+
     private fun review(): PluginEventGrantReview = PluginEventGrantReview(
         artifact = PluginArtifactIdentity("pkg.test", "1.0.0", 1, "a".repeat(64)),
         sourceKeys = listOf(SourceKey(packageId = "pkg.test", sourceId = "source")),

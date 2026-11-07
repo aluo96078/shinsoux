@@ -29,6 +29,7 @@ import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
 import dev.shinsou.kmp.plugin.events.PluginRuntimeLifecycle
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
+import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget
 import dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation
@@ -675,6 +676,13 @@ public class PluginManager(
             requireValidStoredPluginPackage(stored)
             val grantReview = requireNotNull(stored.eventGrantReview(includeEmpty = true))
             val previousReview = previousStored?.eventGrantReview(includeEmpty = true)
+            // D4: an update that asks for nothing new keeps the user's decision (the user is told).
+            val continuedGrant = continuedGrantFor(previousStored, previousReview, stored, grantReview)
+            if (continuedGrant != null) {
+                val admission = requireNotNull(eventGrantAdmission)
+                admission.stage(grantReview)
+                admission.approve(grantReview.artifact, continuedGrant.hostPermissions, continuedGrant)
+            }
             val alreadyGranted = executionAdmissionGranted(grantReview)
             val reservation = lifecycleMutex.withLock { reserveManifestSources(manifest) }
             var candidates: List<ScriptPluginRuntime> = emptyList()
@@ -738,6 +746,11 @@ public class PluginManager(
                 // replacement is durable and the old runtime has closed. A failed update cannot
                 // grant the candidate or revoke the still-installed artifact's authorization.
                 eventGrantAdmission?.hydrate(grantReview)
+                if (continuedGrant != null && previousStored != null) {
+                    continuationNotices.tryEmit(
+                        PluginGrantContinuationNotice(entry.id, entry.name, previousStored.manifest.version, entry.version),
+                    )
+                }
                 return@withLock compatibilityResult
             } catch (error: Throwable) {
                 if (!committed) {
@@ -761,7 +774,7 @@ public class PluginManager(
                                     }.exceptionOrNull()?.let(error::addSuppressed)
                                 }
                         }
-                        if (!alreadyGranted && previousReview?.artifact != grantReview.artifact) {
+                        if ((!alreadyGranted || continuedGrant != null) && previousReview?.artifact != grantReview.artifact) {
                             runCatching { eventGrantAdmission?.revoke(grantReview.artifact) }
                                 .exceptionOrNull()?.let(error::addSuppressed)
                         }
@@ -1173,6 +1186,7 @@ public class PluginManager(
         pluginId: String,
         expectedReview: PluginEventGrantReview,
         permissions: Set<PluginHostPermission>,
+        selection: PluginGrantSelection? = null,
     ): Unit = packageMutationMutex.withLock {
         invalidateWebChallengeGrants()
         val stored = requireNotNull(packageStore.get(pluginId)) { "Extension '$pluginId' is not installed" }
@@ -1199,7 +1213,13 @@ public class PluginManager(
         require(admission.pending(currentReview.artifact) == currentReview) {
             "The exact displayed plugin review is no longer pending"
         }
-        admission.approve(stored.artifactIdentity(), permissions)
+        if (selection != null) {
+            // Running the script and reaching its declared origins come with the installation.
+            require(selection.runtimePermissions.containsAll(
+                currentReview.requestedRuntimePermissions intersect SandboxTierCeiling.ORDINARY_RUNTIME_PERMISSIONS,
+            )) { "Ordinary runtime permissions cannot be declined" }
+        }
+        admission.approve(stored.artifactIdentity(), permissions, selection)
         locallyRevokedPluginIds.remove(pluginId)
         locallyRevokedArtifacts.remove(stored.artifactIdentity())
         try {
@@ -1221,6 +1241,87 @@ public class PluginManager(
             locallyRevokedArtifacts += stored.artifactIdentity()
             quarantineUnavailableRuntime(requireNotNull(stored.eventGrantReview(includeEmpty = true)))
             throw ExtensionArtifactNotReviewedException(pluginId)
+        }
+    }
+
+    /** Updates that kept the user's previous grant; the UI tells the user about each one. */
+    public val grantContinuationNotices: kotlinx.coroutines.flow.SharedFlow<PluginGrantContinuationNotice>
+        get() = continuationNotices
+
+    private val continuationNotices =
+        kotlinx.coroutines.flow.MutableSharedFlow<PluginGrantContinuationNotice>(extraBufferCapacity = 16)
+
+    private suspend fun continuedGrantFor(
+        previousStored: StoredPlugin?,
+        previousReview: PluginEventGrantReview?,
+        stored: StoredPlugin,
+        review: PluginEventGrantReview,
+    ): PluginGrantSelection? {
+        val admission = eventGrantAdmission ?: return null
+        if (previousStored == null || previousReview == null) return null
+        if (isLocallyRevoked(previousReview.artifact)) return null
+        val previousGrant = admission.grantedSelection(previousReview.artifact) ?: return null
+        return UpdateGrantContinuation.continuedSelection(
+            previousPublisherId = previousStored.metadata.publisherId,
+            nextPublisherId = stored.metadata.publisherId,
+            previousReview = previousReview,
+            previousGrant = previousGrant,
+            nextReview = review,
+            previousSources = previousStored.manifest.sources.orEmpty(),
+            nextSources = stored.manifest.sources.orEmpty(),
+        )
+    }
+
+    /**
+     * [source]'s declared policy with only the content CDN families the user granted (ADR-0002
+     * §6.2): one rule for the runtime and for the reader and download content clients. Without an
+     * admission store (developer compatibility) the declaration stands; with one, no grant means no
+     * dynamic families at all.
+     */
+    private fun grantedNetworkPolicy(source: SourceIndexEntry, grant: PluginGrantSelection?): PluginNetworkPolicy {
+        val policy = source.networkPolicy()
+        if (eventGrantAdmission == null) return policy
+        val granted = grant?.contentHostSuffixes.orEmpty()
+        return policy.copy(contentHostSuffixes = policy.contentHostSuffixes intersect granted)
+    }
+
+    private suspend fun grantFor(stored: StoredPlugin): PluginGrantSelection? =
+        eventGrantAdmission?.grantedSelection(stored.artifactIdentity())
+
+    /** The verified review of the installed artifact of [pluginId] (granted or not). */
+    public suspend fun currentEventGrantReview(pluginId: String): PluginEventGrantReview? = packageMutationMutex.withLock {
+        packageStore.get(pluginId)?.eventGrantReview(includeEmpty = true)
+    }
+
+    /** What the user granted the installed artifact of [pluginId], or null when it is not granted. */
+    public suspend fun grantedSelection(pluginId: String): PluginGrantSelection? = packageMutationMutex.withLock {
+        val stored = packageStore.get(pluginId) ?: return@withLock null
+        eventGrantAdmission?.grantedSelection(stored.artifactIdentity())
+    }
+
+    /**
+     * Withdraws sensitive items from an installed plugin (source settings → permissions, ADR-0002
+     * §6.5) and reloads it under a new generation, so the old runtime's authority ends now.
+     */
+    public suspend fun narrowGrant(pluginId: String, selection: PluginGrantSelection): Unit = packageMutationMutex.withLock {
+        invalidateWebChallengeGrants()
+        val stored = requireNotNull(packageStore.get(pluginId)) { "Extension '$pluginId' is not installed" }
+        val admission = requireNotNull(eventGrantAdmission) { "Plugin event grant admission is unavailable" }
+        val review = requireNotNull(stored.eventGrantReview(includeEmpty = true))
+        require(selection.runtimePermissions.containsAll(
+            review.requestedRuntimePermissions intersect SandboxTierCeiling.ORDINARY_RUNTIME_PERMISSIONS,
+        )) { "Ordinary runtime permissions cannot be withdrawn; uninstall the plugin instead" }
+        withContext(NonCancellable) {
+            // The old runtime goes first so nothing keeps the wider authority; if the narrowed grant
+            // cannot be stored, the previous grant still stands and its runtime comes back.
+            lifecycleMutex.withLock { unloadPlugin(pluginId) }
+            try {
+                admission.narrow(stored.artifactIdentity(), selection)
+            } catch (error: Throwable) {
+                runCatching { lifecycleMutex.withLock { loadStored(stored) } }.exceptionOrNull()?.let(error::addSuppressed)
+                throw error
+            }
+            lifecycleMutex.withLock { loadStored(stored) }
         }
     }
 
@@ -1304,7 +1405,9 @@ public class PluginManager(
             if (isDisabledReviewedLocalInstall(stored)) return@withLock null
             reviewedImageContentClient(
                 sourceKeyFor(packageId, sourceId, declared.canonicalSourceId), stored.artifactIdentity(),
-                environment.network.scopedToContentPolicy(reviewed?.networkPolicy ?: declared.networkPolicy()),
+                environment.network.scopedToContentPolicy(
+                    reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
+                ),
             )
         }
 
@@ -1337,7 +1440,9 @@ public class PluginManager(
                     sourceId = legacyId,
                     network = reviewedImageContentClient(
                         sourceKey, stored.artifactIdentity(),
-                        environment.network.scopedToContentPolicy(reviewed?.networkPolicy ?: declared.networkPolicy()),
+                        environment.network.scopedToContentPolicy(
+                            reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
+                        ),
                     ),
                 )
             }
@@ -2413,7 +2518,11 @@ public class PluginManager(
         }
         val legacyLoginCompatibility = manifest.systemEvents == null
         val visibleNegotiation = negotiated ?: PluginSystemEventNegotiation(enabled = false)
+        // Only what the user granted (ADR-0002 §6.3); without an admission store (developer
+        // compatibility) the declaration stands, as before item-level grants existed.
+        val grant = eventGrantAdmission?.grantedSelection(artifactIdentity)
         val runtimePermissions = effectiveRuntimePermissions(stored)
+            .let { declared -> if (grant == null) declared else declared intersect grant.runtimePermissions }
         val reviewedOfficialSource = OfficialShinsouReviewedCatalog.match(
             stored, source, reviewedLocalRepositoryPolicy,
         )
@@ -2435,7 +2544,7 @@ public class PluginManager(
                 }
                 .scopedToPolicy(
                     reviewedOfficialSource?.networkPolicy
-                        ?: source?.networkPolicy()
+                        ?: source?.let { grantedNetworkPolicy(it, grant) }
                         ?: PluginNetworkPolicy.Default,
                 ),
             storage = boundStorage,
@@ -2543,6 +2652,7 @@ public class PluginManager(
             sourceKeys,
             manifest.requestedHostPermissions,
             effectiveRuntimePermissions,
+            declaredSources.flatMapTo(linkedSetOf()) { it.contentHostSuffixes },
         )
     }
 
