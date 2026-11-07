@@ -66,14 +66,21 @@ class PluginManagerExecutionTierTest {
 
     private val keys = mutableListOf<dev.shinsou.kmp.sync.crypto.SodiumKeyPair>()
 
+    /** The local install key of the single installed fixture (publisher-scoped when signed, D6). */
+    private suspend fun Host.key(): String = manager.installedPlugins().singleOrNull()?.manifest?.id ?: PLUGIN_ID
+
+    /** The numeric id the fixture's source runs under on this device. */
+    private suspend fun Host.sourceId(): Long =
+        manager.installedPlugins().singleOrNull()?.manifest?.sources?.singleOrNull()?.id ?: SOURCE_ID
+
     @kotlin.test.AfterTest
     fun destroyKeys() = keys.forEach { SodiumSyncPrimitives.destroy(it.privateKey) }
 
     /** Trusts a fresh publisher for [REPOSITORY], with the current (empty) revocation list installs require. */
-    private suspend fun Host.trustPublisher(): String {
+    private suspend fun Host.trustPublisher(repository: ExtensionRepository = REPOSITORY): String {
         val key = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
-        val publisher = publishers.trustRepository(REPOSITORY.baseUrl, publisherRoot(key)).publisherId
-        revocations.applyRevocations(REPOSITORY.baseUrl, signedRevocations(key, REPOSITORY.baseUrl, publisher, expiresAt = 10_000))
+        val publisher = publishers.trustRepository(repository.baseUrl, publisherRoot(key)).publisherId
+        revocations.applyRevocations(repository.baseUrl, signedRevocations(key, repository.baseUrl, publisher, expiresAt = 10_000))
         return publisher
     }
 
@@ -82,11 +89,11 @@ class PluginManagerExecutionTierTest {
         val host = Host()
         val publisher = host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
-        assertEquals(publisher, host.packages.get(PLUGIN_ID)!!.metadata.publisherId)
+        assertEquals(publisher, host.packages.get(host.key())!!.metadata.publisherId)
         assertTrue(host.sandbox.created.isEmpty(), "nothing runs before the user approves")
-        host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
-        assertEquals(listOf(PLUGIN_ID), host.sandbox.created)
-        assertNotNull(host.manager.source(SOURCE_ID))
+        host.manager.approveCurrentEventGrantReview(host.key(), emptySet())
+        assertEquals(listOf(host.key()), host.sandbox.created)
+        assertNotNull(host.manager.source(host.sourceId()))
     }
 
     @Test
@@ -100,26 +107,26 @@ class PluginManagerExecutionTierTest {
             ),
         )
         host.manager.install(REPOSITORY, first)
-        val review = assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        val review = assertNotNull(host.manager.pendingEventGrantReview(host.key()))
         // The user turns COOKIE_READ off.
         val selection = dev.shinsou.kmp.plugin.events.PluginGrantSelection(
             hostPermissions = emptySet(),
             runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK, PluginRuntimePermission.COOKIE_STORAGE),
             contentHostSuffixes = emptySet(),
         )
-        host.manager.approveEventGrantReview(PLUGIN_ID, review, emptySet(), selection)
+        host.manager.approveEventGrantReview(host.key(), review, emptySet(), selection)
         assertEquals(selection.runtimePermissions, host.sandbox.permissions.last())
 
         // D4: same publisher, nothing new requested — it runs at once and the choice is kept.
         host.manager.install(REPOSITORY, first.copy(version = "1.1.0", versionCode = 2))
-        assertNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
-        assertEquals(selection, host.manager.grantedSelection(PLUGIN_ID))
+        assertNull(host.manager.pendingEventGrantReview(host.key()))
+        assertEquals(selection, host.manager.grantedSelection(host.key()))
         assertEquals(selection.runtimePermissions, host.sandbox.permissions.last())
-        assertNotNull(host.manager.source(SOURCE_ID))
+        assertNotNull(host.manager.source(host.sourceId()))
 
         // Settings withdraw an item: the runtime is rebuilt without it.
         val narrower = selection.copy(runtimePermissions = selection.runtimePermissions - PluginRuntimePermission.COOKIE_STORAGE)
-        host.manager.narrowGrant(PLUGIN_ID, narrower)
+        host.manager.narrowGrant(host.key(), narrower)
         assertEquals(narrower.runtimePermissions, host.sandbox.permissions.last())
 
         // An update asking for something new waits for a fresh review and does not run.
@@ -127,8 +134,8 @@ class PluginManagerExecutionTierTest {
             REPOSITORY,
             first.copy(version = "1.2.0", versionCode = 3, runtimePermissions = first.runtimePermissions!! + PluginRuntimePermission.CREDENTIAL_ACCESS),
         )
-        assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
-        assertNull(host.manager.source(SOURCE_ID))
+        assertNotNull(host.manager.pendingEventGrantReview(host.key()))
+        assertNull(host.manager.source(host.sourceId()))
     }
 
     @Test
@@ -145,27 +152,60 @@ class PluginManagerExecutionTierTest {
             ),
         )
         host.manager.install(REPOSITORY, withCdn)
-        val review = assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        val review = assertNotNull(host.manager.pendingEventGrantReview(host.key()))
         assertEquals(setOf("cdn.example.net"), review.requestedContentHostSuffixes)
         // Approved without the CDN family.
         host.manager.approveEventGrantReview(
-            PLUGIN_ID, review, emptySet(),
+            host.key(), review, emptySet(),
             dev.shinsou.kmp.plugin.events.PluginGrantSelection(emptySet(), review.requestedRuntimePermissions, emptySet()),
         )
-        val content = assertNotNull(host.manager.contentNetworkForSource(SOURCE_ID))
+        val content = assertNotNull(host.manager.contentNetworkForSource(host.sourceId()))
         val refused = assertFailsWith<IllegalArgumentException> {
-            content.execute(SOURCE_ID, PluginHttpRequest("GET", "https://img1.cdn.example.net/a.jpg", ByteArray(0), emptyMap()))
+            content.execute(host.sourceId(), PluginHttpRequest("GET", "https://img1.cdn.example.net/a.jpg", ByteArray(0), emptyMap()))
         }
         assertTrue(refused.message.orEmpty().contains("not declared"), refused.message)
+    }
+
+    @Test
+    fun theSamePackageIdFromTwoPublishersInstallsSideBySide() = runTest {
+        val host = Host()
+        val first = host.trustPublisher(REPOSITORY)
+        val second = host.trustPublisher(OTHER_REPOSITORY)
+        host.manager.install(REPOSITORY, entry())
+        host.manager.install(OTHER_REPOSITORY, entry())
+        val installed = host.manager.installedPlugins()
+        assertEquals(2, installed.size)
+        val byPublisher = installed.associateBy { it.metadata.publisherId }
+        val a = assertNotNull(byPublisher[first])
+        val b = assertNotNull(byPublisher[second])
+        // Each has its own local identity and its own projected source id, the same on every device.
+        assertTrue(a.manifest.id.startsWith("$PLUGIN_ID~") && b.manifest.id.startsWith("$PLUGIN_ID~"))
+        assertTrue(a.manifest.id != b.manifest.id)
+        val aSource = a.manifest.sources!!.single()
+        val bSource = b.manifest.sources!!.single()
+        assertTrue(aSource.id != bSource.id)
+        assertEquals(PluginInstallKeys.projectedSourceId(a.manifest.id, SOURCE_ID.toString()), aSource.id)
+        assertEquals(SOURCE_ID.toString(), aSource.canonicalSourceId)
+
+        host.manager.approveCurrentEventGrantReview(a.manifest.id, emptySet())
+        host.manager.approveCurrentEventGrantReview(b.manifest.id, emptySet())
+        assertNotNull(host.manager.source(aSource.id))
+        assertNotNull(host.manager.source(bSource.id))
+
+        // Removing one leaves the other running, with its grant.
+        host.manager.uninstall(a.manifest.id)
+        assertNull(host.manager.source(aSource.id))
+        assertNotNull(host.manager.source(bSource.id))
+        assertNotNull(host.manager.grantedSelection(b.manifest.id))
     }
 
     @Test
     fun anUnsignedPackageStaysInertEvenWhenApproved() = runTest {
         val host = Host()
         host.manager.install(REPOSITORY, entry())
-        assertFailsWith<ExtensionArtifactNotReviewedException> { host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet()) }
+        assertFailsWith<ExtensionArtifactNotReviewedException> { host.manager.approveCurrentEventGrantReview(host.key(), emptySet()) }
         assertTrue(host.sandbox.created.isEmpty())
-        assertNull(host.manager.source(SOURCE_ID))
+        assertNull(host.manager.source(host.sourceId()))
     }
 
     @Test
@@ -173,19 +213,19 @@ class PluginManagerExecutionTierTest {
         val host = Host()
         val publisher = host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
-        host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
+        host.manager.approveCurrentEventGrantReview(host.key(), emptySet())
         host.blocklist.block(PluginBlockEntry.Publisher(publisher))
         host.manager.loadInstalled()
-        assertNull(host.manager.source(SOURCE_ID))
+        assertNull(host.manager.source(host.sourceId()))
 
         // A later process (same device storage) still keeps it inert; unblocking brings it back.
         val restarted = Host(host.keyValues, host.packages)
         restarted.manager.loadInstalled()
-        assertNull(restarted.manager.source(SOURCE_ID))
+        assertNull(restarted.manager.source(restarted.sourceId()))
         restarted.blocklist.unblock(PluginBlockEntry.Publisher(publisher))
         val again = Host(host.keyValues, host.packages)
         again.manager.loadInstalled()
-        assertNotNull(again.manager.source(SOURCE_ID))
+        assertNotNull(again.manager.source(again.sourceId()))
     }
 
     @Test
@@ -194,7 +234,7 @@ class PluginManagerExecutionTierTest {
         val publisher = host.trustPublisher()
         host.blocklist.block(PluginBlockEntry.Publisher(publisher))
         assertFailsWith<PublisherTrustException.Blocked> { host.manager.install(REPOSITORY, entry()) }
-        assertNull(host.packages.get(PLUGIN_ID))
+        assertTrue(host.manager.installedPlugins().isEmpty())
     }
 
     @Test
@@ -202,10 +242,10 @@ class PluginManagerExecutionTierTest {
         val host = Host()
         host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
-        host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
+        host.manager.approveCurrentEventGrantReview(host.key(), emptySet())
         host.publishers.setGlobalMode(PublisherTrustMode.REQUIRE_FINGERPRINT_MATCH)
         host.manager.loadInstalled()
-        assertNotNull(host.manager.source(SOURCE_ID))
+        assertNotNull(host.manager.source(host.sourceId()))
         assertFailsWith<PublisherTrustException.NotInstallable> { host.manager.install(REPOSITORY, entry(version = "1.1.0", versionCode = 2)) }
     }
 
@@ -215,8 +255,8 @@ class PluginManagerExecutionTierTest {
         val host = Host(keyValues)
         val publisher = host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
-        host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet())
-        assertNotNull(host.manager.source(SOURCE_ID))
+        host.manager.approveCurrentEventGrantReview(host.key(), emptySet())
+        assertNotNull(host.manager.source(host.sourceId()))
         val adapter = PluginBrowseAdapter(
             manager = host.manager,
             repositoryClient = host.client,
@@ -231,7 +271,7 @@ class PluginManagerExecutionTierTest {
         keyValues.stalled.await() // the block is on disk; the screen goes away before the call returns
         blocking.cancel()
         blocking.join()
-        assertNull(host.manager.source(SOURCE_ID))
+        assertNull(host.manager.source(host.sourceId()))
     }
 
     @Test
@@ -244,9 +284,9 @@ class PluginManagerExecutionTierTest {
             val installed = runCatching { host.manager.install(ExtensionRepository(spelling, "Repo"), entry()) }
             if (installed.isFailure) continue // the same publisher: refused by the install gate
             // A spelling the publisher is not pinned under installs as unsigned: it can never run.
-            assertNull(host.packages.get(PLUGIN_ID)!!.metadata.publisherId, spelling)
-            runCatching { host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet()) }
-            assertNull(host.manager.source(SOURCE_ID), "$spelling runs without a revocation list")
+            assertNull(host.packages.get(host.key())!!.metadata.publisherId, spelling)
+            runCatching { host.manager.approveCurrentEventGrantReview(host.key(), emptySet()) }
+            assertNull(host.manager.source(host.sourceId()), "$spelling runs without a revocation list")
             assertTrue(host.sandbox.created.isEmpty(), spelling)
         }
     }
@@ -256,8 +296,8 @@ class PluginManagerExecutionTierTest {
         val host = Host(withSandbox = false)
         host.trustPublisher()
         host.manager.install(REPOSITORY, entry())
-        assertFailsWith<ExtensionArtifactNotReviewedException> { host.manager.approveCurrentEventGrantReview(PLUGIN_ID, emptySet()) }
-        assertNull(host.manager.source(SOURCE_ID))
+        assertFailsWith<ExtensionArtifactNotReviewedException> { host.manager.approveCurrentEventGrantReview(host.key(), emptySet()) }
+        assertNull(host.manager.source(host.sourceId()))
     }
 
     @Test
@@ -357,6 +397,7 @@ class PluginManagerExecutionTierTest {
         const val SOURCE_ID = 8_101L
         const val SCRIPT = "var source = { version: 1 };"
         val REPOSITORY = ExtensionRepository("https://repo.example", "Repo")
+        val OTHER_REPOSITORY = ExtensionRepository("https://other-repo.example", "Other repo")
     }
 }
 

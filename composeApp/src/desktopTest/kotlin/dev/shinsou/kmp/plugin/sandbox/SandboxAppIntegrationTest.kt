@@ -115,16 +115,19 @@ class SandboxAppIntegrationTest {
             revocations.applyRevocations(REPOSITORY.baseUrl, signedRevocations(key, REPOSITORY.baseUrl, publisher, expiresAt = 10_000))
             SodiumSyncPrimitives.destroy(key.privateKey)
             manager.install(REPOSITORY, entry)
-            manager.approveCurrentEventGrantReview(entry.id, emptySet())
-            val page = manager.source(SOURCE_ID)!!.getPopularManga(1)
-            println("integration: requests=$requests logs=${(manager.source(SOURCE_ID) as dev.shinsou.kmp.plugin.ScriptPluginRuntime).recentLogs}")
+            // A publisher-signed package runs under its local install key and projected source id (D6).
+            val installed = manager.installedPlugins().single()
+            val sourceId = installed.manifest.sources!!.single().id
+            manager.approveCurrentEventGrantReview(installed.manifest.id, emptySet())
+            val page = manager.source(sourceId)!!.getPopularManga(1)
+            println("integration: requests=$requests logs=${(manager.source(sourceId) as dev.shinsou.kmp.plugin.ScriptPluginRuntime).recentLogs}")
             assertEquals(listOf("沙箱一", "Two"), page.mangas.map { it.title })
-            assertTrue(manager.source(SOURCE_ID) is dev.shinsou.kmp.plugin.ScriptPluginRuntime)
+            assertTrue(manager.source(sourceId) is dev.shinsou.kmp.plugin.ScriptPluginRuntime)
             println("integration: ${page.mangas.size} titles from the confined helper")
 
             blocklist.block(PluginBlockEntry.Publisher(publisher))
             manager.loadInstalled()
-            assertNull(manager.source(SOURCE_ID))
+            assertNull(manager.source(sourceId))
         } finally {
             manager.close()
             scope.cancel()

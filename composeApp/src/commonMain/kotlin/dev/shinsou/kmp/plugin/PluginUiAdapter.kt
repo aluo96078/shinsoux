@@ -465,7 +465,10 @@ public class PluginBrowseAdapter(
     override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean): Unit = securityChange { security ->
         // Packages without a publisher (the reviewed catalogues, reviewed ShuYue) are blocked by id.
         val publisherId = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId }?.metadata?.publisherId
-        val entry = PluginBlockEntry.Package(extensionId, publisherId ?: PluginBlockEntry.Package.NO_PUBLISHER)
+        val entry = PluginBlockEntry.Package(
+            PluginInstallKeys.publishedPackageId(extensionId),
+            publisherId ?: PluginBlockEntry.Package.NO_PUBLISHER,
+        )
         if (blocked) security.blocklist.block(entry) else security.blocklist.unblock(entry)
     }
 
@@ -1144,7 +1147,7 @@ public class PluginBrowseAdapter(
             ?: throw IllegalStateException("Extension repository must be refreshed before installing")
         val installedVersion = when (val index = displayed.index) {
             is RepositoryIndex.Plugins -> {
-                val entry = index.entries.firstOrNull { it.id == extensionId }
+                val entry = index.entries.firstOrNull { manager.installKeyFor(repository, it) == extensionId }
                     ?: throw IllegalStateException("Extension '$extensionId' is no longer in the repository")
                 require(entry.matchesDescriptor(descriptor)) {
                     "Extension '$extensionId' changed in the repository; refresh before installing"
@@ -1164,7 +1167,7 @@ public class PluginBrowseAdapter(
             }
 
             is RepositoryIndex.Combined -> {
-                val entry = index.plugins.firstOrNull { it.id == extensionId }
+                val entry = index.plugins.firstOrNull { manager.installKeyFor(repository, it) == extensionId }
                     ?: throw IllegalStateException("Extension '$extensionId' is no longer in the repository")
                 require(entry.matchesDescriptor(descriptor)) {
                     "Extension '$extensionId' changed in the repository; refresh before installing"
@@ -1268,8 +1271,9 @@ public class PluginBrowseAdapter(
             // local mutation. Do not refetch every repository (or rescan unrelated packages): a
             // repository-backed row becomes available, while an installed-only row disappears.
             val descriptor = descriptors[extensionId]
-            descriptors = if (descriptor != null && repositorySnapshots.values.any { snapshot ->
-                    snapshot.containsExtension(extensionId)
+            val repositories = repositoryStore.list().associateBy { it.baseUrl }
+            descriptors = if (descriptor != null && repositorySnapshots.any { (baseUrl, snapshot) ->
+                    repositories[baseUrl]?.let { repository -> snapshot.containsExtension(repository, extensionId) } == true
                 }
             ) {
                 descriptors + (extensionId to descriptor.copy(
@@ -2245,11 +2249,12 @@ public class PluginBrowseAdapter(
         }
     }
 
-    private fun RepositoryIndexSnapshot.containsExtension(extensionId: String): Boolean =
+    /** Whether [extensionId] (an install key, D6) is still offered by this repository's index. */
+    private suspend fun RepositoryIndexSnapshot.containsExtension(repository: ExtensionRepository, extensionId: String): Boolean =
         when (val displayed = index) {
-            is RepositoryIndex.Plugins -> displayed.entries.any { it.id == extensionId }
+            is RepositoryIndex.Plugins -> displayed.entries.any { manager.installKeyFor(repository, it) == extensionId }
             is RepositoryIndex.Legacy -> displayed.entries.any { it.pkg == extensionId }
-            is RepositoryIndex.Combined -> displayed.plugins.any { it.id == extensionId }
+            is RepositoryIndex.Combined -> displayed.plugins.any { manager.installKeyFor(repository, it) == extensionId }
         }
 
     private suspend fun rebuildSnapshot(

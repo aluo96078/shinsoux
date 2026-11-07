@@ -149,8 +149,11 @@ class PluginRuntimeIdentitySecurityTest {
             ),
         )
 
-        assertFailsWith<IllegalArgumentException> { manager.loadInstalled() }
+        // Neither package of a stored collision runs (which one owns the id is ambiguous), and the
+        // collision no longer keeps unrelated packages from loading.
+        manager.loadInstalled()
         assertEquals(0, factory.createCount)
+        assertNull(manager.source(81L))
     }
 
     @Test

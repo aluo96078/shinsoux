@@ -529,9 +529,11 @@ public class PluginManager(
         repositories.forEach { repository ->
             val snapshot = repositoryClient.fetchIndexSnapshot(repository.baseUrl)
             snapshots[repository.baseUrl] = snapshot
+            val installKeyOf = installKeyResolver(repository)
             when (val index = snapshot.index) {
                 is RepositoryIndex.Plugins -> index.entries.forEach { entry ->
-                    val local = installed[entry.id]
+                    val key = installKeyOf(entry.id) ?: return@forEach
+                    val local = installed[key]
                     val state = when {
                         local == null -> ExtensionState.AVAILABLE
                         entry.versionCode > (local.manifest.versionCode
@@ -541,12 +543,12 @@ public class PluginManager(
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
-                    result[entry.id] = entry.toDescriptor(
+                    result[key] = entry.toDescriptor(
                         repository,
                         state,
                         local?.manifest?.version,
                         local?.manifest?.installedContentType(),
-                    )
+                    ).copy(id = key)
                 }
 
                 is RepositoryIndex.Legacy -> index.entries.forEach { entry ->
@@ -568,7 +570,8 @@ public class PluginManager(
                     )
                 }
                 is RepositoryIndex.Combined -> index.plugins.forEach { entry ->
-                    val local = installed[entry.id]
+                    val key = installKeyOf(entry.id) ?: return@forEach
+                    val local = installed[key]
                     val state = when {
                         local == null -> ExtensionState.AVAILABLE
                         entry.versionCode > (local.manifest.versionCode
@@ -578,12 +581,12 @@ public class PluginManager(
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
-                    result[entry.id] = entry.toDescriptor(
+                    result[key] = entry.toDescriptor(
                         repository,
                         state,
                         local?.manifest?.version,
                         local?.manifest?.installedContentType(),
-                    )
+                    ).copy(id = key)
                 }
             }
         }
@@ -595,6 +598,27 @@ public class PluginManager(
             packageMutationMutex.withLock { invalidateWebChallengeGrants() }
         }
     }
+
+    /**
+     * The install key a [repository]'s package ids get on this device (D6); null for an id that
+     * cannot be installed, and for every id of a repository URL this client refuses. Refresh, the
+     * UI lookup and install all derive keys here, so they always agree.
+     *
+     * The original community repository URL keeps bare keys even once it is signed (ADR-0002 S8):
+     * its existing library rows are keyed by them. That is no wider than before: only one publisher
+     * key can sign that URL (a different key is refused as a substitution), and every other
+     * publisher's package is always scoped, so nothing else can take the bare ids.
+     */
+    private suspend fun installKeyResolver(repository: ExtensionRepository): (String) -> String? {
+        val canonical = runCatching { repositoryClient.canonicalBaseUrl(repository.baseUrl) }.getOrNull() ?: return { null }
+        val publisherId = executionTierGate?.publisherForRepository(canonical)
+        val legacyCommunity = canonical == repositoryClient.canonicalBaseUrl(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)
+        return { packageId -> runCatching { PluginInstallKeys.installKey(packageId, publisherId, legacyCommunity) }.getOrNull() }
+    }
+
+    /** The install key [entry] of [repository] has, or would have, on this device. */
+    public suspend fun installKeyFor(repository: ExtensionRepository, entry: PluginIndexEntry): String? =
+        installKeyResolver(repository)(entry.id)
 
     public suspend fun install(
         repository: ExtensionRepository,
@@ -614,7 +638,16 @@ public class PluginManager(
             require(entry.runtimePermissions != null) {
                 "New plugin '${entry.id}' must declare runtimePermissions"
             }
-            val previousStored = packageStore.get(entry.id)
+            // The publisher is fixed by the repository's pinned key, never by what the index says.
+            // Keyed exactly as the client keys trust: an equivalent spelling must not miss the publisher.
+            val canonicalRepository = repositoryClient.canonicalBaseUrl(repository.baseUrl)
+            val publisherId = executionTierGate?.publisherForRepository(canonicalRepository)
+            // D6: the local identity, so another publisher's package with the same id installs beside it.
+            val installKey = requireNotNull(installKeyResolver(repository)(entry.id)) {
+                "Plugin '${entry.id}' cannot be installed under a local identity"
+            }
+            PluginVerifier.validateSafeFileComponent(installKey)
+            val previousStored = packageStore.get(installKey)
             val previousVersionCode = previousStored?.manifest?.versionCode
                 ?: previousStored?.manifest?.version?.let(PluginVerifier::versionInt)
             require(previousVersionCode == null || entry.versionCode >= previousVersionCode) {
@@ -630,23 +663,20 @@ public class PluginManager(
             }
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()
-            // The publisher is fixed by the repository's pinned key, never by what the index says.
-            // Keyed exactly as the client keys trust: an equivalent spelling must not miss the publisher.
-            val publisherId = executionTierGate?.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
             if (publisherId != null) executionTierGate.requireInstallable(entry.id, publisherId, actualHash)
             val manifest = PluginManifest(
-                id = entry.id,
+                id = installKey,
                 name = entry.name,
                 version = entry.version,
                 versionCode = entry.versionCode,
                 lang = entry.lang,
                 nsfw = entry.nsfw == 1,
-                script = "${entry.id}.js",
+                script = "$installKey.js",
                 // Current repositories have no digest field. Hashing the received bytes and
                 // recording the resulting trust token preserves Shinsou's legacy TOFU behavior.
                 signature = expectedHash ?: actualHash,
                 minRuntimeVersion = entry.minRuntimeVersion,
-                sources = entry.sources,
+                sources = entry.sources?.let { sources -> localSources(installKey, sources) },
                 contentKinds = entry.contentKinds.takeIf {
                     entry.sidecarUrl != null ||
                         entry.sources.orEmpty().any { source -> source.contentKindsDeclared != null }
@@ -689,7 +719,7 @@ public class PluginManager(
             var committed = false
             var liveStateReplaced = false
             try {
-                require(extensionRegistryV2.packageFacade(entry.id) == null) {
+                require(extensionRegistryV2.packageFacade(installKey) == null) {
                     "Extension package '${entry.id}' is already loaded by the V2 runtime"
                 }
                 if (alreadyGranted) {
@@ -710,14 +740,14 @@ public class PluginManager(
                     candidates = emptyList()
                 }
                 if (candidates.isNotEmpty()) {
-                    lifecycleMutex.withLock { validateRuntimeCandidates(entry.id, candidates) }
+                    lifecycleMutex.withLock { validateRuntimeCandidates(installKey, candidates) }
                 }
                 withContext(NonCancellable) {
                     packageStore.put(stored)
                     requirePersistedPackageMatches(stored)
                     lifecycleMutex.withLock {
-                        if (candidates.isEmpty()) unloadPlugin(entry.id)
-                        else replaceRuntimes(entry.id, candidates)
+                        if (candidates.isEmpty()) unloadPlugin(installKey)
+                        else replaceRuntimes(installKey, candidates)
                         // The live maps have changed as soon as unload/replace returns. Mark that
                         // boundary before committing the inert reservation: if the latter throws,
                         // rollback must rebuild the previous runtime instead of merely closing the
@@ -748,7 +778,7 @@ public class PluginManager(
                 eventGrantAdmission?.hydrate(grantReview)
                 if (continuedGrant != null && previousStored != null) {
                     continuationNotices.tryEmit(
-                        PluginGrantContinuationNotice(entry.id, entry.name, previousStored.manifest.version, entry.version),
+                        PluginGrantContinuationNotice(installKey, entry.name, previousStored.manifest.version, entry.version),
                     )
                 }
                 return@withLock compatibilityResult
@@ -760,17 +790,17 @@ public class PluginManager(
                                 .exceptionOrNull()?.let(error::addSuppressed)
                         }
                         runCatching {
-                            if (previousStored == null) packageStore.remove(entry.id)
+                            if (previousStored == null) packageStore.remove(installKey)
                             else packageStore.put(previousStored)
                         }.exceptionOrNull()?.let(error::addSuppressed)
                         if (liveStateReplaced) {
-                            runCatching { restorePreviousRuntime(entry.id, previousStored) }
+                            runCatching { restorePreviousRuntime(installKey, previousStored) }
                                 .onFailure { restoreFailure ->
                                     error.addSuppressed(restoreFailure)
                                     // If restoration itself fails, do not leave the replacement
                                     // artifact live beside an uncertain durable package.
                                     runCatching {
-                                        lifecycleMutex.withLock { unloadPlugin(entry.id) }
+                                        lifecycleMutex.withLock { unloadPlugin(installKey) }
                                     }.exceptionOrNull()?.let(error::addSuppressed)
                                 }
                         }
@@ -786,7 +816,7 @@ public class PluginManager(
                     // would make a storage outage an execution-admission bypass.
                     withContext(NonCancellable) {
                         runCatching {
-                            lifecycleMutex.withLock { unloadPlugin(entry.id) }
+                            lifecycleMutex.withLock { unloadPlugin(installKey) }
                         }.exceptionOrNull()?.let(error::addSuppressed)
                     }
                 }
@@ -1131,8 +1161,7 @@ public class PluginManager(
                 sources.clear()
                 sourceOwners.clear()
                 sourceReservations.clear()
-                val storedPlugins = packageStore.list()
-                preflightInstalledManifestSources(storedPlugins)
+                val storedPlugins = preflightInstalledManifestSources(packageStore.list())
                 storedPlugins.forEach { stored ->
                     try {
                         loadStored(stored)
@@ -1241,6 +1270,19 @@ public class PluginManager(
             locallyRevokedArtifacts += stored.artifactIdentity()
             quarantineUnavailableRuntime(requireNotNull(stored.eventGrantReview(includeEmpty = true)))
             throw ExtensionArtifactNotReviewedException(pluginId)
+        }
+    }
+
+    /**
+     * The sources as this device runs them (D6): unchanged for a bare install key; for a
+     * publisher-scoped one each numeric id is projected from its exact identity, and the published
+     * id is kept as the canonical source id the script selects.
+     */
+    private fun localSources(installKey: String, sources: List<SourceIndexEntry>): List<SourceIndexEntry> {
+        if (!PluginInstallKeys.isPublisherScoped(installKey)) return sources
+        return sources.map { source ->
+            val sourceId = source.canonicalSourceId ?: source.id.toString()
+            source.copy(id = PluginInstallKeys.projectedSourceId(installKey, sourceId), canonicalSourceId = sourceId)
         }
     }
 
@@ -2602,7 +2644,8 @@ public class PluginManager(
         val gate = executionTierGate ?: return
         val tier = gate.resolve(
             ExecutionTierCandidate(
-                packageId = stored.manifest.id,
+                // Blocks and revocations name the package id the publisher published (D6).
+                packageId = PluginInstallKeys.publishedPackageId(stored.manifest.id),
                 artifactSha256 = stored.metadata.installedSha256,
                 publisherId = stored.metadata.publisherId,
                 officialReviewedCatalogMatch = reviewedInProcess,
@@ -2847,22 +2890,22 @@ public class PluginManager(
     }
 
     /** One inert pass ensures a corrupt stored collision cannot run whichever package lists first. */
-    private fun preflightInstalledManifestSources(storedPlugins: List<StoredPlugin>) {
-        val declaredOwners = mutableMapOf<Long, String>()
+    /**
+     * The installed packages that can load together. Packages whose stored source ids collide
+     * (which one owns an id is then ambiguous), or that repeat an id, stay installed but none of
+     * them runs; one collision no longer keeps every other package from loading.
+     */
+    private fun preflightInstalledManifestSources(storedPlugins: List<StoredPlugin>): List<StoredPlugin> {
+        val owners = mutableMapOf<Long, MutableSet<String>>()
+        val invalid = mutableSetOf<String>()
         storedPlugins.forEach { stored ->
             val manifest = stored.manifest
             val sourceIds = declaredSourceIds(manifest)
-            require(sourceIds.size == manifest.sources.orEmpty().size.coerceAtLeast(1)) {
-                "Plugin '${manifest.id}' declares duplicate source ids"
-            }
-            sourceIds.forEach { sourceId ->
-                val owner = declaredOwners[sourceId]
-                require(owner == null || owner == manifest.id) {
-                    "Stored source id $sourceId collides between plugins '$owner' and '${manifest.id}'"
-                }
-                declaredOwners[sourceId] = manifest.id
-            }
+            if (sourceIds.size != manifest.sources.orEmpty().size.coerceAtLeast(1)) invalid += manifest.id
+            sourceIds.forEach { owners.getOrPut(it, ::linkedSetOf) += manifest.id }
         }
+        owners.values.filter { it.size > 1 }.forEach(invalid::addAll)
+        return storedPlugins.filter { it.manifest.id !in invalid }
     }
 
     private fun commitReservation(reservation: SourceReservation) {
