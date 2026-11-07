@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 class PluginNamePolicyTest {
     @Test
     fun namesClaimingToBeOfficialAreRefusedInEverySpelling() {
-        for (name in listOf("Shinsou Official", "shinsou_offical", "ＯＦＦＩＣＩＡＬ Plugins", "官方插件", "官 方", "O-f-f-i-c-i-a-l", "公式ソース", "Unofficial Official mirror")) {
+        for (name in listOf("Shinsou Official", "shinsou_offical", "ＯＦＦＩＣＩＡＬ Plugins", "官方插件", "官 方", "O-f-f-i-c-i-a-l", "公式ソース", "Unofficial Official mirror", "0fficial", "Offic1al", "Off\u200Bicial")) {
             assertTrue(PluginNamePolicy.isMisleading(name), name)
         }
         for (name in listOf("Shinsou Community Plugins", "MangaDex", "輕小說文庫", "Office Reader", "Unofficial Manga Sources", "非官方插件", "非公式")) {

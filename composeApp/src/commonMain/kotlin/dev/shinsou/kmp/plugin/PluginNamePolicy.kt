@@ -5,8 +5,9 @@ package dev.shinsou.kmp.plugin
  * or repository name that claims otherwise is refused at install and before trusting a publisher,
  * the same rule the `@shinsou/plugin` CLI's `lint` applies.
  *
- * Compared case-insensitively, with full-width forms folded and every separator removed, so
- * `Shinsou_Official`, `ＯＦＦＩＣＩＡＬ` and `官 方` all match.
+ * Compared case-insensitively, with full-width forms folded, every separator (and zero-width
+ * character) removed and look-alike digits read as letters, so `Shinsou_Official`, `ＯＦＦＩＣＩＡＬ`,
+ * `0fficial` and `官 方` all match.
  */
 public object PluginNamePolicy {
     private val MISLEADING = listOf("official", "offical", "官方", "公式")
@@ -27,7 +28,8 @@ public object PluginNamePolicy {
     private fun fold(name: String): String = buildString {
         for (char in name) {
             val c = if (char in '！'..'～') (char.code - 0xFEE0).toChar() else char
-            if (c.isLetterOrDigit()) append(c.lowercaseChar())
+            // Look-alike digits (`0fficial`, `offic1al`) count as the letters they imitate.
+            if (c.isLetterOrDigit()) append(when (c) { '0' -> 'o'; '1' -> 'i'; else -> c.lowercaseChar() })
         }
     }
 }
