@@ -91,9 +91,14 @@ internal fun PackageSecurityDialog(
     onPublisherBlocked: (publisherId: String, blocked: Boolean) -> Unit,
     onConfirmFingerprint: (publisherId: String, fingerprint: String) -> Unit,
     onUnblock: (key: String) -> Unit,
+    onDeveloperMode: (Boolean) -> Unit = {},
+    onDeveloperHosts: (List<String>) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
+    var developerHosts by remember(snapshot.developerMode?.lanHosts) {
+        mutableStateOf(snapshot.developerMode?.lanHosts.orEmpty().joinToString("\n"))
+    }
     var matching by remember { mutableStateOf<String?>(null) }
     var fingerprint by remember { mutableStateOf("") }
     AlertDialog(
@@ -171,6 +176,38 @@ internal fun PackageSecurityDialog(
                             ) { Text(strings.text("Match")) }
                         }
                         HorizontalDivider()
+                    }
+                }
+                snapshot.developerMode?.let { developer ->
+                    item("developer-title") {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(strings.text("Developer mode"), style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    strings.text("Load unsigned plugins from a development server on this device or on the addresses below. Only for testing your own plugins."),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Switch(checked = developer.enabled, enabled = enabled, onCheckedChange = onDeveloperMode)
+                        }
+                    }
+                    if (developer.enabled) {
+                        item("developer-hosts") {
+                            Column {
+                                OutlinedTextField(
+                                    value = developerHosts,
+                                    onValueChange = { developerHosts = it },
+                                    label = { Text(strings.text("Development server addresses")) },
+                                    supportingText = { Text(strings.text("Private network addresses, one per line (for example 192.168.1.20)")) },
+                                    minLines = 2,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                TextButton(
+                                    enabled = enabled,
+                                    onClick = { onDeveloperHosts(developerHosts.lines().map(String::trim).filter(String::isNotEmpty)) },
+                                ) { Text(strings.text("Save addresses")) }
+                            }
+                        }
                     }
                 }
                 item("blocks-title") {

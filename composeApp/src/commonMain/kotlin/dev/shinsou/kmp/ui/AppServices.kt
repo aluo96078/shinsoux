@@ -1041,6 +1041,11 @@ interface BrowseCallbacks {
 
     suspend fun setStrictPublisherTrust(strict: Boolean) = Unit
 
+    suspend fun setPluginDeveloperMode(enabled: Boolean) = Unit
+
+    /** Throws when an address is not on a private network. */
+    suspend fun setPluginDeveloperHosts(hosts: List<String>) = Unit
+
     suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String) = Unit
 
     suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean) = Unit
@@ -1635,6 +1640,8 @@ data class BrowseExtension(
     val reviewedShuYueV2: Boolean = false,
     val description: String? = null,
     val contentType: PluginContentType = PluginContentType.BOTH,
+    /** ADR-0002 §8.1: an unsigned package loaded from a developer-mode repository. */
+    val inDevelopment: Boolean = false,
 )
 
 data class BrowseManga(
@@ -1697,7 +1704,7 @@ enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_
 data class PluginPermissionDetails(
     val packageName: String,
     val version: String,
-    /** Null for a package without a publisher key (it cannot run). */
+    /** Null for a package without a publisher key (it cannot run, unless [inDevelopment]). */
     val publisherDisplayFingerprint: String?,
     val publisherState: PublisherTrustState?,
     val fingerprintVerified: Boolean,
@@ -1707,6 +1714,8 @@ data class PluginPermissionDetails(
     /** Where cookies and, for login, the account password may be sent. */
     val credentialOrigins: List<String>,
     val browserSessionOrigins: List<String>,
+    /** ADR-0002 §8.1: unsigned, from a developer-mode repository; runs only while the mode is on. */
+    val inDevelopment: Boolean = false,
 )
 
 /** A granted plugin's review and the items currently granted from it (source settings → permissions). */
@@ -1732,4 +1741,9 @@ data class PackageSecuritySnapshot(
     val strictMode: Boolean = false,
     val publishers: List<PackagePublisher> = emptyList(),
     val blocks: List<PackageBlock> = emptyList(),
+    /** Null where developer mode is unavailable (previews). */
+    val developerMode: PluginDeveloperModeSettings? = null,
 )
+
+/** ADR-0002 §8.1: loading unsigned packages from this device or the LAN addresses entered here. */
+data class PluginDeveloperModeSettings(val enabled: Boolean, val lanHosts: List<String>)

@@ -151,7 +151,10 @@ private fun PublisherBlock(details: PluginPermissionDetails?, strings: ShinsouSt
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(strings.text("Publisher"), style = MaterialTheme.typography.labelMedium)
         val fingerprint = details?.publisherDisplayFingerprint
-        if (fingerprint == null) {
+        if (fingerprint == null && details?.inDevelopment == true) {
+            Text(strings.text("In development"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.tertiary)
+            Text(strings.text("Unsigned development build: runs only while developer mode is on."), style = MaterialTheme.typography.bodySmall)
+        } else if (fingerprint == null) {
             Text(strings.text("No publisher key: this plugin cannot run"), color = MaterialTheme.colorScheme.error)
         } else {
             Text(fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleMedium)

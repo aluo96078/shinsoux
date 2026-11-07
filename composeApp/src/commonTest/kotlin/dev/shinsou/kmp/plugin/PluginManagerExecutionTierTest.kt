@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -42,10 +43,13 @@ class PluginManagerExecutionTierTest {
         val revocations = PublisherRevocationStore(keyValues, publishers, state)
         val blocklist = LocalPluginBlocklist(keyValues)
         val storage = KeyValuePluginStorage(keyValues)
+        val developer = PluginDeveloperModeStore(keyValues)
+        var script = SCRIPT
         val client = ExtensionRepositoryClient(
-            HttpClient(MockEngine { respond(SCRIPT) }),
+            HttpClient(MockEngine { respond(script) }),
             cacheToken = { 1L },
             repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+            developerRepository = developer::admitsRepository,
         )
         val manager = PluginManager(
             repositoryClient = client,
@@ -59,8 +63,13 @@ class PluginManagerExecutionTierTest {
             eventGrantAdmission = KeyValuePluginEventGrantAdmission(keyValues, MutablePluginSystemEventAuthorizer()),
             executionTierGate = PublisherExecutionTierGate(
                 publishers,
-                ExecutionTierResolver(publishers, revocations, blocklist, nowEpochSeconds = { 1_000L }),
+                ExecutionTierResolver(
+                    publishers, revocations, blocklist,
+                    developerMode = { developer.state.value.enabled },
+                    nowEpochSeconds = { 1_000L },
+                ),
             ),
+            developerRepository = developer::admitsRepository,
         )
     }
 
@@ -381,6 +390,60 @@ class PluginManagerExecutionTierTest {
         assertFailsWith<ExtensionRepositoryException.Http> { unreachable.inspectRepositoryTrust(other) }
     }
 
+    @Test
+    fun developerModeLoadsAnUnsignedDevBuildUnderItsOwnKeyAndOnlyWhileOn() = runTest {
+        val host = Host()
+        // Off: the development server is not a repository at all.
+        assertFails { host.manager.install(DEV_REPOSITORY, entry()) }
+        host.developer.setEnabled(true)
+        host.manager.install(DEV_REPOSITORY, entry())
+        val devKey = "$PLUGIN_ID~dev"
+        val dev = assertNotNull(host.packages.get(devKey))
+        assertNull(dev.metadata.publisherId)
+        host.manager.approveCurrentEventGrantReview(devKey, emptySet())
+        assertEquals(listOf(devKey), host.sandbox.created)
+        val devSource = dev.manifest.sources!!.single().id
+        assertNotNull(host.manager.source(devSource))
+
+        // A signed install of the same id lives beside it.
+        host.trustPublisher()
+        host.manager.install(REPOSITORY, entry())
+        assertEquals(2, host.manager.installedPlugins().size)
+
+        // A rebuild asking for nothing new keeps its grant (D4), even without a version bump.
+        host.script = "var source = { version: 2 };"
+        host.manager.install(DEV_REPOSITORY, entry())
+        assertNull(host.manager.pendingEventGrantReview(devKey))
+        assertNotNull(host.manager.source(devSource))
+
+        // Off again: the dev build stops; it is not deleted.
+        host.developer.setEnabled(false)
+        host.manager.loadInstalled()
+        assertNull(host.manager.source(devSource))
+        assertNotNull(host.packages.get(devKey))
+    }
+
+    @Test
+    fun developerModeAdmitsOnlyThisDeviceAndEnteredPrivateAddresses() = runTest {
+        val developer = PluginDeveloperModeStore(InMemoryPluginKeyValueStore())
+        assertTrue(!developer.admitsRepository("http://127.0.0.1:8787"))
+        developer.setEnabled(true)
+        assertTrue(developer.admitsRepository("http://127.0.0.1:8787"))
+        assertTrue(developer.admitsRepository("http://localhost:8787/repo"))
+        assertTrue(developer.admitsRepository("http://[::1]:8787"))
+        assertTrue(!developer.admitsRepository("http://192.168.1.20:8787"))
+        developer.setLanHosts(listOf(" 192.168.1.20 "))
+        assertTrue(developer.admitsRepository("http://192.168.1.20:8787"))
+        assertTrue(!developer.admitsRepository("http://192.168.1.21:8787"))
+        assertTrue(!developer.admitsRepository("http://user@192.168.1.20:8787"))
+        assertTrue(!developer.admitsRepository("https://example.com"))
+        for (public in listOf("8.8.8.8", "example.com", "mac-mini.local", "172.32.0.1", "127.0.0.1x")) {
+            assertFails { developer.setLanHosts(listOf(public)) }
+        }
+        val reloaded = PluginDeveloperModeStore(InMemoryPluginKeyValueStore())
+        assertTrue(!reloaded.load().enabled)
+    }
+
     private fun entry(version: String = "1.0.0", versionCode: Int = 1) = PluginIndexEntry(
         id = PLUGIN_ID,
         name = "Tier fixture",
@@ -398,6 +461,7 @@ class PluginManagerExecutionTierTest {
         const val SCRIPT = "var source = { version: 1 };"
         val REPOSITORY = ExtensionRepository("https://repo.example", "Repo")
         val OTHER_REPOSITORY = ExtensionRepository("https://other-repo.example", "Other repo")
+        val DEV_REPOSITORY = ExtensionRepository("http://127.0.0.1:8787", "Dev server")
     }
 }
 

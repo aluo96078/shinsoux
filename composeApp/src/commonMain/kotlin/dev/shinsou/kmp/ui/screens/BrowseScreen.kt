@@ -1204,6 +1204,8 @@ fun BrowseScreen(
             onPublisherBlocked = { id, blocked -> change { callbacks.setPublisherBlocked(id, blocked) } },
             onConfirmFingerprint = { id, fingerprint -> change { callbacks.confirmPublisherFingerprint(id, fingerprint) } },
             onUnblock = { key -> change { callbacks.unblockPackageEntry(key) } },
+            onDeveloperMode = { on -> change { callbacks.setPluginDeveloperMode(on) } },
+            onDeveloperHosts = { hosts -> change { callbacks.setPluginDeveloperHosts(hosts) } },
             onDismiss = { packageSecurity = null },
         )
     }
@@ -4362,6 +4364,9 @@ private fun ExtensionRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(extension.name, style = MaterialTheme.typography.titleMedium)
+                if (extension.inDevelopment) {
+                    Text(strings.text("In development"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+                }
                 Text(
                     "${extension.language.uppercase()} · v${extension.version}" +
                         " · ${extension.contentType.label(strings)}" +

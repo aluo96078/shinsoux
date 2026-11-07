@@ -283,11 +283,16 @@ public class ShinsouComposition(
     /** ADR-0002 D5: the user's own block list, device-local. */
     public val pluginBlocklist: LocalPluginBlocklist = LocalPluginBlocklist(pluginKeyValueStore)
 
+    /** ADR-0002 §8.1: device-local developer mode for loading unsigned packages from a dev server. */
+    public val pluginDeveloperMode: dev.shinsou.kmp.plugin.PluginDeveloperModeStore =
+        dev.shinsou.kmp.plugin.PluginDeveloperModeStore(pluginKeyValueStore)
+
     /** ADR-0002 §10.1: the formal basis for where a package's code runs. */
     public val executionTierResolver: ExecutionTierResolver = ExecutionTierResolver(
         publishers = publisherTrustStore,
         revocations = publisherRevocationStore,
         blocklist = pluginBlocklist,
+        developerMode = { pluginDeveloperMode.state.value.enabled },
         nowEpochSeconds = { kotlin.time.Clock.System.now().epochSeconds },
     )
     private val repositoryClient = ExtensionRepositoryClient(
@@ -302,7 +307,10 @@ public class ShinsouComposition(
                 // Temporary compatibility for the unsigned official publication only. URL
                 // normalization happens before this exact predicate; every other unpinned public
                 // repository remains rejected before transport.
-                allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
+                // Developer mode adds only this device and the LAN addresses the user entered.
+                allowUnsignedDeveloperCompatibility = { url ->
+                    isCanonicalOfficialUnsignedRepository(url) || pluginDeveloperMode.admitsRepository(url)
+                },
             ),
         ),
         repositorySecurityState = repositorySecurityState,
@@ -310,6 +318,7 @@ public class ShinsouComposition(
         repositoryTransport = platformPinnedPluginTransport,
         reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
         reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
+        developerRepository = pluginDeveloperMode::admitsRepository,
     )
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
     private val pluginLoginRequests = PluginLoginRequestCoordinator()
@@ -456,6 +465,7 @@ public class ShinsouComposition(
         reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
         reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
         executionTierGate = PublisherExecutionTierGate(publisherTrustStore, executionTierResolver),
+        developerRepository = pluginDeveloperMode::admitsRepository,
     )
     private val coordinator = RepositoryPluginCoordinator(
         repository = repository,
@@ -705,6 +715,7 @@ public class ShinsouComposition(
         logoutRequestCoordinator = pluginLogoutRequests,
         exactSourceRefreshInvalidations = pluginSourceInvalidations,
         packageSecurity = PluginPackageSecurity(publisherTrustStore, publisherRevocationStore, pluginBlocklist, repositoryClient),
+        developerMode = pluginDeveloperMode,
         extensionContentConsumerV2 = contentFoundation?.let { foundation ->
             ExtensionContentConsumerV2(
                 gateway = ExtensionBrowseContentGatewayV2(
@@ -814,6 +825,14 @@ public class ShinsouComposition(
      * they continue on the background tracking scope.
      */
     public suspend fun start() {
+        // Before any refresh: repository trust and install keys read it synchronously.
+        try {
+            pluginDeveloperMode.load()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Unreadable: developer mode stays off.
+        }
         // The v2 observer/guard must be installed before proxy hydration, source refresh,
         // tracking or downloads can publish repository mutations.
         syncRuntime?.start()

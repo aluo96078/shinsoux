@@ -30,6 +30,22 @@ internal object PluginInstallKeys {
         return "$packageId$SEPARATOR${publisherDigits(publisherId)}"
     }
 
+    /** ADR-0002 §8.1: what an unsigned package from a developer-mode repository is scoped by. */
+    const val DEVELOPER_SCOPE: String = "dev"
+
+    /**
+     * The key of an unsigned package loaded in developer mode: its own identity, so it never
+     * replaces (or is mistaken for) a signed install of the same package id.
+     */
+    fun developerInstallKey(packageId: String): String {
+        require(SEPARATOR !in packageId) { "Plugin package ids cannot contain '$SEPARATOR'" }
+        require(packageId.length <= MAX_PUBLISHED_PACKAGE_ID_LENGTH) { "Plugin package id is too long" }
+        return "$packageId$SEPARATOR$DEVELOPER_SCOPE"
+    }
+
+    /** True for a package installed from a developer-mode repository. */
+    fun isDeveloperKey(installKey: String): Boolean = installKey.substringAfter(SEPARATOR, "") == DEVELOPER_SCOPE
+
     /** True for a key that is scoped to a publisher (its sources get projected numeric ids). */
     fun isPublisherScoped(installKey: String): Boolean = SEPARATOR in installKey
 

@@ -81,6 +81,11 @@ public class ExtensionRepositoryClient(
         ReviewedLocalRepositoryPolicy.DISABLED,
     /** Dedicated credential-free loopback transport; never reused for ordinary repositories. */
     private val reviewedLocalRepositoryTransport: PluginHttpTransport? = null,
+    /**
+     * ADR-0002 §8.1: the development servers developer mode currently admits (checked against the
+     * origin on every request, so switching the mode off takes effect at once). They may use HTTP.
+     */
+    private val developerRepository: (String) -> Boolean = { false },
 ) {
     /** Repository admission owns redirect handling; Ktor must never follow an unvalidated hop. */
     private val repositoryHttpClient: HttpClient = client.config { followRedirects = false }
@@ -1129,6 +1134,7 @@ public class ExtensionRepositoryClient(
         if (reviewedLocalRepositoryPolicy.admits(parsed.origin) &&
             (parsed.path == "/" || reviewedLocalRepositoryPolicy.admitsRequestUrl(original))
         ) return
+        if (developerRepository(parsed.origin)) return
         if (!allowInsecureDeveloperHttp || !isPrivateHost(parsed.host)) {
             throw ExtensionRepositoryException.InvalidUrl(original)
         }

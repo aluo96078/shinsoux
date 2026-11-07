@@ -389,6 +389,8 @@ internal const val MAX_PLUGIN_PACKAGE_SCRIPT_BYTES: Int = 8 * 1_024 * 1_024
 internal const val MAX_PLUGIN_PACKAGE_METADATA_BYTES: Int = 512 * 1_024
 internal const val MAX_PLUGIN_PACKAGE_COUNT: Int = 256
 private const val MAX_PLUGIN_PACKAGE_ID_BYTES: Int = 256
+/** Stands in for a publisher in D4 between two builds of one developer-mode package; never a real key id. */
+private const val DEVELOPER_CONTINUATION_PUBLISHER: String = "developer-mode:local"
 private const val MAX_PLUGIN_PACKAGE_SCRIPT_NAME_BYTES: Int = 512
 private const val MAX_PLUGIN_PACKAGE_SOURCE_ID_BYTES: Int = 256
 private const val MAX_PLUGIN_PACKAGE_SOURCES: Int = 256
@@ -422,6 +424,8 @@ public class PluginManager(
         ReviewedLocalRepositoryPolicy.DISABLED,
     /** ADR-0002 §10.1: publisher trust, withdrawals and the user's block list decide each runtime's tier. */
     private val executionTierGate: PluginExecutionTierGate? = null,
+    /** ADR-0002 §8.1: true for a canonical repository URL developer mode currently admits. */
+    private val developerRepository: (String) -> Boolean = { false },
 ) {
     private val reviewedImagePermits = kotlinx.coroutines.sync.Semaphore(2)
     /** Serializes package mutations without blocking readers of the live source/runtime maps. */
@@ -527,7 +531,16 @@ public class PluginManager(
 
         val snapshots = linkedMapOf<String, RepositoryIndexSnapshot>()
         repositories.forEach { repository ->
-            val snapshot = repositoryClient.fetchIndexSnapshot(repository.baseUrl)
+            val snapshot = try {
+                repositoryClient.fetchIndexSnapshot(repository.baseUrl)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // Only a developer-mode server can be plain HTTP: one that is stopped, or refused
+                // because the mode is off, must not fail every other repository's refresh.
+                if (repository.baseUrl.trim().startsWith("http://", ignoreCase = true)) return@forEach
+                throw error
+            }
             snapshots[repository.baseUrl] = snapshot
             val installKeyOf = installKeyResolver(repository)
             when (val index = snapshot.index) {
@@ -541,6 +554,9 @@ public class PluginManager(
                         entry.versionCode == (local.manifest.versionCode
                             ?: PluginVerifier.versionInt(local.manifest.version)) &&
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
+                        // A development build changes without a version bump.
+                        PluginInstallKeys.isDeveloperKey(key) && entry.sha256 != null &&
+                            !entry.sha256.equals(local.metadata.installedSha256, ignoreCase = true) -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
                     result[key] = entry.toDescriptor(
@@ -579,6 +595,9 @@ public class PluginManager(
                         entry.versionCode == (local.manifest.versionCode
                             ?: PluginVerifier.versionInt(local.manifest.version)) &&
                             entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
+                        // A development build changes without a version bump.
+                        PluginInstallKeys.isDeveloperKey(key) && entry.sha256 != null &&
+                            !entry.sha256.equals(local.metadata.installedSha256, ignoreCase = true) -> ExtensionState.UPDATE_AVAILABLE
                         else -> ExtensionState.INSTALLED
                     }
                     result[key] = entry.toDescriptor(
@@ -612,6 +631,10 @@ public class PluginManager(
     private suspend fun installKeyResolver(repository: ExtensionRepository): (String) -> String? {
         val canonical = runCatching { repositoryClient.canonicalBaseUrl(repository.baseUrl) }.getOrNull() ?: return { null }
         val publisherId = executionTierGate?.publisherForRepository(canonical)
+        // ADR-0002 §8.1: an unsigned developer-mode repository gets its own `~dev` identities.
+        if (publisherId == null && developerRepository(canonical)) {
+            return { packageId -> runCatching { PluginInstallKeys.developerInstallKey(packageId) }.getOrNull() }
+        }
         val legacyCommunity = canonical == repositoryClient.canonicalBaseUrl(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)
         return { packageId -> runCatching { PluginInstallKeys.installKey(packageId, publisherId, legacyCommunity) }.getOrNull() }
     }
@@ -635,6 +658,7 @@ public class PluginManager(
             requireReviewedLocalRepositoryEntry(repository, entry)
             requireSupportedGenericRuntime(entry)
             SandboxTierCeiling.requireWithinCeiling(entry)
+            PluginNamePolicy.requireNotMisleading(entry.name, *entry.sources.orEmpty().map { it.name }.toTypedArray())
             require(entry.runtimePermissions != null) {
                 "New plugin '${entry.id}' must declare runtimePermissions"
             }
@@ -1293,6 +1317,13 @@ public class PluginManager(
     private val continuationNotices =
         kotlinx.coroutines.flow.MutableSharedFlow<PluginGrantContinuationNotice>(extraBufferCapacity = 16)
 
+    /**
+     * The publisher D4 compares. A developer-mode package (one `~dev` key, unsigned) is rebuilt all
+     * the time; under the same rules it keeps its grant across rebuilds that ask for nothing new.
+     */
+    private fun StoredPlugin.continuationPublisher(): String? = metadata.publisherId
+        ?: DEVELOPER_CONTINUATION_PUBLISHER.takeIf { PluginInstallKeys.isDeveloperKey(manifest.id) }
+
     private suspend fun continuedGrantFor(
         previousStored: StoredPlugin?,
         previousReview: PluginEventGrantReview?,
@@ -1304,8 +1335,8 @@ public class PluginManager(
         if (isLocallyRevoked(previousReview.artifact)) return null
         val previousGrant = admission.grantedSelection(previousReview.artifact) ?: return null
         return UpdateGrantContinuation.continuedSelection(
-            previousPublisherId = previousStored.metadata.publisherId,
-            nextPublisherId = stored.metadata.publisherId,
+            previousPublisherId = previousStored.continuationPublisher(),
+            nextPublisherId = stored.continuationPublisher(),
             previousReview = previousReview,
             previousGrant = previousGrant,
             nextReview = review,
@@ -2677,6 +2708,8 @@ public class PluginManager(
                 officialReviewedCatalogMatch = reviewedInProcess,
                 fromCanonicalOfficialUnsignedRepository = reviewedInProcess && stored.metadata.publisherId == null,
                 userAuthorized = true,
+                developerLocalSource = stored.metadata.publisherId == null &&
+                    PluginInstallKeys.isDeveloperKey(stored.manifest.id),
             ),
         )
         val allowed = if (reviewedInProcess) tier == ExecutionTier.ReviewedInProcess else tier is ExecutionTier.Sandboxed

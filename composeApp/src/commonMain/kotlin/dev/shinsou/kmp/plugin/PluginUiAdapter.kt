@@ -161,6 +161,8 @@ public class PluginBrowseAdapter(
     private val fileSystem: AppFileSystem? = null,
     /** ADR-0002 S5: publisher trust, withdrawals and the block list. Null in previews and older tests. */
     private val packageSecurity: PluginPackageSecurity? = null,
+    /** ADR-0002 §8.1: device-local developer mode. Null in previews and older tests. */
+    private val developerMode: PluginDeveloperModeStore? = null,
 ) : BrowseCallbacks {
     /** Keys shown to the user by [inspectRepositoryTrust], by normalized URL, until trusted or replaced. */
     private val inspectedRepositoryKeys = mutableMapOf<String, RepositoryKeyPresentation>()
@@ -397,6 +399,8 @@ public class PluginBrowseAdapter(
             check(presentation != null && presentation.key.fingerprint == prompt.keyFingerprint) {
                 "The repository's key changed; inspect it again before trusting it"
             }
+            // No publisher is official; one that says so is not trusted.
+            PluginNamePolicy.requireNotMisleading(presentation.name)
             // A link's fingerprint binds the trust whatever the dialog sent: it cannot be cleared
             // back to trust-on-first-use, and a different typed value is refused.
             val typed = fingerprint?.takeIf(String::isNotBlank)
@@ -415,10 +419,12 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun packageSecurity(): PackageSecuritySnapshot {
-        val security = packageSecurity ?: return PackageSecuritySnapshot()
+        val developer = developerMode?.state?.value?.let { dev.shinsou.kmp.ui.PluginDeveloperModeSettings(it.enabled, it.lanHosts) }
+        val security = packageSecurity ?: return PackageSecuritySnapshot(developerMode = developer)
         val mode = security.publishers.globalMode()
         val blocks = security.blocklist.entries()
         return PackageSecuritySnapshot(
+            developerMode = developer,
             strictMode = mode == PublisherTrustMode.REQUIRE_FINGERPRINT_MATCH,
             publishers = security.publishers.publishers().map { record ->
                 PackagePublisher(
@@ -451,6 +457,23 @@ public class PluginBrowseAdapter(
 
     override suspend fun setStrictPublisherTrust(strict: Boolean): Unit = securityChange {
         it.publishers.setGlobalMode(if (strict) PublisherTrustMode.REQUIRE_FINGERPRINT_MATCH else PublisherTrustMode.TOFU_WITH_OPTIONAL_MATCH)
+    }
+
+    override suspend fun setPluginDeveloperMode(enabled: Boolean): Unit = developerModeChange { it.setEnabled(enabled) }
+
+    override suspend fun setPluginDeveloperHosts(hosts: List<String>): Unit = developerModeChange { it.setLanHosts(hosts) }
+
+    /** A developer-mode change starts or stops the `~dev` packages, so their runtimes are re-resolved. */
+    private suspend fun developerModeChange(change: suspend (PluginDeveloperModeStore) -> Unit): Unit = operationMutex.withLock {
+        val store = checkNotNull(developerMode) { "Developer mode is unavailable" }
+        try {
+            change(store)
+        } finally {
+            withContext(NonCancellable) {
+                manager.loadInstalled()
+                rebuildSnapshot(errorMessage = null)
+            }
+        }
     }
 
     override suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String): Unit = securityChange {
@@ -1260,6 +1283,7 @@ public class PluginBrowseAdapter(
             contentOrigins = policies.flatMap { it.contentOrigins }.distinct().sorted(),
             credentialOrigins = policies.flatMap { it.credentialOrigins }.distinct().sorted(),
             browserSessionOrigins = policies.flatMap { it.browserSessionOrigins }.distinct().sorted(),
+            inDevelopment = stored.metadata.publisherId == null && PluginInstallKeys.isDeveloperKey(stored.manifest.id),
         )
     }
 
@@ -2463,6 +2487,7 @@ public class PluginBrowseAdapter(
                 isNsfw = descriptor.nsfw,
                 sourceIds = descriptor.sources.map { it.id },
                 contentType = descriptor.contentType,
+                inDevelopment = PluginInstallKeys.isDeveloperKey(descriptor.id),
             )
         } + reviewedShuYuePackages.values.map { reviewed ->
             val profile = requireNotNull(
