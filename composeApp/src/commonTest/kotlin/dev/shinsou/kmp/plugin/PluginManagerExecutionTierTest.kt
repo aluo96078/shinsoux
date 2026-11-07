@@ -129,6 +129,7 @@ class PluginManagerExecutionTierTest {
         assertEquals(selection.runtimePermissions, host.sandbox.permissions.last())
 
         // D4: same publisher, nothing new requested — it runs at once and the choice is kept.
+        assertNull(host.manager.updateReviewPreview(REPOSITORY, first.copy(version = "1.1.0", versionCode = 2)))
         host.manager.install(REPOSITORY, first.copy(version = "1.1.0", versionCode = 2))
         assertNull(host.manager.pendingEventGrantReview(host.key()))
         assertEquals(selection, host.manager.grantedSelection(host.key()))
@@ -140,7 +141,13 @@ class PluginManagerExecutionTierTest {
         host.manager.narrowGrant(host.key(), narrower)
         assertEquals(narrower.runtimePermissions, host.sandbox.permissions.last())
 
-        // An update asking for something new waits for a fresh review and does not run.
+        // An update asking for something new is previewed first: until accepted, nothing changes.
+        val asking = first.copy(version = "1.2.0", versionCode = 3, runtimePermissions = first.runtimePermissions!! + PluginRuntimePermission.CREDENTIAL_ACCESS)
+        val preview = assertNotNull(host.manager.updateReviewPreview(REPOSITORY, asking))
+        assertTrue(PluginRuntimePermission.CREDENTIAL_ACCESS in preview.review.requestedRuntimePermissions)
+        assertEquals("1.2.0", preview.review.artifact.version)
+        assertNotNull(host.manager.source(host.sourceId()))
+        // Installed without approving it, it waits for a fresh review and does not run.
         host.manager.install(
             REPOSITORY,
             first.copy(version = "1.2.0", versionCode = 3, runtimePermissions = first.runtimePermissions!! + PluginRuntimePermission.CREDENTIAL_ACCESS),
@@ -419,6 +426,8 @@ class PluginManagerExecutionTierTest {
         assertNotNull(host.manager.source(devSource))
 
         // Off again: the dev build stops; it is not deleted.
+        host.manager.unloadDeveloperRuntimes()
+        assertNull(host.manager.source(devSource))
         host.developer.setEnabled(false)
         host.manager.loadInstalled()
         assertNull(host.manager.source(devSource))

@@ -392,6 +392,9 @@ private const val MAX_PLUGIN_PACKAGE_ID_BYTES: Int = 256
 private fun Throwable.isUntrustedRepository(): Boolean =
     generateSequence(this) { it.cause }.any { it is RepositoryTrustException.UntrustedRepository }
 
+/** The digest of an update preview whose index entry has none (all zeroes: never a real artifact). */
+internal val UNKNOWN_PREVIEW_DIGEST: String = "0".repeat(64)
+
 /** Stands in for a publisher in D4 between two builds of one developer-mode package; never a real key id. */
 private const val DEVELOPER_CONTINUATION_PUBLISHER: String = "developer-mode:local"
 private const val MAX_PLUGIN_PACKAGE_SCRIPT_NAME_BYTES: Int = 512
@@ -630,6 +633,65 @@ public class PluginManager(
         }
     }
 
+    private fun manifestFor(installKey: String, entry: PluginIndexEntry, signature: String): PluginManifest = PluginManifest(
+        id = installKey,
+        name = entry.name,
+        version = entry.version,
+        versionCode = entry.versionCode,
+        lang = entry.lang,
+        nsfw = entry.nsfw == 1,
+        script = "$installKey.js",
+        signature = signature,
+        minRuntimeVersion = entry.minRuntimeVersion,
+        sources = entry.sources?.let { sources -> localSources(installKey, sources) },
+        contentKinds = entry.contentKinds.takeIf {
+            entry.sidecarUrl != null ||
+                entry.sources.orEmpty().any { source -> source.contentKindsDeclared != null }
+        },
+        systemEvents = entry.systemEvents,
+        requestedHostPermissions = entry.requestedHostPermissions,
+        runtimePermissions = entry.runtimePermissions,
+        contract = entry.contract,
+        runtime = entry.runtime,
+        sidecarUrl = entry.sidecarUrl,
+    )
+
+    /**
+     * ADR-0002 §6.3: what an update of a running, granted package would ask for, when D4 would not
+     * carry the grant over — shown before anything is downloaded, so the installed version keeps
+     * running until the user accepts (and keeps running if they do not). Null for a first install,
+     * an update D4 continues, or a package that is not granted now (the regular flow applies).
+     * Built from the index entry only; the downloaded artifact is checked against it at install.
+     */
+    public suspend fun updateReviewPreview(repository: ExtensionRepository, entry: PluginIndexEntry): UpdateReviewPreview? {
+        val installKey = installKeyResolver(repository)(entry.id) ?: return null
+        val previousStored = packageStore.get(installKey) ?: return null
+        val previousReview = previousStored.eventGrantReview(includeEmpty = true) ?: return null
+        if (!executionAdmissionGranted(previousReview)) return null
+        val publisherId = executionTierGate?.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
+        // An index without digests learns the artifact's only at download.
+        val digest = entry.sha256?.trim()?.lowercase() ?: UNKNOWN_PREVIEW_DIGEST
+        val preview = StoredPlugin(
+            metadata = InstalledPluginMetadata(
+                manifest = manifestFor(installKey, entry, signature = digest),
+                repositoryBaseUrl = repository.baseUrl,
+                installedSha256 = digest,
+                legacyStorageMigrationAllowed = false,
+                publisherId = publisherId,
+            ),
+            scriptBytes = ByteArray(0),
+        )
+        val review = preview.eventGrantReview(includeEmpty = true) ?: return null
+        if (continuedGrantFor(previousStored, previousReview, preview, review) != null) return null
+        return UpdateReviewPreview(preview, review)
+    }
+
+    /** See [updateReviewPreview]; [stored] has no script and is never installed. */
+    public class UpdateReviewPreview internal constructor(
+        public val stored: StoredPlugin,
+        public val review: PluginEventGrantReview,
+    )
+
     /**
      * The install key a [repository]'s package ids get on this device (D6); null for an id that
      * cannot be installed, and for every id of a repository URL this client refuses. Refresh, the
@@ -700,30 +762,9 @@ public class PluginManager(
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()
             if (publisherId != null) executionTierGate.requireInstallable(entry.id, publisherId, actualHash)
-            val manifest = PluginManifest(
-                id = installKey,
-                name = entry.name,
-                version = entry.version,
-                versionCode = entry.versionCode,
-                lang = entry.lang,
-                nsfw = entry.nsfw == 1,
-                script = "$installKey.js",
-                // Current repositories have no digest field. Hashing the received bytes and
-                // recording the resulting trust token preserves Shinsou's legacy TOFU behavior.
-                signature = expectedHash ?: actualHash,
-                minRuntimeVersion = entry.minRuntimeVersion,
-                sources = entry.sources?.let { sources -> localSources(installKey, sources) },
-                contentKinds = entry.contentKinds.takeIf {
-                    entry.sidecarUrl != null ||
-                        entry.sources.orEmpty().any { source -> source.contentKindsDeclared != null }
-                },
-                systemEvents = entry.systemEvents,
-                requestedHostPermissions = entry.requestedHostPermissions,
-                runtimePermissions = entry.runtimePermissions,
-                contract = entry.contract,
-                runtime = entry.runtime,
-                sidecarUrl = entry.sidecarUrl,
-            )
+            // Current repositories may have no digest field. Hashing the received bytes and
+            // recording the resulting trust token preserves Shinsou's legacy TOFU behavior.
+            val manifest = manifestFor(installKey, entry, signature = expectedHash ?: actualHash)
             // Installation validates integrity but permission review remains the sole execution
             // admission. The older trust token is retained for explicit user revocation and
             // persisted-byte tamper checks; it must never cause runtime construction here.
@@ -1189,6 +1230,18 @@ public class PluginManager(
      * Reconstructs trusted packages independently. An untrusted, corrupt, or unloadable package
      * remains installed but cannot prevent other packages from becoming available.
      */
+    /**
+     * ADR-0002 §8.1: takes every developer-mode (`~dev`) runtime down now. Called before the mode
+     * is switched off, so no development build is ever live while the mode is off.
+     */
+    public suspend fun unloadDeveloperRuntimes(): Unit = withContext(Dispatchers.Default + NonCancellable) {
+        packageMutationMutex.withLock {
+            invalidateWebChallengeGrants()
+            val keys = packageStore.list().map { it.manifest.id }.filter(PluginInstallKeys::isDeveloperKey)
+            lifecycleMutex.withLock { keys.forEach { unloadPlugin(it) } }
+        }
+    }
+
     public suspend fun loadInstalled(): List<CatalogueSource> = withContext(Dispatchers.Default) {
         packageMutationMutex.withLock {
             invalidateWebChallengeGrants()

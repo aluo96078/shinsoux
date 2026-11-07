@@ -380,6 +380,10 @@ fun BrowseScreen(
     val catalogueJobs = remember { CatalogueJobController() }
     var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
+    /** ADR-0002 §6.3: an update asking for something new, reviewed before it is installed. */
+    var pendingUpdateReview by remember {
+        mutableStateOf<Pair<BrowseExtension, dev.shinsou.kmp.ui.UpdatePermissionPreview>?>(null)
+    }
     // Source settings → permissions (ADR-0002 §6.5): the granted plugin whose items are being edited.
     var editingPluginPermissions by remember {
         mutableStateOf<Pair<BrowseExtension, dev.shinsou.kmp.ui.InstalledPluginPermissions>?>(null)
@@ -865,6 +869,29 @@ fun BrowseScreen(
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
                         if (extension.reviewedShuYueV2) stageReviewedShuYue(extension)
+                        else if (extension.installed && extension.updateAvailable) launchExtensionOperation(
+                            extension,
+                            "Updating…",
+                            onSuccess = { review ->
+                                pendingPluginEventGrant = review?.let { PendingPluginEventGrant(extension, it) }
+                                if (review == null) {
+                                    scope.launch {
+                                        operationSnackbar.showSnackbar(
+                                            strings.text("{0} was updated and kept the permissions you granted before.", extension.name),
+                                        )
+                                    }
+                                }
+                            },
+                        ) {
+                            // Asks for something new: review it first; the installed version keeps running.
+                            val preview = callbacks.updatePermissionPreview(extension.id)
+                            if (preview != null) {
+                                pendingUpdateReview = extension to preview
+                                return@launchExtensionOperation null
+                            }
+                            callbacks.installExtension(extension.id)
+                            callbacks.pendingPluginEventGrantReview(extension.id)
+                        }
                         else launchExtensionOperation(
                             extension,
                             if (extension.installed) "Updating…" else "Installing…",
@@ -1231,6 +1258,25 @@ fun BrowseScreen(
                 }) pendingPluginEventGrant = null
             },
             onDismiss = { pendingPluginEventGrant = null },
+        )
+    }
+
+    pendingUpdateReview?.let { (extension, preview) ->
+        PluginPermissionReviewDialog(
+            review = preview.review,
+            details = preview.details,
+            onConfirm = { selection ->
+                pendingUpdateReview = null
+                launchExtensionOperation(
+                    extension,
+                    "Updating…",
+                    onSuccess = { remaining: dev.shinsou.kmp.plugin.events.PluginEventGrantReview? ->
+                        // The artifact asked for something else than shown: review that instead.
+                        pendingPluginEventGrant = remaining?.let { PendingPluginEventGrant(extension, it) }
+                    },
+                ) { callbacks.installReviewedUpdate(extension.id, preview, selection) }
+            },
+            onDismiss = { pendingUpdateReview = null },
         )
     }
 

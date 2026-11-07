@@ -1281,6 +1281,22 @@ interface BrowseCallbacks {
     /** Who published [review]'s artifact and where it connects: what the permission page shows (ADR-0002 §6.5). */
     suspend fun pluginPermissionDetails(extensionId: String, review: PluginEventGrantReview): PluginPermissionDetails? = null
 
+    /**
+     * ADR-0002 §6.3: what an update of a running plugin would ask for, when it asks for something
+     * new — reviewed before updating, so the installed version keeps running until accepted.
+     */
+    suspend fun updatePermissionPreview(extensionId: String): UpdatePermissionPreview? = null
+
+    /**
+     * Installs the update [preview] showed and grants [selection] to it. Returns the update's own
+     * review when it turned out to ask for something else than the preview (it is then not granted).
+     */
+    suspend fun installReviewedUpdate(
+        extensionId: String,
+        preview: UpdatePermissionPreview,
+        selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
+    ): PluginEventGrantReview? = null
+
     /** The granted plugin's current permissions, for source settings; null when not granted. */
     suspend fun installedPluginPermissions(extensionId: String): InstalledPluginPermissions? = null
 
@@ -1719,6 +1735,9 @@ data class PluginPermissionDetails(
     /** ADR-0002 §8.1: unsigned, from a developer-mode repository; runs only while the mode is on. */
     val inDevelopment: Boolean = false,
 )
+
+/** An update's permission page, from the repository's index (nothing downloaded yet). */
+data class UpdatePermissionPreview(val review: PluginEventGrantReview, val details: PluginPermissionDetails)
 
 /** A granted plugin's review and the items currently granted from it (source settings → permissions). */
 data class InstalledPluginPermissions(

@@ -461,7 +461,11 @@ public class PluginBrowseAdapter(
         it.publishers.setGlobalMode(if (strict) PublisherTrustMode.REQUIRE_FINGERPRINT_MATCH else PublisherTrustMode.TOFU_WITH_OPTIONAL_MATCH)
     }
 
-    override suspend fun setPluginDeveloperMode(enabled: Boolean): Unit = developerModeChange { it.setEnabled(enabled) }
+    override suspend fun setPluginDeveloperMode(enabled: Boolean): Unit = developerModeChange { store ->
+        // Down first: a development build must not outlive the mode, even for a moment.
+        if (!enabled) manager.unloadDeveloperRuntimes()
+        store.setEnabled(enabled)
+    }
 
     override suspend fun setPluginDeveloperHosts(hosts: List<String>): Unit = developerModeChange { it.setLanHosts(hosts) }
 
@@ -1151,6 +1155,49 @@ public class PluginBrowseAdapter(
             "Extension v2 publications must use the exact details/unit/content workflow"
         }
         return mangaResolver.resolve(item)
+    }
+
+    /** The current index entry of a generic package [extensionId] and its repository; null for legacy indexes. */
+    private suspend fun indexEntryFor(extensionId: String): Pair<ExtensionRepository, PluginIndexEntry>? {
+        val descriptor = descriptors[extensionId] ?: return null
+        val repository = repositoryStore.list().firstOrNull { it.baseUrl == descriptor.repositoryBaseUrl } ?: return null
+        val entries = when (val index = repositorySnapshots[repository.baseUrl]?.index) {
+            is RepositoryIndex.Plugins -> index.entries
+            is RepositoryIndex.Combined -> index.plugins
+            else -> return null
+        }
+        val entry = entries.firstOrNull { manager.installKeyFor(repository, it) == extensionId } ?: return null
+        return (repository to entry).takeIf { entry.matchesDescriptor(descriptor) }
+    }
+
+    override suspend fun updatePermissionPreview(extensionId: String): dev.shinsou.kmp.ui.UpdatePermissionPreview? =
+        withContext(Dispatchers.Default) {
+            operationMutex.withLock {
+                val (repository, entry) = indexEntryFor(extensionId) ?: return@withLock null
+                val preview = manager.updateReviewPreview(repository, entry) ?: return@withLock null
+                dev.shinsou.kmp.ui.UpdatePermissionPreview(preview.review, permissionDetails(preview.stored))
+            }
+        }
+
+    override suspend fun installReviewedUpdate(
+        extensionId: String,
+        preview: dev.shinsou.kmp.ui.UpdatePermissionPreview,
+        selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
+    ): dev.shinsou.kmp.plugin.events.PluginEventGrantReview? = withContext(Dispatchers.Default) {
+        installExtension(extensionId)
+        val pending = manager.pendingEventGrantReview(extensionId) ?: return@withContext null
+        val expected = preview.review
+        // The artifact downloaded must ask for exactly what the user just reviewed.
+        val same = pending.artifact.packageId == expected.artifact.packageId &&
+            pending.artifact.version == expected.artifact.version &&
+            (expected.artifact.sha256 == UNKNOWN_PREVIEW_DIGEST || pending.artifact.sha256 == expected.artifact.sha256) &&
+            pending.requestedPermissions == expected.requestedPermissions &&
+            pending.requestedRuntimePermissions == expected.requestedRuntimePermissions &&
+            pending.requestedContentHostSuffixes == expected.requestedContentHostSuffixes &&
+            pending.sourceKeys == expected.sourceKeys
+        if (!same || !selection.isWithin(pending)) return@withContext pending
+        approvePluginEventGrantReview(extensionId, pending, selection.hostPermissions, selection)
+        null
     }
 
     override suspend fun installExtension(extensionId: String): Unit = withContext(Dispatchers.Default) {
