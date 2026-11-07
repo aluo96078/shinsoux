@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +67,8 @@ public class ExtensionDownloadQueueV2(
     private val store: ExtensionDownloadQueueStoreV2? = null,
     /** False holds the worker until [open], e.g. while the app is still loading its sources. */
     startOpen: Boolean = true,
+    /** Wait before retrying a unit after the database was locked; grows with each retry. */
+    private val storageBusyRetryDelayMillis: Long = 2_000L,
 ) {
     private val gate = CompletableDeferred<Unit>().apply { if (startOpen) complete(Unit) }
 
@@ -86,6 +89,8 @@ public class ExtensionDownloadQueueV2(
     private var paused = false
     private var persisting = false
     private var consecutiveFailures = 0
+    /** Retries per unit after the local database was briefly locked; not download failures. */
+    private val storageBusyRetries = mutableMapOf<String, Int>()
     private val failureStreak = mutableListOf<String>()
     private var pausedAfterFailures = false
     private val unissued = mutableListOf<ExtensionDownloadRecordV2>()
@@ -369,6 +374,7 @@ public class ExtensionDownloadQueueV2(
                 }
             } ?: continue
             val (id, task) = next
+            var retryAfterMillis = 0L
             val failure = try {
                 task.await()
                 null
@@ -386,6 +392,7 @@ public class ExtensionDownloadQueueV2(
                 when (failure) {
                     null -> {
                         setState(id, DownloadState.DOWNLOADED)
+                        storageBusyRetries.remove(id)
                         consecutiveFailures = 0
                         failureStreak.clear()
                     }
@@ -401,7 +408,15 @@ public class ExtensionDownloadQueueV2(
                             else -> DownloadState.QUEUED
                         },
                     )
-                    else -> {
+                    // Another part of the app held the local database (sync, indexing): wait and
+                    // try the unit again rather than count it towards pausing the whole queue.
+                    else -> if (failure.isStorageBusy() && (storageBusyRetries[id] ?: 0) < MAX_STORAGE_BUSY_RETRIES) {
+                        val attempt = (storageBusyRetries[id] ?: 0) + 1
+                        storageBusyRetries[id] = attempt
+                        setState(id, DownloadState.QUEUED)
+                        retryAfterMillis = storageBusyRetryDelayMillis * attempt
+                    } else {
+                        storageBusyRetries.remove(id)
                         setState(id, DownloadState.ERROR, failure.downloadFailureMessage())
                         consecutiveFailures++
                         failureStreak += id
@@ -417,6 +432,7 @@ public class ExtensionDownloadQueueV2(
                     }
                 }
             }
+            if (retryAfterMillis > 0) delay(retryAfterMillis)
         }
     }
 
@@ -429,6 +445,7 @@ public class ExtensionDownloadQueueV2(
     public companion object {
         private const val PERSIST_DEBOUNCE_MS = 500L
         private const val MAX_CONSECUTIVE_FAILURES = 3
+        private const val MAX_STORAGE_BUSY_RETRIES = 5
 
         public fun entryId(selection: ExtensionUnitSelectionV2): String =
             "${selection.sourceKey.canonicalId}|${selection.remotePublicationId}|${selection.unit.remoteId}"
@@ -436,6 +453,12 @@ public class ExtensionDownloadQueueV2(
 }
 
 private fun ExtensionDownloadRecordV2.key() = Triple(sourceKey.canonicalId, remotePublicationId, unit.remoteId)
+
+/** SQLite reported the database locked by another connection (SQLITE_BUSY and its variants). */
+internal fun Throwable.isStorageBusy(): Boolean = generateSequence(this) { it.cause }.take(8).any { error ->
+    val text = error.message.orEmpty()
+    text.contains("SQLITE_BUSY") || text.contains("database is locked", ignoreCase = true)
+}
 
 private fun Throwable.downloadFailureMessage(): String =
     sourceFailureMarker() ?: message ?: "Download failed"

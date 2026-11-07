@@ -338,6 +338,48 @@ class ExtensionDownloadQueueV2Test {
         scope.cancel()
     }
 
+    @Test
+    fun aLockedDatabaseIsRetriedInsteadOfPausingTheQueue() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val attempts = mutableMapOf<String, Int>()
+        val queue = ExtensionDownloadQueueV2(
+            materialize = {
+                val attempt = attempts.merge(it.unit.remoteId, 1, Int::plus)!!
+                // Each unit first meets the database locked by another connection.
+                if (attempt == 1) throw IllegalStateException("[SQLITE_BUSY] The database file is locked (database is locked)")
+            },
+            scope = scope,
+            storageBusyRetryDelayMillis = 10,
+        )
+        queue.enqueue(listOf(selection("a"), selection("b"), selection("c")))
+        withTimeout(5_000) {
+            queue.entries.first { list -> list.isNotEmpty() && list.all { it.state == DownloadState.DOWNLOADED } }
+        }
+        assertEquals(mapOf("a" to 2, "b" to 2, "c" to 2), attempts)
+        scope.cancel()
+    }
+
+    @Test
+    fun aStillLockedDatabaseEventuallyFailsTheUnit() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        var attempts = 0
+        val queue = ExtensionDownloadQueueV2(
+            materialize = {
+                attempts++
+                throw IllegalStateException("wrapped", IllegalStateException("[SQLITE_BUSY_SNAPSHOT] database is locked"))
+            },
+            scope = scope,
+            storageBusyRetryDelayMillis = 10,
+        )
+        queue.enqueue(listOf(selection("a")))
+        withTimeout(5_000) {
+            queue.entries.first { list -> list.singleOrNull()?.state == DownloadState.ERROR }
+        }
+        // The first try plus five retries.
+        assertEquals(6, attempts)
+        scope.cancel()
+    }
+
     private fun ExtensionDownloadRecordV2.toSelection() =
         ExtensionUnitSelectionV2(sourceKey, remotePublicationId, publicationTitle, unit, owner)
 

@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.desktop
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.sqldelight.db.SqlDriver
 import dev.shinsou.kmp.sync.persistence.JvmEncryptedSyncSecretStore
 import dev.shinsou.kmp.sync.persistence.JvmFileSyncInstallationStore
@@ -86,7 +85,7 @@ internal class DesktopSyncInfrastructure(
         // before SQLDelight asks DriverManager for the connection. The release keep rule retains
         // this runtime-only class and its native bridge.
         Class.forName("org.sqlite.JDBC")
-        JdbcSqliteDriver("jdbc:sqlite:$database").also { openDriver = it }
+        DesktopSqliteDriver("jdbc:sqlite:$database").also { openDriver = it }
     }
 }
 
