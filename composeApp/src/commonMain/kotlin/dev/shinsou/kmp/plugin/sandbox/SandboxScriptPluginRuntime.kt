@@ -26,6 +26,7 @@ import dev.shinsou.kmp.plugin.sandbox.SandboxScriptJson.str
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlinx.serialization.json.JsonArray
@@ -157,6 +158,9 @@ internal class SandboxScriptPluginRuntime(
         currentGeneration = { generation },
         nowEpochMillis = nowEpochMillis,
     )
+    private val policyForLogin = policy
+    private val nowEpochMillisForLogin = nowEpochMillis
+    private val loginLock = Mutex()
 
     /** Guards [session]; held for a whole call, so a release never interrupts one. */
     private val sandboxLock = Mutex()
@@ -263,10 +267,10 @@ internal class SandboxScriptPluginRuntime(
     override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
         if (!supportsLogin) return LoginAttemptResult(false)
         environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
-        // The one host-started invocation in which the script may read or store passwords (§6.4).
-        val result = SandboxScriptJson.loginResult(
-            call("login", JsonArray(listOf(JsonPrimitive(username), JsonPrimitive(password))), loginInvocation = true),
-        )
+        // The one host-started invocation in which the script may read or store passwords (§6.4),
+        // in a sandbox of its own that is destroyed afterwards: the long-lived runtime never holds
+        // the password, and this one can only reach the credential origins.
+        val result = SandboxScriptJson.loginResult(oneShotLogin(username, password))
         if (result.loggedIn) environment.storage.setCredential(id, PluginCredential(username, password))
         return result
     }
@@ -307,12 +311,6 @@ internal class SandboxScriptPluginRuntime(
 
     /** Starts a sandbox and loads the script; caller holds [sandboxLock]. */
     private suspend fun startSandbox(): SandboxSession {
-        val script = checkNotNull(script) { "not initialized" }
-        val requestedId = source.canonicalSourceId ?: source.id.toString()
-        val prelude = "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(requestedId)};" +
-            "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
-            "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
-            "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};\n"
         val s = SandboxSession(
             transport = transports.open(manifest.id),
             dispatcher = dispatcher,
@@ -324,13 +322,77 @@ internal class SandboxScriptPluginRuntime(
         session = s
         if (closed) s.close() // close() raced the start: never leave a sandbox behind
         try {
-            s.initialize(prelude + script)
-            s.invoke("__shinsouSelectSource", buildJsonArray { add(JsonPrimitive(requestedId)) }.toString())
+            loadScript(s)
         } catch (e: Throwable) {
             stopSandbox() // a half-loaded script must never serve a call
             throw e
         }
         return s
+    }
+
+    private suspend fun loadScript(s: SandboxSession) {
+        val script = checkNotNull(script) { "not initialized" }
+        val requestedId = source.canonicalSourceId ?: source.id.toString()
+        val prelude = "globalThis.__shinsouRequestedSourceId=${JsonPrimitive(requestedId)};" +
+            "globalThis.__shinsouRequestedSourceName=${JsonPrimitive(source.name)};" +
+            "globalThis.__shinsouRequestedSourceLang=${JsonPrimitive(source.lang)};" +
+            "globalThis.__shinsouRequestedSourceBaseUrl=${JsonPrimitive(source.baseUrl.orEmpty())};\n"
+        s.initialize(prelude + script)
+        s.invoke("__shinsouSelectSource", buildJsonArray { add(JsonPrimitive(requestedId)) }.toString())
+    }
+
+    /**
+     * ADR-0002 §6.4: runs `login` in a fresh sandbox (a new isolated process, helper process or
+     * WASM instance) whose network reaches only the credential origins, then destroys it. It is
+     * not a resident of the lifecycle: nothing of it outlives the call but the host-kept cookies
+     * and credential.
+     */
+    private suspend fun oneShotLogin(username: String, password: String): JsonElement =
+        // One login at a time per source, and a small app-wide bound: a retry loop (or a script
+        // that makes the host log in repeatedly) cannot start helper processes without limit.
+        loginLock.withLock { LOGIN_SANDBOX_PERMITS.withPermit { runOneShotLogin(username, password) } }
+
+    private suspend fun runOneShotLogin(username: String, password: String): JsonElement {
+        if (closed) throw SandboxBrokenException("closed")
+        val args = JsonArray(listOf(JsonPrimitive(username), JsonPrimitive(password))).toString()
+        if (pluginUtf8ByteCountAtMost(args, limits.maxInvocationInputBytes) == null) {
+            throw PluginResourceLimitException("Plugin '$pluginId' exceeded the ${limits.maxInvocationInputBytes}-byte invocation input limit")
+        }
+        lifecycle?.requireEnabled(packageId)
+        var loginGeneration = 1L
+        val loginDispatcher = SandboxBridgeDispatcher(
+            environment = environment.copy(network = environment.network.scopedToCredentialOriginsOnly()),
+            source = source,
+            limits = limits,
+            policy = policyForLogin,
+            currentGeneration = { loginGeneration },
+            nowEpochMillis = nowEpochMillisForLogin,
+        ).also { it.sourceHeaders = dispatcher.sourceHeaders }
+        val login = SandboxSession(
+            transport = transports.open(manifest.id),
+            dispatcher = loginDispatcher,
+            limits = limits.toSandboxLimits(),
+            generation = { loginGeneration },
+            // Nothing logged while the password is present is kept: a script could log it.
+            onLog = {},
+            pumpScope = pumpScope,
+        )
+        try {
+            loadScript(login)
+            val json = login.invoke("login", args, loginInvocation = true)
+            return SandboxScriptJson.parseBoundedResult(json, limits, pluginId)
+        } catch (e: SandboxInvocationException) {
+            throw when (e.code) {
+                SandboxErrorCode.LIMIT_MEMORY, SandboxErrorCode.LIMIT_STACK, SandboxErrorCode.LIMIT_TIME,
+                SandboxErrorCode.LIMIT_BRIDGE, SandboxErrorCode.LIMIT_RESULT,
+                -> PluginResourceLimitException("Plugin '$pluginId' exceeded its ${e.code.name} limit")
+                else -> e
+            }
+        } finally {
+            // Late bridge calls of the destroyed sandbox are refused, then it is gone.
+            loginGeneration += 1
+            login.close()
+        }
     }
 
     private suspend fun hasFunction(method: String): Boolean =
@@ -400,6 +462,9 @@ internal class SandboxScriptPluginRuntime(
         logs = next.toList()
     }
 }
+
+/** At most this many one-shot login sandboxes exist at once, across every plugin (ADR-0002 §6.4). */
+private val LOGIN_SANDBOX_PERMITS = kotlinx.coroutines.sync.Semaphore(2)
 
 /** Which invocation failures count toward the crash-loop limit (§7): the sandbox's own limits. */
 private fun SandboxErrorCode.strike(): SandboxStrike? = when (this) {

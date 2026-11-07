@@ -1063,6 +1063,26 @@ public class PluginNetworkClient(
     )
 
     /** Binds a manifest/runtime-specific exact-origin policy while preserving this client setup. */
+    /**
+     * ADR-0002 §6.4: the network of a one-shot login sandbox. Only this client's credential
+     * origins stay reachable (as request and credential origins); no content plane, no CDN
+     * families and no browser session, so a password can only travel to where the permission page
+     * said it would.
+     */
+    internal fun scopedToCredentialOriginsOnly(): PluginNetworkClient {
+        val credentials = policy.credentialOrigins
+        return scopedToPolicy(
+            policy.copy(
+                requestOrigins = credentials,
+                allowedOrigins = emptySet(),
+                credentialOrigins = credentials,
+                contentOrigins = emptySet(),
+                contentHostSuffixes = emptySet(),
+                browserSessionOrigins = emptySet(),
+            ),
+        )
+    }
+
     public fun scopedToPolicy(policy: PluginNetworkPolicy): PluginNetworkClient = PluginNetworkClient(
         transport = transport,
         storage = storage,

