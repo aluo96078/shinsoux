@@ -510,6 +510,45 @@ class ExtensionRepositoryV2AdmissionTest {
         }
     }
 
+    @Test
+    fun aPackageForANewerAppIsLeftOutWithoutBreakingTheRepository() = runTest {
+        // A newer publisher may declare permissions this app does not know yet. That package must
+        // never be granted an unknown permission, and the rest of the repository must still load.
+        fun pkg(id: String, sourceId: Long, runtime: String, host: String) = """
+            {
+              "id":"$id","name":"$id","version":"1.0.0","versionCode":1,"lang":"zh","nsfw":false,
+              "contract":"shinsou","runtime":"legacy-shinsou-adapter-v2","contentKinds":["IMAGE_SEQUENCE"],
+              "capabilities":["CATALOGUE","CONTENT"],"runtimePermissions":$runtime,"contentType":"manga",
+              "scriptUrl":"plugins/$id.js","sha256":"${"0".repeat(64)}","byteSize":1,"sidecarUrl":"sidecars/$id.json",
+              "requestedHostPermissions":$host,
+              "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+              "sources":[{"sourceId":"$sourceId","legacyLongId":"$sourceId","name":"$id","lang":"zh","baseUrl":"https://$id.example",
+                "contentHostSuffixes":["cdn.$id.example"]}]
+            }
+        """.trimIndent()
+        val body = """
+            {"format":"shinsou-extension-v2","contractVersion":2,"packages":[
+              ${pkg("known", 200, """["EXECUTE_SCRIPT","NETWORK","COOKIE_READ"]""", "[]")},
+              ${pkg("future-runtime", 201, """["EXECUTE_SCRIPT","FUTURE_PERMISSION"]""", "[]")},
+              ${pkg("future-host", 202, """["EXECUTE_SCRIPT"]""", """["FUTURE_HOST_PERMISSION"]""")}
+            ]}
+        """.trimIndent()
+        val client = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond(body, HttpStatusCode.OK) }),
+            cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        )
+
+        val combined = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
+        assertEquals(listOf("known"), combined.plugins.map { it.id })
+        val known = combined.plugins.single()
+        assertEquals(
+            setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK, PluginRuntimePermission.COOKIE_READ),
+            known.runtimePermissions,
+        )
+        assertEquals(setOf("cdn.known.example"), known.sources.orEmpty().single().contentHostSuffixes)
+    }
+
     private fun clientFor(index: String, sidecar: String): ExtensionRepositoryClient {
         val http = HttpClient(MockEngine { request ->
             when {

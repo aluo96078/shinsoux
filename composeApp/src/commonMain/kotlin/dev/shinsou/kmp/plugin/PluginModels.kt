@@ -98,6 +98,13 @@ public enum class PluginRuntimePermission {
     FAVORITE_MUTATION,
     BROWSER_CHALLENGE,
 
+    /**
+     * ADR-0002 §6.2: lets the script read the values of the host-kept session cookies of its
+     * `credentialOrigins` (`getCookie`/`getCookies`). Sensitive, off unless granted; without it the
+     * host still sends those cookies with requests, but the script cannot see them.
+     */
+    COOKIE_READ,
+
     ;
 
     public companion object {
@@ -193,6 +200,12 @@ public data class SourceIndexEntry(
     val contentOrigins: Set<String> = emptySet(),
     /** Exact HTTPS API origins allowed to use this source's browser network transport. */
     val browserSessionOrigins: Set<String> = emptySet(),
+    /**
+     * Dynamic content CDN host families (ADR-0002 §6.2, D11): a registrable host name or one below
+     * it, matched with its subdomains on port 443, only by the credential-free content plane. A
+     * sensitive declaration the user approves; never a request or credential origin.
+     */
+    val contentHostSuffixes: Set<String> = emptySet(),
     /** Persisted marker distinguishing authoritative V2 empty allowlists from legacy omission. */
     val originPolicyVersion: Int? = null,
     /** Lossless V2 legacy identifier copied into the sidecar SourceKey when present. */
@@ -211,6 +224,10 @@ public data class SourceIndexEntry(
         normalizePluginBrowserSessionOrigins(browserSessionOrigins)
         require(normalizedCredentials.all { it in effectiveRequestOrigins }) {
             "Credential origins must also be declared request origins"
+        }
+        require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES) { "Too many content host suffixes" }
+        require(contentHostSuffixes.all(::isGrantableContentHostSuffix)) {
+            "Content host suffixes must be registrable host names, not public suffixes"
         }
     }
 
@@ -249,6 +266,7 @@ public data class SourceIndexEntry(
         } else {
             normalizePluginBrowserSessionOrigins(browserSessionOrigins)
         },
+        contentHostSuffixes = if (usesLegacyOriginCompatibility()) emptySet() else contentHostSuffixes,
     )
 
     /**
@@ -260,7 +278,8 @@ public data class SourceIndexEntry(
             requestOrigins.isEmpty() &&
             credentialOrigins.isEmpty() &&
             contentOrigins.isEmpty() &&
-            browserSessionOrigins.isEmpty()
+            browserSessionOrigins.isEmpty() &&
+            contentHostSuffixes.isEmpty()
 }
 
 internal fun pluginHttpsOriginOrNull(value: String): String? = runCatching {

@@ -1,0 +1,21 @@
+{
+  "note": "TEST KEYS ONLY. Seeds are SHA-256 of the seed label; never use them to sign real repositories.",
+  "keys": [
+    {
+      "name": "publisher-a",
+      "seedLabel": "shinsou plugin contract v1 test publisher A",
+      "seedHex": "8d94428b78de0e0d51ea8dbede253ec1df364a2ab17ec1b4a9ef84876f869463",
+      "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+      "fingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+      "displayFingerprint": "20C7 D064 6108 1841 2E5F C6A1 68FE E9E4"
+    },
+    {
+      "name": "publisher-b",
+      "seedLabel": "shinsou plugin contract v1 test publisher B",
+      "seedHex": "0f1b5dc2695999fb9914b5894cdf307f049292713f72e64459a96b104038a6d5",
+      "publicKey": "28FNANZfArwhFUSxdMTuS2cDdFzDIpaob7fX1ObskXY",
+      "fingerprint": "sha256:x1-NTwsVKq5O2YjbMDEi9RLtKCI-od4r9XRSEwLP-hw",
+      "displayFingerprint": "C75F 8D4F 0B15 2AAE 4ED9 88DB 3031 22F5"
+    }
+  ]
+}

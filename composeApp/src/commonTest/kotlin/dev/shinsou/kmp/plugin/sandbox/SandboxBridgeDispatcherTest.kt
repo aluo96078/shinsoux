@@ -204,6 +204,19 @@ class SandboxBridgeDispatcherTest {
     }
 
     @Test
+    fun theCookieReadGrantOpensCookieValuesOnlyWithCookieStorage() = runTest {
+        val granted = fixture(PluginRuntimePermission.COOKIE_STORAGE, PluginRuntimePermission.COOKIE_READ)
+        granted.storage.setCookie(42, PluginCookie("sid", "v1", "www.example.test"))
+        assertEquals(BridgeOutcome.Value("\"v1\""), granted.dispatcher.dispatch(invocation(), "getCookie", "[\"sid\",\"https://www.example.test/\"]"))
+        assertEquals(err(SandboxErrorCode.PERMISSION_DENIED), granted.dispatcher.dispatch(invocation(), "getCookies", "[\"https://evil.test/\"]"))
+
+        // Without host-kept cookies there is nothing to read: COOKIE_READ alone is refused.
+        val readOnly = fixture(PluginRuntimePermission.COOKIE_READ)
+        readOnly.storage.setCookie(42, PluginCookie("sid", "v1", "www.example.test"))
+        assertEquals(err(SandboxErrorCode.PERMISSION_DENIED), readOnly.dispatcher.dispatch(invocation(), "getCookie", "[\"sid\",\"https://www.example.test/\"]"))
+    }
+
+    @Test
     fun cookieWritesAreConfinedToCredentialOriginsAndNeverAPublicSuffix() = runTest {
         val f = fixture(PluginRuntimePermission.COOKIE_STORAGE)
         val set = { domain: String -> "[\"sid\",\"v\",\"$domain\",\"/\",0]" }

@@ -354,8 +354,9 @@ public data class PluginNetworkPolicy(
     /** Content/image origins are metadata only and never authorize active requests. */
     val contentOrigins: Set<String> = emptySet(),
     /**
-     * Reviewed-only dynamic content hosts. This is intentionally not a manifest field or a
-     * general wildcard facility; only app-pinned suffixes for reviewed content CDNs are accepted.
+     * Dynamic content host families (ADR-0002 §6.2): the app-pinned reviewed CDNs, or suffixes a
+     * package declared and the user granted. Only the credential-free content scope uses them
+     * (GET/HEAD, no cookies), never the executable bridge's request origins.
      */
     internal val contentHostSuffixes: Set<String> = emptySet(),
     private val contentOnlyScope: Boolean = false,
@@ -375,8 +376,11 @@ public data class PluginNetworkPolicy(
         val allowed = effectiveRequestOrigins()
         val credentials = normalizePluginOrigins(credentialOrigins)
         normalizePluginOrigins(contentOrigins)
-        require(contentHostSuffixes.all { it in REVIEWED_DYNAMIC_CONTENT_SUFFIXES }) {
-            "Unsupported reviewed content host suffix"
+        require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES + REVIEWED_DYNAMIC_CONTENT_SUFFIXES.size) {
+            "Too many content host suffixes"
+        }
+        require(contentHostSuffixes.all { it in REVIEWED_DYNAMIC_CONTENT_SUFFIXES || isGrantableContentHostSuffix(it) }) {
+            "Unsupported content host suffix"
         }
         normalizePluginOrigins(browserSessionOrigins)
         require(credentials.all { it in allowed }) {
@@ -427,6 +431,23 @@ public data class PluginNetworkPolicy(
     }
 
     internal val isContentOnlyScope: Boolean get() = contentOnlyScope
+
+    /**
+     * The credential-free content scope of this policy: [contentOrigins] become its only exact
+     * origins, plus the [contentHostSuffixes] families; no credentials, cookies or browser session.
+     */
+    internal fun contentScope(): PluginNetworkPolicy = PluginNetworkPolicy(
+        requestOrigins = contentOrigins,
+        credentialOrigins = emptySet(),
+        contentOrigins = emptySet(),
+        contentHostSuffixes = contentHostSuffixes,
+        contentOnlyScope = true,
+        browserSessionOrigins = emptySet(),
+        resolver = resolver,
+        allowDeveloperLocalNetwork = allowDeveloperLocalNetwork,
+        allowDeveloperUnpinnedTransport = allowDeveloperUnpinnedTransport,
+        maxResponseBytes = maxContentResponseBytes,
+    )
 
     private fun effectiveRequestOrigins(): Set<String> = normalizePluginOrigins(requestOrigins + allowedOrigins)
 }
@@ -1089,18 +1110,7 @@ public class PluginNetworkClient(
                 requestBuilder = requestBuilder,
                 requestGate = requestGate,
                 nowEpochMillis = nowEpochMillis,
-                policy = PluginNetworkPolicy(
-                    requestOrigins = policy.contentOrigins,
-                    credentialOrigins = emptySet(),
-                    contentOrigins = emptySet(),
-                    contentHostSuffixes = policy.contentHostSuffixes,
-                    contentOnlyScope = true,
-                    browserSessionOrigins = emptySet(),
-                    resolver = policy.resolver,
-                    allowDeveloperLocalNetwork = policy.allowDeveloperLocalNetwork,
-                    allowDeveloperUnpinnedTransport = policy.allowDeveloperUnpinnedTransport,
-                    maxResponseBytes = policy.maxContentResponseBytes,
-                ),
+                policy = policy.contentScope(),
                 hostResolver = hostResolver,
                 credentialsEnabled = false,
                 explicitRefererWithoutCredentials = true,
@@ -1501,29 +1511,30 @@ public class PluginNetworkClient(
 }
 
 /**
- * Conservative public-suffix guard shared by the response cookie parser and the sandbox bridge:
- * a cookie must never be scoped to a whole registry such as `com` or `co.uk`.
+ * Public-suffix guard shared by the response cookie parser and the sandbox bridge: a cookie must
+ * never be scoped to a whole registry such as `com`, `co.uk` or `github.io`. Uses the bundled
+ * Public Suffix List (ICANN and private sections).
  */
-internal fun isPluginCookiePublicSuffix(domain: String): Boolean {
-    if ('.' !in domain || domain in COMMON_MULTI_LABEL_PUBLIC_SUFFIXES) return true
-    val labels = domain.split('.')
-    return labels.size == 2 && labels.last().length == 2 &&
-        labels.first() in COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES
+internal fun isPluginCookiePublicSuffix(domain: String): Boolean =
+    dev.shinsou.kmp.plugin.network.PublicSuffixList.isPublicSuffix(domain)
+
+/**
+ * A `contentHostSuffixes` entry a package may declare (ADR-0002 §6.2, D11): a lowercase ASCII host
+ * name at or below a registrable domain (`cdn.example.com`, `example.com`), never a public suffix
+ * (`com`, `co.jp`, `github.io`) and never an IP address. It only ever widens the credential-free
+ * content plane, on port 443.
+ */
+internal fun isGrantableContentHostSuffix(suffix: String): Boolean {
+    if (suffix != suffix.lowercase() || suffix.length > 253 || suffix.startsWith('.') || suffix.endsWith('.')) return false
+    if (suffix.any { !(it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.') }) return false
+    val labels = suffix.split('.')
+    if (labels.size < 2 || labels.any { it.isEmpty() || it.length > 63 || it.startsWith('-') || it.endsWith('-') }) return false
+    if (labels.last().all(Char::isDigit)) return false // an IPv4 address, not a host name
+    return dev.shinsou.kmp.plugin.network.PublicSuffixList.registrableDomain(suffix) != null
 }
 
-private val COMMON_MULTI_LABEL_PUBLIC_SUFFIXES = setOf(
-    "ac.uk", "co.uk", "gov.uk", "ltd.uk", "me.uk", "net.uk", "org.uk", "plc.uk",
-    "asn.au", "com.au", "edu.au", "gov.au", "id.au", "net.au", "org.au",
-    "ac.jp", "co.jp", "go.jp", "ne.jp", "or.jp",
-    "ac.kr", "co.kr", "go.kr", "ne.kr", "or.kr",
-    "com.br", "com.cn", "com.hk", "com.mx", "com.sg", "com.tw",
-    "co.in", "firm.in", "gen.in", "ind.in", "net.in", "org.in",
-    "co.nz", "co.za", "com.ar", "com.tr", "com.ua",
-)
-private val COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES = setOf(
-    "ac", "co", "com", "edu", "firm", "gen", "go", "gov", "id", "ind", "ltd",
-    "me", "mil", "ne", "net", "nom", "or", "org", "plc",
-)
+/** Most `contentHostSuffixes` one source may declare. */
+internal const val MAX_CONTENT_HOST_SUFFIXES: Int = 8
 
 /**
  * Reviewed dynamic content host families used by the official readers.
@@ -1542,13 +1553,13 @@ internal val REVIEWED_DYNAMIC_CONTENT_SUFFIXES: Set<String> = setOf(
 
 private fun isReviewedDynamicContentHost(url: Url, suffix: String): Boolean {
     val host = url.host.lowercase().trimEnd('.')
-    if (!host.endsWith(".$suffix")) return false
     return when (suffix) {
-        REVIEWED_DYNAMIC_CONTENT_SUFFIX -> isReviewedDynamicContentPort(url.port)
+        REVIEWED_DYNAMIC_CONTENT_SUFFIX -> host.endsWith(".$suffix") && isReviewedDynamicContentPort(url.port)
         // MangaDex At-Home servers are HTTPS endpoints on the standard TLS port. Keeping this
         // family at 443 prevents an otherwise valid CDN hostname from becoming a port scanner.
-        REVIEWED_MANGADEX_CONTENT_SUFFIX -> url.port == 443
-        else -> false
+        REVIEWED_MANGADEX_CONTENT_SUFFIX -> host.endsWith(".$suffix") && url.port == 443
+        // A package's granted suffix: the host itself or any subdomain, standard TLS port only.
+        else -> isGrantableContentHostSuffix(suffix) && (host == suffix || host.endsWith(".$suffix")) && url.port == 443
     }
 }
 

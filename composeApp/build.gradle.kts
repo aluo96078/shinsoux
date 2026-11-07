@@ -4,6 +4,7 @@ import org.gradle.api.attributes.LibraryElements
 import org.gradle.api.attributes.Usage
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
+import java.net.IDN
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -80,6 +81,15 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     systemProperty(
         "shinsou.pluginRepo",
         shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
+    )
+    // Plugin publishing contract shared with the @shinsou/plugin CLI (PluginContractVectorTest).
+    systemProperty(
+        "shinsou.pluginContractFixtures",
+        rootProject.layout.projectDirectory.dir("fixtures/plugin-contract/v1").asFile.absolutePath,
+    )
+    systemProperty(
+        "shinsou.writePluginContractVectors",
+        providers.gradleProperty("writePluginContractVectors").orElse("false").get(),
     )
 }
 val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
@@ -268,6 +278,62 @@ dependencies {
     )
 }
 
+/**
+ * The vendored Public Suffix List (psl/public_suffix_list.dat, see psl/README.md) as Kotlin data:
+ * rules only, internationalized ones converted to ASCII (punycode) with IDN so the app
+ * compares plain lowercase ASCII host names on every platform. Built at compile time only; the app
+ * never downloads the list.
+ */
+abstract class GeneratePublicSuffixData : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val listFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val rules = listFile.get().asFile.readLines()
+            .map { it.substringBefore(' ').substringBefore('\t').trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("//") }
+            .map { rule ->
+                val prefix = when {
+                    rule.startsWith("!") -> "!"
+                    rule.startsWith("*.") -> "*."
+                    else -> ""
+                }
+                val ascii = IDN.toASCII(rule.removePrefix(prefix), IDN.ALLOW_UNASSIGNED).lowercase()
+                require(ascii.all { it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.' }) { "Unexpected rule '$rule'" }
+                prefix + ascii
+            }
+            .distinct()
+        require(rules.size > 5_000) { "Public Suffix List looks truncated (${rules.size} rules)" }
+        val chunks = rules.joinToString("\n").chunked(30_000)
+        val directory = outputDirectory.get().asFile.resolve("dev/shinsou/kmp/plugin/network")
+        directory.mkdirs()
+        directory.resolve("PublicSuffixData.kt").writeText(
+            buildString {
+                appendLine("// Generated from composeApp/psl/public_suffix_list.dat by generatePublicSuffixData. Do not edit.")
+                appendLine("package dev.shinsou.kmp.plugin.network")
+                appendLine()
+                appendLine("internal val PUBLIC_SUFFIX_RULE_CHUNKS: Array<String> = arrayOf(")
+                chunks.forEach { chunk ->
+                    append("    \"")
+                    chunk.forEach { c -> append(if (c == '\n') "\\n" else c.toString()) }
+                    appendLine("\",")
+                }
+                appendLine(")")
+            },
+        )
+    }
+}
+
+val generatePublicSuffixData by tasks.registering(GeneratePublicSuffixData::class) {
+    listFile.set(layout.projectDirectory.file("psl/public_suffix_list.dat"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/publicSuffix/commonMain/kotlin"))
+}
+
 val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
     from(
         androidHostNativeTestResources.incoming.files.elements.map { artifacts ->
@@ -417,6 +483,9 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(generatePublicSuffixData.map { it.outputDirectory })
+        }
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)

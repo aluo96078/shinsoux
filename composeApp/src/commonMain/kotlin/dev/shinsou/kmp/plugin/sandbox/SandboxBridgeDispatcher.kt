@@ -336,9 +336,14 @@ internal class SandboxBridgeDispatcher(
         if (!invocation.loginInvocation) throw Denied()
     }
 
+    /**
+     * Cookie values: the host must keep cookies for the source (COOKIE_STORAGE) and the script must
+     * hold the COOKIE_READ grant. Host-reviewed catalogue artifacts read them under their review
+     * ([SandboxBridgePolicy.allowCookieRead]) instead.
+     */
     private fun requireCookieRead() {
         require(PluginRuntimePermission.COOKIE_STORAGE)
-        if (!policy.allowCookieRead) throw Denied()
+        if (!policy.allowCookieRead && PluginRuntimePermission.COOKIE_READ !in environment.runtimePermissions) throw Denied()
     }
 
     /** Cookie reads only target a declared credential origin. */

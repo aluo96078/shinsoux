@@ -1,0 +1,68 @@
+{
+  "valid": [
+    {
+      "name": "sorted-keys",
+      "json": "{\"b\":1,\"a\":2,\"aa\":3,\"A\":4}",
+      "canonical": "{\"A\":4,\"a\":2,\"aa\":3,\"b\":1}",
+      "sha256Hex": "9c0f43adde6d436733e8bc3f11edbe1ec08de15dbc823e44031254212cf3b83a"
+    },
+    {
+      "name": "nested",
+      "json": "{\"z\":[3,{\"y\":null,\"x\":true}],\"a\":{\"d\":false,\"c\":[]}}",
+      "canonical": "{\"a\":{\"c\":[],\"d\":false},\"z\":[3,{\"x\":true,\"y\":null}]}",
+      "sha256Hex": "f6b5708fa2db63f966ee880c2db583235807d9f088ff1efb1242bc764450a3d3"
+    },
+    {
+      "name": "integers",
+      "json": "[0,-1,42,9007199254740991,-9007199254740991]",
+      "canonical": "[0,-1,42,9007199254740991,-9007199254740991]",
+      "sha256Hex": "4817afe8a2030d41925db08abb474e5defec15139e046f0086f53357ba4c6eb7"
+    },
+    {
+      "name": "string-escapes",
+      "json": "{\"s\":\"quote\\\" backslash\\\\ slash/ nl\\n cr\\r tab\\t bs\\b ff\\f ctl\\u0001 us\\u001f del\\u007f\"}",
+      "canonical": "{\"s\":\"quote\\\" backslash\\\\ slash/ nl\\n cr\\r tab\\t bs\\b ff\\f ctl\\u0001 us\\u001f del\"}",
+      "sha256Hex": "78b61aed3e00d08957b9f7679644a383de556ffff433ec66ef324848c1e88e04"
+    },
+    {
+      "name": "unicode-text",
+      "json": "{\"s\":\"ü 中文 😀 \\u2028 \\u00e9\"}",
+      "canonical": "{\"s\":\"ü 中文 😀   é\"}",
+      "sha256Hex": "470505df2c3f5e581da85709a18aaebaf7858c73b6ba6c40a454a5652bf32a6d"
+    },
+    {
+      "name": "utf16-key-order",
+      "json": "{\"z\":1,\"é\":2,\"中\":3,\"😀\":4,\"\\uffff\":5}",
+      "canonical": "{\"z\":1,\"é\":2,\"中\":3,\"😀\":4,\"￿\":5}",
+      "sha256Hex": "8897d5d9a2863a96d6c40644d6162db61e4f9a6a04e374ee67f70deb2b12cd08"
+    },
+    {
+      "name": "empty",
+      "json": "{\"o\":{},\"a\":[],\"s\":\"\"}",
+      "canonical": "{\"a\":[],\"o\":{},\"s\":\"\"}",
+      "sha256Hex": "c127f9b3c6f4233b3976f8e2d54486ab15f9a46cfa50fc14ae6d0787d1ac2917"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "fraction",
+      "json": "{\"n\":1.5}"
+    },
+    {
+      "name": "exponent",
+      "json": "{\"n\":1e3}"
+    },
+    {
+      "name": "trailing-zero-fraction",
+      "json": "{\"n\":1.0}"
+    },
+    {
+      "name": "negative-zero",
+      "json": "{\"n\":-0}"
+    },
+    {
+      "name": "beyond-safe-integer",
+      "json": "{\"n\":9007199254740992}"
+    }
+  ]
+}

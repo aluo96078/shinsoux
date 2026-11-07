@@ -13,6 +13,7 @@ public fun PluginRuntimePermission.localizedLabel(strings: ShinsouStrings): Stri
         PluginRuntimePermission.LOGIN_PROMPT -> "Show login prompt"
         PluginRuntimePermission.FAVORITE_MUTATION -> "Modify favorites"
         PluginRuntimePermission.BROWSER_CHALLENGE -> "Open browser challenge"
+        PluginRuntimePermission.COOKIE_READ -> "Read session cookies"
     },
 )
 

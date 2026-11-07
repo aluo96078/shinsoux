@@ -609,6 +609,7 @@ public class PluginManager(
             }
             requireReviewedLocalRepositoryEntry(repository, entry)
             requireSupportedGenericRuntime(entry)
+            SandboxTierCeiling.requireWithinCeiling(entry)
             require(entry.runtimePermissions != null) {
                 "New plugin '${entry.id}' must declare runtimePermissions"
             }

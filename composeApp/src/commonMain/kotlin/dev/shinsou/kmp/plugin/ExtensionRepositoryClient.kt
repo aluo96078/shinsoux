@@ -400,6 +400,17 @@ public class ExtensionRepositoryClient(
                 requireV2PackageAdmissionFields(pkg)
                 return@forEach
             }
+            // A package declaring a permission this app does not know was published for a newer app:
+            // it is left out like a non-installable row (never granted an unknown permission), while
+            // the rest of the repository stays usable instead of the whole index failing.
+            val knownHostPermissions = PluginHostPermission.entries.mapTo(hashSetOf()) { it.name }
+            val knownRuntimePermissions = PluginRuntimePermission.entries.mapTo(hashSetOf()) { it.name }
+            if (!knownHostPermissions.containsAll(pkg.requiredStringSet("requestedHostPermissions")) ||
+                !knownRuntimePermissions.containsAll(pkg.requiredStringSet("runtimePermissions"))
+            ) {
+                requireV2PackageAdmissionFields(pkg)
+                return@forEach
+            }
             val eventObject = pkg["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
             require(eventObject.requiredString("protocol") == "dev.shinsou.system")
             val events = PluginSystemEventDeclaration(
@@ -449,6 +460,7 @@ public class ExtensionRepositoryClient(
                         credentialOrigins = source.optionalStringSet("credentialOrigins"),
                         contentOrigins = source.optionalStringSet("contentOrigins"),
                         browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
+                        contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
                         originPolicyVersion = 2,
                         legacyLongId = source.requiredNullableString("legacyLongId"),
                         canonicalSourceId = rawId,
@@ -606,6 +618,7 @@ public class ExtensionRepositoryClient(
                 require(match.optionalStringSet("credentialOrigins") == expected.credentialOrigins)
                 require(match.optionalStringSet("contentOrigins") == expected.contentOrigins)
                 require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
+                require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
                 require(match.requiredStringSet("capabilities") == entry.capabilities)
                 val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
                 require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
@@ -1314,6 +1327,7 @@ public class ExtensionRepositoryClient(
             source.credentialOrigins,
             source.contentOrigins,
             source.browserSessionOrigins,
+            source.contentHostSuffixes,
         )
         require(declarations.all { it.size <= MAX_INDEX_SET_VALUES }) {
             "Repository source declaration contains too many values"
@@ -1356,6 +1370,7 @@ public class ExtensionRepositoryClient(
             source.optionalStringSet("credentialOrigins")
             source.optionalStringSet("contentOrigins")
             source.optionalStringSet("browserSessionOrigins")
+            source.optionalStringSet("contentHostSuffixes")
         }
     }
 

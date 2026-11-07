@@ -1,0 +1,415 @@
+{
+  "format": "shinsou-signed-envelope-v1",
+  "signatureDomain": "dev.shinsou.repository.signature.v1\\u0000",
+  "rotationDomain": "dev.shinsou.publisher.rotation.v1\\u0000",
+  "rotationStatement": {
+    "publisherId": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+    "oldKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+    "newKey": "publisher-b",
+    "effectiveSequence": 2,
+    "messageBase64": "ZGV2LnNoaW5zb3UucHVibGlzaGVyLnJvdGF0aW9uLnYxAHsiZWZmZWN0aXZlU2VxdWVuY2UiOjIsIm5ld0tleUZpbmdlcnByaW50Ijoic2hhMjU2OngxLU5Ud3NWS3E1TzJZamJNREVpOVJMdEtDSS1vZDRyOVhSU0V3TFAtaHciLCJuZXdQdWJsaWNLZXkiOiIyOEZOQU5aZkFyd2hGVVN4ZE1UdVMyY0RkRnpESXBhb2I3ZlgxT2Jza1hZIiwib2xkS2V5RmluZ2VycHJpbnQiOiJzaGEyNTY6SU1mUVpHRUlHRUV1WDhhaGFQN3A1RjB6dk1NaWpJTUNZaERkNGdRUWF4RSIsInB1Ymxpc2hlcklkIjoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUifQ"
+  },
+  "valid": [
+    {
+      "name": "repository-meta",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "sequence": 1,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InJlcG8uanNvbiIsImZvcm1hdCI6InNoaW5zb3Utc2lnbmVkLWVudmVsb3BlLXYxIiwia2V5RmluZ2VycHJpbnQiOiJzaGEyNTY6SU1mUVpHRUlHRUV1WDhhaGFQN3A1RjB6dk1NaWpJTUNZaERkNGdRUWF4RSIsInBheWxvYWQiOnsibWV0YSI6eyJuYW1lIjoiRXhhbXBsZSBQdWJsaXNoZXIiLCJzaG9ydE5hbWUiOiJFeGFtcGxlIiwic2lnbmluZ0tleUZpbmdlcnByaW50Ijoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUiLCJ3ZWJzaXRlIjoiaHR0cHM6Ly9wbHVnaW5zLmV4YW1wbGUudGVzdCJ9fSwicGF5bG9hZFR5cGUiOiJyZXBvc2l0b3J5LW1ldGEiLCJyZXBvc2l0b3J5IjoiaHR0cHM6Ly9wbHVnaW5zLmV4YW1wbGUudGVzdC9yZXBvIiwic2VxdWVuY2UiOjF9",
+      "signingMessageSha256Hex": "d6917fe150fd5ea698f09bd6467ebd89aa75f22944ad8de96781bc2698d7032d",
+      "payloadCanonicalSha256Hex": "12a8c6871003e313bf3e7f3593d4137bc6c9ad4ebbb63499783c650b7cb23bb6",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "repository-meta-mirror",
+      "signer": "publisher-a",
+      "repository": "https://mirror.example.test",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "sequence": 1,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InJlcG8uanNvbiIsImZvcm1hdCI6InNoaW5zb3Utc2lnbmVkLWVudmVsb3BlLXYxIiwia2V5RmluZ2VycHJpbnQiOiJzaGEyNTY6SU1mUVpHRUlHRUV1WDhhaGFQN3A1RjB6dk1NaWpJTUNZaERkNGdRUWF4RSIsInBheWxvYWQiOnsibWV0YSI6eyJuYW1lIjoiRXhhbXBsZSBQdWJsaXNoZXIiLCJzaG9ydE5hbWUiOiJFeGFtcGxlIiwic2lnbmluZ0tleUZpbmdlcnByaW50Ijoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUiLCJ3ZWJzaXRlIjoiaHR0cHM6Ly9wbHVnaW5zLmV4YW1wbGUudGVzdCJ9fSwicGF5bG9hZFR5cGUiOiJyZXBvc2l0b3J5LW1ldGEiLCJyZXBvc2l0b3J5IjoiaHR0cHM6Ly9taXJyb3IuZXhhbXBsZS50ZXN0Iiwic2VxdWVuY2UiOjF9",
+      "signingMessageSha256Hex": "e14abf60622a5b425699db64b436180bce71313528aa2e3497fe6f7fcc83bf9b",
+      "payloadCanonicalSha256Hex": "12a8c6871003e313bf3e7f3593d4137bc6c9ad4ebbb63499783c650b7cb23bb6",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "6_IKYFDmOIZf8Br2A9tmrXB4kA24RWz1kzapJa5chG4O_ahIwZuwLphZcOGzN_swm0HsYaY_pRZvUgGCv9QKBw"
+      }
+    },
+    {
+      "name": "repository-index",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-index",
+      "documentId": "index.json",
+      "sequence": 7,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6ImluZGV4Lmpzb24iLCJmb3JtYXQiOiJzaGluc291LXNpZ25lZC1lbnZlbG9wZS12MSIsImtleUZpbmdlcnByaW50Ijoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUiLCJwYXlsb2FkIjp7ImNvbnRyYWN0VmVyc2lvbiI6MiwiZm9ybWF0Ijoic2hpbnNvdS1leHRlbnNpb24tdjIiLCJwbHVnaW5zIjpbeyJpZCI6ImV4YW1wbGUubm92ZWwiLCJuYW1lIjoi56-E5L6L5bCP6KqqIOKckyIsInNjcmlwdCI6InBsdWdpbnMvZXhhbXBsZS5ub3ZlbC5qcyIsInNoYTI1NiI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJzaXplIjo0MDk2LCJ2ZXJzaW9uIjoiMS4yLjAiLCJ2ZXJzaW9uQ29kZSI6MTJ9XX0sInBheWxvYWRUeXBlIjoicmVwb3NpdG9yeS1pbmRleCIsInJlcG9zaXRvcnkiOiJodHRwczovL3BsdWdpbnMuZXhhbXBsZS50ZXN0L3JlcG8iLCJzZXF1ZW5jZSI6N30",
+      "signingMessageSha256Hex": "c6af0e6feefba402cec6725841bc0577ed232c31ccccd808881b67f96eb55297",
+      "payloadCanonicalSha256Hex": "25fdb85477e5da1125f4c3a1128af7343304616d06300d9e4bf132cdb5f936e4",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-index",
+        "sequence": 7,
+        "payload": {
+          "format": "shinsou-extension-v2",
+          "contractVersion": 2,
+          "plugins": [
+            {
+              "id": "example.novel",
+              "name": "範例小說 ✓",
+              "version": "1.2.0",
+              "versionCode": 12,
+              "script": "plugins/example.novel.js",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "size": 4096
+            }
+          ]
+        },
+        "signature": "ZO9b9-3KS0TYIMCL4kO5d38X6htWU2no0iWo6hEFU6c6nMLajDeVwNW908G8UrOkjeieQCXow_-8azj0B66FCw"
+      }
+    },
+    {
+      "name": "plugin-sidecar",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "plugin-sidecar",
+      "documentId": "sidecars/example.novel.json",
+      "sequence": 3,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InNpZGVjYXJzL2V4YW1wbGUubm92ZWwuanNvbiIsImZvcm1hdCI6InNoaW5zb3Utc2lnbmVkLWVudmVsb3BlLXYxIiwia2V5RmluZ2VycHJpbnQiOiJzaGEyNTY6SU1mUVpHRUlHRUV1WDhhaGFQN3A1RjB6dk1NaWpJTUNZaERkNGdRUWF4RSIsInBheWxvYWQiOnsiY29udGVudEtpbmRzIjpbIlBMQUlOX1RFWFQiXSwiY29udHJhY3RWZXJzaW9uIjoyLCJlc2NhcGVzIjoicXVvdGVcIiBiYWNrc2xhc2hcXCBuZXdsaW5lXG4gdGFiXHQgY29udHJvbFx1MDAwMSBlbW9qaSDwn5iAIiwiZm9ybWF0Ijoic2hpbnNvdS1leHRlbnNpb24tc2lkZWNhci12MiIsInBhY2thZ2VJZCI6ImV4YW1wbGUubm92ZWwiLCJ2ZXJzaW9uIjoiMS4yLjAiLCJ2ZXJzaW9uQ29kZSI6MTJ9LCJwYXlsb2FkVHlwZSI6InBsdWdpbi1zaWRlY2FyIiwicmVwb3NpdG9yeSI6Imh0dHBzOi8vcGx1Z2lucy5leGFtcGxlLnRlc3QvcmVwbyIsInNlcXVlbmNlIjozfQ",
+      "signingMessageSha256Hex": "f7c686faac3c6880436ac51aaa49984a022d228d4e7cc4dc94d6bae9240a1be3",
+      "payloadCanonicalSha256Hex": "5b49c55f657c195bf6235c10b6360a414ca85e654859afd9944aa6ebe5ecdfc7",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "plugin-sidecar",
+        "sequence": 3,
+        "payload": {
+          "format": "shinsou-extension-sidecar-v2",
+          "contractVersion": 2,
+          "packageId": "example.novel",
+          "version": "1.2.0",
+          "versionCode": 12,
+          "contentKinds": [
+            "PLAIN_TEXT"
+          ],
+          "escapes": "quote\" backslash\\ newline\n tab\t control\u0001 emoji 😀"
+        },
+        "signature": "mZ4QbA1YNmCjv4w6MdGCW341UVnrLb1tShXY7zHXsjjZO2q3voXjYnxTtU_L1-CQbUKzPNeminrjL6m6TdKJCA"
+      }
+    },
+    {
+      "name": "publisher-revocations",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "publisher-revocations",
+      "documentId": "publisher-revocations.json",
+      "sequence": 4,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InB1Ymxpc2hlci1yZXZvY2F0aW9ucy5qc29uIiwiZm9ybWF0Ijoic2hpbnNvdS1zaWduZWQtZW52ZWxvcGUtdjEiLCJrZXlGaW5nZXJwcmludCI6InNoYTI1NjpJTWZRWkdFSUdFRXVYOGFoYVA3cDVGMHp2TU1paklNQ1loRGQ0Z1FRYXhFIiwicGF5bG9hZCI6eyJleHBpcmVzQXQiOjE4MDAwMDAwMDAsInB1Ymxpc2hlcklkIjoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUiLCJyZXZva2VkQXJ0aWZhY3RzIjpbImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiXX0sInBheWxvYWRUeXBlIjoicHVibGlzaGVyLXJldm9jYXRpb25zIiwicmVwb3NpdG9yeSI6Imh0dHBzOi8vcGx1Z2lucy5leGFtcGxlLnRlc3QvcmVwbyIsInNlcXVlbmNlIjo0fQ",
+      "signingMessageSha256Hex": "a9baf09e6e3a3fdb5f726cc6183ac171952d230c34d96d39d751618a7b158ef2",
+      "payloadCanonicalSha256Hex": "2847655be00f3017c96d8b91279c52bdcc843fb9f216d89588c24e1ed301e684",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "publisher-revocations",
+        "sequence": 4,
+        "payload": {
+          "publisherId": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+          "revokedArtifacts": [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "expiresAt": 1800000000
+        },
+        "signature": "ieXSlZQeUBGuC8bFPIXRu6k4Wh36tZ4RM00f7p5mMah-ds0ztl_4bcYiLa5-xakyRWbuWaQnblh2ErdiA5bDCA"
+      }
+    },
+    {
+      "name": "publisher-key-rotation",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "publisher-key-rotation",
+      "documentId": "publisher-key-rotation.json",
+      "sequence": 5,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InB1Ymxpc2hlci1rZXktcm90YXRpb24uanNvbiIsImZvcm1hdCI6InNoaW5zb3Utc2lnbmVkLWVudmVsb3BlLXYxIiwia2V5RmluZ2VycHJpbnQiOiJzaGEyNTY6SU1mUVpHRUlHRUV1WDhhaGFQN3A1RjB6dk1NaWpJTUNZaERkNGdRUWF4RSIsInBheWxvYWQiOnsiZWZmZWN0aXZlU2VxdWVuY2UiOjIsIm5ld0tleUZpbmdlcnByaW50Ijoic2hhMjU2OngxLU5Ud3NWS3E1TzJZamJNREVpOVJMdEtDSS1vZDRyOVhSU0V3TFAtaHciLCJuZXdLZXlTaWduYXR1cmUiOiJub1pLamVlLVhkQXE5bFpTbHhQTjZwZVF1VkNfR1daaWJaV1U4UXZjMFB1QVBWVzAwWTBrM0otUGxtVXRIZndZSGduNXlZcGVIYWVzRmNBbEFBTVJCQSIsIm5ld1B1YmxpY0tleSI6IjI4Rk5BTlpmQXJ3aEZVU3hkTVR1UzJjRGRGekRJcGFvYjdmWDFPYnNrWFkiLCJwdWJsaXNoZXJJZCI6InNoYTI1NjpJTWZRWkdFSUdFRXVYOGFoYVA3cDVGMHp2TU1paklNQ1loRGQ0Z1FRYXhFIn0sInBheWxvYWRUeXBlIjoicHVibGlzaGVyLWtleS1yb3RhdGlvbiIsInJlcG9zaXRvcnkiOiJodHRwczovL3BsdWdpbnMuZXhhbXBsZS50ZXN0L3JlcG8iLCJzZXF1ZW5jZSI6NX0",
+      "signingMessageSha256Hex": "91e4ce5a2b33c19064277272a43bd44f4c8ae588e35b51217cdf4c7c38c7edc3",
+      "payloadCanonicalSha256Hex": "fb854816442babb9ff019dab9fe347f93abaa8ffa5601329df36d8834785bd2a",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "publisher-key-rotation",
+        "sequence": 5,
+        "payload": {
+          "publisherId": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+          "newPublicKey": "28FNANZfArwhFUSxdMTuS2cDdFzDIpaob7fX1ObskXY",
+          "newKeyFingerprint": "sha256:x1-NTwsVKq5O2YjbMDEi9RLtKCI-od4r9XRSEwLP-hw",
+          "effectiveSequence": 2,
+          "newKeySignature": "noZKjee-XdAq9lZSlxPN6peQuVC_GWZibZWU8Qvc0PuAPVW00Y0k3J-PlmUtHfwYHgn5yYpeHaesFcAlAAMRBA"
+        },
+        "signature": "UC7Cq4mmYrsG7bPT1wf2J-4tBkPez11eaVbDTXzQky_9qtsvbdeoYGHsYBtNdcea0g00WnTVIMjzN2OX4CoLAw"
+      }
+    },
+    {
+      "name": "publisher-key-revoked",
+      "signer": "publisher-a",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "publisher-key-revoked",
+      "documentId": "publisher-key-revoked.json",
+      "sequence": 1,
+      "signingMessageBase64": "ZGV2LnNoaW5zb3UucmVwb3NpdG9yeS5zaWduYXR1cmUudjEAeyJhbGdvcml0aG0iOiJFZDI1NTE5IiwiZG9jdW1lbnRJZCI6InB1Ymxpc2hlci1rZXktcmV2b2tlZC5qc29uIiwiZm9ybWF0Ijoic2hpbnNvdS1zaWduZWQtZW52ZWxvcGUtdjEiLCJrZXlGaW5nZXJwcmludCI6InNoYTI1NjpJTWZRWkdFSUdFRXVYOGFoYVA3cDVGMHp2TU1paklNQ1loRGQ0Z1FRYXhFIiwicGF5bG9hZCI6eyJwdWJsaXNoZXJJZCI6InNoYTI1NjpJTWZRWkdFSUdFRXVYOGFoYVA3cDVGMHp2TU1paklNQ1loRGQ0Z1FRYXhFIiwicmV2b2tlZEtleUZpbmdlcnByaW50Ijoic2hhMjU2OklNZlFaR0VJR0VFdVg4YWhhUDdwNUYwenZNTWlqSU1DWWhEZDRnUVFheEUifSwicGF5bG9hZFR5cGUiOiJwdWJsaXNoZXIta2V5LXJldm9rZWQiLCJyZXBvc2l0b3J5IjoiaHR0cHM6Ly9wbHVnaW5zLmV4YW1wbGUudGVzdC9yZXBvIiwic2VxdWVuY2UiOjF9",
+      "signingMessageSha256Hex": "81f239bd61b23dacd8a3f7f9c1378ee2ea6cd0e2a296c337992e61fb5c5e4b79",
+      "payloadCanonicalSha256Hex": "de1e9816c21faf29b4f98f817ea7cd007c03a7a32f096f8ef69c52e7a7a296b1",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "publisher-key-revoked",
+        "sequence": 1,
+        "payload": {
+          "publisherId": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+          "revokedKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+        },
+        "signature": "wwlN484XW-8qNAKXDqKAikelAGjLJMHVY_Jgq3D2bRqIwMVv8aN2xSj8dpGIHXoMK72SYkR8vIA2NwK_2YQ0Bg"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "tampered-payload",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "InvalidSignature",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Tampered Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "other-repository",
+      "repository": "https://mirror.example.test",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "InvalidSignature",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "pinned-to-another-key",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-b",
+      "expectedError": "KeySubstitution",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "unknown-field",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "Malformed",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg",
+        "extra": true
+      }
+    },
+    {
+      "name": "padded-public-key",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "Malformed",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU=",
+        "payloadType": "repository-meta",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "wrong-payload-type",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "Malformed",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-index",
+        "sequence": 1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "negative-sequence",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "Malformed",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": -1,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "shortName": "Example",
+            "website": "https://plugins.example.test",
+            "signingKeyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE"
+          }
+        },
+        "signature": "IWofURQ2Kk0pE1qkVp8MGS2uraY43DS3ae4VOVfX_QzAVLscDcoA1-TrDJtem9kScFenerZ7QTBXhdi8XL6LBg"
+      }
+    },
+    {
+      "name": "meta-fingerprint-mismatch",
+      "repository": "https://plugins.example.test/repo",
+      "payloadType": "repository-meta",
+      "documentId": "repo.json",
+      "pinnedKey": "publisher-a",
+      "expectedError": "Malformed",
+      "envelope": {
+        "format": "shinsou-signed-envelope-v1",
+        "algorithm": "Ed25519",
+        "keyFingerprint": "sha256:IMfQZGEIGEEuX8ahaP7p5F0zvMMijIMCYhDd4gQQaxE",
+        "publicKey": "ZebwYyKwxzG2_QYGji37aCIxmWrxXwWOqixF5cl2iqU",
+        "payloadType": "repository-meta",
+        "sequence": 2,
+        "payload": {
+          "meta": {
+            "name": "Example Publisher",
+            "signingKeyFingerprint": "sha256:x1-NTwsVKq5O2YjbMDEi9RLtKCI-od4r9XRSEwLP-hw"
+          }
+        },
+        "signature": "8yiLaJOvWEqNqsi-LXZL4u6GMseQN6lJUsjyLZSVk7lcg5_a5-adiIeh-FRS04Stur1ykxrtd95JRzRNeLtMBQ"
+      }
+    }
+  ]
+}

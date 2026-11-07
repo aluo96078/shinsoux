@@ -1,0 +1,205 @@
+{
+  "protocolVersion": 1,
+  "maxFrameBytes": 1048576,
+  "chunkPayloadBytes": 1048560,
+  "frames": [
+    {
+      "name": "init",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "INIT",
+        "callId": 1,
+        "protocolVersion": 1,
+        "apiLevel": 1,
+        "limits": [
+          67108864,
+          1048576,
+          10000,
+          30000,
+          4096,
+          6,
+          64,
+          4194304,
+          65536,
+          256
+        ],
+        "script": "globalThis.source = { name: \"範例\" };"
+      },
+      "bodyHex": "86010101018a1a040000001a001000001927101975301910000618401a004000001a000100001901007827676c6f62616c546869732e736f75726365203d207b206e616d653a2022e7af84e4be8b22207d3b",
+      "envelopeHex": "0000005286010101018a1a040000001a001000001927101975301910000618401a004000001a000100001901007827676c6f62616c546869732e736f75726365203d207b206e616d653a2022e7af84e4be8b22207d3b"
+    },
+    {
+      "name": "invoke",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "INVOKE",
+        "callId": 2,
+        "method": "getPopularManga",
+        "argsJson": "[1]"
+      },
+      "bodyHex": "8402026f676574506f70756c61724d616e6761635b315d",
+      "envelopeHex": "000000178402026f676574506f70756c61724d616e6761635b315d"
+    },
+    {
+      "name": "cancel",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "CANCEL",
+        "callId": 2
+      },
+      "bodyHex": "820302",
+      "envelopeHex": "00000003820302"
+    },
+    {
+      "name": "bridge-result-value",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "BRIDGE_RESULT",
+        "seq": 7,
+        "ok": true,
+        "json": "{\"status\":200}"
+      },
+      "bodyHex": "840407f56e7b22737461747573223a3230307d",
+      "envelopeHex": "00000013840407f56e7b22737461747573223a3230307d"
+    },
+    {
+      "name": "bridge-result-null",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "BRIDGE_RESULT",
+        "seq": 8,
+        "ok": true,
+        "json": null
+      },
+      "bodyHex": "840408f5f6",
+      "envelopeHex": "00000005840408f5f6"
+    },
+    {
+      "name": "bridge-result-error",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "BRIDGE_RESULT",
+        "seq": 9,
+        "ok": false,
+        "code": 33
+      },
+      "bodyHex": "840409f41821",
+      "envelopeHex": "00000006840409f41821"
+    },
+    {
+      "name": "async-bridge-result",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "ASYNC_BRIDGE_RESULT",
+        "opId": 3,
+        "ok": true,
+        "json": "\"ok\""
+      },
+      "bodyHex": "840503f564226f6b22",
+      "envelopeHex": "00000009840503f564226f6b22"
+    },
+    {
+      "name": "async-cancel",
+      "direction": "host-to-sandbox",
+      "frame": {
+        "type": "ASYNC_CANCEL",
+        "opId": 3
+      },
+      "bodyHex": "820603",
+      "envelopeHex": "00000003820603"
+    },
+    {
+      "name": "ready",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "READY",
+        "callId": 1,
+        "protocolVersion": 1
+      },
+      "bodyHex": "83100101",
+      "envelopeHex": "0000000483100101"
+    },
+    {
+      "name": "bridge-call",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "BRIDGE_CALL",
+        "callId": 2,
+        "seq": 7,
+        "op": "net.request",
+        "argsJson": "{\"url\":\"https://example.test/\"}"
+      },
+      "bodyHex": "851102076b6e65742e72657175657374781f7b2275726c223a2268747470733a2f2f6578616d706c652e746573742f227d",
+      "envelopeHex": "00000031851102076b6e65742e72657175657374781f7b2275726c223a2268747470733a2f2f6578616d706c652e746573742f227d"
+    },
+    {
+      "name": "async-bridge-call",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "ASYNC_BRIDGE_CALL",
+        "callId": 2,
+        "opId": 3,
+        "op": "net.fetch",
+        "argsJson": "{\"url\":\"https://example.test/a\"}"
+      },
+      "bodyHex": "85120203696e65742e666574636878207b2275726c223a2268747470733a2f2f6578616d706c652e746573742f61227d",
+      "envelopeHex": "0000003085120203696e65742e666574636878207b2275726c223a2268747470733a2f2f6578616d706c652e746573742f61227d"
+    },
+    {
+      "name": "result",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "RESULT",
+        "callId": 2,
+        "valueJson": "{\"title\":\"第一章 😀\"}"
+      },
+      "bodyHex": "831302781a7b227469746c65223a22e7acace4b880e7aba020f09f9880227d",
+      "envelopeHex": "0000001f831302781a7b227469746c65223a22e7acace4b880e7aba020f09f9880227d"
+    },
+    {
+      "name": "failure",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "FAILURE",
+        "callId": 2,
+        "code": 4,
+        "sourceFailure": 0
+      },
+      "bodyHex": "8414020400",
+      "envelopeHex": "000000058414020400"
+    },
+    {
+      "name": "failure-source-marker",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "FAILURE",
+        "callId": 2,
+        "code": 1,
+        "sourceFailure": 1
+      },
+      "bodyHex": "8414020101",
+      "envelopeHex": "000000058414020101"
+    },
+    {
+      "name": "log",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "LOG",
+        "bytesHex": "64656275673a20e9a081e99da22033"
+      },
+      "bodyHex": "82154f64656275673a20e9a081e99da22033",
+      "envelopeHex": "0000001282154f64656275673a20e9a081e99da22033"
+    },
+    {
+      "name": "limit-exceeded",
+      "direction": "sandbox-to-host",
+      "frame": {
+        "type": "LIMIT_EXCEEDED",
+        "callId": 2,
+        "kind": 7
+      },
+      "bodyHex": "83160207",
+      "envelopeHex": "0000000483160207"
+    }
+  ]
+}
