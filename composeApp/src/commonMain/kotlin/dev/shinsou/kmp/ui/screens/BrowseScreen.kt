@@ -1988,6 +1988,9 @@ internal fun ExtensionV2PublicationPane(
     var unitDirectoryComplete by remember(item.identityKey) { mutableStateOf(false) }
     // A later page that came back empty may be a failed fetch; such a list must not replace the cache.
     var unitDirectoryPartial by remember(item.identityKey) { mutableStateOf(false) }
+    // [units] holds a complete list of a library title (the saved one, or the last full refresh),
+    // kept on screen until the next refresh has every page.
+    var savedDirectoryShown by remember(item.identityKey) { mutableStateOf(false) }
     var loading by remember(item.identityKey) { mutableStateOf(true) }
     var loadingMore by remember(item.identityKey) { mutableStateOf(false) }
     var loadError by remember(item.identityKey) { mutableStateOf<String?>(null) }
@@ -2156,7 +2159,7 @@ internal fun ExtensionV2PublicationPane(
         return
     }
 
-    suspend fun loadUnitPage(requestedPage: Int, append: Boolean) {
+    suspend fun fetchUnitPage(requestedPage: Int): ExtensionPublicationPageV2 {
         val loaded = withContext(Dispatchers.Default) {
             callbacks.extensionPublicationUnitsPageV2(
                 sourceKey = sourceKey,
@@ -2170,6 +2173,11 @@ internal fun ExtensionV2PublicationPane(
             "Extension publication identity changed"
         }
         check(loaded.page == requestedPage) { "Extension unit page identity changed" }
+        return loaded
+    }
+
+    suspend fun loadUnitPage(requestedPage: Int, append: Boolean) {
+        val loaded = fetchUnitPage(requestedPage)
         if (append && loaded.units.isEmpty()) unitDirectoryPartial = true
         publicationPage = if (append) publicationPage ?: loaded else loaded
         units = if (append) {
@@ -2183,6 +2191,37 @@ internal fun ExtensionV2PublicationPane(
     }
 
     suspend fun loadInitialUnitDirectory() {
+        if (localLibrary && savedDirectoryShown) {
+            // The saved list is complete; replacing it with page 1 while later pages load would
+            // move "Start reading" and the reader's adjacent chapters until the end. Fetch every
+            // page first and swap the whole list in at once.
+            val first = fetchUnitPage(0)
+            if (first.units.isEmpty()) {
+                unitDirectoryPartial = true
+                return
+            }
+            var fetched = first.units
+            var page = 1
+            var more = first.hasNextPage
+            while (more) {
+                currentCoroutineContext().ensureActive()
+                val next = fetchUnitPage(page)
+                page++
+                if (next.units.isEmpty()) {
+                    // Possibly a failed fetch: keep the complete list on screen, not a truncated
+                    // one (and, being partial, it is not written to the saved copy either).
+                    unitDirectoryPartial = true
+                    return
+                }
+                fetched = (fetched + next.units).distinctBy { it.unit.remoteId }
+                more = next.hasNextPage
+            }
+            publicationPage = first
+            units = fetched
+            nextPage = page
+            hasNextPage = false
+            return
+        }
         loadUnitPage(requestedPage = 0, append = false)
         // A local-library title must be self-contained when opened directly. Reviewed ShuYue
         // sources paginate long catalogues (100 units per page); leaving later pages behind a
@@ -2297,6 +2336,8 @@ internal fun ExtensionV2PublicationPane(
             if (cached != null && publicationPage == null) {
                 publicationPage = cached
                 units = cached.units
+                // Only complete lists are saved (see cacheLibraryCopy).
+                savedDirectoryShown = cached.units.isNotEmpty()
                 refreshedPublication = cached.publication
                 nextPage = 1
                 hasNextPage = false
@@ -2346,6 +2387,7 @@ internal fun ExtensionV2PublicationPane(
             }
             loadInitialUnitDirectory()
             unitDirectoryComplete = true
+            if (!unitDirectoryPartial) savedDirectoryShown = true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -2378,6 +2420,7 @@ internal fun ExtensionV2PublicationPane(
             refreshedPublication = null
             detailsFresh = false
             units = emptyList()
+            savedDirectoryShown = false
             nextPage = 0
             hasNextPage = false
             unitDirectoryComplete = false
@@ -2385,6 +2428,7 @@ internal fun ExtensionV2PublicationPane(
             try {
                 loadInitialUnitDirectory()
                 unitDirectoryComplete = true
+                if (!unitDirectoryPartial) savedDirectoryShown = true
                 cacheLibraryCopy()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -2418,8 +2462,9 @@ internal fun ExtensionV2PublicationPane(
         }
     }
 
-    val continueUnit = remember(localLibrary, unitDirectoryComplete, units, readUnitIds, resumeUnitId) {
-        if (localLibrary && !unitDirectoryComplete) return@remember null
+    val continueUnit = remember(localLibrary, unitDirectoryComplete, savedDirectoryShown, units, readUnitIds, resumeUnitId) {
+        // A library title resumes from its complete list: the saved one until the refresh is done.
+        if (localLibrary && !unitDirectoryComplete && !savedDirectoryShown) return@remember null
         extensionContinueUnitId(
             unitIds = units.map { it.unit.remoteId },
             completedUnitIds = readUnitIds,
