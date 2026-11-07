@@ -113,15 +113,12 @@ shinsou-plugin init my-plugin --template manga --id zh.example --name "範例漫
 | 範本 | 內容 | 內容種類 |
 |---|---|---|
 | `manga` | `bridge.httpGet` ＋ `Jsoup` 解析 HTML，回傳圖片頁 | `IMAGE_SEQUENCE` |
-| `novel` | 小說來源骨架（見下方說明） | `PLAIN_TEXT` |
+| `novel` | 小說來源：實作 `getChapterText(chapter)` 回傳章節文字（最多 4 MiB） | `PLAIN_TEXT` |
+| `mixed` | 一個套件兩個來源：漫畫來源（`IMAGE_SEQUENCE`）＋小說來源（`PLAIN_TEXT`），各自宣告 `contentKinds` | 兩者 |
 | `async` | JSON API：`async` hook、非阻塞的 `bridge.net.fetch`、多檔 ES module（打包成單一腳本） | `IMAGE_SEQUENCE` |
 
-CLI **沒有名為 `mixed` 的範本**。要做混合套件（同一個 package 同時有漫畫與小說來源），請從 `manga` 或 `novel`
-範本起手，手動在 `sources` 陣列加入第二個來源，並把 `contentType` 改成 `both`（見[第 5 節](#5-shinsouplugin-json-欄位)）。
-
 > **小說來源請實作 `getChapterText`。** App 對宣告了 `PLAIN_TEXT` 的來源會呼叫
-> `getChapterText(chapter)`，期望回傳一個字串（或 `{ text }`），最多 4 MiB。目前 CLI 的 `novel` 範本仍把正文放在
-> `getPageList` 的 `{ text, content }` 頁面裡，與 App 的做法不同，請自行改成 `getChapterText`（見[已知落差](#已知落差與未驗證項目)）。
+> `getChapterText(chapter)`，期望回傳一個字串（或 `{ text }`），最多 4 MiB；`shinsou-plugin test` 也會檢查它。
 
 產生的檔案：
 
@@ -623,10 +620,7 @@ shinsou-plugin revoke-key --key mykey
 
 | 項目 | 狀況 |
 |---|---|
-| `novel` 範本 | 範本把正文放在 `getPageList`，但 App 對宣告 `PLAIN_TEXT` 的來源是呼叫 `getChapterText`。請自行實作 `getChapterText`。 |
-| `lint` 對 `COOKIE_READ` 的警告 | 警告「App 尚未支援」，但 App 已經有 `COOKIE_READ`（`getCookie`／`getCookies` 需要它與 `COOKIE_STORAGE`）。 |
-| `lint` 對 `contentHostSuffixes` 的警告與檢查 | 警告「App 尚未接受第三方宣告」，但 App 已接受；且 CLI 的正規表示式不接受 `:1024-65535` 後綴，用了就會被誤判為錯誤；CLI 只用內建小清單，不是完整 Public Suffix List。 |
-| 名稱規則 | App 與 CLI 的比對規則不完全相同，CLI 較嚴（見第 8 節）。 |
+| 名稱規則 | App 與 CLI 都拒絕「官方／official」並允許「非官方／Unofficial」；CLI 另外檢查更多變體（如「官網」、重音字母），所以 CLI 通過的名稱 App 一定接受（見第 8 節）。 |
 | 資源限制 | ADR-0002 §7 的部分限制（請求速率、每次回應總量、crash-loop）是否已全部落實【未驗證】；腳本大小上限在 App 端的確切數值【未驗證】。 |
 | 混合套件 | CLI 的 manifest 接受每個來源自己的 `contentKinds`（省略時沿用 package 的值），但 CLI 沒有混合範本，也未在 App 上實測過混合套件【未驗證】。 |
 | 平台差異 | 沙箱的實作方式（Android isolated process、macOS／Windows helper、iOS WASM）見 ADR-0002；本指南不展開。 |
