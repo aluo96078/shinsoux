@@ -14,8 +14,8 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.11")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.111")
+val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion").orElse("1.0.1-beta.12")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.112")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }

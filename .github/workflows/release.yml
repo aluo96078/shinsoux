@@ -603,7 +603,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.8' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.9' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.10' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.11'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.11' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.12'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -658,6 +659,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.10"
             $expectedHash = "cb11e5ece9bf8f383cc8fa3cd47ac4c6bff4ca28d95738492fe13161883074e5"
             $baselineProductCode = "{714C8C8A-9295-3183-8147-1C00221DCBD1}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.12") {
+            $baselineVersion = "1.0.1-beta.11"
+            $expectedHash = "1fd9b406a0788b5b0604e2b63ae81bd1e2e15bddbfaf34a445f664a934346871"
+            $baselineProductCode = "{EA8AB55A-405E-3265-8121-72A4D25EAB2A}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -887,7 +892,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.8 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.9 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.10 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.11 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.11 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.12 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -951,6 +957,11 @@ jobs:
                 "Windows note: opening Shinsou X again brings back the running window instead of starting a second copy." \
                 "Notification note: the download notification and tray menu list each title with its own progress." \
                 "Reader note: Wenku8 illustrations load again, and tapping an illustration opens a viewer to zoom and save it."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.12 ]]; then
+              printf '%s\n' \
+                "Desktop note: downloads no longer stop when the macOS window loses focus. They used to fail on a locked database while sync ran in the background, pause the queue and remove the menu bar icon; a briefly locked database is now waited for and retried." \
+                "iOS note: a new opt-in download setting keeps downloading in the background with silent audio where iOS gives no background time, such as inside LiveContainer. It appears only where it can work and uses more battery."
             fi
           } > release-notes.md
 
