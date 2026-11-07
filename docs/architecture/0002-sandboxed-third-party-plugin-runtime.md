@@ -468,8 +468,9 @@ effective permission（sandbox tier）=
 - **過期警示**：repository index／revocations 過期時，在套件清單與來源頁顯示持續警示（「已 N 天無法確認此套件是否被
   開發者撤回」），但不停用套件（§8.4）。
 - **信任模式**：設定中選擇全域預設模式，新增 repository 時可對單一發佈者覆寫（§8.2）。
-- **官方標章**只在發佈者金鑰等於 App 內建官方金鑰時出現；第三方套件名稱中含「官方」「Shinsou」等保留字時，
-  Host 拒絕或加註警示。
+- **沒有官方標章**（§23 取代原設計）：所有套件一律是第三方；套件、來源或發佈者名稱含「官方」「official」
+  「offical」「公式」（不分大小寫、全半形、分隔符號）時，安裝與信任發佈者都會被拒絕，明確否定的
+  「非官方」「Unofficial」除外。
 
 ## 7. 資源限制
 
@@ -606,7 +607,7 @@ App 不會因為作者或任何第三方的判斷而遠端停用使用者安裝�
 | **引擎漏洞逃逸** | Android isolated process；Desktop OS sandbox；iOS WASM 邊界；QuickJS 與解析器持續 fuzz、固定版本 | 要真正危害 App 需「引擎漏洞 + OS sandbox 或 WASM runtime 漏洞」串連；minSdk 29 後 Android 所有裝置都是每套件一程序，沒有共用程序的弱化情況；iOS 使用者若自行開啟原生 QuickJS 效能模式（D1，視 S0 是否提供），該套件的引擎漏洞 = App 被控制 |
 | **IPC／frame 攻擊** | 長度上限、strict CBOR、schema 驗證、fuzz；身分來自 channel 而非 payload | Host codec 漏洞；以 fuzz 與 bounded decode 降低 |
 | **Host 解析套件輸出** | bounded JSON／結果驗證；URL 只接受 https；文字當純文字 | Host 圖片解碼器（AVIF 等）會處理攻擊者可控的圖片 bytes，這與現在處理遠端網站圖片相同，但攻擊者可精準選擇；列為後續加固項目 |
-| **偽造官方套件** | 官方標章只綁 App 內建金鑰；reviewed catalog 的 packageId 為保留命名空間；名稱保留字檢查；授權 identity 含發佈者金鑰 | 使用者仍可能被說服安裝名稱相似的第三方套件；UI 必須讓「發佈者」比「名稱」更醒目 |
+| **偽造官方套件** | 沒有官方套件或標章（§23）；名稱含「官方／official」一律拒絕；同一 packageId 依發佈者分開安裝；授權 identity 含發佈者金鑰 | 使用者仍可能被說服安裝名稱相似的第三方套件；UI 必須讓「發佈者」比「名稱」更醒目 |
 | **偽造 Host UI／誘導輸入密碼** | 沿用 event 架構：Host 自繪 UI、套件文字當純文字、可信 source label；登入表單由 Host 顯示 | browser challenge 會顯示網站自己的頁面，網站本身可能是釣魚頁；只能靠 origin 顯示與敏感權限 |
 | **供應鏈：repository 主機被入侵** | 所有文件需發佈者簽章；主機被入侵但私鑰沒外洩 → 無法發佈新內容；replay／equivocation／expiry 防重播舊文件 | 攻擊者可讓 repository 無法使用（DoS） |
 | **供應鏈：開發者私鑰外洩** | 權限子集才自動更新（D4）；新增權限需使用者確認；發佈者 `key-revoked`；使用者本機封鎖名單；更新差異 UI | 攻擊者可在原有權限內推送惡意更新（例如把已授權的帳密送往原有 credential origin 的別的路徑），且因 D4 會自動沿用授權；沒有中央 denylist，只有原發佈者撤銷或使用者自己封鎖才能停用；這是開放生態固有風險 |
@@ -1445,6 +1446,31 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
   - reviewed ShuYue 整套測試（20 項）以 Rhino 與桌面沙箱 helper 各跑一次，全部通過
     （`ProductionShuYueReviewedRuntimeV2SandboxTest`）。超過 4 MiB 的測試在沙箱中改為驗證 `LIMIT_RESULT`。
   - 官方套件的沙箱 parity 測試（`SandboxOfficialParityTest`）與原本相同。
+
+## 23. S6–S8 實作狀態（2026-11）
+
+本節記錄實作後的現況；與前文不同處以本節為準。
+
+- **沒有官方套件。** 所有套件（包含專案作者維護的那些）都是第三方，走同一條「發佈者簽章 → 使用者信任 → 逐項授權 → 沙箱」
+  路徑。App 不內建發佈者金鑰、不顯示官方標章；名稱含誤導字眼一律拒絕（`PluginNamePolicy`）。
+  原「reviewed in-process」層級與審核清單（`OfficialShinsouReviewedCatalog`、reviewed ShuYue）仍在程式碼中，只服務
+  既有、未簽章的社群儲存庫安裝；發佈者簽章的副本一律不配對審核清單。待社群儲存庫改為簽章發佈並經過過渡版後移除。
+- **只有審核套件才有的能力，已改成第三方可授予的敏感權限：**
+  `COOKIE_READ`（`getCookie`／`getCookies` 需 `COOKIE_STORAGE` + `COOKIE_READ`）；
+  瀏覽器驗證（`BROWSER_CHALLENGE`，只限來源宣告的 `browserSessionOrigins`）；
+  `contentHostSuffixes` 可加 `:1024-65535` 允許非特權埠；
+  宣告 `PLAIN_TEXT` 的來源，章節文字字串上限提高到單次結果上限（4 MiB）；
+  `Connection` header 對所有套件一律丟棄。
+  尚未取代：嗶哩漫畫（`bilimanga.manga`）的瀏覽器圖片抓取、ShuYue 憑證範圍的搬移。
+- **套件身分（取代 `SourceKey` v3 構想）：** 本機安裝鍵為 `packageId~<發佈者金鑰摘要前 16 位十六進位>`，
+  數字來源 ID 由 SHA-256 投影到 [2^62, 2^63)；原社群儲存庫網址保留裸 `packageId` 以維持既有書庫；
+  開發者模式的未簽章套件為 `packageId~dev`。詳見 ADR-0001「套件身分」。
+- **更新：** 沒有要求新東西的更新自動沿用授權並通知（D4）；要求新東西的更新會先顯示權限頁（依索引的 digest），
+  使用者接受前舊版持續執行；索引沒有 digest 時改走一般流程。
+- **開發者模式（S7）：** 只接受本機（127.0.0.1／localhost／::1）與使用者輸入的私有 IPv4；開發儲存庫可用 HTTP，
+  套件自身請求仍只能 HTTPS；關閉模式前先停掉所有 `~dev` 執行環境；`shinsou://add-dev-repository` 連結只在位址被允許時開啟確認。
+- **過渡（S8）：** 已加入的儲存庫改為簽章發佈時，重新整理不會失敗，而是提示「確認發佈者」；未簽章時期安裝的社群套件，
+  第一個簽章更新若沒有要求新東西，沿用原授權。
 
 ## 不接受的縮小範圍
 
