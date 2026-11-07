@@ -5,6 +5,7 @@ package dev.shinsou.kmp.plugin.v2
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.content.ImageLayout
 import dev.shinsou.kmp.content.ImageProgression
+import dev.shinsou.kmp.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.CatalogueSource
 import dev.shinsou.kmp.plugin.ConfigurableSource
@@ -16,6 +17,7 @@ import dev.shinsou.kmp.plugin.PageRequestMetadata
 import dev.shinsou.kmp.plugin.SChapter
 import dev.shinsou.kmp.plugin.SManga
 import dev.shinsou.kmp.plugin.SourcePreference
+import dev.shinsou.kmp.plugin.TextChapterSource
 import dev.shinsou.kmp.plugin.toBrowseFilterV2
 import dev.shinsou.kmp.plugin.toPluginFilter
 import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
@@ -49,17 +51,26 @@ public class LegacyMangaExtensionSourceV2(
     additionalRepresentations: Iterable<UnitContentRepresentationProviderV2> = emptyList(),
     private val imageProgression: ImageProgression = ImageProgression.RIGHT_TO_LEFT,
     private val imageLayout: ImageLayout = ImageLayout.PAGE,
+    /**
+     * What the script's own hooks produce (A5): images through `getPageList`, text chapters
+     * through `getChapterText` (only for a [TextChapterSource] that implements it).
+     */
+    contentKinds: Set<ContentKind> = setOf(ContentKind.IMAGE_SEQUENCE),
 ) : ExtensionSourceV2, WebChallengeUserAgentSourceV2 {
     private val extraProviders = additionalRepresentations.toList()
+    private val ownKinds: Set<ContentKind> = contentKinds intersect supportedKindsOf(source)
     private val contentResolver = MultiRepresentationContentResolverV2(
-        listOf(LegacyImageRepresentationProvider()) + extraProviders,
+        buildList {
+            if (ContentKind.IMAGE_SEQUENCE in ownKinds) add(LegacyImageRepresentationProvider())
+            if (ContentKind.PLAIN_TEXT in ownKinds) add(TextChapterRepresentationProvider())
+        } + extraProviders,
     )
 
     override val descriptor: SourceDescriptorV2 = SourceDescriptorV2(
         sourceKey = sourceKey,
         displayName = source.name,
         languageTag = source.lang,
-        supportedContentKinds = setOf(ContentKind.IMAGE_SEQUENCE) + additionalContentKinds,
+        supportedContentKinds = ownKinds + additionalContentKinds,
         capabilities = buildSet {
             add(ExtensionCapability.CATALOGUE)
             add(ExtensionCapability.BROWSE)
@@ -77,6 +88,7 @@ public class LegacyMangaExtensionSourceV2(
     )
 
     init {
+        require(ownKinds.isNotEmpty() || extraProviders.isNotEmpty()) { "Source produces no supported content kind" }
         require(extraProviders.isEmpty() == additionalContentKinds.isEmpty()) {
             "Additional representations and their declared content kinds must be supplied together"
         }
@@ -201,6 +213,24 @@ public class LegacyMangaExtensionSourceV2(
     override suspend fun favorite(remotePublicationId: String, favorite: Boolean): Unit =
         throw UnsupportedOperationException("Legacy manga source does not implement favorite mutation")
 
+    /** A5: plain-text chapters from `getChapterText`, inline (the sandbox caps a result at 4 MiB). */
+    private inner class TextChapterRepresentationProvider : UnitContentRepresentationProviderV2 {
+        override val representationId: String = "script-text"
+
+        override suspend fun load(request: UnitContentRequestV2): UnitContentPayload? {
+            val textSource = source as? TextChapterSource ?: return null
+            val text = textSource.getChapterText(SChapter(url = request.remoteUnitId, name = request.remoteUnitId)) ?: return null
+            return UnitContentPayload.InlineTextPayload(
+                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                representationId = representationId,
+                sourceKey = request.sourceKey,
+                remoteUnitId = request.remoteUnitId,
+                source = TextPayloadSourceV2.InlineTextPayload(text),
+                blocks = listOf(TextBlock("body", 0, text.length)),
+            )
+        }
+    }
+
     private inner class LegacyImageRepresentationProvider : UnitContentRepresentationProviderV2 {
         override val representationId: String = "legacy-image-sequence"
 
@@ -269,6 +299,12 @@ public class LegacyMangaExtensionSourceV2(
     )
 }
 
+/** The content kinds a script source's hooks can produce. */
+internal fun supportedKindsOf(source: CatalogueSource): Set<ContentKind> = buildSet {
+    add(ContentKind.IMAGE_SEQUENCE)
+    if ((source as? TextChapterSource)?.supportsChapterText == true) add(ContentKind.PLAIN_TEXT)
+}
+
 private fun String.boundedLoginError(): String? =
     filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
 
@@ -289,17 +325,19 @@ public class LegacyMangaPackageRuntimeV2(
         val adapters = sources.mapNotNull { source ->
             val declaredKinds = declaredContentKindsByLegacyId[source.id]
                 ?: setOf(ContentKind.IMAGE_SEQUENCE)
-            // The legacy adapter implements only image sequences. A V2 source which explicitly
-            // omits that kind must not regain it merely because its executable uses this adapter.
-            if (ContentKind.IMAGE_SEQUENCE !in declaredKinds) return@mapNotNull null
+            // Each source exposes only kinds it declared *and* its hooks produce (A5): a source
+            // that omits images does not regain them, and declared text needs `getChapterText`.
+            val kinds = declaredKinds intersect supportedKindsOf(source)
+            if (kinds.isEmpty()) return@mapNotNull null
             LegacyMangaExtensionSourceV2(
                 source = source,
                 packageId = packageId,
                 sourceKey = sourceKeysByLegacyId[source.id] ?: SourceKey.fromLegacy(packageId, source.id),
                 credentialsResolver = credentialsResolver,
+                contentKinds = kinds,
             )
         }
-        require(adapters.isNotEmpty()) { "Legacy manga package needs at least one source" }
+        require(adapters.isNotEmpty()) { "Script package needs at least one source with supported content" }
         val packageDescriptor = ExtensionPackageV2(
             contractVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
             packageId = packageId,

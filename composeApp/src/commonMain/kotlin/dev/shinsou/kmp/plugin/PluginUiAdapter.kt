@@ -2288,7 +2288,15 @@ public class PluginBrowseAdapter(
             descriptor.sources.map { source -> source.id to descriptor }
         }.toMap()
         val rebuiltSourceProjections = linkedMapOf<Long, BrowseSourceProjection>()
-        val legacySources = manager.catalogueSources().map { source ->
+        // Text-chapter script sources (A5) are listed with the V2 sources below instead: exactly
+        // those the V2 list really contains, so no source can drop out of both lists.
+        val scriptTextSourceIds = extensionDescriptorsV2
+            .flatMap { it.sources }
+            .filter { ContentKind.PLAIN_TEXT in it.supportedContentKinds }
+            .mapNotNullTo(hashSetOf()) { it.sourceKey.legacyLongId }
+        val legacySources = manager.catalogueSources()
+            .filterNot { (it as? TextChapterSource)?.supportsChapterText == true && it.id in scriptTextSourceIds }
+            .map { source ->
             val reused = sourceProjections[source.id]
                 ?.takeIf { reuseUnchangedSources && it.source === source }
                 ?.value

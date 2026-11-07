@@ -2330,7 +2330,33 @@ public class PluginManager(
         setEventSourceEnabled(sourceKey, enabled)
     }
 
-    public suspend fun extensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()
+    /**
+     * The V2 sources the browse UI shows: native V2 packages, plus every script source that
+     * produces text chapters (A5) — those read through the V2 publication/reader path, while
+     * image-only script sources stay on the manga path.
+     */
+    public suspend fun extensionDescriptorsV2(): List<ExtensionPackageV2> {
+        val native = extensionRegistryV2.descriptors()
+        val nativeIds = native.mapTo(hashSetOf(), ExtensionPackageV2::packageId)
+        val scripted = packageMutationMutex.withLock {
+            packageStore.list().mapNotNull { stored ->
+                if (stored.manifest.id in nativeIds) return@mapNotNull null
+                // Manga-only packages (the common case) cost nothing here.
+                if (stored.manifest.sources.orEmpty().none { "PLAIN_TEXT" in it.contentKinds } &&
+                    stored.manifest.contentKinds.orEmpty().none { it == "PLAIN_TEXT" }
+                ) return@mapNotNull null
+                val runtime = runCatching { legacyPackageRuntimeV2WhilePackageLocked(stored.manifest.id) }.getOrNull()
+                    ?: return@mapNotNull null
+                val textSources = runtime.descriptor.sources.filter { ContentKind.PLAIN_TEXT in it.supportedContentKinds }
+                if (textSources.isEmpty()) return@mapNotNull null
+                runtime.descriptor.copy(
+                    sources = textSources,
+                    supportedContentKinds = textSources.flatMapTo(linkedSetOf()) { it.supportedContentKinds },
+                )
+            }
+        }
+        return native + scripted
+    }
 
     public suspend fun close(): Unit = withContext(NonCancellable + Dispatchers.Default) {
         packageMutationMutex.withLock {

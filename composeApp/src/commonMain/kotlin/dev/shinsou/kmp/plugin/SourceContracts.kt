@@ -58,6 +58,18 @@ public interface LoginSource {
     public suspend fun logout()
 }
 
+/**
+ * A source whose units can be text chapters (light novels): ADR-0002 A5, for third-party novel
+ * and mixed manga + novel packages. Plain UTF-8 text; the host lays it out.
+ */
+public interface TextChapterSource {
+    /** True when the script implements `getChapterText`. */
+    public val supportsChapterText: Boolean
+
+    /** The chapter's text, or null when the unit has none. */
+    public suspend fun getChapterText(chapter: SChapter): String?
+}
+
 /** The only login response details that may cross from a source into host UI. */
 public data class LoginAttemptResult(
     val loggedIn: Boolean,

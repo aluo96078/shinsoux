@@ -137,7 +137,7 @@ internal class SandboxScriptPluginRuntime(
     nowEpochMillis: () -> Long,
     private val pumpScope: kotlinx.coroutines.CoroutineScope? = null,
     private val lifecycle: SandboxLifecycle? = null,
-) : ScriptPluginRuntime, SandboxResident {
+) : ScriptPluginRuntime, SandboxResident, dev.shinsou.kmp.plugin.TextChapterSource {
     private val limits = environment.executionLimits
 
     /** Bumped by [close]: bridge calls of an older generation are refused (§5.1). */
@@ -202,6 +202,8 @@ internal class SandboxScriptPluginRuntime(
         supportsLatest = metadata["supportsLatest"].bool()
         supportsLogin = metadata["supportsLogin"].bool()
         supportsFavorites = metadata["supportsFavorites"].bool()
+        // Only a source that declares text content is asked: one call fewer for every manga source.
+        supportsChapterText = "PLAIN_TEXT" in source.contentKinds && hasFunction("getChapterText")
         var h = SandboxScriptJson.stringMap(metadata["headers"])
         if (h.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotBlank()) h = h + ("Referer" to baseUrl)
         headers = h
@@ -235,6 +237,20 @@ internal class SandboxScriptPluginRuntime(
 
     override suspend fun getChapterList(manga: SManga): List<SChapter> =
         SandboxScriptJson.chapters(call("getChapterList", JsonArray(listOf(SandboxScriptJson.mangaJson(manga)))))
+
+    override var supportsChapterText: Boolean = false
+        private set
+
+    /** `getChapterText(chapter)` → a string, or `{text}`; bounded like every result (§7). */
+    override suspend fun getChapterText(chapter: SChapter): String? {
+        if (!supportsChapterText) return null
+        // A returned string is the text itself (never re-parsed as JSON); an object carries it in `text`.
+        return when (val value = call("getChapterText", JsonArray(listOf(SandboxScriptJson.chapterJson(chapter))))) {
+            is JsonPrimitive -> value.contentOrNull
+            is JsonObject -> (value["text"] as? JsonPrimitive)?.contentOrNull
+            else -> null
+        }?.takeIf(String::isNotEmpty)
+    }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> =
         SandboxScriptJson.pages(call("getPageList", JsonArray(listOf(SandboxScriptJson.chapterJson(chapter)))))
