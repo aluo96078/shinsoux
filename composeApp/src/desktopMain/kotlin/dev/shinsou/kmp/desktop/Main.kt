@@ -307,7 +307,18 @@ fun main(args: Array<String>) {
                 onAction = ::showWindow,
             ) {
                 if (progress != null) Item(progress, enabled = false, onClick = {})
-                shown?.current?.let { Item(it, enabled = false, onClick = {}) }
+                // One line per title, so several series are told apart.
+                val works = shown?.works.orEmpty()
+                if (works.isEmpty()) {
+                    shown?.current?.let { Item(it, enabled = false, onClick = {}) }
+                } else {
+                    works.take(5).forEach { work ->
+                        val line = listOfNotNull("${work.title}  ${work.done} / ${work.total}", work.chapter)
+                            .joinToString(" · ")
+                        Item(line, enabled = false, onClick = {})
+                    }
+                    if (works.size > 5) Item(strings.text("{0} more titles", works.size - 5), enabled = false, onClick = {})
+                }
                 if (shown != null) Separator()
                 Item(strings.text("Open Shinsou X"), onClick = ::showWindow)
                 Item(strings.text("Quit Shinsou X"), onClick = ::requestClose)

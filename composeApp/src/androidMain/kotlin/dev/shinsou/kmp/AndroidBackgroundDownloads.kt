@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import dev.shinsou.kmp.download.BackgroundDownloadStatus
+import dev.shinsou.kmp.download.BackgroundDownloadWork
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,8 +86,9 @@ internal object AndroidDownloadNotification {
         return Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(strings.text("Downloading {0} / {1}", shown.done, shown.total))
-            .setContentText(shown.current)
+            .setContentText(summary(shown, strings))
             .setProgress(shown.total, shown.done, shown.total == 0)
+            .apply { titles(shown, strings)?.let(::setStyle) }
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -97,6 +99,33 @@ internal object AndroidDownloadNotification {
             }
             .build()
     }
+
+    /** Collapsed line: the one title (and its chapter), or how many titles are downloading. */
+    private fun summary(status: BackgroundDownloadStatus, strings: ShinsouStrings): String? {
+        val works = status.works
+        return when {
+            works.size == 1 -> works.single().line()
+            works.size > 1 -> strings.text("Downloading {0} titles", works.size)
+            else -> status.current
+        }
+    }
+
+    /** Expanded: one line per title, so several series are told apart. */
+    private fun titles(status: BackgroundDownloadStatus, strings: ShinsouStrings): Notification.Style? {
+        val works = status.works
+        if (works.size < 2) {
+            return works.singleOrNull()?.let { Notification.BigTextStyle().bigText(it.line()) }
+        }
+        return Notification.InboxStyle().apply {
+            works.take(MAX_LINES).forEach { addLine(it.line()) }
+            if (works.size > MAX_LINES) setSummaryText(strings.text("{0} more titles", works.size - MAX_LINES))
+        }
+    }
+
+    private fun BackgroundDownloadWork.line(): String =
+        listOfNotNull("$title  $done / $total", chapter).joinToString(" · ")
+
+    private const val MAX_LINES = 5
 
     fun update(context: Context, value: BackgroundDownloadStatus) {
         runCatching {

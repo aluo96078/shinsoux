@@ -962,13 +962,23 @@ private fun ProtectedNovelImage(
         }
         return
     }
+    var viewing by remember(url, retryKey) { mutableStateOf(false) }
     AsyncImage(
         model = ImageRequest.Builder(context).data(body).build(),
         contentDescription = alt.ifBlank { null },
         contentScale = ContentScale.Fit,
         onError = { decodeFailed = true },
-        modifier = modifier,
+        // A tap opens the picture full screen to zoom or save; swiping still turns the page.
+        modifier = modifier.pointerInput(body) { detectTapGestures(onTap = { viewing = true }) },
     )
+    if (viewing) {
+        dev.shinsou.kmp.ui.components.ImageViewerDialog(
+            bytes = body,
+            suggestedName = dev.shinsou.kmp.ui.components.imageFileNameFor(url, fallbackStem = "illustration"),
+            contentDescription = alt.ifBlank { null },
+            onDismiss = { viewing = false },
+        )
+    }
 }
 
 private fun paginateNovelContent(

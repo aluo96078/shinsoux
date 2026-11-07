@@ -460,6 +460,13 @@ interface ShinsouAppServices {
     suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean = false
 
     /**
+     * Saves a picture where the platform keeps pictures (the gallery or Photos). Hosts without
+     * such a place fall back to an ordinary file export.
+     */
+    suspend fun saveImage(suggestedName: String, contents: ByteArray): Boolean =
+        exportBinaryDocument(suggestedName, contents)
+
+    /**
      * Streaming binary export used by large content archives. Production hosts override this and
      * write directly to their file/content-provider boundary. The bounded default keeps older
      * small-document hosts source-compatible without allowing a large archive heap copy.

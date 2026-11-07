@@ -35,6 +35,21 @@ import kotlin.test.assertTrue
 
 class ShuYueReviewedExtensionV2Test {
     @Test
+    fun wenku8ProfilesAllowTheIllustrationHostsForContentOnly() {
+        val wenku8 = ShuYueReviewedPluginCatalogV2.profiles
+            .filter { it.identity.packageId == "zh.wenku8" || it.identity.packageId == "zh.wenku8.api" }
+        assertTrue(wenku8.isNotEmpty())
+        wenku8.flatMap { it.sourceProfiles }.forEach { source ->
+            // Chapter text points at pic.777743.xyz (older chapters at pic.wenku8.com, which
+            // redirects there); without these the reader rejects every illustration.
+            assertTrue("https://pic.777743.xyz" in source.contentOrigins)
+            assertTrue("https://pic.wenku8.com" in source.contentOrigins)
+            // Image hosts only: the script itself still cannot call them.
+            assertTrue("https://pic.777743.xyz" !in source.requestOrigins)
+        }
+    }
+
+    @Test
     fun everyReviewedLoginSourceSendsItsCookiesToItsOwnOriginOnly() {
         val linovelib = ShuYueReviewedPluginCatalogV2.profiles
             .single { it.identity.packageId == "zh.bilimanga" && it.identity.version == "1.6.0" }

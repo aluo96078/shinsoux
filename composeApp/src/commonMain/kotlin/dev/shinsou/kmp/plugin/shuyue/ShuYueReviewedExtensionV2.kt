@@ -467,6 +467,12 @@ public class ShuYueReviewedPluginProfileV2(
         }
 }
 
+/**
+ * Where Wenku8 chapter illustrations live: chapter text names pic.777743.xyz, and older chapters
+ * name pic.wenku8.com, which redirects there. Image fetches only, like the cover host.
+ */
+private val WENKU8_ILLUSTRATION_ORIGINS: Set<String> = setOf("https://pic.777743.xyz", "https://pic.wenku8.com")
+
 public object ShuYueReviewedPluginCatalogV2 {
     public val profiles: List<ShuYueReviewedPluginProfileV2> = listOf(
         profile(
@@ -477,7 +483,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫（停止維護）",
             sourceName = "輕小說文庫（停止維護）",
             baseUrl = "https://www.wenku8.net",
-            contentOrigins = setOf("https://www.wenku8.net", "https://img.wenku8.com"),
+            contentOrigins = setOf("https://www.wenku8.net", "https://img.wenku8.com") + WENKU8_ILLUSTRATION_ORIGINS,
             login = true,
             favorite = true,
             browserChallenge = true,
@@ -491,7 +497,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
-            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com") + WENKU8_ILLUSTRATION_ORIGINS,
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -504,7 +510,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
-            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com") + WENKU8_ILLUSTRATION_ORIGINS,
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -518,7 +524,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫",
             sourceName = "輕小說文庫",
             baseUrl = "https://wenku8-relay.mewx.org/",
-            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com"),
+            contentOrigins = setOf("https://wenku8-relay.mewx.org", "https://img.wenku8.com") + WENKU8_ILLUSTRATION_ORIGINS,
             login = true,
             favorite = false,
             browserChallenge = false,
@@ -1169,6 +1175,7 @@ public object ShuYueReviewedPluginCatalogV2 {
             displayName = "輕小說文庫（停止維護）",
             sourceName = "輕小說文庫（停止維護）",
             baseUrl = "https://www.wenku8.net",
+            contentOrigins = setOf("https://www.wenku8.net", "https://img.wenku8.com") + WENKU8_ILLUSTRATION_ORIGINS,
             login = true,
             favorite = true,
             browserChallenge = true,

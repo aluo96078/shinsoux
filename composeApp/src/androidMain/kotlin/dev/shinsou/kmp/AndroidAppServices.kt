@@ -52,6 +52,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 internal interface AndroidDocumentLauncher {
@@ -148,6 +150,38 @@ internal class AndroidAppServices(
         suggestedName: String,
         source: BinaryDocumentExportSource,
     ): Boolean = documentLauncher.export(suggestedName, source)
+
+    /** Into the gallery under Pictures/Shinsou X; no storage permission is needed from API 29. */
+    override suspend fun saveImage(suggestedName: String, contents: ByteArray): Boolean =
+        withContext(Dispatchers.IO) {
+            val resolver = activity.contentResolver
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, suggestedName)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, imageMimeType(contents))
+                put(
+                    android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                    android.os.Environment.DIRECTORY_PICTURES + "/Shinsou X",
+                )
+                put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(
+                android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                values,
+            ) ?: return@withContext false
+            // Published only once the pending flag is cleared on exactly this row.
+            val written = runCatching {
+                requireNotNull(resolver.openOutputStream(uri)).use { it.write(contents) }
+                resolver.update(
+                    uri,
+                    android.content.ContentValues().apply { put(android.provider.MediaStore.Images.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                ) == 1
+            }.getOrDefault(false)
+            // A half-written entry would show up broken in the gallery.
+            if (!written) runCatching { resolver.delete(uri, null, null) }
+            written
+        }
 
     override suspend fun importDocument(
         acceptedExtensions: Set<String>,
@@ -316,5 +350,17 @@ internal class AndroidAppServices(
                 },
             )
         }
+    }
+}
+
+/** From the leading bytes, so a gallery entry is typed by what it holds rather than its URL. */
+internal fun imageMimeType(bytes: ByteArray): String {
+    fun at(index: Int) = bytes.getOrNull(index)?.toInt()?.and(0xFF) ?: -1
+    return when {
+        at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "image/png"
+        at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 -> "image/gif"
+        at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 &&
+            at(8) == 0x57 && at(9) == 0x45 && at(10) == 0x42 && at(11) == 0x50 -> "image/webp"
+        else -> "image/jpeg"
     }
 }

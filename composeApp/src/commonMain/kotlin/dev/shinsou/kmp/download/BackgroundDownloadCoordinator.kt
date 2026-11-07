@@ -18,7 +18,21 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /** Progress of the manga and novel queues together, as a platform keep-alive shows it. */
-public data class BackgroundDownloadStatus(val done: Int, val total: Int, val current: String?)
+public data class BackgroundDownloadStatus(
+    val done: Int,
+    val total: Int,
+    val current: String?,
+    /** One entry per title with chapters still waiting, the one downloading now first. */
+    val works: List<BackgroundDownloadWork> = emptyList(),
+)
+
+/** One title's share of [BackgroundDownloadStatus]; [chapter] is the one downloading now, if any. */
+public data class BackgroundDownloadWork(
+    val title: String,
+    val done: Int,
+    val total: Int,
+    val chapter: String?,
+)
 
 /** Null when no chapter is queued or downloading, so nothing needs the process kept alive. */
 public fun backgroundDownloadStatus(
@@ -36,8 +50,66 @@ public fun backgroundDownloadStatus(
         listOfNotNull(title, chapter).joinToString(" · ").ifEmpty { null }
     } ?: novels.firstOrNull { it.state == DownloadState.DOWNLOADING }
         ?.let { "${it.publicationTitle} · ${it.unitTitle}" }
-    return BackgroundDownloadStatus(done = done, total = done + pending, current = current)
+
+    // Only what the queue names: the library can be far larger than the queue.
+    val queuedMangaIds = manga.mapTo(HashSet()) { it.mangaId }
+    val activeChapterIds = manga.filter { it.state == DownloadState.DOWNLOADING }.mapTo(HashSet()) { it.chapterId }
+    val mangaTitles = snapshot.mangas.filter { it.id in queuedMangaIds }.associate { it.id to it.title }
+    val chapterNames = if (activeChapterIds.isEmpty()) {
+        emptyMap()
+    } else {
+        snapshot.chapters.filter { it.id in activeChapterIds }.associate { it.id to it.name }
+    }
+    val works = buildList {
+        manga.groupBy { it.mangaId }.forEach { (mangaId, items) ->
+            val downloading = items.firstOrNull { it.state == DownloadState.DOWNLOADING }
+            add(
+                WorkTally(
+                    title = mangaTitles[mangaId] ?: mangaId.toString(),
+                    states = items.map { it.state },
+                    chapter = downloading?.let { chapterNames[it.chapterId] },
+                ),
+            )
+        }
+        novels.groupBy { it.sourceKey to it.remotePublicationId }.forEach { (_, items) ->
+            add(
+                WorkTally(
+                    title = items.first().publicationTitle,
+                    states = items.map { it.state },
+                    chapter = items.firstOrNull { it.state == DownloadState.DOWNLOADING }?.unitTitle,
+                ),
+            )
+        }
+    }
+        .filter { tally -> tally.states.any { it.pending() } }
+        // Stable: titles keep their queue order, with the ones downloading now on top.
+        .sortedByDescending { tally -> tally.states.any { it == DownloadState.DOWNLOADING } }
+        .map { tally ->
+            val workDone = tally.states.count { it == DownloadState.DOWNLOADED }
+            BackgroundDownloadWork(
+                title = tally.title.forDisplay(),
+                done = workDone,
+                total = workDone + tally.states.count { it.pending() },
+                chapter = tally.chapter?.forDisplay(),
+            )
+        }
+    return BackgroundDownloadStatus(
+        done = done,
+        total = done + pending,
+        current = current?.forDisplay(MAX_DISPLAY_CHARS * 2),
+        works = works,
+    )
 }
+
+/** Names come from sources; a notification or tray line has a size budget. */
+private const val MAX_DISPLAY_CHARS = 60
+
+private fun String.forDisplay(limit: Int = MAX_DISPLAY_CHARS): String {
+    val line = replace(Regex("\\s+"), " ").trim()
+    return if (line.length <= limit) line else line.take(limit - 1).trimEnd() + "…"
+}
+
+private class WorkTally(val title: String, val states: List<DownloadState>, val chapter: String?)
 
 private fun DownloadState.pending() = this == DownloadState.QUEUED || this == DownloadState.DOWNLOADING
 

@@ -35,6 +35,8 @@ import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCObjectVar
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
@@ -304,6 +306,40 @@ internal class IosAppServices(
             pickDocumentUrls(exportUrl = temporaryUrl, allowsMultipleSelection = false).isNotEmpty()
         } finally {
             NSFileManager.defaultManager.removeItemAtPath(temporaryUrl.path.orEmpty(), error = null)
+        }
+    }
+
+    /**
+     * Into Photos with add-only access (the "add photos" prompt, NSPhotoLibraryAddUsageDescription).
+     * Without that key in the running bundle the prompt would crash, so it falls back to Files.
+     */
+    override suspend fun saveImage(suggestedName: String, contents: ByteArray): Boolean {
+        if (platform.Foundation.NSBundle.mainBundle.objectForInfoDictionaryKey("NSPhotoLibraryAddUsageDescription") == null) {
+            return exportBinaryDocument(suggestedName, contents)
+        }
+        val status = suspendCancellableCoroutine { continuation ->
+            platform.Photos.PHPhotoLibrary.requestAuthorizationForAccessLevel(platform.Photos.PHAccessLevelAddOnly) { value ->
+                continuation.resume(value) {}
+            }
+        }
+        if (status != platform.Photos.PHAuthorizationStatusAuthorized &&
+            status != platform.Photos.PHAuthorizationStatusLimited
+        ) {
+            return false
+        }
+        val data = contents.usePinned { pinned ->
+            platform.Foundation.NSData.create(bytes = pinned.addressOf(0), length = contents.size.toULong())
+        }
+        return suspendCancellableCoroutine { continuation ->
+            platform.Photos.PHPhotoLibrary.sharedPhotoLibrary().performChanges(
+                {
+                    val options = platform.Photos.PHAssetResourceCreationOptions().apply {
+                        originalFilename = suggestedName
+                    }
+                    platform.Photos.PHAssetCreationRequest.creationRequestForAsset()
+                        .addResourceWithType(platform.Photos.PHAssetResourceTypePhoto, data, options)
+                },
+            ) { success, _ -> continuation.resume(success) {} }
         }
     }
 

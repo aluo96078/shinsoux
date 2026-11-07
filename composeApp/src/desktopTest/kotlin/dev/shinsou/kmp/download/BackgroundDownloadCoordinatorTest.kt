@@ -87,6 +87,50 @@ class BackgroundDownloadCoordinatorTest {
     }
 
     @Test
+    fun statusSplitsProgressPerTitleWithTheActiveOneFirst() {
+        snapshot.value = snapshot.value.copy(
+            downloadQueue = listOf(
+                DownloadQueueItem("a1", 1, 11, DownloadState.DOWNLOADED),
+                DownloadQueueItem("a2", 1, 12, DownloadState.QUEUED),
+                // A title with nothing left waiting is not listed.
+                DownloadQueueItem("b1", 2, 21, DownloadState.DOWNLOADED),
+            ),
+        )
+        novels.value = listOf(
+            ExtensionDownloadEntryV2("n1", SourceKey(2, "fixture", "source"), "book", "u1", "Book", "One", DownloadState.DOWNLOADED),
+            ExtensionDownloadEntryV2("n2", SourceKey(2, "fixture", "source"), "book", "u2", "Book", "Two", DownloadState.DOWNLOADING),
+            ExtensionDownloadEntryV2("n3", SourceKey(2, "fixture", "source"), "book", "u3", "Book", "Three", DownloadState.QUEUED),
+        )
+
+        val works = backgroundDownloadStatus(snapshot.value, novels.value)?.works
+
+        assertEquals(
+            listOf(
+                BackgroundDownloadWork(title = "Book", done = 1, total = 3, chapter = "Two"),
+                BackgroundDownloadWork(title = "1", done = 1, total = 2, chapter = null),
+            ),
+            works,
+        )
+    }
+
+    @Test
+    fun longSourceNamesAreShortenedForNotifications() {
+        val long = "書".repeat(500)
+        novels.value = listOf(
+            ExtensionDownloadEntryV2("n1", SourceKey(2, "fixture", "source"), "book", "u1", long, "章\n節  $long", DownloadState.DOWNLOADING),
+        )
+
+        val status = backgroundDownloadStatus(snapshot.value, novels.value)!!
+        val work = status.works.single()
+
+        assertEquals(60, work.title.length)
+        assertEquals(true, work.title.endsWith("…"))
+        assertEquals(60, work.chapter!!.length)
+        assertEquals(true, work.chapter!!.startsWith("章 節 "))
+        assertEquals(true, status.current!!.length <= 120)
+    }
+
+    @Test
     fun resumesOnlyTheQueuesTheSystemPaused() = runBlocking {
         setManga(DownloadState.QUEUED)
         setNovel(DownloadState.PAUSED) // the user's pause

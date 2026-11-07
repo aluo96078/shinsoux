@@ -150,7 +150,7 @@ internal class IosDownloadBackgroundKeeper(
         val request = BGContinuedProcessingTaskRequest(
             identifier = CONTINUED_TASK_IDENTIFIER,
             title = text.text("Downloading {0} / {1}", status.done, status.total),
-            subtitle = status.current ?: text.downloads,
+            subtitle = subtitle(status, text),
         ).apply {
             // Run now or not at all: queued for later it would start when the work may be over,
             // and the UIKit time already covers a refusal.
@@ -199,8 +199,20 @@ internal class IosDownloadBackgroundKeeper(
             task.progress.completedUnitCount = status.done.toLong()
             task.updateTitle(
                 text.text("Downloading {0} / {1}", status.done, status.total),
-                subtitle = status.current ?: text.downloads,
+                subtitle = subtitle(status, text),
             )
+        }
+    }
+
+    /** The system UI has one line: the title being downloaded, or how many titles are. */
+    private fun subtitle(status: BackgroundDownloadStatus, text: ShinsouStrings): String {
+        val works = status.works
+        return when {
+            works.size == 1 -> works.single().let { work ->
+                listOfNotNull("${work.title}  ${work.done} / ${work.total}", work.chapter).joinToString(" · ")
+            }
+            works.size > 1 -> text.text("Downloading {0} titles", works.size)
+            else -> status.current ?: text.downloads
         }
     }
 

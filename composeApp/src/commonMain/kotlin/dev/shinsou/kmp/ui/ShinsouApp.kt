@@ -211,6 +211,7 @@ fun ShinsouApp(
                     CompositionLocalProvider(
                         LocalMobileKeyboardDismissEnabled provides !appServices.prefersDesktopChrome,
                         dev.shinsou.kmp.ui.components.LocalPluginImageLoader provides pluginImages,
+                        dev.shinsou.kmp.ui.components.LocalImageSaver provides appServices::saveImage,
                     ) {
                         ShinsouAppContent(
                             repository = repository,
