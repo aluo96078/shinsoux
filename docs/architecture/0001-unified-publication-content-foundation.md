@@ -88,6 +88,37 @@ RemoteEntityKey(
   明確 link/merge 才能讓多個 Acquisitions 掛在同一 Publication。
 - migration 必須保存 legacy ID -> 新 UUID alias，重跑同一輸入時得到同一結果。
 
+### 套件身分（package identity）：install key 與投影的 source id
+
+> 本節取代 ADR-0002 早期構想的「`SourceKey` v3 加 `publisherId`」。`SourceKey` 本身的欄位與 `contractVersion`
+> **沒有改變**，也不需要書庫、下載、備份與同步的 v2 → v3 遷移；改變的是 `SourceKey.packageId` 在本機放入什麼值。
+
+第三方套件沒有中央命名機構，兩位發佈者可以發佈相同的 `packageId`。App 因此把發佈者納入本機的套件身分，
+讓兩者並存安裝而不互相覆蓋（實作：`PluginInstallKeys`）：
+
+| 情況 | install key（取代 bare `packageId` 出現在套件儲存、runtime、授權、信任 token、沙箱與 `SourceKey.packageId`） |
+|---|---|
+| 有發佈者金鑰的套件 | `packageId~<發佈者 ID 的 SHA-256 前 16 位十六進位>` |
+| 從原社群儲存庫網址安裝，或沒有發佈者金鑰 | 保留 bare `packageId`，使既有書庫列、閱讀進度與下載維持綁定 |
+| 開發者模式載入的未簽章套件 | `packageId~dev` |
+
+- 發佈者 ID 是發佈者第一把金鑰的完整指紋（`sha256:` ＋ base64url），輪替金鑰後不變，所以 install key 不隨輪替改變。
+- 規則只取決於 `packageId`、發佈者金鑰與 repository URL，所以每台裝置推導出相同的 install key，同步的書庫列仍綁在同一個套件上；
+  持久化格式不變。
+- `packageId` 不可含 `~`；已發佈的 `packageId` 最長 111 字元，使 `packageId~` 加 16 位十六進位不超過 128 字元。
+- 有發佈者範圍的 install key 的來源，其數字 source id（V2 仍投影成 legacy `Long`）由 install key 與 `sourceId` 決定性投影：
+
+  ```text
+  digest = SHA-256("shinsou-source-projection-v1" ‖ 0x00 ‖ installKey ‖ 0x00 ‖ sourceId)
+  value  = 取 digest 前 16 位十六進位（64 bit）
+  id     = (value & 0x3FFF_FFFF_FFFF_FFFF) | 0x4000_0000_0000_0000   // 落在 [2^62, 2^63)
+  ```
+
+  落在正整數範圍的上半部，避開手動挑選的小數字 id；各裝置結果相同。發生碰撞時由來源保留檢查拒絕，而不是靜默覆蓋。
+  使用 bare `packageId` 的套件保留原本的 source id。
+- 授權與信任以 install key（即含發佈者的身分）分開計算：同一 `packageId`、不同發佈者的授權不互通。
+- Content identity 的規則不變：repository mirror URL 不屬於 content identity；信任身分由發佈者金鑰決定。
+
 ## 統一領域模型
 
 ### Publication

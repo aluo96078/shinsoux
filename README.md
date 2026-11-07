@@ -48,8 +48,8 @@
 - Reader 的 LTR、RTL、直向、Webtoon、縮放、濾鏡、章節清單、章末切換、錯誤重試與預取
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
-- Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；Host 審核與受信任發行者的
-  套件皆在沙箱中執行，其餘套件保持 inert；repository 設定納入可攜 snapshot
+- Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；所有套件都是第三方套件，
+  一律在沙箱中執行、只取得使用者逐項同意的權限；未簽章的開發中套件僅限開發者模式；repository 設定納入可攜 snapshot
 - [ShuYue](https://github.com/aluo96078/shuyue) v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
@@ -72,13 +72,13 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 
 ## 擴充套件與網路
 
-所有擴充套件（包含 Host 內建審核的官方與 ShuYue 套件）一律在 [`sandbox-core`](sandbox-core/README.md) 的 QuickJS 沙箱中執行，每個套件各自隔離：Android 為每個套件一個 isolated process，macOS 為 `sandbox_init` deny-all 的 helper，Windows 為 Low Privilege AppContainer＋Job object 的 helper，iOS 為 WAMR WebAssembly 直譯器。沙箱沒有網路、檔案與子程序權限，只能經 SandboxProtocol v1 的 bridge 向 Host 請求；審核套件的身分在進入沙箱前仍須逐 byte 比對，並保留其審核過的資源上限、網路範圍與 cookie 讀取權。架構與取捨見 [ADR-0002](docs/architecture/0002-sandboxed-third-party-plugin-runtime.md)。Plugin 的 Browse/API request plane 與 Reader／Download 的 host content plane 已分離：後者只接受 manifest 宣告的 exact `contentOrigins`、`GET`／`HEAD` 與安全 headers，不帶 Cookie、Authorization、proxy API key 或其他認證／代理秘密；Host 取得 bytes 後交給 Coil 或相應內容 consumer。Cookie、Referer、User-Agent 與 proxy route 不會沿用到 content plane。每個來源仍可為 API request plane 將 Cloudflare Worker Proxy 設為「跟隨全域」、「強制啟用」或「強制關閉」。
+所有擴充套件（Shinsou X 沒有官方套件，每個套件都是第三方套件）一律在 [`sandbox-core`](sandbox-core/README.md) 的 QuickJS 沙箱中執行，每個套件各自隔離：Android 為每個套件一個 isolated process，macOS 為 `sandbox_init` deny-all 的 helper，Windows 為 Low Privilege AppContainer＋Job object 的 helper，iOS 為 WAMR WebAssembly 直譯器。沙箱沒有網路、檔案與子程序權限，只能經 SandboxProtocol v1 的 bridge 向 Host 請求；套件的身分在進入沙箱前須逐 byte 比對 SHA-256，權限則取「套件宣告 ∩ 沙箱上限 ∩ 使用者授權」。架構與取捨見 [ADR-0002](docs/architecture/0002-sandboxed-third-party-plugin-runtime.md)。Plugin 的 Browse/API request plane 與 Reader／Download 的 host content plane 已分離：後者只接受 manifest 宣告的 exact `contentOrigins`、`GET`／`HEAD` 與安全 headers，不帶 Cookie、Authorization、proxy API key 或其他認證／代理秘密；Host 取得 bytes 後交給 Coil 或相應內容 consumer。Cookie、Referer、User-Agent 與 proxy route 不會沿用到 content plane。每個來源仍可為 API request plane 將 Cloudflare Worker Proxy 設為「跟隨全域」、「強制啟用」或「強制關閉」。
 
-完整的 repository 格式、package／SourceKey、安裝與撤銷生命週期、四層權限、reviewed ShuYue admission、平台 Web challenge 與資料邊界，統一整理於[插件系統總覽](docs/PLUGIN_SYSTEM.md)。以下只列出容易影響使用與測試的 production 邊界：
+完整的 repository 格式、package／SourceKey、安裝與撤銷生命週期、發佈者信任與撤回、四層權限、平台 Web challenge 與資料邊界，統一整理於[插件系統總覽](docs/PLUGIN_SYSTEM.md)。以下只列出容易影響使用與測試的 production 邊界：
 
-- Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 的官方腳本並在 Rhino 與沙箱中各執行一次比對；這不會連正式來源網站。Rhino／JavaScriptCore 只保留於測試比對，正式 App 不再以 in-process 引擎執行擴充套件。
+- Desktop deterministic compatibility test 會載入相鄰 `shinsou_plugin` 儲存庫中的腳本並在 Rhino 與沙箱中各執行一次比對；這不會連正式來源網站。Rhino／JavaScriptCore 只保留於測試比對，正式 App 不再以 in-process 引擎執行擴充套件。
 - 沙箱支援 Promise／async 與 `bridge.net.fetch`；fetch 佇列有界，超出 in-flight 與排隊上限的請求會被拒絕而不是無限緩衝。
-- V2 schema 可描述 `IMAGE_SEQUENCE`、`PLAIN_TEXT`、`EPUB_SPINE`，也能描述同包漫畫與小說；但目前 generic Shinsou adapter 與 reviewed ShuYue 安裝路徑尚未完整支援任意 mixed package。官方 `example.dual` 是 `referenceOnly: true`、`installable: false` 的契約範例，可安裝的漫畫與小說來源目前採分包發布。
+- V2 schema 可描述 `IMAGE_SEQUENCE`、`PLAIN_TEXT`、`EPUB_SPINE`，一個套件可以同時包含漫畫（`getPageList`）與小說（`getChapterText`，最多 4 MiB）來源。`example.dual` 是 `referenceOnly: true`、`installable: false` 的契約範例，可安裝的漫畫與小說來源目前採分包發布。
 - `AppSnapshot.extensionRepositories` 是可攜的 repository source of truth。升級時只會一次性遷移舊 KV 清單；之後 add／remove／default、備份還原與同步結果都會精確鏡像回 KV，不會再把 stale KV 無條件 union 回 snapshot。
 - Extension 的 execution trust token 綁定 `{pluginId}:{versionCode}:{SHA-256}`，只代表 exact artifact 已獲本機執行核准；不能與 repository 的 pinned author trust 混為一談。System-event grant 另以完整的 `(packageId, version, versionCode, SHA-256, SourceKey)` artifact／來源身分核准。撤銷會立即卸載 runtime、保留 package 供重新授權或卸載；啟動時不會只因 bytes 仍符合 manifest digest 就重建已撤銷的授權。
 - 功能 capability、reviewed runtime permission、Host permission 與 negotiated system event 是四個不同層級；repository 的宣告只是審核輸入，不會自行取得 Host 權限。
@@ -97,6 +97,13 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 - ShuYue 大文本以 64 KiB chunk 的單次、可取消 stream 傳遞；pending 與 active stream 的 aggregate reservation 合計最多 8 MiB。這些放寬只存在 exact reviewed runtime，最壞情況仍可能同時有 JS String、JSON 與 Kotlin copies，並使用較高 CPU instruction budget；不改變 generic runtime 的 steady-state 記憶體或效能。
 - System-event grant 是單一 durable exact-artifact／`SourceKey`／permissions record（`PENDING`／`GRANTED`／`REVOKED`）；legacy split migration、bounds、更新與 revoke 都 fail closed，撤銷 write 失敗也不會在本程序復活舊 authority。
 - 這些邊界會增加 DNS、SHA-256、Ed25519 驗證與 admission 成本；host-fetch 會多一次 bytes 取得及快取路徑，但避免 plugin 直接接觸內容秘密。SourceKey 及 content identity 變更可能觸發 migration／cache SourceKey 更新；OkHttp shared pool 會降低重建 client 的連線與執行緒成本。每個套件的沙箱程序會增加約數 MiB 記憶體與跨程序序列化成本，Host 以 LRU 與閒置回收限制同時存活的沙箱數量。Mihon metadata-only 與 mixed-package 限制仍是相容性邊界。
+
+### 撰寫與發佈你自己的套件
+
+任何人都可以為 Shinsou X 撰寫並發佈套件，不需要任何人核准：用作者工具 `@shinsou/plugin`（目前尚未發佈到 npm，
+從原始碼使用）產生 Ed25519 發佈者金鑰、建立專案、本機測試、在 App 的**開發者模式**即時試用，再簽章並放到任何靜態主機
+（GitHub Pages、raw GitHub 等）。使用者以你公布的完整指紋信任你的金鑰，並對每個套件的敏感權限逐項授權；你也能自行撤回版本、
+輪替或撤銷金鑰。完整流程見[套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)。
 
 ## Desktop
 
@@ -197,6 +204,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android debug APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
+- [套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)：從金鑰、CLI、權限到簽章發佈、更新與撤回的完整作者流程
 - [插件系統總覽](docs/PLUGIN_SYSTEM.md)：repository 相容矩陣、package／SourceKey、內容契約、安裝與信任生命週期、runtime、網路、登入與資料邊界
 - [統一插件儲存庫契約](docs/UNIFIED_PLUGIN_REPOSITORY.md)：歷史索引、unified-v1、Extension v2 與 reviewed ShuYue 的偵測／投影規則
 - [插件系統事件接口架構](docs/PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：production V1 handler、exact-artifact grant、安全邊界與尚未接通的保留能力

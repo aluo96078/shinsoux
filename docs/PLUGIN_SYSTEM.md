@@ -1,78 +1,96 @@
 # Shinsou X 插件系統
 
-- 狀態：Production 路徑已接通；部分 V2 能力仍為保留設計
-- 文件基準：2026-09-03 的 `master` 實作與官方插件索引
-- 官方插件倉庫：<https://github.com/aluo96078/shinsou_plugin>
-- 官方儲存庫基底 URL：
-  `https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master`
+- 狀態：第三方沙箱套件生態已接通；部分 V2 能力仍為保留設計
+- 文件基準：2026-11 的 `master` 實作與 [ADR-0002](architecture/0002-sandboxed-third-party-plugin-runtime.md)
+- 想寫套件？請先看 **[套件作者指南](PLUGIN_AUTHOR_GUIDE.md)**（CLI、金鑰、權限、發佈、更新與撤回的完整流程）
 
 本文件是 Shinsou X 插件系統的總覽與目前行為基準。Repository 格式細節見
 [統一插件儲存庫契約](UNIFIED_PLUGIN_REPOSITORY.md)，system-event 的 wire、安全與排程設計見
 [插件系統事件接口架構](PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)。
 
 > [!IMPORTANT]
-> Plugin artifact 可能包含會執行 JavaScript、發送第三方網路請求並處理 Cookie／登入狀態的程式碼。
-> SHA-256 與 sidecar cross-check 能確認下載的 artifact 和已審核宣告一致，但不等於作者身分已由
-> PKI 驗證，也不保證程式行為安全。Production 只執行 Host 內建 catalog 精確審核的 ShuYue
-> artifact；generic repository JavaScript 即使已安裝與核准仍保持 inert。
+> **Shinsou X 沒有官方套件。** 每個套件，包含專案擁有者自己維護的，都是第三方套件：由作者自己的 Ed25519
+> 發佈者金鑰簽章，在 App 的沙箱中執行，只取得使用者逐項同意的權限。名稱含「官方」「公式」`official`
+> （含 `offical`，不分大小寫與全形、忽略分隔符號）的套件、來源或發佈者，會在安裝與信任發佈者時被拒絕；
+> `Unofficial`、`非官方`、`非公式` 這類明確的免責聲明則可以。
+>
+> 套件程式碼會執行 JavaScript、發送第三方網路請求並可能處理 Cookie／登入狀態。簽章只證明「這份內容出自持有該金鑰的作者」，
+> SHA-256 與 sidecar cross-check 只證明下載的 artifact 與作者的宣告一致；兩者都不代表程式行為安全，也不代表任何人審核過它。
+> 安全性來自**沙箱隔離＋最小權限＋使用者逐項授權**，不是來自誰發佈。
 
 ## 目前 production 狀態
 
 Shinsou X 將來源實作與 App 核心分開：Plugin 負責瀏覽、搜尋、作品 metadata、章節與內容解析；
 書庫、Reader、下載、備份、同步、權利判斷與敏感資料儲存仍由 Host 控制。
 
-目前正式路徑包含：
+- **所有套件一律在沙箱中執行**（[ADR-0002 §22](architecture/0002-sandboxed-third-party-plugin-runtime.md)）：
+  Android 為每個套件一個 isolated process，macOS／Windows 為 OS 隔離的 helper，iOS 為 WASM 沙箱。
+  平台沒有沙箱時一律拒絕執行，絕不退回 in-process 引擎。Rhino／JavaScriptCore 只留在測試與 parity 比對。
+- **第三方簽章發佈**：作者用 Ed25519 金鑰簽署整個儲存庫（`shinsou-signed-envelope-v1`），使用者信任**發佈者金鑰**；
+  發佈者自己簽署並定期續簽撤回清單，可輪替金鑰、可自我撤銷金鑰。見下方「發佈者信任、撤回與更新」。
+- **最小權限**：`EXECUTE_SCRIPT` 與 `NETWORK` 隨安裝授予；敏感權限與每個 `contentHostSuffixes` 家族是使用者在權限頁的個別開關，
+  預設關閉，之後可在該套件的「權限」撤銷。
+- **同一 `packageId` 可由不同發佈者並存安裝**（見「套件身分與並存安裝」）。
+- **開發者模式**：可從本機或使用者輸入的區網位址載入未簽章的開發中套件（見「開發者模式」）。
+- 漫畫 `IMAGE_SEQUENCE` 與小說 `PLAIN_TEXT` 來源，可在同一個 package 內混合（見「Package、內容與輸出契約」）。
+- Android／Desktop／iOS 共用來源級 Cookie、帳密、偏好、User-Agent、Web challenge 與 Cloudflare Worker Proxy 設定；
+  Browse、Reader 與 Download 共用來源身分和 Host 網路層。
 
-- `contract: "shinsou"`：解析、驗證與安裝 generic legacy Shinsou metadata／artifact，但 production
-  不把其 JavaScript 送入 in-process runtime；
-- `contract: "shuyue"`：只執行內建 reviewed catalog 精確核准的 ShuYue artifact；
-- 漫畫 `IMAGE_SEQUENCE` 與小說 `PLAIN_TEXT` 套件；
-- V2 exact-artifact digest、sidecar cross-check、execution grant 與 system-event grant；
-- Android／Desktop Rhino 與 iOS JavaScriptCore runtime；
-- 來源級 Cookie、帳密、偏好、User-Agent、Web challenge 與 Cloudflare Worker Proxy 設定；
-- Browse、Reader 與 Download 共用來源身分和 Host 網路層。
+這裡的「共用」只表示同一個 Host 安全邊界，不表示共用 credentials。API request plane 可使用已核准的 source headers、Cookie、Referer、UA 與 proxy；Reader 圖片／文字及 Download 則走獨立 host content plane，只允許 exact `contentOrigins`（與使用者授權的 `contentHostSuffixes`）、`GET`／`HEAD` 與安全 headers，明確移除 Cookie、Authorization、proxy key 及其他 credential/proxy secret。Host 取得 bytes 後交給 Coil 或相應內容 consumer。
 
-這裡的「共用」只表示同一個 Host 安全邊界，不表示共用 credentials。API request plane 可使用已核准的 source headers、Cookie、Referer、UA 與 proxy；Reader 圖片／文字及 Download 則走獨立 host content plane，只允許 exact `contentOrigins`、`GET`／`HEAD` 與安全 headers，明確移除 Cookie、Authorization、proxy key 及其他 credential/proxy secret。Host 取得 bytes 後交給 Coil 或相應內容 consumer。
-
-V2 schema 能描述同一 package 內同時存在漫畫與小說來源，但目前 production generic Shinsou adapter
-與 reviewed ShuYue 安裝流程尚未保證任意 mixed package 的完整執行。官方 `example.dual` 因此明確為
-`referenceOnly: true`、`installable: false`；目前可安裝的漫畫與小說來源採分包發布。
+> 內建的 reviewed catalog（`OfficialShinsouReviewedCatalog`／reviewed ShuYue）是早期相容路徑留下的 Host 內部清單，
+> 只對 exact artifact 生效，用來保持既有使用者的資料連續性；它**不是**第三方可以申請或取得的等級，
+> 也不代表這些套件比第三方更「官方」。第三方套件走的是下方的一般簽章流程。
 
 ## 名詞與身分
 
 | 名詞 | 意義 |
 |---|---|
 | Repository | 提供 `repo.json`、索引、script 與 sidecar 的靜態來源，不是內容託管服務。 |
+| Publisher | 以一把 Ed25519 金鑰簽署 repository 的作者；發佈者 ID 是其第一把金鑰的完整指紋（輪替後不變）。 |
 | Package | 可版本化的來源套件；可能宣告一個或多個 source。 |
 | Artifact | 某一 package version 的確切 JavaScript bytes，以版本、version code、SHA-256 與 byte size 識別。 |
-| Sidecar | 安裝前可讀的審核資料；Host 會把它和索引中的 artifact、來源、內容、權限及事件宣告逐欄交叉核對。Repository schema 沒有發布者宣告的獨立「sidecar digest」；reviewed loader 另會把實際下載 sidecar bytes 的 SHA-256／size 記入本機 quarantine metadata。 |
+| Sidecar | 安裝前可讀的宣告資料；Host 會把它和索引中的 artifact、來源、內容、權限及事件宣告逐欄交叉核對，且 sidecar 本身也由發佈者簽章。 |
 | Source | 使用者在「瀏覽 → 來源」看到並呼叫的內容來源。 |
 | Host | Shinsou X App；負責 admission、runtime、網路、敏感儲存、UI 與資料生命週期。 |
 
-來源的穩定主鍵是：
+### 套件身分與並存安裝
+
+同一個 `packageId` 可以由不同發佈者各自發佈，App 把它們視為**不同的套件**：本機的安裝識別（install key）
+把發佈者納入考量，授權、信任、書庫綁定都分開計算。規則（`PluginInstallKeys`）：
+
+- 有發佈者金鑰的套件：`packageId~<發佈者 ID 的 SHA-256 前 16 位十六進位>`；
+- 從原社群儲存庫網址安裝、或沒有發佈者金鑰的套件：保留裸 `packageId`，讓既有書庫、進度與下載維持綁定；
+- 開發者模式的未簽章套件：`packageId~dev`，永遠不會取代同 id 的簽章安裝；
+- `packageId` 不可含 `~`；已發佈的 id 最長 111 字元，確保加上 `~` 與 16 位十六進位後不超過 128 字元。
+
+有發佈者範圍的來源，其數字 source id 由 install key 與 `sourceId` 以 SHA-256 決定性地投影到 `[2^62, 2^63)`，
+各裝置推導結果相同（同步以它綁定書庫），發生碰撞則由來源保留檢查拒絕。細節與設計理由見
+[ADR-0001「套件身分」](architecture/0001-unified-publication-content-foundation.md)。
+
+來源在 V2 的 canonical 身分仍是：
 
 ```text
 SourceKey(contractVersion, packageId, sourceId, legacyLongId?)
 ```
 
-- `packageId + sourceId` 是 V2 的 canonical identity；
-- `legacyLongId` 只用於需要和既有資料／adapter 對接的來源；
+- `packageId + sourceId` 是 V2 的 canonical identity；`legacyLongId` 只用於需要和既有資料／adapter 對接的來源；
 - 多來源 package 必須以 exact `sourceId` 選擇來源，不能依陣列位置、顯示名稱或雜湊猜測；
-- 書庫 binding、閱讀進度、下載與遷移都應保留完整 `SourceKey`。
+- 書庫 binding、閱讀進度、下載與遷移都應保留完整身分。
 
-目前 installable generic Shinsou V2 項目仍會投影到 legacy `Long` source ID，因此 `sourceId` 必須可無損
-轉成 `Long`。不可安裝的參考項目可使用 opaque ID；reviewed ShuYue 路徑也可保留 opaque string ID。
+目前 installable 的 Shinsou V2 項目仍會投影到 `Long` source id，因此 `sourceId` 必須可無損轉成 64-bit 整數。
 
 ## 從 Repository 到 Reader
 
 ```text
-repository metadata
+repository metadata（簽章 envelope，或開發者模式的未簽章文件）
+  → 發佈者信任（金鑰 pin、撤回清單新鮮度）
   → index shape / contract detection
-  → installable 與相容性檢查
+  → installable 與相容性檢查（含名稱政策與 tier ceiling）
   → sidecar cross-check
   → script byte size + SHA-256 驗證
-  → execution / event admission
-  → exact-source runtime
+  → 權限審核（使用者逐項授權）
+  → 沙箱 runtime（exact source）
   → capability-gated Host facade
   → Browse / Library / Reader / Download
 ```
@@ -84,10 +102,10 @@ Mihon/Tachiyomi metadata、`shinsou-unified-v1` envelope 或 `shinsou-extension-
 
 | 索引格式 | Host 行為 | 可執行性 | 主要限制 |
 |---|---|---|---|
-| 傳統 Shinsou `index.json` array | 讀取 JavaScript package metadata | 可安裝但 production runtime 保持 inert | 舊索引可能沒有發布端 digest；developer compatibility 可明示測試 legacy adapter，但 production 不執行。 |
+| 傳統 Shinsou `index.json` array | 讀取 JavaScript package metadata | 只有簽章發佈者的套件、或開發者模式下的開發中套件可執行；其餘（含未簽章且不在開發者模式者）保持 inert | 舊索引可能沒有發布端 digest；不執行沒有發佈者金鑰的未簽章套件。 |
 | Mihon／Tachiyomi `index.min.json` | 建立 metadata-only stub source | APK 不執行 | 只提供相容 metadata，不代表支援 Android APK extension runtime。 |
 | `shinsou-unified-v1` | 同一 URL 投影 `shinsou`／`legacy` 與 `shuyue` 清單 | 依各自 admission 路徑 | 保留給遷移與相容；不要由 URL 或 hostname 猜 contract。 |
-| `shinsou-extension-v2`、`contractVersion: 2` | 驗證 V2 package、sidecar、digest、內容與權限宣告 | generic `shinsou` production inert；`shuyue` 必須命中 reviewed catalog | `referenceOnly`、`installable: false`、`legacyCompatibilityOnly` 不可作一般新安裝。 |
+| `shinsou-extension-v2`、`contractVersion: 2` | 驗證 V2 package、sidecar、digest、內容與權限宣告 | `contract: "shinsou"` 在沙箱執行（需簽章與使用者授權）；`shuyue` 另有內建相容路徑 | `referenceOnly`、`installable: false`、`legacyCompatibilityOnly` 不可作一般新安裝。 |
 
 V2 根索引可以同時包含 `contract: "shinsou"` 與 `contract: "shuyue"`。這表示共用發布目錄，
 不表示兩種 script contract 可以互換。完整欄位與偵測規則見
@@ -104,11 +122,10 @@ sidecars/<package-id>.json
 ```
 
 索引、sidecar 與 script metadata 應對齊 package／version、來源、content kinds、capabilities、runtime
-permissions、requested Host permissions、system events、script URL、SHA-256 與 byte size。官方
-repository smoke test 會完整比對這些欄位。App 的 generic Shinsou admission 目前會強制比對 package、
-version、artifact、內容 type、來源、browser origins、events 與 requested Host permissions；reviewed
-ShuYue admission 另比對 capabilities。`contentKinds`、generic `capabilities` 與 `runtimePermissions` 的
-完整三方 parity 目前仍以官方發布檢查為主，尚未全部成為 generic Host 的 runtime admission gate。
+permissions、requested Host permissions、system events、script URL、SHA-256 與 byte size。作者 CLI 的 `build` 會完整比對這些欄位。App 的 generic Shinsou admission 目前會強制比對 package、
+version、artifact、內容 type、來源、browser origins、events 與 requested Host permissions；內建 reviewed
+ShuYue 相容路徑另比對 capabilities。`contentKinds`、generic `capabilities` 與 `runtimePermissions` 的
+完整三方 parity 目前仍以作者端的 `build` 檢查為主，尚未全部成為 generic Host 的 runtime admission gate。
 
 核心 V2 內容種類為：
 
@@ -122,36 +139,75 @@ V2 Host facade 在每次呼叫前檢查 exact `SourceKey` 與 capability，並�
 hint、頁數、資源數、文字 chunk、回應 bytes 與輸出 source scope。Plugin 取得的是受限 Host bridge，
 不是任意核心服務或原始 credential store。
 
-### Reviewed ShuYue large-text profile
+### 小說（`PLAIN_TEXT`）與混合套件
 
-只有 exact reviewed ShuYue artifact 會套用 large-text profile。相對於 generic 的 Host defaults，
-invocation instruction budget 由 100M 提高至 500M，default result string cap 由 1 MiB 提高至 8 MiB，
-result envelope cap 由 4 MiB 提高至 17 MiB；generic runtime 的 defaults 不變。這不是任意 repository
-宣告可取得的額度：caller 明示的更嚴值保留，只有仍等於 generic default 的值才會提升，任何非
-default 的 raised value 仍 capped 於 reviewed maximum。
+- 宣告 `PLAIN_TEXT` 的來源實作 `getChapterText(chapter)`，回傳一個字串（或 `{ text }`），**最多 4 MiB**
+  （約 130 萬個中文字；沙箱單一 Result frame 的上限）。這個值比一般結果的 1 MiB 單字串上限大，只套用在宣告了
+  `PLAIN_TEXT` 的來源。超過上限會以 `LIMIT_RESULT`（結果過大）失敗，不會讓套件被判定為當機。
+- `IMAGE_SEQUENCE` 來源實作 `getPageList(chapter)`。
+- **一個 package 可以混合**：同一個 package 內的每個來源各自宣告 `contentKinds`，漫畫來源用 `getPageList`、
+  小說來源用 `getChapterText`。Host 依 exact `sourceId` 選擇來源，不依陣列順序。
+- 沙箱把所有套件的結果限制在 4 MiB 內，內建 reviewed ShuYue 相容路徑也不例外（原本的 8 MiB／17 MiB large-text
+  profile 已不再使用）。
+- 對仍使用舊式 hook 的腳本，Generic adapter 保留既有 image-oriented hook 與同步 JavaScript 假設；
+  「V2 核心能表示某種 payload」不等於所有 legacy script 都已能產生該 payload。
 
-4–8 MiB 的多頁 `PLAIN_TEXT` 現在可讀；大於 8 MiB 的正文 fail closed。正文以 64 KiB chunk 的
-single-use、可取消 stream 傳遞，pending 與 active stream 的 aggregate reservation 合計最多 8 MiB；
-超過任一 stream 或 aggregate bound 即拒絕。最壞情況可能同時存在 JS String、JSON envelope 與 Kotlin
-String／ByteArray copies，並使用較高 CPU instruction budget，因此放寬只影響 exact reviewed runtime，
-不改變 generic runtime 的 steady-state 記憶體或效能。
+## 發佈者信任、撤回與更新
 
-Generic Shinsou adapter 保留既有 image-oriented hook（例如 `getPageList`）與同步 JavaScript 假設，
-因此「V2 核心能表示某種 payload」不等於所有 legacy script 都已能產生該 payload。Reviewed ShuYue
-runtime 會把已審核的小說／漫畫輸出轉成 V2 內容。
+### 簽章與信任
+
+- 發佈者以 Ed25519 簽署 `repo.json`、`index.json`、每個 sidecar 與 `publisher-revocations.json`
+  （`shinsou-signed-envelope-v1`；簽章訊息綁定文件 ID 與儲存庫網址，所以每個鏡像各簽一份）。
+  每種文件各自有嚴格遞增的 `sequence`，App 拒絕重播與同 sequence 不同內容。
+- 使用者**首次使用即信任**（TOFU）發佈者金鑰，或輸入／經 `shinsou://add-repository?url=…&fp=…` 連結帶入
+  **完整指紋**並比對。「套件安全」中的「一律要求比對指紋」是嚴格模式：沒有完整指紋或指紋不符就不能信任；
+  切換為嚴格模式後，只用 TOFU 信任的發佈者顯示為「待比對指紋」，已安裝套件繼續執行，但在比對完成前不安裝新套件、不更新。
+- 信任的單位是**發佈者金鑰**：同一把金鑰從不同鏡像網址出現不需重新信任；同一網址出示另一把金鑰一律視為
+  金鑰替換（`KeySubstitution`）而被拒絕。
+- 連結不會自行加入 repository：有簽章的 repository 顯示信任對話框，連結帶的指紋唯讀顯示且一定比對。
+- 名稱含「官方」「公式」`official` 的發佈者在信任時被拒絕。
+
+### 撤回、到期與金鑰事件
+
+| 機制 | 文件 | Host 行為 |
+|---|---|---|
+| 版本撤回 | 發佈者簽署的 `publisher-revocations`（artifact SHA-256 清單與 `expiresAt`） | 對應已安裝 artifact 立即卸載 runtime、轉為 inert，提示更新 |
+| 撤回清單新鮮度 | 同上 | **新安裝與更新一律要求**該發佈者有一份已驗證、未過期的撤回清單（可為空）；過期後不再從該發佈者安裝或更新，已安裝的繼續執行並持續顯示警示 |
+| 金鑰輪替 | `publisher-key-rotation`（舊金鑰簽 envelope、新金鑰簽聲明，雙簽） | 自動更新 pin，舊金鑰退休，不需重新信任 |
+| 金鑰自我撤銷 | `publisher-key-revoked`（由被撤銷的金鑰簽署） | 撤銷目前金鑰：該發佈者全部套件 inert，須重新信任新金鑰 |
+| 遺失私鑰 | 無 | 無法自動恢復；使用者須明確同意改信任新金鑰，新金鑰視為新的發佈者，授權重新審核 |
+| 使用者本機封鎖 | 不簽章、不下載，只存在本機 | 可封鎖單一套件、單一 artifact 或整個發佈者；不進備份與同步 |
+
+沒有中央 denylist：Shinsou 不簽署、不發佈、不維護任何遠端封鎖清單，App 不會因為任何第三方的判斷而遠端停用使用者安裝的套件。
+唯一的遠端停用來源是發佈者自己簽署的撤回清單與金鑰撤銷。降版（`versionCode`／digest 回退）一律拒絕。
+
+### 從未簽章改為簽章發佈
+
+使用者已加入的未簽章 repository 若改為簽章發佈，App 會顯示「已改為由發佈者簽章：請確認發佈者以繼續更新」，
+使用者確認發佈者後才繼續更新。未簽章時期的授權，在第一個簽章版本**沒有要求任何新東西**時延續。
+
+## 開發者模式
+
+「套件安全（Package security）」對話框中的「開發者模式（Developer mode）」（預設關閉，僅限本機設定）：
+
+- 載入**未簽章**的開發儲存庫，來源只能是這台裝置（`127.0.0.1`、`localhost`、`::1`）或使用者輸入的私有區網 IPv4
+  位址（`10/8`、`172.16/12`、`192.168/16`；只接受數字位址，**不接受主機名稱**，最多 8 個）。
+- 開發儲存庫可使用 HTTP，但**套件自己的請求仍然只能是 HTTPS**，網路規則不放寬。
+- 這類套件以 `packageId~dev` 安裝、標示「開發中」，**只在開發者模式開啟時執行**；重新 build 後授權維持，
+  每當 artifact digest 改變就顯示一次更新。仍在沙箱中執行，沒有任何額外放寬。
+- 搭配作者 CLI 的 `shinsou-plugin serve` 使用。流程見[作者指南](PLUGIN_AUTHOR_GUIDE.md)。
 
 ## 安裝、更新與撤銷生命週期
 
-### Generic Shinsou package
+### 第三方套件（`contract: "shinsou"`）
 
-1. Host 讀取 inert repository metadata，拒絕不可安裝狀態與不安全的檔名／路徑。
-2. 若有 V2 sidecar，先把 package、version、artifact、內容、來源、事件與 requested permissions 和索引交叉核對。
-3. 下載 script，驗證 byte size 與 SHA-256；production V2 repository 另要求 pinned Ed25519 envelope，並驗證 sequence replay／equivocation。舊格式沒有發布端 digest 時，只有明示的 unsigned developer compatibility 流程可記錄收到 bytes 的 legacy trust-on-install token。
-4. Production 保持 artifact inert；只有明示的 internal test／developer compatibility factory 才建立
-   generic runtime candidate 並做相容性檢查。
-5. 先寫 content-addressed script，再以原子寫入 `package.json` 作為 package commit point；production
-   不因安裝、digest 或 execution grant 自動建立 generic live runtime。
-6. 有 Host event 權限要求時建立待審 review；repository 的要求不會自動變成 grant。
+1. Host 讀取 repository metadata，驗證發佈者簽章與撤回清單新鮮度，拒絕不可安裝狀態、誤導性名稱與不安全的檔名／路徑。
+2. 將 package、version、artifact、內容、來源、事件與 requested permissions 的宣告在 index、sidecar 與腳本三處交叉核對。
+3. `SandboxTierCeiling` 在寫入任何 byte 之前拒絕超出上限的宣告（例如 `REPORT_USER_MESSAGE`、公開後綴的 `contentHostSuffixes`）。
+4. 下載 script，驗證 byte size 與 SHA-256。
+5. 使用者在權限頁逐項審核：`EXECUTE_SCRIPT` 與 `NETWORK` 隨安裝授予；敏感權限與每個 `contentHostSuffixes` 家族預設關閉。
+6. 先寫 content-addressed script，再以原子寫入 `package.json` 作為 package commit point；之後在沙箱建立 runtime。
+7. 重啟時只重建仍符合信任與授權的 package；被撤回、被封鎖、發佈者金鑰被撤銷或被替換者保持 inert。
 
 每個 package 獨立儲存。V2 package store 以 script 的 SHA-256 作為 immutable content address，先寫入
 `script-<sha256>.js`，再以原子 `package.json` 作為 commit point；寫入後會 read back 並重新驗證 script
@@ -160,16 +216,12 @@ SHA-256、嚴格 UTF-8、metadata 與 package ID。單一損壞或不相容 pack
 record 一旦存在但損壞，會 fail closed，絕不退回舊 V1 metadata/script split keys；只有沒有 V2 record
 時才可進行受限的 legacy migration。
 
-### Reviewed ShuYue package
+### 內建 reviewed ShuYue 相容路徑
 
-Reviewed ShuYue 使用更窄的 admission 流程：
-
-1. 載入 inert metadata；
-2. 只顯示命中內建 reviewed catalog 的 exact package／version／versionCode／SHA／source metadata；
-3. 下載 bytes 後放入 quarantine，不執行；
-4. 再次 hash、review，要求使用者明確批准完整 least-privilege permission set；
-5. 批准後才建立 guarded runtime；
-6. 重啟時只 rehydrate 仍精確匹配且仍獲批准的 artifact；損壞、撤銷或 compatibility-only 項目 fail closed。
+這是 Host 內部為既有 ShuYue 使用者保留的 exact-artifact 路徑，**第三方套件不使用也不能取得**。它同樣在沙箱執行，
+流程為：載入 inert metadata、只顯示命中內建 catalog 的 exact package／version／versionCode／SHA／source、
+下載後放入 quarantine、再次 hash 並要求使用者明確批准完整 least-privilege permission set、批准後才建立 guarded runtime；
+重啟時只 rehydrate 仍精確匹配且仍獲批准的 artifact。
 
 Repository fetcher 的 index／sidecar response 預設上限仍為 2 MiB／512 KiB；已安裝 package store 的
 V2 bounds 則是 128 KiB key-value index、8 MiB script、512 KiB package metadata、256 packages、每包
@@ -181,16 +233,21 @@ V2 bounds 則是 128 KiB key-value index、8 MiB script、512 KiB package metada
 
 ### 更新、重新授權與卸載
 
-- Execution grant 綁定 `{pluginId, versionCode, sha256}`；只證明指定 bytes 可執行。
-- System-event grant 是另一套授權，綁定完整
-  `{packageId, version, versionCode, sha256, SourceKey}` 與要求的 Host permissions。
-- 更新造成 version、versionCode、digest、SourceKey 或權限 review 改變時，不能假設舊 grant 自動延伸。
+- 授權綁定**確切版本**與發佈者金鑰：同一 `packageId` 由不同發佈者發佈是不同身分，授權不互通。
+- **更新沒有要求任何新東西時，授權自動沿用（D4）並通知使用者。** 必須全部成立：新舊版本來自同一個發佈者金鑰；
+  新版本要求的 host／runtime 權限與 `contentHostSuffixes` 都是舊版本要求過的子集；新版本的每個來源舊版都存在，
+  且 request／credential／content／browser-session origin 都沒有新增（逐項 exact 比對）。沿用的是「舊授權縮到新版要求的範圍」：
+  使用者拒絕過的仍然拒絕，不會多出任何東西。
+- **否則**（新權限、新後綴、新來源、新 origin，或換了發佈者金鑰、套件沒有發佈者）使用者必須在**安裝前**審核這次更新，
+  **舊版本在使用者接受之前繼續執行**。
+- 降版（`versionCode`／digest 回退）一律拒絕。
 - 撤銷 execution trust 會立即卸載 live runtime，但保留 package 供重新授權或卸載。
 - 只撤銷 event grant 時，來源可在沒有該事件權限的狀態重新載入。
 - App 啟動只重建仍有 exact trust 的 package；「檔案 digest 正確」本身不會恢復使用者已撤銷的授權。
 - Uninstall 會移除 package、對應 grant 與 live runtime。
 
 Uninstall 先在本程序安裝 irrevocable 的 local denial，再卸載 runtime、撤銷 execution／event grant，最後嘗試刪除 package。若 package-store removal 失敗，呼叫會回報錯誤，但已撤銷的 trust、event grant 與 legacy trust-on-install 會讓殘留 bytes 在本程序及下一次重啟都保持 inert；只有確認 durable deletion 後才會清除 denial floor，供之後重新安裝。
+
 
 ### System-event grant 的單一 durable record
 
@@ -206,16 +263,24 @@ Legacy split grant migration 只在兩個舊半部都能嚴格解碼、未超過
 authorizer 並寫入 `REVOKED`；即使 durable write 失敗，本程序也會保持本地 revoked floor，不會重新
 hydrate 舊 grant。
 
+
 ## 四層能力與權限
 
-下列概念用途不同，不應合稱為同一種「插件權限」。
+下列概念用途不同，不應合稱為同一種「插件權限」。有效權限 =
+套件宣告（index ∩ sidecar ∩ script，三方一致）∩ Host 支援 ∩ 沙箱 tier 上限（Host 常數，套件與使用者都不能提高）
+∩ 使用者對 exact artifact 的授權。
 
 | 層級 | 目前識別字 | 意義 |
 |---|---|---|
 | Source capability | `CATALOGUE`、`LATEST`、`BROWSE`、`METADATA`、`UNITS`、`CONTENT`、`SEARCH`、`LOGIN`、`FAVORITE`、`PREFERENCES` | Host 可以向來源呼叫哪些功能；每次呼叫由 V2 facade 檢查。 |
-| Reviewed runtime permission | `EXECUTE_SCRIPT`、`NETWORK`、`COOKIE_STORAGE`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE` | Reviewed ShuYue artifact 執行時可以接觸哪些敏感 Host facility。 |
-| Host permission | `REQUEST_LOGIN_UI`、`REQUEST_SOURCE_REFRESH`、`REQUEST_LOGOUT`、`REPORT_DIAGNOSTIC`、`REPORT_USER_MESSAGE`、`REQUEST_BROWSER_CHALLENGE` | Plugin 可要求 Host 處理哪些 system event；只是 request metadata，必須另行 grant。 |
+| Runtime permission（隨安裝） | `EXECUTE_SCRIPT`、`NETWORK` | 執行腳本，並連到宣告的 exact origin。 |
+| Runtime permission（敏感，逐項開關、預設關閉、可隨時撤銷） | `COOKIE_STORAGE`、`COOKIE_READ`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE` | 接觸敏感 Host facility：寫入 Cookie、讀取 Cookie 值、帳密、登入提示、修改收藏、Web challenge。 |
+| 網路範圍（敏感，逐項） | 每個 `contentHostSuffixes` 家族 | 動態 CDN 後綴，只放寬無憑證的內容平面，限 443（後綴加 `:1024-65535` 時也允許非特權連接埠）。 |
+| Host permission | `REQUEST_LOGIN_UI`、`REQUEST_SOURCE_REFRESH`、`REQUEST_LOGOUT`、`REPORT_DIAGNOSTIC`、`REPORT_USER_MESSAGE`、`REQUEST_BROWSER_CHALLENGE` | Plugin 可要求 Host 處理哪些 system event；只是 request metadata，必須另行 grant。`REPORT_USER_MESSAGE` 永遠不授予第三方。 |
 | Negotiated system event | `command.auth.login.request`、`command.source.refresh.request`、`command.auth.logout.request`、`event.diagnostic.message.report` | Package 與 Host 協商的 V1 capability ID。 |
+
+登入在**一次性沙箱**中執行：只有 App 啟動的 `login` hook 能讀寫密碼，網路只允許 `credentialOrigins`，結束即銷毀；
+一般 runtime 永遠拿不到密碼。沒有 `COOKIE_READ` 時，Host 仍會在請求中帶上它代管的 Cookie，但腳本看不到值。
 
 V1 實際 wire message name 與 production handler：
 
@@ -226,30 +291,35 @@ V1 實際 wire message name 與 production handler：
 | `auth.logout.request` | command | `LOGIN` + `REQUEST_LOGOUT` | Host 確認後清理 exact session owner。 |
 | `diagnostic.message.report` | event | `REPORT_DIAGNOSTIC` | 寫入有界、會過期的 Host diagnostic log，不直接顯示給使用者。 |
 
-`REPORT_USER_MESSAGE` 目前沒有安全的 production presenter，admission 會拒絕；
+`REPORT_USER_MESSAGE` 沒有安全的 production presenter，admission 會拒絕；
 `REQUEST_BROWSER_CHALLENGE` 目前只有 permission enum／保留設計，沒有 production system-event handler。
 App 自身能從來源設定開啟 Web challenge，不代表 Plugin 已能透過 system event 呼叫它。
+（腳本直接使用 `bridge.browserSessionRequest` 則屬於 runtime permission `BROWSER_CHALLENGE`，見「網路」一節。）
 
 事件 ingress 同步且有界，只回傳 admission receipt；`accepted` 代表已入列，不代表登入、刷新或登出
 完成。Host 會注入 Plugin 無法偽造的 exact artifact、source、runtime generation 與 active context，
 再做 schema、grant、TTL、去重、rate limit 與 queue 檢查。
 
+
 ## JavaScript runtime 與跨平台限制
 
-| 平台 | Script runtime | Web challenge |
+所有套件在**沙箱**中以 QuickJS 執行，沒有網路、檔案與子程序權限，只能經 SandboxProtocol v1 的 bridge 向 Host 請求：
+
+| 平台 | 沙箱 | Web challenge |
 |---|---|---|
-| Android | Rhino | System WebView 支援專用 profile 與完整 browsing-data deletion 時使用 App 內隔離 WebView；否則只開外部瀏覽器。 |
-| iOS／iPadOS | JavaScriptCore | App 內 non-persistent WKWebView。 |
-| macOS | Rhino | 獨立原生 non-persistent WKWebView 視窗。 |
-| Windows | Rhino | 只開外部預設瀏覽器；Host 無法自動讀回 Edge／Chrome Cookie。 |
+| Android | 每個套件一個 isolated process | System WebView 支援專用 profile 與完整 browsing-data deletion 時使用 App 內隔離 WebView；否則只開外部瀏覽器。 |
+| iOS／iPadOS | WAMR WebAssembly 直譯器 | App 內 non-persistent WKWebView。 |
+| macOS | `sandbox_init` deny-all 的 helper | 獨立原生 non-persistent WKWebView 視窗。 |
+| Windows | Low Privilege AppContainer＋Job object 的 helper | 只開外部預設瀏覽器；Host 無法自動讀回 Edge／Chrome Cookie。 |
 
-Rhino 與公開 JavaScriptCore API 都沒有可依賴的 per-runtime heap／強制中止隔離。Production 因此不執行一般 repository JavaScript，即使它具有 repository 簽章、使用者 execution approval 或自行宣告 digest；這些都不等同 Host code review。只有命中內建 reviewed catalog 的 exact ShuYue artifact，且 Host 核發的 process-local provenance 同時綁定 package/version/original SHA-256、exact `SourceKey` 與最終 evaluated bytes（包含 Host shim），才可進入 in-process engine。Generic manager 會明確清除此 capability。未來若加入獨立 process／OS memory sandbox，可另建 production runtime，不可用 `Runtime.freeMemory` 輪詢等事後檢測取代隔離。測試與離線 compatibility smoke test 只能透過 internal `unsafeForTests()` factory 明示繞過，正式 App 無此公開入口。
+- 平台沒有可用的沙箱時一律拒絕執行（fail closed），絕不退回 in-process 引擎。Rhino 與 JavaScriptCore 不再用來執行
+  repository 套件，只留在測試與離線 parity 比對。
+- 沙箱為每個套件提供獨立的記憶體、時間與 bridge 呼叫上限（JS heap 64 MiB、單次 hook 30 秒、每次 4,096 次 bridge 呼叫、
+  結果 4 MiB 等）；超限以穩定錯誤碼失敗，不回傳部分結果；短時間內重複崩潰會自動停用該套件。Host 以 LRU 與閒置回收限制同時存活的沙箱數量。
+- Hook 可回傳 Promise；非阻塞的網路請求用 `bridge.net.fetch`（同時最多 6 個）。其餘 bridge API 見[作者指南](PLUGIN_AUTHOR_GUIDE.md)。
+- 每個 exact source 建立自己的 runtime binding，不能用 package 內來源陣列順序選擇另一個來源。
 
-Legacy hooks 以同步呼叫為共同相容基線。任意第三方 Promise、`async`、動態 module 或直接 `fetch`
-不保證在 Rhino 與 JavaScriptCore 有一致行為；網路應使用 Host bridge。每個 exact source 建立自己的
-runtime binding，不能用 package 內來源陣列順序選擇另一個來源。
-
-JVM（Android／Desktop）repository/plugin transport 會將 DNS 結果 pin 到 socket 連線，並透過 OkHttp `newBuilder()` 保留 shared connection pool；iOS production generic network/repository transport 無法安全 pinning 時 fail closed。這會增加 DNS、SHA-256、Ed25519 與 admission 成本，但避免 DNS rebinding。
+JVM（Android／Desktop）repository/plugin transport 會將 DNS 結果 pin 到 socket 連線，並透過 OkHttp `newBuilder()` 保留 shared connection pool；iOS generic network/repository transport 無法安全 pinning 時 fail closed。這會增加 DNS、SHA-256、Ed25519 與 admission 成本，但避免 DNS rebinding。
 
 Runtime identity 是由 exact artifact（package、version、version code、SHA-256）與 exact `SourceKey` 推導的 stable logical ID；runtime 每次載入另分配遞增 generation。這讓 reload 可以保留同一 logical identity，同時讓舊 generation 的 handle、事件與 queued work 失效；package ID 或 source 陣列位置本身都不是 runtime identity。
 
@@ -259,18 +329,18 @@ copy：最多 128 fields；name 最多 256 UTF-8 bytes；單一 value 最多 16 
 `Location`、非法字元與其他超限 header 都拒絕，不以截斷方式繼續處理。Response body 以 bounded
 streaming 讀取，`Content-Length` 必須是唯一、合法且不超過該請求 cap；`Content-Encoding` 只接受
 identity／gzip／deflate，decoded bytes 仍逐 chunk 受 cap。Framing 矛盾、壓縮後超限或 transport 無法
-在讀取時套用 cap 都直接 fail closed，而不是先完整緩衝再補救。只有 exact reviewed ShuYue
-compatibility path 會移除 legacy `Connection` header；generic/repository plugin 不能設定或繞過
-transport-owned hop-by-hop／framing headers。
+在讀取時套用 cap 都直接 fail closed，而不是先完整緩衝再補救。套件不能設定或繞過 transport-owned
+hop-by-hop／framing headers。
+
 
 ## 網路、Cookie、登入與 Web challenge
 
 ### 共用 request builder
 
-API Browse 等 request 使用來源 request builder；Reader 圖片／文字與 Download 使用獨立 host content plane。Content plane 只接受 manifest 的 exact `contentOrigins`、`GET`／`HEAD` 和安全 headers，沒有 Cookie、Authorization、proxy key、request body 或其他 secrets；Host fetch bytes 後交給 Coil／內容 consumer。Redirect 仍逐 hop 限制並拒絕 HTTPS downgrade，不能擴大 origin。
+API Browse 等 request 使用來源 request builder；Reader 圖片／文字與 Download 使用獨立 host content plane。Content plane 只接受 manifest 的 exact `contentOrigins`、使用者已授權的 `contentHostSuffixes`（可註冊網域或其子網域，預設只限 443；後綴加 `:1024-65535` 時也允許非特權連接埠；上限 8 項、不得為 public suffix 或 IP）、`GET`／`HEAD` 和安全 headers，沒有 Cookie、Authorization、proxy key、request body 或其他 secrets；Host fetch bytes 後交給 Coil／內容 consumer。Redirect 仍逐 hop 限制並拒絕 HTTPS downgrade，不能擴大 origin。
 
-Cookie parser 會驗證名稱、值、domain、path、expiry、Secure／HttpOnly 與保守的 public-suffix 防護。
-這套 suffix 清單不是完整 Public Suffix List，因此它是額外邊界，不是瀏覽器等級 PSL 的替代品。
+Cookie parser 會驗證名稱、值、domain、path、expiry、Secure／HttpOnly 與 public-suffix 防護；
+`contentHostSuffixes` 與 Cookie domain 都使用 App 內建的 Public Suffix List 判斷是否為公開後綴。
 
 ### 來源隔離
 
@@ -283,7 +353,7 @@ Cookie parser 會驗證名稱、值、domain、path、expiry、Secure／HttpOnly
 - Cloudflare Worker Proxy override。
 
 `browserSessionOrigins` 只能額外列出 exact HTTPS API origin，讓同一來源的受控 browser transport
-存取必要 API；它不是任意跨站 allowlist。`BROWSER_CHALLENGE` 必須具備 exact artifact 的 reviewed runtime permission，且 target origin 命中 `browserSessionOrigins`。若已保存帳密，Host 的 challenge helper 只會在同源頁面
+存取必要 API；它不是任意跨站 allowlist。`BROWSER_CHALLENGE` 是敏感 runtime permission，第三方套件同樣可以宣告，使用者在權限頁開啟後才生效，且 target origin 必須命中 `browserSessionOrigins`（Cloudflare 等 Web challenge 即以此為前提）。若已保存帳密，Host 的 challenge helper 只會在同源頁面
 且 form action 仍同源時自動填入／提交。
 
 ### User-Agent 與 Proxy
@@ -323,12 +393,9 @@ decoded peak 約 8 MiB；任何 item 或 aggregate 超限都使整批失敗且�
 Plugin 只產生遠端 publication／unit／content 結果。Host 會把 exact source binding 寫入共用內容
 基礎，Reader 以 portable locator 保存位置；Content plane host-fetch bytes 後交給 Coil／內容 consumer，Download 也不會把 API credentials/proxy secrets 帶入內容取得。
 
-Reviewed ShuYue 的 large-text profile 會增加大文本 materialization／streaming 成本：4–8 MiB 多頁正文
-可讀，但 >8 MiB 仍拒絕；正文以 64 KiB、single-use、可取消 stream 傳遞，pending+active aggregate
-reservation 限 8 MiB。最壞情況可能同時存在 JS String、JSON 與 Kotlin copies，並使用較高 CPU budget；
-影響只在 exact reviewed runtime，generic runtime 沒有 steady-state 影響。
+長文字章節（`PLAIN_TEXT`，最多 4 MiB）會在沙箱結果、Host 與 Reader 之間各有一份複本，記憶體成本與文字大小成正比；超過 4 MiB 以 `LIMIT_RESULT` 失敗。
 
-首次 repository load 需 DNS、hash、signature 驗證；content fetch 可能增加 Host bytes/cache 路徑；SourceKey／content identity migration 可能使舊 cache key 失效並重建。OkHttp shared pool 可降低 client 重建成本。Legacy synchronous runtime、exact permission／artifact approval、Mihon metadata-only 與 mixed-package 限制仍是相容性邊界。
+首次 repository load 需 DNS、hash、signature 驗證；content fetch 可能增加 Host bytes/cache 路徑；SourceKey／content identity migration 可能使舊 cache key 失效並重建。OkHttp shared pool 可降低 client 重建成本。Legacy 同步 hook 假設、exact permission／artifact approval 與 Mihon metadata-only 仍是相容性邊界。
 
 | 資料 | Portable backup／sync 狀態 |
 |---|---|
@@ -349,7 +416,9 @@ Repository metadata 被同步不代表另一裝置已安裝 package、取得 Coo
 - 使用 repository 基底 URL，而不是 GitHub HTML 專案頁；
 - 確認基底同層可直接讀取 `repo.json` 與 `index.json`；
 - 不要假設檔名決定格式，先檢查回應是否真的是 JSON，而不是登入頁／Cloudflare HTML；
-- `referenceOnly`、`installable: false` 與 `legacyCompatibilityOnly` 項目可能不投影為一般可安裝套件。
+- `referenceOnly`、`installable: false` 與 `legacyCompatibilityOnly` 項目可能不投影為一般可安裝套件；
+- 簽章儲存庫需要有效的 `publisher-revocations.json`；過期或缺少時不能安裝或更新（作者需執行 `shinsou-plugin refresh`）；
+- 未簽章的儲存庫只有在開發者模式且位址為本機／已輸入的區網位址時才會載入。
 
 ### 安裝時顯示 digest、sidecar 或契約錯誤
 
@@ -358,8 +427,8 @@ Repository metadata 被同步不代表另一裝置已安裝 package、取得 Coo
 
 ### 更新後要求重新授權
 
-這是 exact-artifact 模型的預期行為。新 version／digest 或權限集合不是舊 grant 的同一對象；閱讀
-差異後重新批准。單純把舊 grant 複製到新 artifact 會破壞更新審核邊界。
+若更新要求了任何新的權限、後綴、來源或 origin（或換了發佈者金鑰），App 會在安裝前請你審核，舊版本在你接受前繼續執行；
+只有更新沒有要求任何新東西時，授權才會自動沿用並通知你（D4）。
 
 ### 網站瀏覽器可開啟，但來源請求失敗
 
@@ -372,59 +441,65 @@ proxy override 與 HTTP status。Windows 外部瀏覽器完成驗證後不會自
 Repository 清單、書庫 binding 與 Plugin package 是不同資料。重新安裝／核准 exact package，並在
 該裝置重新建立登入／Cookie；不要期待 backup 或 sync 攜帶 executable 與 secrets。
 
+
 ## 發布者清單
 
-1. 先選擇 runtime contract：generic `shinsou` 或已存在 reviewed profile 的 `shuyue`。
-2. 固定 package ID 與每個 exact source ID；多來源只能按 ID 選擇。
-3. 如實宣告 `contentType`、每來源 `contentKinds` 與 package union。
-4. 只宣告實際實作的 capabilities、runtime permissions、Host permissions 與 events。
-5. 保持 script metadata、index 與 sidecar 的 package、版本、來源、內容、權限、事件完全一致。
-6. 每次改 script 後重算 SHA-256 與 byte size。
-7. 尚未由目標 Host 完整支援的教學 fixture 必須設為 `referenceOnly: true`、`installable: false`。
-8. 從插件 repository 根目錄執行：
+完整步驟見[套件作者指南](PLUGIN_AUTHOR_GUIDE.md)。摘要：
 
-   ```bash
-   node test/v2-migration-smoke.js
-   git diff --check
-   ```
+1. `shinsou-plugin keygen` 產生並備份發佈者金鑰；公布**完整指紋**。
+2. 固定 `packageId` 與每個 exact `sourceId`；多來源只能按 ID 選擇。名稱不可含「官方」「official」「公式」。
+3. 如實宣告 `contentType`、每來源 `contentKinds` 與 package union；小說來源實作 `getChapterText`。
+4. 只宣告實際使用的 capabilities、runtime permissions、Host permissions 與 events；origin 一律 exact HTTPS。
+5. `build`（三方宣告一致）→ `lint` → `test` → 用 `serve` 搭配 App 開發者模式試用。
+6. 每次發佈遞增 `versionCode`，`sign` 並把 `.shinsou/state.json` 一起提交。
+7. 定期 `refresh` 撤回清單（預設 30 天到期），否則使用者無法安裝或更新。
+8. 需要時用 `revoke` 撤回版本、`rotate` 輪替金鑰、`revoke-key` 自我撤銷。
+9. 另在各平台做 Host 相容測試；離線測試不會驗證第三方登入、Cloudflare、限流或站點 API。
 
-9. 另在 Android／Desktop Rhino 與 iOS JavaScriptCore 做 Host 相容測試；離線 smoke test 不會驗證
-   第三方登入、Cloudflare、限流或站點 API。
-
-官方 repository 提供可重用的
-[`shinsou-extension-creator` skill](https://github.com/aluo96078/shinsou_plugin/blob/master/skills/shinsou-extension-creator/SKILL.md)
-與
-[`v2-package-schema.md`](https://github.com/aluo96078/shinsou_plugin/blob/master/skills/shinsou-extension-creator/references/v2-package-schema.md)。
 
 ## 已知限制
 
-- Production repository 必須使用 pinned Ed25519 envelope，並以 durable sequence watermark 防 replay／equivocation，同時檢查 payload SHA-256／size。Unsigned 只供明示 developer/local compatibility；目前沒有宣稱官方簽章已部署，發布前必須配置 out-of-band trust root、簽署所有 envelope 並完成 rotation／撤銷與跨平台驗證。
-- 官方 smoke test 會比對 index／script metadata／sidecar 的 `contentKinds`、capabilities 與 runtime
-  permissions；generic Shinsou Host admission 尚未把這三組欄位全部保留為 runtime enforcement。
+- 簽章發佈需要使用者自行確認發佈者（TOFU 或比對指紋）；Shinsou 不替任何發佈者背書。
+- 遺失發佈者私鑰無法自動恢復，只能發佈新金鑰並由使用者明確改信任。
+- 撤回清單過期後，該發佈者不能再安裝或更新套件；已安裝的套件繼續執行並顯示警示。
 - Mihon／Tachiyomi APK 只作 metadata 相容，不能在 Shinsou X 執行。
-- Generic Shinsou installable source ID 目前必須可無損轉成 `Long`。
-- 任意 Promise／async／direct `fetch` 不保證跨 Rhino／JavaScriptCore 相容。
-- Mixed manga + novel package 可由 schema 描述，但 production 安裝路徑尚未完整支援；`example.dual`
-  僅是不可安裝的契約 fixture。
-- Reviewed ShuYue 只允許內建 catalog 的 exact artifact，不是通用任意 ShuYue script loader。
-- `REPORT_USER_MESSAGE` 與 system-event `REQUEST_BROWSER_CHALLENGE` 尚未接通 production handler。
+- Installable source ID 目前必須可無損轉成 64-bit `Long`。
+- 沙箱把單一結果限制在 4 MiB；單一章節文字超過約 130 萬個中文字會失敗。
+- `REPORT_USER_MESSAGE` 永遠不授予第三方；system-event `REQUEST_BROWSER_CHALLENGE` 尚未接通 production handler。
+- 開發者模式的區網位址只接受私有 IPv4 數字位址，不接受主機名稱。
 - Windows 外部瀏覽器 challenge 無法自動匯入 Cookie。
+- 內建 reviewed catalog／ShuYue 相容路徑仍存在於程式碼中（見「目前 production 狀態」的說明）；第三方套件不依賴它。
 - Deterministic test 與 contract 驗證不代表第三方網站、帳號或反爬蟲流程持續可用。
+
 
 ## 實作與規格入口
 
+- [套件作者指南](PLUGIN_AUTHOR_GUIDE.md)：作者端完整流程。
+- [ADR-0002](architecture/0002-sandboxed-third-party-plugin-runtime.md)：沙箱、權限模型與發佈者信任的設計與決策。
+- [ADR-0001「套件身分」](architecture/0001-unified-publication-content-foundation.md)：install key 與 source id 投影。
 - [`ExtensionRepositoryClient.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/ExtensionRepositoryClient.kt)：索引 shape 偵測、V2 投影與 sidecar cross-check。
 - [`PluginManager.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginManager.kt)：安裝、更新、runtime、trust、撤銷與重啟恢復。
+- [`PublisherTrust.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PublisherTrust.kt)：發佈者信任、輪替、撤回清單與金鑰撤銷。
+- [`RepositoryTrust.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/RepositoryTrust.kt)：signed envelope 驗證與 replay／equivocation watermark。
+- [`PluginInstallKeys.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginInstallKeys.kt)：install key 與 source id 投影。
+- [`SandboxTierCeiling.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/SandboxTierCeiling.kt)：第三方套件永遠拿不到的上限。
+- [`UpdateGrantContinuation.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/UpdateGrantContinuation.kt)：更新時沿用授權（D4）。
+- [`PluginDeveloperMode.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginDeveloperMode.kt)：開發者模式。
+- [`PluginNamePolicy.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginNamePolicy.kt)：名稱政策。
+- [`sandbox/SandboxBridgeDispatcher.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxBridgeDispatcher.kt)：bridge 操作與權限檢查。
 - [`PluginVerifier.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginVerifier.kt)：SHA-256 與 execution grant。
 - [`FilePluginPackageStore.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/FilePluginPackageStore.kt)：獨立、content-addressed、原子 package 儲存。
 - [`ExtensionV2Contracts.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/v2/ExtensionV2Contracts.kt)：內容、capability 與 Host facade。
-- [`ShuYueReviewedExtensionV2.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/shuyue/ShuYueReviewedExtensionV2.kt)：reviewed catalog、quarantine 與 admission。
 - [`PluginSystemEventContracts.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/events/PluginSystemEventContracts.kt)：event wire、Host permission 與 limits。
+- [`fixtures/plugin-contract/v1/`](../fixtures/plugin-contract/v1/README.md)：App 與作者 CLI 共用的位元組級契約測試向量。
 - [插件系統事件接口架構](PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：完整 V1 event 威脅模型與 handler 設計。
 - [統一插件儲存庫契約](UNIFIED_PLUGIN_REPOSITORY.md)：repository 格式與本地 fixture。
 
 
-### Android 內容相容性修正（2026-09-11）
+### 歷史紀錄：Android 內容相容性修正（2026-09-11）
+
+> 以下是內建 reviewed catalog 時期對特定來源的修正紀錄，只對當時 catalog 內的 exact artifact 有意義，
+> 不構成第三方套件的規則，也不表示這些來源在任何意義上是「官方」。
 
 - 嗶咔 1.0.12 的已審核 content origins 增加 storage1.picacomic.com、storage-b.picacomic.com 與實際 redirect 目的地 img.picacomic.com；API、瀏覽器驗證及 credential origins 不變。
 - MyComic 增加 biccam.com；動漫屋／漫畫人補已觀察的 cdndm5 精確圖片 shard；包子漫畫增加 s2.bzcdn.net。這些均僅屬內容網路範圍。
