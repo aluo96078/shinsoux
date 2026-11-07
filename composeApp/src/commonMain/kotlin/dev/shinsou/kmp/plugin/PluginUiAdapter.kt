@@ -1190,7 +1190,7 @@ public class PluginBrowseAdapter(
         // The artifact downloaded must ask for exactly what the user just reviewed.
         val same = pending.artifact.packageId == expected.artifact.packageId &&
             pending.artifact.version == expected.artifact.version &&
-            (expected.artifact.sha256 == UNKNOWN_PREVIEW_DIGEST || pending.artifact.sha256 == expected.artifact.sha256) &&
+            pending.artifact.sha256 == expected.artifact.sha256 &&
             pending.requestedPermissions == expected.requestedPermissions &&
             pending.requestedRuntimePermissions == expected.requestedRuntimePermissions &&
             pending.requestedContentHostSuffixes == expected.requestedContentHostSuffixes &&

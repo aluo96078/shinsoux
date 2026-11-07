@@ -143,7 +143,11 @@ class PluginManagerExecutionTierTest {
 
         // An update asking for something new is previewed first: until accepted, nothing changes.
         val asking = first.copy(version = "1.2.0", versionCode = 3, runtimePermissions = first.runtimePermissions!! + PluginRuntimePermission.CREDENTIAL_ACCESS)
-        val preview = assertNotNull(host.manager.updateReviewPreview(REPOSITORY, asking))
+        // Without a digest the preview could not name the artifact: no preview (regular review).
+        assertNull(host.manager.updateReviewPreview(REPOSITORY, asking))
+        val digest = Sha256.hex(SCRIPT.encodeToByteArray())
+        val preview = assertNotNull(host.manager.updateReviewPreview(REPOSITORY, asking.copy(sha256 = digest)))
+        assertEquals(digest, preview.review.artifact.sha256)
         assertTrue(PluginRuntimePermission.CREDENTIAL_ACCESS in preview.review.requestedRuntimePermissions)
         assertEquals("1.2.0", preview.review.artifact.version)
         assertNotNull(host.manager.source(host.sourceId()))
@@ -432,6 +436,40 @@ class PluginManagerExecutionTierTest {
         host.manager.loadInstalled()
         assertNull(host.manager.source(devSource))
         assertNotNull(host.packages.get(devKey))
+    }
+
+    @Test
+    fun aThirdPartySourceOpensItsWebChallengeOnlyWhenGranted() = runTest {
+        suspend fun hostGranting(challenge: Boolean): Pair<Host, dev.shinsou.kmp.domain.model.SourceKey> {
+            val host = Host()
+            host.trustPublisher()
+            host.manager.install(
+                REPOSITORY,
+                entry().copy(
+                    runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK, PluginRuntimePermission.BROWSER_CHALLENGE),
+                    sources = listOf(
+                        SourceIndexEntry(
+                            name = "Tier fixture", lang = "all", id = SOURCE_ID, baseUrl = "https://source.example",
+                            browserSessionOrigins = setOf("https://source.example"), originPolicyVersion = 2,
+                        ),
+                    ),
+                ),
+            )
+            val review = assertNotNull(host.manager.pendingEventGrantReview(host.key()))
+            val runtime = if (challenge) review.requestedRuntimePermissions else review.requestedRuntimePermissions - PluginRuntimePermission.BROWSER_CHALLENGE
+            host.manager.approveEventGrantReview(host.key(), review, emptySet(), dev.shinsou.kmp.plugin.events.PluginGrantSelection(emptySet(), runtime, emptySet()))
+            val stored = host.manager.installedPlugins().single()
+            val source = stored.manifest.sources!!.single()
+            return host to dev.shinsou.kmp.domain.model.SourceKey(packageId = stored.manifest.id, sourceId = source.canonicalSourceId ?: source.id.toString(), legacyLongId = source.id)
+        }
+        val (declined, declinedKey) = hostGranting(challenge = false)
+        assertTrue(!declined.manager.authorizeWebChallenge(declinedKey))
+        assertFails { declined.manager.issueWebChallenge(declinedKey) }
+
+        val (granted, grantedKey) = hostGranting(challenge = true)
+        assertTrue(granted.manager.authorizeWebChallenge(grantedKey))
+        val authorization = assertNotNull(granted.manager.issueWebChallenge(grantedKey))
+        assertEquals(setOf("https://source.example"), authorization.allowedSubresourceOrigins)
     }
 
     @Test

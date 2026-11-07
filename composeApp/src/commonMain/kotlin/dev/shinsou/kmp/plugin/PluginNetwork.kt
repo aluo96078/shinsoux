@@ -1257,12 +1257,13 @@ public class PluginNetworkClient(
         }
     }
 
+    /**
+     * `Connection` is hop-by-hop and owned by the transport. Older scripts set it (`keep-alive`);
+     * it is dropped for every package rather than failing the request (ADR-0002 A7: no ability is
+     * reviewed-only). Every other transport-owned header still fails the request.
+     */
     private fun reviewedCompatibleHeaders(headers: Map<String, String>): Map<String, String> =
-        if (!stripReviewedLegacyConnectionHeader) {
-            headers
-        } else {
-            headers.filterKeys { !it.equals("Connection", ignoreCase = true) }
-        }
+        headers.filterKeys { !it.equals("Connection", ignoreCase = true) }
 
     private suspend fun storeResponseCookies(
         sourceId: Long,
@@ -1544,7 +1545,8 @@ internal fun isPluginCookiePublicSuffix(domain: String): Boolean =
  * (`com`, `co.jp`, `github.io`) and never an IP address. It only ever widens the credential-free
  * content plane, on port 443.
  */
-internal fun isGrantableContentHostSuffix(suffix: String): Boolean {
+internal fun isGrantableContentHostSuffix(declared: String): Boolean {
+    val suffix = declared.removeSuffix(CONTENT_HOST_SUFFIX_HIGH_PORTS)
     if (suffix != suffix.lowercase() || suffix.length > 253 || suffix.startsWith('.') || suffix.endsWith('.')) return false
     if (suffix.any { !(it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.') }) return false
     val labels = suffix.split('.')
@@ -1552,6 +1554,12 @@ internal fun isGrantableContentHostSuffix(suffix: String): Boolean {
     if (labels.last().all(Char::isDigit)) return false // an IPv4 address, not a host name
     return dev.shinsou.kmp.plugin.network.PublicSuffixList.registrableDomain(suffix) != null
 }
+
+/**
+ * Appended to a declared suffix (`hath.network:1024-65535`), the family may also use any
+ * non-privileged port, like E-Hentai's image nodes. Never a privileged port other than 443.
+ */
+internal const val CONTENT_HOST_SUFFIX_HIGH_PORTS: String = ":1024-65535"
 
 /** Most `contentHostSuffixes` one source may declare. */
 internal const val MAX_CONTENT_HOST_SUFFIXES: Int = 8
@@ -1578,8 +1586,13 @@ private fun isReviewedDynamicContentHost(url: Url, suffix: String): Boolean {
         // MangaDex At-Home servers are HTTPS endpoints on the standard TLS port. Keeping this
         // family at 443 prevents an otherwise valid CDN hostname from becoming a port scanner.
         REVIEWED_MANGADEX_CONTENT_SUFFIX -> host.endsWith(".$suffix") && url.port == 443
-        // A package's granted suffix: the host itself or any subdomain, standard TLS port only.
-        else -> isGrantableContentHostSuffix(suffix) && (host == suffix || host.endsWith(".$suffix")) && url.port == 443
+        // A package's granted suffix: the host itself or any subdomain, on 443 unless it declared
+        // the non-privileged port range too.
+        else -> {
+            val base = suffix.removeSuffix(CONTENT_HOST_SUFFIX_HIGH_PORTS)
+            val portAllowed = if (base != suffix) isReviewedDynamicContentPort(url.port) else url.port == 443
+            isGrantableContentHostSuffix(suffix) && (host == base || host.endsWith(".$base")) && portAllowed
+        }
     }
 }
 

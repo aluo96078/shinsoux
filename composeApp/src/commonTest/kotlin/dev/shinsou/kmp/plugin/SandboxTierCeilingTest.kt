@@ -81,6 +81,24 @@ class SandboxTierCeilingTest {
     }
 
     @Test
+    fun aSuffixDeclaringHighPortsReachesNonPrivilegedPortsOnly() = runTest {
+        assertTrue(isGrantableContentHostSuffix("hath.network:1024-65535"))
+        assertFalse(isGrantableContentHostSuffix("network:1024-65535"))
+        assertFalse(isGrantableContentHostSuffix("hath.network:1-65535"))
+        val content = SourceIndexEntry(
+            name = "S", lang = "en", id = 1, baseUrl = "https://e-hentai.example",
+            requestOrigins = setOf("https://e-hentai.example"),
+            contentHostSuffixes = setOf("hath.network:1024-65535"),
+            originPolicyVersion = 2,
+        ).networkPolicy().contentScope()
+        val resolver = PluginHostResolver { listOf("93.184.216.34") }
+        content.validate(Url("https://abc.hath.network:5891/h/a.jpg"), resolver)
+        content.validate(Url("https://abc.hath.network/h/a.jpg"), resolver)
+        assertFailsWith<IllegalArgumentException> { content.validate(Url("https://abc.hath.network:22/h/a.jpg"), resolver) }
+        assertFailsWith<IllegalArgumentException> { content.validate(Url("https://abc.hath.networks:5891/h/a.jpg"), resolver) }
+    }
+
+    @Test
     fun aPackageAskingForAHostPermissionAboveTheCeilingIsRefused() {
         val entry = PluginIndexEntry(
             id = "example.plugin",

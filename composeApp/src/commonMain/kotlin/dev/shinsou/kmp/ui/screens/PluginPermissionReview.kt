@@ -122,7 +122,7 @@ internal fun PluginPermissionReviewDialog(
                 }
                 suffixes.forEach { suffix ->
                     PermissionSwitch(
-                        title = strings.text("Download from every site under {0}", suffix),
+                        title = strings.text("Download from every site under {0}", suffix.displaySuffix(strings)),
                         risk = strings.text("Images and text only, without cookies or your account."),
                         checked = suffix in hosts,
                         enabled = current == null || suffix in current.contentHostSuffixes,
@@ -220,4 +220,10 @@ private fun PluginRuntimePermission.risk(strings: ShinsouStrings, details: Plugi
     PluginRuntimePermission.FAVORITE_MUTATION -> strings.text("Lets the plugin change your favorites on the site.")
     PluginRuntimePermission.BROWSER_CHALLENGE -> strings.text("Lets the plugin open a browser page to pass the site's checks.")
     PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK -> ""
+}
+
+/** `hath.network:1024-65535` reads as the host family with its port range spelled out. */
+private fun String.displaySuffix(strings: ShinsouStrings): String {
+    val base = removeSuffix(":1024-65535")
+    return if (base == this) this else strings.text("{0} (any port from 1024)", base)
 }

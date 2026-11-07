@@ -392,9 +392,6 @@ private const val MAX_PLUGIN_PACKAGE_ID_BYTES: Int = 256
 private fun Throwable.isUntrustedRepository(): Boolean =
     generateSequence(this) { it.cause }.any { it is RepositoryTrustException.UntrustedRepository }
 
-/** The digest of an update preview whose index entry has none (all zeroes: never a real artifact). */
-internal val UNKNOWN_PREVIEW_DIGEST: String = "0".repeat(64)
-
 /** Stands in for a publisher in D4 between two builds of one developer-mode package; never a real key id. */
 private const val DEVELOPER_CONTINUATION_PUBLISHER: String = "developer-mode:local"
 private const val MAX_PLUGIN_PACKAGE_SCRIPT_NAME_BYTES: Int = 512
@@ -480,6 +477,8 @@ public class PluginManager(
         val requiredCookieName: String?,
         val reviewedShuYue: Boolean,
         val reviewedOfficialPackage: Boolean,
+        /** A third-party package the user granted BROWSER_CHALLENGE (ADR-0002 §6.2). */
+        val genericPackage: Boolean = false,
     )
 
     /** Host-internal snapshot used to build an isolated browser without exposing raw storage. */
@@ -661,7 +660,8 @@ public class PluginManager(
      * carry the grant over — shown before anything is downloaded, so the installed version keeps
      * running until the user accepts (and keeps running if they do not). Null for a first install,
      * an update D4 continues, or a package that is not granted now (the regular flow applies).
-     * Built from the index entry only; the downloaded artifact is checked against it at install.
+     * Built from the index entry only (which must name the artifact's digest); the downloaded
+     * artifact must be exactly that one before the grant is applied.
      */
     public suspend fun updateReviewPreview(repository: ExtensionRepository, entry: PluginIndexEntry): UpdateReviewPreview? {
         val installKey = installKeyResolver(repository)(entry.id) ?: return null
@@ -669,8 +669,9 @@ public class PluginManager(
         val previousReview = previousStored.eventGrantReview(includeEmpty = true) ?: return null
         if (!executionAdmissionGranted(previousReview)) return null
         val publisherId = executionTierGate?.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
-        // An index without digests learns the artifact's only at download.
-        val digest = entry.sha256?.trim()?.lowercase() ?: UNKNOWN_PREVIEW_DIGEST
+        // The approval must name the exact artifact: an index without digests (legacy, unsigned)
+        // learns it only at download, so its update takes the regular review after installing.
+        val digest = entry.sha256?.trim()?.lowercase() ?: return null
         val preview = StoredPlugin(
             metadata = InstalledPluginMetadata(
                 manifest = manifestFor(installKey, entry, signature = digest),
@@ -1944,6 +1945,24 @@ public class PluginManager(
      * embedded browser: browser origins in repository/manifest data are not host review.
      */
     @OptIn(ExtensionImplementationApi::class)
+    /**
+     * ADR-0002 §6.2: the browser-challenge origins of a third-party (sandboxed) package's source:
+     * only the browser-session origins the source declared — which the permission page showed — and
+     * only while the user's grant includes BROWSER_CHALLENGE. Pages may load subresources from that
+     * source's declared request origins too. Null when it may not open a challenge.
+     */
+    private suspend fun genericWebChallengeOrigins(stored: StoredPlugin, sourceKey: SourceKey): Pair<Set<String>, Set<String>>? {
+        val declared = stored.manifest.sources.orEmpty().singleOrNull { source ->
+            sourceKeyFor(stored.manifest.id, source.id, source.canonicalSourceId) == sourceKey
+        } ?: return null
+        if (PluginRuntimePermission.BROWSER_CHALLENGE !in effectiveRuntimePermissions(stored)) return null
+        val grant = grantFor(stored)
+        if (eventGrantAdmission != null && (grant == null || PluginRuntimePermission.BROWSER_CHALLENGE !in grant.runtimePermissions)) return null
+        val sessionOrigins = canonicalWebChallengeOrigins(declared.networkPolicy().browserSessionOrigins)
+        if (sessionOrigins.isEmpty()) return null
+        return sessionOrigins to (sessionOrigins + canonicalWebChallengeOrigins(declared.declaredRequestOrigins()))
+    }
+
     internal suspend fun issueWebChallenge(sourceKey: SourceKey): WebChallengeAuthorization? =
         packageMutationMutex.withLock {
             require(sourceKey !in disabledNativeSources) { "Browser challenge source is disabled" }
@@ -1959,9 +1978,10 @@ public class PluginManager(
                     installed, declared, reviewedLocalRepositoryPolicy,
                 )
             }
-            if (stored != null && reviewedOfficial == null) {
-                throw IllegalArgumentException("Generic extensions cannot receive an embedded browser challenge")
-            }
+            val generic = if (stored != null && reviewedOfficial == null) {
+                genericWebChallengeOrigins(stored, sourceKey)
+                    ?: throw IllegalArgumentException("This extension was not granted the browser challenge")
+            } else null
             val profile = exactReviewedShuYueProfile(identity, sourceKey)
             if (profile != null) require(
                 dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in profile.requiredPermissions,
@@ -1976,16 +1996,18 @@ public class PluginManager(
             val origin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
                 ?: return@withLock null
             val liveOrigins = canonicalWebChallengeOrigins(source.webChallengeBrowserSessionOrigins())
-            val reviewedOrigins = if (profile != null) {
-                canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
-            } else {
-                canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
+            val reviewedOrigins = when {
+                generic != null -> generic.first
+                profile != null -> canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
+                else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
             }
             require(origin in reviewedOrigins && (profile == null || origin in liveOrigins)) {
                 "Web challenge URL is outside the exact reviewed origin"
             }
-            val reviewedSubresourceOrigins = if (profile != null) setOf(origin) else {
-                canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeSubresourceOrigins)
+            val reviewedSubresourceOrigins = when {
+                generic != null -> generic.second
+                profile != null -> setOf(origin)
+                else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeSubresourceOrigins)
             }
             require(origin in reviewedSubresourceOrigins) {
                 "Web challenge document origin must remain an allowed subresource origin"
@@ -2028,6 +2050,7 @@ public class PluginManager(
                 requiredCookieName = reviewedOfficial?.requiredWebChallengeCookieName,
                 reviewedShuYue = profile != null,
                 reviewedOfficialPackage = reviewedOfficial != null,
+                genericPackage = generic != null,
             )
             WebChallengeAuthorization(
                 capability, sourceKey, storageId, origin, source, localKeys, requiredKeys,
@@ -2073,9 +2096,9 @@ public class PluginManager(
                 sourceKeyFor(stored.manifest.id, source.id, source.canonicalSourceId) == sourceKey
             }
             val review = stored.eventGrantReview(includeEmpty = true) ?: return@withLock false
-            OfficialShinsouReviewedCatalog.match(
-                stored, declared, reviewedLocalRepositoryPolicy,
-            )?.webChallengeOrigins?.isNotEmpty() == true &&
+            val reviewed = OfficialShinsouReviewedCatalog.match(stored, declared, reviewedLocalRepositoryPolicy)
+            val origins = if (reviewed != null) reviewed.webChallengeOrigins else genericWebChallengeOrigins(stored, sourceKey)?.first.orEmpty()
+            origins.isNotEmpty() &&
                 PluginRuntimePermission.BROWSER_CHALLENGE in stored.manifest.runtimePermissions.orEmpty() &&
                 executionAdmissionGranted(review) && sourceWhilePackageLocked(sourceKey) != null
         }
@@ -2121,8 +2144,12 @@ public class PluginManager(
                 installed, declared, reviewedLocalRepositoryPolicy,
             )
         }
+        val generic = if (grant.genericPackage && stored != null && reviewedOfficial == null) {
+            genericWebChallengeOrigins(stored, sourceKey)
+        } else null
         require((grant.reviewedShuYue && profile != null && stored == null) ||
-            (grant.reviewedOfficialPackage && reviewedOfficial != null)
+            (grant.reviewedOfficialPackage && reviewedOfficial != null) ||
+            (grant.genericPackage && generic != null)
         ) {
             "Browser challenge storage scope is no longer reviewed"
         }
@@ -2130,10 +2157,10 @@ public class PluginManager(
             ?: throw IllegalArgumentException("Browser challenge source is no longer live")
         val liveOrigin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
         val liveOrigins = canonicalWebChallengeOrigins(source.webChallengeBrowserSessionOrigins())
-        val reviewedOrigins = if (profile != null) {
-            canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
-        } else {
-            canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
+        val reviewedOrigins = when {
+            generic != null -> generic.first
+            profile != null -> canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
+            else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
         }
         require(liveOrigin == grant.canonicalOrigin && liveOrigin in reviewedOrigins &&
             (profile == null || liveOrigin in liveOrigins)

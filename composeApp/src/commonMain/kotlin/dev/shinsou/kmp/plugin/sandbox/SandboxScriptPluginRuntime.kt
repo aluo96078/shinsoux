@@ -74,7 +74,7 @@ internal class SandboxRuntimeFactory(
         // Checked before any sandbox opens: provenance for other bytes or another source is refused.
         val provenance = environment.inProcessScriptProvenance
         val reviewedLimits = provenance?.requireExactMatch(script, manifest, source)
-        val sandboxEnvironment = if (provenance == null) environment else environment.copy(
+        val sandboxEnvironment = if (provenance == null) environment.withTextResultLimit(source) else environment.copy(
             executionLimits = reviewedLimits ?: environment.executionLimits,
             inProcessScriptProvenance = null,
         )
@@ -94,6 +94,18 @@ internal class SandboxRuntimeFactory(
         }
         return runtime
     }
+}
+
+/**
+ * A source that serves chapter text (ADR-0002 A5) returns it as one string: it may be as long as a
+ * whole result (4 MiB, the sandbox's frame ceiling) instead of the general 1 MiB string limit.
+ */
+private fun ScriptPluginEnvironment.withTextResultLimit(source: SourceIndexEntry): ScriptPluginEnvironment {
+    if ("PLAIN_TEXT" !in source.contentKinds) return this
+    val limits = executionLimits
+    val textLimit = minOf(limits.maxResultBytes, SandboxFieldLimits().maxJsonBytes)
+    if (limits.maxResultStringBytes >= textLimit) return this
+    return copy(executionLimits = limits.copy(maxResultStringBytes = textLimit))
 }
 
 /** Host-owned sandbox limits derived from the source's execution limits (§7). */

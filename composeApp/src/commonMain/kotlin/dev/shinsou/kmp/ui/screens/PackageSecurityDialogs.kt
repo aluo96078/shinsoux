@@ -140,7 +140,6 @@ internal fun PackageSecurityDialog(
                                 append(" · ")
                                 append(
                                     when {
-                                        publisher.official -> strings.text("Official")
                                         publisher.fingerprintVerified -> strings.text("Fingerprint matched")
                                         else -> strings.text("Trusted on first use")
                                     },

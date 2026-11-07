@@ -4329,9 +4329,7 @@ private fun ExtensionsPane(
                                 }
                             }
                         }
-                        if (repository.official) {
-                            Icon(Icons.Filled.CheckCircle, strings.text("Official"), tint = MaterialTheme.colorScheme.primary)
-                        }
+                        // No repository is official (ADR-0002): none gets a badge.
                         // Every repository is user-managed, including official repositories.
                         IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
                             Icon(Icons.Outlined.Delete, strings.delete)
