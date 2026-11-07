@@ -3,6 +3,9 @@ package dev.shinsou.kmp.ui
 /** Whether this target exposes hardware volume buttons that the reader can intercept. */
 internal expect val platformSupportsReaderVolumeKeys: Boolean
 
+/** Whether background downloads can be kept running with silent audio (iOS only). */
+internal expect val platformSupportsSilentAudioKeepAlive: Boolean
+
 internal fun shouldShowReaderVolumeKeySetting(
     platformSupported: Boolean = platformSupportsReaderVolumeKeys,
 ): Boolean = platformSupported

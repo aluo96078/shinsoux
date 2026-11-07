@@ -121,6 +121,12 @@ public fun registerBackgroundDownloadTasks() {
     IosApplicationContainer.registerBackgroundDownloadTasks()
 }
 
+/**
+ * Swift's volume-key support shares the app's AVAudioSession and asks this before deactivating
+ * it: deactivating would stop the silent audio keeping background downloads alive.
+ */
+public fun isDownloadSilentAudioInUse(): Boolean = IosApplicationContainer.downloadSilentAudioInUse
+
 /** Re-submits the earliest-begin-date hint when the scene moves to the background. */
 public fun scheduleAutomaticBackupBackgroundTask(): Boolean =
     IosApplicationContainer.autoBackupScheduler.apply(IosApplicationContainer.repository.currentSnapshot.backupState)
@@ -219,10 +225,13 @@ internal object IosApplicationContainer {
                 ?: "en"
             shinsouStringsFor(tag)
         },
+        silentAudioEnabled = { repository.currentSnapshot.settings.downloads.keepAliveWithSilentAudio },
     )
 
     /** Called synchronously at launch, before the app finishes launching. */
     fun registerBackgroundDownloadTasks() = downloadKeeper.registerTasks()
+
+    val downloadSilentAudioInUse: Boolean get() = downloadKeeper.silentAudioInUse
 
     private var started = false
 

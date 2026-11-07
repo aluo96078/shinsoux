@@ -126,6 +126,8 @@ data class DownloadSettings(
     val parallelDownloads: Int = 3,
     val parallelPages: Int = 5,
     val removeAfterMarkedRead: Boolean = false,
+    /** iOS: play silent audio in the background so downloads go on where iOS grants no task time. */
+    val keepAliveWithSilentAudio: Boolean = false,
 )
 
 @Serializable

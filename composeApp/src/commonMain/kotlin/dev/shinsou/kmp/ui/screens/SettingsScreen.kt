@@ -596,6 +596,17 @@ private fun DownloadSettingsPane(settings: AppSettings, onChange: (AppSettings) 
         }
         item { SliderSetting(strings.text("Parallel chapters"), settings.downloads.parallelDownloads.toFloat(), 1f..10f, 1) { onChange(settings.copy(downloads = settings.downloads.copy(parallelDownloads = it.roundToInt()))) } }
         item { SliderSetting(strings.text("Parallel pages"), settings.downloads.parallelPages.toFloat(), 1f..12f, 1) { onChange(settings.copy(downloads = settings.downloads.copy(parallelPages = it.roundToInt()))) } }
+        if (dev.shinsou.kmp.ui.platformSupportsSilentAudioKeepAlive) {
+            item {
+                ToggleSetting(
+                    strings.text("Keep downloading with silent audio"),
+                    strings.text("Plays silent audio while downloading in the background, for when iOS gives no background time (such as in LiveContainer). Uses more battery."),
+                    settings.downloads.keepAliveWithSilentAudio,
+                ) {
+                    onChange(settings.copy(downloads = settings.downloads.copy(keepAliveWithSilentAudio = it)))
+                }
+            }
+        }
     }
 }
 

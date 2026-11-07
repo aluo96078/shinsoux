@@ -720,7 +720,11 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         volumeView?.removeFromSuperview()
         volumeView = nil
         volumeSlider = nil
-        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        // Background downloads may be kept alive by silent audio on this same session;
+        // deactivating it would stop that audio and let iOS suspend the downloads.
+        if !MainViewControllerKt.isDownloadSilentAudioInUse() {
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     override func observeValue(

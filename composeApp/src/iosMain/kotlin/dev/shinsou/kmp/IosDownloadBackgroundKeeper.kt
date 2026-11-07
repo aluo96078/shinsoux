@@ -9,12 +9,14 @@ import kotlinx.cinterop.ObjCObjectVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.value
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -32,6 +34,7 @@ import platform.Foundation.NSBundle
 import platform.Foundation.NSClassFromString
 import platform.Foundation.NSDate
 import platform.Foundation.NSError
+import platform.Foundation.NSLog
 import platform.Foundation.dateByAddingTimeInterval
 import platform.UIKit.UIApplication
 import platform.UIKit.UIApplicationState
@@ -51,7 +54,10 @@ import platform.UIKit.UIBackgroundTaskInvalid
  *   app is not opened again. They also resume as soon as the app returns.
  *
  * Under LiveContainer the scheduler checks the host app's Info.plist and bundle id, not ours, so
- * both task kinds fail to register and only the UIKit background time is used.
+ * both task kinds fail to register and only the UIKit background time is used. For that case the
+ * user can opt in to [IosSilentAudioKeepAlive]: when no system task is running, silent audio keeps
+ * the app alive in place of the UIKit time, and the UIKit time remains the fallback whenever the
+ * audio cannot play (it failed to start, or a call interrupted it).
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class IosDownloadBackgroundKeeper(
@@ -60,6 +66,8 @@ internal class IosDownloadBackgroundKeeper(
     /** Starts the app core (idempotent) and waits until both queues are restored. */
     private val startApp: suspend () -> Unit,
     private val strings: () -> ShinsouStrings,
+    /** The user's opt-in to keep downloading with silent audio; read whenever background time is needed. */
+    private val silentAudioEnabled: () -> Boolean = { false },
 ) {
     private val scheduler: BGTaskScheduler get() = BGTaskScheduler.sharedScheduler
     private val foreground = MutableStateFlow(true)
@@ -76,6 +84,14 @@ internal class IosDownloadBackgroundKeeper(
 
     private var continuedRegistered = false
     private var catchUpRegistered = false
+
+    /** Main thread only: downloads are waiting in the background with no system task running. */
+    private var needsTime = false
+    private val silentAudio = IosSilentAudioKeepAlive(onInterrupted = ::silentAudioInterrupted)
+    private var silentAudioWatchdog: Job? = null
+
+    /** Main thread: silent audio is what keeps the downloads running now (read by the Swift host). */
+    val silentAudioInUse: Boolean get() = silentAudioWatchdog?.isActive == true
 
     /** Must run before the app finishes launching; each identifier is registered at most once. */
     fun registerTasks() {
@@ -98,7 +114,7 @@ internal class IosDownloadBackgroundKeeper(
                 !visible && status != null && runs == 0
             }
                 .distinctUntilChanged()
-                .collect { needsTime -> withContext(Dispatchers.Main) { if (needsTime) begin() else end() } }
+                .collect { needed -> withContext(Dispatchers.Main) { if (needed) keepAlive() else release() } }
         }
         // A continued-processing task may only be submitted while the app is on screen.
         scope.launch {
@@ -119,6 +135,48 @@ internal class IosDownloadBackgroundKeeper(
             // Work a stop in an earlier process paused is still waiting.
             scope.launch { requestCatchUpIfNeeded() }
         }
+    }
+
+    // Background time ----------------------------------------------------------------------------
+
+    private fun keepAlive() {
+        needsTime = true
+        if (silentAudioEnabled() && silentAudio.start()) {
+            end()
+            watchSilentAudio()
+        } else {
+            begin()
+        }
+    }
+
+    private fun release() {
+        needsTime = false
+        silentAudioWatchdog?.cancel()
+        silentAudioWatchdog = null
+        silentAudio.stop()
+        end()
+    }
+
+    /**
+     * The audio can stop without telling us (another part of the app deactivating the shared
+     * session, a media services reset): check it regularly, play again, and fall back to the
+     * UIKit time while it cannot.
+     */
+    private fun watchSilentAudio() {
+        if (silentAudioWatchdog?.isActive == true) return
+        silentAudioWatchdog = scope.launch(Dispatchers.Main) {
+            while (needsTime) {
+                delay(SILENT_AUDIO_CHECK_MILLIS)
+                if (!needsTime || silentAudio.isPlaying) continue
+                if (silentAudio.start()) end() else begin()
+            }
+        }
+    }
+
+    /** Another app's audio stopped ours: fall back to the UIKit time, and play again once it ends. */
+    private fun silentAudioInterrupted(began: Boolean) {
+        if (!needsTime || !silentAudioEnabled()) return
+        if (began) begin() else if (silentAudio.start()) end()
     }
 
     // UIKit background time ----------------------------------------------------------------------
@@ -302,7 +360,16 @@ internal class IosDownloadBackgroundKeeper(
 
     private fun submitRequest(request: platform.BackgroundTasks.BGTaskRequest): Boolean = memScoped {
         val error = alloc<ObjCObjectVar<NSError?>>()
-        scheduler.submitTaskRequest(request, error.ptr)
+        scheduler.submitTaskRequest(request, error.ptr).also { submitted ->
+            // A refusal is not an app error (the Simulator, for one, has no scheduler), but the
+            // reason belongs in the device log for anyone wondering why work stopped in the background.
+            if (!submitted) {
+                val reason = error.value?.let { "${it.domain} ${it.code}: ${it.localizedDescription}" } ?: "unknown"
+                // Formatted here: Kotlin strings passed through NSLog's C varargs crash.
+                val message = "Shinsou: background task ${request.identifier} was not submitted ($reason)"
+                NSLog(message.replace("%", "%%"))
+            }
+        }
     }
 
     private fun permittedIdentifiers(): Set<String> =
@@ -319,5 +386,6 @@ internal class IosDownloadBackgroundKeeper(
         const val CONTINUED_TASK_IDENTIFIER = "dev.aluo.shinsoux.downloads"
         const val CATCH_UP_TASK_IDENTIFIER = "dev.aluo.shinsoux.downloads.catchup"
         const val CATCH_UP_DELAY_SECONDS = 5.0 * 60.0
+        const val SILENT_AUDIO_CHECK_MILLIS = 5_000L
     }
 }
