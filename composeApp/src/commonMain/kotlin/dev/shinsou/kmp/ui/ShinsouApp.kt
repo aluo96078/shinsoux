@@ -138,6 +138,7 @@ import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
 import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
 import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
+import dev.shinsou.kmp.plugin.admits
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.isPlaceholderPublicationTitle
 import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
@@ -1182,9 +1183,12 @@ private fun ShinsouAppContent(
                         if (link == pendingRepositoryLink) return@collect
                         selectSection(MainSection.BROWSE)
                         val developer = appServices.browse.packageSecurity().developerMode
-                        if (developer?.enabled != true) {
+                        val admitted = developer != null && dev.shinsou.kmp.plugin.PluginDeveloperModeState(developer.enabled, developer.lanHosts)
+                            .admits(link.repositoryUrl)
+                        if (!admitted) {
+                            // Only this device or an address the user entered: never any other server.
                             appServices.deepLinkHandled(link)
-                            snackbar.showSnackbar(strings.text("Turn on developer mode in Package security to add a development server."))
+                            snackbar.showSnackbar(strings.text("To add this development server, turn on developer mode in Package security and add its address there (this device is always allowed)."))
                             return@collect
                         }
                         // Confirmed like any unsigned repository; admission still checks the address.

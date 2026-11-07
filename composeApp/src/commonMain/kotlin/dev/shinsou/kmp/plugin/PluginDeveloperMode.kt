@@ -48,19 +48,22 @@ public class PluginDeveloperModeStore(private val store: PluginKeyValueStore) {
     }
 
     /** True when developer mode is on and [normalizedBaseUrl] is on this device or an entered LAN address. */
-    public fun admitsRepository(normalizedBaseUrl: String): Boolean {
-        val current = state.value
-        if (!current.enabled) return false
-        val host = repositoryHost(normalizedBaseUrl) ?: return false
-        return host in LOOPBACK_HOSTS || host in current.lanHosts
-    }
+    public fun admitsRepository(normalizedBaseUrl: String): Boolean = state.value.admits(normalizedBaseUrl)
 
     private companion object {
         const val ENABLED_KEY = "plugin.developer-mode.enabled"
         const val HOSTS_KEY = "plugin.developer-mode.lan-hosts"
         const val MAX_HOSTS = 8
-        val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "::1")
     }
+}
+
+private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "::1")
+
+/** True when the mode is on and [url] is on this device or an entered LAN address (any scheme but those two refused). */
+public fun PluginDeveloperModeState.admits(url: String): Boolean {
+    if (!enabled) return false
+    val host = repositoryHost(url.trim()) ?: return false
+    return host in LOOPBACK_HOSTS || host in lanHosts
 }
 
 private fun repositoryHost(url: String): String? {
