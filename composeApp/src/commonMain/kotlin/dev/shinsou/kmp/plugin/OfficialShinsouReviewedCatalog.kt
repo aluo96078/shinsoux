@@ -350,6 +350,9 @@ internal object OfficialShinsouReviewedCatalog {
         source: SourceIndexEntry?,
         reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy = ReviewedLocalRepositoryPolicy.DISABLED,
     ): ReviewedOfficialShinsouSource? {
+        // A publisher-signed copy runs as the third-party package it is (ADR-0002: no official
+        // tier), even when its bytes equal a reviewed artifact: only the unsigned install matches.
+        if (stored.metadata.publisherId != null) return null
         // ExtensionRepositoryClient accepts surrounding whitespace and redundant trailing
         // slashes before applying the exact official-repository trust decision. PluginManager
         // retains the caller-facing repository value in installed metadata, so repeat only that

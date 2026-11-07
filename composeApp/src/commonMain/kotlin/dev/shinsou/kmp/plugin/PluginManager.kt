@@ -389,6 +389,9 @@ internal const val MAX_PLUGIN_PACKAGE_SCRIPT_BYTES: Int = 8 * 1_024 * 1_024
 internal const val MAX_PLUGIN_PACKAGE_METADATA_BYTES: Int = 512 * 1_024
 internal const val MAX_PLUGIN_PACKAGE_COUNT: Int = 256
 private const val MAX_PLUGIN_PACKAGE_ID_BYTES: Int = 256
+private fun Throwable.isUntrustedRepository(): Boolean =
+    generateSequence(this) { it.cause }.any { it is RepositoryTrustException.UntrustedRepository }
+
 /** Stands in for a publisher in D4 between two builds of one developer-mode package; never a real key id. */
 private const val DEVELOPER_CONTINUATION_PUBLISHER: String = "developer-mode:local"
 private const val MAX_PLUGIN_PACKAGE_SCRIPT_NAME_BYTES: Int = 512
@@ -493,6 +496,8 @@ public class PluginManager(
     internal data class RepositoryRefreshResult(
         val descriptors: List<ExtensionDescriptor>,
         val snapshots: Map<String, RepositoryIndexSnapshot>,
+        /** Added repositories that now publish signed documents from a publisher not yet trusted here. */
+        val repositoriesNeedingTrust: Set<String> = emptySet(),
     )
 
     public suspend fun refresh(repositories: List<ExtensionRepository>): List<ExtensionDescriptor> =
@@ -530,6 +535,7 @@ public class PluginManager(
         }
 
         val snapshots = linkedMapOf<String, RepositoryIndexSnapshot>()
+        val needingTrust = linkedSetOf<String>()
         repositories.forEach { repository ->
             val snapshot = try {
                 repositoryClient.fetchIndexSnapshot(repository.baseUrl)
@@ -539,6 +545,12 @@ public class PluginManager(
                 // Only a developer-mode server can be plain HTTP: one that is stopped, or refused
                 // because the mode is off, must not fail every other repository's refresh.
                 if (repository.baseUrl.trim().startsWith("http://", ignoreCase = true)) return@forEach
+                // A repository that switched to signed publishing waits for the user to trust its
+                // publisher; installed packages keep running, and the others still refresh.
+                if (error.isUntrustedRepository()) {
+                    needingTrust += repository.baseUrl
+                    return@forEach
+                }
                 throw error
             }
             snapshots[repository.baseUrl] = snapshot
@@ -612,7 +624,7 @@ public class PluginManager(
         return RepositoryRefreshResult(result.values.sortedWith(
             compareBy<ExtensionDescriptor> { it.state == ExtensionState.AVAILABLE }
                 .thenBy { it.name.lowercase() },
-        ), snapshots.toMap())
+        ), snapshots.toMap(), needingTrust)
         } finally {
             packageMutationMutex.withLock { invalidateWebChallengeGrants() }
         }
@@ -1324,6 +1336,21 @@ public class PluginManager(
     private fun StoredPlugin.continuationPublisher(): String? = metadata.publisherId
         ?: DEVELOPER_CONTINUATION_PUBLISHER.takeIf { PluginInstallKeys.isDeveloperKey(manifest.id) }
 
+    /**
+     * ADR-0002 S8 transition: a package installed from the original community repository while it
+     * was unsigned has no publisher. Its first signed update, from that same URL under the same bare
+     * key, counts as the publisher the user has since trusted for the URL (one key only can ever be
+     * pinned there), so D4 can keep the user's grant when nothing new is asked.
+     */
+    private suspend fun StoredPlugin.legacyCommunityPublisher(next: StoredPlugin): String? {
+        if (metadata.publisherId != null || PluginInstallKeys.isPublisherScoped(manifest.id)) return null
+        val nextPublisher = next.metadata.publisherId ?: return null
+        val official = repositoryClient.canonicalBaseUrl(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)
+        fun canonical(url: String?) = url?.let { runCatching { repositoryClient.canonicalBaseUrl(it) }.getOrNull() }
+        if (canonical(metadata.repositoryBaseUrl) != official || canonical(next.metadata.repositoryBaseUrl) != official) return null
+        return nextPublisher.takeIf { executionTierGate?.publisherForRepository(official) == it }
+    }
+
     private suspend fun continuedGrantFor(
         previousStored: StoredPlugin?,
         previousReview: PluginEventGrantReview?,
@@ -1335,7 +1362,7 @@ public class PluginManager(
         if (isLocallyRevoked(previousReview.artifact)) return null
         val previousGrant = admission.grantedSelection(previousReview.artifact) ?: return null
         return UpdateGrantContinuation.continuedSelection(
-            previousPublisherId = previousStored.continuationPublisher(),
+            previousPublisherId = previousStored.continuationPublisher() ?: previousStored.legacyCommunityPublisher(stored),
             nextPublisherId = stored.continuationPublisher(),
             previousReview = previousReview,
             previousGrant = previousGrant,

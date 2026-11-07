@@ -303,6 +303,8 @@ public class PluginBrowseAdapter(
     private var descriptors: Map<String, ExtensionDescriptor> = emptyMap()
     /** Exact process-local authenticated index paired with the displayed repository rows. */
     private var repositorySnapshots: Map<String, RepositoryIndexSnapshot> = emptyMap()
+    /** Repositories whose new signed publisher the user has not trusted yet (ADR-0002 S8). */
+    private var repositoriesNeedingTrust: Set<String> = emptySet()
     private var reviewedShuYuePackages: Map<String, ShuYueReviewedRepositoryPackageV2> = emptyMap()
     private var reviewedShuYuePackageOwners: Map<String, ShuYueReviewedRepositoryCoordinatorV2> = emptyMap()
     private var reviewedShuYueRepositoryRows: List<BrowseRepository> = emptyList()
@@ -1761,6 +1763,7 @@ public class PluginBrowseAdapter(
                 val refreshed = manager.refreshWithAdmissions(visibleRepositories)
                 descriptors = refreshed.descriptors.associateBy { it.id }
                 repositorySnapshots = refreshed.snapshots
+                repositoriesNeedingTrust = refreshed.repositoriesNeedingTrust
                 refreshReviewedShuYueRepositories()
             }
             rebuildSnapshot(errorMessage = null)
@@ -2549,6 +2552,7 @@ public class PluginBrowseAdapter(
         website = website,
         signingFingerprint = signingKeyFingerprint.takeIf { it.isNotBlank() },
         official = baseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL,
+        needsPublisherTrust = baseUrl in repositoriesNeedingTrust,
     )
 
     private fun ExtensionRepository.toPortableRepository(): ExtensionRepo = ExtensionRepo(

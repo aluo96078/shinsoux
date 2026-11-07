@@ -4272,6 +4272,16 @@ private fun ExtensionsPane(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (repository.needsPublisherTrust) {
+                                Text(
+                                    strings.text("Now signed by its publisher: confirm the publisher to keep updating."),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                TextButton(enabled = operation == null, onClick = { onAddRepository(repository.url) }) {
+                                    Text(strings.text("Confirm publisher"))
+                                }
+                            }
                         }
                         if (repository.official) {
                             Icon(Icons.Filled.CheckCircle, strings.text("Official"), tint = MaterialTheme.colorScheme.primary)

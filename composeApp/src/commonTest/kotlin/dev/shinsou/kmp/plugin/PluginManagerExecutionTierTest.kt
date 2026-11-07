@@ -36,6 +36,7 @@ class PluginManagerExecutionTierTest {
         val keyValues: PluginKeyValueStore = InMemoryPluginKeyValueStore(),
         val packages: PluginPackageStore = InMemoryPluginPackageStore(),
         withSandbox: Boolean = true,
+        trustPolicy: RepositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
     ) {
         val sandbox = Engine()
         val state = KeyValueRepositorySecurityStateStore(keyValues)
@@ -44,11 +45,12 @@ class PluginManagerExecutionTierTest {
         val blocklist = LocalPluginBlocklist(keyValues)
         val storage = KeyValuePluginStorage(keyValues)
         val developer = PluginDeveloperModeStore(keyValues)
+        val admission = KeyValuePluginEventGrantAdmission(keyValues, MutablePluginSystemEventAuthorizer())
         var script = SCRIPT
         val client = ExtensionRepositoryClient(
             HttpClient(MockEngine { respond(script) }),
             cacheToken = { 1L },
-            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+            repositoryTrustPolicy = trustPolicy,
             developerRepository = developer::admitsRepository,
         )
         val manager = PluginManager(
@@ -60,7 +62,7 @@ class PluginManagerExecutionTierTest {
                 network = PluginNetworkClient(transport = PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) }, storage = storage),
                 storage = storage,
             ),
-            eventGrantAdmission = KeyValuePluginEventGrantAdmission(keyValues, MutablePluginSystemEventAuthorizer()),
+            eventGrantAdmission = admission,
             executionTierGate = PublisherExecutionTierGate(
                 publishers,
                 ExecutionTierResolver(
@@ -424,6 +426,49 @@ class PluginManagerExecutionTierTest {
     }
 
     @Test
+    fun aLegacyCommunityInstallKeepsItsGrantOnItsFirstSignedUpdate() = runTest {
+        val host = Host()
+        val withCookies = entry().copy(
+            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK, PluginRuntimePermission.COOKIE_STORAGE),
+        )
+        // Installed while the community repository was unsigned: bare key, no publisher.
+        host.manager.install(COMMUNITY_REPOSITORY, withCookies)
+        assertNull(host.packages.get(PLUGIN_ID)!!.metadata.publisherId)
+        val review = assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        val selection = dev.shinsou.kmp.plugin.events.PluginGrantSelection(emptySet(), review.requestedRuntimePermissions, emptySet())
+        // As the user approved it then (it ran in the reviewed tier, which this fixture is not in).
+        host.admission.approve(review.artifact, emptySet(), selection)
+
+        // The user trusts the publisher that now signs the URL; its update asks for nothing new.
+        val publisher = host.trustPublisher(COMMUNITY_REPOSITORY)
+        host.script = "var source = { version: 2 };"
+        host.manager.install(COMMUNITY_REPOSITORY, withCookies.copy(version = "1.1.0", versionCode = 2))
+        val signed = host.packages.get(PLUGIN_ID)!!
+        assertEquals(publisher, signed.metadata.publisherId)
+        assertNull(host.manager.pendingEventGrantReview(PLUGIN_ID))
+        assertEquals(selection, host.manager.grantedSelection(PLUGIN_ID))
+        assertNotNull(host.manager.source(SOURCE_ID))
+    }
+
+    @Test
+    fun anUnsignedPackageFromAnotherUrlDoesNotContinueIntoAPublisher() = runTest {
+        val host = Host()
+        host.manager.install(REPOSITORY, entry())
+        host.admission.approve(assertNotNull(host.manager.pendingEventGrantReview(PLUGIN_ID)).artifact, emptySet())
+        host.trustPublisher(REPOSITORY)
+        host.manager.install(REPOSITORY, entry(version = "1.1.0", versionCode = 2))
+        // A different (publisher-scoped) identity, waiting for its own review.
+        assertNotNull(host.manager.pendingEventGrantReview(host.manager.installedPlugins().first { it.metadata.publisherId != null }.manifest.id))
+    }
+
+    @Test
+    fun aRepositoryThatNeedsPublisherTrustDoesNotFailTheRefresh() = runTest {
+        val host = Host(trustPolicy = RepositoryTrustPolicies.REQUIRE_CONFIGURED_PIN)
+        val result = host.manager.refreshWithAdmissions(listOf(REPOSITORY))
+        assertEquals(setOf(REPOSITORY.baseUrl), result.repositoriesNeedingTrust)
+    }
+
+    @Test
     fun developerModeAdmitsOnlyThisDeviceAndEnteredPrivateAddresses() = runTest {
         val developer = PluginDeveloperModeStore(InMemoryPluginKeyValueStore())
         assertTrue(!developer.admitsRepository("http://127.0.0.1:8787"))
@@ -462,6 +507,7 @@ class PluginManagerExecutionTierTest {
         val REPOSITORY = ExtensionRepository("https://repo.example", "Repo")
         val OTHER_REPOSITORY = ExtensionRepository("https://other-repo.example", "Other repo")
         val DEV_REPOSITORY = ExtensionRepository("http://127.0.0.1:8787", "Dev server")
+        val COMMUNITY_REPOSITORY = ExtensionRepository(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL, "Community")
     }
 }
 
