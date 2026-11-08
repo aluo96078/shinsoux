@@ -775,14 +775,6 @@ public class ShinsouComposition(
      * they continue on the background tracking scope.
      */
     public suspend fun start() {
-        // Before any refresh: repository trust and install keys read it synchronously.
-        try {
-            pluginDeveloperMode.load()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // Unreadable: developer mode stays off.
-        }
         // The v2 observer/guard must be installed before proxy hydration, source refresh,
         // tracking or downloads can publish repository mutations.
         syncRuntime?.start()
@@ -790,6 +782,15 @@ public class ShinsouComposition(
         scheduleContentOutboxDrain()
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
+            // Before any refresh: repository trust and install keys read it synchronously, and
+            // until it is loaded developer mode counts as off.
+            try {
+                pluginDeveloperMode.load()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Unreadable: developer mode stays off.
+            }
             val stopsAtStart = backgroundDownloads.stopCount()
             try {
                 // Shown (and kept alive by the platform download service) right away; the
@@ -1156,7 +1157,8 @@ public class ShinsouComposition(
         syncInfrastructure?.installationStore?.loadOrCreate()?.deviceId
             ?: error("Platform sync infrastructure is unavailable")
 
-    public suspend fun close() {
+    /** [stage] names each shutdown step before it runs (the desktop startup probe records them). */
+    public suspend fun close(stage: (String) -> Unit = {}) {
         startupHydrationJob?.cancel()
         startupHydrationJob = null
         contentOutboxDrainJob?.cancel()
@@ -1173,25 +1175,37 @@ public class ShinsouComposition(
         annotationReconciliationSignals.close()
         proxySecretPersistenceJob?.cancel()
         portableRepositoryReconciliationJob?.cancel()
+        stage("trackerManager.cancelAll")
         trackerManager.cancelAll()
+        stage("trackingJob.cancelAndJoin")
         trackingJob.cancelAndJoin()
+        stage("pluginEventUiJob.cancelAndJoin")
         pluginEventUiJob.cancelAndJoin()
+        stage("downloads.close")
         downloads.close()
+        stage("pluginManager.close")
         pluginManager.close()
+        stage("pluginBrowserSessionTransport.close")
         pluginBrowserSessionTransport.close()
+        stage("pluginEventGateway.close")
         pluginEventGateway.close()
+        stage("pluginDiagnosticLog.clear")
         pluginDiagnosticLog.clear()
+        stage("contentFeatures.close")
         if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
         // Stop every mutation producer before flushing and terminating the coalesced writer.
         try {
+            stage("syncRuntime?.close")
             syncRuntime?.close()
         } finally {
             try {
+                stage("repository.closePersistence")
                 repository.closePersistence()
             } finally {
                 try {
                     provisioningHttpClient?.close()
                 } finally {
+                    stage("pluginHttpClient.close")
                     pluginHttpClient.close()
                     httpClient.close()
                 }

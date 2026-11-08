@@ -87,6 +87,7 @@ fun main(args: Array<String>) {
     configureDesktopSystemProperties(desktopPlatform)
     if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
     val verifyDesktopStartup = VERIFY_DESKTOP_STARTUP_ARGUMENT in args
+    if (verifyDesktopStartup) startDesktopProbeWatchdog()
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
@@ -117,12 +118,15 @@ fun main(args: Array<String>) {
     } else {
         null
     }
+    desktopProbeStage("before http client")
     val httpClient = createPlatformHttpClient()
     installConfiguredImageLoader(httpClient) {
         add(DesktopAvifDecoder.Factory())
     }
 
+    desktopProbeStage("before application")
     application {
+        desktopProbeStage("application")
         val repository = remember {
             val initial = DesktopPersistence.loadState()?.let { payload ->
                 runCatching { AppSnapshotJson.decode(payload) }.getOrNull()
@@ -136,6 +140,7 @@ fun main(args: Array<String>) {
         val strings = remember(languageTag) { shinsouStringsFor(languageTag) }
         val syncInfrastructure = remember { DesktopSyncInfrastructure() }
         val sandboxScope = rememberCoroutineScope()
+        desktopProbeStage("before composition")
         val composition = remember {
             ShinsouComposition(
                 repository = repository,
@@ -172,7 +177,10 @@ fun main(args: Array<String>) {
         lateinit var services: DesktopAppServices
 
         fun closeImmediately() {
-            if (closed.compareAndSet(false, true)) runCatching { runBlocking { composition.close() } }
+            if (closed.compareAndSet(false, true)) runCatching {
+                runBlocking { composition.close { step -> desktopProbeStage("close: $step") } }
+            }
+            desktopProbeStage("exitApplication")
             exitApplication()
         }
 
@@ -363,15 +371,20 @@ fun main(args: Array<String>) {
                 window.minimumSize = Dimension(900, 600)
             }
             LaunchedEffect(composition) {
+                desktopProbeStage("start")
                 composition.start()
+                desktopProbeStage("started")
                 if (verifyDesktopStartup) {
                     // The constructor above has opened and initialized SQLite. Waiting for the
                     // next frame proves that the packaged Compose UI can render as well.
                     withFrameNanos { }
+                    desktopProbeStage("frame")
                     if (desktopPlatform == DesktopPlatform.WINDOWS) {
                         verifyWindowsWindowChrome(window)
                     }
+                    desktopProbeStage("chrome")
                     writeDesktopProbeMarker(required = true)
+                    desktopProbeStage("marker")
                     closeImmediately()
                 }
             }
@@ -520,6 +533,46 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
     println("Shinsou X desktop runtime verification passed.")
     System.out.flush()
     exitProcess(0)
+}
+
+/**
+ * Startup probe only: records that `main` ran and, if the probe is still running after 60 s,
+ * where every thread is (next to the probe marker), so a stalled packaged start can be diagnosed
+ * on CI where no debugger can attach.
+ */
+/** Startup probe only: appends a stage name next to the probe marker (see the watchdog). */
+private fun desktopProbeStage(stage: String) {
+    val markerValue = System.getenv(DESKTOP_PROBE_MARKER_ENVIRONMENT)?.takeIf(String::isNotBlank) ?: return
+    runCatching {
+        Files.writeString(
+            Path.of("$markerValue.stages"), "${System.currentTimeMillis()} $stage\n", StandardCharsets.UTF_8,
+            java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND,
+        )
+    }
+}
+
+private fun startDesktopProbeWatchdog() {
+    val markerValue = System.getenv(DESKTOP_PROBE_MARKER_ENVIRONMENT)?.takeIf(String::isNotBlank) ?: return
+    val dumpPath = Path.of("$markerValue.threads")
+    runCatching { Files.writeString(dumpPath, "main started\n", StandardCharsets.UTF_8) }
+    Thread({
+        try {
+            Thread.sleep(60_000)
+        } catch (_: InterruptedException) {
+            return@Thread
+        }
+        val dump = buildString {
+            Thread.getAllStackTraces().forEach { (thread, frames) ->
+                appendLine("\"${thread.name}\" ${thread.state}")
+                frames.forEach { appendLine("    at $it") }
+                appendLine()
+            }
+        }
+        runCatching { Files.writeString(dumpPath, dump, StandardCharsets.UTF_8) }
+    }, "desktop-probe-watchdog").apply {
+        isDaemon = true
+        start()
+    }
 }
 
 private fun writeDesktopProbeMarker(required: Boolean) {
