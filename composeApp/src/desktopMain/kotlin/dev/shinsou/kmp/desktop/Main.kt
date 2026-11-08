@@ -208,7 +208,10 @@ fun main(args: Array<String>) {
         lateinit var services: DesktopAppServices
 
         fun closeImmediately() {
-            if (closed.compareAndSet(false, true)) runCatching { runBlocking { composition.close() } }
+            if (closed.compareAndSet(false, true)) runCatching {
+                runBlocking { composition.close { step -> desktopProbeStage("close: $step") } }
+            }
+            desktopProbeStage("exitApplication")
             exitApplication()
         }
 
@@ -412,6 +415,7 @@ fun main(args: Array<String>) {
                     }
                     desktopProbeStage("chrome")
                     writeDesktopProbeMarker(required = true)
+                    desktopProbeStage("marker")
                     closeImmediately()
                 }
             }
