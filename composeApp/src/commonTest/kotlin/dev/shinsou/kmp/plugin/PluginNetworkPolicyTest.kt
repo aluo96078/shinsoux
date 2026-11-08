@@ -198,11 +198,11 @@ class PluginNetworkPolicyTest {
     }
 
     @Test
-    fun reviewedDynamicContentSuffixRequiresContentScopeAndResolvedTransport() = runTest {
+    fun highPortContentSuffixRequiresContentScopeAndResolvedTransport() = runTest {
         val policy = PluginNetworkPolicy(
             requestOrigins = setOf("https://ehgt.org"),
             contentOrigins = setOf("https://ehgt.org"),
-            contentHostSuffixes = setOf(REVIEWED_DYNAMIC_CONTENT_SUFFIX),
+            contentHostSuffixes = setOf("hath.network:1024-65535"),
             resolver = publicResolver,
         )
         policy.validate(Url("https://ehgt.org/cover.jpg"))
@@ -234,7 +234,6 @@ class PluginNetworkPolicyTest {
         )
 
         listOf(
-            "https://hath.network/page.jpg",
             "https://evilhath.network/page.jpg",
             "https://abc.hath.network.evil/page.jpg",
             "http://abc.hath.network/page.jpg",
@@ -256,13 +255,13 @@ class PluginNetworkPolicyTest {
     }
 
     @Test
-    fun reviewedMangaDexAtHomeSuffixIsContentOnlyAndStandardHttpsOnly() = runTest {
+    fun mangaDexAtHomeSuffixIsContentOnlyAndStandardHttpsOnly() = runTest {
         val requests = mutableListOf<PluginHttpRequest>()
         val policy = PluginNetworkPolicy(
             requestOrigins = setOf("https://mangadex.org", "https://api.mangadex.org"),
             credentialOrigins = setOf("https://api.mangadex.org"),
             contentOrigins = setOf("https://uploads.mangadex.org"),
-            contentHostSuffixes = setOf(REVIEWED_MANGADEX_CONTENT_SUFFIX),
+            contentHostSuffixes = setOf("mangadex.network"),
             resolver = PluginHostResolver { listOf("93.184.216.34") },
         )
         val content = PluginNetworkClient(
@@ -287,7 +286,6 @@ class PluginNetworkPolicyTest {
         assertFalse(policy.maySendCredentials(Url(atHomeUrl)))
 
         listOf(
-            "https://mangadex.network/data/hash/1.png",
             "https://cmdxd98sb0x3yprd.mangadex.network.evil/data/hash/1.png",
             "https://cmdxd98sb0x3yprd.mangadex.network:8443/data/hash/1.png",
             "http://cmdxd98sb0x3yprd.mangadex.network/data/hash/1.png",

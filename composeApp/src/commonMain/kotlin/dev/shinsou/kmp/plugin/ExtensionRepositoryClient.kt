@@ -73,11 +73,6 @@ public class ExtensionRepositoryClient(
     private val repositoryHostResolver: PluginHostResolver = PluginHostResolver.Unavailable,
     /** Production transport must bind sockets to the already-vetted DNS answer set. */
     private val repositoryTransport: PluginHttpTransport? = null,
-    /** Explicit process-start admission for one app-reviewed loopback repository. */
-    private val reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy =
-        ReviewedLocalRepositoryPolicy.DISABLED,
-    /** Dedicated credential-free loopback transport; never reused for ordinary repositories. */
-    private val reviewedLocalRepositoryTransport: PluginHttpTransport? = null,
     /**
      * ADR-0002 §8.1: the development servers developer mode currently admits (checked against the
      * origin on every request, so switching the mode off takes effect at once). They may use HTTP.
@@ -102,11 +97,6 @@ public class ExtensionRepositoryClient(
             MAX_REPOSITORY_BYTES,
         )
         val document = decodeElement<RepositoryDocument>(url, verified.payload)
-        if (reviewedLocalRepositoryPolicy.admits(normalized) && verified.admission == null) {
-            require(document.meta.signingKeyFingerprint.isNullOrEmpty()) {
-                "Unsigned reviewed local repository cannot advertise signing authority"
-            }
-        }
         val repository = ExtensionRepository(
             baseUrl = normalized,
             name = document.meta.name,
@@ -179,7 +169,6 @@ public class ExtensionRepositoryClient(
             MAX_INDEX_BYTES,
         )
         val root = verified.payload
-        requireReviewedLocalV2Index(normalized, root)
         validateIndexJsonShape(root)
         if (root is JsonObject && isUnifiedEnvelope(root)) {
             val document = decodeElement<UnifiedRepositoryDocument>(url, root)
@@ -205,11 +194,6 @@ public class ExtensionRepositoryClient(
 
     public suspend fun fetchLegacyIndex(baseUrl: String): List<LegacyExtensionIndexEntry> {
         val normalized = normalizeBaseUrl(baseUrl)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            throw ExtensionRepositoryException.InvalidUrl(
-                "Legacy index is outside the reviewed local repository contract",
-            )
-        }
         val url = resolve(normalized, "index.min.json", cacheBust = true)
         val verified = fetchVerifiedJson(
             normalized,
@@ -242,8 +226,7 @@ public class ExtensionRepositoryClient(
                     MAX_INDEX_BYTES,
                 )
                 val root = verified.payload
-                requireReviewedLocalV2Index(normalized, root)
-                validateIndexJsonShape(root)
+                        validateIndexJsonShape(root)
                 if (root is JsonObject && isUnifiedEnvelope(root)) {
                     val document = decodeElement<UnifiedRepositoryDocument>(url, root)
                     validatePluginEntries(
@@ -274,7 +257,6 @@ public class ExtensionRepositoryClient(
                 )
             } catch (pluginFailure: Throwable) {
                 if (pluginFailure.hasRepositorySecurityFailure()) throw pluginFailure
-                if (reviewedLocalRepositoryPolicy.admits(normalized)) throw pluginFailure
                 try {
                     val legacyUrl = resolve(normalized, "index.min.json", cacheBust = true)
                     val legacyVerified = fetchVerifiedJson(
@@ -444,18 +426,7 @@ public class ExtensionRepositoryClient(
             )
         }
         require(shinsou.map { it.id }.distinct().size == shinsou.size)
-        val decoded = RepositoryIndex.Combined(shinsou)
-        if (normalizedBaseUrl != null && reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) {
-            // A local working tree can contain examples or unreviewed drafts. Project only
-            // exact current app-reviewed Shinsou rows; directory contents cannot mint authority.
-            RepositoryIndex.Combined(
-                plugins = decoded.plugins.filter { entry ->
-                    OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                        entry, reviewedLocalRepositoryPolicy, normalizedBaseUrl,
-                    ) != null
-                },
-            )
-        } else decoded
+        RepositoryIndex.Combined(shinsou)
     } catch (error: Throwable) {
         throw ExtensionRepositoryException.InvalidDocument(url, error)
     }
@@ -463,23 +434,10 @@ public class ExtensionRepositoryClient(
     public suspend fun downloadPluginScript(baseUrl: String, scriptUrl: String): ByteArray {
         validateRelativePath(scriptUrl)
         val normalized = normalizeBaseUrl(baseUrl)
-        val reviewedLocalDigests = if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            OfficialShinsouReviewedCatalog.reviewedLocalScriptDigests(scriptUrl).also { digests ->
-                require(digests.isNotEmpty()) {
-                    "Local repository script path is not a current app-reviewed artifact"
-                }
-            }
-        } else emptySet()
         val decision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(decision)
         val url = resolve(normalized, scriptUrl, cacheBust = true)
         val bytes = requestBytes(normalized, url, MAX_SCRIPT_BYTES, decision)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            val digest = Sha256.hex(bytes)
-            require(digest in reviewedLocalDigests) {
-                "Local repository script is not an exact current app-reviewed artifact"
-            }
-        }
         return bytes
     }
 
@@ -491,13 +449,6 @@ public class ExtensionRepositoryClient(
         val sidecarPath = entry.sidecarUrl ?: return
         validateRelativePath(sidecarPath)
         val normalized = normalizeBaseUrl(baseUrl)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            require(
-                OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                    entry, reviewedLocalRepositoryPolicy, normalized,
-                ) != null,
-            ) { "Local repository sidecar request is not bound to an exact reviewed index row" }
-        }
         val url = resolve(normalized, sidecarPath, cacheBust = true)
         val verified = fetchVerifiedJson(
             normalized,
@@ -515,9 +466,7 @@ public class ExtensionRepositoryClient(
             require(sidecar.requiredString("version") == entry.version)
             require(sidecar.requiredInt("versionCode") == entry.versionCode)
             require(sidecar.requiredString("contract") == entry.contract)
-            requireSidecarRuntimeParity(
-                normalized, sidecar, entry, reviewedLocalRepositoryPolicy,
-            )
+            requireSidecarRuntimeParity(normalized, sidecar, entry)
             require(sidecar.requiredString("name") == entry.name)
             require(sidecar.requiredString("lang") == entry.lang)
             require(sidecar.requiredBoolean("nsfw") == (entry.nsfw == 1))
@@ -630,7 +579,6 @@ public class ExtensionRepositoryClient(
         admission: RepositoryIndexAdmission?,
     ) {
         val normalized = normalizeBaseUrl(baseUrl)
-        requireReviewedLocalEntry(normalized, entry)
         val trustDecision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(trustDecision)
         if (trustDecision is RepositoryTrustDecision.RequirePinnedSignature) {
@@ -725,7 +673,6 @@ public class ExtensionRepositoryClient(
         val actual = actualSha256.trim().lowercase()
         if (actual != declared) throw PluginVerificationException.HashMismatch(declared, actual)
         val normalized = normalizeBaseUrl(baseUrl)
-        requireReviewedLocalEntry(normalized, entry)
         val trustDecision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(trustDecision)
         if (trustDecision is RepositoryTrustDecision.RequirePinnedSignature) {
@@ -806,13 +753,6 @@ public class ExtensionRepositoryClient(
             }
             val response = requestRepositoryHop(currentUrl, current, trustDecision, maxBytes)
             val location = response.location.trim()
-            if (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl) &&
-                (response.status in 300..399 || location.isNotEmpty())
-            ) {
-                throw ExtensionRepositoryException.InvalidUrl(
-                    "Local repository redirects are forbidden: $currentUrl",
-                )
-            }
             if (response.status in REDIRECT_STATUS_CODES && location.isNotEmpty()) {
                 if (hop >= MAX_REDIRECTS) throw ExtensionRepositoryException.InvalidUrl(currentUrl)
                 val next = resolveRedirect(currentUrl, location)
@@ -843,49 +783,7 @@ public class ExtensionRepositoryClient(
         parsed: ParsedRepositoryUrl,
         trustDecision: RepositoryTrustDecision,
         maxBytes: Long,
-    ): RepositoryHopResponse = if (reviewedLocalRepositoryPolicy.admits(parsed.origin)) {
-        val transport = reviewedLocalRepositoryTransport ?: throw IllegalStateException(
-            "Reviewed local repository transport is unavailable",
-        )
-        if (!reviewedLocalRepositoryPolicy.admitsRequestUrl(url)) {
-            throw ExtensionRepositoryException.InvalidUrl(url)
-        }
-        val response = try {
-            transport.execute(PluginHttpRequest("GET", url, maxResponseBytes = maxBytes.toInt()))
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (error: ExtensionRepositoryException) {
-            throw error
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        val responseHeaders = try {
-            boundedPluginResponseHeaders(response.headers.entries)
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        try {
-            responseHeaders.pluginContentEncoding()
-            val declared = responseHeaders.pluginDeclaredContentLength()
-            if (declared != null && declared > maxBytes) throw repositoryResponseTooLarge(url)
-        } catch (error: ExtensionRepositoryException) {
-            throw error
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        val bounded = requireBoundedRepositoryResponse(
-            RepositoryHopResponse(
-                response.status,
-                responseHeaders.pluginHeaderValues(HttpHeaders.Location).singleOrNull().orEmpty(),
-                response.body,
-            ),
-            maxBytes,
-        )
-        if (bounded.status in 300..399 || bounded.location.isNotEmpty()) {
-            throw ExtensionRepositoryException.InvalidUrl("Local repository redirects are forbidden: $url")
-        }
-        bounded
-    } else when (trustDecision) {
+    ): RepositoryHopResponse = when (trustDecision) {
         is RepositoryTrustDecision.RequirePinnedSignature -> {
             val transport = repositoryTransport ?: throw IllegalStateException(
                 "Pinned repository transport is unavailable; refusing an unbound DNS request",
@@ -1087,50 +985,14 @@ public class ExtensionRepositoryClient(
 
     private fun requireAllowedRepositoryScheme(parsed: ParsedRepositoryUrl, original: String) {
         if (parsed.scheme == "https") return
-        if (reviewedLocalRepositoryPolicy.admits(parsed.origin) &&
-            (parsed.path == "/" || reviewedLocalRepositoryPolicy.admitsRequestUrl(original))
-        ) return
         if (developerRepository(parsed.origin)) return
         if (!allowInsecureDeveloperHttp || !isPrivateHost(parsed.host)) {
             throw ExtensionRepositoryException.InvalidUrl(original)
         }
     }
 
-    private fun requireReviewedLocalEntry(normalizedBaseUrl: String, entry: PluginIndexEntry) {
-        if (!reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) return
-        require(
-            OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                entry, reviewedLocalRepositoryPolicy, normalizedBaseUrl,
-            ) != null,
-        ) { "Local repository entry is not an exact current app-reviewed artifact" }
-    }
-
-    private fun requireReviewedLocalV2Index(normalizedBaseUrl: String, root: JsonElement) {
-        if (!reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) return
-        val format = (root as? JsonObject)?.get("format")?.jsonPrimitive?.contentOrNull
-        if (format != "shinsou-extension-v2" || root !is JsonObject ||
-            listOf("shinsou", "legacy", "shuyue").any { it in root }
-        ) {
-            throw RepositoryTrustException.Malformed(
-                "Reviewed local repository must expose the fixed Shinsou V2 index contract",
-            )
-        }
-    }
-
-    /**
-     * Configured author pins retain precedence. Only the exact explicitly enabled loopback origin
-     * may replace an ordinary untrusted-repository result with compiled-catalogue compatibility;
-     * malformed policy/configuration failures are never downgraded.
-     */
-    private suspend fun trustDecisionFor(normalizedBaseUrl: String): RepositoryTrustDecision = try {
+    private suspend fun trustDecisionFor(normalizedBaseUrl: String): RepositoryTrustDecision =
         repositoryTrustPolicy.decisionFor(normalizedBaseUrl)
-    } catch (untrusted: RepositoryTrustException.UntrustedRepository) {
-        if (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) {
-            RepositoryTrustDecision.UnsignedDeveloperCompatibility
-        } else {
-            throw untrusted
-        }
-    }
 
     private fun JsonElement.stringSet(): Set<String> = (this as? JsonArray).orEmpty().mapTo(linkedSetOf()) { it.jsonPrimitive.content }
 
@@ -1366,7 +1228,6 @@ private fun requireSidecarRuntimeParity(
     normalizedBaseUrl: String,
     sidecar: JsonObject,
     entry: PluginIndexEntry,
-    reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy = ReviewedLocalRepositoryPolicy.DISABLED,
 ) {
     val expected = entry.runtime
     val element = sidecar["runtime"]
@@ -1375,12 +1236,9 @@ private fun requireSidecarRuntimeParity(
         // Keep this narrowly scoped compatibility exception; every other repository must bind
         // the sidecar runtime explicitly to the index runtime.
         require(
-            (normalizedBaseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL &&
+            normalizedBaseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL &&
                 entry.contract == "shinsou" &&
-                expected == V2_SHINSOU_RUNTIME) ||
-                (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl) &&
-                    entry.contract == "shinsou" &&
-                    expected == V2_SHINSOU_RUNTIME),
+                expected == V2_SHINSOU_RUNTIME,
         ) { "Missing 'runtime'" }
         return
     }

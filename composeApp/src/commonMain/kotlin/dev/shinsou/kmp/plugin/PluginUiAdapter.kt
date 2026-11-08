@@ -314,7 +314,7 @@ public class PluginBrowseAdapter(
         val security = packageSecurity ?: return null
         val input = normalizeRepositoryInput(url.trim())
         val presentation = operationMutex.withLock {
-            // Anything the regular path can already take (official, pinned, trusted publisher)
+            // Anything the regular path can already take (pinned, trusted publisher)
             // or that is not a signed repository goes through addRepository as before.
             // Null only when the repository answered with something that is not a signed repo.json
             // (an unsigned repository); a failure to reach it is an error, so a caller can tell
@@ -444,7 +444,7 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean): Unit = securityChange { security ->
-        // Packages without a publisher (the reviewed catalogues) are blocked by id.
+        // Packages without a publisher (unsigned, developer) are blocked by id.
         val publisherId = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId }?.metadata?.publisherId
         val entry = PluginBlockEntry.Package(
             PluginInstallKeys.publishedPackageId(extensionId),
@@ -642,9 +642,9 @@ public class PluginBrowseAdapter(
         val descriptor = manager.extensionSourceV2(sourceKey)?.descriptor ?: return null
         val metadata = PageRequestMetadata.parse(url)
         val resolved = resolveSourceHttpUrl(descriptor.baseUrl, metadata.cleanUrl) ?: return null
-        // Use the exact live artifact scope. Looking the id up from the reviewed catalogue can
-        // select an older profile when several admitted versions share a package id, causing the
-        // content request (and its source-scoped UA/preferences) to use the wrong namespace.
+        // Use the exact live artifact scope. Looking the id up another way can select an
+        // older version when several admitted ones share a package id, causing the content
+        // request (and its source-scoped UA/preferences) to use the wrong namespace.
         val contentScope = manager.contentNetworkScopeForSource(sourceKey) ?: return null
         return fetchPluginThumbnail(
             content = contentScope.network,
@@ -1581,7 +1581,7 @@ public class PluginBrowseAdapter(
                 url = target.toString(),
                 userAgent = userAgent,
                 cookies = boundStorage.getCookies(storageId).map(::toBrowseCookie),
-                requiredCookieName = authorization.requiredCookieName ?: "cf_clearance".takeIf {
+                requiredCookieName = "cf_clearance".takeIf {
                     requiresCloudflareClearance(sourceKey)
                 },
                 localStorageKeys = localStorageKeys.sorted(),
@@ -1984,7 +1984,6 @@ public class PluginBrowseAdapter(
         name = name,
         website = website,
         signingFingerprint = signingKeyFingerprint.takeIf { it.isNotBlank() },
-        official = baseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL,
         needsPublisherTrust = baseUrl in repositoriesNeedingTrust,
     )
 

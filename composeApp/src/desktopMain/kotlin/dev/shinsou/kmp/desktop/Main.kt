@@ -39,12 +39,8 @@ import dev.shinsou.kmp.network.DesktopAvifDecoder
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
-import dev.shinsou.kmp.plugin.DesktopReviewedLocalRepositoryTransport
-import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
-import dev.shinsou.kmp.plugin.isReviewedLocalRepositoryEnabled
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
-import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.DesktopTextToSpeechEngine
@@ -83,7 +79,6 @@ import org.jetbrains.compose.resources.painterResource
 
 private const val VERIFY_DESKTOP_RUNTIME_ARGUMENT = "--verify-desktop-runtime"
 private const val VERIFY_DESKTOP_STARTUP_ARGUMENT = "--verify-desktop-startup"
-private const val VERIFY_LOCAL_REPOSITORY_ARGUMENT = "--verify-reviewed-local-repository"
 private const val DESKTOP_PROBE_MARKER_ENVIRONMENT = "SHINSOU_DESKTOP_PROBE_MARKER"
 private const val DESKTOP_PROBE_TOKEN_ENVIRONMENT = "SHINSOU_DESKTOP_PROBE_TOKEN"
 
@@ -92,13 +87,6 @@ fun main(args: Array<String>) {
     configureDesktopSystemProperties(desktopPlatform)
     if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
     val verifyDesktopStartup = VERIFY_DESKTOP_STARTUP_ARGUMENT in args
-    val reviewedLocalRepositoryEnabled = isReviewedLocalRepositoryEnabled(
-        System.getProperty("shinsou.reviewedLocalRepository"),
-    )
-    if (VERIFY_LOCAL_REPOSITORY_ARGUMENT in args) {
-        check(reviewedLocalRepositoryEnabled) { "Reviewed local repository development mode is disabled" }
-        verifyReviewedLocalRepositoryAndExit()
-    }
     // Packaged URL protocol handlers pass the full URI as an argv entry. Retain it in the same
     // acknowledge-after-consumption flow used by mobile cold starts.
     val initialDeepLink = args.firstNotNullOfOrNull(DeepLinkParser::parse)
@@ -147,12 +135,6 @@ fun main(args: Array<String>) {
             ?: Locale.getDefault().toLanguageTag()
         val strings = remember(languageTag) { shinsouStringsFor(languageTag) }
         val syncInfrastructure = remember { DesktopSyncInfrastructure() }
-        val localRepositoryTransport = remember {
-            if (reviewedLocalRepositoryEnabled) DesktopReviewedLocalRepositoryTransport() else null
-        }
-        DisposableEffect(localRepositoryTransport) {
-            onDispose { localRepositoryTransport?.close() }
-        }
         val sandboxScope = rememberCoroutineScope()
         val composition = remember {
             ShinsouComposition(
@@ -160,7 +142,7 @@ fun main(args: Array<String>) {
                 httpClient = httpClient,
                 pluginKeyValueStore = DesktopPluginKeyValueStore(),
                 fileSystem = DesktopAppFileSystem(),
-                // ADR-0002 §10.1: every package, reviewed or third-party, runs in the OS-confined
+                // ADR-0002 §10.1: every package runs in the OS-confined
                 // shinsou-sandbox helper.
                 runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(desktopSandboxRuntimeFactory(sandboxScope)),
                 syncInfrastructure = syncInfrastructure,
@@ -168,12 +150,6 @@ fun main(args: Array<String>) {
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
                 pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
-                reviewedLocalRepositoryPolicy = if (reviewedLocalRepositoryEnabled) {
-                    ReviewedLocalRepositoryPolicy.EXACT_LOOPBACK_18081
-                } else {
-                    ReviewedLocalRepositoryPolicy.DISABLED
-                },
-                reviewedLocalRepositoryTransport = localRepositoryTransport,
             )
         }
         val syncRuntime = requireNotNull(composition.syncRuntime)
@@ -503,39 +479,6 @@ fun main(args: Array<String>) {
             )
         }
     }
-}
-
-/** Read-only packaged-transport probe. Runs before any personal storage or source is opened. */
-private fun verifyReviewedLocalRepositoryAndExit(): Nothing {
-    runBlocking {
-        val http = createPlatformHttpClient()
-        DesktopReviewedLocalRepositoryTransport().use { transport ->
-            try {
-                val client = dev.shinsou.kmp.plugin.ExtensionRepositoryClient(
-                    client = http,
-                    reviewedLocalRepositoryPolicy = ReviewedLocalRepositoryPolicy.EXACT_LOOPBACK_18081,
-                    reviewedLocalRepositoryTransport = transport,
-                )
-                val base = dev.shinsou.kmp.plugin.REVIEWED_LOCAL_SHINSOU_REPOSITORY_BASE_URL
-                client.fetchRepository(base)
-                val entries = when (val index = client.fetchIndex(base)) {
-                    is dev.shinsou.kmp.plugin.RepositoryIndex.Plugins -> index.entries
-                    is dev.shinsou.kmp.plugin.RepositoryIndex.Combined -> index.plugins
-                    is dev.shinsou.kmp.plugin.RepositoryIndex.Legacy -> error("Unexpected legacy local repository")
-                }
-                val jm = entries.single { it.id == "zh.jinmantiantang" }
-                client.verifyPluginV2Sidecar(base, jm)
-                val bytes = client.downloadPluginScript(base, jm.scriptUrl)
-                check(bytes.size == jm.byteSize && Sha256.hex(bytes) == jm.sha256) {
-                    "Local JM artifact does not match its reviewed index"
-                }
-                println("Reviewed local repository OK: ${entries.size} admitted packages; JM ${jm.version}/${jm.versionCode}")
-            } finally {
-                http.close()
-            }
-        }
-    }
-    exitProcess(0)
 }
 
 private fun verifyWindowsWindowChrome(window: javax.swing.JFrame) {

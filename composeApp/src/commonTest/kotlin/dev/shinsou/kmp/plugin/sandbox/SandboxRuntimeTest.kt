@@ -2,7 +2,6 @@ package dev.shinsou.kmp.plugin.sandbox
 
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
-import dev.shinsou.kmp.plugin.InProcessScriptProvenance
 import dev.shinsou.kmp.plugin.KeyValuePluginStorage
 import dev.shinsou.kmp.plugin.PluginCredential
 import dev.shinsou.kmp.plugin.PluginExecutionLimits
@@ -70,7 +69,6 @@ class SandboxRuntimeTest {
     private fun environment(
         vararg extra: PluginRuntimePermission,
         limits: PluginExecutionLimits = PluginExecutionLimits(),
-        provenance: InProcessScriptProvenance? = null,
         networkGate: CompletableDeferred<Unit>? = null,
         policySource: SourceIndexEntry = source,
     ): ScriptPluginEnvironment {
@@ -93,7 +91,6 @@ class SandboxRuntimeTest {
             storage = storage,
             runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT) + extra,
             executionLimits = limits,
-            inProcessScriptProvenance = provenance,
         )
     }
 
@@ -135,43 +132,15 @@ class SandboxRuntimeTest {
     }
 
     @Test
-    fun aMismatchedReviewedProvenanceIsRefusedBeforeAnySandboxStarts() = runTest {
-        val provenance = InProcessScriptProvenance.reviewedArtifact(
-            PluginArtifactIdentity(manifest.id, manifest.version, 1, "a".repeat(64)),
-            SourceKey(packageId = manifest.id, sourceId = "42"),
-            "var other = {};",
-        )
-        var opened = 0
-        val factory = SandboxRuntimeFactory(transports = { opened++; error("must not open") })
-        assertFailsWith<IllegalArgumentException> {
-            factory.createForSource("var source = {};", manifest, source, environment(provenance = provenance))
-        }
-        assertEquals(0, opened)
-    }
-
-    @Test
-    fun aReviewedArtifactRunsInTheSandboxWithItsLimitsAndCookieRead() = runTest {
-        val reviewedLimits = PluginExecutionLimits(invocationWallTimeMillis = 120_000)
-        val provenance = InProcessScriptProvenance.reviewedArtifact(
-            PluginArtifactIdentity(manifest.id, manifest.version, 1, "a".repeat(64)),
-            SourceKey(packageId = manifest.id, sourceId = "42"),
-            "var source = {};",
-            executionLimits = reviewedLimits,
-        )
+    fun cookieStorageAloneDoesNotAllowCookieRead() = runTest {
         storage.setCookie(42, dev.shinsou.kmp.plugin.PluginCookie("sid", "v1", "www.example.test"))
         var read: BridgeOutcome? = null
         val cookieHook: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome> = mapOf(
             "getPopularManga" to { read = bridge("getCookie", "[\"sid\",\"https://www.example.test/\"]"); HookOutcome.Ok("{\"mangas\":[]}") },
         )
 
-        val reviewed = start(cookieHook, env = environment(PluginRuntimePermission.COOKIE_STORAGE, provenance = provenance))
-        assertEquals(120_000, reviewed.sandbox.initLimits!!.invokeTimeoutMs)
-        reviewed.runtime.getPopularManga(1)
-        assertEquals(BridgeOutcome.Value("\"v1\""), read)
-
-        // The same permission without a review keeps the COOKIE_READ policy (off).
-        val thirdParty = start(cookieHook, env = environment(PluginRuntimePermission.COOKIE_STORAGE))
-        thirdParty.runtime.getPopularManga(1)
+        val storageOnly = start(cookieHook, env = environment(PluginRuntimePermission.COOKIE_STORAGE))
+        storageOnly.runtime.getPopularManga(1)
         assertEquals(BridgeOutcome.Error(SandboxErrorCode.PERMISSION_DENIED), read)
     }
 

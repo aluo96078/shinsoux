@@ -1232,7 +1232,7 @@ private fun Throwable.diagnosticMessage(): String {
 private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
     localizedSourceFailure(strings)?.let { return it }
     if (generateSequence(this) { it.cause }.any { it is ExtensionArtifactNotReviewedException }) {
-        return strings.text("This version is not in this app's review list. Update the app to use it.")
+        return strings.text("This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox.")
     }
     if (generateSequence(this) { it.cause }.any {
             it.message in setOf(
@@ -4240,7 +4240,6 @@ private fun ExtensionsPane(
                             }
                         }
                         // No repository is official (ADR-0002): none gets a badge.
-                        // Every repository is user-managed, including official repositories.
                         IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
                             Icon(Icons.Outlined.Delete, strings.delete)
                         }

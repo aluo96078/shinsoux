@@ -354,8 +354,8 @@ public data class PluginNetworkPolicy(
     /** Content/image origins are metadata only and never authorize active requests. */
     val contentOrigins: Set<String> = emptySet(),
     /**
-     * Dynamic content host families (ADR-0002 §6.2): the app-pinned reviewed CDNs, or suffixes a
-     * package declared and the user granted. Only the credential-free content scope uses them
+     * Dynamic content host families (ADR-0002 §6.2): suffixes a package declared and the user
+     * granted. Only the credential-free content scope uses them
      * (GET/HEAD, no cookies), never the executable bridge's request origins.
      */
     internal val contentHostSuffixes: Set<String> = emptySet(),
@@ -376,10 +376,10 @@ public data class PluginNetworkPolicy(
         val allowed = effectiveRequestOrigins()
         val credentials = normalizePluginOrigins(credentialOrigins)
         normalizePluginOrigins(contentOrigins)
-        require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES + REVIEWED_DYNAMIC_CONTENT_SUFFIXES.size) {
+        require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES) {
             "Too many content host suffixes"
         }
-        require(contentHostSuffixes.all { it in REVIEWED_DYNAMIC_CONTENT_SUFFIXES || isGrantableContentHostSuffix(it) }) {
+        require(contentHostSuffixes.all { isGrantableContentHostSuffix(it) }) {
             "Unsupported content host suffix"
         }
         normalizePluginOrigins(browserSessionOrigins)
@@ -407,7 +407,7 @@ public data class PluginNetworkPolicy(
         require(origin in effectiveRequestOrigins() ||
             contentOnlyScope && credentialOrigins.isEmpty() &&
             contentHostSuffixes.any { suffix ->
-                isReviewedDynamicContentHost(url, suffix)
+                isContentHostSuffixMatch(url, suffix)
             }) {
             "Plugin network origin was not declared"
         }
@@ -1042,10 +1042,6 @@ public class PluginNetworkClient(
     private val hostResolver: PluginHostResolver = PluginHostResolver.Unavailable,
     private val credentialsEnabled: Boolean = true,
     private val explicitRefererWithoutCredentials: Boolean = false,
-    /** Host-reviewed code may use the platform stack without granting this to repository code. */
-    private val trustedReviewedTransport: Boolean = false,
-    /** Exact reviewed ShuYue artifacts may carry this one legacy transport-owned header. */
-    private val stripReviewedLegacyConnectionHeader: Boolean = false,
 ) {
     /** Shares transport/rate-limit policy but applies a capability-filtered storage view. */
     public fun scopedToStorage(storage: PluginStorage): PluginNetworkClient = PluginNetworkClient(
@@ -1058,8 +1054,6 @@ public class PluginNetworkClient(
         hostResolver = hostResolver,
         credentialsEnabled = credentialsEnabled,
         explicitRefererWithoutCredentials = explicitRefererWithoutCredentials,
-        trustedReviewedTransport = trustedReviewedTransport,
-        stripReviewedLegacyConnectionHeader = stripReviewedLegacyConnectionHeader,
     )
 
     /** Binds a manifest/runtime-specific exact-origin policy while preserving this client setup. */
@@ -1093,26 +1087,6 @@ public class PluginNetworkClient(
         hostResolver = hostResolver,
         credentialsEnabled = credentialsEnabled,
         explicitRefererWithoutCredentials = explicitRefererWithoutCredentials,
-        trustedReviewedTransport = trustedReviewedTransport,
-        stripReviewedLegacyConnectionHeader = stripReviewedLegacyConnectionHeader,
-    )
-
-    /**
-     * Host-only scope for built-in, digest-reviewed ShuYue code. Repository plugin metadata cannot
-     * reach this method through a bridge, and generic source policies remain pinned/fail-closed.
-     */
-    public fun forReviewedInProcessArtifact(): PluginNetworkClient = PluginNetworkClient(
-        transport = transport,
-        storage = storage,
-        requestBuilder = requestBuilder,
-        requestGate = requestGate,
-        nowEpochMillis = nowEpochMillis,
-        policy = policy,
-        hostResolver = hostResolver,
-        credentialsEnabled = credentialsEnabled,
-        explicitRefererWithoutCredentials = explicitRefererWithoutCredentials,
-        trustedReviewedTransport = false,
-        stripReviewedLegacyConnectionHeader = true,
     )
 
     /**
@@ -1134,8 +1108,6 @@ public class PluginNetworkClient(
                 hostResolver = hostResolver,
                 credentialsEnabled = false,
                 explicitRefererWithoutCredentials = true,
-                trustedReviewedTransport = trustedReviewedTransport,
-                stripReviewedLegacyConnectionHeader = stripReviewedLegacyConnectionHeader,
             ),
         )
 
@@ -1260,7 +1232,7 @@ public class PluginNetworkClient(
     /**
      * `Connection` is hop-by-hop and owned by the transport. Older scripts set it (`keep-alive`);
      * it is dropped for every package rather than failing the request (ADR-0002 A7: no ability is
-     * reviewed-only). Every other transport-owned header still fails the request.
+     * tier-specific). Every other transport-owned header still fails the request.
      */
     private fun reviewedCompatibleHeaders(headers: Map<String, String>): Map<String, String> =
         headers.filterKeys { !it.equals("Connection", ignoreCase = true) }
@@ -1565,47 +1537,26 @@ internal const val CONTENT_HOST_SUFFIX_HIGH_PORTS: String = ":1024-65535"
 internal const val MAX_CONTENT_HOST_SUFFIXES: Int = 8
 
 /**
- * Reviewed dynamic content host families used by the official readers.
- *
- * These values are app-pinned implementation policy, never repository-provided wildcards. A
- * suffix is usable only by the host-created credential-free content scope, and each family has
- * its own port rule below. This lets MangaDex use its rotating At-Home nodes without granting a
- * generic extension the ability to probe arbitrary subdomains or services.
+ * Whether [url] falls under a package's granted content-host [suffix]: the host itself or any
+ * subdomain, on 443 unless the grant also spelled the non-privileged port range.
  */
-internal const val REVIEWED_DYNAMIC_CONTENT_SUFFIX: String = "hath.network"
-internal const val REVIEWED_MANGADEX_CONTENT_SUFFIX: String = "mangadex.network"
-internal val REVIEWED_DYNAMIC_CONTENT_SUFFIXES: Set<String> = setOf(
-    REVIEWED_DYNAMIC_CONTENT_SUFFIX,
-    REVIEWED_MANGADEX_CONTENT_SUFFIX,
-)
-
-private fun isReviewedDynamicContentHost(url: Url, suffix: String): Boolean {
+private fun isContentHostSuffixMatch(url: Url, suffix: String): Boolean {
     val host = url.host.lowercase().trimEnd('.')
-    return when (suffix) {
-        REVIEWED_DYNAMIC_CONTENT_SUFFIX -> host.endsWith(".$suffix") && isReviewedDynamicContentPort(url.port)
-        // MangaDex At-Home servers are HTTPS endpoints on the standard TLS port. Keeping this
-        // family at 443 prevents an otherwise valid CDN hostname from becoming a port scanner.
-        REVIEWED_MANGADEX_CONTENT_SUFFIX -> host.endsWith(".$suffix") && url.port == 443
-        // A package's granted suffix: the host itself or any subdomain, on 443 unless it declared
-        // the non-privileged port range too.
-        else -> {
-            val base = suffix.removeSuffix(CONTENT_HOST_SUFFIX_HIGH_PORTS)
-            val portAllowed = if (base != suffix) isReviewedDynamicContentPort(url.port) else url.port == 443
-            isGrantableContentHostSuffix(suffix) && (host == base || host.endsWith(".$base")) && portAllowed
-        }
-    }
+    val base = suffix.removeSuffix(CONTENT_HOST_SUFFIX_HIGH_PORTS)
+    val portAllowed = if (base != suffix) isDynamicContentPort(url.port) else url.port == 443
+    return isGrantableContentHostSuffix(suffix) && (host == base || host.endsWith(".$base")) && portAllowed
 }
 
 /**
- * E-Hentai's reviewed image nodes use a public, non-standard HTTPS port selected per node.
+ * Some image nodes (E-Hentai's) use a public, non-standard HTTPS port selected per node.
  *
- * The host family is already app-pinned and the content scope remains credential-free, GET/HEAD
+ * The host family is a user-granted suffix and the content scope remains credential-free, GET/HEAD
  * only, DNS-pinned, and redirect-revalidated.  Restricting the port to the IANA non-privileged
  * range prevents a compromised page from turning the suffix exception into a probe of SSH,
  * database, or other well-known privileged services while still covering the ports emitted by
  * current E-Hentai viewer pages (for example 5,891, 8,443, 44,000, and 54,200).
  */
-internal fun isReviewedDynamicContentPort(port: Int): Boolean = port == 443 || port in 1_024..65_535
+internal fun isDynamicContentPort(port: Int): Boolean = port == 443 || port in 1_024..65_535
 
 private class PluginBatchResponseBudget(
     private val maximumBytes: Int,

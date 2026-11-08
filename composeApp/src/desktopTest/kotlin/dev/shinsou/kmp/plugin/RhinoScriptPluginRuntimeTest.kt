@@ -111,61 +111,6 @@ class RhinoScriptPluginRuntimeTest {
     }
 
     @Test
-    fun productionFactoryRejectsBytesThatDoNotMatchReviewedProvenance() = runTest {
-        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore())
-        val source = SourceIndexEntry(
-            name = "Reviewed",
-            lang = "all",
-            id = 992L,
-            baseUrl = "https://source.example",
-            canonicalSourceId = "reviewed-source",
-        )
-        val artifact = PluginArtifactIdentity(
-            packageId = "reviewed.rhino",
-            version = "1.0.0",
-            versionCode = 1,
-            sha256 = "1".repeat(64),
-        )
-        val manifest = PluginManifest(
-            id = artifact.packageId,
-            name = "Reviewed Rhino",
-            version = artifact.version,
-            versionCode = artifact.versionCode,
-            lang = "all",
-            script = "reviewed.rhino.js",
-            signature = artifact.sha256,
-            sources = listOf(source),
-        )
-        val reviewedScript = "var source = { id: 'reviewed-source' };"
-        val environment = ScriptPluginEnvironment(
-            network = PluginNetworkClient(
-                PluginHttpTransport { error("No network request expected") },
-                storage,
-            ),
-            storage = storage,
-            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
-            inProcessScriptProvenance = InProcessScriptProvenance.reviewedArtifact(
-                artifact = artifact,
-                sourceKey = SourceKey(
-                    packageId = artifact.packageId,
-                    sourceId = "reviewed-source",
-                    legacyLongId = source.id,
-                ),
-                evaluatedScript = reviewedScript,
-            ),
-        )
-
-        assertFailsWith<IllegalArgumentException> {
-            RhinoScriptPluginRuntimeFactory().createForSource(
-                reviewedScript + " ",
-                manifest,
-                source,
-                environment,
-            )
-        }
-    }
-
-    @Test
     fun cancellingSearchCancelsHttpGetAndReleasesEngineWorker() = runBlocking {
         val slowRequestStarted = CompletableDeferred<Unit>()
         val slowRequestCancelled = CompletableDeferred<Unit>()

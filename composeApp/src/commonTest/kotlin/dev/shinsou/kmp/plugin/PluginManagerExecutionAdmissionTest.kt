@@ -164,60 +164,6 @@ class PluginManagerExecutionAdmissionTest {
     }
 
     @Test
-    fun canonicalOfficialUrlDoesNotReviewAnUnknownArtifact() = runTest {
-        val packageStore = InMemoryPluginPackageStore()
-        val keyValues = InMemoryPluginKeyValueStore()
-        val storage = KeyValuePluginStorage(keyValues)
-        val manager = PluginManager(
-            repositoryClient = ExtensionRepositoryClient(
-                HttpClient(MockEngine { respond(ORIGINAL_SCRIPT) }),
-                cacheToken = { 1L },
-                repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
-            ),
-            packageStore = packageStore,
-            verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
-            runtimeFactory = CapturingEnvironmentRuntimeFactory(),
-            environment = ScriptPluginEnvironment(
-                network = PluginNetworkClient(
-                    transport = PluginHttpTransport { PluginHttpResponse(200, ByteArray(0)) },
-                    storage = storage,
-                ),
-                storage = storage,
-            ),
-            eventGrantAdmission = KeyValuePluginEventGrantAdmission(
-                keyValues,
-                MutablePluginSystemEventAuthorizer(),
-            ),
-        )
-        val entry = PluginIndexEntry(
-            id = "unknown.official-lookalike",
-            name = "Unknown",
-            version = "1.0.0",
-            versionCode = 1,
-            lang = "all",
-            scriptUrl = "plugins/unknown.official-lookalike.js",
-            sources = listOf(SourceIndexEntry(
-                name = "Unknown",
-                lang = "all",
-                id = 99L,
-                baseUrl = "https://source.example",
-                originPolicyVersion = 2,
-                canonicalSourceId = "99",
-            )),
-            runtimePermissions = setOf(PluginRuntimePermission.EXECUTE_SCRIPT),
-        )
-
-        manager.install(ExtensionRepository(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL, "Official"), entry)
-        assertFailsWith<ExtensionArtifactNotReviewedException> {
-            manager.approveCurrentEventGrantReview(entry.id, emptySet())
-        }
-        assertNull(manager.source(99L))
-        assertFalse(manager.hasExecutionApproval(entry.id))
-        // Re-prompting cannot make an unreviewed digest executable; it would only loop.
-        assertNull(manager.pendingEventGrantReview(entry.id))
-    }
-
-    @Test
     fun unavailableInProcessEngineKeepsApprovedGenericPackageInstalledAndInert() = runTest {
         val fixture = Fixture(runtimeFactory = UnavailableRuntimeFactory())
 
@@ -407,19 +353,6 @@ private open class TrackingRuntimeFactory : ScriptPluginRuntimeFactory {
     ): ScriptPluginRuntime = TrackingRuntime(
         NoopScriptPluginRuntimeFactory.create(script, manifest, environment),
     ).also(created::add)
-}
-
-private class CapturingEnvironmentRuntimeFactory : ScriptPluginRuntimeFactory {
-    override suspend fun create(
-        script: String,
-        manifest: PluginManifest,
-        environment: ScriptPluginEnvironment,
-    ): ScriptPluginRuntime {
-        if (environment.inProcessScriptProvenance == null) {
-            throw ScriptRuntimeUnavailableException("Artifact is not host-reviewed")
-        }
-        return NoopScriptPluginRuntimeFactory.create(script, manifest, environment)
-    }
 }
 
 private class TrackingRuntime(

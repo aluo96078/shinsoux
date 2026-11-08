@@ -52,100 +52,48 @@ class RepositoryTrustTest {
     }
 
     @Test
-    fun officialUnsignedCompatibilityAcceptsOnlyTheCanonicalNormalizedBaseUrl() = runTest {
-        val policy = officialCompatibilityPolicy()
-
-        assertIs<RepositoryTrustDecision.UnsignedDeveloperCompatibility>(
-            policy.decisionFor(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL),
-        )
-
-        val rejected = listOf(
-            "http://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com:443/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://RAW.GITHUBUSERCONTENT.COM/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com./aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com.evil.example/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/main",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master/extra",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/%6daster",
-            OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL,
-            "$OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL?mirror=evil",
-            "$OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL#evil",
-            "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL/",
-            "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL?mirror=evil",
-            "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL#evil",
-        )
-        rejected.forEach { candidate ->
-            assertFailsWith<RepositoryTrustException.UntrustedRepository>(candidate) {
-                policy.decisionFor(candidate)
-            }
-        }
-    }
-
-    @Test
-    fun officialUnsignedCompatibilityUsesClientNormalizationWithoutBroadeningTrust() = runTest {
+    fun anUnsignedRepositoryAtTheOfficialUrlIsRefusedUnlessDeveloperModeAdmitsIt() = runTest {
         var requests = 0
         val http = HttpClient(MockEngine {
             requests++
             respond(unsignedIndex(), HttpStatusCode.OK)
         })
         clients += http
-        val client = ExtensionRepositoryClient(
-            client = http,
-            cacheToken = { 1L },
-            repositoryTrustPolicy = officialCompatibilityPolicy(),
+        val admitted = mutableSetOf<String>()
+        val policy = ConfiguredRepositoryTrustPolicy(
+            roots = KeyValueRepositoryTrustRootStore(InMemoryPluginKeyValueStore()),
+            allowUnsignedDeveloperCompatibility = { url -> url in admitted },
         )
+        val client = ExtensionRepositoryClient(client = http, cacheToken = { 1L }, repositoryTrustPolicy = policy)
 
-        val exact = client.fetchIndex("  $OFFICIAL_SHINSOU_REPOSITORY_BASE_URL///  ")
-        assertEquals("pkg", assertIs<RepositoryIndex.Plugins>(exact).entries.single().id)
-        assertEquals(1, requests)
+        // The official URL has no exemption of its own.
+        assertFailsWith<RepositoryTrustException.UntrustedRepository> {
+            policy.decisionFor(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)
+        }
+        assertFailsWith<RepositoryTrustException.UntrustedRepository> {
+            client.fetchIndex(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)
+        }
+        assertEquals(0, requests, "A refused repository must fail before transport")
 
-        val untrustedVariants = listOf(
-            "https://raw.githubusercontent.com.evil.example/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com:443/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/main",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master/extra",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/%6daster",
-            OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL,
+        // Only what developer mode admits (here: that exact URL) is read unsigned.
+        admitted += OFFICIAL_SHINSOU_REPOSITORY_BASE_URL
+        assertIs<RepositoryTrustDecision.UnsignedDeveloperCompatibility>(
+            policy.decisionFor(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL),
         )
-        untrustedVariants.forEach { candidate ->
-            assertFailsWith<RepositoryTrustException.UntrustedRepository>(candidate) {
-                client.fetchIndex(candidate)
-            }
+        assertFailsWith<RepositoryTrustException.UntrustedRepository> {
+            policy.decisionFor("$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL/extra")
         }
-
-        val structurallyInvalidVariants = listOf(
-            "http://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master",
-            "https://raw.githubusercontent.com@evil.example/aluo96078/shinsou_plugin/refs/heads/master",
-            "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL?mirror=evil",
-            "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL#evil",
-        )
-        structurallyInvalidVariants.forEach { candidate ->
-            assertFailsWith<ExtensionRepositoryException.InvalidUrl>(candidate) {
-                client.fetchIndex(candidate)
-            }
-        }
-        val invalidEncodedPathVariants = listOf(
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master%2fextra",
-            "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master/%2e%2e/evil",
-        )
-        invalidEncodedPathVariants.forEach { candidate ->
-            assertFailsWith<IllegalArgumentException>(candidate) {
-                client.fetchIndex(candidate)
-            }
-        }
-        assertEquals(1, requests, "Rejected variants must fail before transport")
     }
 
     @Test
-    fun configuredPinTakesPrecedenceOverOfficialUnsignedCompatibility() = runTest {
+    fun configuredPinTakesPrecedenceOverUnsignedDeveloperCompatibility() = runTest {
         val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
         try {
             val roots = KeyValueRepositoryTrustRootStore(InMemoryPluginKeyValueStore())
             roots.put(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL, root(keys))
             val policy = ConfiguredRepositoryTrustPolicy(
                 roots = roots,
-                allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
+                allowUnsignedDeveloperCompatibility = { true },
             )
 
             assertEquals(
@@ -733,11 +681,6 @@ class RepositoryTrustTest {
 
     private fun policy(keys: SodiumKeyPair): RepositoryTrustPolicy =
         PinnedRepositoryTrustPolicy(mapOf(REPOSITORY to root(keys)))
-
-    private fun officialCompatibilityPolicy(): RepositoryTrustPolicy = ConfiguredRepositoryTrustPolicy(
-        roots = KeyValueRepositoryTrustRootStore(InMemoryPluginKeyValueStore()),
-        allowUnsignedDeveloperCompatibility = ::isCanonicalOfficialUnsignedRepository,
-    )
 
     private fun root(keys: SodiumKeyPair): RepositoryTrustRoot {
         val public = SodiumSyncPrimitives.base64UrlEncode(keys.publicKey)

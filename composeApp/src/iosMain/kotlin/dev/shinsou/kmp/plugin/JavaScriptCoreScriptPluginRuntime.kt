@@ -125,16 +125,10 @@ public class JavaScriptCoreScriptPluginRuntimeFactory private constructor(
         environment: ScriptPluginEnvironment,
     ): ScriptPluginEnvironment {
         if (allowUninterruptibleScriptsForTests) return environment
-        val provenance = environment.inProcessScriptProvenance
-        if (provenance == null) {
-            throw ScriptRuntimeUnavailableException(
-                "Plugin '${manifest.id}' cannot run in-process on iOS: public JavaScriptCore APIs " +
-                    "cannot forcibly interrupt non-cooperative JavaScript. Only exact host-reviewed " +
-                "artifacts are enabled.",
-            )
-        }
-        val reviewedLimits = provenance.requireExactMatch(script, manifest, source)
-        return reviewedLimits?.let { environment.copy(executionLimits = it) } ?: environment
+        throw ScriptRuntimeUnavailableException(
+            "Plugin '${manifest.id}' cannot run in-process on iOS: public JavaScriptCore APIs " +
+                "cannot forcibly interrupt non-cooperative JavaScript. Packages run in the sandbox.",
+        )
     }
 }
 

@@ -12,9 +12,6 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
-import dev.shinsou.kmp.plugin.IosReviewedLanRepositoryTransport
-import dev.shinsou.kmp.plugin.REVIEWED_IOS_LAN_SHINSOU_REPOSITORY_BASE_URL
-import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
@@ -33,8 +30,6 @@ import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import platform.Foundation.NSLocale
 import platform.Foundation.preferredLanguages
 import platform.UIKit.UIViewController
-import kotlin.experimental.ExperimentalNativeApi
-import kotlin.native.Platform
 
 /** Native entry point consumed by the SwiftUI application host. */
 @Suppress("FunctionName")
@@ -141,15 +136,6 @@ internal object IosApplicationContainer {
 
     private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)
 
-    @OptIn(ExperimentalNativeApi::class)
-    private val reviewedLanRepositoryEnabled = !isIosSimulatorBuild && Platform.isDebugBinary
-
-    private val reviewedLocalRepositoryPolicy = if (reviewedLanRepositoryEnabled) {
-        ReviewedLocalRepositoryPolicy.EXACT_IOS_LAN_192_168_50_193_18081
-    } else {
-        ReviewedLocalRepositoryPolicy.DISABLED
-    }
-
     /** Idle stops and LRU of the plugin sandboxes; lives as long as the app. */
     private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -158,7 +144,7 @@ internal object IosApplicationContainer {
         httpClient = httpClient,
         pluginKeyValueStore = IosPluginKeyValueStore(),
         fileSystem = IosAppFileSystem(),
-        // ADR-0002 §10.1: every package, reviewed or third-party, runs in the WASM sandbox (§4.5),
+        // ADR-0002 §10.1: every package runs in the WASM sandbox (§4.5),
         // one interpreter instance each.
         runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(iosSandboxRuntimeFactory(sandboxScope)),
         syncInfrastructure = syncInfrastructure,
@@ -166,13 +152,6 @@ internal object IosApplicationContainer {
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
-        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
-        reviewedLocalRepositoryTransport = if (reviewedLanRepositoryEnabled) {
-            IosReviewedLanRepositoryTransport()
-        } else {
-            null
-        },
-
     )
 
     private val snapshotSync = SnapshotSyncController(

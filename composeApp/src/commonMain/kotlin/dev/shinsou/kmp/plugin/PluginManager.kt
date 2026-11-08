@@ -416,9 +416,6 @@ public class PluginManager(
     private val executionAdmissionMode: PluginExecutionAdmissionMode =
         PluginExecutionAdmissionMode.REQUIRE_EXACT_ARTIFACT_APPROVAL,
     private val reviewedImageTransport: PluginHttpTransport? = null,
-    /** Immutable startup admission for exact compiled-review artifacts from fixed loopback only. */
-    private val reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy =
-        ReviewedLocalRepositoryPolicy.DISABLED,
     /** ADR-0002 §10.1: publisher trust, withdrawals and the user's block list decide each runtime's tier. */
     private val executionTierGate: PluginExecutionTierGate? = null,
     /** ADR-0002 §8.1: true for a canonical repository URL developer mode currently admits. */
@@ -466,10 +463,6 @@ public class PluginManager(
         val storage: PluginStorage,
         val localStorageKeys: Set<String>,
         val requiredLocalStorageKeys: Set<String>,
-        val requiredCookieName: String?,
-        val reviewedOfficialPackage: Boolean,
-        /** A third-party package the user granted BROWSER_CHALLENGE (ADR-0002 §6.2). */
-        val genericPackage: Boolean = false,
     )
 
     /** Host-internal snapshot used to build an isolated browser without exposing raw storage. */
@@ -482,7 +475,6 @@ public class PluginManager(
         internal val localStorageKeys: Set<String>,
         internal val requiredLocalStorageKeys: Set<String>,
         internal val allowedSubresourceOrigins: Set<String>,
-        internal val requiredCookieName: String?,
         internal val storage: PluginStorage,
     )
 
@@ -721,7 +713,6 @@ public class PluginManager(
             require(entry.installable && !entry.referenceOnly && !entry.legacyCompatibilityOnly) {
                 "Plugin '${entry.id}' is migration/reference metadata and cannot be installed"
             }
-            requireReviewedLocalRepositoryEntry(repository, entry)
             requireSupportedGenericRuntime(entry)
             SandboxTierCeiling.requireWithinCeiling(entry)
             PluginNamePolicy.requireNotMisleading(entry.name, *entry.sources.orEmpty().map { it.name }.toTypedArray())
@@ -910,9 +901,6 @@ public class PluginManager(
         entry: LegacyExtensionIndexEntry,
     ): List<CatalogueSource> = withContext(Dispatchers.Default) {
         packageMutationMutex.withLock {
-        require(!isKnownReviewedLocalRepositoryBaseUrl(repository.baseUrl.trim().trimEnd('/'))) {
-            "Reviewed local repository supports Shinsou V2 entries only"
-        }
         invalidateWebChallengeGrants()
         PluginVerifier.validateSafeFileComponent(entry.pkg)
         val manifest = PluginManifest(
@@ -1115,13 +1103,6 @@ public class PluginManager(
                 return@packageMutation
             }
 
-            if (!isAdmittedReviewedLocalInstall(stored)) {
-                lifecycleMutex.withLock { unloadPlugin(pluginId) }
-                throw IllegalArgumentException(
-                    "Local repository artifact is not admitted by the current compiled review policy",
-                )
-            }
-
             if (stored.isMetadataOnly()) {
                 val reservation = lifecycleMutex.withLock { reserveManifestSources(stored.manifest) }
                 currentCoroutineContext().ensureActive()
@@ -1284,7 +1265,6 @@ public class PluginManager(
     public suspend fun hasExecutionApproval(pluginId: String): Boolean = packageMutationMutex.withLock {
         val stored = packageStore.get(pluginId) ?: return@withLock false
         if (stored.isMetadataOnly()) return@withLock true
-        if (!isAdmittedReviewedLocalInstall(stored)) return@withLock false
         if (!stored.hasExecutableRuntimeDeclaration()) return@withLock false
         executionAdmissionGranted(requireNotNull(stored.eventGrantReview(includeEmpty = true)))
     }
@@ -1298,12 +1278,6 @@ public class PluginManager(
     ): Unit = packageMutationMutex.withLock {
         invalidateWebChallengeGrants()
         val stored = requireNotNull(packageStore.get(pluginId)) { "Extension '$pluginId' is not installed" }
-        if (!isAdmittedReviewedLocalInstall(stored)) {
-            withContext(NonCancellable) { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
-            throw IllegalArgumentException(
-                "Local repository artifact is not admitted by the current compiled review policy",
-            )
-        }
         if (!stored.hasExecutableRuntimeDeclaration()) {
             withContext(NonCancellable) { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
             throw IllegalArgumentException(
@@ -1532,16 +1506,10 @@ public class PluginManager(
             if (lifecycleMutex.withLock { sourceOwners[sourceId] } != packageId) return@withLock null
             val declared = stored.manifest.sources.orEmpty().singleOrNull { it.id == sourceId }
                 ?: return@withLock null
-            val reviewed = OfficialShinsouReviewedCatalog.matchContent(
-                stored, declared, reviewedLocalRepositoryPolicy,
-            )
-            if (isDisabledReviewedLocalInstall(stored)) return@withLock null
             reviewedImageContentClient(
                 sourceKeyFor(packageId, sourceId, declared.canonicalSourceId), stored.artifactIdentity(),
                 browserImageOriginsFor(stored, declared),
-                environment.network.scopedToContentPolicy(
-                    reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
-                ),
+                environment.network.scopedToContentPolicy(grantedNetworkPolicy(declared, grantFor(stored))),
             )
         }
 
@@ -1564,19 +1532,13 @@ public class PluginManager(
                 if (sourceKey != sourceKeyFor(packageId, legacyId, declared.canonicalSourceId)) {
                     return@withLock null
                 }
-                val reviewed = OfficialShinsouReviewedCatalog.matchContent(
-                    stored, declared, reviewedLocalRepositoryPolicy,
-                )
-                if (isDisabledReviewedLocalInstall(stored)) return@withLock null
                 return@withLock TypedReaderRemoteAssetScope(
                     sourceKey = sourceKey,
                     sourceId = legacyId,
                     network = reviewedImageContentClient(
                         sourceKey, stored.artifactIdentity(),
                         browserImageOriginsFor(stored, declared),
-                        environment.network.scopedToContentPolicy(
-                            reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
-                        ),
+                        environment.network.scopedToContentPolicy(grantedNetworkPolicy(declared, grantFor(stored))),
                     ),
                 )
             }
@@ -1644,7 +1606,7 @@ public class PluginManager(
         val sourceId = sourceKey.legacyLongId ?: return@withLock false
         if (lifecycleMutex.withLock { sourceOwners[sourceId] } != sourceKey.packageId) return@withLock false
         val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
-        if (stored.artifactIdentity() != identity || isDisabledReviewedLocalInstall(stored)) return@withLock false
+        if (stored.artifactIdentity() != identity) return@withLock false
         val declared = stored.manifest.sources.orEmpty().singleOrNull { it.id == sourceId } ?: return@withLock false
         if (sourceKeyFor(sourceKey.packageId, sourceId, declared.canonicalSourceId) != sourceKey) return@withLock false
         val review = stored.eventGrantReview(includeEmpty = true) ?: return@withLock false
@@ -1767,38 +1729,21 @@ public class PluginManager(
             val identity = nativeArtifactIdentities[sourceKey.packageId]
                 ?: stored?.artifactIdentity()
                 ?: return@withLock null
-            val reviewedOfficial = stored?.let { installed ->
-                val declared = installed.manifest.sources.orEmpty().singleOrNull { source ->
-                    sourceKeyFor(installed.manifest.id, source.id, source.canonicalSourceId) == sourceKey
-                }
-                OfficialShinsouReviewedCatalog.match(
-                    installed, declared, reviewedLocalRepositoryPolicy,
-                )
-            }
-            val generic = if (stored != null && reviewedOfficial == null) {
-                genericWebChallengeOrigins(stored, sourceKey)
-                    ?: throw IllegalArgumentException("This extension was not granted the browser challenge")
-            } else null
             if (stored == null) return@withLock null
+            val generic = genericWebChallengeOrigins(stored, sourceKey)
+                ?: throw IllegalArgumentException("This extension was not granted the browser challenge")
             require(PluginRuntimePermission.BROWSER_CHALLENGE in stored.manifest.runtimePermissions.orEmpty()) {
-                "Reviewed artifact lacks browser challenge permission"
+                "Package lacks browser challenge permission"
             }
             val source = sourceWhilePackageLocked(sourceKey)
                 ?: return@withLock null
             val origin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
                 ?: return@withLock null
-            val reviewedOrigins = when {
-                generic != null -> generic.first
-                else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
+            require(origin in generic.first) {
+                "Web challenge URL is outside the granted browser-session origins"
             }
-            require(origin in reviewedOrigins) {
-                "Web challenge URL is outside the exact reviewed origin"
-            }
-            val reviewedSubresourceOrigins = when {
-                generic != null -> generic.second
-                else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeSubresourceOrigins)
-            }
-            require(origin in reviewedSubresourceOrigins) {
+            val subresourceOrigins = generic.second
+            require(origin in subresourceOrigins) {
                 "Web challenge document origin must remain an allowed subresource origin"
             }
             val storageId = requireNotNull(sourceKey.legacyLongId)
@@ -1808,8 +1753,7 @@ public class PluginManager(
                 allowLegacyMigration = stored.metadata.legacyStorageMigrationAllowed,
             )
             val localKeys = normalizeWebChallengeStorageKeys(source.webChallengeLocalStorageKeys())
-            val requiredKeys = normalizeWebChallengeStorageKeys(source.requiredWebChallengeLocalStorageKeys()) -
-                reviewedOfficial?.optionalWebChallengeStorageKeys.orEmpty()
+            val requiredKeys = normalizeWebChallengeStorageKeys(source.requiredWebChallengeLocalStorageKeys())
             require(requiredKeys.all(localKeys::contains)) {
                 "Required browser storage keys must be included in the source allowlist"
             }
@@ -1830,14 +1774,10 @@ public class PluginManager(
                 storage = storage,
                 localStorageKeys = localKeys,
                 requiredLocalStorageKeys = requiredKeys,
-                requiredCookieName = reviewedOfficial?.requiredWebChallengeCookieName,
-                reviewedOfficialPackage = reviewedOfficial != null,
-                genericPackage = generic != null,
             )
             WebChallengeAuthorization(
                 capability, sourceKey, storageId, origin, source, localKeys, requiredKeys,
-                allowedSubresourceOrigins = reviewedSubresourceOrigins,
-                requiredCookieName = reviewedOfficial?.requiredWebChallengeCookieName,
+                allowedSubresourceOrigins = subresourceOrigins,
                 storage = storage,
             )
         }
@@ -1850,12 +1790,8 @@ public class PluginManager(
             if (nativeArtifactIdentities.containsKey(sourceKey.packageId)) return@withLock false
             val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
             if (isLocallyRevoked(stored.artifactIdentity())) return@withLock false
-            val declared = stored.manifest.sources.orEmpty().singleOrNull { source ->
-                sourceKeyFor(stored.manifest.id, source.id, source.canonicalSourceId) == sourceKey
-            }
             val review = stored.eventGrantReview(includeEmpty = true) ?: return@withLock false
-            val reviewed = OfficialShinsouReviewedCatalog.match(stored, declared, reviewedLocalRepositoryPolicy)
-            val origins = if (reviewed != null) reviewed.webChallengeOrigins else genericWebChallengeOrigins(stored, sourceKey)?.first.orEmpty()
+            val origins = genericWebChallengeOrigins(stored, sourceKey)?.first.orEmpty()
             origins.isNotEmpty() &&
                 PluginRuntimePermission.BROWSER_CHALLENGE in stored.manifest.runtimePermissions.orEmpty() &&
                 executionAdmissionGranted(review) && sourceWhilePackageLocked(sourceKey) != null
@@ -1893,35 +1829,18 @@ public class PluginManager(
         require(liveIdentity == grant.artifactIdentity && nativeRuntimeGeneration == grant.runtimeEpoch) {
             "Browser challenge runtime is no longer live"
         }
-        val reviewedOfficial = stored?.let { installed ->
-            val declared = installed.manifest.sources.orEmpty().singleOrNull { source ->
-                sourceKeyFor(installed.manifest.id, source.id, source.canonicalSourceId) == sourceKey
-            }
-            OfficialShinsouReviewedCatalog.match(
-                installed, declared, reviewedLocalRepositoryPolicy,
-            )
-        }
-        val generic = if (grant.genericPackage && stored != null && reviewedOfficial == null) {
-            genericWebChallengeOrigins(stored, sourceKey)
-        } else null
-        require((grant.reviewedOfficialPackage && reviewedOfficial != null) ||
-            (grant.genericPackage && generic != null)
-        ) {
-            "Browser challenge storage scope is no longer reviewed"
+        val generic = stored?.let { genericWebChallengeOrigins(it, sourceKey) }
+        require(generic != null) {
+            "Browser challenge storage scope is no longer granted"
         }
         val source = sourceWhilePackageLocked(sourceKey)
             ?: throw IllegalArgumentException("Browser challenge source is no longer live")
         val liveOrigin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
-        val reviewedOrigins = when {
-            generic != null -> generic.first
-            else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
-        }
-        require(liveOrigin == grant.canonicalOrigin && liveOrigin in reviewedOrigins) {
+        require(liveOrigin == grant.canonicalOrigin && liveOrigin in generic.first) {
             "Browser challenge origin changed before import"
         }
         val liveKeys = normalizeWebChallengeStorageKeys(source.webChallengeLocalStorageKeys())
-        val liveRequired = normalizeWebChallengeStorageKeys(source.requiredWebChallengeLocalStorageKeys()) -
-            reviewedOfficial?.optionalWebChallengeStorageKeys.orEmpty()
+        val liveRequired = normalizeWebChallengeStorageKeys(source.requiredWebChallengeLocalStorageKeys())
         require(liveKeys == grant.localStorageKeys && liveRequired == grant.requiredLocalStorageKeys &&
             liveRequired.all(liveKeys::contains)
         ) { "Browser challenge storage declaration changed before import" }
@@ -1943,13 +1862,6 @@ public class PluginManager(
                 "Browser cookie import is too large"
             }
             validateImportedWebChallengeCookie(cookie, grant.canonicalOrigin)
-        }
-        grant.requiredCookieName?.let { requiredName ->
-            val challengeUrl = io.ktor.http.Url(requireNotNull(source.webChallengeUrl() ?: source.descriptor.baseUrl))
-            val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
-            require(safeCookies.any { cookie ->
-                cookie.name == requiredName && cookie.value.isNotEmpty() && cookie.matches(challengeUrl, now)
-            }) { "Required browser cookie is missing or does not apply to the challenge URL" }
         }
         require(safeCookies.isNotEmpty() || safeStorage.isNotEmpty()) {
             "No browser session data was supplied"
@@ -2308,10 +2220,6 @@ public class PluginManager(
         // invariant here so even a weak/custom implementation cannot split event-grant identity,
         // manifest signature, and the exact bytes handed to a runtime.
         requireValidStoredPluginPackage(stored)
-        if (!isAdmittedReviewedLocalInstall(stored)) {
-            unloadPlugin(stored.manifest.id)
-            return
-        }
         if (stored.isMetadataOnly()) {
             val trusted = PluginVerifier.isLegacyTrustValid(stored) ||
                 verifier.isTrusted(stored.manifest, stored.metadata.installedSha256)
@@ -2340,13 +2248,9 @@ public class PluginManager(
             return
         }
 
-        // The app-shipped reviewed catalogue is an independent code-review authority.  Its
-        // exact artifact identity plus the persisted event-grant approval is sufficient to
-        // reconstruct a runtime; do not make a non-sensitive, already-reviewed package depend
-        // on reopening the encrypted desktop trust-token store during cold start.  Generic
-        // repository packages still require the durable verifier token, so this is not a way to
-        // turn an arbitrary repository entry into executable code.
-        if (!PluginVerifier.isLegacyTrustValid(stored) && !stored.isBuiltInReviewedArtifact()) {
+        // Every package needs the durable verifier token: a repository entry becomes executable
+        // code only through the exact-artifact trust record.
+        if (!PluginVerifier.isLegacyTrustValid(stored)) {
             verifier.verify(
                 stored.scriptBytes,
                 stored.manifest,
@@ -2455,10 +2359,7 @@ public class PluginManager(
         val grant = eventGrantAdmission?.grantedSelection(artifactIdentity)
         val runtimePermissions = effectiveRuntimePermissions(stored)
             .let { declared -> if (grant == null) declared else declared intersect grant.runtimePermissions }
-        val reviewedOfficialSource = OfficialShinsouReviewedCatalog.match(
-            stored, source, reviewedLocalRepositoryPolicy,
-        )
-        requireExecutionTier(stored, reviewedInProcess = reviewedOfficialSource != null)
+        requireExecutionTier(stored)
         val boundStorage = PermissionFilteredPluginStorage(
             BoundPluginStorage(
                 delegate = environment.storage,
@@ -2470,25 +2371,12 @@ public class PluginManager(
         val scopedEnvironment = environment.copy(
             network = environment.network
                 .scopedToStorage(boundStorage)
-                .let { network ->
-                    if (reviewedOfficialSource == null) network
-                    else network.forReviewedInProcessArtifact()
-                }
                 .scopedToPolicy(
-                    reviewedOfficialSource?.networkPolicy
-                        ?: source?.let { grantedNetworkPolicy(it, grant) }
+                    source?.let { grantedNetworkPolicy(it, grant) }
                         ?: PluginNetworkPolicy.Default,
                 ),
             storage = boundStorage,
             runtimePermissions = runtimePermissions,
-            // A generic repository, exact-artifact user grant, or trusted digest is not a host
-            // code review. Only the app-shipped official catalogue may mint new provenance here;
-            // a caller-supplied capability is still discarded even if its public fields match.
-            inProcessScriptProvenance = reviewedOfficialSource?.provenance(
-                artifact = artifactIdentity,
-                sourceKey = sourceKey,
-                evaluatedScript = stored.script,
-            ),
             // Legacy code receives only the native ingress needed by bridge.requestLogin. Its
             // capability response remains disabled, and the exact authorizer below grants login
             // only after the trusted runtime proves it implements LoginSource.
@@ -2526,11 +2414,10 @@ public class PluginManager(
     /**
      * ADR-0002 §10.1, checked before every runtime is built (install, approval, startup, re-enable).
      * Only reached after the exact-artifact grant, so the user's authorization holds here. A
-     * reviewed in-process artifact must still come out as reviewed (the block list and the official
-     * publisher's revocations apply to it too); anything else must come out as sandboxed, which the
-     * tiered factory then runs out of process.
+     * package must come out as sandboxed (the block list and its publisher's revocations apply), which
+     * the tiered factory then runs out of process.
      */
-    private suspend fun requireExecutionTier(stored: StoredPlugin, reviewedInProcess: Boolean) {
+    private suspend fun requireExecutionTier(stored: StoredPlugin) {
         val gate = executionTierGate ?: return
         val tier = gate.resolve(
             ExecutionTierCandidate(
@@ -2538,15 +2425,12 @@ public class PluginManager(
                 packageId = PluginInstallKeys.publishedPackageId(stored.manifest.id),
                 artifactSha256 = stored.metadata.installedSha256,
                 publisherId = stored.metadata.publisherId,
-                officialReviewedCatalogMatch = reviewedInProcess,
-                fromCanonicalOfficialUnsignedRepository = reviewedInProcess && stored.metadata.publisherId == null,
                 userAuthorized = true,
                 developerLocalSource = stored.metadata.publisherId == null &&
                     PluginInstallKeys.isDeveloperKey(stored.manifest.id),
             ),
         )
-        val allowed = if (reviewedInProcess) tier == ExecutionTier.ReviewedInProcess else tier is ExecutionTier.Sandboxed
-        if (!allowed) {
+        if (tier !is ExecutionTier.Sandboxed) {
             throw PluginExecutionInertException(stored.manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
         }
     }
@@ -2641,46 +2525,6 @@ public class PluginManager(
         scriptBytes.isEmpty() &&
             metadata.installedSha256.isBlank() &&
             manifest.signature.isBlank()
-
-    /** True only for an exact app-shipped code-review profile and every declared source. */
-    private fun StoredPlugin.isBuiltInReviewedArtifact(): Boolean {
-        val declaredSources = manifest.sources.orEmpty()
-        return declaredSources.isNotEmpty() && declaredSources.all { source ->
-            OfficialShinsouReviewedCatalog.match(this, source, reviewedLocalRepositoryPolicy) != null
-        }
-    }
-
-    private fun isReviewedLocalInstall(stored: StoredPlugin): Boolean =
-        isKnownReviewedLocalRepositoryBaseUrl(
-            stored.metadata.repositoryBaseUrl?.trim()?.trimEnd('/').orEmpty(),
-        )
-
-    /** Local provenance is executable only while opt-in and every compiled-review check hold. */
-    private fun isAdmittedReviewedLocalInstall(stored: StoredPlugin): Boolean {
-        if (!isReviewedLocalInstall(stored)) return true
-        val repositoryBaseUrl = stored.metadata.repositoryBaseUrl?.trim()?.trimEnd('/')
-        return reviewedLocalRepositoryPolicy.admits(repositoryBaseUrl.orEmpty()) &&
-            stored.isBuiltInReviewedArtifact()
-    }
-
-    private fun isDisabledReviewedLocalInstall(stored: StoredPlugin): Boolean =
-        isReviewedLocalInstall(stored) && !isAdmittedReviewedLocalInstall(stored)
-
-    private fun requireReviewedLocalRepositoryEntry(
-        repository: ExtensionRepository,
-        entry: PluginIndexEntry,
-    ) {
-        val normalized = repository.baseUrl.trim().trimEnd('/')
-        if (!isKnownReviewedLocalRepositoryBaseUrl(normalized)) return
-        require(reviewedLocalRepositoryPolicy.admits(normalized)) {
-            "Reviewed local repository development mode is disabled"
-        }
-        require(
-            OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                entry, reviewedLocalRepositoryPolicy, normalized,
-            ) != null,
-        ) { "Local repository entry is not an exact current app-reviewed artifact" }
-    }
 
     /**
      * Absence from this map is pre-V2 compatibility. V2 omission is represented by `false` and

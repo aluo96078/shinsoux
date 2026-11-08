@@ -229,7 +229,7 @@ private val EnglishStrings = ShinsouStrings(
         "Applying permissions…" to "Applying permissions…",
         "Updating trust…" to "Updating trust…",
         "This extension changed. Review its permissions again." to "This extension changed. Review its permissions again.",
-        "This version is not in this app's review list. Update the app to use it." to "This version is not in this app's review list. Update the app to use it.",
+        "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox.",
     ),
 )
 
@@ -3282,13 +3282,11 @@ private val TraditionalReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "套用權限中…",
     "Updating trust…" to "更新信任狀態中…",
     "This extension changed. Review its permissions again." to "這個擴充套件已變更，請重新審核其權限。",
-    "This version is not in this app's review list. Update the app to use it." to "此版本不在 App 審核清單中，請更新 App 後再使用。",
-    "Approve reviewed extension" to "核准已審核的擴充套件",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "無法執行此套件：它不是來自你信任的發佈者，或此裝置沒有套件沙箱。",
     "SHA-256: {0}" to "SHA-256：{0}",
     "Required permissions" to "必要權限",
     "The script remains blocked until you approve this exact version and digest." to
         "在你核准這個確切版本與摘要前，腳本會持續被阻擋。",
-    "Exact reviewed permissions granted" to "已授予精確審核的權限",
     "Execution blocked" to "已阻擋執行",
     "Execute reviewed script" to "執行已審核腳本",
     "Network access" to "網路存取",
@@ -3303,8 +3301,6 @@ private val TraditionalReviewedExtensionTranslations = mapOf(
 
 private val SimplifiedReviewedExtensionTranslations =
     TraditionalReviewedExtensionTranslations.mapValues { (_, value) -> value.toSimplifiedChinese() } + mapOf(
-        "Approve reviewed extension" to "批准已审核的扩展",
-        "Exact reviewed permissions granted" to "已授予精确审核的权限",
         "Review host permissions" to "审核主机权限",
         "Host event and runtime permissions remain blocked until you approve this exact version and digest." to
             "在你批准这个确切版本和摘要前，主机事件与运行时权限会持续被阻止。",
@@ -3316,7 +3312,7 @@ private val SimplifiedReviewedExtensionTranslations =
         "Applying permissions…" to "应用权限中…",
         "Updating trust…" to "更新信任状态中…",
         "This extension changed. Review its permissions again." to "此扩展已更改，请重新审核其权限。",
-        "This version is not in this app's review list. Update the app to use it." to "此版本不在 App 审核清单中，请更新 App 后再使用。",
+        "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "无法运行此插件：它不是来自你信任的发布者，或此设备没有插件沙箱。",
     )
 
 private val JapaneseReviewedExtensionTranslations = mapOf(
@@ -3336,13 +3332,11 @@ private val JapaneseReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "権限を適用中…",
     "Updating trust…" to "信頼を更新中…",
     "This extension changed. Review its permissions again." to "この拡張機能が変更されました。権限をもう一度確認してください。",
-    "This version is not in this app's review list. Update the app to use it." to "このバージョンはアプリの審査リストにありません。アプリを更新してからご利用ください。",
-    "Approve reviewed extension" to "レビュー済み拡張機能を承認",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "このプラグインは実行できません。信頼した発行者のものではないか、この端末にプラグインのサンドボックスがありません。",
     "SHA-256: {0}" to "SHA-256：{0}",
     "Required permissions" to "必要な権限",
     "The script remains blocked until you approve this exact version and digest." to
         "この正確なバージョンとダイジェストを承認するまで、スクリプトはブロックされたままです。",
-    "Exact reviewed permissions granted" to "レビュー済みの権限を付与済み",
     "Execution blocked" to "実行をブロック中",
     "Execute reviewed script" to "レビュー済みスクリプトを実行",
     "Network access" to "ネットワークアクセス",
@@ -3372,13 +3366,11 @@ private val KoreanReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "권한 적용 중…",
     "Updating trust…" to "신뢰 업데이트 중…",
     "This extension changed. Review its permissions again." to "이 확장이 변경되었습니다. 권한을 다시 검토하세요.",
-    "This version is not in this app's review list. Update the app to use it." to "이 버전은 앱 검토 목록에 없습니다. 앱을 업데이트한 후 사용하세요.",
-    "Approve reviewed extension" to "검토된 확장 승인",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "이 플러그인을 실행할 수 없습니다. 신뢰하는 게시자의 것이 아니거나 이 기기에 플러그인 샌드박스가 없습니다.",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "필수 권한",
     "The script remains blocked until you approve this exact version and digest." to
         "이 정확한 버전과 다이제스트를 승인할 때까지 스크립트 실행이 차단됩니다.",
-    "Exact reviewed permissions granted" to "검토된 정확한 권한 부여됨",
     "Execution blocked" to "실행 차단됨",
     "Execute reviewed script" to "검토된 스크립트 실행",
     "Network access" to "네트워크 접근",
@@ -3408,13 +3400,11 @@ private val FrenchReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "Application des autorisations…",
     "Updating trust…" to "Mise à jour de la confiance…",
     "This extension changed. Review its permissions again." to "Cette extension a changé. Vérifiez à nouveau ses autorisations.",
-    "This version is not in this app's review list. Update the app to use it." to "Cette version ne figure pas dans la liste de validation de l'application. Mettez l'application à jour pour l'utiliser.",
-    "Approve reviewed extension" to "Approuver l’extension vérifiée",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "Impossible d'exécuter cette extension : elle ne vient pas d'un éditeur de confiance, ou cet appareil n'a pas de bac à sable pour extensions.",
     "SHA-256: {0}" to "SHA-256 : {0}",
     "Required permissions" to "Autorisations requises",
     "The script remains blocked until you approve this exact version and digest." to
         "Le script reste bloqué tant que vous n’approuvez pas cette version et cette empreinte exactes.",
-    "Exact reviewed permissions granted" to "Autorisations vérifiées accordées",
     "Execution blocked" to "Exécution bloquée",
     "Execute reviewed script" to "Exécuter le script vérifié",
     "Network access" to "Accès réseau",
@@ -3444,13 +3434,11 @@ private val GermanReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "Berechtigungen werden angewendet…",
     "Updating trust…" to "Vertrauen wird aktualisiert…",
     "This extension changed. Review its permissions again." to "Diese Erweiterung wurde geändert. Prüfe ihre Berechtigungen erneut.",
-    "This version is not in this app's review list. Update the app to use it." to "Diese Version ist nicht in der Prüfliste der App. Aktualisiere die App, um sie zu verwenden.",
-    "Approve reviewed extension" to "Geprüfte Erweiterung genehmigen",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "Diese Erweiterung kann nicht laufen: Sie stammt nicht von einem vertrauenswürdigen Herausgeber, oder dieses Gerät hat keine Erweiterungs-Sandbox.",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Erforderliche Berechtigungen",
     "The script remains blocked until you approve this exact version and digest." to
         "Das Skript bleibt gesperrt, bis du genau diese Version und Prüfsumme genehmigst.",
-    "Exact reviewed permissions granted" to "Geprüfte Berechtigungen erteilt",
     "Execution blocked" to "Ausführung blockiert",
     "Execute reviewed script" to "Geprüftes Skript ausführen",
     "Network access" to "Netzwerkzugriff",
@@ -3480,13 +3468,11 @@ private val SpanishReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "Aplicando permisos…",
     "Updating trust…" to "Actualizando la confianza…",
     "This extension changed. Review its permissions again." to "Esta extensión ha cambiado. Revisa sus permisos de nuevo.",
-    "This version is not in this app's review list. Update the app to use it." to "Esta versión no está en la lista de revisión de la app. Actualiza la app para usarla.",
-    "Approve reviewed extension" to "Aprobar extensión revisada",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "Esta extensión no puede ejecutarse: no es de un editor de confianza o este dispositivo no tiene sandbox de extensiones.",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Permisos requeridos",
     "The script remains blocked until you approve this exact version and digest." to
         "El script seguirá bloqueado hasta que apruebes esta versión y este resumen exactos.",
-    "Exact reviewed permissions granted" to "Permisos revisados concedidos",
     "Execution blocked" to "Ejecución bloqueada",
     "Execute reviewed script" to "Ejecutar script revisado",
     "Network access" to "Acceso a la red",
@@ -3516,13 +3502,11 @@ private val PortugueseReviewedExtensionTranslations = mapOf(
     "Applying permissions…" to "Aplicando permissões…",
     "Updating trust…" to "Atualizando a confiança…",
     "This extension changed. Review its permissions again." to "Esta extensão foi alterada. Revise suas permissões novamente.",
-    "This version is not in this app's review list. Update the app to use it." to "Esta versão não está na lista de revisão do app. Atualize o app para usá-la.",
-    "Approve reviewed extension" to "Aprovar extensão revisada",
+    "This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox." to "Esta extensão não pode ser executada: ela não é de um publicador confiável ou este dispositivo não tem sandbox de extensões.",
     "SHA-256: {0}" to "SHA-256: {0}",
     "Required permissions" to "Permissões necessárias",
     "The script remains blocked until you approve this exact version and digest." to
         "O script continuará bloqueado até você aprovar esta versão e este resumo exatos.",
-    "Exact reviewed permissions granted" to "Permissões revisadas concedidas",
     "Execution blocked" to "Execução bloqueada",
     "Execute reviewed script" to "Executar script revisado",
     "Network access" to "Acesso à rede",

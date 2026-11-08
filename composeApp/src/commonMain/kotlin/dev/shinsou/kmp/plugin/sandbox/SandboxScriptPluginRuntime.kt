@@ -44,9 +44,7 @@ internal fun interface SandboxTransportProvider {
 
 /**
  * The sandbox tier's [ScriptPluginRuntimeFactory] (ADR-0002 §4.1). Every runtime gets its own
- * sandbox; scripts never run in the host process. Host-reviewed catalogue artifacts run here too
- * (§22): their provenance must match the exact script and source, and brings the reviewed limits
- * and the cookie read the review covers; the capability itself never reaches the sandbox.
+ * sandbox; scripts never run in the host process.
  * With a [lifecycle], idle sandboxes are stopped and restarted on demand and crash loops disable
  * the package (§4.6, §7).
  */
@@ -71,16 +69,8 @@ internal class SandboxRuntimeFactory(
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
     ): ScriptPluginRuntime {
-        // Checked before any sandbox opens: provenance for other bytes or another source is refused.
-        val provenance = environment.inProcessScriptProvenance
-        val reviewedLimits = provenance?.requireExactMatch(script, manifest, source)
-        val sandboxEnvironment = if (provenance == null) environment.withTextResultLimit(source) else environment.copy(
-            executionLimits = reviewedLimits ?: environment.executionLimits,
-            inProcessScriptProvenance = null,
-        )
-        // In process a reviewed artifact read cookies with COOKIE_STORAGE alone; the dispatcher still
-        // requires that permission. Other packages keep the policy's COOKIE_READ decision (S6).
-        val policy = policyFor(manifest, source).let { if (provenance != null) it.copy(allowCookieRead = true) else it }
+        val sandboxEnvironment = environment.withTextResultLimit(source)
+        val policy = policyFor(manifest, source)
         manifest.requireDeclaredExecutableSource(source)
         sandboxEnvironment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
         val runtime = SandboxScriptPluginRuntime(

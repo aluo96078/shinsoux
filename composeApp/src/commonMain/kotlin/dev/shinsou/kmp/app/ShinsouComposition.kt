@@ -52,7 +52,6 @@ import dev.shinsou.kmp.plugin.ConfiguredRepositoryTrustPolicy
 import dev.shinsou.kmp.plugin.createPlatformPinnedPluginHttpTransport
 import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
 import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
-import dev.shinsou.kmp.plugin.isCanonicalOfficialUnsignedRepository
 import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
@@ -169,9 +168,6 @@ public class ShinsouComposition(
         PluginBrowserSessionTransport.Unavailable,
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
-    private val reviewedLocalRepositoryPolicy: dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy =
-        dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED,
-    private val reviewedLocalRepositoryTransport: dev.shinsou.kmp.plugin.PluginHttpTransport? = null,
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -280,20 +276,14 @@ public class ShinsouComposition(
             blocklist = pluginBlocklist,
             fallback = ConfiguredRepositoryTrustPolicy(
                 roots = repositoryTrustRootStore,
-                // Temporary compatibility for the unsigned official publication only. URL
-                // normalization happens before this exact predicate; every other unpinned public
-                // repository remains rejected before transport.
-                // Developer mode adds only this device and the LAN addresses the user entered.
-                allowUnsignedDeveloperCompatibility = { url ->
-                    isCanonicalOfficialUnsignedRepository(url) || pluginDeveloperMode.admitsRepository(url)
-                },
+                // Every unpinned repository is rejected before transport, except what developer
+                // mode admits: this device and the LAN addresses the user entered.
+                allowUnsignedDeveloperCompatibility = { url -> pluginDeveloperMode.admitsRepository(url) },
             ),
         ),
         repositorySecurityState = repositorySecurityState,
         repositoryHostResolver = platformPluginHostResolver,
         repositoryTransport = platformPinnedPluginTransport,
-        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
-        reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
         developerRepository = pluginDeveloperMode::admitsRepository,
     )
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
@@ -429,7 +419,6 @@ public class ShinsouComposition(
         ),
         eventGrantAdmission = pluginEventGrantAdmission,
         reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
-        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
         executionTierGate = PublisherExecutionTierGate(publisherTrustStore, executionTierResolver),
         developerRepository = pluginDeveloperMode::admitsRepository,
     )
@@ -733,10 +722,6 @@ public class ShinsouComposition(
             )
         },
         fileSystem = fileSystem,
-        // Seed only the single app-reviewed official repository when a new installation has no
-        // persisted repository. PluginBrowseAdapter still requires an empty repository list and
-        // performs the exact canonical URL/trust check before fetching; user-configured
-        // repositories and upgraded snapshots are never replaced or re-seeded.
     )
 
     public val localContent: LocalContentManager = LocalContentManager(

@@ -1397,7 +1397,6 @@ data class BrowseRepository(
     val name: String,
     val website: String? = null,
     val signingFingerprint: String? = null,
-    val official: Boolean = false,
     /** It now publishes signed documents; confirm its publisher to refresh it again. */
     val needsPublisherTrust: Boolean = false,
 )

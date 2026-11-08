@@ -62,67 +62,7 @@ public data class ScriptPluginEnvironment(
      * Direct embedders receive no capability unless they explicitly grant one.
      */
     val runtimePermissions: Set<PluginRuntimePermission> = emptySet(),
-    /**
-     * Host-issued, exact-byte provenance for in-process engines without an OS memory sandbox.
-     * Its constructor is not part of the public API and generic repository loading clears it.
-     * Any reviewed-only execution profile is carried inside this capability so a copied
-     * environment cannot enable it without also passing the final exact-match check.
-     */
-    val inProcessScriptProvenance: InProcessScriptProvenance? = null,
 )
-
-/**
- * Unforgeable-by-repository admission for one exact evaluated script and source binding.
- *
- * A repository manifest, signature, permission grant, or user trust toggle is deliberately
- * insufficient to construct this object. The host-reviewed loader issues it only after matching
- * downloaded artifact bytes against its built-in catalogue. Engines must still call
- * [requireExactMatch] immediately before allocating an in-process runtime.
- */
-public class InProcessScriptProvenance internal constructor(
-    private val artifact: PluginArtifactIdentity,
-    private val sourceKey: SourceKey,
-    private val evaluatedScriptSha256: String,
-    private val executionLimits: PluginExecutionLimits? = null,
-) {
-    internal fun requireExactMatch(
-        script: String,
-        manifest: PluginManifest,
-        source: SourceIndexEntry?,
-    ): PluginExecutionLimits? {
-        require(manifest.id == artifact.packageId) { "Reviewed script package identity mismatch" }
-        require(manifest.version == artifact.version) { "Reviewed script version identity mismatch" }
-        require(
-            (manifest.versionCode ?: PluginVerifier.versionInt(manifest.version)) == artifact.versionCode,
-        ) { "Reviewed script version-code identity mismatch" }
-        require(manifest.signature.trim().lowercase() == artifact.sha256) {
-            "Reviewed script artifact digest identity mismatch"
-        }
-        require(source != null) { "Reviewed in-process script requires an exact source binding" }
-        require(sourceKey.packageId == artifact.packageId) { "Reviewed source package identity mismatch" }
-        require((source.canonicalSourceId ?: source.id.toString()) == sourceKey.sourceId) {
-            "Reviewed source identity mismatch"
-        }
-        require(Sha256.hex(script.encodeToByteArray()) == evaluatedScriptSha256) {
-            "Reviewed evaluated-script digest mismatch"
-        }
-        return executionLimits
-    }
-
-    internal companion object {
-        fun reviewedArtifact(
-            artifact: PluginArtifactIdentity,
-            sourceKey: SourceKey,
-            evaluatedScript: String,
-            executionLimits: PluginExecutionLimits? = null,
-        ): InProcessScriptProvenance = InProcessScriptProvenance(
-            artifact = artifact,
-            sourceKey = sourceKey,
-            evaluatedScriptSha256 = Sha256.hex(evaluatedScript.encodeToByteArray()),
-            executionLimits = executionLimits,
-        )
-    }
-}
 
 /** Fail-closed guard shared by both script engines before crossing a sensitive host boundary. */
 internal fun ScriptPluginEnvironment.requireRuntimePermission(permission: PluginRuntimePermission) {
@@ -210,11 +150,11 @@ public fun interface ScriptPluginRuntimeFactory {
 public open class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
 
 /**
- * The user approved an exact artifact, but this app build still cannot execute it (for example the
- * digest is newer than the compiled review catalogue). Re-prompting cannot help; an app update can.
+ * The user approved an exact artifact, but this device still cannot execute it (it is unsigned, or
+ * the platform has no sandbox for it). Re-prompting cannot help.
  */
 public class ExtensionArtifactNotReviewedException(pluginId: String) :
-    IllegalStateException("Extension '$pluginId' is not in this app's reviewed catalogue")
+    IllegalStateException("Extension '$pluginId' cannot run on this device")
 
 /** Safe fallback for iOS hosts that have not injected their JavaScriptCore factory yet. */
 public object NoopScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {

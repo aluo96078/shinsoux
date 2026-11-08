@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 
 class PluginNetworkSecurityTest {
     @Test
-    fun reviewedInProcessScopeStillUsesResolvedTransport() = runTest {
+    fun networkClientStillUsesResolvedTransport() = runTest {
         var ordinaryCalls = 0
         var resolvedCalls = 0
         var received: PluginHostResolution? = null
@@ -41,7 +41,7 @@ class PluginNetworkSecurityTest {
             storage = storage,
             policy = PluginNetworkPolicy(requestOrigins = setOf("https://api.example")),
             hostResolver = PluginHostResolver { listOf("93.184.216.34") },
-        ).forReviewedInProcessArtifact().execute(
+        ).execute(
             1,
             PluginHttpRequest("GET", "https://api.example/item"),
         )
