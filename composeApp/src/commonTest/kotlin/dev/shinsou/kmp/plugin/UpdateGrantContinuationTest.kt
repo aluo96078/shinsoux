@@ -58,4 +58,17 @@ class UpdateGrantContinuationTest {
         // The same artifact is not an update.
         assertNull(continued(next = review('a')))
     }
+
+    @Test
+    fun aNewBrowserImageOriginNeedsAFreshReviewEvenWhenAlreadyAContentOrigin() {
+        val origins = setOf("https://img.example.com", "https://cdn2.example.com")
+        fun imageSource(images: Set<String>) = source().copy(contentOrigins = origins, browserImageOrigins = images)
+        fun carried(previous: Set<String>, next: Set<String>) = UpdateGrantContinuation.continuedSelection(
+            "sha256:publisher", "sha256:publisher", review('a'), previousGrant, review('b'),
+            listOf(imageSource(previous)), listOf(imageSource(next)),
+        )
+        assertEquals(previousGrant, carried(setOf("https://img.example.com"), setOf("https://img.example.com")))
+        assertEquals(previousGrant, carried(origins, setOf("https://img.example.com")))
+        assertNull(carried(setOf("https://img.example.com"), origins))
+    }
 }
