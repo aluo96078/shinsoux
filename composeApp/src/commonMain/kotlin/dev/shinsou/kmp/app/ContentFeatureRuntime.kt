@@ -129,6 +129,36 @@ public class ContentFeatureRuntime(
     public suspend fun reconcileSearchIndex(): FullTextIndexReconcileResult =
         searchReconciler.reconcile()
 
+    /** What the last complete pass saw; only the background actor reads and writes it. */
+    private var lastCompleteReconcile: SearchReconcileInputs? = null
+
+    /**
+     * [reconcileSearchIndex] for the background actor: skipped when the content graph, rights
+     * policy and index rows are all as they were at the start of the last pass that left nothing
+     * unavailable or unauthorized. That pass decodes the whole library and probes every indexed
+     * paragraph, which cost tens of seconds of CPU each time the app left the screen.
+     */
+    public suspend fun reconcileSearchIndexIfChanged(): FullTextIndexReconcileResult? {
+        val inputs = SearchReconcileInputs(
+            contentGeneration = foundation.contentGeneration,
+            rightsRevision = foundation.rightsAuthority.policyRevision,
+            indexRemovals = searchIndex.removalRevision,
+        )
+        if (inputs == lastCompleteReconcile) return null
+        lastCompleteReconcile = null
+        val result = searchReconciler.reconcile()
+        if (result.unavailableRepresentations == 0 && result.unauthorizedRepresentations == 0) {
+            lastCompleteReconcile = inputs
+        }
+        return result
+    }
+
+    private data class SearchReconcileInputs(
+        val contentGeneration: Long,
+        val rightsRevision: Long,
+        val indexRemovals: Long,
+    )
+
     /** Called after foreground/resume and before presenting a typed content session. */
     public suspend fun cleanupRevokedDerivedData(
         scope: ReadingScope,
@@ -180,9 +210,9 @@ public class ContentFeatureRuntime(
             pending += event
         }
         if (pending.isEmpty()) return DerivedRightsCleanupResult.Empty
-        // Capture the focused publication read-side once; resolving a scoped SQL graph for every
-        // annotation would still turn a large cleanup into repeated graph decoding.
-        val publications = foundation.publications.all().associateBy(Publication::key)
+        // One memoized read side for the whole drain: each publication an annotation needs is
+        // decoded at most once, and none is decoded when no annotation refers to it.
+        val publications = PublicationLookup()
         return try {
             pending.fold(DerivedRightsCleanupResult.Empty) { result, event ->
                 result + cleanupDerivedRightsTarget(
@@ -209,7 +239,7 @@ public class ContentFeatureRuntime(
             .sortedBy { grant -> grant.grantId.value }
         if (expired.isEmpty()) return DerivedRightsCleanupResult.Empty
         textToSpeech.stop()
-        val publications = foundation.publications.all().associateBy(Publication::key)
+        val publications = PublicationLookup()
         return expired.fold(DerivedRightsCleanupResult.Empty) { result, grant ->
             result + cleanupDerivedRightsTarget(
                 target = DerivedRightsCleanupTarget.Grant(grant.grantId, grant.scope),
@@ -233,7 +263,7 @@ public class ContentFeatureRuntime(
     private suspend fun cleanupDerivedRightsTarget(
         target: DerivedRightsCleanupTarget,
         speechStopped: Boolean,
-        publications: Map<PublicationKey, Publication> = publicationSnapshot(target),
+        publications: PublicationLookup = PublicationLookup(),
     ): DerivedRightsCleanupResult {
         val search = searchIndex.purgeUnauthorizedInBackground(target)
         val annotationsResult = annotations.purgeUnauthorizedDerivedDataInBackground(
@@ -252,25 +282,21 @@ public class ContentFeatureRuntime(
         )
     }
 
-    private fun publicationSnapshot(
-        target: DerivedRightsCleanupTarget,
-    ): Map<PublicationKey, Publication> {
-        val scopedPublication = when (target) {
-            DerivedRightsCleanupTarget.All -> null
-            is DerivedRightsCleanupTarget.Publication -> target.publicationId
-            is DerivedRightsCleanupTarget.Grant -> target.lastKnownScope?.publicationId
-        }
-        if (scopedPublication == null) {
-            return foundation.publications.all().associateBy(Publication::key)
-        }
-        return foundation.publications.find(scopedPublication)?.let { publication ->
-            mapOf(publication.key to publication)
-        } ?: emptyMap()
+    /**
+     * Publications read on first use and kept for one cleanup. A full sweep used to decode the
+     * whole library (every chapter and manifest) up front, though only annotations consult it and
+     * most libraries have few or none: tens of seconds of CPU each time the app left the screen.
+     */
+    private inner class PublicationLookup {
+        private val loaded = HashMap<PublicationKey, Publication?>()
+
+        operator fun get(key: PublicationKey): Publication? =
+            loaded.getOrPut(key) { foundation.publications.find(key) }
     }
 
     private fun currentAnnotationAccess(
         annotation: ContentAnnotation,
-        publications: Map<PublicationKey, Publication>,
+        publications: PublicationLookup,
     ): ContentAccessRequest? {
         val scope = annotation.scope
         val publication = publications[scope.publicationId] ?: return null

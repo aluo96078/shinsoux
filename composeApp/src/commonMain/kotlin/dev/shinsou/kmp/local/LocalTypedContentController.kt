@@ -388,7 +388,22 @@ internal class LocalTypedContentController(
             }
         }.distinctBy(ContentBlobSyncJobMutation::jobId)
 
-    fun load(chapterUrl: String): TypedReaderContentSession? {
+    /**
+     * The extension source an acquisition came from, for chapters an extension download put in
+     * the library (they open through this typed path, not the extension one). Null for imports.
+     */
+    fun extensionSourceKey(chapterUrl: String): dev.shinsou.kmp.domain.model.SourceKey? {
+        val reference = TypedLocalChapterReference.parse(chapterUrl) ?: return null
+        val acquisition = foundation.publications.findOutline(reference.publicationKey)
+            ?.acquisitions?.singleOrNull { it.id == reference.acquisitionId } ?: return null
+        return (acquisition.origin as? dev.shinsou.kmp.domain.model.AcquisitionOrigin.ExtensionSource)
+            ?.sourceBinding?.remoteEntityKey?.sourceKey
+    }
+
+    fun load(
+        chapterUrl: String,
+        remoteAssetScope: dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope? = null,
+    ): TypedReaderContentSession? {
         val reference = TypedLocalChapterReference.parse(chapterUrl) ?: return null
         val publication = foundation.publications.find(reference.publicationKey)
             ?: throw LocalContentUnavailableException("The typed local publication no longer exists.")
@@ -439,6 +454,12 @@ internal class LocalTypedContentController(
             content = UnifiedReaderContent(navigation),
             canonicalText = canonicalText,
             access = access,
+            // Only the scope issued for this acquisition's own source: inline images in an
+            // extension chapter load through that source's declared content origins.
+            remoteAssetScope = remoteAssetScope?.takeIf { scope ->
+                (acquisition.origin as? dev.shinsou.kmp.domain.model.AcquisitionOrigin.ExtensionSource)
+                    ?.sourceBinding?.remoteEntityKey?.sourceKey == scope.sourceKey
+            },
         )
     }
 
@@ -448,7 +469,9 @@ internal class LocalTypedContentController(
      * emitted by this controller is projected; extension and legacy-migration Publications have
      * their own compatibility owners.
      */
-    fun legacyProjectionCandidates(): List<LocalTypedImport> = foundation.publications.all()
+    // Runs on every launch: pick local titles from outlines, then read only those in full (their
+    // manifests give the item count). Reading every title's manifests took seconds each time.
+    fun legacyProjectionCandidates(): List<LocalTypedImport> = foundation.publications.allOutlines()
         .asSequence()
         .filter { publication ->
             publication.acquisitions.singleOrNull()?.origin.let { origin ->
@@ -457,6 +480,7 @@ internal class LocalTypedContentController(
                     origin is dev.shinsou.kmp.domain.model.AcquisitionOrigin.LocalPackage
             }
         }
+        .mapNotNull { outline -> foundation.publications.find(outline.key) }
         .mapNotNull { publication -> runCatching { publication.toLocalTypedImport() }.getOrNull() }
         .sortedBy(LocalTypedImport::chapterUrl)
         .toList()

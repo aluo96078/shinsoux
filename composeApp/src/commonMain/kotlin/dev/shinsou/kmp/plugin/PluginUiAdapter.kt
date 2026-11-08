@@ -287,6 +287,18 @@ public class PluginBrowseAdapter(
         refreshLocked()
     }
 
+    /**
+     * Shows the installed sources at once. Startup runs content migrations before the full
+     * [refresh], and on a large library those take long enough that the Sources page stayed
+     * empty until the user refreshed it by hand.
+     */
+    public suspend fun showInstalledSources(): Unit = operationMutex.withLock {
+        withContext(Dispatchers.Default) {
+            ensureInstalledLoaded()
+            rebuildSnapshot(errorMessage = null)
+        }
+    }
+
     override suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean): Unit = operationMutex.withLock {
         manager.setEventSourceEnabled(sourceId, enabled)
         keyValueStore.putString(sourceEnabledKey(sourceId), enabled.toString())
@@ -905,7 +917,7 @@ public class PluginBrowseAdapter(
                     materializeExtensionContentV2(selection, choice.availableIds.firstOrNull() ?: throw choice)
                 }
             },
-            isStored = { selection ->
+            storedUnitIds = { selection ->
                 extensionContentConsumerV2
                     ?.downloadedRemoteUnitIds(
                         dev.shinsou.kmp.plugin.v2.extensionPublicationKey(
@@ -913,7 +925,7 @@ public class PluginBrowseAdapter(
                             selection.remotePublicationId,
                         ),
                     )
-                    ?.contains(selection.unit.remoteId) == true
+                    .orEmpty()
             },
             store = fileSystem?.let(::ExtensionDownloadQueueFileStoreV2),
             // Sources load during startup; downloads begin once [openExtensionDownloadsV2] runs.

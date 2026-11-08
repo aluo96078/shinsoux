@@ -50,6 +50,8 @@ public class FoundationFullTextIndexReconciler(
 
     public suspend fun reconcile(): FullTextIndexReconcileResult {
         currentCoroutineContext().ensureActive()
+        // The format-1 rows go first so the space comes back before the library is re-indexed.
+        index.dropLegacyTablesInBackground()
 
         var examined = 0
         var indexedRepresentations = 0
@@ -137,18 +139,14 @@ public class FoundationFullTextIndexReconciler(
                                 }
                                 val representationDocumentIds = segments.map(FullTextDocumentSegment::documentId)
                                 durableDocumentIds += representationDocumentIds
-                                val currentSegments = segments.map { segment ->
-                                    currentCoroutineContext().ensureActive()
-                                    index.isCurrent(
-                                        documentId = segment.documentId,
-                                        scope = readingScope,
-                                        resourceId = representation.resource.id,
-                                        blockId = segment.blockId,
-                                        baseOffsetUtf16 = segment.startUtf16,
-                                        canonicalDocumentUtf16Length = representation.canonicalUtf16Length,
-                                        access = access,
-                                    ).also { yield() }
-                                }
+                                currentCoroutineContext().ensureActive()
+                                val currentSegments = index.currentSegments(
+                                    scope = readingScope,
+                                    resourceId = representation.resource.id,
+                                    canonicalDocumentUtf16Length = representation.canonicalUtf16Length,
+                                    access = access,
+                                    segments = segments,
+                                )
                                 val currentDocumentCount = currentSegments.count { it }
                                 if (currentSegments.all { it }) {
                                     alreadyCurrentRepresentations++

@@ -112,6 +112,7 @@ import dev.shinsou.kmp.sync.provisioning.DefaultSyncRecoveryUiDelegate
 import dev.shinsou.kmp.sync.provisioning.SyncProvisioningCrypto
 import dev.shinsou.kmp.sync.trust.PinnedDevicePublicKeyResolver
 import dev.shinsou.kmp.sync.trust.RecoveryKitManager
+import dev.shinsou.kmp.sync.v2.ContentSyncOutboxCompactor
 import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.sync.v2.BlobReuploadRecoveryCoordinatorV2
 import dev.shinsou.kmp.sync.v2.ContentReplicaMaterializationStatusV2
@@ -126,6 +127,7 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -731,6 +733,7 @@ public class ShinsouComposition(
         contentFoundation = contentFoundation,
         epubArchiveExtractor = BoundedEpubArchiveExtractor(),
         onTypedContentCommitted = ::scheduleSearchIndexReconciliation,
+        remoteAssetScopeFor = { sourceKey -> pluginManager.contentNetworkScopeForSource(sourceKey) },
     )
 
     public val content: ContentCallbacks = localContent
@@ -782,6 +785,14 @@ public class ShinsouComposition(
         scheduleContentOutboxDrain()
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
+            try {
+                // Deferred out of construction (the first frame); load it here, off the main thread.
+                contentFoundation?.warmAttachmentLedger()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Stays pending; the next content operation loads it and reports the failure.
+            }
             // Before any refresh: repository trust and install keys read it synchronously, and
             // until it is loaded developer mode counts as off.
             try {
@@ -790,6 +801,14 @@ public class ShinsouComposition(
                 throw cancelled
             } catch (_: Throwable) {
                 // Unreadable: developer mode stays off.
+            }
+            try {
+                // Installed sources appear now; the migrations below can take a while.
+                browse.showInstalledSources()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // browse.refresh() below loads them again and reports the error.
             }
             val stopsAtStart = backgroundDownloads.stopCount()
             try {
@@ -955,10 +974,24 @@ public class ShinsouComposition(
     }
 
     private fun scheduleContentOutboxDrain() {
-        val runtime = syncRuntime ?: return
         val store = contentFoundation?.transactions ?: return
+        val runtime = syncRuntime
         if (contentOutboxDrainJob?.isActive == true) return
         contentOutboxDrainJob = trackingScope.launch {
+            try {
+                // The outbox drains only while signed in to sync; until then every commit re-sends
+                // its whole title. Merging superseded patches keeps it proportional to the library
+                // (it had reached tens of thousands of drafts and gigabytes on a phone). Same job
+                // as the drain, so the two never run at once.
+                withContext(Dispatchers.Default) {
+                    ContentSyncOutboxCompactor(store).compactIfLarge()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Compaction is an optimization; the drafts stay valid as they are.
+            }
+            if (runtime == null) return@launch
             try {
                 repeat(MAX_CONTENT_OUTBOX_DRAIN_BATCHES) {
                     val result = runtime.drainContentOutbox(store) ?: return@launch
@@ -1086,7 +1119,7 @@ public class ShinsouComposition(
                     features.reconcilePendingRightsInvalidations()
                     features.sweepExpiredRightsDerivedData()
                     features.sweepUnauthorizedDerivedData()
-                    features.reconcileSearchIndex()
+                    features.reconcileSearchIndexIfChanged()
                 } catch (cancelled: CancellationException) {
                     // The actor may already have consumed the conflated invalidation. Preserve one
                     // retry for the next background edge before releasing foreground resources.

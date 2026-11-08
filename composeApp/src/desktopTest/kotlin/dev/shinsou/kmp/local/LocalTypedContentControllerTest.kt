@@ -155,11 +155,13 @@ class LocalTypedContentControllerTest {
                 syncModeProvider = { ContentSyncMode.V2_ACTIVE },
             )
             val repository = ShinsouRepository()
+            val scopeRequests = mutableListOf<dev.shinsou.kmp.domain.model.SourceKey>()
             val manager = LocalContentManager(
                 repository = repository,
                 fileSystem = EmptyLocalFileSystem(),
                 contentFoundation = firstFoundation,
                 now = { 12_345 },
+                remoteAssetScopeFor = { key -> scopeRequests += key; null },
             )
             val source = "# 第一章\n\n第一段 😀\n\n第二段".encodeToByteArray()
             val imported = manager.importLocalDocuments(
@@ -170,6 +172,9 @@ class LocalTypedContentControllerTest {
                 manager.loadReaderChapter(imported.mangaId, imported.chapterId).typedSession,
             )
             assertEquals(source.decodeToString(), firstSession.canonicalText)
+            // An import has no extension source: it never asks for (or gets) a network scope.
+            assertTrue(scopeRequests.isEmpty())
+            assertEquals(null, firstSession.remoteAssetScope)
             assertIs<ContentRepresentation.PlainText>(firstSession.content.representation)
             assertTrue(firstFoundation.transactions.pendingOutbox().isNotEmpty())
             assertTrue(

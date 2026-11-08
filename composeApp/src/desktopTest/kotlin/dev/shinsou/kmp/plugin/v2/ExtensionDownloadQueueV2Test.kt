@@ -39,7 +39,7 @@ class ExtensionDownloadQueueV2Test {
         val fetched = mutableListOf<String>()
         val queue = ExtensionDownloadQueueV2(
             materialize = { fetched += it.unit.remoteId },
-            isStored = { it.unit.remoteId == "b" },
+            storedUnitIds = { setOf("b") },
             scope = scope,
         )
         queue.enqueue(listOf(selection("a"), selection("b"), selection("c")))
@@ -54,6 +54,27 @@ class ExtensionDownloadQueueV2Test {
         queue.enqueue(listOf(selection("a")))
         queue.awaitSettled()
         assertEquals(3, queue.entries.value.size)
+        scope.cancel()
+    }
+
+    @Test
+    fun storedUnitsOfOneTitleSettleWithOneLookup() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        var lookups = 0
+        val fetched = mutableListOf<String>()
+        val ids = (1..200).map { "u$it" }
+        val queue = ExtensionDownloadQueueV2(
+            materialize = { fetched += it.unit.remoteId },
+            storedUnitIds = { lookups++; ids.toSet() - "u200" },
+            scope = scope,
+        )
+        queue.enqueue(ids.map(::selection))
+        queue.awaitSettled()
+
+        assertEquals(listOf("u200"), fetched)
+        assertTrue(queue.entries.value.all { it.state == DownloadState.DOWNLOADED })
+        // One lookup settles the 199 stored units; the last one is checked before its fetch.
+        assertEquals(2, lookups)
         scope.cancel()
     }
 

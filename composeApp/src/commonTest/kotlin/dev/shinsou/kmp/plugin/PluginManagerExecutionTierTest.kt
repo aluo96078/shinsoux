@@ -183,6 +183,17 @@ class PluginManagerExecutionTierTest {
             dev.shinsou.kmp.plugin.events.PluginGrantSelection(emptySet(), review.requestedRuntimePermissions, emptySet()),
         )
         val content = assertNotNull(host.manager.contentNetworkForSource(host.sourceId()))
+        // A library entry may store the key without its numeric projection (string source ids);
+        // inline reader assets must still get the same scoped client.
+        val stored = host.manager.installedPlugins().single()
+        val declared = stored.manifest.sources.orEmpty().single()
+        val exactKey = dev.shinsou.kmp.domain.model.SourceKey(
+            packageId = stored.manifest.id,
+            sourceId = declared.canonicalSourceId ?: declared.id.toString(),
+            legacyLongId = declared.id,
+        )
+        assertNotNull(host.manager.contentNetworkForSource(exactKey))
+        assertNotNull(host.manager.contentNetworkForSource(exactKey.copy(legacyLongId = null)))
         val refused = assertFailsWith<IllegalArgumentException> {
             content.execute(host.sourceId(), PluginHttpRequest("GET", "https://img1.cdn.example.net/a.jpg", ByteArray(0), emptyMap()))
         }
@@ -495,6 +506,8 @@ class PluginManagerExecutionTierTest {
         val (granted, grantedKey) = hostGranting(challenge = true)
         assertTrue(granted.manager.authorizeWebChallenge(grantedKey))
         val authorization = assertNotNull(granted.manager.issueWebChallenge(grantedKey))
+        // A stored key without its numeric projection still resolves (no crash on the storage id).
+        assertNotNull(granted.manager.issueWebChallenge(grantedKey.copy(legacyLongId = null)))
         assertEquals(setOf("https://source.example"), authorization.allowedSubresourceOrigins)
     }
 

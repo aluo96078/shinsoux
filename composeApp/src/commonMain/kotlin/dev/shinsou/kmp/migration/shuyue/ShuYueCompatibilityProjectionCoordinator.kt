@@ -55,20 +55,33 @@ internal class ShuYueCompatibilityProjectionConflictException(
  */
 internal class ShuYueCompatibilityProjectionCoordinator(
     private val repository: ShinsouRepository,
-    private val publications: () -> List<Publication>,
     private val auxiliaryState: () -> ContentPortableAuxiliaryState,
+    /** Reads just the publications with these ids (ShuYue's book aliases). */
+    private val publicationsWithIds: (Set<String>) -> List<Publication>,
 ) {
+    constructor(
+        repository: ShinsouRepository,
+        publications: () -> List<Publication>,
+        auxiliaryState: () -> ContentPortableAuxiliaryState,
+    ) : this(
+        repository = repository,
+        auxiliaryState = auxiliaryState,
+        publicationsWithIds = { ids -> publications().filter { it.key.value in ids } },
+    )
+
     constructor(
         repository: ShinsouRepository,
         foundation: ContentFoundationRuntime,
     ) : this(
         repository = repository,
-        publications = foundation.publications::all,
         auxiliaryState = foundation::portableAuxiliaryState,
+        // Runs on every launch: reading the whole library (every chapter and manifest) to keep the
+        // few ShuYue titles cost seconds each time, and all of it when there is no ShuYue import.
+        publicationsWithIds = { ids -> ids.mapNotNull { foundation.publications.find(PublicationKey(it)) } },
     )
 
     suspend fun repair(): ShuYueCompatibilityProjectionRepairResult {
-        val authority = parseAuthority(publications(), auxiliaryState().validate())
+        val authority = parseAuthority(publicationsWithIds, auxiliaryState().validate())
         if (authority.publications.isEmpty() && authority.settings.isEmpty()) {
             return ShuYueCompatibilityProjectionRepairResult()
         }
@@ -112,7 +125,7 @@ private data class UnitProjection(
 )
 
 private fun parseAuthority(
-    publications: List<Publication>,
+    publicationsWithIds: (Set<String>) -> List<Publication>,
     auxiliary: ContentPortableAuxiliaryState,
 ): ShuYueProjectionAuthority {
     val hasShuYueLedger = auxiliary.migrations.any { it.namespace == SHUYUE_MIGRATION_LEDGER_NAMESPACE }
@@ -124,7 +137,7 @@ private fun parseAuthority(
         .filter { it.alias.startsWith(SHUYUE_BOOK_ALIAS_PREFIX) }
         .mapNotNull { alias -> alias.target.takeIf { PublicationKey.isPortableUuid(it) } }
         .toSet()
-    val selectedPublications = publications.asSequence()
+    val selectedPublications = publicationsWithIds(publicationIds).asSequence()
         .filter { it.key.value in publicationIds }
         .onEach { it.validate() }
         .sortedBy { it.key.value }

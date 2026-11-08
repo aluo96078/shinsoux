@@ -701,6 +701,27 @@ public interface SharedContentTransactionStore<D : Any> {
         return 0
     }
 
+    /** Number of pending drafts, without decoding them. */
+    public fun pendingOutboxCount(): Int = pendingOutbox().size
+
+    /**
+     * One page of pending drafts ordered by draft id, starting after [afterDraftId]. Lets a
+     * caller walk a large outbox without holding every payload in memory at once.
+     */
+    public fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<D> =
+        throw UnsupportedOperationException("This content transaction store cannot page its outbox")
+
+    /** One pending draft by id, or null once it was acknowledged or replaced. */
+    public fun pendingOutboxDraft(draftId: String): D? =
+        throw UnsupportedOperationException("This content transaction store cannot read one outbox draft")
+
+    /**
+     * Atomically removes [remove] (ids already gone are ignored) and adds [add]. Used to replace
+     * superseded drafts by an equivalent compacted set; returns the number of drafts removed.
+     */
+    public fun replaceOutboxDrafts(remove: Set<String>, add: List<D>): Int =
+        throw UnsupportedOperationException("This content transaction store cannot replace outbox drafts")
+
     /** Low-priority encrypted-body jobs queued by the same content transaction. */
     public fun pendingBlobSyncJobs(): List<ContentBlobSyncJobMutation> = emptyList()
 
@@ -829,6 +850,30 @@ public class InMemorySharedContentTransactionStore<D : Any>(
     }
 
     override fun pendingOutbox(): List<D> = withTransactionLock { outbox.values.toList() }
+
+    override fun pendingOutboxCount(): Int = withTransactionLock { outbox.size }
+
+    override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<D> = withTransactionLock {
+        require(limit > 0) { "Outbox page limit must be positive" }
+        outbox.keys.sorted()
+            .filter { afterDraftId == null || it > afterDraftId }
+            .take(limit)
+            .map { outbox.getValue(it) }
+    }
+
+    override fun pendingOutboxDraft(draftId: String): D? = withTransactionLock { outbox[draftId] }
+
+    override fun replaceOutboxDrafts(remove: Set<String>, add: List<D>): Int = withTransactionLock {
+        validateAcknowledgementIds(remove, "Outbox draft id")
+        add.forEach(outboxAdapter::validate)
+        val added = add.associateBy(outboxAdapter::id)
+        require(added.size == add.size) { "Replacement outbox draft ids must be unique" }
+        require(added.keys.none { it in outbox && it !in remove }) { "Replacement outbox draft id already exists" }
+        val removed = remove.count(outbox::containsKey)
+        remove.forEach(outbox::remove)
+        outbox.putAll(added)
+        removed
+    }
 
     override fun acknowledgeOutbox(draftIds: Set<String>): Int = withTransactionLock {
         validateAcknowledgementIds(draftIds, "Outbox draft id")

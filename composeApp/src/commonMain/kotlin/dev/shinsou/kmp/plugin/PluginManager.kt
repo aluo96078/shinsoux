@@ -1519,7 +1519,7 @@ public class PluginManager(
      */
     public suspend fun contentNetworkScopeForSource(sourceKey: SourceKey): TypedReaderRemoteAssetScope? =
         packageMutationMutex.withLock {
-            sourceKey.legacyLongId?.let { legacyId ->
+            installedLegacyIdLocked(sourceKey)?.let { legacyId ->
                 val packageId = lifecycleMutex.withLock { sourceOwners[legacyId] }
                     ?: return@withLock null
                 if (packageId != sourceKey.packageId) return@withLock null
@@ -1603,7 +1603,7 @@ public class PluginManager(
         origin: String,
     ): Boolean = packageMutationMutex.withLock {
         if (isLocallyRevoked(identity)) return@withLock false
-        val sourceId = sourceKey.legacyLongId ?: return@withLock false
+        val sourceId = installedLegacyIdLocked(sourceKey) ?: return@withLock false
         if (lifecycleMutex.withLock { sourceOwners[sourceId] } != sourceKey.packageId) return@withLock false
         val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
         if (stored.artifactIdentity() != identity) return@withLock false
@@ -1722,8 +1722,12 @@ public class PluginManager(
         return sessionOrigins to (sessionOrigins + canonicalWebChallengeOrigins(declared.declaredRequestOrigins()))
     }
 
-    internal suspend fun issueWebChallenge(sourceKey: SourceKey): WebChallengeAuthorization? =
+    internal suspend fun issueWebChallenge(requestedKey: SourceKey): WebChallengeAuthorization? =
         packageMutationMutex.withLock {
+            // A stored key may lack the optional numeric projection; complete it from the manifest
+            // so storage binding below gets the host-assigned id.
+            val sourceKey = installedLegacyIdLocked(requestedKey)
+                ?.let { requestedKey.copy(legacyLongId = it) } ?: requestedKey
             require(sourceKey !in disabledNativeSources) { "Browser challenge source is disabled" }
             val stored = packageStore.get(sourceKey.packageId)
             val identity = nativeArtifactIdentities[sourceKey.packageId]
@@ -2660,6 +2664,18 @@ public class PluginManager(
     private fun declaredSourceIds(manifest: PluginManifest): Set<Long> =
         manifest.sources.orEmpty().mapTo(linkedSetOf(), SourceIndexEntry::id)
             .ifEmpty { setOf(stableSourceId(manifest.id)) }
+
+    /**
+     * The installed numeric id for [sourceKey]. Keys stored with library entries may lack the
+     * optional legacy projection (string source ids since A7b); those resolve through the live
+     * manifest entry with the same package and source id. Callers still verify ownership and the
+     * exact key against that entry. Call with [packageMutationMutex] held.
+     */
+    private suspend fun installedLegacyIdLocked(sourceKey: SourceKey): Long? =
+        sourceKey.legacyLongId ?: packageStore.get(sourceKey.packageId)
+            ?.manifest?.sources.orEmpty()
+            .singleOrNull { source -> sourceKeyFor(sourceKey.packageId, source.id, source.canonicalSourceId) == sourceKey }
+            ?.id
 
     private fun sourceKeyFor(packageId: String, legacyId: Long, canonicalSourceId: String? = null): SourceKey =
         SourceKey(packageId = packageId, sourceId = canonicalSourceId ?: legacyId.toString(), legacyLongId = legacyId)

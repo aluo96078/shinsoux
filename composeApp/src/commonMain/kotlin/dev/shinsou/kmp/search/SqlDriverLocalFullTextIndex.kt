@@ -27,6 +27,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 public data class DerivedSearchCleanupResult(
     val documentsExamined: Int,
@@ -57,6 +59,11 @@ public class DerivedLocalFullTextIndex(
 
     /** Non-serializable provider sessions intentionally disappear at process restart. */
     private val liveAuthorizations = LinkedHashMap<String, ProtectionAuthorization>()
+
+    private var removals: Long = 0L
+
+    /** Advances whenever indexed rows are removed (purge, cleanup, clear); read under the index lock. */
+    internal val removalRevision: Long get() = withIndexLock { removals }
 
     init {
         LocalFullTextIndexSchema.create(driver).value
@@ -109,9 +116,7 @@ public class DerivedLocalFullTextIndex(
         operationGate.requireAllowed(access, ContentOperation.SEARCH_INDEX)
         val source = document.copy(access = access)
         val tokens = CjkLatinFullTextTokenizer.tokenize(source.text)
-        val encoded = codec.encodeToString(PersistedSearchMetadata.from(source))
-        require(encoded.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
-        return PreparedSearchUpsert(source, tokens, encoded)
+        return prepared(source, tokens)
     }
 
     private suspend fun prepareUpsertInBackground(
@@ -124,9 +129,52 @@ public class DerivedLocalFullTextIndex(
         operationGate.requireAllowed(access, ContentOperation.SEARCH_INDEX)
         val source = document.copy(access = access)
         val tokens = CjkLatinFullTextTokenizer.tokenizeCancellable(source.text)
-        val encoded = codec.encodeToString(PersistedSearchMetadata.from(source))
-        require(encoded.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
-        return PreparedSearchUpsert(source, tokens, encoded)
+        return prepared(source, tokens)
+    }
+
+    private fun prepared(source: SearchableTextDocument, tokens: List<FullTextToken>): PreparedSearchUpsert {
+        // Validates the complete persisted shape exactly as before the storage split.
+        val metadata = PersistedSearchMetadata.from(source)
+        val context = codec.encodeToString(PersistedSearchContext.from(metadata))
+        require(context.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+        val anchor = metadata.epubAnchor?.let { codec.encodeToString(it) }
+        require((anchor?.length ?: 0) <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+        val postings = tokens.groupBy(FullTextToken::value).map { (token, occurrences) ->
+            SearchPosting(token, occurrences.size, encodeSearchPositions(token, occurrences))
+        }
+        return PreparedSearchUpsert(source, postings, context, anchor)
+    }
+
+    /** Shared row for every block of one resource revision with the same access request. */
+    private fun contextKeyLocked(source: SearchableTextDocument, encodedContext: String): Long {
+        driver.execute(
+            identifier = null,
+            sql = """
+                INSERT OR IGNORE INTO $TABLE_SEARCH_CONTEXTS(
+                  publication_id, acquisition_id, unit_id, content_revision, resource_id,
+                  canonical_length_utf16, context_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+            parameters = 7,
+        ) {
+            bindString(0, source.scope.publicationId.value)
+            bindString(1, source.scope.acquisitionId)
+            bindString(2, source.scope.unitId.value)
+            bindLong(3, source.scope.contentRevision)
+            bindString(4, source.resourceId)
+            bindLong(5, source.canonicalDocumentUtf16Length.toLong())
+            bindString(6, encodedContext)
+        }.value
+        return driver.executeQuery(
+            identifier = null,
+            sql = "SELECT context_key FROM $TABLE_SEARCH_CONTEXTS WHERE context_json = ?",
+            mapper = { cursor ->
+                check(cursor.next().value) { "Search context row is missing" }
+                QueryResult.Value(requireNotNull(cursor.getLong(0)))
+            },
+            parameters = 1,
+            binders = { bindString(0, encodedContext) },
+        ).value
     }
 
     private fun upsertLocked(prepared: PreparedSearchUpsert) {
@@ -135,46 +183,43 @@ public class DerivedLocalFullTextIndex(
         operationGate.execute(source.access, ContentOperation.SEARCH_INDEX) {
             transactions.transactionWithResult<Unit>(noEnclosing = false) {
                 deleteDocumentRowsLocked(source.documentId)
+                val contextKey = contextKeyLocked(source, prepared.encodedContext)
                 driver.execute(
                     identifier = null,
                     sql = """
                         INSERT INTO $TABLE_SEARCH_DOCUMENTS(
-                          document_id, publication_id, acquisition_id, unit_id,
-                          content_revision, resource_id, block_id, base_offset_utf16,
-                          canonical_length_utf16, metadata_json, body_text
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          document_id, context_key, block_id, base_offset_utf16, epub_anchor_json, body_text
+                        ) VALUES (?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
-                    parameters = 11,
+                    parameters = 6,
                 ) {
                     bindString(0, source.documentId)
-                    bindString(1, source.scope.publicationId.value)
-                    bindString(2, source.scope.acquisitionId)
-                    bindString(3, source.scope.unitId.value)
-                    bindLong(4, source.scope.contentRevision)
-                    bindString(5, source.resourceId)
-                    bindString(6, source.blockId)
-                    bindLong(7, source.baseOffsetUtf16.toLong())
-                    bindLong(8, source.canonicalDocumentUtf16Length.toLong())
-                    bindString(9, prepared.encodedMetadata)
-                    bindString(10, source.text)
+                    bindLong(1, contextKey)
+                    bindString(2, source.blockId)
+                    bindLong(3, source.baseOffsetUtf16.toLong())
+                    bindString(4, prepared.encodedEpubAnchor)
+                    bindString(5, source.text)
                 }.value
-                prepared.tokens.chunked(SEARCH_TOKEN_INSERT_BATCH_SIZE).forEach { batch ->
+                val documentKey = scalarLong("SELECT last_insert_rowid()")
+                // One row per distinct token of the block, its occurrences packed into one value:
+                // a row per occurrence (keyed by the 64-character document id, and indexed a
+                // second time by token) cost about 170 bytes per CJK character of the library.
+                prepared.postings.chunked(SEARCH_TOKEN_INSERT_BATCH_SIZE).forEach { batch ->
                     val values = batch.joinToString(",") { "(?, ?, ?, ?)" }
                     driver.execute(
                         identifier = null,
                         sql = """
-                            INSERT INTO $TABLE_SEARCH_TOKENS(
-                              document_id, token, start_utf16, end_utf16
-                            ) VALUES $values
+                            INSERT INTO $TABLE_SEARCH_POSTINGS(token, doc_key, hits, positions)
+                            VALUES $values
                         """.trimIndent(),
                         parameters = batch.size * 4,
                     ) {
-                        batch.forEachIndexed { index, token ->
+                        batch.forEachIndexed { index, posting ->
                             val offset = index * 4
-                            bindString(offset, source.documentId)
-                            bindString(offset + 1, token.value)
-                            bindLong(offset + 2, token.startUtf16.toLong())
-                            bindLong(offset + 3, token.endUtf16.toLong())
+                            bindString(offset, posting.token)
+                            bindLong(offset + 1, documentKey)
+                            bindLong(offset + 2, posting.hits.toLong())
+                            bindString(offset + 3, posting.positions)
                         }
                     }.value
                 }
@@ -206,8 +251,10 @@ public class DerivedLocalFullTextIndex(
     override fun clear() {
         withIndexLock {
             transactions.transactionWithResult<Unit>(noEnclosing = false) {
-                driver.execute(null, "DELETE FROM $TABLE_SEARCH_TOKENS", 0).value
+                driver.execute(null, "DELETE FROM $TABLE_SEARCH_POSTINGS", 0).value
                 driver.execute(null, "DELETE FROM $TABLE_SEARCH_DOCUMENTS", 0).value
+                driver.execute(null, "DELETE FROM $TABLE_SEARCH_CONTEXTS", 0).value
+                removals++
                 liveAuthorizations.clear()
             }
         }
@@ -279,6 +326,57 @@ public class DerivedLocalFullTextIndex(
         }
     }
 
+    /**
+     * [isCurrent] for every plain-text segment of one resource with a single query. Checking each
+     * paragraph separately (lock, query and JSON decode per row) made an unchanged library take
+     * about four minutes per reconciliation on a phone.
+     */
+    internal suspend fun currentSegments(
+        scope: ReadingScope,
+        resourceId: String,
+        canonicalDocumentUtf16Length: Int,
+        access: ContentAccessRequest,
+        segments: List<FullTextDocumentSegment>,
+    ): List<Boolean> {
+        scope.validate()
+        requireSearchIdentifier(resourceId, "Search resource id")
+        segments.forEach { requireSearchIdentifier(it.documentId, "Search document id") }
+        val exactAccess = access.withActualSearchTextCharacters(canonicalDocumentUtf16Length)
+        if (operationGate.decide(exactAccess, ContentOperation.SEARCH_INDEX) != RightsDecision.ALLOW) {
+            return segments.map { false }
+        }
+        return withIndexLockSuspending {
+            val rows = loadAccessRowsLocked(SearchDocumentScope(scope, resourceId))
+                .associateBy(SearchAccessRow::documentId)
+            // Every block of the resource shares one context row: decode it once, not per block.
+            val sharedContexts = HashMap<String, PersistedSearchContext?>()
+            segments.map { segment ->
+                val row = rows[segment.documentId] ?: return@map false
+                val context = sharedContexts.getOrPut(row.encodedContext) {
+                    runCatching { decodeSharedContext(row.encodedContext) }.getOrNull()
+                } ?: return@map false
+                if (!context.hadProtectionAuthorization) {
+                    return@map context.scope == scope &&
+                        context.access.toRequest(null) == exactAccess &&
+                        context.resourceId == resourceId && row.resourceId == resourceId &&
+                        row.blockId == segment.blockId &&
+                        row.baseOffsetUtf16 == segment.startUtf16.toLong() &&
+                        segment.startUtf16 <= canonicalDocumentUtf16Length &&
+                        context.canonicalDocumentUtf16Length == canonicalDocumentUtf16Length &&
+                        row.canonicalLengthUtf16 == canonicalDocumentUtf16Length.toLong() &&
+                        row.encodedEpubAnchor == null
+                }
+                val metadata = runCatching { row.decodeMetadata() }.getOrNull() ?: return@map false
+                val decoded = runCatching { row.decodeAccess(metadata) }.getOrNull() ?: return@map false
+                decoded.first == scope && decoded.second == exactAccess &&
+                    row.resourceId == resourceId && row.blockId == segment.blockId &&
+                    row.baseOffsetUtf16 == segment.startUtf16.toLong() &&
+                    row.canonicalLengthUtf16 == canonicalDocumentUtf16Length.toLong() &&
+                    metadata.epubAnchor == null
+            }
+        }
+    }
+
     override fun purgeUnauthorized(): Int = withIndexLock { purgeUnauthorizedLocked() }
 
     /** Rights cleanup for the open unit; reader entry must never scan the entire library. */
@@ -309,6 +407,12 @@ public class DerivedLocalFullTextIndex(
         var afterDocumentId: String? = null
         var examined = 0
         var purged = 0
+        // Blocks of one resource share their context row, so its access request and decision are
+        // the same for all of them: decide once per context instead of once per paragraph (rows
+        // come in document-id order, which interleaves every resource). A decision is reused for
+        // at most a second, so a grant expiring during a long sweep is still seen. Protected
+        // content keeps its per-document live authorization and is decided row by row.
+        val sharedDecisions = HashMap<String, SharedSearchDecision>()
         while (true) {
             currentCoroutineContext().ensureActive()
             yield()
@@ -316,7 +420,21 @@ public class DerivedLocalFullTextIndex(
             val page = withIndexLockSuspending {
                 val rows = loadRightsCleanupPageLocked(target, afterDocumentId, pageSize)
                 val denied = rows.mapNotNull { row ->
-                    val access = runCatching { row.decodeAccess().second }.getOrNull()
+                    // A shared decision covers the context; the row's own fields are still checked,
+                    // so a damaged row is purged as before.
+                    val shared = sharedDecisions[row.encodedContext]
+                        ?.takeIf { it.decidedAt.elapsedNow() < SHARED_DECISION_LIFETIME }
+                        ?.takeIf { row.hasValidOwnFields() }
+                    val (access, allowed) = shared?.let { it.access to it.allowed } ?: run {
+                        val decoded = runCatching { row.decodeAccess().second }.getOrNull()
+                        val decision = decoded != null &&
+                            operationGate.decide(decoded, ContentOperation.SEARCH_INDEX) == RightsDecision.ALLOW
+                        if (decoded != null && decoded.protectionAuthorization == null) {
+                            sharedDecisions[row.encodedContext] =
+                                SharedSearchDecision(decoded, decision, TimeSource.Monotonic.markNow())
+                        }
+                        decoded to decision
+                    }
                     val belongsToTarget = when (target) {
                         DerivedRightsCleanupTarget.All -> true
                         is DerivedRightsCleanupTarget.Publication ->
@@ -327,11 +445,7 @@ public class DerivedLocalFullTextIndex(
                             else -> false
                         }
                     }
-                    row.documentId.takeIf {
-                        belongsToTarget && (access == null ||
-                            operationGate.decide(access, ContentOperation.SEARCH_INDEX) !=
-                            RightsDecision.ALLOW)
-                    }
+                    row.documentId.takeIf { belongsToTarget && (access == null || !allowed) }
                 }
                 deleteDocumentsLocked(denied)
                 SearchRightsCleanupPage(
@@ -473,20 +587,18 @@ public class DerivedLocalFullTextIndex(
     ): List<SearchAccessRow> {
         val scopePredicate = if (documentScope == null) "" else buildString {
             append(
-                "WHERE publication_id = ? AND acquisition_id = ? AND unit_id = ? " +
-                    "AND content_revision = ?",
+                "WHERE c.publication_id = ? AND c.acquisition_id = ? AND c.unit_id = ? " +
+                    "AND c.content_revision = ?",
             )
-            if (documentScope.resourceId != null) append(" AND resource_id = ?")
+            if (documentScope.resourceId != null) append(" AND c.resource_id = ?")
         }
         return driver.executeQuery(
             identifier = null,
             sql = """
-                SELECT document_id, publication_id, acquisition_id, unit_id,
-                       content_revision, resource_id, block_id, base_offset_utf16,
-                       canonical_length_utf16, metadata_json
-                FROM $TABLE_SEARCH_DOCUMENTS
+                SELECT $SEARCH_ACCESS_COLUMNS
+                FROM $SEARCH_DOCUMENTS_JOIN
                 $scopePredicate
-                ORDER BY document_id
+                ORDER BY d.document_id
             """.trimIndent(),
             mapper = { cursor ->
                 val rows = mutableListOf<SearchAccessRow>()
@@ -501,7 +613,8 @@ public class DerivedLocalFullTextIndex(
                         blockId = requireNotNull(cursor.getString(6)),
                         baseOffsetUtf16 = requireNotNull(cursor.getLong(7)),
                         canonicalLengthUtf16 = requireNotNull(cursor.getLong(8)),
-                        encodedMetadata = requireNotNull(cursor.getString(9)),
+                        encodedContext = requireNotNull(cursor.getString(9)),
+                        encodedEpubAnchor = cursor.getString(10),
                     )
                 }
                 QueryResult.Value(rows)
@@ -557,15 +670,15 @@ public class DerivedLocalFullTextIndex(
         limit: Int,
     ): List<SearchAccessRow> {
         val predicates = buildList {
-            if (afterDocumentId != null) add("document_id > ?")
+            if (afterDocumentId != null) add("d.document_id > ?")
             when (target) {
                 DerivedRightsCleanupTarget.All -> Unit
-                is DerivedRightsCleanupTarget.Publication -> add("publication_id = ?")
+                is DerivedRightsCleanupTarget.Publication -> add("c.publication_id = ?")
                 is DerivedRightsCleanupTarget.Grant -> target.lastKnownScope?.let { scope ->
-                    add("publication_id = ?")
-                    add("acquisition_id = ?")
-                    if (scope.unitId != null) add("unit_id = ?")
-                    if (scope.contentRevision != null) add("content_revision = ?")
+                    add("c.publication_id = ?")
+                    add("c.acquisition_id = ?")
+                    if (scope.unitId != null) add("c.unit_id = ?")
+                    if (scope.contentRevision != null) add("c.content_revision = ?")
                 }
             }
         }
@@ -574,11 +687,9 @@ public class DerivedLocalFullTextIndex(
         return driver.executeQuery(
             identifier = null,
             sql = """
-                SELECT document_id, publication_id, acquisition_id, unit_id,
-                       content_revision, resource_id, block_id, base_offset_utf16,
-                       canonical_length_utf16, metadata_json
-                FROM $TABLE_SEARCH_DOCUMENTS$where
-                ORDER BY document_id LIMIT ?
+                SELECT $SEARCH_ACCESS_COLUMNS
+                FROM $SEARCH_DOCUMENTS_JOIN$where
+                ORDER BY d.document_id LIMIT ?
             """.trimIndent(),
             mapper = { cursor ->
                 val rows = mutableListOf<SearchAccessRow>()
@@ -593,7 +704,8 @@ public class DerivedLocalFullTextIndex(
                         blockId = requireNotNull(cursor.getString(6)),
                         baseOffsetUtf16 = requireNotNull(cursor.getLong(7)),
                         canonicalLengthUtf16 = requireNotNull(cursor.getLong(8)),
-                        encodedMetadata = requireNotNull(cursor.getString(9)),
+                        encodedContext = requireNotNull(cursor.getString(9)),
+                        encodedEpubAnchor = cursor.getString(10),
                     )
                 }
                 QueryResult.Value(rows)
@@ -621,10 +733,8 @@ public class DerivedLocalFullTextIndex(
     private fun loadAccessRowLocked(documentId: String): SearchAccessRow? = driver.executeQuery(
         identifier = null,
         sql = """
-            SELECT document_id, publication_id, acquisition_id, unit_id,
-                   content_revision, resource_id, block_id, base_offset_utf16,
-                   canonical_length_utf16, metadata_json
-            FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?
+            SELECT $SEARCH_ACCESS_COLUMNS
+            FROM $SEARCH_DOCUMENTS_JOIN WHERE d.document_id = ?
         """.trimIndent(),
         mapper = { cursor ->
             if (!cursor.next().value) {
@@ -641,7 +751,8 @@ public class DerivedLocalFullTextIndex(
                         blockId = requireNotNull(cursor.getString(6)),
                         baseOffsetUtf16 = requireNotNull(cursor.getLong(7)),
                         canonicalLengthUtf16 = requireNotNull(cursor.getLong(8)),
-                        encodedMetadata = requireNotNull(cursor.getString(9)),
+                        encodedContext = requireNotNull(cursor.getString(9)),
+                        encodedEpubAnchor = cursor.getString(10),
                     ),
                 )
             }
@@ -653,10 +764,8 @@ public class DerivedLocalFullTextIndex(
     private fun loadDocumentLocked(documentId: String): SearchableTextDocument? = driver.executeQuery(
         identifier = null,
         sql = """
-            SELECT document_id, publication_id, acquisition_id, unit_id,
-                   content_revision, resource_id, block_id, base_offset_utf16,
-                   canonical_length_utf16, metadata_json, body_text
-            FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?
+            SELECT $SEARCH_ACCESS_COLUMNS, d.body_text
+            FROM $SEARCH_DOCUMENTS_JOIN WHERE d.document_id = ?
         """.trimIndent(),
         mapper = { cursor ->
             if (!cursor.next().value) {
@@ -672,7 +781,8 @@ public class DerivedLocalFullTextIndex(
                     blockId = requireNotNull(cursor.getString(6)),
                     baseOffsetUtf16 = requireNotNull(cursor.getLong(7)),
                     canonicalLengthUtf16 = requireNotNull(cursor.getLong(8)),
-                    encodedMetadata = requireNotNull(cursor.getString(9)),
+                    encodedContext = requireNotNull(cursor.getString(9)),
+                    encodedEpubAnchor = cursor.getString(10),
                 )
                 val metadata = row.decodeMetadata()
                 val access = row.decodeAccess(metadata)
@@ -682,7 +792,7 @@ public class DerivedLocalFullTextIndex(
                         scope = access.first,
                         resourceId = row.resourceId,
                         blockId = row.blockId,
-                        text = requireNotNull(cursor.getString(10)),
+                        text = requireNotNull(cursor.getString(11)),
                         access = access.second,
                         baseOffsetUtf16 = row.baseOffsetUtf16.toBoundedInt("Search block offset"),
                         canonicalDocumentUtf16Length = row.canonicalLengthUtf16.toBoundedInt(
@@ -697,9 +807,45 @@ public class DerivedLocalFullTextIndex(
         binders = { bindString(0, documentId) },
     ).value
 
+    /** The per-block columns [decodeMetadata] would validate, without decoding the shared context. */
+    private fun SearchAccessRow.hasValidOwnFields(): Boolean = runCatching {
+        requireSearchIdentifier(documentId, "Search document id")
+        requireSearchIdentifier(blockId, "Search block id")
+        require(baseOffsetUtf16 in 0..canonicalLengthUtf16) { "Search metadata offsets are invalid" }
+        encodedEpubAnchor?.let { encoded ->
+            require(encoded.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+            codec.decodeFromString<EpubSearchAnchor>(encoded).validate()
+        }
+    }.isSuccess
+
+    /** The shared part of a block's metadata, validated as [PersistedSearchMetadata] would be. */
+    private fun decodeSharedContext(encoded: String): PersistedSearchContext {
+        require(encoded.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+        val context = codec.decodeFromString<PersistedSearchContext>(encoded)
+        context.scope.validate()
+        requireSearchIdentifier(context.resourceId, "Search resource id")
+        require(context.canonicalDocumentUtf16Length >= 0) { "Search metadata offsets are invalid" }
+        context.access.validate()
+        requireSearchScopeMatches(context.scope, context.access.toRequest(null))
+        return context
+    }
+
     private fun SearchAccessRow.decodeMetadata(): PersistedSearchMetadata {
-        require(encodedMetadata.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
-        val metadata = codec.decodeFromString<PersistedSearchMetadata>(encodedMetadata)
+        require(encodedContext.length <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+        require((encodedEpubAnchor?.length ?: 0) <= MAX_SEARCH_METADATA_CHARS) { "Search metadata is too large" }
+        val context = codec.decodeFromString<PersistedSearchContext>(encodedContext)
+        val metadata = PersistedSearchMetadata(
+            schemaVersion = SEARCH_METADATA_SCHEMA_VERSION,
+            documentId = documentId,
+            scope = context.scope,
+            resourceId = context.resourceId,
+            blockId = blockId,
+            baseOffsetUtf16 = baseOffsetUtf16.toBoundedInt("Search block offset"),
+            canonicalDocumentUtf16Length = context.canonicalDocumentUtf16Length,
+            access = context.access,
+            hadProtectionAuthorization = context.hadProtectionAuthorization,
+            epubAnchor = encodedEpubAnchor?.let { codec.decodeFromString<EpubSearchAnchor>(it) },
+        )
         metadata.validate()
         check(documentId == metadata.documentId) { "Search document id/body mismatch" }
         check(publicationId == metadata.scope.publicationId.value) { "Search publication/body mismatch" }
@@ -735,27 +881,28 @@ public class DerivedLocalFullTextIndex(
     ): List<SearchCandidate> {
         val placeholders = queryTokens.joinToString(",") { "?" }
         val scopedJoin = if (documentScope == null) "" else
-            "JOIN $TABLE_SEARCH_DOCUMENTS AS documents ON documents.document_id = tokens.document_id"
+            "JOIN $TABLE_SEARCH_CONTEXTS AS c ON c.context_key = d.context_key"
         val scopedPredicate = if (documentScope == null) "" else buildString {
             append(
-                " AND documents.publication_id = ?" +
-                    " AND documents.acquisition_id = ?" +
-                    " AND documents.unit_id = ?" +
-                    " AND documents.content_revision = ?",
+                " AND c.publication_id = ?" +
+                    " AND c.acquisition_id = ?" +
+                    " AND c.unit_id = ?" +
+                    " AND c.content_revision = ?",
             )
-            if (documentScope.resourceId != null) append(" AND documents.resource_id = ?")
+            if (documentScope.resourceId != null) append(" AND c.resource_id = ?")
         }
         return driver.executeQuery(
             identifier = null,
             sql = """
-                SELECT tokens.document_id
-                FROM $TABLE_SEARCH_TOKENS AS tokens
+                SELECT d.document_id
+                FROM $TABLE_SEARCH_POSTINGS AS p
+                JOIN $TABLE_SEARCH_DOCUMENTS AS d ON d.doc_key = p.doc_key
                 $scopedJoin
-                WHERE tokens.token IN ($placeholders)
+                WHERE p.token IN ($placeholders)
                 $scopedPredicate
-                GROUP BY tokens.document_id
-                HAVING COUNT(DISTINCT tokens.token) = ?
-                ORDER BY COUNT(*) DESC, tokens.document_id ASC
+                GROUP BY p.doc_key
+                HAVING COUNT(DISTINCT p.token) = ?
+                ORDER BY SUM(p.hits) DESC, d.document_id ASC
             """.trimIndent(),
             mapper = { cursor ->
                 val rows = mutableListOf<SearchCandidate>()
@@ -793,25 +940,27 @@ public class DerivedLocalFullTextIndex(
         return driver.executeQuery(
             identifier = null,
             sql = """
-                SELECT token, start_utf16, end_utf16
-                FROM $TABLE_SEARCH_TOKENS
-                WHERE document_id = ? AND token IN ($placeholders)
-                ORDER BY start_utf16, end_utf16, token
+                SELECT p.token, p.hits, p.positions
+                FROM $TABLE_SEARCH_POSTINGS AS p
+                JOIN $TABLE_SEARCH_DOCUMENTS AS d ON d.doc_key = p.doc_key
+                WHERE d.document_id = ? AND p.token IN ($placeholders)
             """.trimIndent(),
             mapper = { cursor ->
                 val rows = mutableListOf<FullTextToken>()
                 while (cursor.next().value) {
-                    val token = FullTextToken(
-                        value = requireNotNull(cursor.getString(0)),
-                        startUtf16 = requireNotNull(cursor.getLong(1)).toBoundedInt("Search token start"),
-                        endUtf16 = requireNotNull(cursor.getLong(2)).toBoundedInt("Search token end"),
-                    )
-                    check(token.endUtf16 <= body.length &&
-                        body.substring(token.startUtf16, token.endUtf16).lowercase() == token.value
-                    ) { "Search token/body mismatch" }
-                    rows += token
+                    val value = requireNotNull(cursor.getString(0))
+                    val tokens = decodeSearchPositions(value, requireNotNull(cursor.getString(2)))
+                    check(tokens.size.toLong() == requireNotNull(cursor.getLong(1))) { "Search posting count mismatch" }
+                    tokens.forEach { token ->
+                        check(token.endUtf16 <= body.length &&
+                            body.substring(token.startUtf16, token.endUtf16).lowercase() == token.value
+                        ) { "Search token/body mismatch" }
+                    }
+                    rows += tokens
                 }
-                QueryResult.Value(rows)
+                QueryResult.Value(
+                    rows.sortedWith(compareBy(FullTextToken::startUtf16, FullTextToken::endUtf16, FullTextToken::value)),
+                )
             },
             parameters = queryTokens.size + 1,
             binders = {
@@ -867,16 +1016,106 @@ public class DerivedLocalFullTextIndex(
     }
 
     private fun deleteDocumentRowsLocked(documentId: String) {
+        val keys = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT doc_key, context_key FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?",
+            mapper = { cursor ->
+                QueryResult.Value(
+                    if (cursor.next().value) requireNotNull(cursor.getLong(0)) to requireNotNull(cursor.getLong(1)) else null,
+                )
+            },
+            parameters = 1,
+            binders = { bindString(0, documentId) },
+        ).value ?: return
+        removals++
+        val (documentKey, contextKey) = keys
         driver.execute(
             identifier = null,
-            sql = "DELETE FROM $TABLE_SEARCH_TOKENS WHERE document_id = ?",
+            sql = "DELETE FROM $TABLE_SEARCH_POSTINGS WHERE doc_key = ?",
             parameters = 1,
-        ) { bindString(0, documentId) }.value
+        ) { bindLong(0, documentKey) }.value
         driver.execute(
             identifier = null,
-            sql = "DELETE FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?",
+            sql = "DELETE FROM $TABLE_SEARCH_DOCUMENTS WHERE doc_key = ?",
             parameters = 1,
-        ) { bindString(0, documentId) }.value
+        ) { bindLong(0, documentKey) }.value
+        driver.execute(
+            identifier = null,
+            sql = """
+                DELETE FROM $TABLE_SEARCH_CONTEXTS WHERE context_key = ?
+                AND NOT EXISTS (SELECT 1 FROM $TABLE_SEARCH_DOCUMENTS WHERE context_key = ?)
+            """.trimIndent(),
+            parameters = 2,
+        ) {
+            bindLong(0, contextKey)
+            bindLong(1, contextKey)
+        }.value
+    }
+
+    /**
+     * Removes the format-1 tables (about 170 bytes per indexed CJK character) a little at a time;
+     * the reconciler rebuilds the rows in the compact format. A single DROP of a table this size
+     * would hold the shared database for a long time.
+     */
+    internal suspend fun dropLegacyTablesInBackground() {
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val done = withIndexLockSuspending { dropLegacyBatchLocked() }
+            if (done) return
+            yield()
+        }
+    }
+
+    private fun dropLegacyBatchLocked(): Boolean {
+        val legacy = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
+            mapper = { cursor ->
+                val names = mutableSetOf<String>()
+                while (cursor.next().value) names += requireNotNull(cursor.getString(0))
+                QueryResult.Value(names)
+            },
+            parameters = 2,
+            binders = {
+                bindString(0, LEGACY_TABLE_SEARCH_DOCUMENTS)
+                bindString(1, LEGACY_TABLE_SEARCH_TOKENS)
+            },
+        ).value
+        if (legacy.isEmpty()) return true
+        transactions.transactionWithResult<Unit>(noEnclosing = false) {
+            if (LEGACY_TABLE_SEARCH_DOCUMENTS in legacy) {
+                if (LEGACY_TABLE_SEARCH_TOKENS in legacy) {
+                    driver.execute(
+                        identifier = null,
+                        sql = """
+                            DELETE FROM $LEGACY_TABLE_SEARCH_TOKENS WHERE document_id IN (
+                              SELECT document_id FROM $LEGACY_TABLE_SEARCH_DOCUMENTS
+                              ORDER BY document_id LIMIT $LEGACY_DROP_BATCH_DOCUMENTS
+                            )
+                        """.trimIndent(),
+                        parameters = 0,
+                    ).value
+                }
+                driver.execute(
+                    identifier = null,
+                    sql = """
+                        DELETE FROM $LEGACY_TABLE_SEARCH_DOCUMENTS WHERE document_id IN (
+                          SELECT document_id FROM $LEGACY_TABLE_SEARCH_DOCUMENTS
+                          ORDER BY document_id LIMIT $LEGACY_DROP_BATCH_DOCUMENTS
+                        )
+                    """.trimIndent(),
+                    parameters = 0,
+                ).value
+            }
+            val documentsLeft = LEGACY_TABLE_SEARCH_DOCUMENTS in legacy &&
+                scalarLong("SELECT EXISTS(SELECT 1 FROM $LEGACY_TABLE_SEARCH_DOCUMENTS)") != 0L
+            if (!documentsLeft) {
+                // Tokens without a document row are unreachable; the table is dropped whole.
+                driver.execute(null, "DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_TOKENS", 0).value
+                driver.execute(null, "DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_DOCUMENTS", 0).value
+            }
+        }
+        return false
     }
 
     private fun scalarLong(sql: String): Long = driver.executeQuery(
@@ -906,7 +1145,8 @@ public class DerivedLocalFullTextIndex(
         val blockId: String,
         val baseOffsetUtf16: Long,
         val canonicalLengthUtf16: Long,
-        val encodedMetadata: String,
+        val encodedContext: String,
+        val encodedEpubAnchor: String?,
     )
 
     private data class SearchCandidate(val documentId: String)
@@ -917,8 +1157,15 @@ public class DerivedLocalFullTextIndex(
     private data class PreparedSearchQuery(val queryTokens: List<String>, val limit: Int)
     private data class PreparedSearchUpsert(
         val source: SearchableTextDocument,
-        val tokens: List<FullTextToken>,
-        val encodedMetadata: String,
+        val postings: List<SearchPosting>,
+        val encodedContext: String,
+        val encodedEpubAnchor: String?,
+    )
+    private data class SearchPosting(val token: String, val hits: Int, val positions: String)
+    private class SharedSearchDecision(
+        val access: ContentAccessRequest,
+        val allowed: Boolean,
+        val decidedAt: TimeSource.Monotonic.ValueTimeMark,
     )
     private data class SearchRightsCleanupPage(
         val lastDocumentId: String?,
@@ -969,6 +1216,49 @@ private data class PersistedSearchMetadata(
     }
 }
 
+/** Everything a block shares with the other blocks of its resource revision; stored once. */
+@Serializable
+private data class PersistedSearchContext(
+    val scope: ReadingScope,
+    val resourceId: String,
+    val canonicalDocumentUtf16Length: Int,
+    val access: PersistedSearchAccess,
+    val hadProtectionAuthorization: Boolean,
+) {
+    companion object {
+        fun from(metadata: PersistedSearchMetadata): PersistedSearchContext = PersistedSearchContext(
+            scope = metadata.scope,
+            resourceId = metadata.resourceId,
+            canonicalDocumentUtf16Length = metadata.canonicalDocumentUtf16Length,
+            access = metadata.access,
+            hadProtectionAuthorization = metadata.hadProtectionAuthorization,
+        )
+    }
+}
+
+/**
+ * Occurrences of one token in one block: comma-separated starts, with ":end" only where the
+ * matched text is not exactly as long as the token (case folding can change the length).
+ */
+private fun encodeSearchPositions(token: String, occurrences: List<FullTextToken>): String =
+    occurrences.joinToString(",") { occurrence ->
+        if (occurrence.endUtf16 - occurrence.startUtf16 == token.length) {
+            occurrence.startUtf16.toString()
+        } else {
+            "${occurrence.startUtf16}:${occurrence.endUtf16}"
+        }
+    }
+
+private fun decodeSearchPositions(token: String, encoded: String): List<FullTextToken> {
+    require(encoded.isNotEmpty() && encoded.length <= MAX_SEARCH_POSITIONS_CHARS) { "Search positions are invalid" }
+    return encoded.split(',').map { entry ->
+        val start = entry.substringBefore(':').toInt()
+        val end = if (':' in entry) entry.substringAfter(':').toInt() else start + token.length
+        require(start >= 0 && end >= start) { "Search positions are invalid" }
+        FullTextToken(value = token, startUtf16 = start, endUtf16 = end)
+    }
+}
+
 @Serializable
 private data class PersistedSearchAccess(
     val grantReference: RightsGrantRef?,
@@ -1005,76 +1295,70 @@ private data class PersistedSearchAccess(
     }
 }
 
-/** Independent schema marker because this table is rebuildable and not part of wire state. */
+/**
+ * Independent schema marker because these tables are rebuildable and not part of wire state.
+ *
+ * Format 2 uses new table names: format 1 stored about 170 bytes per indexed CJK character (a
+ * row per occurrence keyed by a 64-character id, indexed twice, and a kilobyte of JSON per
+ * paragraph). An older app keeps its own format-1 marker and tables and simply re-indexes.
+ */
 public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
-    override val version: Long = 1
+    override val version: Long = 2
 
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
-        driver.execute(
-            null,
+        listOf(
             """
                 CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_SCHEMA(
                   singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 1),
                   format_version INTEGER NOT NULL
                 )
-            """.trimIndent(),
-            0,
-        ).value
-        driver.execute(
-            null,
+            """,
             "INSERT OR IGNORE INTO $TABLE_SEARCH_SCHEMA(singleton_id, format_version) VALUES (1, $version)",
-            0,
-        ).value
-        driver.execute(
-            null,
             """
-                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_DOCUMENTS(
-                  document_id TEXT NOT NULL PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_CONTEXTS(
+                  context_key INTEGER PRIMARY KEY,
                   publication_id TEXT NOT NULL,
                   acquisition_id TEXT NOT NULL,
                   unit_id TEXT NOT NULL,
                   content_revision INTEGER NOT NULL,
                   resource_id TEXT NOT NULL,
+                  canonical_length_utf16 INTEGER NOT NULL,
+                  context_json TEXT NOT NULL UNIQUE
+                )
+            """,
+            """
+                CREATE INDEX IF NOT EXISTS ${TABLE_SEARCH_CONTEXTS}_scope
+                ON $TABLE_SEARCH_CONTEXTS(publication_id, acquisition_id, unit_id, content_revision, resource_id)
+            """,
+            """
+                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_DOCUMENTS(
+                  doc_key INTEGER PRIMARY KEY,
+                  document_id TEXT NOT NULL UNIQUE,
+                  context_key INTEGER NOT NULL,
                   block_id TEXT NOT NULL,
                   base_offset_utf16 INTEGER NOT NULL,
-                  canonical_length_utf16 INTEGER NOT NULL,
-                  metadata_json TEXT NOT NULL,
+                  epub_anchor_json TEXT,
                   body_text TEXT NOT NULL
-                ) WITHOUT ROWID
-            """.trimIndent(),
-            0,
-        ).value
-        driver.execute(
-            null,
-            """
-                CREATE INDEX IF NOT EXISTS content_search_documents_scope
-                ON $TABLE_SEARCH_DOCUMENTS(
-                  publication_id, acquisition_id, unit_id, content_revision, resource_id, block_id
                 )
-            """.trimIndent(),
-            0,
-        ).value
-        driver.execute(
-            null,
+            """,
             """
-                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_TOKENS(
-                  document_id TEXT NOT NULL,
+                CREATE INDEX IF NOT EXISTS ${TABLE_SEARCH_DOCUMENTS}_context
+                ON $TABLE_SEARCH_DOCUMENTS(context_key)
+            """,
+            """
+                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_POSTINGS(
                   token TEXT NOT NULL,
-                  start_utf16 INTEGER NOT NULL,
-                  end_utf16 INTEGER NOT NULL,
-                  PRIMARY KEY(document_id, token, start_utf16, end_utf16)
+                  doc_key INTEGER NOT NULL,
+                  hits INTEGER NOT NULL,
+                  positions TEXT NOT NULL,
+                  PRIMARY KEY(token, doc_key)
                 ) WITHOUT ROWID
-            """.trimIndent(),
-            0,
-        ).value
-        driver.execute(
-            null,
+            """,
             """
-                CREATE INDEX IF NOT EXISTS content_search_tokens_lookup
-                ON $TABLE_SEARCH_TOKENS(token, document_id)
-            """.trimIndent(),
-            0,
-        ).value
+                CREATE INDEX IF NOT EXISTS ${TABLE_SEARCH_POSTINGS}_document
+                ON $TABLE_SEARCH_POSTINGS(doc_key)
+            """,
+        ).forEach { sql -> driver.execute(null, sql.trimIndent(), 0).value }
         return QueryResult.Unit
     }
 
@@ -1160,9 +1444,20 @@ private fun Long.toBoundedInt(label: String): Int {
     return toInt()
 }
 
-private const val TABLE_SEARCH_SCHEMA = "content_search_index_schema"
-private const val TABLE_SEARCH_DOCUMENTS = "content_search_documents"
-private const val TABLE_SEARCH_TOKENS = "content_search_tokens"
+private const val TABLE_SEARCH_SCHEMA = "content_search_v2_schema"
+private const val TABLE_SEARCH_CONTEXTS = "content_search_v2_contexts"
+private const val TABLE_SEARCH_DOCUMENTS = "content_search_v2_documents"
+private const val TABLE_SEARCH_POSTINGS = "content_search_v2_postings"
+private const val LEGACY_TABLE_SEARCH_DOCUMENTS = "content_search_documents"
+private const val LEGACY_TABLE_SEARCH_TOKENS = "content_search_tokens"
+private const val LEGACY_DROP_BATCH_DOCUMENTS = 500
+private val SHARED_DECISION_LIFETIME = 1.seconds
+private const val MAX_SEARCH_POSITIONS_CHARS = 4_000_000
+private const val SEARCH_ACCESS_COLUMNS =
+    "d.document_id, c.publication_id, c.acquisition_id, c.unit_id, c.content_revision, c.resource_id, " +
+        "d.block_id, d.base_offset_utf16, c.canonical_length_utf16, c.context_json, d.epub_anchor_json"
+private const val SEARCH_DOCUMENTS_JOIN =
+    "$TABLE_SEARCH_DOCUMENTS AS d JOIN $TABLE_SEARCH_CONTEXTS AS c ON c.context_key = d.context_key"
 private const val SEARCH_METADATA_SCHEMA_VERSION = 2
 private const val MAX_SEARCH_METADATA_CHARS = 256_000
 private const val MAX_SEARCH_IDENTIFIER_LENGTH = 512

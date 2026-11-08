@@ -462,6 +462,35 @@ class SqlDriverContentFoundationRestartTest {
     }
 
     @Test
+    fun deferredAttachmentLedgerProtectsReferencedBlobsBeforeAnyTransactionAfterReopen() {
+        withDatabase("content-deferred-ledger") { database ->
+            val sqlDriver = driver(database)
+            val blobs = SqlDriverContentBlobStore(sqlDriver, clock = { 100L })
+            val receipt = blobs.put("attached body".encodeToByteArray(), "text/plain")
+            val fixture = publicationFixture(receipt.reference)
+            transactionStore(sqlDriver, blobs).commit(
+                ContentCommitBatch(
+                    commitId = "deferred-ledger-commit",
+                    receipts = listOf(receipt),
+                    attachments = listOf(fixture.attachment),
+                    publications = listOf(ContentPublicationMutation(fixture.publication)),
+                    rightsGrants = listOf(ContentRightsGrantMutation(fixture.grant)),
+                ),
+            )
+            sqlDriver.close()
+
+            val reopenedDriver = driver(database)
+            val reopenedBlobs = SqlDriverContentBlobStore(reopenedDriver, clock = { 200L })
+            transactionStore(reopenedDriver, reopenedBlobs)
+            // No transaction has run yet: collection itself must load the ledger first.
+            assertEquals(0, reopenedBlobs.deleteUnreferencedNow(listOf(receipt.reference)))
+            assertTrue(reopenedBlobs.contains(receipt.reference))
+            assertNotNull(reopenedBlobs.attached(fixture.attachment.owner, fixture.attachment.manifest))
+            reopenedDriver.close()
+        }
+    }
+
+    @Test
     fun localBodyPurgeStripsManifestsButKeepsGraphRightsAndCursorsAndRollsBackOnFailure() {
         withDatabase("content-local-body-purge") { database ->
             val sqlDriver = driver(database)

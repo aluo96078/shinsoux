@@ -57,6 +57,8 @@ public class LocalContentManager(
     epubArchiveExtractor: EpubArchiveExtractor? = null,
     private val onTypedContentCommitted: () -> Unit = {},
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /** Network scope for inline images of chapters an extension source provided. */
+    private val remoteAssetScopeFor: suspend (dev.shinsou.kmp.domain.model.SourceKey) -> dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope? = { null },
 ) : ContentCallbacks {
     private val importMutex = Mutex()
     private val typedContent = contentFoundation?.let { foundation ->
@@ -246,8 +248,18 @@ public class LocalContentManager(
         val chapter = repository.chapter(chapterId)
             ?.takeIf { it.mangaId == mangaId }
             ?: throw LocalContentUnavailableException("The selected local chapter no longer exists.")
-        typedContent?.load(chapter.url)?.let { session ->
-            return ReaderChapter(typedSession = session)
+        typedContent?.let { controller ->
+            // Extension chapters kept in the library open here too; without their source's scope
+            // every inline illustration failed to load.
+            // Best effort: a failed lookup only leaves inline images unloaded, never the chapter.
+            val scope = try {
+                controller.extensionSourceKey(chapter.url)?.let { remoteAssetScopeFor(it) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            controller.load(chapter.url, scope)?.let { session -> return ReaderChapter(typedSession = session) }
         }
         val directory = localDirectory(mangaId, chapter.id)
         val manifest = LocalContentManifests.readValid(fileSystem, directory)

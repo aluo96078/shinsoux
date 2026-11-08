@@ -130,7 +130,7 @@ class SynchronousStoreContentionTest {
     fun searchStoreWaitsForAnActiveSqlReadInsteadOfThrowingRetry() = withBlockingDriver {
         _, blocking ->
         val index = DerivedLocalFullTextIndex(blocking, AllowAllOperationGate)
-        blocking.arm { sql -> "content_search_documents" in sql.lowercase() }
+        blocking.arm { sql -> "content_search_v2_documents" in sql.lowercase() }
 
         val (first, second) = runContendedCalls(
             entered = blocking.entered,

@@ -62,7 +62,7 @@ public class ContentSyncOutboxDrainBridge(
             installed = installed,
             replayed = replayed,
             acknowledged = acknowledged,
-            remaining = contentStore.pendingOutbox().size,
+            remaining = contentStore.pendingOutboxCount(),
         )
     }
 

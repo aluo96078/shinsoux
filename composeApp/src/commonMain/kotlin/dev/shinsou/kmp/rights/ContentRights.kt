@@ -569,6 +569,13 @@ public class InMemoryRightsAuthority : RightsAuthority {
     private var providerPolicyMarker: Any = Any()
     private val invalidationListeners = LinkedHashMap<Long, (RightsGrantInvalidation) -> Unit>()
     private var nextInvalidationListenerId: Long = 1L
+    private var revision: Long = 0L
+
+    /**
+     * Changes whenever an admission, revocation or provider registration may change a decision.
+     * Lets derived-data reconcilers skip a complete-library pass when nothing they depend on moved.
+     */
+    public val policyRevision: Long get() = lock.withLock { revision }
 
     /**
      * Observers must do only bounded, non-blocking work. Production uses this edge to stop native
@@ -591,6 +598,7 @@ public class InMemoryRightsAuthority : RightsAuthority {
         lock.withLock {
             if (registeredProviders.getOrPut(providerId) { LinkedHashSet() }.add(schemeVersion)) {
                 providerPolicyMarker = Any()
+                revision++
             }
         }
     }
@@ -606,6 +614,7 @@ public class InMemoryRightsAuthority : RightsAuthority {
             if (!versions.remove(schemeVersion)) return@withLock emptyList()
             if (versions.isEmpty()) registeredProviders.remove(providerId)
             providerPolicyMarker = Any()
+            revision++
             records.values
                 .filter { record ->
                     record.grant.protectionScheme.matchesProvider(providerId, schemeVersion)
@@ -649,6 +658,7 @@ public class InMemoryRightsAuthority : RightsAuthority {
         val previous = lock.withLock {
             records.put(snapshot.grantId.value, AdmissionRecord(snapshot)).also {
                 revoked.remove(snapshot.grantId.value)
+                revision++
             }
         }
         if (previous != null && previous.grant != snapshot) {
@@ -659,7 +669,12 @@ public class InMemoryRightsAuthority : RightsAuthority {
     public fun revoke(reference: RightsGrantRef) {
         reference.validate()
         val invalidated = lock.withLock {
-            if (revoked.add(reference.value)) records[reference.value]?.grant to true else null to false
+            if (revoked.add(reference.value)) {
+                revision++
+                records[reference.value]?.grant to true
+            } else {
+                null to false
+            }
         }
         if (invalidated.second) notifyInvalidated(reference, invalidated.first)
     }

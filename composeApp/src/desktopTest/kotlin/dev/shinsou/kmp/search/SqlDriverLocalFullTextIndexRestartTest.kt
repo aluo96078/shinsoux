@@ -95,6 +95,75 @@ class SqlDriverLocalFullTextIndexRestartTest {
     }
 
     @Test
+    fun formatOneTablesAreRemovedAndTheLibraryIsReindexedCompactly() = runTest {
+        withDatabase("content-search-legacy-drop") { database ->
+            val driver = driver(database)
+            // What format 1 left on upgraded devices: its own tables, rows and marker.
+            listOf(
+                "CREATE TABLE content_search_documents(document_id TEXT NOT NULL PRIMARY KEY, " +
+                    "publication_id TEXT NOT NULL, body_text TEXT NOT NULL) WITHOUT ROWID",
+                "CREATE TABLE content_search_tokens(document_id TEXT NOT NULL, token TEXT NOT NULL, " +
+                    "start_utf16 INTEGER NOT NULL, end_utf16 INTEGER NOT NULL, " +
+                    "PRIMARY KEY(document_id, token, start_utf16, end_utf16)) WITHOUT ROWID",
+            ).forEach { driver.execute(null, it, 0).value }
+            repeat(1_200) { index ->
+                driver.execute(
+                    null,
+                    "INSERT INTO content_search_documents VALUES ('legacy-$index', 'p', 'old text')",
+                    0,
+                ).value
+                driver.execute(null, "INSERT INTO content_search_tokens VALUES ('legacy-$index', 'o', 0, 1)", 0).value
+            }
+            val foundation = foundation(driver)
+            val fixture = importTwoTextUnits(foundation)
+            val features = features(foundation)
+
+            assertEquals(3, features.reconcileSearchIndex().documentsIndexed)
+
+            assertEquals(
+                0,
+                scalarLong(
+                    driver,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('content_search_documents', 'content_search_tokens')",
+                ),
+            )
+            assertEquals(2, features.searchIndex.searchForeground("global").size)
+            val cjkHit = features.searchIndex.searchForeground("搜尋").single()
+            assertEquals(fixture.firstText.indexOf("搜"), cjkHit.locator.offset)
+            // One context row per indexed resource, shared by its blocks.
+            assertEquals(2, scalarLong(driver, "SELECT COUNT(*) FROM content_search_v2_contexts"))
+            features.close()
+            driver.close()
+        }
+    }
+
+    @Test
+    fun backgroundReconcileIsSkippedUntilContentRightsOrIndexRowsChange() = runTest {
+        withDatabase("content-search-skip-unchanged") { database ->
+            val driver = driver(database)
+            val foundation = foundation(driver)
+            val fixture = importTwoTextUnits(foundation)
+            val features = features(foundation)
+
+            assertEquals(3, features.reconcileSearchIndexIfChanged()?.documentsIndexed)
+            // Its own pass changed nothing it depends on except rows it wrote: one confirming pass.
+            features.reconcileSearchIndexIfChanged()
+            assertEquals(null, features.reconcileSearchIndexIfChanged(), "Nothing changed: no pass")
+
+            features.searchIndex.remove(features.searchIndex.searchForeground("global").first().documentId)
+            val repaired = features.reconcileSearchIndexIfChanged()
+            assertEquals(1, repaired?.documentsIndexed, "A removed row must be rebuilt")
+            features.reconcileSearchIndexIfChanged()
+            assertEquals(null, features.reconcileSearchIndexIfChanged())
+
+            foundation.rightsAuthority.revoke(fixture.grantReference)
+            assertTrue(features.reconcileSearchIndexIfChanged() != null, "A rights change must reconcile")
+            features.close()
+            driver.close()
+        }
+    }
+
+    @Test
     fun revokedRightsPurgePersistedPlaintextAndTokensAcrossRestart() = runTest {
         withDatabase("content-search-rights-purge") { database ->
             val firstDriver = driver(database)
@@ -107,8 +176,8 @@ class SqlDriverLocalFullTextIndexRestartTest {
             firstFoundation.rightsAuthority.revoke(fixture.grantReference)
             assertTrue(firstFeatures.searchIndex.search("global").isEmpty())
             assertEquals(0, firstFeatures.searchIndex.documentCount)
-            assertEquals(0, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_documents"))
-            assertEquals(0, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_tokens"))
+            assertEquals(0, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_v2_documents"))
+            assertEquals(0, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_v2_postings"))
             firstFeatures.close()
             firstDriver.close()
 
@@ -141,7 +210,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 body = "revoked private note",
             )
             val external = externalFixture(firstFoundation, firstFeatures)
-            assertEquals(4, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_documents"))
+            assertEquals(4, scalarLong(firstDriver, "SELECT COUNT(*) FROM content_search_v2_documents"))
             assertEquals(2, firstFoundation.annotations.list().size)
 
             firstFoundation.rightsAuthority.revoke(fixture.grantReference)
@@ -155,7 +224,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 0,
                 scalarLong(
                     firstDriver,
-                    "SELECT COUNT(*) FROM content_search_documents WHERE publication_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_documents AS d JOIN content_search_v2_contexts AS c ON c.context_key = d.context_key WHERE c.publication_id = ?",
                     PUBLICATION_ID,
                 ),
             )
@@ -163,7 +232,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 1,
                 scalarLong(
                     firstDriver,
-                    "SELECT COUNT(*) FROM content_search_documents WHERE publication_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_documents AS d JOIN content_search_v2_contexts AS c ON c.context_key = d.context_key WHERE c.publication_id = ?",
                     EXTERNAL_PUBLICATION_ID,
                 ),
             )
@@ -186,7 +255,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 0,
                 scalarLong(
                     reopenedDriver,
-                    "SELECT COUNT(*) FROM content_search_documents WHERE publication_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_documents AS d JOIN content_search_v2_contexts AS c ON c.context_key = d.context_key WHERE c.publication_id = ?",
                     PUBLICATION_ID,
                 ),
                 "Purged plaintext must not reappear merely by reopening the runtime",
@@ -233,8 +302,8 @@ class SqlDriverLocalFullTextIndexRestartTest {
             assertEquals(3, cleanup.searchDocumentsPurged)
             assertEquals(1, cleanup.annotationsRedacted)
             assertEquals(1, speech.stopCount)
-            assertEquals(0, scalarLong(reopenedDriver, "SELECT COUNT(*) FROM content_search_documents"))
-            assertEquals(0, scalarLong(reopenedDriver, "SELECT COUNT(*) FROM content_search_tokens"))
+            assertEquals(0, scalarLong(reopenedDriver, "SELECT COUNT(*) FROM content_search_v2_documents"))
+            assertEquals(0, scalarLong(reopenedDriver, "SELECT COUNT(*) FROM content_search_v2_postings"))
             val tombstone = requireNotNull(reopenedFoundation.annotations.find(EXPIRED_ANNOTATION_ID))
             assertEquals(ContentAnnotationState.TOMBSTONE, tombstone.state)
             assertEquals(null, tombstone.body)
@@ -261,7 +330,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 3,
                 scalarLong(
                     driver,
-                    "SELECT COUNT(*) FROM content_search_documents WHERE publication_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_documents AS d JOIN content_search_v2_contexts AS c ON c.context_key = d.context_key WHERE c.publication_id = ?",
                     PUBLICATION_ID,
                 ),
                 "Foreground global search must inspect query candidates, not sweep the library",
@@ -369,12 +438,12 @@ class SqlDriverLocalFullTextIndexRestartTest {
 
             assertTrue(hits.isEmpty())
             val targetDocumentId = fullTextDocumentId(SECOND_REPRESENTATION_ID, "paragraph-1")
-            assertEquals(2, scalarLong(driver, "SELECT COUNT(*) FROM content_search_documents"))
+            assertEquals(2, scalarLong(driver, "SELECT COUNT(*) FROM content_search_v2_documents"))
             assertEquals(
                 0,
                 scalarLong(
                     driver,
-                    "SELECT COUNT(*) FROM content_search_documents WHERE document_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_documents WHERE document_id = ?",
                     targetDocumentId,
                 ),
             )
@@ -382,7 +451,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 0,
                 scalarLong(
                     driver,
-                    "SELECT COUNT(*) FROM content_search_tokens WHERE document_id = ?",
+                    "SELECT COUNT(*) FROM content_search_v2_postings AS p JOIN content_search_v2_documents AS d ON d.doc_key = p.doc_key WHERE d.document_id = ?",
                     targetDocumentId,
                 ),
             )
@@ -417,7 +486,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
             assertFalse(completed)
             assertEquals(
                 3,
-                scalarLong(driver, "SELECT COUNT(*) FROM content_search_documents"),
+                scalarLong(driver, "SELECT COUNT(*) FROM content_search_v2_documents"),
                 "Cancellation must win before the rights purge opens a synchronous SQL slice",
             )
             features.close()

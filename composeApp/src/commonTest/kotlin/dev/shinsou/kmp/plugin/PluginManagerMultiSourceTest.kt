@@ -92,6 +92,18 @@ class PluginManagerMultiSourceTest {
                 SourceKey(contractVersion = 2, packageId = entry.id, sourceId = "forged", legacyLongId = 101L),
             ),
         )
+        // Library entries may store the key without its optional numeric projection: it resolves
+        // to the same source through the live manifest, and a forged string id still does not.
+        val withProjection = manager.contentNetworkScopeForSource(secondKey)
+        val withoutProjection = manager.contentNetworkScopeForSource(secondKey.copy(legacyLongId = null))
+        assertEquals(withProjection?.sourceId, withoutProjection?.sourceId)
+        assertEquals(withProjection != null, withoutProjection != null)
+        assertEquals(
+            null,
+            manager.contentNetworkScopeForSource(
+                SourceKey(contractVersion = 2, packageId = entry.id, sourceId = "forged", legacyLongId = null),
+            ),
+        )
 
         val restarted = PluginManager(
             ExtensionRepositoryClient(

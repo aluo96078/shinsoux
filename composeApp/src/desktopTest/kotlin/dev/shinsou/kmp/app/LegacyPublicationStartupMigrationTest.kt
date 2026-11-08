@@ -224,6 +224,30 @@ class LegacyPublicationStartupMigrationTest {
         }
     }
 
+    @Test
+    fun aTitleTooLargeForTheStoreDoesNotBlockTheOthersOrRetryEachLaunch() {
+        withDatabase { path ->
+            val foundation = foundation(driver(path))
+            val small = legacySnapshot()
+            val huge = Manga(id = 20, source = 77, favorite = true, url = "/publication/20", title = "Huge")
+            val longPath = "/" + "x".repeat(900)
+            val snapshot = small.copy(
+                mangas = small.mangas + huge,
+                chapters = small.chapters + (1..6_000).map { index ->
+                    Chapter(id = 10_000L + index, mangaId = 20, url = "$longPath/$index", name = "Chapter $index")
+                },
+            ).validate()
+
+            val first = LegacyPublicationStartupMigration(foundation).migrate(snapshot)
+            assertEquals(LegacyPublicationMigrationStatus.MIGRATED, first.status)
+            assertEquals(1, first.publicationCount)
+            assertEquals(listOf("Legacy"), foundation.publications.all().map { it.title })
+
+            val second = LegacyPublicationStartupMigration(foundation).migrate(snapshot)
+            assertEquals(LegacyPublicationMigrationStatus.UP_TO_DATE, second.status)
+        }
+    }
+
     private fun legacySnapshot(): AppSnapshot = AppSnapshot(
         mangas = listOf(
             Manga(

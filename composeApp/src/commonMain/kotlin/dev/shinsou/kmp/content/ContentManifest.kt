@@ -574,7 +574,7 @@ public sealed interface ContentRepresentation {
             require(blocks.map(TextBlock::blockId).distinct().size == blocks.size) {
                 "Plain text block ids must be unique"
             }
-            blocks.forEach(TextBlock::validate)
+            // Each TextBlock validated itself when constructed and cannot change afterwards.
             require(blocks.all { it.endUtf16 <= canonicalUtf16Length }) {
                 "Plain text block exceeds canonical UTF-16 length"
             }
@@ -883,7 +883,9 @@ private fun EpubSpineDocument.deepImmutableSnapshot(): EpubSpineDocument = copy(
     rendition = rendition?.deepImmutableSnapshot(),
 )
 
-private fun TextBlock.deepImmutableSnapshot(): TextBlock = copy()
+// Only immutable String/Int fields, validated when constructed: copying adds nothing but a
+// second validation per block, and a downloaded library holds hundreds of thousands of blocks.
+private fun TextBlock.deepImmutableSnapshot(): TextBlock = this
 
 private fun ContentRepresentation.deepImmutableSnapshot(): ContentRepresentation = when (this) {
     is ContentRepresentation.ImageSequence -> copy(
@@ -926,7 +928,7 @@ private fun requireSafeIdentifier(value: String, label: String) {
     require(value.isNotBlank() && value.length <= MAX_IDENTIFIER_LENGTH) {
         "$label must be non-blank and bounded"
     }
-    require(value.none(Char::isISOControl) && value.none { it.isWhitespace() }) {
+    require(value.none { it.isISOControl() || it.isWhitespace() }) {
         "$label contains unsafe characters"
     }
 }

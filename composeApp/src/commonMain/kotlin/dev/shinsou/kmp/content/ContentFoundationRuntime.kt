@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package dev.shinsou.kmp.content
 
 import app.cash.sqldelight.db.SqlDriver
@@ -17,6 +19,16 @@ import dev.shinsou.kmp.sync.v2.SyncDraft
 public interface PublicationStore {
     public fun find(key: PublicationKey): Publication?
     public fun all(): List<Publication>
+
+    /**
+     * The publication's structure (acquisitions and units) without stored manifests, read from
+     * its outline row alone. For checks that never look at content; never write it back as the
+     * publication, which would drop the manifests. Implementations may return the full graph.
+     */
+    public fun findOutline(key: PublicationKey): Publication? = find(key)
+
+    /** [findOutline] for every publication. */
+    public fun allOutlines(): List<Publication> = all()
 }
 
 /** Durable full-grant read side paired with acquisition grant references. */
@@ -84,8 +96,24 @@ public class ContentFoundationRuntime(
     /** Host-owned authority; revoke/admit changes are observed by the very next gate resolution. */
     public val rightsAuthority: InMemoryRightsAuthority = hydratedRightsAuthority
 
+    /**
+     * Loads the stored-content attachment ledger now. It is deferred out of construction (which
+     * runs on the first frame); call this from a background thread early in startup so the
+     * reader or a download does not pay for it.
+     */
+    public fun warmAttachmentLedger(): Unit = sqlTransactions.warmAttachmentLedger()
+
+    private val generation = kotlin.concurrent.atomics.AtomicLong(0L)
+
+    /**
+     * Advances on every change to the durable content graph made through [transactions] in this
+     * process (commits, local body purges, replica departures). Derived-data reconcilers compare it
+     * to skip a complete-library pass when nothing changed since their last one.
+     */
+    public val contentGeneration: Long get() = generation.load()
+
     public val transactions: SharedContentTransactionStore<SyncDraft> =
-        SyncAuthorityCoordinatedContentTransactions(sqlTransactions) { batch, result ->
+        SyncAuthorityCoordinatedContentTransactions(sqlTransactions, onGraphChanged = { generation.addAndFetch(1L) }) { batch, result ->
             // Resolve from the durable read side rather than trusting the caller's batch. A
             // migration semantic replay may legitimately ignore newly supplied batch fields.
             val replacedPublication = batch.replicaReplacement?.replacement?.publicationKey
@@ -130,6 +158,8 @@ public class ContentFoundationRuntime(
     public val publications: PublicationStore = object : PublicationStore {
         override fun find(key: PublicationKey): Publication? = sqlTransactions.findPublicationDirect(key)
         override fun all(): List<Publication> = sqlTransactions.allPublicationsDirect()
+        override fun findOutline(key: PublicationKey): Publication? = sqlTransactions.findPublicationOutlineDirect(key)
+        override fun allOutlines(): List<Publication> = sqlTransactions.allPublicationOutlinesDirect()
     }
 
     public val rightsGrants: RightsGrantStore = object : RightsGrantStore {
@@ -263,15 +293,31 @@ public class ContentFoundationRuntime(
 
 private class SyncAuthorityCoordinatedContentTransactions(
     private val delegate: SqlDriverContentTransactionStore<SyncDraft>,
+    private val onGraphChanged: () -> Unit,
     private val afterCommit: (ContentCommitBatch<SyncDraft>, ContentCommitResult) -> Unit,
 ) : SharedContentTransactionStore<SyncDraft> {
     override fun commit(batch: ContentCommitBatch<SyncDraft>): ContentCommitResult {
-        return delegate.commit(batch).also { result -> afterCommit(batch, result) }
+        // Counted even when the commit fails: a partial outcome must not look like "no change".
+        try {
+            return delegate.commit(batch).also { result -> afterCommit(batch, result) }
+        } finally {
+            onGraphChanged()
+        }
     }
 
     override fun pendingOutbox(): List<SyncDraft> = delegate.pendingOutbox()
 
     override fun acknowledgeOutbox(draftIds: Set<String>): Int = delegate.acknowledgeOutbox(draftIds)
+
+    override fun pendingOutboxCount(): Int = delegate.pendingOutboxCount()
+
+    override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<SyncDraft> =
+        delegate.pendingOutboxPage(afterDraftId, limit)
+
+    override fun pendingOutboxDraft(draftId: String): SyncDraft? = delegate.pendingOutboxDraft(draftId)
+
+    override fun replaceOutboxDrafts(remove: Set<String>, add: List<SyncDraft>): Int =
+        delegate.replaceOutboxDrafts(remove, add)
 
     override fun pendingBlobSyncJobs(): List<ContentBlobSyncJobMutation> = delegate.pendingBlobSyncJobs()
 
@@ -292,11 +338,19 @@ private class SyncAuthorityCoordinatedContentTransactions(
         forgetCommitIdsOf: (Publication) -> Set<String>,
         draftIdPrefixOf: (commitId: String) -> String?,
     ): ContentLocalBodyPurgeResult =
-        delegate.purgeLocalPublicationBodies(publicationKey, forgetCommitIdsOf, draftIdPrefixOf)
+        try {
+            delegate.purgeLocalPublicationBodies(publicationKey, forgetCommitIdsOf, draftIdPrefixOf)
+        } finally {
+            onGraphChanged()
+        }
 
     override fun detachReplicaAuthority(
         authority: ContentReplicaAuthority,
-    ): ContentReplicaAuthorityDepartureResult = delegate.detachReplicaAuthority(authority)
+    ): ContentReplicaAuthorityDepartureResult = try {
+        delegate.detachReplicaAuthority(authority)
+    } finally {
+        onGraphChanged()
+    }
 
     override fun lookupMigrationLedger(
         namespace: String,

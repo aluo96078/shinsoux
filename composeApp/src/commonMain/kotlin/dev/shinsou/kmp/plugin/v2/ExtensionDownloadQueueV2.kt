@@ -61,8 +61,12 @@ public interface ExtensionDownloadQueueStoreV2 {
  */
 public class ExtensionDownloadQueueV2(
     private val materialize: suspend (ExtensionUnitSelectionV2) -> Unit,
-    /** True when the unit's content is already stored; such units complete without a fetch. */
-    private val isStored: (ExtensionUnitSelectionV2) -> Boolean = { false },
+    /**
+     * Remote unit ids whose content is already stored, for the selection's whole publication.
+     * Such units complete without a fetch. One lookup answers every queued unit of that title,
+     * so re-checking hundreds of finished chapters (after a restart) costs one read, not hundreds.
+     */
+    private val storedUnitIds: (ExtensionUnitSelectionV2) -> Set<String> = { emptySet() },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val store: ExtensionDownloadQueueStoreV2? = null,
     /** False holds the worker until [open], e.g. while the app is still loading its sources. */
@@ -360,10 +364,8 @@ public class ExtensionDownloadQueueV2(
                         null
                     }
                     // Re-downloading a title must not fetch chapters that are already offline.
-                    runCatching { isStored(selection) }.getOrDefault(false) -> {
-                        setState(entry.id, DownloadState.DOWNLOADED)
-                        null
-                    }
+                    // Every queued unit of the same title found in storage settles at once.
+                    markStoredLocked(entry, selection) -> null
                     else -> {
                         setState(entry.id, DownloadState.DOWNLOADING)
                         val task = scope.async { materialize(selection) }
@@ -400,7 +402,9 @@ public class ExtensionDownloadQueueV2(
                     is CancellationException -> setState(
                         id,
                         when {
-                            selections[id]?.let { runCatching { isStored(it) }.getOrDefault(false) } == true ->
+                            selections[id]?.let { selection ->
+                                selection.unit.remoteId in runCatching { storedUnitIds(selection) }.getOrDefault(emptySet())
+                            } == true ->
                                 DownloadState.DOWNLOADED
                             // Paused for the whole queue, or this entry alone (a system pause).
                             paused || _entries.value.firstOrNull { it.id == id }?.state == DownloadState.PAUSED ->
@@ -434,6 +438,28 @@ public class ExtensionDownloadQueueV2(
             }
             if (retryAfterMillis > 0) delay(retryAfterMillis)
         }
+    }
+
+    /**
+     * Marks every queued unit of [entry]'s title whose content is stored as downloaded; true when
+     * [entry] itself was among them.
+     */
+    private fun markStoredLocked(entry: ExtensionDownloadEntryV2, selection: ExtensionUnitSelectionV2): Boolean {
+        val stored = runCatching { storedUnitIds(selection) }.getOrDefault(emptySet())
+        if (stored.isEmpty()) return false
+        val publication = selection.sourceKey.canonicalId
+        _entries.update { list ->
+            list.map {
+                if (it.state == DownloadState.QUEUED &&
+                    it.remoteUnitId in stored &&
+                    it.remotePublicationId == entry.remotePublicationId &&
+                    it.sourceKey.canonicalId == publication
+                ) {
+                    it.copy(state = DownloadState.DOWNLOADED, errorMessage = null)
+                } else it
+            }
+        }
+        return entry.remoteUnitId in stored
     }
 
     private fun setState(id: String, state: DownloadState, error: String? = null) {

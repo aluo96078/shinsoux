@@ -127,15 +127,22 @@ public class SqlDriverContentTransactionStore<D : Any>(
         driver.execute(null, "PRAGMA synchronous = FULL", 0).value
         driver.execute(null, "PRAGMA foreign_keys = ON", 0).value
         if (blobParticipant.isRestartSafe) {
-            val durableAttachments = loadAllAttachments().map(ManifestAttachment::asBlobAttachment)
-            val durableAuxiliaryAttachments = loadAllAuxiliaryAttachments()
-            blobParticipant.withExclusiveTransaction {
-                blobParticipant.hydrateAttachmentsLocked(
-                    durableAttachments,
-                    durableAuxiliaryAttachments,
+            // Decoding every stored chapter manifest here took about two seconds of the first
+            // frame. The ledger is installed by the first caller of the blob lock instead (the
+            // composition's startup job warms it in the background). Writers of these rows take
+            // the blob lock before their SQL transaction, so the rows read then are committed.
+            blobParticipant.deferAttachmentHydration {
+                DeferredAttachmentHydration(
+                    attachments = loadAllAttachments().map { BlobAttachment(it.owner, it.manifest) },
+                    auxiliaryAttachments = loadAllAuxiliaryAttachments(),
                 )
             }
         }
+    }
+
+    /** Installs the deferred attachment ledger now; call from a background thread at startup. */
+    public fun warmAttachmentLedger() {
+        blobParticipant.withExclusiveTransaction { }
     }
 
     /** Closes the underlying driver.  Reopening the same path reconstructs [state]. */
@@ -152,6 +159,27 @@ public class SqlDriverContentTransactionStore<D : Any>(
     /** Reads and verifies only publication graph rows, in stable portable-id order. */
     public fun allPublicationsDirect(): List<Publication> = withTransactionLock {
         loadAllPublications()
+    }
+
+    /** One publication's outline row only: no child rows and no manifests are decoded. */
+    public fun findPublicationOutlineDirect(key: PublicationKey): Publication? = withTransactionLock {
+        queryRows(
+            TABLE_PUBLICATIONS,
+            "publication_json WHERE publication_id = '${sqlLiteral(key.value)}'",
+        ).singleOrNull()?.let { row ->
+            decodeJson(Publication.serializer(), requireNotNull(row[0])).withoutManifestRevisions().also {
+                check(it.key == key) { "Publication key/body mismatch" }
+            }
+        }
+    }
+
+    /** Every publication's outline row, in stable portable-id order. */
+    public fun allPublicationOutlinesDirect(): List<Publication> = withTransactionLock {
+        queryRows(TABLE_PUBLICATIONS, "publication_id, publication_json ORDER BY publication_id").map { row ->
+            decodeJson(Publication.serializer(), requireNotNull(row[1])).withoutManifestRevisions().also {
+                check(it.key.value == requireNotNull(row[0])) { "Publication key/body mismatch" }
+            }
+        }
     }
 
     /** Reads and verifies exactly one grant and its scoped publication graph. */
@@ -210,6 +238,63 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     override fun acknowledgeOutbox(draftIds: Set<String>): Int = withTransactionLock {
         acknowledgeRows(TABLE_OUTBOX, "draft_id", draftIds, "Outbox draft id")
+    }
+
+    override fun pendingOutboxCount(): Int = withTransactionLock {
+        queryRows(TABLE_OUTBOX, "COUNT(*)").single()[0]?.toIntOrNull() ?: 0
+    }
+
+    override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<D> = withTransactionLock {
+        require(limit in 1..MAX_OUTBOX_PAGE) { "Outbox page limit is out of range" }
+        afterDraftId?.let { requireSafeSqlKey(it, "Outbox draft id") }
+        val after = afterDraftId?.let { " WHERE draft_id > '${sqlLiteral(it)}'" }.orEmpty()
+        queryRows(TABLE_OUTBOX, "draft_id, payload$after ORDER BY draft_id LIMIT $limit").map { row ->
+            val id = requireNotNull(row[0])
+            val draft = decodeOutbox(requireNotNull(row[1]))
+            outboxAdapter.validate(draft)
+            check(outboxAdapter.id(draft) == id) { "Outbox key/body mismatch" }
+            draft
+        }
+    }
+
+    override fun pendingOutboxDraft(draftId: String): D? = withTransactionLock {
+        requireSafeSqlKey(draftId, "Outbox draft id")
+        findString(TABLE_OUTBOX, "draft_id", draftId, "payload")?.let { payload ->
+            decodeOutbox(payload).also { draft ->
+                outboxAdapter.validate(draft)
+                check(outboxAdapter.id(draft) == draftId) { "Outbox key/body mismatch" }
+            }
+        }
+    }
+
+    override fun replaceOutboxDrafts(remove: Set<String>, add: List<D>): Int = withTransactionLock {
+        remove.forEach { requireSafeSqlKey(it, "Outbox draft id") }
+        add.forEach { draft ->
+            outboxAdapter.validate(draft)
+            requireSafeSqlKey(outboxAdapter.id(draft), "Outbox draft id")
+            require(outboxAdapter.encode(draft).length <= MAX_SQL_PAYLOAD_LENGTH) { "Outbox payload is too large" }
+        }
+        require(add.map(outboxAdapter::id).distinct().size == add.size) {
+            "Replacement outbox draft ids must be unique"
+        }
+        transactions.transactionWithResult<Int>(false) {
+            val removed = remove.sorted().count { id ->
+                val exists = findString(TABLE_OUTBOX, "draft_id", id, "draft_id") != null
+                if (exists) execute("DELETE FROM $TABLE_OUTBOX WHERE draft_id = ?", 1) { bindString(0, id) }
+                exists
+            }
+            add.forEach { draft ->
+                val id = outboxAdapter.id(draft)
+                check(findString(TABLE_OUTBOX, "draft_id", id, "draft_id") == null) {
+                    "Replacement outbox draft id already exists"
+                }
+                execute("INSERT INTO $TABLE_OUTBOX(draft_id, payload) VALUES (?, ?)", 2) {
+                    bindString(0, id)
+                    bindString(1, outboxAdapter.encode(draft))
+                }
+            }
+            removed
+        }
     }
 
     override fun pendingBlobSyncJobs(): List<ContentBlobSyncJobMutation> = withTransactionLock {
@@ -925,6 +1010,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val publication = decodeJson(Publication.serializer(), requireNotNull(row[0])).withoutManifestRevisions()
         check(publication.key == key) { "Publication key/body mismatch" }
 
+        val expectedAcquisitions = publication.acquisitions.associateBy(Acquisition::id)
         val acquisitions = queryRows(
             TABLE_ACQUISITIONS,
             "acquisition_id, publication_id, acquisition_json " +
@@ -932,12 +1018,20 @@ public class SqlDriverContentTransactionStore<D : Any>(
         ).associate { acquisitionRow ->
             val acquisitionId = requireNotNull(acquisitionRow[0])
             check(requireNotNull(acquisitionRow[1]) == key.value) { "Acquisition publication scope mismatch" }
-            val acquisition = decodeJson(Acquisition.serializer(), requireNotNull(acquisitionRow[2]))
-                .withoutManifestRevisions()
+            val encoded = requireNotNull(acquisitionRow[2])
+            val expected = expectedAcquisitions[acquisitionId]
+            // The row is written by this codec from the same outline, so an identical encoding
+            // proves equality without decoding every unit a second time. Older rows (still
+            // carrying manifests) or any difference take the full decode and comparison.
+            val acquisition = if (expected != null && encoded == codec.encodeToString(Acquisition.serializer(), expected)) {
+                expected
+            } else {
+                decodeJson(Acquisition.serializer(), encoded).withoutManifestRevisions()
+            }
             check(acquisition.id == acquisitionId) { "Acquisition key/body mismatch" }
             acquisitionId to acquisition
         }
-        check(acquisitions == publication.acquisitions.associateBy(Acquisition::id)) {
+        check(acquisitions == expectedAcquisitions) {
             "Publication acquisition ledger mismatch"
         }
         val rights = queryRows(
@@ -954,6 +1048,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
         }.toMap()
         check(rights == expectedRights) { "Publication acquisition-rights ledger mismatch" }
 
+        // Keyed once per acquisition: scanning the whole unit list for every unit made this check
+        // quadratic (about 40k deep comparisons for a 288-chapter title, on every read).
+        val acquisitionUnitsByKey = acquisitions.mapValues { (_, acquisition) ->
+            acquisition.units.groupBy { it.key }
+        }
         val units = queryRows(
             TABLE_UNITS,
             "unit_id, publication_id, acquisition_id, unit_json " +
@@ -965,7 +1064,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
             val unit = decodeJson(PublicationUnit.serializer(), requireNotNull(unitRow[3]))
             check(unit.key.value == unitId && unit.key.publicationKey == key) { "Unit key/body mismatch" }
             val outline = unit.copy(manifestRevisions = emptyList())
-            check(acquisitions[acquisitionId]?.units?.any { it == outline } == true) {
+            check(acquisitionUnitsByKey[acquisitionId]?.get(outline.key)?.any { it == outline } == true) {
                 "Unit acquisition scope mismatch"
             }
             unitId to unit
@@ -2570,6 +2669,7 @@ private const val TABLE_AUXILIARY_ATTACHMENTS = "content_auxiliary_attachments"
 private const val TABLE_AUXILIARY_ATTACHMENT_REFS = "content_auxiliary_attachment_refs"
 private const val TABLE_QUARANTINES = "content_quarantines"
 private const val TABLE_OUTBOX = "content_transaction_outbox"
+private const val MAX_OUTBOX_PAGE = 1_024
 private const val TABLE_BLOB_SYNC_JOBS = "content_blob_sync_jobs"
 private const val TABLE_PUBLICATION_REPLICA_CURSORS = "content_publication_replica_cursors"
 private const val TABLE_BLOB_REMOVAL_INTENTS = "content_blob_removal_intents"

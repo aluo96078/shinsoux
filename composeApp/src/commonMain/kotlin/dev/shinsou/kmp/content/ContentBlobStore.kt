@@ -133,6 +133,12 @@ public data class ContentManifestOwner(
     public val acquisitionUuid: String get() = acquisitionId
 }
 
+/** The durable attachment ledger a deferred hydration installs. */
+internal class DeferredAttachmentHydration(
+    val attachments: List<BlobAttachment>,
+    val auxiliaryAttachments: List<AuxiliaryBlobAttachment>,
+)
+
 /** Transactional manifest-to-blob attachment/ledger record. */
 @kotlinx.serialization.Serializable
 public data class BlobAttachment(
@@ -419,6 +425,12 @@ internal interface ContentBlobTransactionParticipant {
     val isRestartSafe: Boolean
 
     fun <T> withExclusiveTransaction(block: () -> T): T
+    /**
+     * Registers the durable attachment ledger to be loaded by whichever caller next takes the
+     * store lock, before it reads anything. Lets the host open without decoding every stored
+     * manifest on its first frame.
+     */
+    fun deferAttachmentHydration(load: () -> DeferredAttachmentHydration)
     fun snapshotForTransactionLocked(): ContentBlobRollback
     fun hydrateAttachmentsLocked(
         attachmentsToHydrate: List<BlobAttachment>,
@@ -609,6 +621,7 @@ public class InMemoryContentBlobStore(
     private var nextCommitSequence = 1L
     private var nextIncarnationValue = 1L
     private var durability: ContentBlobDurability? = null
+    private var deferredHydration: (() -> DeferredAttachmentHydration)? = null
     override var currentGeneration: Long = 0
         private set
 
@@ -1390,12 +1403,37 @@ public class InMemoryContentBlobStore(
     private fun copyAuxiliaryAttachment(source: AuxiliaryBlobAttachment): AuxiliaryBlobAttachment =
         source.deepImmutableSnapshot()
 
+    internal fun deferAttachmentHydration(load: () -> DeferredAttachmentHydration) {
+        stateMutex.lock()
+        try {
+            check(!lockHeld) { "Blob store lock re-entry is forbidden" }
+            // A store reopened over the same blob store reads the same durable rows: the latest
+            // registration replaces a pending one; an applied ledger is re-validated on load.
+            deferredHydration = load
+        } finally {
+            stateMutex.unlock()
+        }
+    }
+
     private inline fun <T> withStateLock(block: () -> T): T {
         stateMutex.lock()
         return try {
             check(!lockHeld) { "Blob store lock re-entry is forbidden" }
             lockHeld = true
             try {
+                // Every reader and writer of the ledger takes this lock first, so the deferred
+                // durable ledger is in place before anything (including unreferenced-blob
+                // collection) can consult it. A failed load stays pending and fails this caller.
+                deferredHydration?.let { load ->
+                    deferredHydration = null
+                    try {
+                        val loaded = load()
+                        hydrateAttachmentsLocked(loaded.attachments, loaded.auxiliaryAttachments)
+                    } catch (failure: Throwable) {
+                        deferredHydration = load
+                        throw failure
+                    }
+                }
                 block()
             } finally {
                 lockHeld = false

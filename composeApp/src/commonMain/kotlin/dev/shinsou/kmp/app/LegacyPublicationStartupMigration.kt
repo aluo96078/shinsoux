@@ -7,6 +7,7 @@ import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.content.ContentMigrationLookupStatus
 import dev.shinsou.kmp.content.ContentPublicationMutation
+import dev.shinsou.kmp.content.MAX_CONTENT_METADATA_JSON_CHARS
 import dev.shinsou.kmp.content.asContentAliasMutation
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Acquisition
@@ -62,12 +63,17 @@ public class LegacyPublicationStartupMigration(
         val bundles = LegacyPublicationProjection(InMemoryPortableAliasLedger()).project(
             source.toProjectionSnapshot(),
         )
-        // `PublicationStore.find` is a strong restart-safe read and hydrates the complete SQL
-        // transaction state. Snapshot it once so a large legacy library does not become O(n²).
-        val durablePublications = foundation.publications.all().associateBy(Publication::key)
+        // Only the legacy titles are read, and only their outline: this runs on every launch and
+        // nearly always finds nothing to do. A title that does need units appended is re-read in
+        // full, since the committed graph must keep its stored manifests.
         val candidates = bundles.mapNotNull { bundle ->
-            candidateGraph(bundle, durablePublications[bundle.publication.key])
+            candidateGraph(bundle, foundation.publications.findOutline(bundle.publication.key))
+                ?.let { candidateGraph(bundle, foundation.publications.find(bundle.publication.key)) }
         }
+            // A title whose graph exceeds the store's row limit can never commit. Keeping it in
+            // the batch made the whole migration fail on every launch, re-doing this work each
+            // time while the other titles never migrated. It stays a legacy row instead.
+            .filter(::fitsContentStore)
             .sortedBy { it.key.value }
         if (candidates.isEmpty()) {
             return LegacyPublicationMigrationResult(
@@ -182,6 +188,10 @@ public class LegacyPublicationStartupMigration(
         )
     }
 
+    private fun fitsContentStore(publication: Publication): Boolean =
+        SIZE_JSON.encodeToString(Publication.serializer(), publication).length <=
+            MAX_CONTENT_METADATA_JSON_CHARS - STORE_ENCODING_MARGIN_CHARS
+
     private fun requireSameLegacyIdentity(durable: Acquisition, expected: Acquisition) {
         val durableFacet = requireNotNull(durable.legacyCompatibilityFacet) {
             "A legacy Publication identity collided with a non-legacy publication"
@@ -195,6 +205,13 @@ public class LegacyPublicationStartupMigration(
     private companion object {
         const val MIGRATION_VERSION: Int = 1
         const val MIGRATION_NAMESPACE: String = "legacy-app-snapshot-v1"
+        /** The store's codec may add a few fields this estimate leaves out; stay clear of the limit. */
+        const val STORE_ENCODING_MARGIN_CHARS: Int = 64 * 1024
+        val SIZE_JSON: Json = Json {
+            encodeDefaults = true
+            explicitNulls = true
+            allowStructuredMapKeys = true
+        }
         val MIGRATION_JSON: Json = Json {
             encodeDefaults = true
             explicitNulls = false

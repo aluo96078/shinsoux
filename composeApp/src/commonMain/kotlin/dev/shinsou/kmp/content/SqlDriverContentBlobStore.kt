@@ -84,6 +84,9 @@ private class InMemoryContentBlobParticipant(
     override fun <T> withExclusiveTransaction(block: () -> T): T =
         store.withExclusiveTransaction(block)
 
+    override fun deferAttachmentHydration(load: () -> DeferredAttachmentHydration) =
+        store.deferAttachmentHydration(load)
+
     override fun snapshotForTransactionLocked(): ContentBlobRollback =
         store.snapshotForTransactionLocked()
 
