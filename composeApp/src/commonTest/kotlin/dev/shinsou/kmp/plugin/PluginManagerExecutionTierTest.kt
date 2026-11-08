@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -372,6 +373,31 @@ class PluginManagerExecutionTierTest {
         runCatching { adapter.trustAndAddRepository(shownB, null) } // adding may fail later (no index); trust is what counts
         assertEquals(publisherRoot(second).fingerprint, host.publishers.publisherForRepository(repository)!!.currentFingerprint)
         assertTrue(assertNotNull(adapter.inspectRepositoryTrust(repository)).alreadyTrusted)
+
+        // The repository is configured: another key there is still a key substitution.
+        val third = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        presenting = third
+        val substituted = assertNotNull(adapter.inspectRepositoryTrust(repository))
+        assertFalse(substituted.alreadyTrusted)
+        assertFailsWith<RepositoryTrustException.KeySubstitution> { adapter.trustAndAddRepository(substituted, null) }
+        assertEquals(publisherRoot(second).fingerprint, host.publishers.publisherForRepository(repository)!!.currentFingerprint)
+        // Removing it releases the URL (the publisher stays), so the user can confirm the new key.
+        adapter.removeRepository(repository)
+        assertNull(host.publishers.publisherForRepository(repository))
+        assertNotNull(host.publishers.publisher(publisherRoot(second).fingerprint))
+        runCatching { adapter.trustAndAddRepository(assertNotNull(adapter.inspectRepositoryTrust(repository)), null) }
+        assertEquals(publisherRoot(third).fingerprint, host.publishers.publisherForRepository(repository)!!.currentFingerprint)
+
+        // A mapping left behind by a repository removed before removal released it (not configured):
+        // the new key is confirmed afresh instead of failing as a substitution.
+        val stale = "https://signed.example/stale"
+        host.publishers.trustRepository(stale, publisherRoot(first))
+        presenting = second
+        val restored = assertNotNull(adapter.inspectRepositoryTrust(stale))
+        assertFalse(restored.alreadyTrusted)
+        runCatching { adapter.trustAndAddRepository(restored, null) }
+        assertEquals(publisherRoot(second).fingerprint, host.publishers.publisherForRepository(stale)!!.currentFingerprint)
+        assertNotNull(host.publishers.publisher(publisherRoot(first).fingerprint))
 
         // A link's fingerprint is enforced even when the dialog sends none or another one.
         val other = "https://signed.example/other"

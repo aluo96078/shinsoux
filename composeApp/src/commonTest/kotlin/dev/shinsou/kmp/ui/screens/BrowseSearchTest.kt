@@ -1,5 +1,10 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.ui.BrowseRepository
+import dev.shinsou.kmp.ui.BrowseExtension
+import dev.shinsou.kmp.ui.resolvedAgainst
+import dev.shinsou.kmp.ui.MigrationCandidate
+import dev.shinsou.kmp.plugin.PluginContentType
 import dev.shinsou.kmp.ui.BrowseManga
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.BrowseFilter
@@ -226,6 +231,76 @@ class BrowseSearchTest {
             listOf(1L, 2L),
             eligibleMigrationSources(sources, currentSourceName = "current").map(BrowseSource::id),
         )
+    }
+
+    @Test
+    fun migrationTargetsMatchTheTitlesKindAndIdentityPath() {
+        val novelKey = dev.shinsou.kmp.domain.model.SourceKey(2, "zh.current", "1")
+        val sources = listOf(
+            BrowseSource(id = 1, name = "Legacy manga", language = "zh", contentType = PluginContentType.MANGA),
+            BrowseSource(id = 2, name = "Legacy unknown", language = "zh"),
+            BrowseSource(id = 3, name = "Current", language = "zh", sourceKey = novelKey, contentType = PluginContentType.NOVEL),
+            BrowseSource(id = 4, name = "Other novel", language = "zh", sourceKey = dev.shinsou.kmp.domain.model.SourceKey(2, "zh.other", "1"), contentType = PluginContentType.NOVEL),
+            BrowseSource(id = 5, name = "V2 manga", language = "zh", sourceKey = dev.shinsou.kmp.domain.model.SourceKey(2, "zh.manga", "1"), contentType = PluginContentType.MANGA),
+            BrowseSource(id = 6, name = "Legacy novel", language = "zh", contentType = PluginContentType.NOVEL),
+        )
+        val novel = MigrationCandidate(
+            mangaId = 1, title = "書", currentSourceName = "zh.current", sourceId = 0,
+            sourceKey = novelKey, remotePublicationId = "b", contentType = PluginContentType.NOVEL,
+        )
+        assertEquals(listOf(4L), eligibleMigrationSources(sources, novel).map(BrowseSource::id))
+
+        val manga = MigrationCandidate(mangaId = 2, title = "M", currentSourceName = "Legacy manga", sourceId = 1, contentType = PluginContentType.MANGA)
+        assertEquals(listOf(2L), eligibleMigrationSources(sources, manga).map(BrowseSource::id))
+
+        // The installed source names the title's current source and kind.
+        val resolved = novel.copy(contentType = PluginContentType.BOTH).resolvedAgainst(sources)
+        assertEquals("Current", resolved.currentSourceName)
+        assertEquals(PluginContentType.NOVEL, resolved.contentType)
+    }
+
+    @Test
+    fun aSelectedRepositoryShowsOnlyItsOwnExtensionsAndNoSelectionGroupsThemAll() {
+        val community = BrowseRepository(id = "https://community.example", url = "https://community.example", name = "Community")
+        val nsfw = BrowseRepository(id = "https://nsfw.example", url = "https://nsfw.example", name = "NSFW")
+        val extensions = listOf(
+            BrowseExtension("novel", "Novel", "1", "zh", installed = true, repositoryId = "https://community.example"),
+            BrowseExtension("komiic", "Komiic", "1", "zh", repositoryId = "https://community.example/"),
+            BrowseExtension("canovel", "CA", "1", "zh", repositoryId = "https://nsfw.example"),
+            BrowseExtension("orphan", "Orphan", "1", "zh", installed = true, repositoryId = "https://gone.example"),
+        )
+        val onlyNsfw = extensionRepositoryGroups(extensions, listOf(community, nsfw), nsfw.id)
+        assertEquals(listOf("canovel"), onlyNsfw.single().extensions.map(BrowseExtension::id))
+        val onlyCommunity = extensionRepositoryGroups(extensions, listOf(community, nsfw), community.id)
+        assertEquals(listOf("novel", "komiic"), onlyCommunity.single().extensions.map(BrowseExtension::id))
+
+        val all = extensionRepositoryGroups(extensions, listOf(community, nsfw), null)
+        assertEquals(listOf("Community", "NSFW", null), all.map { it.repository?.name })
+        assertEquals(listOf("orphan"), all.last().extensions.map(BrowseExtension::id))
+    }
+
+    @Test
+    fun theRepositoryPickerFindsByNameOrUrl() {
+        val repositories = (1..30).map { BrowseRepository("https://r$it.example", "https://r$it.example", "Repo $it") } +
+            BrowseRepository("https://nsfw-plugin.shinsoux.com", "https://nsfw-plugin.shinsoux.com", "Shinsou NSFW Plugins")
+        assertEquals(31, repositoryPickerMatches(repositories, " ").size)
+        assertEquals(listOf("Shinsou NSFW Plugins"), repositoryPickerMatches(repositories, "nsfw").map { it.name })
+        assertEquals(listOf("Repo 12"), repositoryPickerMatches(repositories, "r12.").map { it.name })
+    }
+
+    @Test
+    fun sourcesGroupByTheRepositoryOfTheirPackage() {
+        val community = BrowseRepository("https://community.example", "https://community.example", "Community")
+        val nsfw = BrowseRepository("https://nsfw.example", "https://nsfw.example", "NSFW")
+        val sources = listOf(
+            BrowseSource(id = 1, name = "Wenku", language = "zh", repositoryId = community.id),
+            BrowseSource(id = 2, name = "Qimao", language = "zh", repositoryId = nsfw.id),
+            BrowseSource(id = 3, name = "Local", language = "zh"),
+        )
+        val all = repositoryGroups(sources, listOf(community, nsfw), null) { it.repositoryId }
+        assertEquals(listOf("Community", "NSFW", null), all.map { it.repository?.name })
+        assertEquals(listOf(3L), all.last().items.map(BrowseSource::id))
+        assertEquals(listOf(2L), repositoryGroups(sources, listOf(community, nsfw), nsfw.id) { it.repositoryId }.single().items.map(BrowseSource::id))
     }
 
     @Test

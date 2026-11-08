@@ -956,6 +956,61 @@ class ShinsouRepository(
         AtomicSnapshotMutationResult(snapshot = next, result = result)
     }
 
+    /**
+     * Re-binds one library title to another source in a single commit: the row, its rewritten
+     * chapters and the chapters without a counterpart change together or not at all. The plan was
+     * made from an earlier snapshot, so it is refused when the row's URL or its chapter set has
+     * changed since ([expectedUrl], and [rewrittenChapters] plus [removedChapterIds] must be
+     * exactly the title's chapters).
+     */
+    suspend fun rebindLibraryTitle(
+        mangaId: Long,
+        expectedUrl: String,
+        transform: (Manga) -> Manga,
+        rewrittenChapters: List<Chapter>,
+        removedChapterIds: Collection<Long>,
+    ): Manga = mutate { state ->
+        val index = state.mangas.indexOfFirst { it.id == mangaId }
+        if (index < 0) missing("Manga", mangaId)
+        val current = state.mangas[index]
+        if (current.url != expectedUrl) {
+            throw RepositoryConstraintException("Manga $mangaId changed while it was being migrated")
+        }
+        val removed = removedChapterIds.toSet()
+        val rewritten = rewrittenChapters.associateBy { it.id }
+        if (rewritten.size != rewrittenChapters.size || rewritten.keys.any { it in removed }) {
+            throw RepositoryConstraintException("A migrated chapter is planned twice")
+        }
+        val existing = state.chapters.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.id }
+        if (existing != rewritten.keys + removed) {
+            throw RepositoryConstraintException("The chapters of manga $mangaId changed while it was being migrated")
+        }
+        rewrittenChapters.forEach { chapter ->
+            if (chapter.mangaId != mangaId) throw RepositoryConstraintException("Chapter ${chapter.id} belongs to another manga")
+            validateChapter(chapter)
+        }
+        val updated = transform(current).copy(id = current.id)
+        if (state.mangas.any { it.id != mangaId && it.source == updated.source && it.url == updated.url }) {
+            throw RepositoryConstraintException("The migration target is already in the library")
+        }
+        val rebound = replaceMangaAt(state, index, updated)
+        val chapters = rebound.snapshot.chapters.mapNotNull { chapter ->
+            if (chapter.id in removed) null else rewritten[chapter.id] ?: chapter
+        }
+        if (chapters.filter { it.mangaId == mangaId }.map { it.url }.let { it.size != it.toSet().size }) {
+            throw RepositoryConstraintException("Two migrated chapters share one URL")
+        }
+        Mutation(
+            rebound.snapshot.copy(
+                chapters = chapters,
+                histories = rebound.snapshot.histories.filterNot { it.chapterId in removed },
+                updates = rebound.snapshot.updates.filterNot { it.chapterId in removed },
+                downloadQueue = rebound.snapshot.downloadQueue.filterNot { it.chapterId in removed },
+            ),
+            rebound.result,
+        )
+    }
+
     private fun replaceMangaAt(
         state: AppSnapshot,
         index: Int,

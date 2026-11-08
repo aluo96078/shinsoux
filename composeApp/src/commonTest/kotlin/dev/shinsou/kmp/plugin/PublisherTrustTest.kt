@@ -70,6 +70,33 @@ class PublisherTrustTest {
     }
 
     @Test
+    fun forgettingARemovedRepositoryLetsItsUrlBeTrustedUnderAnotherKey() = runTest {
+        val host = Host()
+        val oldKey = newKey()
+        val first = host.publishers.trustRepository(REPO, root(oldKey))
+        host.publishers.trustRepository(MIRROR, root(oldKey))
+        assertFailsWith<RepositoryTrustException.KeySubstitution> { host.publishers.trustRepository(REPO, root(newKey())) }
+
+        host.publishers.forgetRepository(REPO)
+        assertNull(host.publishers.publisherForRepository(REPO))
+        // The publisher, its key and its other URL are untouched.
+        assertEquals(first, host.publishers.publisher(first.publisherId))
+        assertEquals(first.publisherId, host.publishers.publisherForRepository(MIRROR)?.publisherId)
+        assertFailsWith<RepositoryTrustException.KeySubstitution> { host.publishers.trustRepository(MIRROR, root(newKey())) }
+
+        val dedicated = newKey()
+        val second = host.publishers.trustRepository(REPO, root(dedicated))
+        assertEquals(root(dedicated).fingerprint, second.publisherId)
+        assertEquals(2, host.publishers.publishers().size)
+        val decision = assertIs<RepositoryTrustDecision.RequirePinnedSignature>(host.policy.decisionFor(REPO))
+        assertEquals(root(dedicated), decision.root)
+        // Forgetting is idempotent and never touches a URL that was not mapped.
+        host.publishers.forgetRepository(REPO + "/unknown")
+        host.publishers.forgetRepository(REPO + "/unknown")
+        assertEquals(second.publisherId, host.publishers.publisherForRepository(REPO)?.publisherId)
+    }
+
+    @Test
     fun modeBNeverTrustsWithoutTheFullFingerprint() = runTest {
         val host = Host()
         val key = newKey()

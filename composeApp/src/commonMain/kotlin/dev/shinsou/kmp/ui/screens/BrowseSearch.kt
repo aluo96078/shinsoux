@@ -1,6 +1,10 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.ui.BrowseExtension
 import dev.shinsou.kmp.ui.BrowseManga
+import dev.shinsou.kmp.ui.BrowseRepository
+import dev.shinsou.kmp.ui.MigrationCandidate
 import dev.shinsou.kmp.ui.BrowseSource
 
 private val titleParentheticalPattern = Regex("\\([^)]*\\)")
@@ -29,16 +33,35 @@ private data class ScoredBrowseResult(
 internal fun eligibleMigrationSources(
     sources: List<BrowseSource>,
     currentSourceName: String,
+): List<BrowseSource> = eligibleMigrationSources(
+    sources,
+    MigrationCandidate(mangaId = 0, title = "", currentSourceName = currentSourceName),
+)
+
+/**
+ * Sources a library title can move to: enabled, of the same kind (manga or novel), and on the same
+ * identity path. A legacy row moves through the Long-keyed import bridge, an extension-backed
+ * title only between exact v2 sources (its chapters are typed units of a source publication).
+ */
+internal fun eligibleMigrationSources(
+    sources: List<BrowseSource>,
+    candidate: MigrationCandidate,
 ): List<BrowseSource> = sources
     .asSequence()
     .filter(BrowseSource::enabled)
-    // Migration still targets the legacy Long-keyed import bridge. Native v2 sources must not be
-    // narrowed into that authority until an exact SourceKey migration consumer exists.
-    .filter { it.sourceKey == null }
-    .filterNot { it.name.equals(currentSourceName, ignoreCase = true) }
+    .filter { (it.sourceKey != null) == (candidate.sourceKey != null) }
+    .filter { migrationContentTypesMatch(it.contentType, candidate.contentType) }
+    .filterNot { source ->
+        candidate.sourceKey?.let { source.sourceKey == it }
+            ?: (source.id == candidate.sourceId || source.name.equals(candidate.currentSourceName, ignoreCase = true))
+    }
     .distinctBy(BrowseSource::identityKey)
     .sortedWith(compareBy<BrowseSource> { it.name.lowercase() }.thenBy(BrowseSource::identityKey))
     .toList()
+
+/** An unknown ([PluginContentType.BOTH]) side never rules a source out. */
+internal fun migrationContentTypesMatch(source: PluginContentType, title: PluginContentType): Boolean =
+    source == PluginContentType.BOTH || title == PluginContentType.BOTH || source == title
 
 internal fun rankBrowseResults(query: String, items: List<BrowseManga>): List<BrowseManga> {
     val normalizedQuery = normalizeSearchTitle(query).lowercase()
@@ -107,4 +130,51 @@ private fun levenshteinDistance(first: String, second: String): Int {
         current = swap
     }
     return previous[second.length]
+}
+
+/** One repository's items; [repository] is null for items from no configured repository. */
+internal data class RepositoryGroup<T>(
+    val repository: BrowseRepository?,
+    val items: List<T>,
+)
+
+internal typealias ExtensionRepositoryGroup = RepositoryGroup<BrowseExtension>
+
+internal val RepositoryGroup<BrowseExtension>.extensions: List<BrowseExtension> get() = items
+
+/**
+ * A selected repository shows only its own items (installed ones included); no selection shows
+ * every repository, each under its own heading in list order, and items from a repository that is
+ * no longer configured (or none) last.
+ */
+internal fun <T> repositoryGroups(
+    items: List<T>,
+    repositories: List<BrowseRepository>,
+    selectedRepositoryId: String?,
+    repositoryOf: (T) -> String?,
+): List<RepositoryGroup<T>> {
+    fun key(id: String?): String? = id?.trim()?.trimEnd('/')?.lowercase()
+    val selected = repositories.firstOrNull { it.id == selectedRepositoryId }
+    if (selected != null) {
+        return listOf(RepositoryGroup(selected, items.filter { key(repositoryOf(it)) == key(selected.id) }))
+    }
+    val known = repositories.mapTo(mutableSetOf()) { key(it.id) }
+    val groups = repositories.map { repository ->
+        RepositoryGroup(repository, items.filter { key(repositoryOf(it)) == key(repository.id) })
+    }.filter { it.items.isNotEmpty() }
+    val unlisted = items.filter { repositoryOf(it) == null || key(repositoryOf(it)) !in known }
+    return if (unlisted.isEmpty()) groups else groups + RepositoryGroup(null, unlisted)
+}
+
+internal fun extensionRepositoryGroups(
+    extensions: List<BrowseExtension>,
+    repositories: List<BrowseRepository>,
+    selectedRepositoryId: String?,
+): List<ExtensionRepositoryGroup> = repositoryGroups(extensions, repositories, selectedRepositoryId) { it.repositoryId }
+
+/** Repositories whose name or URL contains [query] (case-insensitive), in list order. */
+internal fun repositoryPickerMatches(repositories: List<BrowseRepository>, query: String): List<BrowseRepository> {
+    val needle = query.trim()
+    if (needle.isEmpty()) return repositories
+    return repositories.filter { it.name.contains(needle, ignoreCase = true) || it.url.contains(needle, ignoreCase = true) }
 }

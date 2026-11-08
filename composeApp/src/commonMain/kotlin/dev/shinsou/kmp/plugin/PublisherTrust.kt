@@ -177,6 +177,17 @@ public class PublisherTrustStore(
     public suspend fun publishers(): List<PublisherTrustRecord> = mutex.withLock { readIndex().mapNotNull { readRecord(it) } }
 
     /**
+     * The user removed this repository: drop only its URL -> publisher mapping, so adding the URL
+     * again asks for trust afresh (for example after the publisher moved it to a dedicated key).
+     * The publisher record, its key, its other URLs (mirrors) and every replay/downgrade watermark
+     * are kept, so installed packages stay authorized and nothing can be rolled back.
+     */
+    public suspend fun forgetRepository(normalizedBaseUrl: String): Unit = mutex.withLock {
+        keyValueStore.remove(urlKey(normalizedBaseUrl))
+        check(keyValueStore.getString(urlKey(normalizedBaseUrl)) == null) { "Could not verify publisher trust write" }
+    }
+
+    /**
      * Trusts the key a repository presented, after the user confirmed it. [expectedFingerprint] comes
      * from a deep link or the user; it must match when given and is required under mode (b), globally
      * or for this repository ([requireFingerprintMatch]).

@@ -59,6 +59,8 @@ import dev.shinsou.kmp.ui.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.TypedReaderContentSession
 import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import io.ktor.http.Url
+import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.ui.resolvedAgainst
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -73,6 +75,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 
 /** Startup/refresh discovery must never leave the browse surface behind a dead network host. */
 private const val BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS: Long = 8_000L
+/** Upper bound on target chapter pages read while migrating one title. */
+private const val MAX_MIGRATION_UNIT_PAGES: Int = 200
 
 /** Cooperative bound layered over the desktop protected-store caller timeout. */
 private const val SOURCE_SECRET_ACCESS_TIMEOUT_MILLIS: Long = 12_000L
@@ -362,6 +366,16 @@ public class PluginBrowseAdapter(
             if (linked != null && typed != null && PublisherFingerprint.parse(typed) != PublisherFingerprint.parse(linked)) {
                 throw PublisherTrustException.FingerprintMismatch()
             }
+            // A URL that is no longer one of the user's repositories (removed before removal
+            // released its mapping) is not bound to the publisher it used to serve: the key shown
+            // in this prompt is what the user now confirms. A configured repository presenting
+            // another key is still a key substitution.
+            val mapped = security.publishers.publisherForRepository(presentation.normalizedBaseUrl)
+            if (mapped != null && mapped.currentFingerprint != presentation.key.fingerprint &&
+                !isConfiguredRepository(presentation.normalizedBaseUrl)
+            ) {
+                security.publishers.forgetRepository(presentation.normalizedBaseUrl)
+            }
             security.publishers.trustRepository(
                 presentation.normalizedBaseUrl,
                 presentation.key,
@@ -495,6 +509,9 @@ public class PluginBrowseAdapter(
         fun belongsToRemovedRepository(value: String): Boolean =
             value == repositoryId || runCatching { normalizeRepositoryInput(value) == base }.getOrDefault(false)
         deleteRepository(base)
+        // Removing a repository releases its URL -> publisher mapping (the publisher, its other
+        // URLs and all watermarks stay), so the URL can later be trusted under another key.
+        packageSecurity?.publishers?.forgetRepository(base)
         val remaining = repositoryStore.list()
         val selected = repositoryStore.selected().takeIf { id -> remaining.any { it.baseUrl == id } }
             ?: remaining.firstOrNull()?.baseUrl
@@ -774,6 +791,14 @@ public class PluginBrowseAdapter(
         publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
     ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
         extensionContentConsumerV2?.localReadingState(publicationKey)
+            ?: dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
+
+    override fun extensionLocalReadingStateV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        remoteUnitIds: Collection<String>,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
+        extensionContentConsumerV2?.localReadingState(sourceKey, remotePublicationId, remoteUnitIds)
             ?: dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
 
     override fun extensionDownloadedUnitIdsV2(
@@ -1214,7 +1239,86 @@ public class PluginBrowseAdapter(
         }
 
     override suspend fun migrateManga(mangaId: Long, target: BrowseManga) {
-        migrationHandler.migrate(mangaId, target)
+        if (target.sourceKey == null) {
+            migrationHandler.migrate(mangaId, target)
+        } else {
+            migrateExtensionPublicationV2(mangaId, target)
+        }
+        operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
+    }
+
+    /**
+     * Moves an extension-backed library title to another exact source publication: the same row
+     * (categories, tracking, notes) is re-bound, and every chapter that has a counterpart keeps
+     * its read mark, page and history under the target's unit identity.
+     */
+    private suspend fun migrateExtensionPublicationV2(mangaId: Long, target: BrowseManga) {
+        val repository = checkNotNull(portableRepository) { "Library storage is unavailable" }
+        val targetKey = requireNotNull(target.sourceKey)
+        val targetRemoteId = requireNotNull(target.remotePublicationId) { "The target has no publication id" }
+        val before = repository.currentSnapshot
+        val manga = before.mangas.firstOrNull { it.id == mangaId }
+            ?: throw IllegalArgumentException("Unknown manga: $mangaId")
+        val current = decodeExtensionLibraryPublicationUrl(manga.url)
+        require(manga.source == dev.shinsou.kmp.local.LOCAL_SOURCE_ID && current != null) {
+            "Only an extension-backed title can migrate to an extension source"
+        }
+        require(current.sourceKey != targetKey || current.remotePublicationId != targetRemoteId) {
+            "The target is the title's current source publication"
+        }
+        val units = mutableListOf<dev.shinsou.kmp.plugin.v2.RemoteUnitV2>()
+        var page = 0
+        while (true) {
+            val result = extensionUnitsV2(targetKey, targetRemoteId, page)
+            units += result.items
+            if (!result.hasNextPage || result.items.isEmpty()) break
+            // An incomplete chapter list would read as "no counterpart" and drop read chapters.
+            check(++page < MAX_MIGRATION_UNIT_PAGES) {
+                "The target source lists more chapter pages than migration reads; nothing was changed"
+            }
+        }
+        check(units.isNotEmpty()) { "The target source returned no chapters" }
+        val details = try {
+            extensionDetailsV2(targetKey, targetRemoteId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null // the catalogue row the user picked still names and pictures the title
+        }
+        val latest = repository.currentSnapshot
+        val plan = dev.shinsou.kmp.plugin.v2.planExtensionLibraryMigrationV2(
+            oldChapters = latest.chapters.filter { it.mangaId == mangaId },
+            targetSourceKey = targetKey,
+            targetRemotePublicationId = targetRemoteId,
+            targetUnits = units,
+        )
+        val targetPublication = dev.shinsou.kmp.plugin.v2.extensionPublicationKey(targetKey, targetRemoteId)
+        check(
+            latest.mangas.none { row ->
+                row.id != mangaId && row.source == manga.source && (
+                    row.url == plan.libraryUrl ||
+                        decodeExtensionLibraryPublicationUrl(row.url)?.publicationKey == targetPublication ||
+                        dev.shinsou.kmp.local.decodeTypedLocalPublicationUrl(row.url) == targetPublication
+                    )
+            },
+        ) { "The target title is already in the library" }
+        repository.rebindLibraryTitle(
+            mangaId = mangaId,
+            expectedUrl = manga.url,
+            rewrittenChapters = plan.moved,
+            removedChapterIds = plan.droppedChapterIds,
+            transform = { row ->
+            row.copy(
+                url = plan.libraryUrl,
+                title = details?.title?.takeIf(String::isNotBlank) ?: target.title,
+                thumbnailUrl = details?.thumbnailUrl ?: target.thumbnailUrl ?: row.thumbnailUrl,
+                author = details?.author ?: target.author,
+                artist = details?.artist ?: target.artist,
+                description = details?.description ?: target.description,
+                genre = details?.genre ?: target.genre,
+            )
+            },
+        )
     }
 
     override suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>): Unit =
@@ -1727,6 +1831,12 @@ public class PluginBrowseAdapter(
         mirrorPortableRepositoriesToKeyValue(portable)
     }
 
+    private suspend fun isConfiguredRepository(normalizedBaseUrl: String): Boolean =
+        repositoryStore.list().any { stored ->
+            stored.baseUrl == normalizedBaseUrl ||
+                runCatching { normalizeRepositoryInput(stored.baseUrl) == normalizedBaseUrl }.getOrDefault(false)
+        }
+
     private suspend fun deleteRepository(baseUrl: String) {
         val portable = portableRepository
         if (portable == null) {
@@ -1943,7 +2053,19 @@ public class PluginBrowseAdapter(
                     )
                 }
         }
+        // Which repository provided each source: the installed package that declares it.
+        val repositoryBySourceId = installed.values.flatMap { stored ->
+            val repository = stored.metadata.repositoryBaseUrl ?: return@flatMap emptyList<Pair<Long, String>>()
+            stored.manifest.sources.orEmpty().map { it.id to repository }
+        }.toMap()
+        fun BrowseSource.withRepository(): BrowseSource = copy(
+            repositoryId = repositoryId
+                ?: sourceKey?.legacyLongId?.let(repositoryBySourceId::get)
+                ?: sourceKey?.sourceId?.toLongOrNull()?.let(repositoryBySourceId::get)
+                ?: (if (sourceKey == null) repositoryBySourceId[id] ?: sourceDescriptors[id]?.repositoryBaseUrl else null),
+        )
         val sources = (legacySources + nativeSources)
+            .map { it.withRepository() }
             .distinctBy(BrowseSource::identityKey)
             .sortedWith(compareBy<BrowseSource> { it.language }.thenBy { it.name.lowercase() })
         val extensions = descriptors.values.map { descriptor ->
@@ -1964,6 +2086,7 @@ public class PluginBrowseAdapter(
                 sourceIds = descriptor.sources.map { it.id },
                 contentType = descriptor.contentType,
                 inDevelopment = PluginInstallKeys.isDeveloperKey(descriptor.id),
+                repositoryId = descriptor.repositoryBaseUrl,
             )
         }
         sourceProjections = rebuiltSourceProjections
@@ -1972,7 +2095,7 @@ public class PluginBrowseAdapter(
             selectedRepositoryId = selectedRowId,
             sources = sources,
             extensions = extensions,
-            migrations = migrationProvider.candidates(),
+            migrations = migrationProvider.candidates().map { it.resolvedAgainst(sources) },
             isRefreshing = isRefreshing,
             errorMessage = errorMessage,
         )

@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.LibraryUpdate
@@ -233,8 +235,10 @@ public class RepositoryPluginCoordinator(
 
     override suspend fun migrate(mangaId: Long, target: BrowseManga): Unit = mutationMutex.withLock {
         val snapshot = repository.currentSnapshot
-        if (snapshot.mangas.none { it.id == mangaId }) {
-            throw IllegalArgumentException("Unknown manga: $mangaId")
+        val manga = snapshot.mangas.firstOrNull { it.id == mangaId }
+            ?: throw IllegalArgumentException("Unknown manga: $mangaId")
+        require(manga.source != LOCAL_SOURCE_ID && target.sourceKey == null) {
+            "Extension-backed titles migrate only between extension sources"
         }
         val targetSource = manager.source(target.sourceId)
             ?: throw IllegalStateException("Source '${target.sourceId}' is not loaded")
@@ -268,12 +272,22 @@ public class RepositoryPluginCoordinator(
     override suspend fun candidates(): List<MigrationCandidate> {
         val snapshot = repository.currentSnapshot
         val sourceNames = manager.catalogueSources().associate { it.id to it.name }
-        return snapshot.mangas.filter(Manga::favorite).map { manga ->
+        return snapshot.mangas.filter(Manga::favorite).mapNotNull { manga ->
+            // An app-local row migrates only when it is bound to an exact extension source;
+            // imported files have no source to move away from.
+            val binding = if (manga.source == LOCAL_SOURCE_ID) {
+                decodeExtensionLibraryPublicationUrl(manga.url) ?: return@mapNotNull null
+            } else null
             MigrationCandidate(
                 mangaId = manga.id,
                 title = manga.title,
                 thumbnailUrl = manga.thumbnailUrl,
-                currentSourceName = sourceNames[manga.source] ?: manga.source.toString(),
+                currentSourceName = binding?.sourceKey?.packageId
+                    ?: sourceNames[manga.source]
+                    ?: manga.source.toString(),
+                sourceId = manga.source,
+                sourceKey = binding?.sourceKey,
+                remotePublicationId = binding?.remotePublicationId,
             )
         }
     }

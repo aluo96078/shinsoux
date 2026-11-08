@@ -57,6 +57,11 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -181,6 +186,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -783,6 +790,7 @@ fun BrowseScreen(
             )
             when (section) {
                 BrowseSection.Sources -> SourcesPane(
+                    repositories = snapshot.repositories,
                     sources = snapshot.sources.filter {
                         (showNsfw || !it.isNsfw) &&
                             (enabledLanguages.isEmpty() || it.language in enabledLanguages)
@@ -2109,7 +2117,9 @@ internal fun ExtensionV2PublicationPane(
                     runCatching {
                         withContext(Dispatchers.Default) {
                             callbacks.extensionLocalReadingStateV2(
-                                extensionPublicationKey(sourceKey, remotePublicationId),
+                                sourceKey,
+                                remotePublicationId,
+                                units.map { it.unit.remoteId },
                             )
                         }
                     }.getOrNull()?.let { localReading ->
@@ -2365,7 +2375,9 @@ internal fun ExtensionV2PublicationPane(
                 val localReading = try {
                     withContext(Dispatchers.Default) {
                         callbacks.extensionLocalReadingStateV2(
-                            extensionPublicationKey(sourceKey, remotePublicationId),
+                            sourceKey,
+                            remotePublicationId,
+                            units.map { it.unit.remoteId },
                         )
                     }
                 } catch (cancelled: CancellationException) {
@@ -2396,6 +2408,24 @@ internal fun ExtensionV2PublicationPane(
             loadInitialUnitDirectory()
             unitDirectoryComplete = true
             if (!unitDirectoryPartial) savedDirectoryShown = true
+            // Progress of units this device never opened (carried over by a library migration)
+            // resolves only against the listed unit ids.
+            launch {
+                val listed = units.map { it.unit.remoteId }
+                if (listed.isEmpty()) return@launch
+                val localReading = try {
+                    withContext(Dispatchers.Default) {
+                        callbacks.extensionLocalReadingStateV2(sourceKey, remotePublicationId, listed)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    return@launch
+                }
+                readUnitIds = (readUnitIds + localReading.completedRemoteUnitIds).withReadMarks(manualReadMarks)
+                resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
+                inProgressUnits = inProgressUnits + localReading.inProgressRemoteUnits
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -3352,6 +3382,7 @@ private fun RemotePublicationV2.toBrowseManga(source: BrowseSource): BrowseManga
 @Composable
 private fun SourcesPane(
     sources: List<BrowseSource>,
+    repositories: List<BrowseRepository>,
     onToggle: (BrowseSource, Boolean) -> Unit,
     pinnedSourceIds: Set<Long>,
     pinnedSourceKeys: Set<String>,
@@ -3371,42 +3402,103 @@ private fun SourcesPane(
         return
     }
     var settingsSourceIdentity by remember { mutableStateOf<String?>(null) }
-    val sections = browseSourceSections(sources, pinnedSourceIds, pinnedSourceKeys)
+    // The sources page keeps its own repository choice; choosing one never refreshes repositories.
+    var selectedRepositoryId by rememberSaveable { mutableStateOf<String?>(null) }
+    var collapsedGroups by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val effectiveRepositoryId = selectedRepositoryId?.takeIf { id -> repositories.any { it.id == id } }
+    val shown = if (effectiveRepositoryId == null) {
+        sources
+    } else {
+        repositoryGroups(sources, repositories, effectiveRepositoryId) { it.repositoryId }.single().items
+    }
+    val sections = browseSourceSections(shown, pinnedSourceIds, pinnedSourceKeys)
+    val groups = repositoryGroups(sections.regular, repositories, effectiveRepositoryId) { it.repositoryId }
+    val groupKeys = buildList {
+        if (sections.pinned.isNotEmpty()) add(PINNED_SOURCE_GROUP)
+        groups.filter { it.items.isNotEmpty() }.forEach { add(it.repository?.id ?: OTHER_SOURCE_GROUP) }
+    }
+    val toggleGroup: (String) -> Unit = { key ->
+        collapsedGroups = if (key in collapsedGroups) collapsedGroups - key else collapsedGroups + key
+    }
+    val openSettings: (BrowseSource) -> Unit = { settingsSourceIdentity = it.identityKey }
     LazyColumn(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 104.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (sections.pinned.isNotEmpty()) {
-            item("pinned-header") {
-                SourceSectionHeader(strings.text("Pinned"), sections.pinned.size, pinned = true)
-            }
-            items(sections.pinned, key = { "pinned:${it.identityKey}" }) { source ->
-                SourceListRow(
-                    source = source,
-                    pinned = true,
-                    onOpen = onOpen,
-                    onToggle = onToggle,
-                    onPinnedChange = onSourcePinnedChange,
-                    onPinnedKeyChange = onSourcePinnedKeyChange,
-                    onSettings = { settingsSourceIdentity = source.identityKey },
+        if (repositories.isNotEmpty()) {
+            item("source-repositories") {
+                RepositorySelector(
+                    repositories = repositories,
+                    selectedRepositoryId = effectiveRepositoryId,
+                    enabled = true,
+                    onSelect = { selectedRepositoryId = it },
                 )
             }
-            if (sections.regular.isNotEmpty()) {
-                item("regular-header") {
-                    SourceSectionHeader(strings.text("All sources"), sections.regular.size, pinned = false)
+        }
+        item("sources-title") {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Text(strings.text("Sources"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (groupKeys.size > 1) {
+                    val allCollapsed = groupKeys.all { it in collapsedGroups }
+                    TextButton(onClick = { collapsedGroups = if (allCollapsed) emptyList() else groupKeys }) {
+                        Text(if (allCollapsed) strings.text("Expand all") else strings.text("Collapse all"))
+                    }
                 }
             }
         }
-        items(sections.regular, key = { "source:${it.identityKey}" }) { source ->
-            SourceListRow(
-                source = source,
-                pinned = false,
-                onOpen = onOpen,
-                onToggle = onToggle,
-                onPinnedChange = onSourcePinnedChange,
-                onPinnedKeyChange = onSourcePinnedKeyChange,
-                onSettings = { settingsSourceIdentity = source.identityKey },
-            )
+        if (sections.pinned.isEmpty() && sections.regular.isEmpty()) {
+            item("sources-empty") {
+                EmptyState(
+                    title = strings.text("No sources"),
+                    message = strings.text("Install an extension or enable another language to browse manga."),
+                    icon = { Icon(Icons.Outlined.TravelExplore, null, Modifier.size(30.dp)) },
+                )
+            }
+        }
+        if (sections.pinned.isNotEmpty()) {
+            val collapsed = PINNED_SOURCE_GROUP in collapsedGroups
+            item("pinned-header") {
+                CollapsibleGroupHeader(strings.text("Pinned"), sections.pinned.size, collapsed, pinned = true) {
+                    toggleGroup(PINNED_SOURCE_GROUP)
+                }
+            }
+            if (!collapsed) {
+                items(sections.pinned, key = { "pinned:${it.identityKey}" }) { source ->
+                    SourceListRow(
+                        source = source,
+                        pinned = true,
+                        onOpen = onOpen,
+                        onToggle = onToggle,
+                        onPinnedChange = onSourcePinnedChange,
+                        onPinnedKeyChange = onSourcePinnedKeyChange,
+                        onSettings = { openSettings(source) },
+                    )
+                }
+            }
+        }
+        groups.filter { it.items.isNotEmpty() }.forEach { group ->
+            val key = group.repository?.id ?: OTHER_SOURCE_GROUP
+            val collapsed = key in collapsedGroups
+            item("source-group-$key") {
+                CollapsibleGroupHeader(
+                    group.repository?.name ?: strings.text("Other sources"),
+                    group.items.size,
+                    collapsed,
+                ) { toggleGroup(key) }
+            }
+            if (!collapsed) {
+                items(group.items, key = { "source:$key:${it.identityKey}" }) { source ->
+                    SourceListRow(
+                        source = source,
+                        pinned = false,
+                        onOpen = onOpen,
+                        onToggle = onToggle,
+                        onPinnedChange = onSourcePinnedChange,
+                        onPinnedKeyChange = onSourcePinnedKeyChange,
+                        onSettings = { openSettings(source) },
+                    )
+                }
+            }
         }
     }
     sources.firstOrNull { it.identityKey == settingsSourceIdentity }?.let { source ->
@@ -3418,6 +3510,9 @@ private fun SourcesPane(
         )
     }
 }
+
+private const val PINNED_SOURCE_GROUP: String = "pinned"
+private const val OTHER_SOURCE_GROUP: String = "other"
 
 internal data class BrowseSourceSections(
     val pinned: List<BrowseSource>,
@@ -3509,122 +3604,64 @@ private fun SourceListRow(
     val settingsSections = sourceSettingsSections(source)
     val settingsAvailable = legacyActions || settingsSections.credentials ||
         settingsSections.preferences || source.baseUrl.isNotBlank()
+    var menuVisible by remember(source.identityKey) { mutableStateOf(false) }
     Surface(
         onClick = { if (source.enabled) onOpen(source) },
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val compact = maxWidth < 360.dp
-            if (compact) {
-                // A 320dp Android phone cannot fit the icon, three actions and a readable
-                // source title on one row. Keep the summary and actions on separate rows so
-                // the weighted text column receives a real width instead of one glyph.
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        SourceIcon(source)
-                        Column(Modifier.weight(1f)) {
-                            Text(source.name, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                buildString {
-                                    append(source.language.uppercase())
-                                    append(" · ")
-                                    append(source.contentType.label(strings))
-                                    if (source.isNsfw) append(" · NSFW")
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (source.sourceKey == null) {
-                                    onPinnedChange(source.id, !pinned)
-                                } else {
-                                    onPinnedKeyChange(source.identityKey, !pinned)
-                                }
-                            },
-                        ) {
-                            Icon(
-                                Icons.Outlined.PushPin,
-                                if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = source.enabled,
-                            onCheckedChange = { onToggle(source, it) },
-                        )
-                        if (settingsAvailable) {
-                            IconButton(onClick = onSettings) {
-                                Icon(Icons.Outlined.Settings, strings.text("Source settings"))
-                            }
-                        }
-                    }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            SourceIcon(source)
+            Column(Modifier.weight(1f)) {
+                Text(source.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    buildString {
+                        append(source.language.uppercase())
+                        append(" · ")
+                        append(source.contentType.label(strings))
+                        if (source.isNsfw) append(" · NSFW")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Switch(checked = source.enabled, onCheckedChange = { onToggle(source, it) })
+            Box {
+                IconButton(onClick = { menuVisible = true }) {
+                    Icon(Icons.Outlined.MoreVert, strings.text("More"))
                 }
-            } else {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                ) {
-                    SourceIcon(source)
-                    Column(Modifier.weight(1f)) {
-                        Text(source.name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            buildString {
-                                append(source.language.uppercase())
-                                append(" · ")
-                                append(source.contentType.label(strings))
-                                if (source.isNsfw) append(" · NSFW")
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            if (source.sourceKey == null) {
-                                onPinnedChange(source.id, !pinned)
-                            } else {
-                                onPinnedKeyChange(source.identityKey, !pinned)
-                            }
+                DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (pinned) strings.text("Unpin {0}", source.name)
+                                else strings.text("Pin {0}", source.name),
+                            )
                         },
-                    ) {
-                        Icon(
-                            Icons.Outlined.PushPin,
-                            if (pinned) strings.text("Unpin {0}", source.name) else strings.text("Pin {0}", source.name),
-                            tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = source.enabled,
-                        onCheckedChange = { onToggle(source, it) },
+                        leadingIcon = { Icon(Icons.Outlined.PushPin, null) },
+                        onClick = {
+                            menuVisible = false
+                            if (source.sourceKey == null) onPinnedChange(source.id, !pinned)
+                            else onPinnedKeyChange(source.identityKey, !pinned)
+                        },
                     )
                     if (settingsAvailable) {
-                        IconButton(onClick = onSettings) {
-                            Icon(Icons.Outlined.Settings, strings.text("Source settings"))
-                        }
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Source settings")) },
+                            leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                            onClick = {
+                                menuVisible = false
+                                onSettings()
+                            },
+                        )
                     }
-                    Icon(Icons.Outlined.OpenInNew, strings.browse, Modifier.size(18.dp))
                 }
             }
         }
@@ -4197,93 +4234,72 @@ private fun ExtensionsPane(
     val strings = LocalShinsouStrings.current
     var repositoryDialog by remember { mutableStateOf(false) }
     var repositoryUrl by remember { mutableStateOf("") }
+    var manageRepositories by remember { mutableStateOf(false) }
+    // Headings collapsed in the all-repositories view, by group key; kept while the screen lives.
+    var collapsedGroups by rememberSaveable { mutableStateOf(emptyList<String>()) }
     LazyColumn(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        item("repositories-title") {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(strings.text("Repositories"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(enabled = operation == null, onClick = onOpenPackageSecurity) {
-                    Icon(Icons.Outlined.Security, null, Modifier.size(17.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.text("Package security"))
+        item("repositories") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(strings.text("Repositories"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    IconButton(enabled = operation == null, onClick = { manageRepositories = true }) {
+                        Icon(Icons.Outlined.Settings, strings.text("Manage repositories"))
+                    }
                 }
-                TextButton(enabled = operation == null, onClick = { repositoryDialog = true }) {
-                    Icon(Icons.Outlined.Add, null, Modifier.size(17.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.text("Add"))
-                }
-            }
-        }
-        if (repositories.isEmpty()) {
-            item("empty-repositories") {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        strings.text("Add an extension repository before installing sources."),
-                        modifier = Modifier.padding(12.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                }
-            }
-        } else {
-            items(repositories, key = { "repo-${it.id}" }) { repository ->
-                Surface(
-                    enabled = operation == null,
-                    onClick = { onSelectRepository(repository.id) },
-                    shape = RoundedCornerShape(11.dp),
-                    color = if (repository.id == selectedRepositoryId) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                if (repositories.isEmpty()) {
+                    Surface(
+                        onClick = { repositoryDialog = true },
+                        enabled = operation == null,
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Outlined.Language, null)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(repository.name, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                repository.url,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (repository.needsPublisherTrust) {
-                                Text(
-                                    strings.text("Now signed by its publisher: confirm the publisher to keep updating."),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                                TextButton(enabled = operation == null, onClick = { onAddRepository(repository.url) }) {
-                                    Text(strings.text("Confirm publisher"))
-                                }
-                            }
-                        }
-                        // No repository is official (ADR-0002): none gets a badge.
-                        IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
-                            Icon(Icons.Outlined.Delete, strings.delete)
-                        }
+                        Text(
+                            strings.text("Add an extension repository before installing sources."),
+                            modifier = Modifier.padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                } else {
+                    RepositorySelector(
+                        repositories = repositories,
+                        selectedRepositoryId = selectedRepositoryId,
+                        enabled = operation == null,
+                        onSelect = onSelectRepository,
+                    )
+                    repositories.filter { it.needsPublisherTrust }.forEach { repository ->
+                        Text(
+                            strings.text("{0} is now signed by its publisher: confirm it in Manage repositories.", repository.name),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }
         }
+        val groups = extensionRepositoryGroups(extensions, repositories, selectedRepositoryId)
+        val grouped = selectedRepositoryId == null || repositories.none { it.id == selectedRepositoryId }
+        fun ExtensionRepositoryGroup.key(): String = repository?.id ?: "unlisted"
         item("extensions-title") {
-            Text(
-                strings.extensions,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+            ) {
+                Text(strings.extensions, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (grouped && groups.size > 1) {
+                    val allCollapsed = groups.all { it.key() in collapsedGroups }
+                    TextButton(onClick = {
+                        collapsedGroups = if (allCollapsed) emptyList() else groups.map { it.key() }
+                    }) {
+                        Text(if (allCollapsed) strings.text("Expand all") else strings.text("Collapse all"))
+                    }
+                }
+            }
         }
-        if (extensions.isEmpty()) {
+        if (groups.all { it.extensions.isEmpty() }) {
             item("empty-extensions") {
                 EmptyState(
                     title = strings.text("No extensions"),
@@ -4292,10 +4308,93 @@ private fun ExtensionsPane(
                 )
             }
         } else {
-            items(extensions, key = { "extension-${it.id}" }) { extension ->
-                ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock, onPermissions)
+            groups.forEach { group ->
+                val collapsed = grouped && group.key() in collapsedGroups
+                if (grouped) {
+                    item("extension-group-${group.key()}") {
+                        CollapsibleGroupHeader(
+                            title = group.repository?.name ?: strings.text("Other installed extensions"),
+                            count = group.extensions.size,
+                            collapsed = collapsed,
+                        ) {
+                            collapsedGroups = if (collapsed) collapsedGroups - group.key() else collapsedGroups + group.key()
+                        }
+                    }
+                }
+                if (!collapsed) {
+                    items(group.extensions, key = { "extension-${group.key()}-${it.id}" }) { extension ->
+                        ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock, onPermissions)
+                    }
+                }
             }
         }
+    }
+
+    if (manageRepositories) {
+        AlertDialog(
+            onDismissRequest = { manageRepositories = false },
+            title = { Text(strings.text("Manage repositories")) },
+            text = {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (repositories.isEmpty()) {
+                        item("none") { Text(strings.text("Add an extension repository before installing sources.")) }
+                    }
+                    items(repositories, key = { "manage-${it.id}" }) { repository ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.weight(1f)) {
+                                Text(repository.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    repository.url,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (repository.needsPublisherTrust) {
+                                    TextButton(
+                                        enabled = operation == null,
+                                        onClick = {
+                                            manageRepositories = false
+                                            onAddRepository(repository.url)
+                                        },
+                                    ) { Text(strings.text("Confirm publisher"), color = MaterialTheme.colorScheme.error) }
+                                }
+                            }
+                            // No repository is official (ADR-0002): none gets a badge.
+                            IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
+                                Icon(Icons.Outlined.Delete, strings.delete)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = operation == null,
+                    onClick = {
+                        manageRepositories = false
+                        repositoryDialog = true
+                    },
+                ) {
+                    Icon(Icons.Outlined.Add, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.text("Add"))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = operation == null,
+                    onClick = {
+                        manageRepositories = false
+                        onOpenPackageSecurity()
+                    },
+                ) {
+                    Icon(Icons.Outlined.Security, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.text("Package security"))
+                }
+            },
+        )
     }
 
     if (repositoryDialog) {
@@ -4337,6 +4436,7 @@ private fun ExtensionRow(
     onPermissions: (BrowseExtension) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
+    var menuVisible by remember(extension.id) { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -4345,78 +4445,263 @@ private fun ExtensionRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Surface(shape = RoundedCornerShape(10.dp), modifier = Modifier.size(44.dp)) {
+            Surface(shape = RoundedCornerShape(9.dp), modifier = Modifier.size(36.dp)) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Extension, null)
+                    Icon(Icons.Outlined.Extension, null, Modifier.size(20.dp))
                 }
             }
             Column(Modifier.weight(1f)) {
-                Text(extension.name, style = MaterialTheme.typography.titleMedium)
-                if (extension.inDevelopment) {
-                    Text(strings.text("In development"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
-                }
+                Text(extension.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val details = buildList {
+                    add(extension.language.uppercase())
+                    add("v${extension.version}")
+                    add(extension.contentType.label(strings))
+                    if (extension.inDevelopment) add(strings.text("In development"))
+                    if (extension.updateAvailable) add(strings.text("Update available"))
+                }.joinToString(" · ")
                 Text(
-                    "${extension.language.uppercase()} · v${extension.version}" +
-                        " · ${extension.contentType.label(strings)}" +
-                        if (extension.updateAvailable) " · ${strings.text("Update available")}" else "",
-                    style = MaterialTheme.typography.bodyMedium,
+                    details,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (extension.installed) {
-                    AssistChip(
-                        enabled = operation == null,
-                        onClick = { onTrust(extension, !extension.trusted) },
-                        label = {
-                            Text(
-                                if (extension.trusted) strings.text("Execution allowed")
-                                else strings.text("Execution blocked"),
-                            )
-                        },
-                        leadingIcon = { Icon(Icons.Outlined.Security, null, Modifier.size(16.dp)) },
+                    Text(
+                        if (extension.trusted) strings.text("Execution allowed") else strings.text("Execution blocked"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (extension.trusted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     )
                 }
                 if (operation?.extensionId == extension.id) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(top = 2.dp),
                     ) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text(strings.text(operation.labelKey), style = MaterialTheme.typography.labelMedium)
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Text(strings.text(operation.labelKey), style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
             when {
-                extension.installed && extension.updateAvailable -> Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
+                !extension.installed ->
+                    Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
+                extension.updateAvailable ->
                     Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.text("Update")) }
-                    TextButton(enabled = operation == null, onClick = { onUninstall(extension) }) { Text(strings.uninstall) }
-                }
-                extension.installed -> Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
-                        Text(strings.uninstall)
+            }
+            if (extension.installed) {
+                Box {
+                    IconButton(enabled = operation == null, onClick = { menuVisible = true }) {
+                        Icon(Icons.Outlined.MoreVert, strings.text("More"))
                     }
-                    if (extension.trusted) {
-                        TextButton(enabled = operation == null, onClick = { onPermissions(extension) }) {
-                            Text(strings.text("Permissions"))
+                    DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (extension.trusted) strings.text("Block execution")
+                                    else strings.text("Allow execution"),
+                                )
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Security, null) },
+                            onClick = {
+                                menuVisible = false
+                                onTrust(extension, !extension.trusted)
+                            },
+                        )
+                        if (extension.trusted) {
+                            DropdownMenuItem(
+                                text = { Text(strings.text("Permissions")) },
+                                onClick = {
+                                    menuVisible = false
+                                    onPermissions(extension)
+                                },
+                            )
                         }
+                        // ADR-0002 D5: the user's own block list; undone from Package security.
+                        DropdownMenuItem(
+                            text = { Text(strings.text("Block")) },
+                            onClick = {
+                                menuVisible = false
+                                onBlock(extension)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.uninstall, color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                menuVisible = false
+                                onUninstall(extension)
+                            },
+                        )
                     }
-                    // ADR-0002 D5: the user's own block list; undone from Package security.
-                    TextButton(enabled = operation == null, onClick = { onBlock(extension) }) { Text(strings.text("Block")) }
                 }
-                else -> Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
             }
         }
     }
+}
+
+private const val REPOSITORY_PICKER_SEARCH_THRESHOLD: Int = 6
+
+/** One line however many repositories there are; the picker it opens is searchable. */
+@Composable
+private fun RepositorySelector(
+    repositories: List<BrowseRepository>,
+    selectedRepositoryId: String?,
+    enabled: Boolean,
+    onSelect: (String?) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    var picker by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf("") }
+    val selected = repositories.firstOrNull { it.id == selectedRepositoryId }
+    OutlinedButton(enabled = enabled, onClick = { picker = true }, modifier = Modifier.fillMaxWidth()) {
+        if (repositories.any { it.needsPublisherTrust }) {
+            Icon(Icons.Outlined.Security, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            selected?.name ?: strings.text("All repositories ({0})", repositories.size.toString()),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.Outlined.ArrowDropDown, null)
+    }
+    if (!picker) return
+    val close = {
+        picker = false
+        filter = ""
+    }
+    val matching = repositoryPickerMatches(repositories, filter)
+    AlertDialog(
+        modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
+        onDismissRequest = close,
+        title = { Text(strings.text("Repositories")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (repositories.size > REPOSITORY_PICKER_SEARCH_THRESHOLD) {
+                    OutlinedTextField(
+                        value = filter,
+                        onValueChange = { filter = it },
+                        label = { Text(strings.search) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    if (filter.isBlank()) {
+                        item("pick-all") {
+                            RepositoryPickerRow(
+                                title = strings.text("All repositories ({0})", repositories.size.toString()),
+                                subtitle = null,
+                                selected = selected == null,
+                                warning = false,
+                            ) {
+                                close()
+                                onSelect(null)
+                            }
+                        }
+                    }
+                    items(matching, key = { "pick-${it.id}" }) { repository ->
+                        RepositoryPickerRow(
+                            title = repository.name,
+                            subtitle = repository.url,
+                            selected = repository.id == selectedRepositoryId,
+                            warning = repository.needsPublisherTrust,
+                        ) {
+                            close()
+                            onSelect(repository.id)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = close) { Text(strings.cancel) } },
+    )
+}
+
+@Composable
+private fun CollapsibleGroupHeader(
+    title: String,
+    count: Int,
+    collapsed: Boolean,
+    pinned: Boolean = false,
+    onToggle: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        onClick = onToggle,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (pinned) {
+                Icon(Icons.Outlined.PushPin, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(count.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                if (collapsed) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
+                if (collapsed) strings.text("Expand") else strings.text("Collapse"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RepositoryPickerRow(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    warning: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                subtitle?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (warning) Icon(Icons.Outlined.Security, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+private const val MIGRATION_SEARCH_PARALLELISM: Int = 4
+private const val MIGRATION_RESULT_LIMIT: Int = 30
+
+private fun PluginContentType.migrationLabel(strings: ShinsouStrings): String = when (this) {
+    PluginContentType.MANGA -> strings.text("Manga")
+    PluginContentType.NOVEL -> strings.text("Novel")
+    PluginContentType.BOTH -> strings.text("Unknown type")
 }
 
 private fun PluginContentType.label(strings: ShinsouStrings): String = when (this) {
@@ -4460,20 +4745,29 @@ private fun MigrationCandidateCard(
 ) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
-    val targetSources = remember(sources, candidate.currentSourceName) {
-        eligibleMigrationSources(sources, candidate.currentSourceName)
+    // The current source is not installed, so its kind is unknown: the user names it instead of
+    // mixing manga and novel sources.
+    var chosenType by remember(candidate.mangaId, candidate.contentType) { mutableStateOf(candidate.contentType) }
+    val targetSources = remember(sources, candidate, chosenType) {
+        eligibleMigrationSources(sources, candidate.copy(contentType = chosenType))
     }
-    var selectedSourceId by remember(candidate.mangaId, targetSources) {
-        mutableStateOf(targetSources.firstOrNull()?.id)
-    }
-    val selectedSource = targetSources.firstOrNull { it.id == selectedSourceId }
+    val sourceByIdentity = remember(targetSources) { targetSources.associateBy(BrowseSource::identityKey) }
+    // Null searches every source of the same kind at once, by the title as it stands.
+    var selectedSourceKey by remember(candidate.mangaId, targetSources) { mutableStateOf<String?>(null) }
+    val selectedSource = selectedSourceKey?.let(sourceByIdentity::get)
     var sourceMenuVisible by remember(candidate.mangaId) { mutableStateOf(false) }
     var searchQuery by remember(candidate.mangaId) { mutableStateOf(candidate.title) }
-    var searchResults by remember(candidate.mangaId, selectedSourceId, candidate.suggestions) {
+    fun BrowseManga.migrationSource(): BrowseSource? =
+        targetSources.firstOrNull { source ->
+            if (sourceKey != null) source.sourceKey == sourceKey else source.sourceKey == null && source.id == sourceId
+        }
+    var searchResults by remember(candidate.mangaId, selectedSourceKey, candidate.suggestions) {
         mutableStateOf(
             rankBrowseResults(
                 candidate.title,
-                candidate.suggestions.filter { it.sourceId == selectedSourceId },
+                candidate.suggestions.filter { item ->
+                    item.migrationSource()?.let { selectedSource == null || it == selectedSource } == true
+                },
             ),
         )
     }
@@ -4481,25 +4775,49 @@ private fun MigrationCandidateCard(
     var searchError by remember(candidate.mangaId) { mutableStateOf<String?>(null) }
     var pendingTarget by remember(candidate.mangaId) { mutableStateOf<BrowseManga?>(null) }
 
+    suspend fun searchOne(source: BrowseSource, query: String): List<BrowseManga> {
+        val key = source.sourceKey
+        return if (key != null) {
+            callbacks.searchSourceV2(key, query, page = 0).items.map { it.toBrowseManga(source) }
+        } else {
+            callbacks.browseSource(source.id, query, page = 1).items
+        }
+    }
+
     fun searchSelectedSource() {
-        val source = selectedSource ?: return
+        val searched = selectedSource?.let(::listOf) ?: targetSources
         val submittedQuery = searchQuery.trim()
-        if (submittedQuery.isEmpty() || searchLoading) return
+        if (searched.isEmpty() || submittedQuery.isEmpty() || searchLoading) return
         searchLoading = true
         searchError = null
         scope.launch {
             withFrameNanos { }
-            try {
-                searchResults = withContext(Dispatchers.Default) {
-                    val page = callbacks.browseSource(source.id, submittedQuery, page = 1)
-                    rankBrowseResults(submittedQuery, page.items)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                searchResults = emptyList()
-                searchError = error.localizedSourceFailure(strings)
-                    ?: error.message ?: strings.text("Unable to search {0}", source.name)
+            val outcomes = withContext(Dispatchers.Default) {
+                val permits = Semaphore(MIGRATION_SEARCH_PARALLELISM)
+                searched.map { source ->
+                    async {
+                        permits.withPermit {
+                            try {
+                                searchOne(source, submittedQuery) to null
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                emptyList<BrowseManga>() to (
+                                    error.localizedSourceFailure(strings)
+                                        ?: error.message ?: strings.text("Unable to search {0}", source.name)
+                                    )
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            val found = outcomes.flatMap { it.first }
+            val failures = outcomes.mapNotNull { it.second }
+            searchResults = rankBrowseResults(submittedQuery, found)
+            searchError = when {
+                failures.isEmpty() -> null
+                found.isEmpty() && failures.size == searched.size -> failures.first()
+                else -> strings.text("{0} of {1} sources could not be searched", failures.size.toString(), searched.size.toString())
             }
             searchLoading = false
         }
@@ -4509,10 +4827,23 @@ private fun MigrationCandidateCard(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(candidate.title, style = MaterialTheme.typography.titleLarge)
             Text(
-                strings.text("Current source: {0}", candidate.currentSourceName),
+                strings.text("Current source: {0}", candidate.currentSourceName) + " · " +
+                    strings.text("Type: {0}", candidate.contentType.migrationLabel(strings)),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (candidate.contentType == PluginContentType.BOTH) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(strings.text("This title is a"), style = MaterialTheme.typography.bodySmall)
+                    listOf(PluginContentType.MANGA, PluginContentType.NOVEL).forEach { type ->
+                        FilterChip(
+                            selected = chosenType == type,
+                            onClick = { chosenType = if (chosenType == type) PluginContentType.BOTH else type },
+                            label = { Text(type.migrationLabel(strings)) },
+                        )
+                    }
+                }
+            }
             if (targetSources.isEmpty()) {
                 Text(
                     strings.text("Install or enable another compatible source to migrate this title."),
@@ -4520,33 +4851,48 @@ private fun MigrationCandidateCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
+                // The source picker gets its own line: sharing one with the title field left the
+                // field a couple of characters wide on phones.
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { sourceMenuVisible = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Language, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            selectedSource?.name
+                                ?: strings.text("All {0} sources ({1})", chosenType.migrationLabel(strings), targetSources.size.toString()),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = sourceMenuVisible,
+                        onDismissRequest = { sourceMenuVisible = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(strings.text("All {0} sources ({1})", chosenType.migrationLabel(strings), targetSources.size.toString())) },
+                            onClick = {
+                                selectedSourceKey = null
+                                sourceMenuVisible = false
+                                searchError = null
+                            },
+                        )
+                        targetSources.forEach { source ->
+                            DropdownMenuItem(
+                                text = { Text("${source.name} · ${source.language.uppercase()}") },
+                                onClick = {
+                                    selectedSourceKey = source.identityKey
+                                    sourceMenuVisible = false
+                                    searchError = null
+                                },
+                            )
+                        }
+                    }
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box {
-                        OutlinedButton(onClick = { sourceMenuVisible = true }) {
-                            Icon(Icons.Outlined.Language, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(selectedSource?.name ?: strings.text("Choose source"), maxLines = 1)
-                        }
-                        DropdownMenu(
-                            expanded = sourceMenuVisible,
-                            onDismissRequest = { sourceMenuVisible = false },
-                        ) {
-                            targetSources.forEach { source ->
-                                DropdownMenuItem(
-                                    text = { Text("${source.name} · ${source.language.uppercase()}") },
-                                    onClick = {
-                                        selectedSourceId = source.id
-                                        sourceMenuVisible = false
-                                        searchError = null
-                                    },
-                                )
-                            }
-                        }
-                    }
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -4556,7 +4902,7 @@ private fun MigrationCandidateCard(
                     )
                     Button(
                         onClick = ::searchSelectedSource,
-                        enabled = searchQuery.isNotBlank() && selectedSource != null && !searchLoading,
+                        enabled = searchQuery.isNotBlank() && !searchLoading,
                     ) {
                         if (searchLoading) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -4576,8 +4922,19 @@ private fun MigrationCandidateCard(
                     )
                 } else if (searchResults.isNotEmpty()) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(searchResults.take(10), key = { "migration:${it.sourceId}:${it.url}" }) { target ->
-                            BrowseResultCard(target, onClick = { pendingTarget = target })
+                        items(searchResults.take(MIGRATION_RESULT_LIMIT), key = { "migration:${it.identityKey}" }) { target ->
+                            Column(Modifier.width(112.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                BrowseResultCard(target, onClick = { pendingTarget = target })
+                                target.migrationSource()?.let { source ->
+                                    Text(
+                                        source.name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -4589,7 +4946,12 @@ private fun MigrationCandidateCard(
         AlertDialog(
             modifier = Modifier.dismissKeyboardOnMobileBlankTap(),
             onDismissRequest = { pendingTarget = null },
-            title = { Text(strings.text("Migrate to this manga?")) },
+            title = {
+                Text(
+                    if (chosenType == PluginContentType.NOVEL) strings.text("Migrate to this novel?")
+                    else strings.text("Migrate to this manga?"),
+                )
+            },
             text = {
                 Text(
                     strings.text("Replace “{0}” with “{1}”? Read progress, categories and tracking links stay attached to this library entry.", candidate.title, target.title),

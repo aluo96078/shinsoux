@@ -311,10 +311,32 @@ public class ExtensionContentConsumerV2(
      * No secret or source invocation is needed, so the local-library screen can select the exact
      * resume chapter before it starts downloading chapter content.
      */
-    public fun localReadingState(publicationKey: PublicationKey): ExtensionLocalReadingStateV2 {
+    public fun localReadingState(publicationKey: PublicationKey): ExtensionLocalReadingStateV2 =
+        localReadingState(publicationKey, remoteUnitIds = emptyMap())
+
+    /**
+     * Like [localReadingState], also resolving progress of [remoteUnitIds] (the units the caller
+     * already listed for the exact source publication) whose content was never stored. Unit
+     * identities are derived deterministically, so progress carried over by a library migration
+     * shows before any of the target's chapters is opened.
+     */
+    public fun localReadingState(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        remoteUnitIds: Collection<String>,
+    ): ExtensionLocalReadingStateV2 = localReadingState(
+        extensionPublicationKey(sourceKey, remotePublicationId),
+        remoteUnitIds.associateBy { remoteId -> extensionUnitKey(sourceKey, remotePublicationId, remoteId) },
+    )
+
+    private fun localReadingState(
+        publicationKey: PublicationKey,
+        remoteUnitIds: Map<UnitKey, String>,
+    ): ExtensionLocalReadingStateV2 {
         val publication = foundation.publications.find(publicationKey)
-            ?: return ExtensionLocalReadingStateV2()
-        val remoteIdByUnitKey = publication.acquisitions
+        if (publication == null && remoteUnitIds.isEmpty()) return ExtensionLocalReadingStateV2()
+        val remoteIdByUnitKey = remoteUnitIds + publication?.acquisitions
+            .orEmpty()
             .asSequence()
             .flatMap { it.units.asSequence() }
             .mapNotNull { unit ->
@@ -999,7 +1021,7 @@ public class ExtensionContentConsumerV2(
     ): ExtensionGraphMerge {
         val publicationKey = publicationKey(selection)
         val acquisitionId = acquisitionId(selection)
-        val unitKey = UnitKey(publicationKey, extensionId("unit", selection, selection.unit.remoteId))
+        val unitKey = extensionUnitKey(selection.sourceKey, selection.remotePublicationId, selection.unit.remoteId)
         val representation = prepared.representation.withRepresentationId(
             extensionId("representation", selection, selection.unit.remoteId, remoteRepresentationId),
         )
@@ -1241,7 +1263,7 @@ public class ExtensionContentConsumerV2(
         extensionPublicationKey(selection.sourceKey, selection.remotePublicationId)
 
     private fun acquisitionId(selection: ExtensionUnitSelectionV2): String =
-        extensionId("acquisition", selection)
+        extensionAcquisitionId(selection.sourceKey, selection.remotePublicationId)
 
     private fun extensionId(
         role: String,
@@ -1462,6 +1484,34 @@ private inline fun <T, K> List<T>.replaceOrAppend(value: T, key: (T) -> K): List
  * share the exact compatibility URL that the reader/history bridge creates later. Keep this
  * derivation in one place; changing it would split one remote publication into two local rows.
  */
+internal fun extensionAcquisitionId(
+    sourceKey: SourceKey,
+    remotePublicationId: String,
+): String {
+    sourceKey.validate()
+    require(remotePublicationId.isNotBlank()) { "Remote publication id cannot be blank" }
+    return Rfc9562UuidV5.derive(
+        EXTENSION_CONTENT_NAMESPACE,
+        framedIdentity("acquisition", sourceKey.canonicalId, remotePublicationId),
+    )
+}
+
+/** The typed unit an exact source unit materializes into; shared with library migration. */
+internal fun extensionUnitKey(
+    sourceKey: SourceKey,
+    remotePublicationId: String,
+    remoteUnitId: String,
+): UnitKey {
+    require(remoteUnitId.isNotBlank()) { "Remote unit id cannot be blank" }
+    return UnitKey(
+        extensionPublicationKey(sourceKey, remotePublicationId),
+        Rfc9562UuidV5.derive(
+            EXTENSION_CONTENT_NAMESPACE,
+            framedIdentity("unit", sourceKey.canonicalId, remotePublicationId, remoteUnitId),
+        ),
+    )
+}
+
 internal fun extensionPublicationKey(
     sourceKey: SourceKey,
     remotePublicationId: String,

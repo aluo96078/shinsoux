@@ -1144,6 +1144,14 @@ interface BrowseCallbacks {
     ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
         dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
 
+    /** Also resolves progress of listed units never opened here (for example carried by a migration). */
+    fun extensionLocalReadingStateV2(
+        sourceKey: SourceKey,
+        remotePublicationId: String,
+        remoteUnitIds: Collection<String>,
+    ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 =
+        extensionLocalReadingStateV2(dev.shinsou.kmp.plugin.v2.extensionPublicationKey(sourceKey, remotePublicationId))
+
     /** Source unit ids of a typed extension publication whose content is stored offline. */
     fun extensionDownloadedUnitIdsV2(publicationKey: PublicationKey): Set<String> = emptySet()
 
@@ -1427,6 +1435,8 @@ data class BrowseSource(
     val sourceKey: SourceKey? = null,
     /** Resolved from repository metadata; older sources intentionally default to BOTH. */
     val contentType: PluginContentType = PluginContentType.BOTH,
+    /** The repository ([BrowseRepository.id]) the providing package was installed from, when known. */
+    val repositoryId: String? = null,
 ) {
     val identityKey: String get() = sourceKey?.canonicalId ?: "legacy:$id"
 }
@@ -1643,6 +1653,8 @@ data class BrowseExtension(
     val contentType: PluginContentType = PluginContentType.BOTH,
     /** ADR-0002 §8.1: an unsigned package loaded from a developer-mode repository. */
     val inDevelopment: Boolean = false,
+    /** The repository (its [BrowseRepository.id]) the package is listed in or was installed from. */
+    val repositoryId: String? = null,
 )
 
 data class BrowseManga(
@@ -1677,7 +1689,27 @@ data class MigrationCandidate(
     val thumbnailUrl: String? = null,
     val currentSourceName: String,
     val suggestions: List<BrowseManga> = emptyList(),
+    /** Legacy source of the library row; [LOCAL_SOURCE_ID] for an extension-backed title. */
+    val sourceId: Long = -1,
+    /** Exact v2 source of an extension-backed title; such a title migrates only to v2 sources. */
+    val sourceKey: SourceKey? = null,
+    val remotePublicationId: String? = null,
+    /** Manga or novel, from the current source; [PluginContentType.BOTH] when it is unknown. */
+    val contentType: PluginContentType = PluginContentType.BOTH,
 )
+
+/** Fills the current source's name and content type from the installed source list. */
+internal fun MigrationCandidate.resolvedAgainst(sources: List<BrowseSource>): MigrationCandidate {
+    val current = if (sourceKey != null) {
+        sources.firstOrNull { it.sourceKey == sourceKey }
+    } else {
+        sources.firstOrNull { it.sourceKey == null && it.id == sourceId }
+    }
+    return copy(
+        currentSourceName = current?.name ?: currentSourceName,
+        contentType = current?.contentType ?: contentType,
+    )
+}
 
 /** ADR-0002 S5: a repository presenting a publisher key the user has not trusted yet. */
 data class RepositoryTrustPrompt(
