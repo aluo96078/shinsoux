@@ -35,7 +35,7 @@ import dev.shinsou.kmp.domain.model.SourceBinding
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
+
 import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
@@ -511,7 +511,7 @@ private fun ShuYueStagedBook.remotePublicationBinding(): SourceBinding? {
     if (origin != ORIGIN_REMOTE_PLUGIN) return null
     val exactSourceId = requireNotNull(sourceId) { "Remote ShuYue book is missing its source id" }
     return SourceBinding(
-        sourceKey = ShuYueReviewedPluginCatalogV2.sourceKeyForLegacySourceId(exactSourceId)
+        sourceKey = ShuYueLegacySources.sourceKeyForLegacySourceId(exactSourceId)
             ?: SourceKey(
                 contractVersion = SourceKey.CURRENT_CONTRACT_VERSION,
                 packageId = SHUYUE_COMPAT_PACKAGE_ID,

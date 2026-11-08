@@ -59,7 +59,6 @@ class OfficialShinsouCorpusAdmissionTest {
                 client.fetchIndex(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL),
             )
             assertEquals(CORPUS.map { it.id }, index.plugins.map { it.id })
-            assertTrue(index.shuyue.isEmpty())
 
             index.plugins.forEach { entry ->
                 // verifyPluginV2Sidecar performs the complete package/source parity check:

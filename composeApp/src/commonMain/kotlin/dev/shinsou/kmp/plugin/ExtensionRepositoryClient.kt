@@ -22,8 +22,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositorySource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
@@ -35,7 +33,6 @@ public sealed class RepositoryIndex {
     public data class Legacy(val entries: List<LegacyExtensionIndexEntry>) : RepositoryIndex()
     public data class Combined(
         val plugins: List<PluginIndexEntry>,
-        val shuyue: List<dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry>,
     ) : RepositoryIndex()
 }
 
@@ -256,7 +253,6 @@ public class ExtensionRepositoryClient(
                     validateUnifiedIds(document)
                     val index = RepositoryIndex.Combined(
                         plugins = document.shinsou + document.legacy,
-                        shuyue = document.shuyue,
                     )
                     val admission = commitAuthenticatedIndex(normalized, index.plugins, verified.admission)
                     return@run RepositoryIndexSnapshot(index, admission)
@@ -319,18 +315,19 @@ public class ExtensionRepositoryClient(
         val packageIds = mutableSetOf<String>()
         val sourceIdsByPackage = mutableMapOf<String, MutableSet<String>>()
         val shinsou = mutableListOf<PluginIndexEntry>()
-        val shuyue = mutableListOf<ShuYueRepositoryEntry>()
         packages.forEach { element ->
             val pkg = element.jsonObject
             val contract = pkg["contract"]?.jsonPrimitive?.contentOrNull
-            require(contract == "shinsou" || contract == "shuyue") {
+            // ShuYue-format packages are no longer supported: such rows are skipped so a mixed
+            // index stays usable for its Shinsou-contract packages.
+            if (contract == "shuyue") return@forEach
+            require(contract == "shinsou") {
                 "Unknown or missing executable V2 contract"
             }
             val runtime = pkg.requiredString("runtime")
-            require(
-                (contract == "shinsou" && runtime == V2_SHINSOU_RUNTIME) ||
-                    (contract == "shuyue" && runtime == V2_SHUYUE_RUNTIME),
-            ) { "Unsupported V2 runtime '$runtime' for contract '$contract'" }
+            require(runtime == V2_SHINSOU_RUNTIME) {
+                "Unsupported V2 runtime '$runtime' for contract '$contract'"
+            }
             val packageId = pkg.requiredString("id")
             require(packageIds.add(packageId)) { "Duplicate V2 package id '$packageId'" }
             val sourceIds = sourceIdsByPackage.getOrPut(packageId) { mutableSetOf() }
@@ -343,55 +340,6 @@ public class ExtensionRepositoryClient(
             packageSources.forEach { source ->
                 val sourceId = source.jsonObject.requiredString("sourceId")
                 require(sourceIds.add(sourceId)) { "Duplicate V2 source id '$sourceId'" }
-            }
-            if (contract == "shuyue") {
-                val capabilityIds = pkg.requiredStringSet("capabilities")
-                val eventObject = pkg["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
-                require(eventObject.requiredString("protocol") == "dev.shinsou.system")
-                val eventDeclaration = PluginSystemEventDeclaration(
-                    minVersion = eventObject["minVersion"]?.jsonPrimitive?.intOrNull ?: error("Missing minVersion"),
-                    maxVersion = eventObject["maxVersion"]?.jsonPrimitive?.intOrNull ?: error("Missing maxVersion"),
-                    required = eventObject.stringSet("required"),
-                    optional = eventObject.stringSet("optional"),
-                )
-                val requested = pkg.stringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
-                    PluginHostPermission.valueOf(it)
-                }
-                shuyue += ShuYueRepositoryEntry(
-                    id = packageId,
-                    name = pkg.requiredString("name"),
-                    version = pkg.requiredString("version"),
-                    versionCode = pkg["versionCode"]?.jsonPrimitive?.intOrNull ?: error("Missing versionCode"),
-                    lang = pkg.requiredString("lang"),
-                    nsfw = if (pkg.requiredBoolean("nsfw")) 1 else 0,
-                    scriptUrl = pkg.requiredString("scriptUrl"),
-                    sources = packageSources.map { sourceElement ->
-                        val source = sourceElement.jsonObject
-                        ShuYueRepositorySource(
-                            id = source.requiredString("sourceId"),
-                            name = source.requiredString("name"),
-                            lang = source.requiredString("lang"),
-                            baseUrl = source.requiredString("baseUrl"),
-                            supportsLogin = "LOGIN" in capabilityIds,
-                            supportsLatest = "LATEST" in capabilityIds,
-                            supportsFavorites = "FAVORITE" in capabilityIds,
-                            contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
-                        )
-                    },
-                    contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
-                    capabilities = capabilityIds,
-                    contract = contract,
-                    runtime = runtime,
-                    sha256 = pkg.requiredString("sha256"),
-                    byteSize = pkg["byteSize"]?.jsonPrimitive?.intOrNull ?: error("Missing byteSize"),
-                    sidecarUrl = pkg.requiredString("sidecarUrl"),
-                    systemEvents = eventDeclaration,
-                    requestedHostPermissions = requested,
-                    installable = pkg["installable"]?.jsonPrimitive?.booleanOrNull ?: true,
-                    referenceOnly = pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                    legacyCompatibilityOnly = pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                )
-                return@forEach
             }
             // Reference-only/non-installable Shinsou packages may intentionally use opaque
             // source IDs (for example, a login capability sample). They are not executable
@@ -489,9 +437,9 @@ public class ExtensionRepositoryClient(
             )
         }
         require(shinsou.map { it.id }.distinct().size == shinsou.size)
-        val decoded = RepositoryIndex.Combined(shinsou, shuyue)
+        val decoded = RepositoryIndex.Combined(shinsou)
         if (normalizedBaseUrl != null && reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) {
-            // A local working tree can contain ShuYue, examples, or unreviewed drafts. Project only
+            // A local working tree can contain examples or unreviewed drafts. Project only
             // exact current app-reviewed Shinsou rows; directory contents cannot mint authority.
             RepositoryIndex.Combined(
                 plugins = decoded.plugins.filter { entry ->
@@ -499,7 +447,6 @@ public class ExtensionRepositoryClient(
                         entry, reviewedLocalRepositoryPolicy, normalizedBaseUrl,
                     ) != null
                 },
-                shuyue = emptyList(),
             )
         } else decoded
     } catch (error: Throwable) {
@@ -1281,48 +1228,25 @@ public class ExtensionRepositoryClient(
     }
 
     private fun validateUnifiedIds(document: UnifiedRepositoryDocument) {
-        require(document.shinsou.size + document.legacy.size + document.shuyue.size <= MAX_INDEX_PACKAGES) {
+        require(document.shinsou.size + document.legacy.size <= MAX_INDEX_PACKAGES) {
             "Repository contains too many packages"
         }
         val ids = mutableSetOf<String>()
-        (document.shinsou.map { it.id } + document.legacy.map { it.id } + document.shuyue.map { it.id })
+        (document.shinsou.map { it.id } + document.legacy.map { it.id })
             .forEach { require(ids.add(it)) { "Duplicate plugin package id '$it'" } }
-        document.shuyue.forEach { packageEntry ->
-            requireIndexString(packageEntry.id, MAX_INDEX_ID_BYTES, "package id")
-            requireIndexString(packageEntry.name, MAX_INDEX_NAME_BYTES, "package name")
-            requireIndexString(packageEntry.version, MAX_INDEX_VERSION_BYTES, "package version")
-            requireIndexString(packageEntry.lang, MAX_INDEX_LANG_BYTES, "package language")
-            requireIndexString(packageEntry.scriptUrl, MAX_INDEX_URL_BYTES, "script URL")
-            packageEntry.description?.let { requireIndexString(it, MAX_INDEX_DESCRIPTION_BYTES, "description") }
-            require(packageEntry.sources.size <= MAX_INDEX_SOURCES_PER_PACKAGE) {
-                "Repository package '${packageEntry.id}' contains too many sources"
-            }
-            val sourceIds = mutableSetOf<String>()
-            packageEntry.sources.forEach { source ->
-                requireIndexString(source.id, MAX_INDEX_ID_BYTES, "source id")
-                requireIndexString(source.name, MAX_INDEX_NAME_BYTES, "source name")
-                requireIndexString(source.lang, MAX_INDEX_LANG_BYTES, "source language")
-                requireIndexString(source.baseUrl, MAX_INDEX_URL_BYTES, "source URL")
-                require(sourceIds.add(source.id)) { "Duplicate source id '${source.id}' in '${packageEntry.id}'" }
-            }
-        }
         require(
             document.shinsou.sumOf { it.sources.orEmpty().size } +
-                document.legacy.sumOf { it.sources.orEmpty().size } +
-                document.shuyue.sumOf { it.sources.size } <= MAX_INDEX_TOTAL_SOURCES,
+                document.legacy.sumOf { it.sources.orEmpty().size } <= MAX_INDEX_TOTAL_SOURCES,
         ) { "Repository contains too many sources" }
     }
 
     private fun validateCombinedIndex(index: RepositoryIndex.Combined) {
-        require(index.plugins.size + index.shuyue.size <= MAX_INDEX_PACKAGES) {
+        require(index.plugins.size <= MAX_INDEX_PACKAGES) {
             "Repository contains too many packages"
         }
         validatePluginEntries(index.plugins)
-        val synthetic = UnifiedRepositoryDocument(shuyue = index.shuyue)
-        validateUnifiedIds(synthetic)
-        require(index.plugins.sumOf { it.sources.orEmpty().size } +
-            index.shuyue.sumOf { it.sources.size } <= MAX_INDEX_TOTAL_SOURCES
-        ) { "Repository contains too many sources" }
+        validateUnifiedIds(UnifiedRepositoryDocument(shinsou = index.plugins))
+        require(index.plugins.sumOf { it.sources.orEmpty().size } <= MAX_INDEX_TOTAL_SOURCES) { "Repository contains too many sources" }
     }
 
     private fun validateIndexSource(source: SourceIndexEntry) {
@@ -1425,7 +1349,6 @@ public class ExtensionRepositoryClient(
 }
 
 private const val V2_SHINSOU_RUNTIME = "legacy-shinsou-adapter-v2"
-private const val V2_SHUYUE_RUNTIME = "reviewed-shuyue-adapter-v2"
 
 private fun JsonObject.requiredString(key: String): String =
     this[key]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)

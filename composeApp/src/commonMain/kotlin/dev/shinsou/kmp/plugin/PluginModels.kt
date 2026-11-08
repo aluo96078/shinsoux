@@ -24,15 +24,15 @@ public data class RepositoryDocument(
 
 /**
  * Optional envelope understood by both repository readers. It lets one URL expose old Shinsou
- * packages and ShuYue packages without making either reader infer a protocol from `index.json`
- * or a hostname. A plain JSON array remains fully supported for both historical formats.
+ * packages without making a reader infer a protocol from `index.json` or a hostname. A plain
+ * JSON array remains fully supported. A legacy `shuyue` list is ignored (ShuYue packages are
+ * no longer supported).
  */
 @Serializable
 public data class UnifiedRepositoryDocument(
     val format: String = "shinsou-unified-v1",
     val shinsou: List<PluginIndexEntry> = emptyList(),
     val legacy: List<PluginIndexEntry> = emptyList(),
-    val shuyue: List<dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry> = emptyList(),
 )
 
 @Serializable
@@ -150,7 +150,7 @@ public data class PluginIndexEntry(
     val type: String? = null,
     /** Alias accepted by newer repositories; [type] remains the canonical wire key. */
     val contentType: String? = null,
-    /** `shinsou`/`shuyue` marker used only by a unified repository index. */
+    /** Contract marker used only by a unified repository index. */
     val contract: String? = null,
     /** V2 host runtime/adapter identifier (for example `legacy-shinsou-adapter-v2`). */
     val runtime: String? = null,

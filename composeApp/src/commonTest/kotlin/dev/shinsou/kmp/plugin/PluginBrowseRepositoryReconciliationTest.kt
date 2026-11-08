@@ -33,21 +33,18 @@ class PluginBrowseRepositoryReconciliationTest {
     }
 
     @Test
-    fun removalSkipsBrokenReviewedMigrationAndUnrelatedRemoteRefresh() = runTest {
+    fun removalSkipsUnrelatedRemoteRefresh() = runTest {
         val kv = InMemoryPluginKeyValueStore()
         val store = KeyValueExtensionRepositoryStore(kv)
         val portable = ShinsouRepository()
         val requested = CompletableDeferred<Unit>()
         store.put(ExtensionRepository("https://remove.example", "Remove"))
         store.put(ExtensionRepository("https://offline.example", "Offline"))
-        // This previously prevented deletion during the pre-delete reconciliation.
-        kv.putString("plugin.shuyue.v2.repository-urls", "https://remove.example/index.json\nmalformed")
         val harness = createHarness(kv, store, portable, indexRequestStarted = requested)
         try {
             harness.adapter.removeRepository("https://remove.example")
             assertEquals(listOf("https://offline.example"), store.list().map { it.baseUrl })
             assertEquals(listOf("https://offline.example"), portable.currentSnapshot.extensionRepositories.map { it.baseUrl })
-            assertEquals("malformed", kv.getString("plugin.shuyue.v2.repository-urls"))
             assertFalse(requested.isCompleted)
             assertEquals(null, harness.adapter.state.value.errorMessage)
             harness.adapter.removeRepository("https://offline.example")

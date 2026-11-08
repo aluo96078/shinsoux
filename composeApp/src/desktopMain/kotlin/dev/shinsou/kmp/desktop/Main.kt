@@ -38,7 +38,6 @@ import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.DesktopAvifDecoder
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.navigation.DeepLinkParser
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
 import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.DesktopReviewedLocalRepositoryTransport
 import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
@@ -46,12 +45,6 @@ import dev.shinsou.kmp.plugin.isReviewedLocalRepositoryEnabled
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantinedScriptV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptProvenanceV2
 import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.DesktopTextToSpeechEngine
@@ -579,55 +572,11 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
     }
     check(java.net.URI.create("shinsou-epub://runtime-probe.invalid/index.xhtml").toURL().protocol == "shinsou-epub")
     check(java.net.URI.create("https://runtime-probe.invalid/").toURL().protocol == "https")
-    verifyPackagedShuYueQuarantineRoundTrip()
     Toolkit.getDefaultToolkit()
     writeDesktopProbeMarker(required = false)
     println("Shinsou X desktop runtime verification passed.")
     System.out.flush()
     exitProcess(0)
-}
-
-/** Exercises durable security state from the ProGuard-processed release JAR used by installers. */
-private fun verifyPackagedShuYueQuarantineRoundTrip() = runBlocking {
-    val bytes = "packaged ShuYue quarantine probe".encodeToByteArray()
-    val identity = ShuYueArtifactIdentityV2(
-        packageId = "dev.shinsou.runtime-probe",
-        version = "1.0.0",
-        versionCode = 1,
-        sha256 = Sha256.hex(bytes),
-    )
-    val record = ShuYueQuarantinedScriptV2(
-        quarantineId = "runtime-probe-${identity.sha256}",
-        identity = identity,
-        sourceIds = listOf("runtime-probe-source"),
-        bytes = bytes,
-        provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
-        stagedReviewStatus = ShuYueReviewStatusV2.REVIEWED,
-    )
-    val permissions = ShuYueExecutionPermissionV2.entries.toSet()
-    val backing = InMemoryPluginKeyValueStore()
-    KeyValueShuYueReviewedStoreV2(backing).also { store ->
-        store.put(record)
-        store.approve(identity, permissions)
-    }
-
-    KeyValueShuYueReviewedStoreV2(backing).also { reopened ->
-        val restored = checkNotNull(reopened.get(record.quarantineId)) {
-            "Packaged ShuYue quarantine disappeared after durable round-trip."
-        }
-        check(restored.identity == identity && restored.copyBytes().contentEquals(bytes)) {
-            "Packaged ShuYue quarantine changed after durable round-trip."
-        }
-        check(reopened.grantedPermissions(identity) == permissions) {
-            "Packaged ShuYue permissions changed after durable round-trip."
-        }
-    }
-
-    // These calls specifically require the synthetic values() method that release shrinking used
-    // to remove. Keep them in the packaged probe even though durable parsing no longer relies on it.
-    check(ShuYueScriptProvenanceV2.valueOf("LEGACY_BACKUP") == ShuYueScriptProvenanceV2.LEGACY_BACKUP)
-    check(ShuYueReviewStatusV2.valueOf("REVIEWED") == ShuYueReviewStatusV2.REVIEWED)
-    check(ShuYueExecutionPermissionV2.valueOf("NETWORK") == ShuYueExecutionPermissionV2.NETWORK)
 }
 
 private fun writeDesktopProbeMarker(required: Boolean) {

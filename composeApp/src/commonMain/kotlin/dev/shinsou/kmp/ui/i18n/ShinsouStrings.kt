@@ -3289,10 +3289,6 @@ private val TraditionalReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "在你核准這個確切版本與摘要前，腳本會持續被阻擋。",
     "Exact reviewed permissions granted" to "已授予精確審核的權限",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "下載的 ShuYue 成品不是完全相符的已審核版本",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "已儲存的 ShuYue 隔離資料已損壞或不相容，無法安全讀取。",
     "Execution blocked" to "已阻擋執行",
     "Execute reviewed script" to "執行已審核腳本",
     "Network access" to "網路存取",
@@ -3347,10 +3343,6 @@ private val JapaneseReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "この正確なバージョンとダイジェストを承認するまで、スクリプトはブロックされたままです。",
     "Exact reviewed permissions granted" to "レビュー済みの権限を付与済み",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "ダウンロードした ShuYue 成果物は、レビュー済みの正確なバージョンではありません",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "保存済みの ShuYue 隔離データが破損しているか互換性がないため、安全に読み込めません。",
     "Execution blocked" to "実行をブロック中",
     "Execute reviewed script" to "レビュー済みスクリプトを実行",
     "Network access" to "ネットワークアクセス",
@@ -3387,10 +3379,6 @@ private val KoreanReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "이 정확한 버전과 다이제스트를 승인할 때까지 스크립트 실행이 차단됩니다.",
     "Exact reviewed permissions granted" to "검토된 정확한 권한 부여됨",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "다운로드한 ShuYue 결과물이 검토된 정확한 버전이 아닙니다",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "저장된 ShuYue 격리 데이터가 손상되었거나 호환되지 않아 안전하게 읽을 수 없습니다.",
     "Execution blocked" to "실행 차단됨",
     "Execute reviewed script" to "검토된 스크립트 실행",
     "Network access" to "네트워크 접근",
@@ -3427,10 +3415,6 @@ private val FrenchReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "Le script reste bloqué tant que vous n’approuvez pas cette version et cette empreinte exactes.",
     "Exact reviewed permissions granted" to "Autorisations vérifiées accordées",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "L’artefact ShuYue téléchargé ne correspond pas exactement à une version vérifiée",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "Les données de quarantaine ShuYue sont endommagées ou incompatibles et ne peuvent pas être lues en toute sécurité.",
     "Execution blocked" to "Exécution bloquée",
     "Execute reviewed script" to "Exécuter le script vérifié",
     "Network access" to "Accès réseau",
@@ -3467,10 +3451,6 @@ private val GermanReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "Das Skript bleibt gesperrt, bis du genau diese Version und Prüfsumme genehmigst.",
     "Exact reviewed permissions granted" to "Geprüfte Berechtigungen erteilt",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "Das geladene ShuYue-Artefakt entspricht keiner exakt geprüften Version",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "Die gespeicherten ShuYue-Quarantänedaten sind beschädigt oder inkompatibel und können nicht sicher gelesen werden.",
     "Execution blocked" to "Ausführung blockiert",
     "Execute reviewed script" to "Geprüftes Skript ausführen",
     "Network access" to "Netzwerkzugriff",
@@ -3507,10 +3487,6 @@ private val SpanishReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "El script seguirá bloqueado hasta que apruebes esta versión y este resumen exactos.",
     "Exact reviewed permissions granted" to "Permisos revisados concedidos",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "El artefacto de ShuYue descargado no coincide con una versión revisada exacta",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "Los datos de cuarentena de ShuYue están dañados o son incompatibles y no se pueden leer de forma segura.",
     "Execution blocked" to "Ejecución bloqueada",
     "Execute reviewed script" to "Ejecutar script revisado",
     "Network access" to "Acceso a la red",
@@ -3547,10 +3523,6 @@ private val PortugueseReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "O script continuará bloqueado até você aprovar esta versão e este resumo exatos.",
     "Exact reviewed permissions granted" to "Permissões revisadas concedidas",
-    "Downloaded ShuYue artifact is not an exact reviewed version" to
-        "O artefato ShuYue baixado não corresponde a uma versão revisada exata",
-    "Stored ShuYue quarantine could not be decoded safely." to
-        "Os dados de quarentena do ShuYue estão corrompidos ou incompatíveis e não podem ser lidos com segurança.",
     "Execution blocked" to "Execução bloqueada",
     "Execute reviewed script" to "Executar script revisado",
     "Network access" to "Acesso à rede",

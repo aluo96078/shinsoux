@@ -19,9 +19,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionCapability
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
-import dev.shinsou.kmp.plugin.v2.exactExtensionLibraryRecoveryMatchV2
 import dev.shinsou.kmp.plugin.v2.HostExtensionSourceV2
-import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsResolverV2
 import dev.shinsou.kmp.plugin.v2.LegacyLoginCredentialsV2
 import dev.shinsou.kmp.plugin.v2.LoginCredentialsV2
 import dev.shinsou.kmp.plugin.v2.PagedResultV2
@@ -30,18 +28,6 @@ import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
 import kotlin.time.Clock
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
-import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
-import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginProfileV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryPackageV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLocation
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryException
-import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptCandidateV2
 import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.PackageBlock
@@ -91,7 +77,7 @@ private const val BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS: Long = 8_000L
 /** Cooperative bound layered over the desktop protected-store caller timeout. */
 private const val SOURCE_SECRET_ACCESS_TIMEOUT_MILLIS: Long = 12_000L
 
-/** Stable v2 option key used by account-owned collection views (ShuYue bookcase). */
+/** Stable v2 option key used by account-owned collection views (account bookcase). */
 internal const val DEFAULT_FAVORITE_BROWSE_OPTION_KEY: String = "option"
 
 /** Internal wrapper carrying only a stable stage to the UI boundary; its cause is never rendered. */
@@ -152,12 +138,6 @@ public class PluginBrowseAdapter(
     extensionGatewayV2: ExtensionBrowseContentGatewayV2? = null,
     /** Null only in previews/tests that intentionally omit the shared content foundation. */
     private val extensionContentConsumerV2: ExtensionContentConsumerV2? = null,
-    /** Production supplies the bounded reviewed repository loader; previews may omit it. */
-    private val reviewedShuYueRepositoryLoaderV2: ShuYueRepositoryIndexLoader? = null,
-    private val reviewedShuYueRepositoryLocationV2: ShuYueRepositoryLocation =
-        ShuYueRepositoryLocation.IndexUrl(
-            ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_INDEX_URL,
-        ),
     private val fileSystem: AppFileSystem? = null,
     /** ADR-0002 S5: publisher trust, withdrawals and the block list. Null in previews and older tests. */
     private val packageSecurity: PluginPackageSecurity? = null,
@@ -267,16 +247,7 @@ public class PluginBrowseAdapter(
         if (installed != null && manager.extensionSourceV2(sourceKey) != null) {
             return sourceKey.legacyLongId
         }
-        val reviewedIdentity = runCatching {
-            dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2(
-                artifact.packageId, artifact.version, artifact.versionCode, artifact.sha256,
-            )
-        }.getOrNull() ?: return null
-        val profile = ShuYueReviewedPluginCatalogV2.profiles.singleOrNull {
-            it.identity == reviewedIdentity &&
-                sourceKey.packageId == it.identity.packageId && sourceKey.sourceId in it.sourceIds
-        } ?: return null
-        return runCatching { BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey) }.getOrNull()
+        return null
     }
     private val operationMutex = Mutex()
     /**
@@ -286,28 +257,12 @@ public class PluginBrowseAdapter(
      */
     private val installedLoadMutex = Mutex()
     private val mutableState = MutableStateFlow(BrowseSnapshot())
-    private val reviewedShuYueStoreV2 = KeyValueShuYueReviewedStoreV2(keyValueStore, fileSystem)
-    private val reviewedShuYueInstallerV2 = manager.reviewedShuYueInstallCoordinatorV2(
-        quarantineStore = reviewedShuYueStoreV2,
-        approvalStore = reviewedShuYueStoreV2,
-        installationStore = reviewedShuYueStoreV2,
-        credentialsResolver = LegacyLoginCredentialsResolverV2(::resolveReviewedCredentials),
-    )
-    /**
-     * ShuYue repositories use a different, reviewed `index.json` contract than legacy extension
-     * repositories. Keep one coordinator per URL so adding a ShuYue repository cannot accidentally
-     * feed its entries to the legacy manager/parser.
-     */
-    private val reviewedShuYueRepositoriesV2 = linkedMapOf<String, ShuYueReviewedRepositoryCoordinatorV2>()
     private var loadedInstalled = false
     private var descriptors: Map<String, ExtensionDescriptor> = emptyMap()
     /** Exact process-local authenticated index paired with the displayed repository rows. */
     private var repositorySnapshots: Map<String, RepositoryIndexSnapshot> = emptyMap()
     /** Repositories whose new signed publisher the user has not trusted yet (ADR-0002 S8). */
     private var repositoriesNeedingTrust: Set<String> = emptySet()
-    private var reviewedShuYuePackages: Map<String, ShuYueReviewedRepositoryPackageV2> = emptyMap()
-    private var reviewedShuYuePackageOwners: Map<String, ShuYueReviewedRepositoryCoordinatorV2> = emptyMap()
-    private var reviewedShuYueRepositoryRows: List<BrowseRepository> = emptyList()
     private var sourceProjections: Map<Long, BrowseSourceProjection> = emptyMap()
     private val v2SourceRowIds = linkedMapOf<SourceKey, Long>()
     private val v2SourceKeysByRowId = linkedMapOf<Long, SourceKey>()
@@ -347,9 +302,6 @@ public class PluginBrowseAdapter(
     override suspend fun addRepository(url: String): BrowseRepository? = operationMutex.withLock {
         reconcilePortableRepositories()
         val input = url.trim()
-        // Classification is response/schema based. A URL ending in index.json is valid for both
-        // historical contracts and must never force the ShuYue parser.
-        tryAddReviewedShuYueRepository(input)?.let { return@withLock it }
         val repository = repositoryClient.fetchRepository(normalizeRepositoryInput(input))
         val hadRepositories = repositoryStore.list().isNotEmpty()
         saveRepository(repository)
@@ -362,11 +314,11 @@ public class PluginBrowseAdapter(
         val security = packageSecurity ?: return null
         val input = normalizeRepositoryInput(url.trim())
         val presentation = operationMutex.withLock {
-            // Anything the regular path can already take (official, pinned, trusted publisher,
-            // reviewed ShuYue) or that is not a signed repository goes through addRepository as before.
+            // Anything the regular path can already take (official, pinned, trusted publisher)
+            // or that is not a signed repository goes through addRepository as before.
             // Null only when the repository answered with something that is not a signed repo.json
-            // (an unsigned or reviewed ShuYue repository); a failure to reach it is an error, so a
-            // caller can tell "unsigned" from "try again".
+            // (an unsigned repository); a failure to reach it is an error, so a caller can tell
+            // "unsigned" from "try again".
             val inspected = try {
                 repositoryClient.inspectRepositoryKey(input)
             } catch (cancelled: CancellationException) {
@@ -374,7 +326,7 @@ public class PluginBrowseAdapter(
             } catch (_: ExtensionRepositoryException.InvalidDocument) {
                 return@withLock null
             } catch (_: ExtensionRepositoryException.InvalidUrl) {
-                return@withLock null // not a generic repository URL: addRepository decides (e.g. ShuYue)
+                return@withLock null // not a generic repository URL: addRepository decides
             } catch (missing: ExtensionRepositoryException.Http) {
                 if (missing.status == 404) return@withLock null // no repo.json: not a signed repository
                 throw missing
@@ -492,7 +444,7 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean): Unit = securityChange { security ->
-        // Packages without a publisher (the reviewed catalogues, reviewed ShuYue) are blocked by id.
+        // Packages without a publisher (the reviewed catalogues) are blocked by id.
         val publisherId = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId }?.metadata?.publisherId
         val entry = PluginBlockEntry.Package(
             PluginInstallKeys.publishedPackageId(extensionId),
@@ -530,7 +482,6 @@ public class PluginBrowseAdapter(
         } finally {
             withContext(NonCancellable) {
                 manager.loadInstalled()
-                manager.reevaluateReviewedRuntimesV2()
                 rebuildSnapshot(errorMessage = null)
             }
         }
@@ -540,28 +491,15 @@ public class PluginBrowseAdapter(
         // Deletion is local maintenance. Never load scripts, migrate remote indexes, or refresh
         // another repository as a prerequisite (or after the durable removal has succeeded).
         reconcilePortableRepositoryStorage()
-        val base = normalizeRepositoryInput(repositoryId.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX))
+        val base = normalizeRepositoryInput(repositoryId)
         fun belongsToRemovedRepository(value: String): Boolean =
-            value == repositoryId || runCatching {
-                normalizeRepositoryInput(value.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX)) == base
-            }.getOrDefault(false)
-        // Preserve unrelated malformed records verbatim; they must not prevent removing this row.
-        val remainingReviewed = keyValueStore.getString(SHUYUE_REPOSITORY_URLS_KEY)
-            .orEmpty().lineSequence().filterNot(::belongsToRemovedRepository).filter(String::isNotBlank).toList()
-        if (remainingReviewed.isEmpty()) keyValueStore.remove(SHUYUE_REPOSITORY_URLS_KEY)
-        else keyValueStore.putString(SHUYUE_REPOSITORY_URLS_KEY, remainingReviewed.joinToString("\n"))
+            value == repositoryId || runCatching { normalizeRepositoryInput(value) == base }.getOrDefault(false)
         deleteRepository(base)
         val remaining = repositoryStore.list()
         val selected = repositoryStore.selected().takeIf { id -> remaining.any { it.baseUrl == id } }
             ?: remaining.firstOrNull()?.baseUrl
         repositoryStore.select(selected)
 
-        val removedOwners = reviewedShuYueRepositoriesV2.filterKeys(::belongsToRemovedRepository).values.toSet()
-        reviewedShuYueRepositoriesV2.keys.removeAll(::belongsToRemovedRepository)
-        val removedPackageIds = reviewedShuYuePackageOwners.filterValues { it in removedOwners }.keys
-        reviewedShuYuePackageOwners = reviewedShuYuePackageOwners - removedPackageIds
-        reviewedShuYuePackages = reviewedShuYuePackages - removedPackageIds
-        reviewedShuYueRepositoryRows = reviewedShuYueRepositoryRows.filterNot { belongsToRemovedRepository(it.url) }
         repositorySnapshots = repositorySnapshots.filterKeys { !belongsToRemovedRepository(it) }
         val removedGenericIds = descriptors.values.filter {
             it.repositoryBaseUrl?.let(::belongsToRemovedRepository) == true && it.state == ExtensionState.AVAILABLE
@@ -570,12 +508,11 @@ public class PluginBrowseAdapter(
         // Reuse already-rendered source/settings state: rebuilding it can invoke a broken plugin.
         val current = mutableState.value
         mutableState.value = current.copy(
-            repositories = (remaining.map { it.toBrowseRepository() } + reviewedShuYueRepositoryRows)
-                .distinctBy(BrowseRepository::url),
+            repositories = remaining.map { it.toBrowseRepository() }.distinctBy(BrowseRepository::url),
             selectedRepositoryId = selected,
             extensions = current.extensions.filterNot {
-                !it.installed && (it.id in removedGenericIds || it.id in removedPackageIds)
-            }.map { if (it.id in removedPackageIds || descriptors[it.id]?.repositoryBaseUrl == base) {
+                !it.installed && (it.id in removedGenericIds)
+            }.map { if (descriptors[it.id]?.repositoryBaseUrl == base) {
                 it.copy(updateAvailable = false)
             } else it },
             isRefreshing = false,
@@ -586,18 +523,6 @@ public class PluginBrowseAdapter(
     override suspend fun selectRepository(repositoryId: String?): Unit = operationMutex.withLock {
         reconcilePortableRepositories()
         val repositories = repositoryStore.list()
-        if (repositoryId?.startsWith(SHUYUE_REPOSITORY_ID_PREFIX) == true) {
-            val location = repositoryId.removePrefix(SHUYUE_REPOSITORY_ID_PREFIX)
-            require(reviewedShuYueRepositoryRows.any { it.id == repositoryId }) {
-                "Unknown ShuYue repository: $repositoryId"
-            }
-            // A unified URL has one visible row but two readers. Selecting it also selects the
-            // normalized Shinsou half. A plain ShuYue row clears an unrelated Shinsou selection.
-            val unifiedBase = normalizeRepositoryInput(location)
-            repositoryStore.select(unifiedBase.takeIf { base -> repositories.any { it.baseUrl == base } })
-            refreshLocked()
-            return@withLock
-        }
         require(repositoryId == null || repositories.any { it.baseUrl == repositoryId }) {
             "Unknown extension repository: $repositoryId"
         }
@@ -855,47 +780,6 @@ public class PluginBrowseAdapter(
         publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
     ): Set<String> = extensionContentConsumerV2?.downloadedRemoteUnitIds(publicationKey).orEmpty()
 
-    override suspend fun recoverExtensionLibraryBindingV2(
-        publicationKey: dev.shinsou.kmp.domain.model.PublicationKey,
-        title: String,
-    ): dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? = withContext(Dispatchers.Default) {
-        if (title.isBlank()) return@withContext null
-        ensureInstalledLoaded()
-        val descriptors = manager.extensionDescriptorsV2()
-            .flatMap { descriptor -> descriptor.sources }
-            .filter { descriptor -> ExtensionCapability.SEARCH in descriptor.capabilities }
-            // UUID-only local favorites were emitted by the beta app path only for reviewed
-            // ShuYue extensions. Keep repair bounded to that package family so unrelated future
-            // extensions are never queried for a legacy row they could not have created.
-            .filter { descriptor -> descriptor.sourceKey.packageId in LEGACY_LOCAL_LIBRARY_PACKAGE_IDS }
-        val candidates = buildList {
-            for (descriptor in descriptors) {
-                val enabled = keyValueStore.getString(sourceEnabledV2Key(descriptor.sourceKey))
-                    ?.toBooleanStrictOrNull() ?: true
-                if (enabled) add(descriptor)
-            }
-        }.sortedBy { descriptor -> descriptor.sourceKey.canonicalId }
-        var recovered: dev.shinsou.kmp.plugin.v2.ExtensionLibraryBindingV2? = null
-        for (descriptor in candidates) {
-            val page = runCatching {
-                manager.withUserInteractionContext(descriptor.sourceKey) {
-                    extensionGatewayV2.search(descriptor.sourceKey, title, page = 0)
-                }
-            }.getOrNull() ?: continue
-            exactExtensionLibraryRecoveryMatchV2(
-                publicationKey = publicationKey,
-                sourceKey = descriptor.sourceKey,
-                publications = page.items,
-            )?.let { match ->
-                check(recovered == null || recovered == match) {
-                    "Legacy extension library identity resolves to multiple sources"
-                }
-                recovered = match
-            }
-        }
-        recovered
-    }
-
     override suspend fun favoriteExtensionPublicationV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
@@ -1113,43 +997,6 @@ public class PluginBrowseAdapter(
         )
     }
 
-    override suspend fun stageReviewedShuYueV2(
-        candidate: ShuYueScriptCandidateV2,
-    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
-        reviewedShuYueInstallerV2.stage(candidate)
-    }
-
-    override suspend fun stageReviewedShuYuePackageV2(
-        packageId: String,
-    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
-        val repository = reviewedShuYuePackageOwners[packageId]
-            ?: refreshReviewedShuYueRepositories().let { reviewedShuYuePackageOwners[packageId] }
-        requireNotNull(repository) {
-            "Reviewed ShuYue repository is unavailable"
-        }.stage(packageId)
-    }
-
-    override suspend fun reviewShuYueQuarantineV2(
-        quarantineId: String,
-    ): ShuYueQuarantineReviewV2 = withContext(Dispatchers.Default) {
-        reviewedShuYueInstallerV2.review(quarantineId)
-    }
-
-    override suspend fun approveAndInstallReviewedShuYueV2(
-        decision: ShuYueReviewedInstallApprovalV2,
-    ): Unit = withContext(Dispatchers.Default) {
-        reviewedShuYueInstallerV2.approveAndInstall(decision)
-        operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
-    }
-
-    override suspend fun uninstallReviewedShuYueV2(packageId: String): Unit =
-        withContext(Dispatchers.Default) {
-            val installed = reviewedShuYueInstallerV2.installed(packageId)
-                ?: throw IllegalArgumentException("Reviewed ShuYue package '$packageId' is not installed")
-            reviewedShuYueInstallerV2.revokeAndUnload(installed.identity)
-            operationMutex.withLock { rebuildSnapshot(errorMessage = null) }
-        }
-
     override suspend fun resolveManga(item: BrowseManga): Long? {
         require(item.sourceKey == null) {
             "Extension v2 publications must use the exact details/unit/content workflow"
@@ -1202,9 +1049,6 @@ public class PluginBrowseAdapter(
 
     override suspend fun installExtension(extensionId: String): Unit = withContext(Dispatchers.Default) {
         operationMutex.withLock installOperation@{
-        require(ShuYueReviewedPluginCatalogV2.profiles.none { it.identity.packageId == extensionId }) {
-            "Reviewed ShuYue packages must use the reviewed installation flow"
-        }
         ensureInstalledLoaded()
         val descriptor = descriptors[extensionId]
             ?: throw IllegalArgumentException("Unknown extension: $extensionId")
@@ -1812,7 +1656,6 @@ public class PluginBrowseAdapter(
                 descriptors = refreshed.descriptors.associateBy { it.id }
                 repositorySnapshots = refreshed.snapshots
                 repositoriesNeedingTrust = refreshed.repositoriesNeedingTrust
-                refreshReviewedShuYueRepositories()
             }
             rebuildSnapshot(errorMessage = null)
         } catch (cancelled: CancellationException) {
@@ -1829,229 +1672,12 @@ public class PluginBrowseAdapter(
     }
 
     /**
-     * Tries the reviewed ShuYue contract for an add-repository input. Local/LAN URLs are probed
-     * as well as GitHub URLs because their host name carries no ShuYue hint. A generic URL falls
-     * back to the legacy repository parser when the probe is not a reviewed ShuYue index, so
-     * existing extension repositories keep their old behavior.
-     */
-    private suspend fun tryAddReviewedShuYueRepository(input: String): BrowseRepository? {
-        val loader = reviewedShuYueRepositoryLoaderV2 ?: return null
-        // Probe every ordinary HTTP(S) repository once. A local/LAN ShuYue server has no
-        // `shuyue` token in its hostname, so relying on the URL hint silently routes it to the
-        // legacy manager and leaves the reviewed extension list empty. Non-ShuYue repositories
-        // still fall back to the legacy path when this optimistic probe fails.
-        val probeableUrl = input.startsWith("http://") || input.startsWith("https://")
-        if (!probeableUrl) {
-            return null
-        }
-        val location = normalizeShuYueRepositoryInput(input)
-        val coordinator = reviewedShuYueCoordinator(location, loader)
-        val packages = try {
-            coordinator.refresh()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            return null
-        }
-        if (packages.isEmpty()) {
-            return null
-        }
-        // A unified envelope has a real legacy half as well. Keep that half in the legacy store,
-        // while the reviewed coordinator owns the ShuYue half. Plain ShuYue repositories remain
-        // reviewed-only and are not fed to the executable legacy manager.
-        val legacyBase = normalizeRepositoryInput(input)
-        val unified = coordinator.cachedIndexContainsShinsouPackages()
-        val preparedRepository = if (unified) {
-            // The reviewed parser deliberately ignores generic package fields. Once the exact
-            // response says that such a half exists, its authoritative parser and trust policy
-            // must accept it before either durable repository record is touched.
-            val snapshot = repositoryClient.fetchIndexSnapshot(legacyBase)
-            require(snapshot.index is RepositoryIndex.Combined && snapshot.index.plugins.isNotEmpty()) {
-                "Unified repository declares Shinsou packages but exposes no installable generic packages"
-            }
-            loadUnifiedRepositoryMetadata(legacyBase)
-        } else {
-            null
-        }
-        val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        if (preparedRepository != null) {
-            commitUnifiedRepository(location, preparedRepository, select = true)
-        } else {
-            if (location !in readReviewedShuYueRepositoryUrls()) {
-                writeReviewedShuYueRepositoryUrls(readReviewedShuYueRepositoryUrls() + location)
-            }
-            clearUnifiedRepositoryMigrationAttempt(location)
-        }
-        if (unified) {
-            // The full refresh publishes both prepared durable halves. Do not perform a separate
-            // reviewed refresh first; that would refetch the same index without strengthening the
-            // commit boundary.
-            refreshLocked()
-        } else {
-            refreshReviewedShuYueRepositories()
-            rebuildSnapshot(errorMessage = null)
-        }
-        return reviewedRepositoryRow(location, official = location == builtIn)
-    }
-
-    /** Refreshes only user-configured ShuYue index URLs.
-     *
-     * The maintained ShuYue repository is available through the normal add-repository flow, but
-     * it is deliberately not seeded here. A fresh install must not contact or display a remote
-     * source until the user has explicitly configured one.
-     */
-    private suspend fun refreshReviewedShuYueRepositories() {
-        val loader = reviewedShuYueRepositoryLoaderV2
-        if (loader == null) {
-            reviewedShuYuePackages = emptyMap()
-            reviewedShuYuePackageOwners = emptyMap()
-            reviewedShuYueRepositoryRows = emptyList()
-            return
-        }
-        val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        // Default repositories and older generic-only records also own a reviewed partition.
-        // Derive it from this refresh's admitted combined indexes; discovery grants no execution
-        // permission, and removing the generic repository removes this derived location as well.
-        val combinedLocations = repositorySnapshots.filter { (baseUrl, snapshot) ->
-            val index = snapshot.index
-            index is RepositoryIndex.Combined &&
-                (index.shuyue.isNotEmpty() || isKnownReviewedLocalRepositoryBaseUrl(baseUrl))
-        }.keys.map(::normalizeShuYueRepositoryInput)
-        val configured = (readReviewedShuYueRepositoryUrls() + combinedLocations).distinct()
-        val packages = linkedMapOf<String, ShuYueReviewedRepositoryPackageV2>()
-        val owners = linkedMapOf<String, ShuYueReviewedRepositoryCoordinatorV2>()
-        var successfulRepositories = 0
-        var firstFailure: Throwable? = null
-        configured.forEach { location ->
-            val coordinator = reviewedShuYueCoordinator(location, loader)
-            try {
-                val refreshed = coordinator.refresh()
-                successfulRepositories++
-                refreshed.forEach { packageInfo ->
-                    // The first configured source wins when repositories mirror the same package.
-                    if (packageInfo.packageId !in packages) {
-                        packages[packageInfo.packageId] = packageInfo
-                        owners[packageInfo.packageId] = coordinator
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                val matchingGenericPartition = repositorySnapshots[normalizeRepositoryInput(location)]?.index
-                val matchingGenericPartitionWasAdmitted = matchingGenericPartition is RepositoryIndex.Combined &&
-                    matchingGenericPartition.plugins.isNotEmpty()
-                // One configured source can be unavailable while another user-provided source is
-                // healthy. Keep refreshing the remaining locations so one failed source cannot
-                // hide working ShuYue packages. The explicit add flow still surfaces errors for
-                // the URL the user entered.
-                //
-                // iOS currently cannot bind a vetted DNS answer to TLS SNI/Host. A unified
-                // repository's generic Shinsou half uses its own exact-URL, bounded compatibility
-                // path and may already have refreshed successfully above. Preserve that admitted
-                // half when only the optional reviewed ShuYue reader is unavailable. A pure
-                // ShuYue URL, or any malformed/origin/digest/network failure, remains visible as
-                // an error; this branch never retries through an ordinary unbound transport.
-                if (failure !is ShuYueRepositoryException.PinnedTransportUnavailable ||
-                    !matchingGenericPartitionWasAdmitted
-                ) {
-                    if (firstFailure == null) firstFailure = failure
-                }
-            }
-        }
-        // Preserve the existing error signal when every configured source is unavailable, while
-        // allowing a healthy user repository to keep working during a built-in outage.
-        if (successfulRepositories == 0) firstFailure?.let { throw it }
-        reviewedShuYuePackages = packages.toMap()
-        reviewedShuYuePackageOwners = owners.toMap()
-        reviewedShuYueRepositoryRows = configured.map { location ->
-            reviewedRepositoryRow(location, official = location == builtIn)
-        }
-    }
-
-    private fun reviewedShuYueCoordinator(
-        location: String,
-        loader: ShuYueRepositoryIndexLoader,
-    ): ShuYueReviewedRepositoryCoordinatorV2 =
-        reviewedShuYueRepositoriesV2.getOrPut(location) {
-            ShuYueReviewedRepositoryCoordinatorV2(
-                loader = loader,
-                installer = reviewedShuYueInstallerV2,
-                location = ShuYueRepositoryLocation.IndexUrl(location),
-            )
-        }
-
-    private suspend fun reviewedRepositoryRow(location: String, official: Boolean = false): BrowseRepository {
-        val unified = repositoryStore.list().firstOrNull {
-            it.baseUrl == normalizeRepositoryInput(location)
-        }
-        // A unified repository is a Shinsou repository with an additional reviewed ShuYue
-        // partition. Preserve its canonical repository identity in the UI; labelling the whole
-        // row with the synthetic `shuyue:` id made the official shinsou_plugin publication look
-        // like a pure ShuYue source even though its generic packages were admitted and persisted.
-        // Pure ShuYue indexes have no matching repository-store row and keep the synthetic id.
-        if (unified != null) return unified.toBrowseRepository()
-        return BrowseRepository(
-            id = SHUYUE_REPOSITORY_ID_PREFIX + location,
-            url = location,
-            name = "ShuYue",
-            website = location.substringBeforeLast('/').ifBlank { location },
-            signingFingerprint = null,
-            official = official,
-        )
-    }
-
-    private suspend fun readReviewedShuYueRepositoryUrls(): List<String> =
-        keyValueStore.getString(SHUYUE_REPOSITORY_URLS_KEY)
-            ?.lineSequence()
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?.map(::normalizeShuYueRepositoryInput)
-            ?.distinct()
-            ?.toList()
-            .orEmpty()
-
-    private suspend fun writeReviewedShuYueRepositoryUrls(urls: Iterable<String>) {
-        val normalized = urls.map(::normalizeShuYueRepositoryInput).distinct().sorted()
-        if (normalized.isEmpty()) keyValueStore.remove(SHUYUE_REPOSITORY_URLS_KEY)
-        else keyValueStore.putString(SHUYUE_REPOSITORY_URLS_KEY, normalized.joinToString("\n"))
-    }
-
-    /** Accepts a ShuYue base URL, index URL, GitHub repository URL, or GitHub tree URL. */
-    private fun normalizeShuYueRepositoryInput(value: String): String {
-        val trimmed = value.trim().trimEnd('/').substringBefore('#').substringBefore('?')
-        require(trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            "Invalid ShuYue repository URL: $value"
-        }
-        val authority = trimmed.substringAfter("://").substringBefore('/').lowercase()
-        val path = trimmed.substringAfter("://").substringAfter('/', "")
-        if (authority == "github.com") {
-            val segments = path.split('/').filter(String::isNotEmpty)
-            require(segments.size >= 2) { "Invalid GitHub ShuYue repository URL: $value" }
-            val owner = segments[0]
-            val repository = segments[1].removeSuffix(".git")
-            val hasTreeOrBlob = segments.size >= 4 &&
-                (segments[2] == "tree" || segments[2] == "blob")
-            val branch = if (hasTreeOrBlob) segments[3] else "main"
-            val tail = if (hasTreeOrBlob && segments.size > 4) {
-                segments.drop(4).joinToString("/")
-            } else {
-                "index.json"
-            }
-            return "https://raw.githubusercontent.com/$owner/$repository/refs/heads/$branch/" +
-                if (tail.endsWith(".json")) tail else "$tail/index.json"
-        }
-        return if (path.endsWith(".json")) trimmed else "$trimmed/index.json"
-    }
-
-    /**
      * On upgraded installs, imports the legacy KV list once when the portable snapshot has never
      * owned repository state. After that one-time bridge, the snapshot is authoritative: every
      * refresh replaces the KV mirror exactly, including removals made by restore or sync.
      */
     private suspend fun reconcilePortableRepositories() {
         reconcilePortableRepositoryStorage()
-        reconcileLegacyShuYueRepositories()
-        reconcileUnifiedReviewedRepositories()
     }
 
     private suspend fun reconcilePortableRepositoryStorage() {
@@ -2075,194 +1701,6 @@ public class PluginBrowseAdapter(
             removeLegacyBundledRepository(portable)
             mirrorPortableRepositoriesToKeyValue(portable)
         }
-    }
-
-    /**
-     * Older builds accepted ShuYue's repository `repo.json` as a legacy repository. Remove that
-     * stale mirror before the legacy manager sees its ShuYue `index.json`; preserve the URL in the
-     * reviewed repository store so an upgrade repairs itself without user re-entry.
-     */
-    private suspend fun reconcileLegacyShuYueRepositories() {
-        // Do not probe every configured repository during startup. Apart from making launch
-        // unnecessarily network-bound, that would recreate the very URL-substring detection
-        // bug this adapter is meant to avoid. Older builds stored the ShuYue repository name in
-        // metadata, so only that explicit migration marker is eligible for a one-time bridge.
-        val stale = repositoryStore.list().filter { repository ->
-            val name = "${repository.name} ${repository.shortName.orEmpty()}".lowercase()
-            "shuyue" in name || "syp" in name
-        }
-        if (stale.isEmpty()) return
-        val builtIn = normalizeShuYueRepositoryInput(reviewedShuYueRepositoryLocationV2.value)
-        val reviewedUrls = readReviewedShuYueRepositoryUrls().toMutableList()
-        stale.map { normalizeShuYueRepositoryInput(it.baseUrl) }
-            .filter { it != builtIn && it !in reviewedUrls }
-            .forEach(reviewedUrls::add)
-        writeReviewedShuYueRepositoryUrls(reviewedUrls)
-        stale.forEach { deleteRepository(it.baseUrl) }
-        val remaining = repositoryStore.list()
-        if (repositoryStore.selected() !in remaining.map { it.baseUrl }) {
-            repositoryStore.select(remaining.firstOrNull()?.baseUrl)
-        }
-    }
-
-    /**
-     * Repairs repositories created by builds that only knew about the reviewed ShuYue half.
-     *
-     * Those builds persisted the URL in [SHUYUE_REPOSITORY_URLS_KEY], so simply adding the new
-     * unified fixture again is not enough: the old reviewed row remains and the legacy manager
-     * never sees the Shinsou half. Probe each such URL once, and when its response is a unified
-     * envelope restore the legacy repository row before [refreshLocked] asks the manager for
-     * descriptors. A per-URL marker keeps ordinary ShuYue repositories from adding a network
-     * probe to every launch; re-adding a URL clears the marker and retries it explicitly.
-     */
-    private suspend fun reconcileUnifiedReviewedRepositories() {
-        val configured = readReviewedShuYueRepositoryUrls()
-        if (configured.isEmpty()) return
-        val attempted = readUnifiedRepositoryMigrationAttempts().toMutableSet()
-        configured.forEach { location ->
-            val base = normalizeRepositoryInput(location)
-            if (repositoryStore.list().any { it.baseUrl == base } || location in attempted) return@forEach
-            try {
-                // Prefer the independently admitted generic parser. This repairs an old
-                // reviewed-only unified record even on a platform where the optional ShuYue
-                // transport must remain fail-closed. Pure ShuYue indexes continue below through
-                // their dedicated parser; a generic parse result never grants ShuYue execution.
-                val genericSnapshot = try {
-                    withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                        repositoryClient.fetchIndexSnapshot(base)
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    // A pure ShuYue repository is not required to satisfy the generic schema or
-                    // generic author-trust policy. Its dedicated parser below remains authoritative.
-                    null
-                }
-                if (genericSnapshot?.index is RepositoryIndex.Combined &&
-                    genericSnapshot.index.plugins.isNotEmpty()
-                ) {
-                    val repository = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                        loadUnifiedRepositoryMetadata(base)
-                    } ?: throw IllegalStateException("Timed out loading unified repository metadata")
-                    commitUnifiedRepository(
-                        location = location,
-                        repository = repository,
-                        select = repositoryStore.selected() == null,
-                    )
-                    return@forEach
-                }
-                val coordinator = reviewedShuYueCoordinator(
-                    location,
-                    reviewedShuYueRepositoryLoaderV2 ?: return,
-                )
-                withTimeout(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                    coordinator.refresh()
-                }
-                if (coordinator.cachedIndexContainsShinsouPackages()) {
-                    val snapshot = withTimeout(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                        repositoryClient.fetchIndexSnapshot(base)
-                    }
-                    require(snapshot.index is RepositoryIndex.Combined && snapshot.index.plugins.isNotEmpty()) {
-                        "Unified repository declares Shinsou packages but exposes no installable generic packages"
-                    }
-                    val repository = withTimeoutOrNull(BROWSE_REMOTE_REFRESH_TIMEOUT_MILLIS) {
-                        loadUnifiedRepositoryMetadata(base)
-                    }
-                        ?: throw IllegalStateException("Timed out loading unified repository metadata")
-                    commitUnifiedRepository(
-                        location = location,
-                        repository = repository,
-                        select = repositoryStore.selected() == null,
-                    )
-                } else {
-                    // Only a successfully classified pure ShuYue repository receives the one-shot
-                    // marker. A declared unified half that fails parsing or trust remains eligible
-                    // for repair and is surfaced as an error below.
-                    attempted += location
-                    writeUnifiedRepositoryMigrationAttempts(attempted)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                // Do not permanently downgrade an already-configured unified repository to a
-                // misleading ShuYue-only row. No attempt marker is written, so restart/refresh
-                // retries once the remote document is repaired.
-                throw IllegalStateException(
-                    "Unable to reconcile unified repository $location",
-                    failure,
-                )
-            }
-        }
-    }
-
-    /**
-     * Transaction-like durable commit for the two internal halves of one visible repository.
-     * Every remote parse/trust/metadata operation must complete before entering this block.
-     */
-    private suspend fun commitUnifiedRepository(
-        location: String,
-        repository: ExtensionRepository,
-        select: Boolean,
-    ) {
-        val previousRepository = repositoryStore.list().firstOrNull { it.baseUrl == repository.baseUrl }
-        val previousSelection = repositoryStore.selected()
-        val previousReviewedUrls = readReviewedShuYueRepositoryUrls()
-        val previousAttempts = readUnifiedRepositoryMigrationAttempts()
-        withContext(NonCancellable) {
-            try {
-                saveRepository(repository)
-                if (select) repositoryStore.select(repository.baseUrl)
-                if (location !in previousReviewedUrls) {
-                    writeReviewedShuYueRepositoryUrls(previousReviewedUrls + location)
-                }
-                clearUnifiedRepositoryMigrationAttempt(location)
-            } catch (failure: Throwable) {
-                runCatching {
-                    if (previousRepository == null) deleteRepository(repository.baseUrl)
-                    else saveRepository(previousRepository)
-                    repositoryStore.select(previousSelection)
-                    writeReviewedShuYueRepositoryUrls(previousReviewedUrls)
-                    writeUnifiedRepositoryMigrationAttempts(previousAttempts)
-                }.exceptionOrNull()?.let(failure::addSuppressed)
-                throw failure
-            }
-        }
-    }
-
-    /** Reads optional metadata, while still allowing a unified index without repo.json. */
-    private suspend fun loadUnifiedRepositoryMetadata(baseUrl: String): ExtensionRepository =
-        try {
-            repositoryClient.fetchRepository(baseUrl)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (missing: ExtensionRepositoryException.Http) {
-            if (missing.status != 404) throw missing
-            ExtensionRepository(
-                baseUrl = baseUrl,
-                name = "Unified repository",
-                shortName = "Unified",
-                website = baseUrl,
-            )
-        }
-
-    private suspend fun readUnifiedRepositoryMigrationAttempts(): List<String> =
-        keyValueStore.getString(UNIFIED_REPOSITORY_MIGRATION_KEY)
-            ?.lineSequence()
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?.distinct()
-            ?.toList()
-            .orEmpty()
-
-    private suspend fun writeUnifiedRepositoryMigrationAttempts(attempts: Iterable<String>) {
-        val normalized = attempts.map(String::trim).filter(String::isNotEmpty).distinct().sorted()
-        if (normalized.isEmpty()) keyValueStore.remove(UNIFIED_REPOSITORY_MIGRATION_KEY)
-        else keyValueStore.putString(UNIFIED_REPOSITORY_MIGRATION_KEY, normalized.joinToString("\n"))
-    }
-
-    private suspend fun clearUnifiedRepositoryMigrationAttempt(location: String) {
-        val remaining = readUnifiedRepositoryMigrationAttempts().filterNot { it == location }
-        writeUnifiedRepositoryMigrationAttempts(remaining)
     }
 
     /**
@@ -2319,8 +1757,23 @@ public class PluginBrowseAdapter(
     private suspend fun ensureInstalledLoaded(): Unit = installedLoadMutex.withLock {
         if (!loadedInstalled) {
             manager.loadInstalled()
-            reviewedShuYueInstallerV2.rehydrateInstalled()
+            removeLegacyShuYueKeys()
             loadedInstalled = true
+        }
+    }
+
+    /**
+     * Best-effort cleanup of the only fixed keys the removed reviewed ShuYue runtime left on
+     * devices. Unknown keys are deliberately not enumerated; failure is irrelevant.
+     */
+    private suspend fun removeLegacyShuYueKeys() {
+        for (key in LEGACY_SHUYUE_KV_KEYS) {
+            try {
+                keyValueStore.remove(key)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -2338,22 +1791,9 @@ public class PluginBrowseAdapter(
         reuseUnchangedSources: Boolean = false,
     ): Unit = withContext(Dispatchers.Default) {
         val repositories = repositoryStore.list()
-        // A unified repository is persisted twice internally (the executable Shinsou base and
-        // the reviewed ShuYue index), but it must appear as one source in the UI. Plain ShuYue
-        // repositories have no matching legacy base and therefore keep their own row.
-        val unifiedLegacyBases = reviewedShuYueRepositoryRows
-            .map { normalizeRepositoryInput(it.url) }
-            .toSet()
-        val repositoryRows = (
-            repositories
-                .filterNot { it.baseUrl in unifiedLegacyBases }
-                .map { it.toBrowseRepository() } + reviewedShuYueRepositoryRows
-            )
+        val repositoryRows = repositories.map { it.toBrowseRepository() }
             .distinctBy(BrowseRepository::url)
-        val selected = repositoryStore.selected()
-        val selectedRowId = reviewedShuYueRepositoryRows.firstOrNull { row ->
-            normalizeRepositoryInput(row.url) == selected
-        }?.id ?: selected
+        val selectedRowId = repositoryStore.selected()
         val installed = manager.installedPlugins().associateBy { it.manifest.id }
         val extensionDescriptorsV2 = manager.extensionDescriptorsV2()
         val liveV2SourceKeys = extensionDescriptorsV2.flatMap { it.sources }
@@ -2435,10 +1875,6 @@ public class PluginBrowseAdapter(
             extensionDescriptorsV2
                 .flatMap { it.sources }
                 .filterNot { descriptor -> legacySources.any { it.sourceKey == descriptor.sourceKey } }
-                .filterNot { descriptor ->
-                    ShuYueReviewedPluginCatalogV2.profiles
-                        .any { it.identity.packageId == descriptor.sourceKey.packageId && it.legacyCompatibilityOnly }
-                }
                 .forEach { descriptor ->
                     val sourceKey = descriptor.sourceKey
                     val rowId = v2UiRowId(sourceKey, occupiedSourceIds)
@@ -2510,18 +1946,7 @@ public class PluginBrowseAdapter(
         val sources = (legacySources + nativeSources)
             .distinctBy(BrowseSource::identityKey)
             .sortedWith(compareBy<BrowseSource> { it.language }.thenBy { it.name.lowercase() })
-        val reservedReviewedIds = ShuYueReviewedPluginCatalogV2.profiles
-            .mapTo(hashSetOf()) { it.identity.packageId }
-        val liveV2Packages = extensionDescriptorsV2.associateBy { it.packageId }
-        val compatibilityInstalled = ShuYueReviewedPluginCatalogV2.profiles
-            .filter(ShuYueReviewedPluginProfileV2::legacyCompatibilityOnly)
-            .mapNotNull { profile ->
-                reviewedShuYueInstallerV2.installed(profile.identity.packageId)
-                    ?.takeIf { it.identity == profile.identity }
-                    ?.let { profile }
-            }
-            .distinctBy { it.identity.packageId }
-        val extensions = descriptors.values.filterNot { it.id in reservedReviewedIds }.map { descriptor ->
+        val extensions = descriptors.values.map { descriptor ->
             val local = installed[descriptor.id]
             // A verified digest is integrity state, not permission to execute sensitive host
             // services. The UI's execution switch reflects the exact-artifact approval gate.
@@ -2539,46 +1964,6 @@ public class PluginBrowseAdapter(
                 sourceIds = descriptor.sources.map { it.id },
                 contentType = descriptor.contentType,
                 inDevelopment = PluginInstallKeys.isDeveloperKey(descriptor.id),
-            )
-        } + reviewedShuYuePackages.values.map { reviewed ->
-            val profile = requireNotNull(
-                ShuYueReviewedPluginCatalogV2.findRepositoryProfile(
-                    packageId = reviewed.packageId,
-                    version = reviewed.version,
-                    versionCode = reviewed.versionCode,
-                    sha256 = reviewed.sha256,
-                ),
-            )
-            val installation = reviewedShuYueInstallerV2.installed(reviewed.packageId)
-            val live = liveV2Packages[reviewed.packageId]
-            val exactInstalled = installation?.identity == profile.identity &&
-                live == profile.descriptor
-            val trusted = exactInstalled &&
-                reviewedShuYueStoreV2.isTrusted(profile.identity) &&
-                reviewedShuYueStoreV2.grantedPermissions(profile.identity) == profile.requiredPermissions
-            BrowseExtension(
-                id = reviewed.packageId,
-                name = reviewed.name,
-                version = reviewed.version,
-                language = reviewed.languageTag,
-                installed = installation != null,
-                updateAvailable = installation != null && installation.identity != profile.identity,
-                trusted = trusted,
-                isNsfw = reviewed.isNsfw,
-                reviewedShuYueV2 = true,
-                description = reviewed.description,
-                contentType = reviewed.contentType,
-            )
-        } + compatibilityInstalled.map { profile ->
-            BrowseExtension(
-                id = profile.identity.packageId,
-                name = profile.displayName,
-                version = profile.identity.version,
-                language = profile.languageTag,
-                installed = true,
-                trusted = false,
-                reviewedShuYueV2 = true,
-                description = "停止維護；僅保留相容性安裝。請改用維護中的 ShuYue 來源。",
             )
         }
         sourceProjections = rebuiltSourceProjections
@@ -2695,16 +2080,8 @@ public class PluginBrowseAdapter(
         return candidate
     }
 
-    /** ShuYue v2 keeps the same protected PluginStorage jar, addressed by its host-local scope. */
-    private fun v2StorageSourceId(sourceKey: SourceKey): Long? {
-        sourceKey.legacyLongId?.let { return it }
-        val profile = ShuYueReviewedPluginCatalogV2.profiles.firstOrNull {
-            it.identity.packageId == sourceKey.packageId
-        } ?: return null
-        return runCatching {
-            BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey)
-        }.getOrNull()
-    }
+    /** The host-assigned storage namespace of a v2 source: its legacy numeric id. */
+    private fun v2StorageSourceId(sourceKey: SourceKey): Long? = sourceKey.legacyLongId
 
     private fun v2SourceKeyFor(sourceId: Long): SourceKey? =
         v2SourceKeysByRowId[sourceId] ?: v2SourceKeysByStorageId[sourceId]
@@ -2716,35 +2093,11 @@ public class PluginBrowseAdapter(
         return sourceKey to storageId
     }
 
-    private suspend fun resolveReviewedCredentials(credentials: LoginCredentialsV2): LegacyLoginCredentialsV2? {
-        if (!credentials.usernameReference.startsWith(V2_USERNAME_REFERENCE_PREFIX) ||
-            !credentials.passwordReference.startsWith(V2_PASSWORD_REFERENCE_PREFIX)
-        ) return null
-        val usernameScope = credentials.usernameReference
-            .removePrefix(V2_USERNAME_REFERENCE_PREFIX)
-            .toLongOrNull()
-        val passwordScope = credentials.passwordReference
-            .removePrefix(V2_PASSWORD_REFERENCE_PREFIX)
-            .toLongOrNull()
-        if (usernameScope == null || usernameScope != passwordScope) return null
-        // References are opaque to the extension and must never become an arbitrary lookup into
-        // the host's credential store.  Only the fixed, reviewed ShuYue execution scopes may be
-        // resolved here; all other references are treated as an invalid login attempt.
-        if (usernameScope !in REVIEWED_CREDENTIAL_SCOPES) return null
-        return pluginStorage.getCredential(usernameScope)?.let {
-            LegacyLoginCredentialsV2(it.username, it.password)
-        }
-    }
-
     /** Resolve UI state through the manager's exact package/source ownership map. */
     private suspend fun storageForSourceUi(sourceId: Long): PluginStorage {
         val scope = requireV2SourceScope(sourceId)
         if (scope != null) {
             val sourceKey = scope.first
-            // Raw protected storage is available only when the manager proves this exact live
-            // artifact owns the same fixed reviewed scope. Catalogue names alone are not authority.
-            val reviewedScope = manager.reviewedShuYueStorageScope(sourceKey)
-            if (reviewedScope != null && reviewedScope == scope.second) return pluginStorage
             val ownedSourceId = requireNotNull(sourceKey.legacyLongId) {
                 "Generic source has no host-assigned storage id: ${sourceKey.canonicalId}"
             }
@@ -2843,33 +2196,15 @@ public class PluginBrowseAdapter(
     }
 
     public companion object {
-        private const val SHUYUE_REPOSITORY_ID_PREFIX: String = "shuyue:"
-        private const val SHUYUE_REPOSITORY_URLS_KEY: String = "plugin.shuyue.v2.repository-urls"
-        private const val UNIFIED_REPOSITORY_MIGRATION_KEY: String =
-            // V3 invalidates the generation that permanently marked a failed generic parse as
-            // reconciled and could therefore strand a real unified index as reviewed-only.
-            "plugin.repositories.unified-reviewed-migration.v3"
+        /** Keys the removed reviewed ShuYue runtime stored; deleted best-effort on first load. */
+        private val LEGACY_SHUYUE_KV_KEYS: List<String> = listOf(
+            "plugin.shuyue.v2.installations",
+            "plugin.shuyue.v2.repository-urls",
+        )
         private const val V2_USERNAME_REFERENCE_PREFIX: String = "shinsou-v2-username-"
         private const val V2_PASSWORD_REFERENCE_PREFIX: String = "shinsou-v2-password-"
-        private val REVIEWED_CREDENTIAL_SCOPES: Set<Long> =
-            ShuYueReviewedPluginCatalogV2.profiles
-                .flatMap { profile ->
-                    profile.sourceIds.mapNotNull { sourceId ->
-                        runCatching {
-                            BuiltInShuYueExecutionScopesV2.resolve(
-                                profile.identity,
-                                SourceKey(2, profile.identity.packageId, sourceId),
-                            )
-                        }.getOrNull()
-                    }
-                }.toSet()
         private const val PORTABLE_REPOSITORY_MIGRATION_KEY: String =
             "plugin.repositories.portable-migration.v1"
-        private val LEGACY_LOCAL_LIBRARY_PACKAGE_IDS: Set<String> = setOf(
-            "zh.bilimanga",
-            "zh.biquge.tw",
-            "zh.wenku8.api",
-        )
 
         private const val LEGACY_BUNDLED_REPOSITORY_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/master"

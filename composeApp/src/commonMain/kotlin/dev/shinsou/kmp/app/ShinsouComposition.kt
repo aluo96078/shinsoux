@@ -87,13 +87,6 @@ import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.PluginEventObserver
 import dev.shinsou.kmp.plugin.events.PluginEventObserverGroup
 import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
-import dev.shinsou.kmp.plugin.shuyue.KtorShuYueRepositoryTransport
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLimits
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
-import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
@@ -246,23 +239,6 @@ public class ShinsouComposition(
     private val pluginHttpClient = httpClient.config { followRedirects = false }
     private val platformPluginHostResolver = createPlatformPluginHostResolver()
     private val platformPinnedPluginTransport = createPlatformPinnedPluginHttpTransport()
-    private val reviewedShuYueRepositoryLoader = ShuYueRepositoryIndexLoader(
-        transport = KtorShuYueRepositoryTransport(
-            client = pluginHttpClient,
-            hostResolver = platformPluginHostResolver,
-            pinnedTransport = platformPinnedPluginTransport,
-            reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
-            reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
-        ),
-        limits = ShuYueRepositoryLimits(
-            allowedArtifactOrigins = setOfNotNull(
-                ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_ARTIFACT_ORIGIN,
-                reviewedLocalRepositoryPolicy.baseUrl,
-            ),
-            // Local/LAN repositories require a separate explicit developer composition.
-            allowLocalArtifactOrigins = false,
-        ),
-    )
     private val pluginStorage = MigratingPluginStorage(
         delegate = KeyValuePluginStorage(pluginKeyValueStore),
         migrationState = pluginKeyValueStore,
@@ -384,18 +360,8 @@ public class ShinsouComposition(
                     val sourceKey = target.sourceKey
                     val legacy = pluginManager.exactLegacySource(target)
                     val exactV2 = pluginManager.exactExtensionSource(target)
-                    val sourceId = sourceKey.legacyLongId ?: runCatching {
-                        val artifact = target.artifactIdentity
-                        BuiltInShuYueExecutionScopesV2.resolve(
-                            ShuYueArtifactIdentityV2(
-                                artifact.packageId,
-                                artifact.version,
-                                artifact.versionCode,
-                                artifact.sha256,
-                            ),
-                            sourceKey,
-                        )
-                    }.getOrNull() ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
+                    val sourceId = sourceKey.legacyLongId
+                        ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
                     val sourceName = legacy?.name ?: exactV2?.descriptor?.displayName
                         ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
                     if (pluginLoginRequests.requestEvent(eventId, target, sourceId, sourceName, payload.fallbackMessage)) {
@@ -766,7 +732,6 @@ public class ShinsouComposition(
                 },
             )
         },
-        reviewedShuYueRepositoryLoaderV2 = reviewedShuYueRepositoryLoader,
         fileSystem = fileSystem,
         // Seed only the single app-reviewed official repository when a new installation has no
         // persisted repository. PluginBrowseAdapter still requires an empty repository list and

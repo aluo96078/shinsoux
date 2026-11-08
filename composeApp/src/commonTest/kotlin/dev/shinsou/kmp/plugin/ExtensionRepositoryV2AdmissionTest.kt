@@ -65,7 +65,7 @@ class ExtensionRepositoryV2AdmissionTest {
     }
 
     @Test
-    fun v2IndexSeparatesContractsAndPreservesLosslessIdsAndAdmissionMetadata() = runTest {
+    fun v2IndexSkipsShuYueContractAndPreservesLosslessIdsAndAdmissionMetadata() = runTest {
         val client = clientFor(
             index = v2IndexJson(),
             sidecar = sidecarJson(),
@@ -73,7 +73,6 @@ class ExtensionRepositoryV2AdmissionTest {
 
         val index = assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL))
         val shinsou = index.plugins.single()
-        val shuyue = index.shuyue.single()
 
         assertEquals(SHINSOU_ID, shinsou.id)
         assertEquals(9_223_372_036_854_775_807L, shinsou.sources!!.single().id)
@@ -84,14 +83,8 @@ class ExtensionRepositoryV2AdmissionTest {
         assertEquals(PERMISSIONS, shinsou.requestedHostPermissions)
         assertEquals(BROWSER_ORIGINS, shinsou.sources!!.single().browserSessionOrigins)
 
-        assertEquals(SHUYUE_ID, shuyue.id)
-        assertEquals(SHUYUE_OPAQUE_SOURCE_ID, shuyue.sources.single().id)
-        assertEquals(SHUYUE_OPAQUE_SOURCE_ID, shuyue.sourceKeys.single().sourceId)
-        assertEquals(SHUYUE_RUNTIME, shuyue.runtime)
-        assertEquals(SHA256, shuyue.sha256)
-        assertEquals(SIDECAR_PATH, shuyue.sidecarUrl)
-        assertEquals(EVENTS, shuyue.systemEvents)
-        assertEquals(PERMISSIONS, shuyue.requestedHostPermissions)
+        // ShuYue-format packages are no longer supported: the row is skipped, not an error.
+        assertTrue(index.plugins.none { it.id == SHUYUE_ID })
     }
 
     @Test
@@ -192,11 +185,8 @@ class ExtensionRepositoryV2AdmissionTest {
         // Reference-only Shinsou records are intentionally validated but omitted from the
         // executable partition; they must not become installable descriptors.
         assertTrue(combined.plugins.none { it.id in referenceIds })
-        assertEquals(shuyueIds.toSet(), combined.shuyue.map { it.id }.toSet())
-        assertEquals(4, combined.shuyue.size)
-        assertEquals(setOf("zh.wenku8"), combined.shuyue.filter { it.legacyCompatibilityOnly }.map { it.id }.toSet())
+        // ShuYue-contract rows in a mixed index are skipped without failing the repository.
         assertTrue(combined.plugins.none { it.id in shuyueIds })
-        assertTrue(combined.shuyue.none { it.id in shinsouIds })
     }
 
     @Test
@@ -308,12 +298,6 @@ class ExtensionRepositoryV2AdmissionTest {
             ),
             "Shinsou with unknown runtime" to v2IndexJson(
                 shinsouRuntime = "unknown-runtime",
-            ),
-            "ShuYue with Shinsou runtime" to v2IndexJson(
-                shuyueRuntime = RUNTIME,
-            ),
-            "ShuYue with unknown runtime" to v2IndexJson(
-                shuyueRuntime = "unknown-runtime",
             ),
         )
         invalidIndexes.forEach { (label, invalid) ->

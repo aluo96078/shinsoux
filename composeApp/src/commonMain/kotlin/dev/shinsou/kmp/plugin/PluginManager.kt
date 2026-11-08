@@ -4,12 +4,6 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginAdmissionV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallCoordinatorV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallationStoreV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionApprovalStoreV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptQuarantineStoreV2
-import dev.shinsou.kmp.plugin.shuyue.productionShuYueReviewedAdmissionV2
 import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionHostFacadeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionImplementationApi
@@ -445,8 +439,6 @@ public class PluginManager(
     private val extensionRegistryV2 = ExtensionRuntimeRegistryV2()
     private val nativeArtifactIdentities = mutableMapOf<String, PluginArtifactIdentity>()
     private val nativeLifecycleRuntimes = mutableMapOf<String, SourceLifecycleControlledExtensionPackageRuntimeV2>()
-    private val reviewedReloaders = mutableMapOf<String, suspend () -> ExtensionPackageRuntimeV2>()
-    private val reviewedContentAuthorizers = mutableMapOf<String, suspend () -> Boolean>()
     private val disabledNativeSources = mutableSetOf<SourceKey>()
     private val eventScopeFactory = BoundPluginScopeFactory()
     private val eventScopes = mutableMapOf<ScriptPluginRuntime, BoundPluginScope>()
@@ -475,7 +467,6 @@ public class PluginManager(
         val localStorageKeys: Set<String>,
         val requiredLocalStorageKeys: Set<String>,
         val requiredCookieName: String?,
-        val reviewedShuYue: Boolean,
         val reviewedOfficialPackage: Boolean,
         /** A third-party package the user granted BROWSER_CHALLENGE (ADR-0002 §6.2). */
         val genericPackage: Boolean = false,
@@ -1009,8 +1000,6 @@ public class PluginManager(
                     .exceptionOrNull()?.let(::captureCleanup)
                 nativeArtifactIdentities.remove(pluginId)
                 nativeLifecycleRuntimes.remove(pluginId)
-                reviewedReloaders.remove(pluginId)
-                reviewedContentAuthorizers.remove(pluginId)
                 disabledNativeSources.removeAll { it.packageId == pluginId }
                 runCatching { extensionRegistryV2.uninstall(pluginId) }
                     .exceptionOrNull()?.let(::captureCleanup)
@@ -1518,16 +1507,6 @@ public class PluginManager(
         sourceKeyFor(packageId, sourceId, declared.canonicalSourceId)
     }
 
-    /** Exact fixed storage namespace only for the currently live reviewed ShuYue artifact. */
-    public suspend fun reviewedShuYueStorageScope(sourceKey: SourceKey): Long? = packageMutationMutex.withLock {
-        if (sourceKey.legacyLongId != null) return@withLock null
-        val identity = nativeArtifactIdentities[sourceKey.packageId] ?: return@withLock null
-        val profile = exactReviewedShuYueProfile(identity, sourceKey) ?: return@withLock null
-        if (reviewedContentAuthorizers[sourceKey.packageId]?.invoke() != true) return@withLock null
-        if (extensionRegistryV2.packageFacade(sourceKey.packageId)?.source(sourceKey) == null) return@withLock null
-        dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2.resolve(profile.identity, sourceKey)
-    }
-
     /**
      * Host-only exact storage lookup for source settings/import UI. Package identity is resolved
      * from the manager's live ownership map and cannot be supplied by extension code.
@@ -1568,8 +1547,7 @@ public class PluginManager(
 
     /**
      * Exact v2 content scope for UI thumbnails and inline reader assets. Generic native runtimes
-     * have no repository-defined network declaration and therefore remain denied. Reviewed
-     * ShuYue runtimes derive this policy only from the host-pinned profile catalogue.
+     * have no repository-defined network declaration and therefore remain denied.
      */
     public suspend fun contentNetworkScopeForSource(sourceKey: SourceKey): TypedReaderRemoteAssetScope? =
         packageMutationMutex.withLock {
@@ -1602,34 +1580,7 @@ public class PluginManager(
                     ),
                 )
             }
-            val liveIdentity = nativeArtifactIdentities[sourceKey.packageId] ?: return@withLock null
-            if (sourceKey in disabledNativeSources) return@withLock null
-            if (reviewedContentAuthorizers[sourceKey.packageId]?.invoke() != true) return@withLock null
-            val profile = dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2.profiles
-                .singleOrNull { candidate ->
-                    candidate.identity.packageId == liveIdentity.packageId &&
-                        candidate.identity.version == liveIdentity.version &&
-                        candidate.identity.versionCode == liveIdentity.versionCode &&
-                        candidate.identity.sha256 == liveIdentity.sha256 &&
-                        sourceKey.sourceId in candidate.sourceIds
-                } ?: return@withLock null
-            val sourceProfile = profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }
-            val origins = sourceProfile.contentOrigins
-            if (origins.isEmpty()) return@withLock null
-            val sourceId = dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
-                .resolve(profile.identity, sourceKey)
-            TypedReaderRemoteAssetScope(
-                sourceKey = sourceKey,
-                sourceId = sourceId,
-                network = reviewedImageContentClient(sourceKey, liveIdentity, emptySet(), environment.network
-                    .forReviewedInProcessArtifact()
-                    .scopedToContentPolicy(
-                        PluginNetworkPolicy(
-                            contentOrigins = origins,
-                            maxResponseBytes = PLUGIN_NETWORK_MAX_RESPONSE_BYTES,
-                        ),
-                    )),
-            )
+            null
         }
 
     /**
@@ -1754,7 +1705,7 @@ public class PluginManager(
     ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
         invalidateWebChallengeGrants()
         val facade = extensionRegistryV2.install(runtime, replace)
-        // A generic replacement must never inherit an earlier reviewed runtime's identity.
+        // A replacement must never inherit an earlier runtime's identity.
         nativeArtifactIdentities.remove(runtime.descriptor.packageId)
         (runtime as? ArtifactBoundExtensionPackageRuntimeV2)?.let {
             nativeArtifactIdentities[runtime.descriptor.packageId] = it.artifactIdentity
@@ -1762,164 +1713,8 @@ public class PluginManager(
         (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let {
             nativeLifecycleRuntimes[runtime.descriptor.packageId] = it
         }
-        reviewedReloaders.remove(runtime.descriptor.packageId)
-        reviewedContentAuthorizers.remove(runtime.descriptor.packageId)
         disabledNativeSources.removeAll { it.packageId == runtime.descriptor.packageId }
         facade
-    }
-
-    /** Admits reviewed ShuYue bytes and atomically publishes their guarded runtime to v2 browse. */
-    @OptIn(ExtensionImplementationApi::class)
-    public suspend fun installReviewedShuYueRuntimeV2(
-        admission: ShuYueReviewedPluginAdmissionV2,
-        quarantineId: String,
-        replace: Boolean = false,
-    ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
-        invalidateWebChallengeGrants()
-        val review = admission.inspectQuarantine(quarantineId)
-        require(packageStore.get(review.identity.packageId) == null) {
-            "Extension package '${review.identity.packageId}' is already installed by the generic runtime"
-        }
-        if (!replace) require(extensionRegistryV2.packageFacade(review.identity.packageId) == null) {
-            "Extension package '${review.identity.packageId}' is already loaded"
-        }
-        val runtime = admission.createRuntime(quarantineId)
-        try {
-            require(runtime.descriptor.packageId == review.identity.packageId) {
-                "Reviewed runtime package differs from inspected quarantine"
-            }
-            require(runtime.descriptor.sources.map { it.sourceKey.sourceId } == review.sourceIds) {
-                "Reviewed runtime source set differs from inspected quarantine"
-            }
-            extensionRegistryV2.install(runtime, replace).also {
-                // The admitted review is the authority used to construct this runtime. Record it
-                // directly so content scopes cannot disappear if a runtime decorator does not
-                // expose ArtifactBoundExtensionPackageRuntimeV2 at this integration boundary.
-                nativeArtifactIdentities[runtime.descriptor.packageId] = PluginArtifactIdentity(
-                    review.identity.packageId,
-                    review.identity.version,
-                    review.identity.versionCode,
-                    review.identity.sha256,
-                )
-                (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let { controlled ->
-                    nativeLifecycleRuntimes[runtime.descriptor.packageId] = controlled
-                }
-                reviewedReloaders[runtime.descriptor.packageId] = {
-                    admission.createRuntime(quarantineId)
-                }
-                reviewedContentAuthorizers[runtime.descriptor.packageId] = {
-                    admission.isCurrentlyAuthorized(review.identity)
-                }
-                disabledNativeSources.removeAll { it.packageId == runtime.descriptor.packageId }
-            }
-        } catch (error: Throwable) {
-            if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
-            throw error
-        }
-    }
-
-    /** Builds the production reviewed installer without exposing runtimeFactory/environment. */
-    public fun reviewedShuYueInstallCoordinatorV2(
-        quarantineStore: ShuYueScriptQuarantineStoreV2,
-        approvalStore: ShuYueExecutionApprovalStoreV2,
-        installationStore: ShuYueReviewedInstallationStoreV2,
-        credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
-    ): ShuYueReviewedInstallCoordinatorV2 {
-        val admission = productionShuYueReviewedAdmissionV2(
-            quarantineStore = quarantineStore,
-            trustStore = approvalStore,
-            permissionStore = approvalStore,
-            runtimeFactory = blockListCheckedReviewedFactory(),
-            environment = environment,
-            credentialsResolver = credentialsResolver,
-        )
-        return ShuYueReviewedInstallCoordinatorV2(admission, approvalStore, this, installationStore)
-    }
-
-    /**
-     * The reviewed ShuYue runtimes are built outside [createScopedRuntime]; the user's block list
-     * (ADR-0002 D5) applies to them too: an exact reviewed artifact that is blocked is not built.
-     */
-    private fun blockListCheckedReviewedFactory(): ScriptPluginRuntimeFactory {
-        val gate = executionTierGate ?: return runtimeFactory
-        return object : ScriptPluginRuntimeFactory {
-            override suspend fun create(script: String, manifest: PluginManifest, environment: ScriptPluginEnvironment): ScriptPluginRuntime {
-                requireReviewed(script, manifest)
-                return runtimeFactory.create(script, manifest, environment)
-            }
-
-            override suspend fun createForSource(
-                script: String,
-                manifest: PluginManifest,
-                source: SourceIndexEntry,
-                environment: ScriptPluginEnvironment,
-            ): ScriptPluginRuntime {
-                requireReviewed(script, manifest)
-                return runtimeFactory.createForSource(script, manifest, source, environment)
-            }
-
-            private suspend fun requireReviewed(script: String, manifest: PluginManifest) {
-                val tier = gate.resolve(
-                    ExecutionTierCandidate(
-                        packageId = manifest.id,
-                        artifactSha256 = Sha256.hex(script.encodeToByteArray()),
-                        publisherId = null,
-                        officialReviewedCatalogMatch = true,
-                        fromCanonicalOfficialUnsignedRepository = true,
-                        userAuthorized = true,
-                    ),
-                )
-                if (tier != ExecutionTier.ReviewedInProcess) {
-                    throw PluginExecutionInertException(manifest.id, (tier as? ExecutionTier.Inert)?.reason ?: InertReason.NOT_AUTHORIZED)
-                }
-            }
-        }
-    }
-
-    /**
-     * After a block-list change (ADR-0002 D5): reviewed ShuYue runtimes the user blocked are taken
-     * down now, and ones unblocked are rebuilt. Their reloaders and identities stay, so blocking
-     * is reversible without reinstalling.
-     */
-    @OptIn(ExtensionImplementationApi::class)
-    public suspend fun reevaluateReviewedRuntimesV2(): Unit = packageMutationMutex.withLock {
-        val gate = executionTierGate ?: return@withLock
-        for ((packageId, reloader) in reviewedReloaders.toMap()) {
-            val identity = nativeArtifactIdentities[packageId] ?: continue
-            val tier = gate.resolve(
-                ExecutionTierCandidate(
-                    packageId = packageId,
-                    artifactSha256 = identity.sha256,
-                    publisherId = null,
-                    officialReviewedCatalogMatch = true,
-                    fromCanonicalOfficialUnsignedRepository = true,
-                    userAuthorized = true,
-                ),
-            )
-            val live = extensionRegistryV2.packageFacade(packageId) != null
-            if (tier != ExecutionTier.ReviewedInProcess) {
-                if (live) {
-                    invalidateWebChallengeGrants()
-                    nativeLifecycleRuntimes.remove(packageId)
-                    extensionRegistryV2.uninstall(packageId)
-                }
-            } else if (!live) {
-                val runtime = try {
-                    reloader()
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    continue // unavailable now; the next change or launch tries again
-                }
-                try {
-                    extensionRegistryV2.install(runtime, replace = true)
-                    (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let { nativeLifecycleRuntimes[packageId] = it }
-                } catch (error: Throwable) {
-                    if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
-                    throw error
-                }
-            }
-        }
     }
 
     public suspend fun uninstallExtensionRuntimeV2(packageId: String): Boolean =
@@ -1927,8 +1722,6 @@ public class PluginManager(
             invalidateWebChallengeGrants()
             nativeArtifactIdentities.remove(packageId)
             nativeLifecycleRuntimes.remove(packageId)
-            reviewedReloaders.remove(packageId)
-            reviewedContentAuthorizers.remove(packageId)
             disabledNativeSources.removeAll { it.packageId == packageId }
             extensionRegistryV2.uninstall(packageId)
         }
@@ -1986,47 +1779,33 @@ public class PluginManager(
                 genericWebChallengeOrigins(stored, sourceKey)
                     ?: throw IllegalArgumentException("This extension was not granted the browser challenge")
             } else null
-            val profile = exactReviewedShuYueProfile(identity, sourceKey)
-            if (profile != null) require(
-                dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in profile.requiredPermissions,
-            ) { "Reviewed artifact lacks browser challenge permission" }
-            require(profile != null ||
-                PluginRuntimePermission.BROWSER_CHALLENGE in stored!!.manifest.runtimePermissions.orEmpty()
-            ) {
+            if (stored == null) return@withLock null
+            require(PluginRuntimePermission.BROWSER_CHALLENGE in stored.manifest.runtimePermissions.orEmpty()) {
                 "Reviewed artifact lacks browser challenge permission"
             }
             val source = sourceWhilePackageLocked(sourceKey)
                 ?: return@withLock null
             val origin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
                 ?: return@withLock null
-            val liveOrigins = canonicalWebChallengeOrigins(source.webChallengeBrowserSessionOrigins())
             val reviewedOrigins = when {
                 generic != null -> generic.first
-                profile != null -> canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
                 else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
             }
-            require(origin in reviewedOrigins && (profile == null || origin in liveOrigins)) {
+            require(origin in reviewedOrigins) {
                 "Web challenge URL is outside the exact reviewed origin"
             }
             val reviewedSubresourceOrigins = when {
                 generic != null -> generic.second
-                profile != null -> setOf(origin)
                 else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeSubresourceOrigins)
             }
             require(origin in reviewedSubresourceOrigins) {
                 "Web challenge document origin must remain an allowed subresource origin"
             }
-            val storageId = if (profile != null) dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
-                .resolve(
-                    dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2(
-                        identity.packageId, identity.version, identity.versionCode, identity.sha256,
-                    ),
-                    sourceKey,
-                ) else requireNotNull(sourceKey.legacyLongId)
-            val storage = if (profile != null) environment.storage else BoundPluginStorage(
+            val storageId = requireNotNull(sourceKey.legacyLongId)
+            val storage = BoundPluginStorage(
                 delegate = environment.storage,
                 sourceKey = sourceKey,
-                allowLegacyMigration = requireNotNull(stored).metadata.legacyStorageMigrationAllowed,
+                allowLegacyMigration = stored.metadata.legacyStorageMigrationAllowed,
             )
             val localKeys = normalizeWebChallengeStorageKeys(source.webChallengeLocalStorageKeys())
             val requiredKeys = normalizeWebChallengeStorageKeys(source.requiredWebChallengeLocalStorageKeys()) -
@@ -2052,7 +1831,6 @@ public class PluginManager(
                 localStorageKeys = localKeys,
                 requiredLocalStorageKeys = requiredKeys,
                 requiredCookieName = reviewedOfficial?.requiredWebChallengeCookieName,
-                reviewedShuYue = profile != null,
                 reviewedOfficialPackage = reviewedOfficial != null,
                 genericPackage = generic != null,
             )
@@ -2064,36 +1842,12 @@ public class PluginManager(
             )
         }
 
-    /** Host-only helper for deterministic native/reviewed test runtimes. */
-    @OptIn(ExtensionImplementationApi::class)
-    internal suspend fun installReviewedRuntimeForTest(
-        runtime: ExtensionPackageRuntimeV2,
-        identity: PluginArtifactIdentity,
-        replace: Boolean = false,
-    ): ExtensionHostFacadeV2 = packageMutationMutex.withLock {
-        require(exactReviewedShuYueProfile(identity, runtime.descriptor.sources.single().sourceKey) != null) {
-            "Test runtime is not an exact reviewed ShuYue artifact"
-        }
-        invalidateWebChallengeGrants()
-        extensionRegistryV2.install(runtime, replace).also {
-            nativeArtifactIdentities[runtime.descriptor.packageId] = identity
-            reviewedContentAuthorizers[runtime.descriptor.packageId] = { true }
-        }
-    }
-
     /** Compatibility predicate; it does not issue import authority. */
     public suspend fun authorizeWebChallenge(sourceKey: SourceKey): Boolean =
         packageMutationMutex.withLock {
             if (sourceKey in disabledNativeSources) return@withLock false
-            nativeArtifactIdentities[sourceKey.packageId]?.let { identity ->
-                val profile = exactReviewedShuYueProfile(identity, sourceKey) ?: return@withLock false
-                return@withLock !isLocallyRevoked(identity) &&
-                    dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2.BROWSER_CHALLENGE in profile.requiredPermissions &&
-                    profile.sourceProfiles.singleOrNull { it.sourceId == sourceKey.sourceId }
-                        ?.browserSessionOrigins?.isNotEmpty() == true &&
-                    reviewedContentAuthorizers[sourceKey.packageId]?.invoke() == true &&
-                    extensionRegistryV2.packageFacade(sourceKey.packageId)?.source(sourceKey) != null
-            }
+            // Artifact-bound native runtimes carry no browser-challenge declaration.
+            if (nativeArtifactIdentities.containsKey(sourceKey.packageId)) return@withLock false
             val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
             if (isLocallyRevoked(stored.artifactIdentity())) return@withLock false
             val declared = stored.manifest.sources.orEmpty().singleOrNull { source ->
@@ -2139,7 +1893,6 @@ public class PluginManager(
         require(liveIdentity == grant.artifactIdentity && nativeRuntimeGeneration == grant.runtimeEpoch) {
             "Browser challenge runtime is no longer live"
         }
-        val profile = exactReviewedShuYueProfile(liveIdentity, sourceKey)
         val reviewedOfficial = stored?.let { installed ->
             val declared = installed.manifest.sources.orEmpty().singleOrNull { source ->
                 sourceKeyFor(installed.manifest.id, source.id, source.canonicalSourceId) == sourceKey
@@ -2151,8 +1904,7 @@ public class PluginManager(
         val generic = if (grant.genericPackage && stored != null && reviewedOfficial == null) {
             genericWebChallengeOrigins(stored, sourceKey)
         } else null
-        require((grant.reviewedShuYue && profile != null && stored == null) ||
-            (grant.reviewedOfficialPackage && reviewedOfficial != null) ||
+        require((grant.reviewedOfficialPackage && reviewedOfficial != null) ||
             (grant.genericPackage && generic != null)
         ) {
             "Browser challenge storage scope is no longer reviewed"
@@ -2160,15 +1912,11 @@ public class PluginManager(
         val source = sourceWhilePackageLocked(sourceKey)
             ?: throw IllegalArgumentException("Browser challenge source is no longer live")
         val liveOrigin = canonicalWebChallengeOrigin(source.webChallengeUrl() ?: source.descriptor.baseUrl)
-        val liveOrigins = canonicalWebChallengeOrigins(source.webChallengeBrowserSessionOrigins())
         val reviewedOrigins = when {
             generic != null -> generic.first
-            profile != null -> canonicalWebChallengeOrigins(profile.sourceProfiles.single { it.sourceId == sourceKey.sourceId }.browserSessionOrigins)
             else -> canonicalWebChallengeOrigins(requireNotNull(reviewedOfficial).webChallengeOrigins)
         }
-        require(liveOrigin == grant.canonicalOrigin && liveOrigin in reviewedOrigins &&
-            (profile == null || liveOrigin in liveOrigins)
-        ) {
+        require(liveOrigin == grant.canonicalOrigin && liveOrigin in reviewedOrigins) {
             "Browser challenge origin changed before import"
         }
         val liveKeys = normalizeWebChallengeStorageKeys(source.webChallengeLocalStorageKeys())
@@ -2253,7 +2001,6 @@ public class PluginManager(
                     .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 nativeArtifactIdentities.remove(grant.sourceKey.packageId)
                 nativeLifecycleRuntimes.remove(grant.sourceKey.packageId)
-                reviewedReloaders.remove(grant.sourceKey.packageId)
                 runCatching { extensionRegistryV2.uninstall(grant.sourceKey.packageId) }
                     .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 invalidateWebChallengeGrants()
@@ -2425,29 +2172,6 @@ public class PluginManager(
                 disabledNativeSources += sourceKey
                 return@withLock
             }
-            val reloader = reviewedReloaders[sourceKey.packageId]
-            if (reloader != null) {
-                val runtime = reloader()
-                try {
-                    extensionRegistryV2.install(runtime, replace = true)
-                    (runtime as? ArtifactBoundExtensionPackageRuntimeV2)?.let {
-                        nativeArtifactIdentities[sourceKey.packageId] = it.artifactIdentity
-                    }
-                    // Guarded reviewed reloaders intentionally hide the artifact-bound delegate.
-                    // Preserve the already-authorized exact identity across that replacement.
-                    require(nativeArtifactIdentities[sourceKey.packageId] != null) {
-                        "Reviewed reload lost exact artifact identity"
-                    }
-                    (runtime as? SourceLifecycleControlledExtensionPackageRuntimeV2)?.let {
-                        nativeLifecycleRuntimes[sourceKey.packageId] = it
-                    }
-                    disabledNativeSources.remove(sourceKey)
-                } catch (error: Throwable) {
-                    if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
-                    throw error
-                }
-                return@withLock
-            }
             val stored = packageStore.get(sourceKey.packageId) ?: return@withLock
             try {
                 lifecycleMutex.withLock { loadStored(stored) }
@@ -2510,8 +2234,6 @@ public class PluginManager(
                 sourceReservations.clear()
             }
             nativeLifecycleRuntimes.clear()
-            reviewedReloaders.clear()
-            reviewedContentAuthorizers.clear()
             disabledNativeSources.clear()
             nativeArtifactIdentities.clear()
             extensionRegistryV2.close()
@@ -3103,19 +2825,6 @@ public class PluginManager(
         nativeRuntimeGeneration += 1
         webChallengeGrants.clear()
     }
-
-    private fun exactReviewedShuYueProfile(
-        identity: PluginArtifactIdentity,
-        sourceKey: SourceKey,
-    ): dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginProfileV2? =
-        dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2.profiles.singleOrNull { profile ->
-            profile.identity.packageId == identity.packageId &&
-                profile.identity.version == identity.version &&
-                profile.identity.versionCode == identity.versionCode &&
-                profile.identity.sha256 == identity.sha256 &&
-                sourceKey.packageId == identity.packageId &&
-                sourceKey.sourceId in profile.sourceIds
-        }
 
     private fun canonicalWebChallengeOrigin(value: String?): String? = value?.let { raw ->
         runCatching {

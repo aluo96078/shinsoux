@@ -42,18 +42,11 @@ class ReviewedLocalRepositoryTest {
             ),
             reviewedLocalRepositoryPolicy = policy,
         )
-        val loader = dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader(
-            dev.shinsou.kmp.plugin.shuyue.KtorShuYueRepositoryTransport(
-                http, reviewedLocalRepositoryPolicy = policy, reviewedLocalRepositoryTransport = transport,
-            ),
-            dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLimits(allowedArtifactOrigins = setOf(base)),
-        )
         val adapter = PluginBrowseAdapter(
             manager, client, KeyValueExtensionRepositoryStore(keys).also {
                 it.put(ExtensionRepository(base, "Local"))
             }, storage, keys,
             KeyValuePluginTrustStore(keys),
-            reviewedShuYueRepositoryLoaderV2 = loader,
         )
         try {
             adapter.refresh()
@@ -74,13 +67,6 @@ class ReviewedLocalRepositoryTest {
                 assertEquals(entry.sha256, Sha256.hex(bytes))
                 assertNotNull(OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(entry, policy, base))
                 assertNull(OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(entry.copy(byteSize = requireNotNull(entry.byteSize) + 1), policy, base))
-            }
-            val expected = setOf("zh.bilimanga", "zh.wenku8.api", "zh.biquge.tw")
-            assertEquals(expected, adapter.state.value.extensions.filter { it.reviewedShuYueV2 }.map { it.id }.toSet())
-            val index = loader.load(dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLocation.IndexUrl("$base/index.json"))
-            for (entry in index.entries.filter { it.id in expected }) {
-                val download = loader.downloadScript(index, entry)
-                assertEquals(entry.sha256, Sha256.hex(download.bytes))
             }
         } finally {
             manager.close()
@@ -145,7 +131,6 @@ class ReviewedLocalRepositoryTest {
             }
             assertEquals(14, index.plugins.size)
             assertEquals(14, index.plugins.map { it.id }.distinct().size)
-            assertTrue(index.shuyue.isEmpty())
             assertTrue(index.plugins.none { it.id.startsWith("example.") })
             assertTrue(index.plugins.none { it.contract != "shinsou" })
             assertTrue(index.plugins.none {

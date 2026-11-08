@@ -159,10 +159,6 @@ import dev.shinsou.kmp.plugin.v2.ExtensionUnitPageProgressV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.overKnownDetails
 import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
-import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
@@ -232,11 +228,6 @@ internal data class SourceSearchUpdate(
 
 internal const val GLOBAL_SEARCH_MAX_CONCURRENCY: Int = 4
 private const val GLOBAL_SEARCH_VISIBLE_RESULTS: Int = 10
-
-private data class PendingReviewedShuYueInstall(
-    val extension: BrowseExtension,
-    val review: ShuYueQuarantineReviewV2,
-)
 
 private data class PendingPluginEventGrant(
     val extension: BrowseExtension,
@@ -378,7 +369,6 @@ fun BrowseScreen(
     var cataloguePageNumber by remember { mutableStateOf(1) }
     var catalogueRequestToken by remember { mutableStateOf(0) }
     val catalogueJobs = remember { CatalogueJobController() }
-    var pendingReviewedInstall by remember { mutableStateOf<PendingReviewedShuYueInstall?>(null) }
     var pendingPluginEventGrant by remember { mutableStateOf<PendingPluginEventGrant?>(null) }
     /** ADR-0002 §6.3: an update asking for something new, reviewed before it is installed. */
     var pendingUpdateReview by remember {
@@ -404,10 +394,10 @@ fun BrowseScreen(
     }
 
     LaunchedEffect(snapshot.extensions.map { Triple(it.id, it.version, it.installed) }, extensionOperations.active) {
-        if (pendingPluginEventGrant == null && pendingReviewedInstall == null && extensionOperations.active == null) {
+        if (pendingPluginEventGrant == null && extensionOperations.active == null) {
             try {
                 val pending = withContext(Dispatchers.Default) {
-                    snapshot.extensions.filter { it.installed && !it.reviewedShuYueV2 }
+                    snapshot.extensions.filter { it.installed }
                         .firstNotNullOfOrNull { extension ->
                             callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
                                 PendingPluginEventGrant(extension, review)
@@ -415,7 +405,7 @@ fun BrowseScreen(
                         }
                 }
                 // A click can claim an operation before recomposition cancels this effect.
-                if (extensionOperations.active == null && pendingPluginEventGrant == null && pendingReviewedInstall == null) {
+                if (extensionOperations.active == null && pendingPluginEventGrant == null) {
                     pendingPluginEventGrant = pending
                 }
             } catch (cancelled: CancellationException) {
@@ -523,22 +513,6 @@ fun BrowseScreen(
         onSuccess = onSuccess,
         onError = { error -> operationSnackbar.showSnackbar(error.localizedDiagnosticMessage(strings)) },
     )
-
-    fun stageReviewedShuYue(extension: BrowseExtension) {
-        launchExtensionOperation(
-            extension,
-            "Preparing installation…",
-            onSuccess = { review: ShuYueQuarantineReviewV2 ->
-                pendingReviewedInstall = PendingReviewedShuYueInstall(extension, review)
-            },
-        ) {
-            val review = callbacks.stageReviewedShuYuePackageV2(extension.id)
-            check(review.reviewStatus == ShuYueReviewStatusV2.REVIEWED) {
-                "Downloaded ShuYue artifact is not an exact reviewed version"
-            }
-            review
-        }
-    }
 
     fun openManga(item: BrowseManga) {
         if (item.sourceKey != null) {
@@ -868,8 +842,7 @@ fun BrowseScreen(
                     onRemoveRepository = { id -> launchOperation { callbacks.removeRepository(id) } },
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
-                        if (extension.reviewedShuYueV2) stageReviewedShuYue(extension)
-                        else if (extension.installed && extension.updateAvailable) launchExtensionOperation(
+                        if (extension.installed && extension.updateAvailable) launchExtensionOperation(
                             extension,
                             "Updating…",
                             onSuccess = { review ->
@@ -913,11 +886,7 @@ fun BrowseScreen(
                     },
                     onUninstall = { extension ->
                         launchExtensionOperation(extension, "Removing…") {
-                            if (extension.reviewedShuYueV2) {
-                                callbacks.uninstallReviewedShuYueV2(extension.id)
-                            } else {
-                                callbacks.uninstallExtension(extension.id)
-                            }
+                            callbacks.uninstallExtension(extension.id)
                         }
                     },
                     onPermissions = { extension ->
@@ -1161,53 +1130,6 @@ fun BrowseScreen(
     }
 
 
-    pendingReviewedInstall?.let { pending ->
-        val review = pending.review
-        AlertDialog(
-            onDismissRequest = { pendingReviewedInstall = null },
-            title = { Text(strings.text("Approve reviewed extension")) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(pending.extension.name, style = MaterialTheme.typography.titleMedium)
-                    pending.extension.description?.let { Text(it) }
-                    Text(
-                        strings.text("SHA-256: {0}", review.identity.sha256),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    Text(strings.text("Required permissions"), fontWeight = FontWeight.SemiBold)
-                    review.requiredPermissions.sortedBy { it.name }.forEach { permission ->
-                        Text("• ${permission.localizedLabel(strings)}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text(
-                        strings.text("The script remains blocked until you approve this exact version and digest."),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (launchExtensionOperation(pending.extension, "Installing…") {
-                            callbacks.approveAndInstallReviewedShuYueV2(
-                                ShuYueReviewedInstallApprovalV2(
-                                    quarantineId = review.quarantineId,
-                                    identity = review.identity,
-                                    grantedPermissions = review.requiredPermissions,
-                                    userConfirmed = true,
-                                    replaceInstalledVersion = pending.extension.installed,
-                                ),
-                            )
-                        }) pendingReviewedInstall = null
-                    },
-                ) { Text(strings.install) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingReviewedInstall = null }) { Text(strings.cancel) }
-            },
-        )
-    }
-
     pendingRepositoryTrust?.let { prompt ->
         RepositoryTrustDialog(
             prompt = prompt,
@@ -1297,18 +1219,6 @@ fun BrowseScreen(
     }
 }
 
-private fun ShuYueExecutionPermissionV2.localizedLabel(strings: ShinsouStrings): String = strings.text(
-    when (this) {
-        ShuYueExecutionPermissionV2.EXECUTE_SCRIPT -> "Execute reviewed script"
-        ShuYueExecutionPermissionV2.NETWORK -> "Network access"
-        ShuYueExecutionPermissionV2.COOKIE_STORAGE -> "Cookie storage"
-        ShuYueExecutionPermissionV2.CREDENTIAL_ACCESS -> "Credential access"
-        ShuYueExecutionPermissionV2.LOGIN_PROMPT -> "Show login prompt"
-        ShuYueExecutionPermissionV2.FAVORITE_MUTATION -> "Modify favorites"
-        ShuYueExecutionPermissionV2.BROWSER_CHALLENGE -> "Open browser challenge"
-    },
-)
-
 private fun Throwable.diagnosticMessage(): String {
     val messages = generateSequence(this) { it.cause }
         .mapNotNull { error -> error.message?.trim()?.takeIf(String::isNotEmpty) }
@@ -1336,8 +1246,8 @@ private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): Strin
     val translated = strings.text(diagnostic)
     if (translated != diagnostic) return translated
     // Repository/extension failures carry a deliberately bounded, non-secret message (status,
-    // URL policy, metadata field, etc.). Hiding it behind one generic sentence made ShuYue
-    // `index.json`/legacy `repo.json` mismatches impossible to diagnose from the UI.
+    // URL policy, metadata field, etc.). Hiding it behind one generic sentence made `index.json`/legacy
+    // `repo.json` mismatches impossible to diagnose from the UI.
     return diagnostic
         .filterNot(Char::isISOControl)
         .take(MAX_DIAGNOSTIC_MESSAGE_CHARS)
@@ -2294,8 +2204,8 @@ internal fun ExtensionV2PublicationPane(
             return
         }
         loadUnitPage(requestedPage = 0, append = false)
-        // A local-library title must be self-contained when opened directly. Reviewed ShuYue
-        // sources paginate long catalogues (100 units per page); leaving later pages behind a
+        // A local-library title must be self-contained when opened directly. Sources
+        // that paginate long catalogues (100 units per page); leaving later pages behind a
         // manual button makes the saved resume unit and adjacent chapter navigation disappear.
         if (localLibrary) {
             while (hasNextPage) {
@@ -4429,34 +4339,17 @@ private fun ExtensionRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (extension.installed) {
-                    if (extension.reviewedShuYueV2) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(Icons.Outlined.Security, null, Modifier.size(16.dp))
+                    AssistChip(
+                        enabled = operation == null,
+                        onClick = { onTrust(extension, !extension.trusted) },
+                        label = {
                             Text(
-                                if (extension.trusted) {
-                                    strings.text("Exact reviewed permissions granted")
-                                } else {
-                                    strings.text("Execution blocked")
-                                },
-                                style = MaterialTheme.typography.labelMedium,
+                                if (extension.trusted) strings.text("Execution allowed")
+                                else strings.text("Execution blocked"),
                             )
-                        }
-                    } else {
-                        AssistChip(
-                            enabled = operation == null,
-                            onClick = { onTrust(extension, !extension.trusted) },
-                            label = {
-                                Text(
-                                    if (extension.trusted) strings.text("Execution allowed")
-                                    else strings.text("Execution blocked"),
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.Security, null, Modifier.size(16.dp)) },
-                        )
-                    }
+                        },
+                        leadingIcon = { Icon(Icons.Outlined.Security, null, Modifier.size(16.dp)) },
+                    )
                 }
                 if (operation?.extensionId == extension.id) {
                     Row(
@@ -4484,7 +4377,7 @@ private fun ExtensionRow(
                     OutlinedButton(enabled = operation == null, onClick = { onUninstall(extension) }) {
                         Text(strings.uninstall)
                     }
-                    if (!extension.reviewedShuYueV2 && extension.trusted) {
+                    if (extension.trusted) {
                         TextButton(enabled = operation == null, onClick = { onPermissions(extension) }) {
                             Text(strings.text("Permissions"))
                         }
