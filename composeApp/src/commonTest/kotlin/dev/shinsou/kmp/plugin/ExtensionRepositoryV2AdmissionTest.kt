@@ -533,6 +533,36 @@ class ExtensionRepositoryV2AdmissionTest {
         assertEquals(setOf("cdn.known.example"), known.sources.orEmpty().single().contentHostSuffixes)
     }
 
+    @Test
+    fun aStringSourceIdKeepsItsLibraryIdentityWithANumericLegacyId() = runTest {
+        // A rewritten former ShuYue source keeps `zh.wenku8` as its source id (library rows) and
+        // its old numeric id as the engine and storage id (saved login).
+        fun body(sourceId: String, legacy: String) = """
+            {"format":"shinsou-extension-v2","contractVersion":2,"packages":[{
+              "id":"zh.wenku8","name":"Wenku8","version":"2.0.0","versionCode":20,"lang":"zh","nsfw":false,
+              "contract":"shinsou","runtime":"legacy-shinsou-adapter-v2","contentKinds":["PLAIN_TEXT"],
+              "capabilities":["CATALOGUE","CONTENT"],"runtimePermissions":["EXECUTE_SCRIPT","NETWORK"],"contentType":"novel",
+              "scriptUrl":"plugins/zh.wenku8.js","sha256":"${"0".repeat(64)}","byteSize":1,"sidecarUrl":"sidecars/zh.wenku8.json",
+              "requestedHostPermissions":[],
+              "systemEvents":{"protocol":"dev.shinsou.system","minVersion":1,"maxVersion":1,"required":[],"optional":[]},
+              "sources":[{"sourceId":"$sourceId","legacyLongId":$legacy,"name":"Wenku8","lang":"zh","baseUrl":"https://www.wenku8.net"}]
+            }]}
+        """.trimIndent()
+        suspend fun parse(sourceId: String, legacy: String) = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond(body(sourceId, legacy), HttpStatusCode.OK) }),
+            cacheToken = { 1L },
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        ).let { client -> assertIs<RepositoryIndex.Combined>(client.fetchIndex(REPOSITORY_URL)).plugins }
+
+        val source = parse("zh.wenku8", "\"-9110000000000001\"").single().sources.orEmpty().single()
+        assertEquals(-9_110_000_000_000_001L, source.id)
+        assertEquals("zh.wenku8", source.canonicalSourceId)
+        // Without a numeric legacy id, or with an unsafe string id, the document is refused
+        // (as an invalid numeric id always was).
+        assertFailsWith<ExtensionRepositoryException> { parse("zh.wenku8", "null") }
+        assertFailsWith<ExtensionRepositoryException> { parse("Zh/Wenku8", "\"-9110000000000001\"") }
+    }
+
     private fun clientFor(index: String, sidecar: String): ExtensionRepositoryClient {
         val http = HttpClient(MockEngine { request ->
             when {

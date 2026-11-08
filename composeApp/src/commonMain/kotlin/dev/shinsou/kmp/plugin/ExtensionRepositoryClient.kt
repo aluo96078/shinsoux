@@ -397,7 +397,14 @@ public class ExtensionRepositoryClient(
                     SourceIndexEntry(
                         name = source.requiredString("name"),
                         lang = source.requiredString("lang"),
-                        id = rawId.toLongOrNull() ?: error("Invalid lossless source id '$rawId'"),
+                        // A numeric sourceId is its own engine id. A string sourceId (an existing
+                        // library identity, such as a former ShuYue source) names its numeric
+                        // engine and storage id in legacyLongId.
+                        id = rawId.toLongOrNull() ?: run {
+                            require(STRING_SOURCE_ID.matches(rawId)) { "Invalid source id '$rawId'" }
+                            source.requiredNullableString("legacyLongId")?.toLongOrNull()
+                                ?: error("Source '$rawId' needs a numeric legacyLongId")
+                        },
                         baseUrl = source.requiredString("baseUrl"),
                         // Preserve the raw index metadata. An omitted source refinement is
                         // meaningful to exact installed-manifest matching; sidecar validation
@@ -1436,3 +1443,6 @@ private fun Throwable.hasRepositorySecurityFailure(): Boolean {
     }
     return false
 }
+
+/** A non-numeric `sourceId`: a lowercase dotted identifier such as `zh.wenku8`. */
+private val STRING_SOURCE_ID = Regex("^[a-z0-9][a-z0-9._-]{0,127}$")
