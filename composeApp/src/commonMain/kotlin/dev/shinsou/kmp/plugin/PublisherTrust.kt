@@ -117,14 +117,14 @@ public object PublisherFingerprint {
         val hex = text.filterNot { it == ' ' || it == ':' || it == '-' }.lowercase()
         if (hex.length != 64 || hex.any { it !in '0'..'9' && it !in 'a'..'f' }) return null
         val bytes = ByteArray(32) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
-        return "sha256:${SodiumSyncPrimitives.base64UrlEncode(bytes)}"
+        return "sha256:${TrustBase64.encode(bytes)}"
     }
 
     private fun digestOf(fingerprint: String): ByteArray? {
         if (!fingerprint.startsWith("sha256:") || fingerprint.length > 64) return null
         val encoded = fingerprint.removePrefix("sha256:")
-        val bytes = runCatching { SodiumSyncPrimitives.base64UrlDecode(encoded) }.getOrNull() ?: return null
-        return bytes.takeIf { it.size == 32 && SodiumSyncPrimitives.base64UrlEncode(it) == encoded }
+        val bytes = runCatching { TrustBase64.decode(encoded) }.getOrNull() ?: return null
+        return bytes.takeIf { it.size == 32 && TrustBase64.encode(it) == encoded }
     }
 }
 

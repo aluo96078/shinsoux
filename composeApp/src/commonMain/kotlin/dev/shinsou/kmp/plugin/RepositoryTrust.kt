@@ -694,12 +694,24 @@ internal object RepositoryTrustRootValidation {
 
     fun canonicalBase64Url(value: String, expectedBytes: Int): ByteArray {
         require(value.length <= 128) { "Encoded signing material is too large" }
-        val decoded = SodiumSyncPrimitives.base64UrlDecode(value)
+        val decoded = TrustBase64.decode(value)
         require(decoded.size == expectedBytes) { "Invalid signing material size" }
-        require(SodiumSyncPrimitives.base64UrlEncode(decoded) == value) { "Non-canonical base64url signing material" }
+        require(TrustBase64.encode(decoded) == value) { "Non-canonical base64url signing material" }
         return decoded
     }
 
     fun fingerprint(publicKey: ByteArray): String =
         "sha256:${SodiumSyncPrimitives.base64UrlEncode(SodiumSyncPrimitives.sha256(publicKey))}"
+}
+
+/**
+ * Unpadded base64url for keys, signatures and fingerprints. Pure Kotlin, so parsing a key or an
+ * add-repository link works before libsodium is loaded (a device that never used sync).
+ */
+internal object TrustBase64 {
+    private val codec = kotlin.io.encoding.Base64.UrlSafe.withPadding(kotlin.io.encoding.Base64.PaddingOption.ABSENT)
+
+    fun decode(value: String): ByteArray = codec.decode(value)
+
+    fun encode(bytes: ByteArray): String = codec.encode(bytes)
 }
