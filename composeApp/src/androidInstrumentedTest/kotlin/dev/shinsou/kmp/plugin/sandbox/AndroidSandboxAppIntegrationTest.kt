@@ -20,6 +20,7 @@ import dev.shinsou.kmp.plugin.PluginHttpRequest
 import dev.shinsou.kmp.plugin.PluginHttpResponse
 import dev.shinsou.kmp.plugin.PluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginIndexEntry
+import dev.shinsou.kmp.plugin.PluginInstallKeys
 import dev.shinsou.kmp.plugin.PluginManager
 import dev.shinsou.kmp.plugin.PluginNetworkClient
 import dev.shinsou.kmp.plugin.PluginRuntimePermission
@@ -132,9 +133,12 @@ class AndroidSandboxAppIntegrationTest {
             val publisher = publishers.trustRepository(REPOSITORY.baseUrl, root).publisherId
             revocations.applyRevocations(REPOSITORY.baseUrl, emptyRevocations(key, root, publisher))
             manager.install(REPOSITORY, entry)
-            val review = checkNotNull(manager.pendingEventGrantReview(entry.id))
-            manager.approveEventGrantReview(entry.id, review, review.requestedPermissions)
-            val page = manager.source(SOURCE_ID)!!.getPopularManga(1)
+            // ADR-0002 D6: a publisher's package is keyed by publisher, and its sources get projected ids.
+            val installKey = checkNotNull(manager.installKeyFor(REPOSITORY, entry))
+            val sourceId = PluginInstallKeys.projectedSourceId(installKey, SOURCE_ID.toString())
+            val review = checkNotNull(manager.pendingEventGrantReview(installKey))
+            manager.approveEventGrantReview(installKey, review, review.requestedPermissions)
+            val page = manager.source(sourceId)!!.getPopularManga(1)
             assertEquals(listOf("沙箱一", "Two"), page.mangas.map { it.title })
             // It ran in a separate isolated process.
             val sandbox = opened.single()
@@ -146,7 +150,7 @@ class AndroidSandboxAppIntegrationTest {
 
             blocklist.block(PluginBlockEntry.Publisher(publisher))
             manager.loadInstalled()
-            assertNull(manager.source(SOURCE_ID))
+            assertNull(manager.source(sourceId))
         } finally {
             SodiumSyncPrimitives.destroy(key.privateKey)
             manager.close()

@@ -6,3 +6,5 @@ composeApp/src/desktopTest/resources/shuyue-plugin/** -text
 # sandbox-core's patches apply to LF upstream sources; its scripts run under bash on Windows too.
 sandbox-core/patches/*.patch text eol=lf
 sandbox-core/scripts/*.sh text eol=lf
+# The plugin contract vectors are compared byte for byte (with the @shinsou/plugin CLI too).
+fixtures/plugin-contract/** -text

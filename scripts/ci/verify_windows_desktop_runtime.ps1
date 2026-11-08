@@ -67,6 +67,14 @@ function Invoke-ShinsouProbe {
 
         if (-not $process.WaitForExit(90000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            # Show what the app printed before it stalled; otherwise a hang leaves no trace.
+            Start-Sleep -Seconds 2
+            foreach ($log in @($stdoutPath, $stderrPath)) {
+                if (Test-Path -LiteralPath $log) {
+                    Write-Host "----- $log -----"
+                    Get-Content -LiteralPath $log -Tail 200 | ForEach-Object { Write-Host $_ }
+                }
+            }
             throw "Packaged application $Name probe timed out after 90 seconds."
         }
         $process.Refresh()
