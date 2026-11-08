@@ -466,6 +466,7 @@ public class ExtensionRepositoryClient(
                         contentOrigins = source.optionalStringSet("contentOrigins"),
                         browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
                         contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
+                        browserImageOrigins = source.optionalStringSet("browserImageOrigins"),
                         originPolicyVersion = 2,
                         legacyLongId = source.requiredNullableString("legacyLongId"),
                         canonicalSourceId = rawId,
@@ -624,6 +625,7 @@ public class ExtensionRepositoryClient(
                 require(match.optionalStringSet("contentOrigins") == expected.contentOrigins)
                 require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
                 require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
+                require(match.optionalStringSet("browserImageOrigins") == expected.browserImageOrigins)
                 require(match.requiredStringSet("capabilities") == entry.capabilities)
                 val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
                 require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
@@ -1334,6 +1336,7 @@ public class ExtensionRepositoryClient(
             source.contentOrigins,
             source.browserSessionOrigins,
             source.contentHostSuffixes,
+            source.browserImageOrigins,
         )
         require(declarations.all { it.size <= MAX_INDEX_SET_VALUES }) {
             "Repository source declaration contains too many values"
@@ -1377,6 +1380,7 @@ public class ExtensionRepositoryClient(
             source.optionalStringSet("contentOrigins")
             source.optionalStringSet("browserSessionOrigins")
             source.optionalStringSet("contentHostSuffixes")
+            source.optionalStringSet("browserImageOrigins")
         }
     }
 

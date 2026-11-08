@@ -38,6 +38,7 @@ private class DesktopReviewedImageTransport(
         resolution: PluginHostResolution,
     ): PluginHttpResponse {
         validateReviewedBrowserImageRequest(request, resolution)
+        val origin = requireNotNull(browserImageOriginOf(request.url))
         return withContext(Dispatchers.IO) {
             val helper = locator.prepareExecutableCopy()
             var process: Process? = null
@@ -54,9 +55,9 @@ private class DesktopReviewedImageTransport(
                     val tokenBytes = ByteArray(32).also(SecureRandom()::nextBytes)
                     val token = tokenBytes.joinToString("") { "%02x".format(it) }
                     commands.write(REVIEWED_IMAGE_JSON.encodeToString(ReviewedImageLaunch(
-                        url = REVIEWED_BROWSER_IMAGE_ORIGIN,
-                        allowedNavigationOrigins = listOf(REVIEWED_BROWSER_IMAGE_ORIGIN),
-                        allowedSubresourceOrigins = listOf(REVIEWED_BROWSER_IMAGE_ORIGIN),
+                        url = origin,
+                        allowedNavigationOrigins = listOf(origin),
+                        allowedSubresourceOrigins = listOf(origin),
                         reviewedAddresses = resolution.addresses,
                         proxyToken = token,
                     )))

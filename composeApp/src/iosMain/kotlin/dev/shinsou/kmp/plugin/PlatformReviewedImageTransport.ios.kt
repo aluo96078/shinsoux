@@ -104,8 +104,9 @@ private suspend fun executeReviewedImageAtAddress(
     request: PluginHttpRequest,
     address: String,
 ): PluginHttpResponse = withTimeout(REVIEWED_IMAGE_TIMEOUT_MILLIS) {
+    val origin = requireNotNull(browserImageOriginOf(request.url))
     val credentials = randomProxyCredential() to randomProxyCredential()
-    val proxy = IosPinnedConnectProxy(address, credentials.first, credentials.second)
+    val proxy = IosPinnedConnectProxy(origin.removePrefix("https://"), address, credentials.first, credentials.second)
     try {
         val port = proxy.start()
         withContext(Dispatchers.Main) {
@@ -118,10 +119,10 @@ private suspend fun executeReviewedImageAtAddress(
             val configuration = WKWebViewConfiguration().apply { websiteDataStore = dataStore }
             val webView = WKWebView(platform.CoreGraphics.CGRectMake(0.0, 0.0, 1.0, 1.0), configuration)
             val ready = CompletableDeferred<Unit>()
-            val delegate = ReviewedImageNavigationDelegate(ready)
+            val delegate = ReviewedImageNavigationDelegate(ready, origin)
             webView.navigationDelegate = delegate
             try {
-                webView.loadHTMLString(REVIEWED_IMAGE_BOOTSTRAP, NSURL.URLWithString(REVIEWED_IMAGE_ORIGIN))
+                webView.loadHTMLString(reviewedImageBootstrap(origin), NSURL.URLWithString(origin))
                 ready.await()
                 webView.evaluateJavaScriptAwait(reviewedBrowserImageStartScript(request))
                 while (true) {
@@ -153,6 +154,7 @@ private suspend fun executeReviewedImageAtAddress(
 
 private class ReviewedImageNavigationDelegate(
     private val ready: CompletableDeferred<Unit>,
+    private val origin: String,
 ) : NSObject(), WKNavigationDelegateProtocol {
     private var released = false
     fun release() { released = true; if (!ready.isCompleted) ready.cancel() }
@@ -165,7 +167,7 @@ private class ReviewedImageNavigationDelegate(
         decisionHandler: (WKNavigationActionPolicy) -> Unit,
     ) {
         val target = decidePolicyForNavigationAction.request.URL?.absoluteString.orEmpty()
-        val bootstrap = target == REVIEWED_IMAGE_ORIGIN || target == "$REVIEWED_IMAGE_ORIGIN/" ||
+        val bootstrap = target == origin || target == "$origin/" ||
             target == "about:blank"
         decisionHandler(if (!released && bootstrap) {
             WKNavigationActionPolicy.WKNavigationActionPolicyAllow
@@ -186,6 +188,8 @@ private suspend fun WKWebView.evaluateJavaScriptAwait(script: String): String? =
     }
 
 private class IosPinnedConnectProxy(
+    /** The image origin's host; the only CONNECT target the proxy accepts. */
+    private val imageHost: String,
     private val approvedAddress: String,
     username: String,
     password: String,
@@ -249,7 +253,7 @@ private class IosPinnedConnectProxy(
             val end = joined.indexOfHeaderEnd()
             if (end < 0) return@shinsou_connection_receive readConnectHeader(connection, joined, mayChallenge)
             val header = joined.copyOfRange(0, end).decodeToString()
-            if (!isValidReviewedImageConnectHeader(header, expectedAuthorization)) {
+            if (!isValidReviewedImageConnectHeader(header, expectedAuthorization, imageHost)) {
                 return@shinsou_connection_receive if (mayChallenge) challengeAndRetry(connection) else rejectAndClose(connection)
             }
             val remainder = joined.copyOfRange(end + 4, joined.size)
@@ -374,13 +378,16 @@ private fun rawTcpParameters(): NSObject {
 
 private class IosReviewedImageAddressException(message: String) : Exception(message)
 
-private const val REVIEWED_IMAGE_ORIGIN = "https://i.motiezw.com"
 private const val REVIEWED_IMAGE_TIMEOUT_MILLIS = 30_000L
 private const val REVIEWED_IMAGE_POLL_MILLIS = 40L
 private const val MAX_RELAY_BYTES = 16 * 1_024 * 1_024
 private const val MAX_PROXY_CONNECTIONS = 4
 private const val PROXY_CHUNK_BYTES: UInt = 32_768u
-private const val REVIEWED_IMAGE_BOOTSTRAP = "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src https://i.motiezw.com\"><title>Shinsou image transport</title>"
+/** A blank document of the image origin that may only connect back to that origin. */
+private fun reviewedImageBootstrap(origin: String): String {
+    require(browserImageOriginOf("$origin/") == origin)
+    return "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src $origin\"><title>Shinsou image transport</title>"
+}
 private val CONNECT_ESTABLISHED = "HTTP/1.1 200 Connection Established\r\n\r\n".encodeToByteArray()
 private val CONNECT_CHALLENGE = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Shinsou\"\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n".encodeToByteArray()
 private val CONNECT_REJECTED = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Shinsou\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".encodeToByteArray()

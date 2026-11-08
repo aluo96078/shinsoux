@@ -83,6 +83,7 @@ public class LegacyMangaExtensionSourceV2(
                 add(ExtensionCapability.LOGIN)
             }
             if (source is ConfigurableSource) add(ExtensionCapability.PREFERENCES)
+            if (source.supportsFavorites) add(ExtensionCapability.FAVORITE)
         },
         baseUrl = source.baseUrl.takeIf(String::isNotBlank),
     )
@@ -115,6 +116,7 @@ public class LegacyMangaExtensionSourceV2(
         source.getFilterList().map { it.toBrowseFilterV2() }
 
     override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2(
+        keys = if (source.supportsFavorites) listOf(FAVORITE_BROWSE_OPTION_KEY) else emptyList(),
         filters = getFilterList(),
     )
 
@@ -139,7 +141,15 @@ public class LegacyMangaExtensionSourceV2(
         options: BrowseOptionsV2,
         page: Int,
     ): PagedResultV2<RemotePublicationV2> {
-        require(options.values.isEmpty()) { "Legacy manga browse does not accept v2 option keys" }
+        // The one option key: the account collection (the UI's bookcase), when the source has one.
+        val option = options.values[FAVORITE_BROWSE_OPTION_KEY]
+        require(options.values.keys.all { it == FAVORITE_BROWSE_OPTION_KEY }) {
+            "Legacy manga browse accepts only the '$FAVORITE_BROWSE_OPTION_KEY' option"
+        }
+        if (option != null) {
+            require(source.supportsFavorites && option == FAVORITE_BROWSE_OPTION_VALUE) { "Unknown browse option '$option'" }
+            return source.getFavoriteManga(page).toV2Page()
+        }
         return if (options.filters.isEmpty()) {
             source.getPopularManga(page).toV2Page()
         } else {
@@ -210,8 +220,14 @@ public class LegacyMangaExtensionSourceV2(
     override suspend fun preferences(): List<PreferenceV2> =
         (source as? ConfigurableSource)?.getPreferenceDefinitions().orEmpty().map(SourcePreference::toV2)
 
-    override suspend fun favorite(remotePublicationId: String, favorite: Boolean): Unit =
-        throw UnsupportedOperationException("Legacy manga source does not implement favorite mutation")
+    override suspend fun favorite(remotePublicationId: String, favorite: Boolean) {
+        if (!source.supportsFavoriteMutation) {
+            throw UnsupportedOperationException("This source cannot change its account collection")
+        }
+        check(source.setFavorite(SManga(url = remotePublicationId, title = remotePublicationId), favorite)) {
+            "The site did not accept the favorite change"
+        }
+    }
 
     /** A5: plain-text chapters from `getChapterText`, inline (the sandbox caps a result at 4 MiB). */
     private inner class TextChapterRepresentationProvider : UnitContentRepresentationProviderV2 {
@@ -394,3 +410,6 @@ private val LEGACY_SAFE_HEADER_HINTS: Set<String> = setOf(
     "x-requested-with",
     "x-image-ticket",
 )
+/** The browse option that opens a source's account collection; the UI sends this key and value. */
+private const val FAVORITE_BROWSE_OPTION_KEY: String = dev.shinsou.kmp.plugin.DEFAULT_FAVORITE_BROWSE_OPTION_KEY
+private const val FAVORITE_BROWSE_OPTION_VALUE: String = "bookcase"

@@ -195,6 +195,8 @@ internal class SandboxScriptPluginRuntime(
         private set
     override var supportsFavorites: Boolean = false
         private set
+    override var supportsFavoriteMutation: Boolean = false
+        private set
     override var headers: Map<String, String> = emptyMap()
         private set
     override var webChallengeUrl: String? = null
@@ -213,7 +215,10 @@ internal class SandboxScriptPluginRuntime(
         baseUrl = source.baseUrl ?: metadata.str("baseUrl").orEmpty()
         supportsLatest = metadata["supportsLatest"].bool()
         supportsLogin = metadata["supportsLogin"].bool()
-        supportsFavorites = metadata["supportsFavorites"].bool()
+        // The account collection (a site's bookcase): `getFavoriteManga(page)`, and optionally
+        // `setFavorite(manga, favorite)` to change it.
+        supportsFavorites = metadata["supportsFavorites"].bool() || hasFunction("getFavoriteManga")
+        supportsFavoriteMutation = supportsFavorites && hasFunction("setFavorite")
         // Only a source that declares text content is asked: one call fewer for every manga source.
         supportsChapterText = "PLAIN_TEXT" in source.contentKinds && hasFunction("getChapterText")
         var h = SandboxScriptJson.stringMap(metadata["headers"])
@@ -232,6 +237,20 @@ internal class SandboxScriptPluginRuntime(
     override suspend fun getFavoriteManga(page: Int): MangasPage =
         if (hasFunction("getFavoriteManga")) mangasPage("getFavoriteManga", buildJsonArray { add(JsonPrimitive(page)) })
         else MangasPage(emptyList(), false)
+
+    /** `setFavorite(manga, favorite)` → true (or `{ok: true}`) when the site accepted the change. */
+    override suspend fun setFavorite(manga: SManga, favorite: Boolean): Boolean {
+        check(supportsFavoriteMutation) { "Plugin '$pluginId' cannot change its account collection" }
+        environment.requireRuntimePermission(PluginRuntimePermission.FAVORITE_MUTATION)
+        val result = call("setFavorite", buildJsonArray {
+            add(SandboxScriptJson.mangaJson(manga))
+            add(JsonPrimitive(favorite))
+        })
+        return when (result) {
+            is JsonObject -> result["ok"].bool()
+            else -> result.bool()
+        }
+    }
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
         mangasPage(

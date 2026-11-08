@@ -43,6 +43,14 @@ public interface CatalogueSource : Source {
     public suspend fun getLatestUpdates(page: Int): MangasPage
     /** Loads the source-owned collection without mixing it with the host's local library. */
     public suspend fun getFavoriteManga(page: Int): MangasPage = MangasPage(emptyList(), false)
+    /** Whether [setFavorite] can add to (or remove from) the account-owned collection. */
+    public val supportsFavoriteMutation: Boolean get() = false
+    /**
+     * Adds [manga] to the account-owned collection, or removes it when [favorite] is false.
+     * Only for sources with [supportsFavoriteMutation]; the host requires FAVORITE_MUTATION.
+     */
+    public suspend fun setFavorite(manga: SManga, favorite: Boolean): Boolean =
+        throw UnsupportedOperationException("This source cannot change its account collection")
     public suspend fun getFilterList(): FilterList
 }
 

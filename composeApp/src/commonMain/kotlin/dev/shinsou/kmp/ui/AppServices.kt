@@ -1739,6 +1739,8 @@ data class PluginPermissionDetails(
     /** Where cookies and, for login, the account password may be sent. */
     val credentialOrigins: List<String>,
     val browserSessionOrigins: List<String>,
+    /** Where the isolated browser may load images from, with BROWSER_IMAGES. */
+    val browserImageOrigins: List<String> = emptyList(),
     /** ADR-0002 §8.1: unsigned, from a developer-mode repository; runs only while the mode is on. */
     val inDevelopment: Boolean = false,
 )

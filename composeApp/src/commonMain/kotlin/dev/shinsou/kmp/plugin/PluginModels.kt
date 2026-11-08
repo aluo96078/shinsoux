@@ -105,6 +105,14 @@ public enum class PluginRuntimePermission {
      */
     COOKIE_READ,
 
+    /**
+     * Lets the host load this source's images from its `browserImageOrigins` in a short-lived,
+     * isolated browser (no cookies, no referrer), for image CDNs that refuse ordinary HTTP
+     * clients. Sensitive, off unless granted; used on macOS and iOS, elsewhere images use the
+     * ordinary content plane.
+     */
+    BROWSER_IMAGES,
+
     ;
 
     public companion object {
@@ -206,6 +214,11 @@ public data class SourceIndexEntry(
      * sensitive declaration the user approves; never a request or credential origin.
      */
     val contentHostSuffixes: Set<String> = emptySet(),
+    /**
+     * Exact HTTPS content origins (port 443, a subset of [contentOrigins]) whose images the host
+     * may load in an isolated browser, only while the user grants BROWSER_IMAGES.
+     */
+    val browserImageOrigins: Set<String> = emptySet(),
     /** Persisted marker distinguishing authoritative V2 empty allowlists from legacy omission. */
     val originPolicyVersion: Int? = null,
     /** Lossless V2 legacy identifier copied into the sidecar SourceKey when present. */
@@ -228,6 +241,11 @@ public data class SourceIndexEntry(
         require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES) { "Too many content host suffixes" }
         require(contentHostSuffixes.all(::isGrantableContentHostSuffix)) {
             "Content host suffixes must be registrable host names, not public suffixes"
+        }
+        require(browserImageOrigins.size <= MAX_BROWSER_IMAGE_ORIGINS) { "Too many browser image origins" }
+        val imageOrigins = normalizePluginOrigins(browserImageOrigins)
+        require(imageOrigins.all { it in normalizePluginOrigins(contentOrigins) && browserImageOriginOf("$it/") == it }) {
+            "Browser image origins must be content origins on port 443"
         }
     }
 
@@ -413,3 +431,6 @@ public data class StoredPlugin(
     val manifest: PluginManifest get() = metadata.manifest
     val script: String get() = scriptBytes.decodeToString()
 }
+
+/** Most `browserImageOrigins` one source may declare. */
+internal const val MAX_BROWSER_IMAGE_ORIGINS: Int = 4

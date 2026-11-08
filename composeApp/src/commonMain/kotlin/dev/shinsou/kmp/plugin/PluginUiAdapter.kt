@@ -1332,6 +1332,7 @@ public class PluginBrowseAdapter(
             contentOrigins = policies.flatMap { it.contentOrigins }.distinct().sorted(),
             credentialOrigins = policies.flatMap { it.credentialOrigins }.distinct().sorted(),
             browserSessionOrigins = policies.flatMap { it.browserSessionOrigins }.distinct().sorted(),
+            browserImageOrigins = sources.flatMap { it.browserImageOrigins }.distinct().sorted(),
             inDevelopment = stored.metadata.publisherId == null && PluginInstallKeys.isDeveloperKey(stored.manifest.id),
         )
     }

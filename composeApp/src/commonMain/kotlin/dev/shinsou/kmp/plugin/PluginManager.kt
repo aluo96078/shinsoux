@@ -1559,6 +1559,7 @@ public class PluginManager(
             if (isDisabledReviewedLocalInstall(stored)) return@withLock null
             reviewedImageContentClient(
                 sourceKeyFor(packageId, sourceId, declared.canonicalSourceId), stored.artifactIdentity(),
+                browserImageOriginsFor(stored, declared),
                 environment.network.scopedToContentPolicy(
                     reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
                 ),
@@ -1594,6 +1595,7 @@ public class PluginManager(
                     sourceId = legacyId,
                     network = reviewedImageContentClient(
                         sourceKey, stored.artifactIdentity(),
+                        browserImageOriginsFor(stored, declared),
                         environment.network.scopedToContentPolicy(
                             reviewed?.networkPolicy ?: grantedNetworkPolicy(declared, grantFor(stored)),
                         ),
@@ -1619,7 +1621,7 @@ public class PluginManager(
             TypedReaderRemoteAssetScope(
                 sourceKey = sourceKey,
                 sourceId = sourceId,
-                network = reviewedImageContentClient(sourceKey, liveIdentity, environment.network
+                network = reviewedImageContentClient(sourceKey, liveIdentity, emptySet(), environment.network
                     .forReviewedInProcessArtifact()
                     .scopedToContentPolicy(
                         PluginNetworkPolicy(
@@ -1630,25 +1632,41 @@ public class PluginManager(
             )
         }
 
+    /**
+     * The origins whose images this source may load in the isolated browser: those it declared
+     * as `browserImageOrigins` (always content origins), only while the user grants BROWSER_IMAGES.
+     */
+    private suspend fun browserImageOriginsFor(stored: StoredPlugin, declared: SourceIndexEntry): Set<String> {
+        if (declared.browserImageOrigins.isEmpty()) return emptySet()
+        if (PluginRuntimePermission.BROWSER_IMAGES !in effectiveRuntimePermissions(stored)) return emptySet()
+        val grant = grantFor(stored)
+        if (eventGrantAdmission != null &&
+            (grant == null || PluginRuntimePermission.BROWSER_IMAGES !in grant.runtimePermissions)
+        ) return emptySet()
+        return normalizePluginOrigins(declared.browserImageOrigins) intersect normalizePluginOrigins(declared.contentOrigins)
+    }
+
     /** No script-selected origin or identity can grant the browser image transport. */
     private fun reviewedImageContentClient(
         sourceKey: SourceKey,
         identity: PluginArtifactIdentity,
+        origins: Set<String>,
         native: PluginContentNetworkClient,
     ): PluginContentNetworkClient {
         val transport = reviewedImageTransport ?: return native
-        if (!sourceKey.isReviewedBrowserImageCandidate()) return native
+        if (origins.isEmpty()) return native
         return native.withReviewedImageTransport { request ->
-            if (request.method != "GET" || !isReviewedBrowserImageUrl(request.url)) return@withReviewedImageTransport null
-            // The reader's legacy Referer/UA hints are not browser credentials. Ignore them;
-            // the isolated same-origin browser uses its real UA and no referrer/cookies.
+            val origin = browserImageOriginOf(request.url)
+            if (request.method != "GET" || origin == null || origin !in origins) return@withReviewedImageTransport null
+            // The reader's Referer/UA hints are not browser credentials. Ignore them; the
+            // isolated same-origin browser uses its real UA and no referrer/cookies.
             val imageRequest = request.copy(
                 headers = emptyMap(),
                 maxResponseBytes = minOf(request.maxResponseBytes, REVIEWED_BROWSER_IMAGE_MAX_BYTES),
             )
             reviewedImagePermits.acquire()
             try {
-                require(isLiveReviewedBrowserImageSource(sourceKey, identity)) { "Reviewed browser image source is no longer authorized" }
+                require(isLiveBrowserImageSource(sourceKey, identity, origin)) { "Browser image source is no longer authorized" }
                 val resolution = resolvePluginTransportHost(Url(imageRequest.url), environment.hostResolver, false)
                 validateReviewedBrowserImageRequest(imageRequest, resolution)
                 val result = kotlinx.coroutines.withTimeout(30_000) {
@@ -1656,45 +1674,31 @@ public class PluginManager(
                         transport.executeResolved(imageRequest, resolution)
                     }
                 }
-                require(isLiveReviewedBrowserImageSource(sourceKey, identity)) { "Reviewed browser image source changed during loading" }
+                require(isLiveBrowserImageSource(sourceKey, identity, origin)) { "Browser image source changed during loading" }
                 require(result.body.size <= imageRequest.maxResponseBytes && result.imageBodyForDecoderOrNull() != null) {
-                    "Reviewed browser image returned invalid content"
+                    "Browser image returned invalid content"
                 }
                 result
             } finally { reviewedImagePermits.release() }
         }
     }
 
-    private suspend fun isLiveReviewedBrowserImageSource(
+    /** Rechecked before and after every browser image: same artifact, still admitted, still granted. */
+    private suspend fun isLiveBrowserImageSource(
         sourceKey: SourceKey,
         identity: PluginArtifactIdentity,
+        origin: String,
     ): Boolean = packageMutationMutex.withLock {
-        if (!sourceKey.isReviewedBrowserImageCandidate() || isLocallyRevoked(identity)) return@withLock false
-        sourceKey.legacyLongId?.let { sourceId ->
-            if (sourceKey.packageId != "zh.bilimanga.manga") return@withLock false
-            if (lifecycleMutex.withLock { sourceOwners[sourceId] } != sourceKey.packageId) return@withLock false
-            val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
-            if (stored.artifactIdentity() != identity) return@withLock false
-            val declared = stored.manifest.sources.orEmpty().singleOrNull { it.id == sourceId }
-                ?: return@withLock false
-            val review = stored.eventGrantReview(includeEmpty = true) ?: return@withLock false
-            return@withLock executionAdmissionGranted(review) &&
-                sourceKeyFor(sourceKey.packageId, sourceId, declared.canonicalSourceId) == sourceKey &&
-                OfficialShinsouReviewedCatalog.matchContent(
-                    stored, declared, reviewedLocalRepositoryPolicy,
-                ) != null
-        }
-        if (sourceKey.packageId != "zh.bilimanga" || nativeArtifactIdentities[sourceKey.packageId] != identity ||
-            sourceKey in disabledNativeSources) return@withLock false
-        exactReviewedShuYueProfile(identity, sourceKey) != null &&
-            reviewedContentAuthorizers[sourceKey.packageId]?.invoke() == true &&
-            extensionRegistryV2.packageFacade(sourceKey.packageId)?.source(sourceKey) != null
+        if (isLocallyRevoked(identity)) return@withLock false
+        val sourceId = sourceKey.legacyLongId ?: return@withLock false
+        if (lifecycleMutex.withLock { sourceOwners[sourceId] } != sourceKey.packageId) return@withLock false
+        val stored = packageStore.get(sourceKey.packageId) ?: return@withLock false
+        if (stored.artifactIdentity() != identity || isDisabledReviewedLocalInstall(stored)) return@withLock false
+        val declared = stored.manifest.sources.orEmpty().singleOrNull { it.id == sourceId } ?: return@withLock false
+        if (sourceKeyFor(sourceKey.packageId, sourceId, declared.canonicalSourceId) != sourceKey) return@withLock false
+        val review = stored.eventGrantReview(includeEmpty = true) ?: return@withLock false
+        executionAdmissionGranted(review) && origin in browserImageOriginsFor(stored, declared)
     }
-
-    private fun SourceKey.isReviewedBrowserImageCandidate(): Boolean =
-        if (legacyLongId != null) packageId == "zh.bilimanga.manga" &&
-            legacyLongId == 7_289_707_411_592_168_382L
-        else packageId == "zh.bilimanga" && sourceId == "zh.bilimanga.manga"
 
     public suspend fun contentNetworkForSource(sourceKey: SourceKey): PluginContentNetworkClient? =
         contentNetworkScopeForSource(sourceKey)?.network

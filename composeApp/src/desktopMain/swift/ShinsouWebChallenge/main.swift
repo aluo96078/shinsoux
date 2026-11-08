@@ -30,7 +30,14 @@ private final class ReviewedConnectProxy {
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var closed = false
 
-    init(addresses: [String], token: String) throws {
+    private let host: String
+
+    init(host: String, addresses: [String], token: String) throws {
+        // The image origin's host, already validated by the app and by the launch grant below.
+        guard !host.isEmpty, host.utf8.count <= 253,
+              host.unicodeScalars.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "." })
+        else { throw BoundedLineError.invalidUTF8 }
+        self.host = host
         guard !addresses.isEmpty, addresses.count <= 32, token.utf8.count >= 32,
               token.utf8.count <= 128 else { throw BoundedLineError.invalidUTF8 }
         approvedAddresses = try addresses.map {
@@ -120,7 +127,7 @@ private final class ReviewedConnectProxy {
               }) else {
             client.cancel(); return
         }
-        guard lines.first == "CONNECT i.motiezw.com:443 HTTP/1.1" else { client.cancel(); return }
+        guard lines.first == "CONNECT \(host):443 HTTP/1.1" else { client.cancel(); return }
         var hosts: [String] = [], auths: [String] = []
         for line in lines.dropFirst() where !line.isEmpty {
             guard let colon = line.firstIndex(of: ":"), colon != line.startIndex else { client.cancel(); return }
@@ -135,7 +142,7 @@ private final class ReviewedConnectProxy {
             if name == "proxy-authorization" { auths.append(value) }
         }
         guard hosts.count == 1 else { client.cancel(); return }
-        let acceptedHostValues = ["i.motiezw.com:443", "i.motiezw.com"]
+        let acceptedHostValues = ["\(host):443", host]
         guard acceptedHostValues.contains(hosts[0].lowercased()) else { client.cancel(); return }
         guard auths == ["Basic \(authorization)"] else {
             guard authenticationChallenges == 0 else { client.cancel(); return }
@@ -493,7 +500,8 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
                     self.writer.send(.error("Reviewed image transport is unavailable.")); self.terminate(); return
                 }
                 do {
-                    let proxyServer = try ReviewedConnectProxy(addresses: self.launch.reviewedAddresses, token: token)
+                    guard let imageHost = self.origin.host?.lowercased() else { throw BoundedLineError.invalidUTF8 }
+                    let proxyServer = try ReviewedConnectProxy(host: imageHost, addresses: self.launch.reviewedAddresses, token: token)
                     let port = try proxyServer.start()
                     var proxy = ProxyConfiguration(
                         httpCONNECTProxy: .hostPort(
@@ -605,8 +613,9 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
             if self.launch.mode == "browserSession" || self.launch.mode == "reviewedImage" {
+                let reviewedImageOrigin = "https://\(self.origin.host?.lowercased() ?? "invalid.invalid")"
                 let document = self.launch.mode == "reviewedImage"
-                    ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src https://i.motiezw.com\">"
+                    ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src \(reviewedImageOrigin)\">"
                     : "<!doctype html><meta charset=\"utf-8\"><title>Shinsou browser session</title>"
                 self.webView?.loadHTMLString(
                     document,
@@ -1203,10 +1212,22 @@ let browserSessionGrantIsValid = launch.mode == "browserSession" &&
     !navigationOrigins.isEmpty &&
     navigationOrigins.isSubset(of: subresourceOrigins) &&
     initialOrigin.map(navigationOrigins.contains) == true
+/// A browser-image origin: `https://` + a lowercase DNS name on the default port (see the app's browserImageOriginOf).
+func isBrowserImageOrigin(_ origin: String) -> Bool {
+    guard origin.hasPrefix("https://") else { return false }
+    let host = origin.dropFirst("https://".count)
+    guard !host.isEmpty, host.utf8.count <= 253, host.contains("."),
+          !host.hasPrefix("."), !host.hasSuffix("."), !host.hasPrefix("-") else { return false }
+    let digitsAndDots = host.unicodeScalars.allSatisfy { ("0"..."9").contains($0) || $0 == "." }
+    return !digitsAndDots && host.unicodeScalars.allSatisfy {
+        ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "."
+    }
+}
 let reviewedImageGrantIsValid = launch.mode == "reviewedImage" &&
-    navigationOrigins == ["https://i.motiezw.com"] &&
+    navigationOrigins.count == 1 &&
     subresourceOrigins == navigationOrigins &&
-    initialOrigin == "https://i.motiezw.com" &&
+    initialOrigin.map(navigationOrigins.contains) == true &&
+    initialOrigin.map(isBrowserImageOrigin) == true &&
     launch.cookies.isEmpty && launch.userAgent.isEmpty && launch.localStorageKeys.isEmpty &&
     launch.username == nil && launch.password == nil
 let interactiveGrantIsValid = launch.mode == "challenge" &&

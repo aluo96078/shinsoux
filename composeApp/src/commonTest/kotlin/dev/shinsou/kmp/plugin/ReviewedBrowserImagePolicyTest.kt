@@ -13,16 +13,25 @@ class ReviewedBrowserImagePolicyTest {
     private fun request(url: String, method: String = "GET", headers: Map<String, String> = emptyMap(), bytes: Int = 4 * 1024 * 1024) =
         PluginHttpRequest(method, url, headers = headers, maxResponseBytes = bytes)
 
-    @Test fun acceptsCanonicalReviewedImageAndRejectsUntrustedVariants() {
+    @Test fun acceptsCanonicalImageUrlsAndRejectsUnsafeVariants() {
         validateReviewedBrowserImageRequest(request("https://i.motiezw.com/1/1615/133085/2911882.avif"), resolution("93.184.216.34"))
+        // Any path and query on the image origin; the source's declared origins decide which hosts.
+        validateReviewedBrowserImageRequest(request("https://i.motiezw.com/a/b.webp?t=1"), resolution("93.184.216.34"))
+        assertEquals("https://cdn.example.com", browserImageOriginOf("https://cdn.example.com/x.png"))
         listOf(
-            "https://evil.motiezw.com/1/1615/133085/2911882.avif",
             "http://i.motiezw.com/1/1615/133085/2911882.avif",
-            "https://i.motiezw.com/1/1615/133085/2911882.avif?q=1",
-            "https://i.motiezw.com/1/1615/133085/2911882.avif#x",
-            "https://user:i@i.motiezw.com/1/1615/133085/2911882.avif",
-            "https://i.motiezw.com/a/b/c/d.avif",
-        ).forEach { url -> assertFailsWith<IllegalArgumentException> { validateReviewedBrowserImageRequest(request(url), resolution("93.184.216.34")) } }
+            "https://i.motiezw.com:8443/1.avif",
+            "https://I.MOTIEZW.COM/1.avif",
+            "https://i.motiezw.com/1.avif#x",
+            "https://user:i@i.motiezw.com/1.avif",
+            "https://93.184.216.34/1.avif",
+            "https://localhost/1.avif",
+            "https://i.motiezw.com",
+        ).forEach { url -> assertNull(browserImageOriginOf(url), url) }
+        // The resolution must be for the URL's own host.
+        assertFailsWith<IllegalArgumentException> {
+            validateReviewedBrowserImageRequest(request("https://evil.motiezw.com/1.avif"), resolution("93.184.216.34"))
+        }
     }
 
     @Test fun rejectsNonGetHeadersBodiesOversizeAndUnsafeResolution() {
