@@ -825,14 +825,6 @@ public class ShinsouComposition(
      * they continue on the background tracking scope.
      */
     public suspend fun start() {
-        // Before any refresh: repository trust and install keys read it synchronously.
-        try {
-            pluginDeveloperMode.load()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // Unreadable: developer mode stays off.
-        }
         // The v2 observer/guard must be installed before proxy hydration, source refresh,
         // tracking or downloads can publish repository mutations.
         syncRuntime?.start()
@@ -840,6 +832,15 @@ public class ShinsouComposition(
         scheduleContentOutboxDrain()
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
+            // Before any refresh: repository trust and install keys read it synchronously, and
+            // until it is loaded developer mode counts as off.
+            try {
+                pluginDeveloperMode.load()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Unreadable: developer mode stays off.
+            }
             val stopsAtStart = backgroundDownloads.stopCount()
             try {
                 // Shown (and kept alive by the platform download service) right away; the
