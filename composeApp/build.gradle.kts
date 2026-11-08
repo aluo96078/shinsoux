@@ -65,6 +65,12 @@ val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository"
     .filter { it.isNotBlank() }
     .orElse(providers.systemProperty("shinsou.pluginRepo").filter { it.isNotBlank() })
     .orElse("../../shinsou_plugin")
+// The repository keeps its unsigned sources in src/ (the root serves signed copies); older
+// checkouts, such as the commit CI pins, keep them at the root.
+val shinsouPluginSources = shinsouPluginRepository.map { repository ->
+    val root = file(repository)
+    root.resolve("src").takeIf { it.resolve("index.json").isFile } ?: root
+}
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     // The sandbox tests run this helper: a rebuilt helper must rerun them, not reuse old results.
@@ -76,7 +82,7 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         .optional()
     systemProperty(
         "shinsou.pluginRepo",
-        shinsouPluginRepository.map { repository -> file(repository).absolutePath }.get(),
+        shinsouPluginSources.map { it.absolutePath }.get(),
     )
     // Plugin publishing contract shared with the @shinsou/plugin CLI (PluginContractVectorTest).
     systemProperty(
@@ -584,7 +590,7 @@ kotlin {
         }
 
         val desktopTest by getting {
-            resources.srcDir(shinsouPluginRepository.map(::file))
+            resources.srcDir(shinsouPluginSources)
         }
     }
 }

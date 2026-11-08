@@ -1231,6 +1231,10 @@ private fun Throwable.diagnosticMessage(): String {
 
 private fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
     localizedSourceFailure(strings)?.let { return it }
+    // A repository that switched to signed publishing: its card already offers "Confirm publisher".
+    if (generateSequence(this) { it.cause }.any { it is dev.shinsou.kmp.plugin.RepositoryTrustException.UntrustedRepository }) {
+        return strings.text("Now signed by its publisher: confirm the publisher to keep updating.")
+    }
     if (generateSequence(this) { it.cause }.any { it is ExtensionArtifactNotReviewedException }) {
         return strings.text("This plugin can't run: it isn't from a publisher you trust, or this device has no plugin sandbox.")
     }
@@ -1992,6 +1996,9 @@ internal fun ExtensionV2PublicationPane(
     var notes by remember(item.identityKey) { mutableStateOf("") }
     var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    // Read/unread marks the user set by hand on this screen. Reading state loads in the
+    // background, so a late result must not undo a mark made while it was loading.
+    var manualReadMarks by remember(item.identityKey) { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var resumeUnitId by remember(item.identityKey) { mutableStateOf<String?>(null) }
     var inProgressUnits by remember(item.identityKey) {
         mutableStateOf<Map<String, ExtensionUnitPageProgressV2>>(emptyMap())
@@ -2098,14 +2105,18 @@ internal fun ExtensionV2PublicationPane(
                 onReaderVisibilityChanged(false)
                 // The shell calls back only after local progress is durable. Merge it so the
                 // chapter list shows the page just reached; unsaved manual read marks survive.
-                runCatching {
-                    callbacks.extensionLocalReadingStateV2(
-                        extensionPublicationKey(sourceKey, remotePublicationId),
-                    )
-                }.getOrNull()?.let { localReading ->
-                    readUnitIds = readUnitIds + localReading.completedRemoteUnitIds
-                    resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
-                    inProgressUnits = localReading.inProgressRemoteUnits
+                scope.launch {
+                    runCatching {
+                        withContext(Dispatchers.Default) {
+                            callbacks.extensionLocalReadingStateV2(
+                                extensionPublicationKey(sourceKey, remotePublicationId),
+                            )
+                        }
+                    }.getOrNull()?.let { localReading ->
+                        readUnitIds = (readUnitIds + localReading.completedRemoteUnitIds).withReadMarks(manualReadMarks)
+                        resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
+                        inProgressUnits = localReading.inProgressRemoteUnits
+                    }
                 }
             },
             onOpenUnit = { selection -> materialize(selection, openReader = true) },
@@ -2116,7 +2127,11 @@ internal fun ExtensionV2PublicationPane(
             onReaderSettingsChange = onReaderSettingsChange,
             onCompleted = {
                 if (readerSession === openedReader) {
-                    readerUnitId?.let { unitId -> readUnitIds = readUnitIds + unitId }
+                    readerUnitId?.let { unitId ->
+                        // Reading it again supersedes an earlier hand-set "unread".
+                        manualReadMarks = manualReadMarks - unitId
+                        readUnitIds = readUnitIds + unitId
+                    }
                 }
             },
             onReaderProgress = { position ->
@@ -2344,12 +2359,24 @@ internal fun ExtensionV2PublicationPane(
             }
         }
         try {
-            val localReading = callbacks.extensionLocalReadingStateV2(
-                extensionPublicationKey(sourceKey, remotePublicationId),
-            )
-            readUnitIds = localReading.completedRemoteUnitIds
-            resumeUnitId = localReading.lastReadRemoteUnitId
-            inProgressUnits = localReading.inProgressRemoteUnits
+            // Reading marks decode the whole stored publication (downloaded chapter text included):
+            // off the UI thread, beside the chapter request, merged when ready.
+            launch {
+                val localReading = try {
+                    withContext(Dispatchers.Default) {
+                        callbacks.extensionLocalReadingStateV2(
+                            extensionPublicationKey(sourceKey, remotePublicationId),
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    return@launch
+                }
+                readUnitIds = (readUnitIds + localReading.completedRemoteUnitIds).withReadMarks(manualReadMarks)
+                resumeUnitId = localReading.lastReadRemoteUnitId ?: resumeUnitId
+                inProgressUnits = localReading.inProgressRemoteUnits
+            }
             // Offline bodies are durable; only the markers were screen-local before. Recover them
             // beside the chapter request and merge, so downloads finished meanwhile are kept.
             launch {
@@ -2581,6 +2608,7 @@ internal fun ExtensionV2PublicationPane(
                         onDownloadUnits = { downloadUnits(it) },
                         onSelectionChange = { selectedUnitIds = it },
                         onReadStateChange = { ids, read ->
+                            manualReadMarks = manualReadMarks + ids.associateWith { read }
                             readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
                         },
                         onBookmarkStateChange = { ids, bookmarked ->
@@ -2664,6 +2692,7 @@ internal fun ExtensionV2PublicationPane(
                             onDownloadUnits = { downloadUnits(it) },
                             onSelectionChange = { selectedUnitIds = it },
                             onReadStateChange = { ids, read ->
+                                manualReadMarks = manualReadMarks + ids.associateWith { read }
                                 readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
                             },
                             onBookmarkStateChange = { ids, bookmarked ->
@@ -5072,3 +5101,7 @@ private fun SourceSortFilter(
         }
     }
 }
+
+/** Applies the user's hand-set read/unread marks over read state that loaded later. */
+internal fun Set<String>.withReadMarks(marks: Map<String, Boolean>): Set<String> =
+    this - marks.filterValues { !it }.keys + marks.filterValues { it }.keys

@@ -316,7 +316,10 @@ class SandboxOfficialParityTest {
     private fun locateRepository(): Path? =
         listOfNotNull(System.getProperty("shinsou.pluginRepo"), "../shinsou_plugin", "../../shinsou_plugin")
             .map { Path.of(it).toAbsolutePath() }
-            .firstOrNull { Files.isRegularFile(it.resolve("index.json")) }
+            // Unsigned sources live in src/ (the root serves signed copies); older checkouts keep them at the root.
+            .flatMap { listOf(it, it.resolve("src")) }
+            .filter { Files.isRegularFile(it.resolve("index.json")) }
+            .firstOrNull { !Files.readString(it.resolve("index.json")).contains("\"signature\"") }
 }
 
 private fun key(post: Boolean, url: String, body: String) = "${if (post) "POST" else "GET"} $url ${if (post) body else ""}"
