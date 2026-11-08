@@ -67,6 +67,11 @@ function Invoke-ShinsouProbe {
 
         if (-not $process.WaitForExit(90000)) {
             # The startup probe writes its thread stacks here after 60 seconds (Main.kt).
+            $stages = "$markerPath.stages"
+            if (Test-Path -LiteralPath $stages) {
+                Write-Host "----- $stages -----"
+                Get-Content -LiteralPath $stages | ForEach-Object { Write-Host $_ }
+            }
             $threads = "$markerPath.threads"
             if (Test-Path -LiteralPath $threads) {
                 Write-Host "----- $threads -----"
