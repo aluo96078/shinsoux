@@ -50,7 +50,7 @@
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
 - Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；所有套件都是第三方套件，
   一律在沙箱中執行、只取得使用者逐項同意的權限；未簽章的開發中套件僅限開發者模式；repository 設定納入可攜 snapshot
-- [ShuYue](https://github.com/aluo96078/shuyue) v2 repository／runtime 相容層：保留 package／source identity，支援登入、登出、來源刷新與精確事件授權，不把 v2 套件誤當成舊版單一來源
+- 從 [ShuYue](https://github.com/aluo96078/shuyue) 匯入書庫與閱讀進度；原 ShuYue 小說來源改寫成一般 Shinsou 套件後保留同一份書庫身分與登入
 - 統一內容基礎：TXT、圖片序列與完整 EPUB package/resource graph 都寫入 app-private immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交
 - 統一 Reader：文字定位、圖片頁面與 EPUB spine 共用 portable locator；EPUB XHTML、CSS、font、image 由 Android WebView、iOS WKWebView 與 Desktop WebKit private scheme 按需讀取
 - 內建 Local source（source `0`）：直接圖片與 TXT／ZIP／CBZ／EPUB；匯入以原子發布的 v2 manifest 拒絕部分或損毀內容
@@ -81,7 +81,7 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 - V2 schema 可描述 `IMAGE_SEQUENCE`、`PLAIN_TEXT`、`EPUB_SPINE`，一個套件可以同時包含漫畫（`getPageList`）與小說（`getChapterText`，最多 4 MiB）來源。`example.dual` 是 `referenceOnly: true`、`installable: false` 的契約範例，可安裝的漫畫與小說來源目前採分包發布。
 - `AppSnapshot.extensionRepositories` 是可攜的 repository source of truth。升級時只會一次性遷移舊 KV 清單；之後 add／remove／default、備份還原與同步結果都會精確鏡像回 KV，不會再把 stale KV 無條件 union 回 snapshot。
 - Extension 的 execution trust token 綁定 `{pluginId}:{versionCode}:{SHA-256}`，只代表 exact artifact 已獲本機執行核准；不能與 repository 的 pinned author trust 混為一談。System-event grant 另以完整的 `(packageId, version, versionCode, SHA-256, SourceKey)` artifact／來源身分核准。撤銷會立即卸載 runtime、保留 package 供重新授權或卸載；啟動時不會只因 bytes 仍符合 manifest digest 就重建已撤銷的授權。
-- 功能 capability、reviewed runtime permission、Host permission 與 negotiated system event 是四個不同層級；repository 的宣告只是審核輸入，不會自行取得 Host 權限。
+- 功能 capability、runtime permission、Host permission 與 negotiated system event 是四個不同層級；repository 的宣告只是審核輸入，不會自行取得 Host 權限。
 - Source settings 可手動管理 cookie，或匯入 Netscape `cookies.txt`／常見 JSON 匯出。匯入器限制 1 MiB／500 筆，並驗證來源 domain、path、expiry 與 cookie 字元；平台 picker 會在配置完整 ByteArray 前先檢查 declared size。
 - Plugin HTTP redirect 由共用層逐 hop 處理：限制 hop 數、拒絕 HTTPS 降級、跨 origin 丟棄 credentials／自訂秘密 header，並依新目標重新選 cookie。`Set-Cookie` 支援 `Max-Age`／`Expires`、精確 path 刪除與保守 suffix 防護；這套 suffix 規則不是完整 Public Suffix List。
 - Android 只有在裝置的 System WebView 同時支援 dedicated non-default profile 與 complete browsing-data deletion 時，才會在 App 內完成 Cloudflare／Web challenge；否則只開外部瀏覽器，絕不退回共用預設 profile。專用 profile 在每次 challenge 前後都完整清除 Cookie、cache 與 JavaScript storage，因此開啟與關閉可能稍有延遲。iOS 以 non-persistent WKWebView 完成 challenge 後擷取並驗證 cookie。macOS Desktop 會開啟獨立原生、non-persistent WKWebView 視窗，擷取該隔離 session 的 cookie 與真實 User-Agent；若 challenge request 明確屬於某來源且該來源已保存帳密，Host 只會在同源頁面、同源 form action 下填入並提交，帳密經 helper stdin 傳送而不放入 command line。Windows Desktop 只開外部瀏覽器，無法讀取或自動匯入 Safari／Chrome／Edge 的既有 cookie；可改用 `cookies.txt`／JSON 匯入或手動輸入。
@@ -92,9 +92,8 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 - Package store V2 以 script SHA-256 content-addressing 與 atomic metadata commit 保存套件；write/readback 會驗證 SHA-256、strict UTF-8 與 metadata。Host bounds 為 script 8 MiB、metadata 512 KiB、256 packages、每包 256 sources、128 KiB index、1,024 discovered files；corrupt V2 不會 fallback 到 V1 split keys。Response headers 另限 128 fields、256B name、16KiB value、64KiB aggregate、64 `Set-Cookie`、32 cookie attributes，且 `Location` 必須唯一並限 4KiB。
 - Plugin batch POST 限 128 items、最多 32 個同時 in flight；每 item 的 decoded response 上限為 128 KiB，整批保留上限為 4 MiB，transport read-ahead 加上已接收結果的 decoded peak 約 8 MiB。批次超限會整批失敗，不回傳部分結果；需要較大單一文件時必須走普通單次請求。
 - Response body 以 bounded streaming 讀取，並在讀取前後檢查 declared `Content-Length`、允許的 `Content-Encoding`（identity／gzip／deflate）與 decoded-byte cap；header、body 與 HTTP framing 超限、矛盾或非法時 fail closed，不以事後截斷代替限制。
-- Runtime identity 是由 exact artifact 與 exact `SourceKey` 推導的 stable logical ID；每次載入仍有遞增 generation，舊 generation 的 handle／事件會失效。只有 reviewed ShuYue compatibility path 會移除 legacy `Connection` header；repository／generic plugin 不能設定或繞過 transport-owned framing／hop-by-hop headers。
-- Exact reviewed ShuYue runtime 才會把 default invocation instruction budget 由 100M 提高至 500M、result string 由 1 MiB 提高至 8 MiB、result envelope 由 4 MiB 提高至 17 MiB；caller 明示的更嚴值保留，任何非 default 的 raised value 仍 capped，generic runtime 的 default 不變。沙箱回傳單一結果時另受 SandboxProtocol 的 4 MiB 欄位上限限制，因此單一章節文字超過 4 MiB（約 130 萬個中文字）會以「結果過大」失敗，不會讓套件被判定為當機。
-- ShuYue 大文本以 64 KiB chunk 的單次、可取消 stream 傳遞；pending 與 active stream 的 aggregate reservation 合計最多 8 MiB。這些放寬只存在 exact reviewed runtime，最壞情況仍可能同時有 JS String、JSON 與 Kotlin copies，並使用較高 CPU instruction budget；不改變 generic runtime 的 steady-state 記憶體或效能。
+- Runtime identity 是由 exact artifact 與 exact `SourceKey` 推導的 stable logical ID；每次載入仍有遞增 generation，舊 generation 的 handle／事件會失效。所有套件的 `Connection` header 一律丟棄；套件不能設定或繞過 transport-owned framing／hop-by-hop headers。
+- 沙箱回傳單一結果時受 SandboxProtocol 的 4 MiB 欄位上限限制，宣告 `PLAIN_TEXT` 的來源字串上限同為 4 MiB，因此單一章節文字超過 4 MiB（約 130 萬個中文字）會以「結果過大」失敗，不會讓套件被判定為當機。
 - System-event grant 是單一 durable exact-artifact／`SourceKey`／permissions record（`PENDING`／`GRANTED`／`REVOKED`）；legacy split migration、bounds、更新與 revoke 都 fail closed，撤銷 write 失敗也不會在本程序復活舊 authority。
 - 這些邊界會增加 DNS、SHA-256、Ed25519 驗證與 admission 成本；host-fetch 會多一次 bytes 取得及快取路徑，但避免 plugin 直接接觸內容秘密。SourceKey 及 content identity 變更可能觸發 migration／cache SourceKey 更新；OkHttp shared pool 會降低重建 client 的連線與執行緒成本。每個套件的沙箱程序會增加約數 MiB 記憶體與跨程序序列化成本，Host 以 LRU 與閒置回收限制同時存活的沙箱數量。Mihon metadata-only 與 mixed-package 限制仍是相容性邊界。
 
@@ -206,7 +205,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
 - [套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)：從金鑰、CLI、權限到簽章發佈、更新與撤回的完整作者流程
 - [插件系統總覽](docs/PLUGIN_SYSTEM.md)：repository 相容矩陣、package／SourceKey、內容契約、安裝與信任生命週期、runtime、網路、登入與資料邊界
-- [統一插件儲存庫契約](docs/UNIFIED_PLUGIN_REPOSITORY.md)：歷史索引、unified-v1、Extension v2 與 reviewed ShuYue 的偵測／投影規則
+- [統一插件儲存庫契約](docs/UNIFIED_PLUGIN_REPOSITORY.md)：歷史索引、unified-v1 與 Extension v2 的偵測規則（`shuyue` 契約項目會被略過）
 - [插件系統事件接口架構](docs/PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：production V1 handler、exact-artifact grant、安全邊界與尚未接通的保留能力
 - [跨平台同步架構](docs/CROSS_PLATFORM_SYNC_ARCHITECTURE.md)：事件模型、E2EE、配對、checkpoint、Recovery、quota 與驗收 Gate
 - [Cloudflare Sync Worker](syncWorker/README.md)：本機測試、部署、D1/R2 bindings 與 API

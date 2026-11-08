@@ -38,9 +38,8 @@ Shinsou X 將來源實作與 App 核心分開：Plugin 負責瀏覽、搜尋、�
 
 這裡的「共用」只表示同一個 Host 安全邊界，不表示共用 credentials。API request plane 可使用已核准的 source headers、Cookie、Referer、UA 與 proxy；Reader 圖片／文字及 Download 則走獨立 host content plane，只允許 exact `contentOrigins`（與使用者授權的 `contentHostSuffixes`）、`GET`／`HEAD` 與安全 headers，明確移除 Cookie、Authorization、proxy key 及其他 credential/proxy secret。Host 取得 bytes 後交給 Coil 或相應內容 consumer。
 
-> 內建的 reviewed catalog（`OfficialShinsouReviewedCatalog`／reviewed ShuYue）是早期相容路徑留下的 Host 內部清單，
-> 只對 exact artifact 生效，用來保持既有使用者的資料連續性；它**不是**第三方可以申請或取得的等級，
-> 也不代表這些套件比第三方更「官方」。第三方套件走的是下方的一般簽章流程。
+> 早期的內建 reviewed catalog 與 reviewed ShuYue 執行路徑已移除（ADR-0002 §24）。所有套件都走下方的一般簽章流程，
+> App 內沒有任何以套件名稱、網址或 SHA 例外放行的清單。
 
 ## 名詞與身分
 
@@ -123,8 +122,7 @@ sidecars/<package-id>.json
 
 索引、sidecar 與 script metadata 應對齊 package／version、來源、content kinds、capabilities、runtime
 permissions、requested Host permissions、system events、script URL、SHA-256 與 byte size。作者 CLI 的 `build` 會完整比對這些欄位。App 的 generic Shinsou admission 目前會強制比對 package、
-version、artifact、內容 type、來源、browser origins、events 與 requested Host permissions；內建 reviewed
-ShuYue 相容路徑另比對 capabilities。`contentKinds`、generic `capabilities` 與 `runtimePermissions` 的
+version、artifact、內容 type、來源、browser origins、browser image origins、events 與 requested Host permissions。`contentKinds`、generic `capabilities` 與 `runtimePermissions` 的
 完整三方 parity 目前仍以作者端的 `build` 檢查為主，尚未全部成為 generic Host 的 runtime admission gate。
 
 核心 V2 內容種類為：
@@ -147,8 +145,7 @@ hint、頁數、資源數、文字 chunk、回應 bytes 與輸出 source scope�
 - `IMAGE_SEQUENCE` 來源實作 `getPageList(chapter)`。
 - **一個 package 可以混合**：同一個 package 內的每個來源各自宣告 `contentKinds`，漫畫來源用 `getPageList`、
   小說來源用 `getChapterText`。Host 依 exact `sourceId` 選擇來源，不依陣列順序。
-- 沙箱把所有套件的結果限制在 4 MiB 內，內建 reviewed ShuYue 相容路徑也不例外（原本的 8 MiB／17 MiB large-text
-  profile 已不再使用）。
+- 沙箱把所有套件的結果限制在 4 MiB 內。
 - 對仍使用舊式 hook 的腳本，Generic adapter 保留既有 image-oriented hook 與同步 JavaScript 假設；
   「V2 核心能表示某種 payload」不等於所有 legacy script 都已能產生該 payload。
 
@@ -216,12 +213,19 @@ SHA-256、嚴格 UTF-8、metadata 與 package ID。單一損壞或不相容 pack
 record 一旦存在但損壞，會 fail closed，絕不退回舊 V1 metadata/script split keys；只有沒有 V2 record
 時才可進行受限的 legacy migration。
 
-### 內建 reviewed ShuYue 相容路徑
+### 原 ShuYue 格式套件
 
-這是 Host 內部為既有 ShuYue 使用者保留的 exact-artifact 路徑，**第三方套件不使用也不能取得**。它同樣在沙箱執行，
-流程為：載入 inert metadata、只顯示命中內建 catalog 的 exact package／version／versionCode／SHA／source、
-下載後放入 quarantine、再次 hash 並要求使用者明確批准完整 least-privilege permission set、批准後才建立 guarded runtime；
-重啟時只 rehydrate 仍精確匹配且仍獲批准的 artifact。
+App 不再執行 ShuYue 格式（`contract: "shuyue"`）的套件；儲存庫中這類項目會被略過。原本的 ShuYue 小說來源改寫成一般
+Shinsou 套件後重新簽章發佈，只要保留下表的 package ID、字串 `sourceId` 與數字 `legacyLongId`，書庫、閱讀進度與已儲存的登入
+就會直接沿用（`migration/shuyue/ShuYueLegacySources.kt`）。改寫方式見作者指南〈從 ShuYue 格式改寫〉。
+
+| package | `sourceId` | `legacyLongId` |
+|---|---|---|
+| `zh.wenku8` | `zh.wenku8` | `-9110000000000001` |
+| `zh.wenku8.api` | `zh.wenku8.api` | `-9110000000000002` |
+| `zh.biquge.tw` | `zh.biquge.tw` | `-9110000000000003` |
+| `zh.bilimanga` | `zh.bilimanga.novel` | `-9110000000000004` |
+| `zh.bilimanga` | `zh.bilimanga.manga` | `-9110000000000005` |
 
 Repository fetcher 的 index／sidecar response 預設上限仍為 2 MiB／512 KiB；已安裝 package store 的
 V2 bounds 則是 128 KiB key-value index、8 MiB script、512 KiB package metadata、256 packages、每包
@@ -274,7 +278,7 @@ hydrate 舊 grant。
 |---|---|---|
 | Source capability | `CATALOGUE`、`LATEST`、`BROWSE`、`METADATA`、`UNITS`、`CONTENT`、`SEARCH`、`LOGIN`、`FAVORITE`、`PREFERENCES` | Host 可以向來源呼叫哪些功能；每次呼叫由 V2 facade 檢查。 |
 | Runtime permission（隨安裝） | `EXECUTE_SCRIPT`、`NETWORK` | 執行腳本，並連到宣告的 exact origin。 |
-| Runtime permission（敏感，逐項開關、預設關閉、可隨時撤銷） | `COOKIE_STORAGE`、`COOKIE_READ`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE` | 接觸敏感 Host facility：寫入 Cookie、讀取 Cookie 值、帳密、登入提示、修改收藏、Web challenge。 |
+| Runtime permission（敏感，逐項開關、預設關閉、可隨時撤銷） | `COOKIE_STORAGE`、`COOKIE_READ`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE`、`BROWSER_IMAGES` | 接觸敏感 Host facility：寫入 Cookie、讀取 Cookie 值、帳密、登入提示、修改收藏、Web challenge、以私密瀏覽器載入 `browserImageOrigins` 的圖片。 |
 | 網路範圍（敏感，逐項） | 每個 `contentHostSuffixes` 家族 | 動態 CDN 後綴，只放寬無憑證的內容平面，限 443（後綴加 `:1024-65535` 時也允許非特權連接埠）。 |
 | Host permission | `REQUEST_LOGIN_UI`、`REQUEST_SOURCE_REFRESH`、`REQUEST_LOGOUT`、`REPORT_DIAGNOSTIC`、`REPORT_USER_MESSAGE`、`REQUEST_BROWSER_CHALLENGE` | Plugin 可要求 Host 處理哪些 system event；只是 request metadata，必須另行 grant。`REPORT_USER_MESSAGE` 永遠不授予第三方。 |
 | Negotiated system event | `command.auth.login.request`、`command.source.refresh.request`、`command.auth.logout.request`、`event.diagnostic.message.report` | Package 與 Host 協商的 V1 capability ID。 |
@@ -463,12 +467,11 @@ Repository 清單、書庫 binding 與 Plugin package 是不同資料。重新�
 - 遺失發佈者私鑰無法自動恢復，只能發佈新金鑰並由使用者明確改信任。
 - 撤回清單過期後，該發佈者不能再安裝或更新套件；已安裝的套件繼續執行並顯示警示。
 - Mihon／Tachiyomi APK 只作 metadata 相容，不能在 Shinsou X 執行。
-- Installable source ID 目前必須可無損轉成 64-bit `Long`。
+- Installable `sourceId` 須是 64-bit 整數，或是小寫點分隔識別字（如 `zh.wenku8`）並以 `legacyLongId` 提供數字 ID。
 - 沙箱把單一結果限制在 4 MiB；單一章節文字超過約 130 萬個中文字會失敗。
 - `REPORT_USER_MESSAGE` 永遠不授予第三方；system-event `REQUEST_BROWSER_CHALLENGE` 尚未接通 production handler。
 - 開發者模式的區網位址只接受私有 IPv4 數字位址，不接受主機名稱。
 - Windows 外部瀏覽器 challenge 無法自動匯入 Cookie。
-- 內建 reviewed catalog／ShuYue 相容路徑仍存在於程式碼中（見「目前 production 狀態」的說明）；第三方套件不依賴它。
 - Deterministic test 與 contract 驗證不代表第三方網站、帳號或反爬蟲流程持續可用。
 
 
