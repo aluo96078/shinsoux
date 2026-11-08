@@ -69,17 +69,12 @@ function Invoke-ShinsouProbe {
             # A thread dump says where it is stuck (the packaged launcher hosts the JVM in-process).
             $jcmd = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\jcmd.exe" } else { "jcmd" }
             try {
-                Get-CimInstance Win32_Process |
-                    Where-Object { $_.ParentProcessId -eq $process.Id -or $_.ProcessId -eq $process.Id } |
-                    ForEach-Object { Write-Host "process $($_.ProcessId) parent $($_.ParentProcessId): $($_.CommandLine)" }
-                $jvms = & $jcmd -l 2>&1
-                $jvms | ForEach-Object { Write-Host "jvm: $_" }
-                foreach ($line in $jvms) {
-                    $jvmPid = ("$line" -split ' ')[0]
-                    if ($jvmPid -match '^[0-9]+$' -and $jvmPid -ne "$PID") {
-                        Write-Host "===== threads of $line ====="
-                        & $jcmd $jvmPid Thread.print 2>&1 | ForEach-Object { Write-Host $_ }
-                    }
+                # The launcher may run the JVM in a child process of the same executable.
+                $children = @(Get-CimInstance Win32_Process |
+                    Where-Object { $_.ParentProcessId -eq $process.Id })
+                foreach ($candidate in @($process.Id) + @($children | ForEach-Object { $_.ProcessId })) {
+                    Write-Host "===== threads of process $candidate ====="
+                    & $jcmd $candidate Thread.print 2>&1 | ForEach-Object { Write-Host $_ }
                 }
             } catch {
                 Write-Host "Thread dump failed: $_"
