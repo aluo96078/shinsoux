@@ -66,19 +66,17 @@ function Invoke-ShinsouProbe {
             -PassThru
 
         if (-not $process.WaitForExit(90000)) {
-            # A thread dump says where it is stuck (the packaged launcher hosts the JVM in-process).
-            $jcmd = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\jcmd.exe" } else { "jcmd" }
-            try {
-                # The launcher may run the JVM in a child process of the same executable.
-                $children = @(Get-CimInstance Win32_Process |
-                    Where-Object { $_.ParentProcessId -eq $process.Id })
-                foreach ($candidate in @($process.Id) + @($children | ForEach-Object { $_.ProcessId })) {
-                    Write-Host "===== threads of process $candidate ====="
-                    & $jcmd $candidate Thread.print 2>&1 | ForEach-Object { Write-Host $_ }
-                }
-            } catch {
-                Write-Host "Thread dump failed: $_"
+            # The startup probe writes its thread stacks here after 60 seconds (Main.kt).
+            $threads = "$markerPath.threads"
+            if (Test-Path -LiteralPath $threads) {
+                Write-Host "----- $threads -----"
+                Get-Content -LiteralPath $threads | ForEach-Object { Write-Host $_ }
+            } else {
+                Write-Host "No thread dump: the application never reached main."
             }
+            # The launcher may run the JVM in a child process; stop it too.
+            Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $process.Id } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             # Show what the app printed before it stalled; otherwise a hang leaves no trace.
             Start-Sleep -Seconds 2

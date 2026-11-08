@@ -99,6 +99,7 @@ fun main(args: Array<String>) {
     configureDesktopSystemProperties(desktopPlatform)
     if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
     val verifyDesktopStartup = VERIFY_DESKTOP_STARTUP_ARGUMENT in args
+    if (verifyDesktopStartup) startDesktopProbeWatchdog()
     val reviewedLocalRepositoryEnabled = isReviewedLocalRepositoryEnabled(
         System.getProperty("shinsou.reviewedLocalRepository"),
     )
@@ -628,6 +629,35 @@ private fun verifyPackagedShuYueQuarantineRoundTrip() = runBlocking {
     check(ShuYueScriptProvenanceV2.valueOf("LEGACY_BACKUP") == ShuYueScriptProvenanceV2.LEGACY_BACKUP)
     check(ShuYueReviewStatusV2.valueOf("REVIEWED") == ShuYueReviewStatusV2.REVIEWED)
     check(ShuYueExecutionPermissionV2.valueOf("NETWORK") == ShuYueExecutionPermissionV2.NETWORK)
+}
+
+/**
+ * Startup probe only: records that `main` ran and, if the probe is still running after 60 s,
+ * where every thread is (next to the probe marker), so a stalled packaged start can be diagnosed
+ * on CI where no debugger can attach.
+ */
+private fun startDesktopProbeWatchdog() {
+    val markerValue = System.getenv(DESKTOP_PROBE_MARKER_ENVIRONMENT)?.takeIf(String::isNotBlank) ?: return
+    val dumpPath = Path.of("$markerValue.threads")
+    runCatching { Files.writeString(dumpPath, "main started\n", StandardCharsets.UTF_8) }
+    Thread({
+        try {
+            Thread.sleep(60_000)
+        } catch (_: InterruptedException) {
+            return@Thread
+        }
+        val dump = buildString {
+            Thread.getAllStackTraces().forEach { (thread, frames) ->
+                appendLine("\"${thread.name}\" ${thread.state}")
+                frames.forEach { appendLine("    at $it") }
+                appendLine()
+            }
+        }
+        runCatching { Files.writeString(dumpPath, dump, StandardCharsets.UTF_8) }
+    }, "desktop-probe-watchdog").apply {
+        isDaemon = true
+        start()
+    }
 }
 
 private fun writeDesktopProbeMarker(required: Boolean) {
