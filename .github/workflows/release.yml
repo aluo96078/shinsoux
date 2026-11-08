@@ -606,7 +606,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.11' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.12' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.13' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.14'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.14' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.15'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -673,6 +674,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.13"
             $expectedHash = "6a661107626e1a9125be5b225e014ca85f291e973b07c85ed58782664502bf7f"
             $baselineProductCode = "{13CF6AD8-1E1D-3995-B6B8-8549A42A923F}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.15") {
+            $baselineVersion = "1.0.1-beta.14"
+            $expectedHash = "185003762e1a5e73f5b9638f186c2e80540c814ef17650379134668cbc987baa"
+            $baselineProductCode = "{918A1763-1AA5-3B3F-A496-7A2A058E92AE}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -905,7 +910,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.11 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.12 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.13 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.14 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.14 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.15 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -984,6 +990,13 @@ jobs:
                 "Plugin note: this transitional release opens plugins to every author. There is no official badge any more; anyone can publish a signed repository, and you confirm the publisher's fingerprint before installing. Plugins installed from the existing repository keep working unchanged." \
                 "Plugin note: new installs and updates show a permission page where each sensitive permission is its own switch. An update that asks for more permissions waits for your review while the previous version keeps running." \
                 "Plugin note: Settings > Package security has a developer mode for plugin authors, which loads unsigned plugins only from this device or LAN addresses you enter. See docs/PLUGIN_AUTHOR_GUIDE.md."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.15 ]]; then
+              printf '%s\n' \
+                "Plugin note: every plugin now comes from a repository signed by its publisher, or from developer mode, and runs in the sandbox with the permissions you grant. The built-in review list and the unsigned exception for the community repository are gone." \
+                "Plugin note: after updating, confirm the community repository's publisher (fingerprint A3E9 1699 D2CA E49B 0F04 8933 341D 0536) and review each plugin's updated permissions. Comic plugins now declare their own sites." \
+                "Plugin note: the old ShuYue-format novel sources no longer run here. Their Shinsou-format versions are published shortly and keep your library, reading progress and saved logins." \
+                "Plugin note: plugins can now offer a site bookcase and favorites, and load images through a private browser on macOS and iOS (each a permission you grant)."
             fi
           } > release-notes.md
 
