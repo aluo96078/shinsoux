@@ -66,6 +66,13 @@ function Invoke-ShinsouProbe {
             -PassThru
 
         if (-not $process.WaitForExit(90000)) {
+            # A thread dump says where it is stuck (the packaged launcher hosts the JVM in-process).
+            $jcmd = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\jcmd.exe" } else { "jcmd" }
+            try {
+                & $jcmd $process.Id Thread.print 2>&1 | ForEach-Object { Write-Host $_ }
+            } catch {
+                Write-Host "Thread dump failed: $_"
+            }
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             # Show what the app printed before it stalled; otherwise a hang leaves no trace.
             Start-Sleep -Seconds 2
