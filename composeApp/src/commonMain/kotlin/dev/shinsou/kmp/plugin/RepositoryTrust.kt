@@ -84,9 +84,9 @@ public object RepositoryTrustPolicies {
 }
 
 /**
- * Canonical base URL of the official repository while its published documents are still unsigned.
- * Keep this as a base URL (not the reviewed `index.json` location) because repository clients
- * append and independently validate `repo.json`, `index.json`, sidecars, and artifacts.
+ * Canonical base URL of the project's own repository. It carries no trust: it is kept only as an
+ * identity (packages installed from it keep their bare install key, see `PluginInstallKeys`), and
+ * the repository is trusted like any other, through its publisher-signed documents.
  */
 public const val OFFICIAL_SHINSOU_REPOSITORY_BASE_URL: String =
     "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master"
@@ -94,16 +94,6 @@ public const val OFFICIAL_SHINSOU_REPOSITORY_BASE_URL: String =
 /** User-facing canonical index location; repository trust is keyed by its normalized base URL. */
 public const val OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL: String =
     "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL/index.json"
-
-/**
- * Temporary, fail-closed compatibility for the one canonical official repository base URL.
- *
- * The input contract is the repository client's normalized base URL. Deliberately use exact
- * equality anyway: alternate schemes, authorities, ports, paths, encodings, queries, fragments,
- * and lookalikes must not inherit this unsigned exception.
- */
-public fun isCanonicalOfficialUnsignedRepository(normalizedBaseUrl: String): Boolean =
-    normalizedBaseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL
 
 /** Durable configuration boundary for an out-of-band or user-confirmed author key. */
 public interface RepositoryTrustRootStore {

@@ -21,9 +21,6 @@ import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
 import dev.shinsou.kmp.plugin.isBlockedPluginAddress
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantineReviewV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallApprovalV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptCandidateV2
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.sync.SnapshotSyncController
@@ -226,7 +223,7 @@ private fun pluginImageAuthority(snapshot: BrowseSnapshot): Any = listOf(
     // Disabling a source withdraws its covers as well, even though the host could still fetch them.
     snapshot.sources.mapTo(HashSet()) { listOf(it.identityKey, it.id, it.enabled) },
     snapshot.extensions.mapTo(HashSet()) {
-        listOf(it.id, it.version, it.installed, it.trusted, it.reviewedShuYueV2, it.sourceIds)
+        listOf(it.id, it.version, it.installed, it.trusted, it.sourceIds)
     },
 )
 
@@ -1253,24 +1250,6 @@ interface BrowseCallbacks {
     ): TypedReaderContentSession =
         throw IllegalStateException("Extension v2 reader content is unavailable")
 
-    suspend fun stageReviewedShuYueV2(
-        candidate: ShuYueScriptCandidateV2,
-    ): ShuYueQuarantineReviewV2 = throw IllegalStateException("Reviewed ShuYue installation is unavailable")
-
-    /** Downloads one pinned reviewed package into quarantine; this does not execute it. */
-    suspend fun stageReviewedShuYuePackageV2(packageId: String): ShuYueQuarantineReviewV2 =
-        throw IllegalStateException("Reviewed ShuYue repository is unavailable")
-
-    suspend fun reviewShuYueQuarantineV2(quarantineId: String): ShuYueQuarantineReviewV2 =
-        throw IllegalStateException("Reviewed ShuYue installation is unavailable")
-
-    suspend fun approveAndInstallReviewedShuYueV2(
-        decision: ShuYueReviewedInstallApprovalV2,
-    ): Unit = throw IllegalStateException("Reviewed ShuYue installation is unavailable")
-
-    suspend fun uninstallReviewedShuYueV2(packageId: String): Unit =
-        throw IllegalStateException("Reviewed ShuYue installation is unavailable")
-
     /** Returns the local manga id when the bridge imported or resolved the item. */
     suspend fun resolveManga(item: BrowseManga): Long? = null
 
@@ -1418,7 +1397,6 @@ data class BrowseRepository(
     val name: String,
     val website: String? = null,
     val signingFingerprint: String? = null,
-    val official: Boolean = false,
     /** It now publishes signed documents; confirm its publisher to refresh it again. */
     val needsPublisherTrust: Boolean = false,
 )
@@ -1661,8 +1639,6 @@ data class BrowseExtension(
     val trusted: Boolean = false,
     val isNsfw: Boolean = false,
     val sourceIds: List<Long> = emptyList(),
-    /** Uses exact-digest quarantine and permission review instead of the v1 trust toggle. */
-    val reviewedShuYueV2: Boolean = false,
     val description: String? = null,
     val contentType: PluginContentType = PluginContentType.BOTH,
     /** ADR-0002 §8.1: an unsigned package loaded from a developer-mode repository. */
@@ -1739,6 +1715,8 @@ data class PluginPermissionDetails(
     /** Where cookies and, for login, the account password may be sent. */
     val credentialOrigins: List<String>,
     val browserSessionOrigins: List<String>,
+    /** Where the isolated browser may load images from, with BROWSER_IMAGES. */
+    val browserImageOrigins: List<String> = emptyList(),
     /** ADR-0002 §8.1: unsigned, from a developer-mode repository; runs only while the mode is on. */
     val inDevelopment: Boolean = false,
 )

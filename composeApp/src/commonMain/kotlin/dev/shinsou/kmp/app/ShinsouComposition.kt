@@ -52,7 +52,6 @@ import dev.shinsou.kmp.plugin.ConfiguredRepositoryTrustPolicy
 import dev.shinsou.kmp.plugin.createPlatformPinnedPluginHttpTransport
 import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
 import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
-import dev.shinsou.kmp.plugin.isCanonicalOfficialUnsignedRepository
 import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
@@ -87,13 +86,6 @@ import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.PluginEventObserver
 import dev.shinsou.kmp.plugin.events.PluginEventObserverGroup
 import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
-import dev.shinsou.kmp.plugin.shuyue.KtorShuYueRepositoryTransport
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryIndexLoader
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryLimits
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedRepositoryCoordinatorV2
-import dev.shinsou.kmp.plugin.shuyue.BuiltInShuYueExecutionScopesV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedPluginCatalogV2
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
@@ -176,9 +168,6 @@ public class ShinsouComposition(
         PluginBrowserSessionTransport.Unavailable,
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
-    private val reviewedLocalRepositoryPolicy: dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy =
-        dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy.DISABLED,
-    private val reviewedLocalRepositoryTransport: dev.shinsou.kmp.plugin.PluginHttpTransport? = null,
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -246,23 +235,6 @@ public class ShinsouComposition(
     private val pluginHttpClient = httpClient.config { followRedirects = false }
     private val platformPluginHostResolver = createPlatformPluginHostResolver()
     private val platformPinnedPluginTransport = createPlatformPinnedPluginHttpTransport()
-    private val reviewedShuYueRepositoryLoader = ShuYueRepositoryIndexLoader(
-        transport = KtorShuYueRepositoryTransport(
-            client = pluginHttpClient,
-            hostResolver = platformPluginHostResolver,
-            pinnedTransport = platformPinnedPluginTransport,
-            reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
-            reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
-        ),
-        limits = ShuYueRepositoryLimits(
-            allowedArtifactOrigins = setOfNotNull(
-                ShuYueReviewedRepositoryCoordinatorV2.DEFAULT_REVIEWED_SHUYUE_ARTIFACT_ORIGIN,
-                reviewedLocalRepositoryPolicy.baseUrl,
-            ),
-            // Local/LAN repositories require a separate explicit developer composition.
-            allowLocalArtifactOrigins = false,
-        ),
-    )
     private val pluginStorage = MigratingPluginStorage(
         delegate = KeyValuePluginStorage(pluginKeyValueStore),
         migrationState = pluginKeyValueStore,
@@ -304,20 +276,14 @@ public class ShinsouComposition(
             blocklist = pluginBlocklist,
             fallback = ConfiguredRepositoryTrustPolicy(
                 roots = repositoryTrustRootStore,
-                // Temporary compatibility for the unsigned official publication only. URL
-                // normalization happens before this exact predicate; every other unpinned public
-                // repository remains rejected before transport.
-                // Developer mode adds only this device and the LAN addresses the user entered.
-                allowUnsignedDeveloperCompatibility = { url ->
-                    isCanonicalOfficialUnsignedRepository(url) || pluginDeveloperMode.admitsRepository(url)
-                },
+                // Every unpinned repository is rejected before transport, except what developer
+                // mode admits: this device and the LAN addresses the user entered.
+                allowUnsignedDeveloperCompatibility = { url -> pluginDeveloperMode.admitsRepository(url) },
             ),
         ),
         repositorySecurityState = repositorySecurityState,
         repositoryHostResolver = platformPluginHostResolver,
         repositoryTransport = platformPinnedPluginTransport,
-        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
-        reviewedLocalRepositoryTransport = reviewedLocalRepositoryTransport,
         developerRepository = pluginDeveloperMode::admitsRepository,
     )
     private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
@@ -384,18 +350,8 @@ public class ShinsouComposition(
                     val sourceKey = target.sourceKey
                     val legacy = pluginManager.exactLegacySource(target)
                     val exactV2 = pluginManager.exactExtensionSource(target)
-                    val sourceId = sourceKey.legacyLongId ?: runCatching {
-                        val artifact = target.artifactIdentity
-                        BuiltInShuYueExecutionScopesV2.resolve(
-                            ShuYueArtifactIdentityV2(
-                                artifact.packageId,
-                                artifact.version,
-                                artifact.versionCode,
-                                artifact.sha256,
-                            ),
-                            sourceKey,
-                        )
-                    }.getOrNull() ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
+                    val sourceId = sourceKey.legacyLongId
+                        ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
                     val sourceName = legacy?.name ?: exactV2?.descriptor?.displayName
                         ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
                     if (pluginLoginRequests.requestEvent(eventId, target, sourceId, sourceName, payload.fallbackMessage)) {
@@ -463,7 +419,6 @@ public class ShinsouComposition(
         ),
         eventGrantAdmission = pluginEventGrantAdmission,
         reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
-        reviewedLocalRepositoryPolicy = reviewedLocalRepositoryPolicy,
         executionTierGate = PublisherExecutionTierGate(publisherTrustStore, executionTierResolver),
         developerRepository = pluginDeveloperMode::admitsRepository,
     )
@@ -766,12 +721,7 @@ public class ShinsouComposition(
                 },
             )
         },
-        reviewedShuYueRepositoryLoaderV2 = reviewedShuYueRepositoryLoader,
         fileSystem = fileSystem,
-        // Seed only the single app-reviewed official repository when a new installation has no
-        // persisted repository. PluginBrowseAdapter still requires an empty repository list and
-        // performs the exact canonical URL/trust check before fetching; user-configured
-        // repositories and upgraded snapshots are never replaced or re-seeded.
     )
 
     public val localContent: LocalContentManager = LocalContentManager(

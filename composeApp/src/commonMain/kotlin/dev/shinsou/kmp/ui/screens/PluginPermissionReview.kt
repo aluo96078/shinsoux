@@ -219,6 +219,10 @@ private fun PluginRuntimePermission.risk(strings: ShinsouStrings, details: Plugi
     PluginRuntimePermission.LOGIN_PROMPT -> strings.text("Lets the plugin ask you to log in.")
     PluginRuntimePermission.FAVORITE_MUTATION -> strings.text("Lets the plugin change your favorites on the site.")
     PluginRuntimePermission.BROWSER_CHALLENGE -> strings.text("Lets the plugin open a browser page to pass the site's checks.")
+    PluginRuntimePermission.BROWSER_IMAGES -> strings.text(
+        "Loads its images in a private browser without your cookies, from: {0}",
+        details?.browserImageOrigins?.joinToString().orEmpty().ifEmpty { "—" },
+    )
     PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK -> ""
 }
 

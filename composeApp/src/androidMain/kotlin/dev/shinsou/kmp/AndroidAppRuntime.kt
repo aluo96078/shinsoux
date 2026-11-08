@@ -1,14 +1,11 @@
 package dev.shinsou.kmp
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
-import dev.shinsou.kmp.plugin.JvmReviewedLocalRepositoryTransport
-import dev.shinsou.kmp.plugin.ReviewedLocalRepositoryPolicy
 import dev.shinsou.kmp.plugin.sandbox.AndroidSandboxTransportProvider
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
@@ -41,13 +38,6 @@ internal class AndroidAppRuntime private constructor(context: Context) {
     /** Idle stops and LRU of the plugin sandboxes; lives as long as the process. */
     private val sandboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val localRepositoryPolicy =
-        if (applicationContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            ReviewedLocalRepositoryPolicy.EXACT_ANDROID_LAN_192_168_50_193_18081
-        } else {
-            ReviewedLocalRepositoryPolicy.DISABLED
-        }
-
     val composition: ShinsouComposition = run {
         // Coil creates its own Ktor client by default. On the Android emulator that client
         // inherits the system's stale 10.0.2.2 proxy, while the app's source client explicitly
@@ -62,7 +52,7 @@ internal class AndroidAppRuntime private constructor(context: Context) {
             httpClient = httpClient,
             pluginKeyValueStore = AndroidPluginKeyValueStore(applicationContext),
             fileSystem = sharedState.fileSystem,
-            // ADR-0002 §10.1: every package, reviewed or third-party, runs in an isolated process
+            // ADR-0002 §10.1: every package runs in an isolated process
             // of its own (S2).
             runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
                 SandboxRuntimeFactory(
@@ -76,12 +66,6 @@ internal class AndroidAppRuntime private constructor(context: Context) {
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
-            reviewedLocalRepositoryPolicy = localRepositoryPolicy,
-            reviewedLocalRepositoryTransport = if (localRepositoryPolicy != ReviewedLocalRepositoryPolicy.DISABLED) {
-                JvmReviewedLocalRepositoryTransport(localRepositoryPolicy)
-            } else {
-                null
-            },
         )
     }
 

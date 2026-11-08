@@ -39,7 +39,6 @@ class PublisherTrustTest {
 
     private inner class Host(
         val kv: PluginKeyValueStore = InMemoryPluginKeyValueStore(),
-        officialPublisherId: String? = null,
         val state: RepositorySecurityStateStore = KeyValueRepositorySecurityStateStore(kv),
     ) {
         var now = 1_000_000L
@@ -48,7 +47,7 @@ class PublisherTrustTest {
         val revocations = PublisherRevocationStore(kv, publishers, state)
         val blocklist = LocalPluginBlocklist(kv)
         val resolver = ExecutionTierResolver(
-            publishers, revocations, blocklist, officialPublisherId, developerMode = { developerMode }, nowEpochSeconds = { now },
+            publishers, revocations, blocklist, developerMode = { developerMode }, nowEpochSeconds = { now },
         )
         val policy = PublisherRepositoryTrustPolicy(publishers, blocklist, RepositoryTrustPolicies.REQUIRE_CONFIGURED_PIN)
     }
@@ -250,8 +249,9 @@ class PublisherTrustTest {
         val host = Host(kv)
         val key = newKey()
         val publisher = host.publishers.trustRepository(REPO, root(key)).publisherId
-        val official = ExecutionTierCandidate("official", OTHER_ARTIFACT, null, officialReviewedCatalogMatch = true, fromCanonicalOfficialUnsignedRepository = true)
-        assertEquals(ExecutionTier.ReviewedInProcess, host.resolver.resolve(official))
+        // No package is exempt: an unsigned one is inert (and blockable) like any other.
+        val unsigned = ExecutionTierCandidate("unsigned", OTHER_ARTIFACT, null)
+        assertEquals(ExecutionTier.Inert(InertReason.UNSIGNED), host.resolver.resolve(unsigned))
 
         val entries = listOf(
             PluginBlockEntry.Package("pkg", publisher),
@@ -268,9 +268,8 @@ class PublisherTrustTest {
         }
         host.blocklist.block(PluginBlockEntry.Publisher(publisher))
         assertFailsWith<PublisherTrustException.Blocked> { host.policy.decisionFor(REPO) }
-        // Official packages can be blocked too.
         host.blocklist.block(PluginBlockEntry.Artifact(OTHER_ARTIFACT))
-        assertEquals(ExecutionTier.Inert(InertReason.BLOCKED_BY_USER), host.resolver.resolve(official))
+        assertEquals(ExecutionTier.Inert(InertReason.BLOCKED_BY_USER), host.resolver.resolve(unsigned))
     }
 
     @Test
@@ -283,8 +282,8 @@ class PublisherTrustTest {
         assertEquals(ExecutionTier.Inert(InertReason.UNSIGNED), host.resolver.resolve(ExecutionTierCandidate("x", ARTIFACT, null)))
         assertEquals(ExecutionTier.Inert(InertReason.PUBLISHER_NOT_TRUSTED), host.resolver.resolve(candidate(root(newKey()).fingerprint)))
         assertEquals(ExecutionTier.Inert(InertReason.NOT_AUTHORIZED), host.resolver.resolve(candidate(publisher).copy(userAuthorized = false)))
-        // A catalogue match from anyone but the official publisher is not reviewed.
-        assertEquals(ExecutionTier.Sandboxed(), host.resolver.resolve(candidate(publisher).copy(officialReviewedCatalogMatch = true)))
+        // A trusted, authorized publisher's package is sandboxed: there is no other tier.
+        assertEquals(ExecutionTier.Sandboxed(), host.resolver.resolve(candidate(publisher)))
     }
 
     @Test
@@ -370,22 +369,18 @@ class PublisherTrustTest {
     }
 
     @Test
-    fun theOfficialTierStillHonoursRevocationAndWithdrawal() = runTest {
-        val official = newKey()
-        val host = Host(officialPublisherId = root(official).fingerprint)
-        val publisher = host.publishers.trustBuiltIn(REPO, root(official)).publisherId
-        val catalogued = ExecutionTierCandidate("official", ARTIFACT, publisher, officialReviewedCatalogMatch = true)
-        assertEquals(ExecutionTier.ReviewedInProcess, host.resolver.resolve(catalogued))
-        // A signed package cannot claim the unsigned official exception.
-        val other = host.publishers.trustRepository(MIRROR, root(newKey())).publisherId
-        assertEquals(
-            ExecutionTier.Inert(InertReason.NOT_AUTHORIZED),
-            host.resolver.resolve(ExecutionTierCandidate("x", ARTIFACT, other, officialReviewedCatalogMatch = true, fromCanonicalOfficialUnsignedRepository = true)),
-        )
-        host.revocations.applyRevocations(REPO, revocations(official, publisher, listOf(ARTIFACT), expiresAt = host.now + DAY, sequence = 1))
-        assertEquals(ExecutionTier.Inert(InertReason.ARTIFACT_REVOKED), host.resolver.resolve(catalogued))
-        host.publishers.applyKeyRevocation(REPO, keyRevoked(official, publisher))
-        assertEquals(ExecutionTier.Inert(InertReason.PUBLISHER_KEY_REVOKED), host.resolver.resolve(catalogued.copy(artifactSha256 = OTHER_ARTIFACT)))
+    fun aBuiltInPublisherGetsNoSpecialTierAndStillHonoursRevocationAndWithdrawal() = runTest {
+        val builtIn = newKey()
+        val host = Host()
+        val publisher = host.publishers.trustBuiltIn(REPO, root(builtIn)).publisherId
+        val authorized = ExecutionTierCandidate("pkg", ARTIFACT, publisher, userAuthorized = true)
+        assertEquals(ExecutionTier.Sandboxed(), host.resolver.resolve(authorized))
+        // Without the user's authorization nothing runs, whoever published it.
+        assertEquals(ExecutionTier.Inert(InertReason.NOT_AUTHORIZED), host.resolver.resolve(authorized.copy(userAuthorized = false)))
+        host.revocations.applyRevocations(REPO, revocations(builtIn, publisher, listOf(ARTIFACT), expiresAt = host.now + DAY, sequence = 1))
+        assertEquals(ExecutionTier.Inert(InertReason.ARTIFACT_REVOKED), host.resolver.resolve(authorized))
+        host.publishers.applyKeyRevocation(REPO, keyRevoked(builtIn, publisher))
+        assertEquals(ExecutionTier.Inert(InertReason.PUBLISHER_KEY_REVOKED), host.resolver.resolve(authorized.copy(artifactSha256 = OTHER_ARTIFACT)))
     }
 
     @Test

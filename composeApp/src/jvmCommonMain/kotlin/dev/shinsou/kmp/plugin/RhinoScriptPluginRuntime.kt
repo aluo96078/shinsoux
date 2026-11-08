@@ -81,13 +81,10 @@ public class RhinoScriptPluginRuntimeFactory private constructor(
         environment: ScriptPluginEnvironment,
     ): ScriptPluginEnvironment {
         if (allowUnsandboxedScriptsForTests) return environment
-        val provenance = environment.inProcessScriptProvenance
-            ?: throw ScriptRuntimeUnavailableException(
-                "Plugin '${manifest.id}' cannot run in-process on Rhino: the JVM provides no " +
-                    "per-runtime heap isolation. Only exact host-reviewed artifacts are enabled.",
-            )
-        val reviewedLimits = provenance.requireExactMatch(script, manifest, source)
-        return reviewedLimits?.let { environment.copy(executionLimits = it) } ?: environment
+        throw ScriptRuntimeUnavailableException(
+            "Plugin '${manifest.id}' cannot run in-process on Rhino: the JVM provides no " +
+                "per-runtime heap isolation. Packages run in the sandbox.",
+        )
     }
 }
 

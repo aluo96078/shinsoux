@@ -55,10 +55,6 @@ val isWindowsBuildHost = System.getProperty("os.name").lowercase().startsWith("w
 fun iosSandboxSdk(target: org.jetbrains.kotlin.konan.target.KonanTarget): String =
     if (target == org.jetbrains.kotlin.konan.target.KonanTarget.IOS_ARM64) "iphoneos" else "iphonesimulator"
 fun iosSandboxHostDir(sdk: String): File = layout.buildDirectory.dir("sandbox-ios-$sdk").get().asFile
-// Explicit opt-in for an app-audited localhost mirror. Ordinary builds remain HTTPS-only.
-val reviewedLocalRepositoryEnabled = providers.gradleProperty("shinsouReviewedLocalRepository")
-    .map { it.toBooleanStrict() }
-    .orElse(false)
 // Device tests install (and afterwards uninstall) the app: give that build its own application id
 // so a developer's or tester's real installation and its library are never touched.
 val sandboxDeviceTest = providers.gradleProperty("shinsouSandboxDeviceTest")
@@ -708,10 +704,6 @@ tasks.configureEach {
 compose.desktop {
     application {
         mainClass = "dev.shinsou.kmp.desktop.MainKt"
-
-        if (reviewedLocalRepositoryEnabled.get()) {
-            jvmArgs += "-Dshinsou.reviewedLocalRepository=true"
-        }
 
         if (compileMacOsWebChallengeHelper != null) {
             dependsOn("compileMacOsWebChallengeHelper")

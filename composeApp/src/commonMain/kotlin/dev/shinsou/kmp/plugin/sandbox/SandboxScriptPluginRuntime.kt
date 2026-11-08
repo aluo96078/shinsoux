@@ -44,9 +44,7 @@ internal fun interface SandboxTransportProvider {
 
 /**
  * The sandbox tier's [ScriptPluginRuntimeFactory] (ADR-0002 §4.1). Every runtime gets its own
- * sandbox; scripts never run in the host process. Host-reviewed catalogue artifacts run here too
- * (§22): their provenance must match the exact script and source, and brings the reviewed limits
- * and the cookie read the review covers; the capability itself never reaches the sandbox.
+ * sandbox; scripts never run in the host process.
  * With a [lifecycle], idle sandboxes are stopped and restarted on demand and crash loops disable
  * the package (§4.6, §7).
  */
@@ -71,16 +69,8 @@ internal class SandboxRuntimeFactory(
         source: SourceIndexEntry,
         environment: ScriptPluginEnvironment,
     ): ScriptPluginRuntime {
-        // Checked before any sandbox opens: provenance for other bytes or another source is refused.
-        val provenance = environment.inProcessScriptProvenance
-        val reviewedLimits = provenance?.requireExactMatch(script, manifest, source)
-        val sandboxEnvironment = if (provenance == null) environment.withTextResultLimit(source) else environment.copy(
-            executionLimits = reviewedLimits ?: environment.executionLimits,
-            inProcessScriptProvenance = null,
-        )
-        // In process a reviewed artifact read cookies with COOKIE_STORAGE alone; the dispatcher still
-        // requires that permission. Other packages keep the policy's COOKIE_READ decision (S6).
-        val policy = policyFor(manifest, source).let { if (provenance != null) it.copy(allowCookieRead = true) else it }
+        val sandboxEnvironment = environment.withTextResultLimit(source)
+        val policy = policyFor(manifest, source)
         manifest.requireDeclaredExecutableSource(source)
         sandboxEnvironment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
         val runtime = SandboxScriptPluginRuntime(
@@ -195,6 +185,8 @@ internal class SandboxScriptPluginRuntime(
         private set
     override var supportsFavorites: Boolean = false
         private set
+    override var supportsFavoriteMutation: Boolean = false
+        private set
     override var headers: Map<String, String> = emptyMap()
         private set
     override var webChallengeUrl: String? = null
@@ -213,7 +205,10 @@ internal class SandboxScriptPluginRuntime(
         baseUrl = source.baseUrl ?: metadata.str("baseUrl").orEmpty()
         supportsLatest = metadata["supportsLatest"].bool()
         supportsLogin = metadata["supportsLogin"].bool()
-        supportsFavorites = metadata["supportsFavorites"].bool()
+        // The account collection (a site's bookcase): `getFavoriteManga(page)`, and optionally
+        // `setFavorite(manga, favorite)` to change it.
+        supportsFavorites = metadata["supportsFavorites"].bool() || hasFunction("getFavoriteManga")
+        supportsFavoriteMutation = supportsFavorites && hasFunction("setFavorite")
         // Only a source that declares text content is asked: one call fewer for every manga source.
         supportsChapterText = "PLAIN_TEXT" in source.contentKinds && hasFunction("getChapterText")
         var h = SandboxScriptJson.stringMap(metadata["headers"])
@@ -232,6 +227,20 @@ internal class SandboxScriptPluginRuntime(
     override suspend fun getFavoriteManga(page: Int): MangasPage =
         if (hasFunction("getFavoriteManga")) mangasPage("getFavoriteManga", buildJsonArray { add(JsonPrimitive(page)) })
         else MangasPage(emptyList(), false)
+
+    /** `setFavorite(manga, favorite)` → true (or `{ok: true}`) when the site accepted the change. */
+    override suspend fun setFavorite(manga: SManga, favorite: Boolean): Boolean {
+        check(supportsFavoriteMutation) { "Plugin '$pluginId' cannot change its account collection" }
+        environment.requireRuntimePermission(PluginRuntimePermission.FAVORITE_MUTATION)
+        val result = call("setFavorite", buildJsonArray {
+            add(SandboxScriptJson.mangaJson(manga))
+            add(JsonPrimitive(favorite))
+        })
+        return when (result) {
+            is JsonObject -> result["ok"].bool()
+            else -> result.bool()
+        }
+    }
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
         mangasPage(

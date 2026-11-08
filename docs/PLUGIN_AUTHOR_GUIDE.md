@@ -184,6 +184,8 @@ package.json             ← build/lint/test/dev/sign 的 npm scripts
   且不能含 `~`。
 - **`versionCode`**：整數，單調遞增。App 以 `versionCode`／digest 防止降版。
 - **`sourceId`**：64-bit 整數的十進位字串，同一個 package 內固定不變；多來源套件必須用 `sourceId` 區分來源。
+  也可以用小寫點分隔的字串（如 `zh.wenku8`，只含 `a-z0-9._-`），此時必須在 `legacyLongId` 給一個 64-bit 整數，
+  它就是這個來源的引擎與儲存 ID。這主要用來沿用既有書庫身分，見[第 18 節](#18-從-shuyue-格式改寫)。
 - **`contentType` ／ `contentKinds`**：如實宣告。包含 `PLAIN_TEXT` 的來源要實作 `getChapterText`；
   `IMAGE_SEQUENCE` 的來源實作 `getPageList`。一個 package 可以混合，每個來源各自使用其中一種。
 - **`capabilities`**：只宣告你真的實作的功能（`CATALOGUE`、`LATEST`、`BROWSE`、`METADATA`、`UNITS`、`CONTENT`、
@@ -216,7 +218,8 @@ package.json             ← build/lint/test/dev/sign 的 npm scripts
 | `getChapterText(chapter)` | `PLAIN_TEXT` 來源：回傳字串（或 `{ text }`），最多 4 MiB |
 | `resolveImageUrl(pageUrl)` | 選用：延遲解析圖片網址 |
 | `getFilterList()` | 選用：篩選器 |
-| `getFavoriteManga(page)` | 選用：收藏（需 `FAVORITE`） |
+| `getFavoriteManga(page)` | 選用：網站帳號的收藏（App 顯示為「書架」）；有此 hook 就會出現書架 |
+| `setFavorite(manga, favorite)` | 選用：加入（`true`）或移出（`false`）網站收藏，成功回傳 `true`；需使用者授權 `FAVORITE_MUTATION` |
 | `login(username, password)` | 選用：由 App 啟動的登入 hook（見 6.4） |
 
 Hook 可以回傳 Promise（`async`）。
@@ -290,7 +293,7 @@ crash-loop 自動停用等限制；這些是否已全部在程式中落實【未
 | 層級 | 項目 | 取得方式 |
 |---|---|---|
 | 隨安裝授予 | `EXECUTE_SCRIPT`、`NETWORK` | 安裝即有；`NETWORK` 僅限你宣告的 exact origin |
-| 敏感（逐項開關，**預設關閉**，之後可在該套件的「權限」撤銷） | `COOKIE_STORAGE`、`COOKIE_READ`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE` | 使用者在權限頁自行開啟 |
+| 敏感（逐項開關，**預設關閉**，之後可在該套件的「權限」撤銷） | `COOKIE_STORAGE`、`COOKIE_READ`、`CREDENTIAL_ACCESS`、`LOGIN_PROMPT`、`FAVORITE_MUTATION`、`BROWSER_CHALLENGE`、`BROWSER_IMAGES` | 使用者在權限頁自行開啟 |
 | 敏感（逐項開關） | 每一個 `contentHostSuffixes` 後綴家族 | 同上 |
 | 永不授予 | `REPORT_USER_MESSAGE` | — |
 
@@ -332,6 +335,18 @@ crash-loop 自動停用等限制；這些是否已全部在程式中落實【未
 第三方來源也可以使用 Web challenge：宣告 `browserSessionOrigins`、`runtimePermissions` 含 `BROWSER_CHALLENGE`，
 使用者在權限頁開啟後，請求 origin 命中 `browserSessionOrigins` 時才可使用。平台行為不同（Windows 只能開外部瀏覽器、
 無法自動帶回 Cookie），細節見[插件系統總覽](PLUGIN_SYSTEM.md)。
+
+### 7.4.1 以瀏覽器載入圖片（`BROWSER_IMAGES`）
+
+有些圖片 CDN 會拒絕一般 HTTP 客戶端。來源可以在 `browserImageOrigins` 列出這類 CDN 的 exact HTTPS origin
+（只能是 443 埠，且必須同時列在 `contentOrigins`），並在 `runtimePermissions` 宣告 `BROWSER_IMAGES`。使用者開啟後，
+macOS 與 iOS 上這些 origin 的圖片會在一次性的私密瀏覽器中下載：不帶 Cookie、不帶 Referer、只能連回該 origin，
+每次載入前後都會再確認授權仍有效。Android 與 Windows 一律走一般內容通道。最多 4 個 origin。
+
+```json
+"contentOrigins": ["https://i.example-cdn.com"],
+"browserImageOrigins": ["https://i.example-cdn.com"]
+```
 
 ### 7.5 同一 `packageId`、不同發佈者：並存安裝
 
@@ -613,6 +628,38 @@ shinsou-plugin revoke-key --key mykey
 如果你的儲存庫原本沒有簽章，之後改為簽章發佈：使用者原本加入的儲存庫在第一次看到簽章時，App 會顯示
 「已改為由發佈者簽章：請確認發佈者以繼續更新」，使用者確認發佈者後，更新才會繼續。確認之後，未簽章時期的授權在
 **第一個簽章版本沒有要求任何新東西**時會延續，不必重新授權。
+
+## 18. 從 ShuYue 格式改寫
+
+App 不再執行 ShuYue 格式（`contract: "shuyue"`）的套件。改寫成一般 Shinsou 套件時：
+
+1. **保留身分**：沿用原本的 package ID，`sourceId` 用原本的字串 ID，`legacyLongId` 填下表的數字。這樣使用者的書庫、
+   閱讀進度與已儲存的帳密會直接接上新套件，不必重新加入書庫或登入。
+
+   | package | `sourceId` | `legacyLongId` |
+   |---|---|---|
+   | `zh.wenku8` | `zh.wenku8` | `-9110000000000001` |
+   | `zh.wenku8.api` | `zh.wenku8.api` | `-9110000000000002` |
+   | `zh.biquge.tw` | `zh.biquge.tw` | `-9110000000000003` |
+   | `zh.bilimanga` | `zh.bilimanga.novel` | `-9110000000000004` |
+   | `zh.bilimanga` | `zh.bilimanga.manga` | `-9110000000000005` |
+
+2. **改寫 hook**：
+
+   | ShuYue | Shinsou |
+   |---|---|
+   | `search(query, page)` | `getSearchManga(page, query, filters)` |
+   | `latest(page)` | `getLatestUpdates(page)` |
+   | `browse(...)`（一般瀏覽） | `getPopularManga(page)` |
+   | `browse` 的書架選項 | `getFavoriteManga(page)` |
+   | `favorite(...)` | `setFavorite(manga, favorite)`（宣告 `FAVORITE_MUTATION`） |
+   | `chapters(book)` | `getChapterList(manga)` |
+   | `chapterText(chapter)` | `getChapterText(chapter)`（宣告 `PLAIN_TEXT`） |
+   | `requestLogin` | `bridge.requestLogin`（宣告 `LOGIN_PROMPT` 與 Host permission `REQUEST_LOGIN_UI`） |
+
+3. **宣告網路**：原本 App 內建的 origin 清單不再存在，請在每個來源自己宣告 `requestOrigins`、`credentialOrigins`、
+   `contentOrigins`（例如插圖主機）與 `browserSessionOrigins`。需要以瀏覽器抓圖的 CDN 用 `browserImageOrigins`（7.4.1）。
+4. **簽章發佈**：和其他套件一樣用你的發佈者金鑰簽章。使用者確認發佈者、在權限頁授權後即可使用。
 
 ## 已知落差與未驗證項目
 

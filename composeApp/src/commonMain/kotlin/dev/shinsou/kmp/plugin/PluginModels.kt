@@ -24,15 +24,15 @@ public data class RepositoryDocument(
 
 /**
  * Optional envelope understood by both repository readers. It lets one URL expose old Shinsou
- * packages and ShuYue packages without making either reader infer a protocol from `index.json`
- * or a hostname. A plain JSON array remains fully supported for both historical formats.
+ * packages without making a reader infer a protocol from `index.json` or a hostname. A plain
+ * JSON array remains fully supported. A legacy `shuyue` list is ignored (ShuYue packages are
+ * no longer supported).
  */
 @Serializable
 public data class UnifiedRepositoryDocument(
     val format: String = "shinsou-unified-v1",
     val shinsou: List<PluginIndexEntry> = emptyList(),
     val legacy: List<PluginIndexEntry> = emptyList(),
-    val shuyue: List<dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry> = emptyList(),
 )
 
 @Serializable
@@ -105,6 +105,14 @@ public enum class PluginRuntimePermission {
      */
     COOKIE_READ,
 
+    /**
+     * Lets the host load this source's images from its `browserImageOrigins` in a short-lived,
+     * isolated browser (no cookies, no referrer), for image CDNs that refuse ordinary HTTP
+     * clients. Sensitive, off unless granted; used on macOS and iOS, elsewhere images use the
+     * ordinary content plane.
+     */
+    BROWSER_IMAGES,
+
     ;
 
     public companion object {
@@ -142,7 +150,7 @@ public data class PluginIndexEntry(
     val type: String? = null,
     /** Alias accepted by newer repositories; [type] remains the canonical wire key. */
     val contentType: String? = null,
-    /** `shinsou`/`shuyue` marker used only by a unified repository index. */
+    /** Contract marker used only by a unified repository index. */
     val contract: String? = null,
     /** V2 host runtime/adapter identifier (for example `legacy-shinsou-adapter-v2`). */
     val runtime: String? = null,
@@ -206,6 +214,11 @@ public data class SourceIndexEntry(
      * sensitive declaration the user approves; never a request or credential origin.
      */
     val contentHostSuffixes: Set<String> = emptySet(),
+    /**
+     * Exact HTTPS content origins (port 443, a subset of [contentOrigins]) whose images the host
+     * may load in an isolated browser, only while the user grants BROWSER_IMAGES.
+     */
+    val browserImageOrigins: Set<String> = emptySet(),
     /** Persisted marker distinguishing authoritative V2 empty allowlists from legacy omission. */
     val originPolicyVersion: Int? = null,
     /** Lossless V2 legacy identifier copied into the sidecar SourceKey when present. */
@@ -228,6 +241,11 @@ public data class SourceIndexEntry(
         require(contentHostSuffixes.size <= MAX_CONTENT_HOST_SUFFIXES) { "Too many content host suffixes" }
         require(contentHostSuffixes.all(::isGrantableContentHostSuffix)) {
             "Content host suffixes must be registrable host names, not public suffixes"
+        }
+        require(browserImageOrigins.size <= MAX_BROWSER_IMAGE_ORIGINS) { "Too many browser image origins" }
+        val imageOrigins = normalizePluginOrigins(browserImageOrigins)
+        require(imageOrigins.all { it in normalizePluginOrigins(contentOrigins) && browserImageOriginOf("$it/") == it }) {
+            "Browser image origins must be content origins on port 443"
         }
     }
 
@@ -413,3 +431,6 @@ public data class StoredPlugin(
     val manifest: PluginManifest get() = metadata.manifest
     val script: String get() = scriptBytes.decodeToString()
 }
+
+/** Most `browserImageOrigins` one source may declare. */
+internal const val MAX_BROWSER_IMAGE_ORIGINS: Int = 4

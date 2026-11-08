@@ -57,6 +57,8 @@ class SandboxBlockingWriteTest {
         val hooks: Map<String, suspend FakeSandbox.Hook.(kotlinx.serialization.json.JsonArray) -> HookOutcome> = mapOf(
             "__shinsouSelectSource" to { HookOutcome.Ok("null") },
             "__shinsouMetadata" to { HookOutcome.Ok("{}") },
+            // Initialization asks whether the script has an account collection (getFavoriteManga).
+            "__shinsouHasFunction" to { HookOutcome.Ok("false") },
             "getPopularManga" to { transport.stall = true; HookOutcome.Hang },
         )
         val runtime = SandboxRuntimeFactory(transports = { StallingTransport(FakeSandbox(fakeScope, hooks = hooks)).also { transport = it } })

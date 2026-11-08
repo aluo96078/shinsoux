@@ -229,13 +229,9 @@ class ShinsouStringsTest {
     @Test
     fun reviewedExtensionApprovalDoesNotExposeEnumNamesOrFallBackInSupportedLocales() {
         val keys = listOf(
-            "Approve reviewed extension",
             "SHA-256: {0}",
             "Required permissions",
             "The script remains blocked until you approve this exact version and digest.",
-            "Exact reviewed permissions granted",
-            "Downloaded ShuYue artifact is not an exact reviewed version",
-            "Stored ShuYue quarantine could not be decoded safely.",
             "Execution blocked",
             "Execute reviewed script",
             "Network access",

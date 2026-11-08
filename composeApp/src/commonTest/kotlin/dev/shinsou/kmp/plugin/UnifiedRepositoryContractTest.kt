@@ -11,7 +11,7 @@ import kotlin.test.assertIs
 
 class UnifiedRepositoryContractTest {
     @Test
-    fun fetchIndexKeepsBothShinsouAndShuYueHalves() = runTest {
+    fun fetchIndexIgnoresTheRetiredShuYueHalf() = runTest {
         val body = """
             {"format":"shinsou-unified-v1","shinsou":[
               {"id":"manga","name":"Manga","version":"1.0.0","versionCode":1,"lang":"zh",
@@ -31,6 +31,6 @@ class UnifiedRepositoryContractTest {
         val index = client.fetchIndex("https://repo.example")
         val combined = assertIs<RepositoryIndex.Combined>(index)
         assertEquals(listOf("manga"), combined.plugins.map { it.id })
-        assertEquals(listOf("novel"), combined.shuyue.map { it.id })
+        // The legacy `shuyue` list is no longer supported and is ignored without failing the index.
     }
 }

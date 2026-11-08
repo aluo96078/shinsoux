@@ -1,6 +1,15 @@
 package dev.shinsou.kmp.plugin.sandbox
 
+import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.OFFICIAL_SHINSOU_REPOSITORY_BASE_URL
+import dev.shinsou.kmp.plugin.PluginIndexEntry
+import dev.shinsou.kmp.plugin.RepositoryIndex
+import dev.shinsou.kmp.plugin.RepositoryTrustPolicies
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
 import dev.shinsou.kmp.plugin.KeyValuePluginStorage
 import dev.shinsou.kmp.plugin.PerHostRequestGate
 import dev.shinsou.kmp.plugin.PluginExecutionLimits
@@ -20,7 +29,6 @@ import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntime
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.SourceIndexEntry
-import dev.shinsou.kmp.plugin.localIndexEntries
 import dev.shinsou.kmp.plugin.pluginOrigin
 import dev.shinsou.kmp.plugin.sourceFailureMarker
 import java.io.File
@@ -312,3 +320,24 @@ class SandboxOfficialParityTest {
 }
 
 private fun key(post: Boolean, url: String, body: String) = "${if (post) "POST" else "GET"} $url ${if (post) body else ""}"
+
+/** The package index of a local checkout of the plugin repository, read through the client. */
+private fun localIndexEntries(repository: Path): List<PluginIndexEntry> = runBlocking {
+    val http = HttpClient(MockEngine { request ->
+        val relative = request.url.encodedPath.substringAfter("refs/heads/master/")
+        respond(Files.readAllBytes(repository.resolve(relative)), HttpStatusCode.OK)
+    })
+    try {
+        val client = ExtensionRepositoryClient(
+            http,
+            repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
+        )
+        when (val index = client.fetchIndex(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL)) {
+            is RepositoryIndex.Combined -> index.plugins
+            is RepositoryIndex.Plugins -> index.entries
+            is RepositoryIndex.Legacy -> error("Expected V2 repository")
+        }
+    } finally {
+        http.close()
+    }
+}

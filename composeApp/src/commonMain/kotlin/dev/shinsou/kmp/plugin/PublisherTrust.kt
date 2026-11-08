@@ -532,7 +532,7 @@ public data class PublisherRevocations(
 /** D5: what the user blocked on this device. Never signed, downloaded, backed up or synced. */
 @Serializable
 public sealed interface PluginBlockEntry {
-    /** [publisherId] is [NO_PUBLISHER] for packages without one (the reviewed catalogues, unsigned). */
+    /** [publisherId] is [NO_PUBLISHER] for packages without one (unsigned, developer). */
     @Serializable
     public data class Package(val packageId: String, val publisherId: String) : PluginBlockEntry {
         public companion object {
@@ -599,7 +599,7 @@ public class LocalPluginBlocklist(
  * Repository trust by publisher (§8.5): a URL mapped to a trusted publisher requires that
  * publisher's current key and shares its watermarks with every mirror. Revoked, replaced or
  * user-blocked publishers are refused before any request. URLs without a publisher fall back to
- * [fallback] (URL pins and the official unsigned exception).
+ * [fallback] (URL pins and developer-mode compatibility).
  */
 public class PublisherRepositoryTrustPolicy(
     private val publishers: PublisherTrustStore,
@@ -617,11 +617,6 @@ public class PublisherRepositoryTrustPolicy(
 
 /** §10.1: where a package's code runs. Decided from local state only, never from what a repository says. */
 public sealed interface ExecutionTier {
-    /**
-     * A host-reviewed catalogue artifact: it keeps its reviewed network scope and limits, but like
-     * every other package it runs in the sandbox ([SandboxOnlyScriptPluginRuntimeFactory]).
-     */
-    public data object ReviewedInProcess : ExecutionTier
     public data class Sandboxed(val development: Boolean = false, val warnings: Set<ExecutionTierWarning> = emptySet()) : ExecutionTier
     public data class Inert(val reason: InertReason) : ExecutionTier
 }
@@ -642,10 +637,6 @@ public data class ExecutionTierCandidate(
     val artifactSha256: String,
     /** The verified publisher of the artifact; null when it was not signed by a trusted publisher. */
     val publisherId: String?,
-    /** Exact match in the compiled official reviewed catalogue. */
-    val officialReviewedCatalogMatch: Boolean = false,
-    /** Transitional: from the canonical official repository while it is still unsigned. */
-    val fromCanonicalOfficialUnsignedRepository: Boolean = false,
     /** The user authorized this package's execution (the admission record). */
     val userAuthorized: Boolean = false,
     /** Unsigned, from an allowed loopback/LAN developer source. */
@@ -656,21 +647,17 @@ public class ExecutionTierResolver(
     private val publishers: PublisherTrustStore,
     private val revocations: PublisherRevocationStore,
     private val blocklist: LocalPluginBlocklist,
-    /** The app's built-in official publisher, once the official repository is signed. */
-    private val officialPublisherId: String? = null,
     private val developerMode: suspend () -> Boolean = { false },
     private val nowEpochSeconds: () -> Long,
 ) {
     /** The tier an installed package runs in now (checked at launch, rehydrate and after any trust change). */
     public suspend fun resolve(candidate: ExecutionTierCandidate): ExecutionTier {
-        // The user's block list comes first, before official status or any grant.
+        // The user's block list comes first, before any grant.
         blocklist.blocking(candidate.packageId, candidate.publisherId, candidate.artifactSha256)?.let {
             return ExecutionTier.Inert(InertReason.BLOCKED_BY_USER)
         }
         val publisherId = candidate.publisherId
             ?: return when {
-                // Transitional: the official repository is still unsigned, so it has no publisher yet.
-                candidate.officialReviewedCatalogMatch && candidate.fromCanonicalOfficialUnsignedRepository -> ExecutionTier.ReviewedInProcess
                 candidate.developerLocalSource && developerMode() -> ExecutionTier.Sandboxed(development = true)
                 else -> ExecutionTier.Inert(InertReason.UNSIGNED)
             }
@@ -685,11 +672,6 @@ public class ExecutionTierResolver(
         val withdrawn = revocations.revocations(publisherId)
         if (withdrawn != null && candidate.artifactSha256.lowercase() in withdrawn.revokedArtifacts) {
             return ExecutionTier.Inert(InertReason.ARTIFACT_REVOKED)
-        }
-        // Official status comes after revocation and withdrawal: a revoked official key or a withdrawn
-        // official artifact does not run in process either.
-        if (candidate.officialReviewedCatalogMatch && officialPublisherId != null && publisherId == officialPublisherId) {
-            return ExecutionTier.ReviewedInProcess
         }
         if (!candidate.userAuthorized) return ExecutionTier.Inert(InertReason.NOT_AUTHORIZED)
         if (withdrawn?.isExpired(nowEpochSeconds()) == true) warnings += ExecutionTierWarning.PUBLISHER_DOCUMENTS_EXPIRED

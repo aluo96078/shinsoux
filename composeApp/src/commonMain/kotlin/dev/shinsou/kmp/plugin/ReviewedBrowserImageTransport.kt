@@ -12,26 +12,35 @@ public expect fun createPlatformReviewedImageTransport(): PluginHttpTransport?
 
 internal const val REVIEWED_BROWSER_IMAGE_MAX_BYTES: Int = 4 * 1024 * 1024
 internal const val REVIEWED_BROWSER_IMAGE_MAX_PIXELS: Int = 8 * 1024 * 1024
-internal const val REVIEWED_BROWSER_IMAGE_ORIGIN: String = "https://i.motiezw.com"
-private val REVIEWED_BROWSER_IMAGE_PATH = Regex("^/[0-9]+/[0-9]+/[0-9]+/[0-9]+\\.(?:avif|webp|jpg|jpeg|png)$")
 
-internal fun isReviewedBrowserImageUrl(value: String): Boolean = runCatching {
+/**
+ * The canonical `https://host` origin of a URL the isolated browser may fetch, or null: HTTPS on
+ * port 443, a DNS name (no IP literal, no user info, no fragment), spelled canonically. Which
+ * origins a source may use is decided by its `browserImageOrigins` and the user's BROWSER_IMAGES
+ * grant; this only keeps the URL safe to hand to a browser and a CONNECT proxy.
+ */
+internal fun browserImageOriginOf(value: String): String? = runCatching {
     val url = Url(value)
-    value.length <= 2048 && url.protocol.name == "https" && url.host == "i.motiezw.com" &&
-        url.port == 443 && url.user.isNullOrEmpty() && url.password.isNullOrEmpty() &&
-        '?' !in value && '#' !in value && '@' !in value &&
-        value == REVIEWED_BROWSER_IMAGE_ORIGIN + url.encodedPath &&
-        REVIEWED_BROWSER_IMAGE_PATH.matches(url.encodedPath)
-}.getOrDefault(false)
+    val host = url.host
+    val canonical = value.length <= 2048 && url.protocol.name == "https" && url.port == 443 &&
+        url.user.isNullOrEmpty() && url.password.isNullOrEmpty() && '#' !in value && '@' !in value &&
+        BROWSER_IMAGE_HOST.matches(host) && !isPluginIpLiteral(host) && !isBlockedPluginAddress(host) &&
+        value.startsWith("https://$host/")
+    if (canonical) "https://$host" else null
+}.getOrNull()
+
+private val BROWSER_IMAGE_HOST = Regex("^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+internal fun isReviewedBrowserImageUrl(value: String): Boolean = browserImageOriginOf(value) != null
 
 /** Rechecked by the platform before creating any browser or loopback proxy. */
 internal fun validateReviewedBrowserImageRequest(request: PluginHttpRequest, resolution: PluginHostResolution) {
     require(request.method == "GET" && request.body.isEmpty() && request.headers.isEmpty()) {
-        "Reviewed browser images permit only host-owned credential-free GET requests"
+        "Browser images permit only host-owned credential-free GET requests"
     }
-    require(isReviewedBrowserImageUrl(request.url)) { "Image is outside the reviewed browser URL scope" }
+    val origin = requireNotNull(browserImageOriginOf(request.url)) { "Image is outside the browser image URL scope" }
     require(request.maxResponseBytes in 1..REVIEWED_BROWSER_IMAGE_MAX_BYTES) { "Invalid browser image byte limit" }
-    require(resolution.host == "i.motiezw.com" && resolution.addresses.size in 1..32 &&
+    require("https://${resolution.host}" == origin && resolution.addresses.size in 1..32 &&
         resolution.addresses.all { isPluginIpLiteral(it) && !isBlockedPluginAddress(it) }) {
         "Browser image requires an exact public DNS resolution"
     }

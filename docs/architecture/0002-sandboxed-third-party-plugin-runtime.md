@@ -1472,6 +1472,29 @@ WorkManager、資料庫或其他 App 初始化；之後若新增自訂 `Applicat
 - **過渡（S8）：** 已加入的儲存庫改為簽章發佈時，重新整理不會失敗，而是提示「確認發佈者」；未簽章時期安裝的社群套件，
   第一個簽章更新若沒有要求新東西，沿用原授權。
 
+## 24. A7b：移除審核層級（2026-11）
+
+本節取代 §23 中「仍在程式碼中」「尚未取代」兩處的描述。
+
+- **審核層級已移除。** `OfficialShinsouReviewedCatalog`、`ExecutionTier.ReviewedInProcess`、`InProcessScriptProvenance`、
+  reviewed 網路範圍與後綴家族、以及審核清單的 trust-token 例外都已刪除。可執行的套件只剩 `ExecutionTier.Sandboxed`：
+  來自已信任發佈者的簽章儲存庫，或開發者模式（本機／使用者輸入的私有 IPv4）。
+- **官方網址不再放行未簽章內容。** `OFFICIAL_SHINSOU_REPOSITORY_BASE_URL` 只剩身分用途：從它安裝的套件保留裸
+  `packageId`，D4 在使用者信任該網址的發佈者後延續原授權。Reviewed local repository 由開發者模式取代。
+- **ShuYue 執行路徑已移除。** App 不再執行 `contract: "shuyue"` 的套件，儲存庫中這類項目被略過。原 ShuYue 來源以一般
+  Shinsou 套件重新發佈：索引的 `sourceId` 可為小寫點分隔字串（如 `zh.wenku8`），此時必須以 `legacyLongId` 提供數字
+  引擎／儲存 ID。沿用原本的 package ID、字串 source ID 與 `-91100000000000xx` 數字 ID 時，書庫列（以 `SourceKey`
+  綁定）與已儲存的帳密（以數字 ID 為命名空間）直接延續。ShuYue App 備份匯入改用靜態對照表（`ShuYueLegacySources`）。
+- **審核限定能力的通用替代：**
+  - 帳號書架與收藏：`getFavoriteManga(page)` 讓來源出現「書架」（`ExtensionCapability.FAVORITE`、瀏覽選項
+    `option=bookcase`）；`setFavorite(manga, favorite)` 變更網站收藏，需敏感權限 `FAVORITE_MUTATION`。
+  - 瀏覽器載入圖片：新敏感權限 `BROWSER_IMAGES` 與來源欄位 `browserImageOrigins`（443 埠的 exact HTTPS origin，
+    必須是 `contentOrigins` 的子集，最多 4 個）。macOS 與 iOS 上，命中的圖片在一次性私密瀏覽器中以無 Cookie、無
+    Referer 的 GET 下載；CONNECT proxy、helper grant 與 CSP 都只接受該請求的 origin，DNS 須解析為公開位址，
+    載入前後各檢查一次授權與 artifact 身分。Android 與 Windows 走一般內容通道。
+  - `requiredWebChallengeCookieName`（`cf_clearance`）與 bika 的 optional storage key 例外沒有通用替代：來源以
+    `requiredWebChallengeLocalStorageKeys` 自行宣告需要的 key；Cookie 名稱不再強制。wnacg 的 16 MiB 內容上限亦不再特例。
+
 ## 不接受的縮小範圍
 
 - 讓第三方套件在 Rhino 或 JavaScriptCore in-process 執行，只加 instruction 計數或事後記憶體輪詢。

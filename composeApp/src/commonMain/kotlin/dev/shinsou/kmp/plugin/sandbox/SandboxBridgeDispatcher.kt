@@ -41,7 +41,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
- * Sandbox-tier policy that is stricter than the reviewed in-process engines (ADR-0002 §5.1, §6).
+ * Sandbox-tier policy that is the sandbox's own (ADR-0002 §5.1, §6).
  * Values come from the host's permission records, never from the sandbox.
  */
 internal data class SandboxBridgePolicy(
@@ -338,8 +338,7 @@ internal class SandboxBridgeDispatcher(
 
     /**
      * Cookie values: the host must keep cookies for the source (COOKIE_STORAGE) and the script must
-     * hold the COOKIE_READ grant. Host-reviewed catalogue artifacts read them under their review
-     * ([SandboxBridgePolicy.allowCookieRead]) instead.
+     * hold the COOKIE_READ grant ([SandboxBridgePolicy.allowCookieRead] is the host policy's override).
      */
     private fun requireCookieRead() {
         require(PluginRuntimePermission.COOKIE_STORAGE)

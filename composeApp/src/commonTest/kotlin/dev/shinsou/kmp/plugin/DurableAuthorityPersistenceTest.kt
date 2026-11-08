@@ -8,13 +8,6 @@ import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginEventRuntimeStatus
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
-import dev.shinsou.kmp.plugin.shuyue.KeyValueShuYueReviewedStoreV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueArtifactIdentityV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueExecutionPermissionV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueQuarantinedScriptV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewStatusV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueReviewedInstallationV2
-import dev.shinsou.kmp.plugin.shuyue.ShuYueScriptProvenanceV2
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -88,82 +81,11 @@ class DurableAuthorityPersistenceTest {
     }
 
     @Test
-    fun shuYueApprovalAndRevocationUseVerifiedTrustCommitMarkers() = runTest {
-        val backing = SilentMutationKeyValueStore()
-        val store = KeyValueShuYueReviewedStoreV2(backing)
-        val identity = shuYueIdentity()
-        val permissions = setOf(
-            ShuYueExecutionPermissionV2.EXECUTE_SCRIPT,
-            ShuYueExecutionPermissionV2.NETWORK,
-        )
-
-        backing.dropPut = { key, value -> key.endsWith(".trust") && value == "true" }
-        assertFailsWith<IllegalStateException> { store.approve(identity, permissions) }
-        assertFalse(store.isTrusted(identity))
-        assertFalse(KeyValueShuYueReviewedStoreV2(backing).isTrusted(identity))
-
-        backing.dropPut = { _, _ -> false }
-        store.approve(identity, permissions)
-        assertTrue(KeyValueShuYueReviewedStoreV2(backing).isTrusted(identity))
-
-        backing.dropPut = { key, value -> key.endsWith(".trust") && value == "false" }
-        assertFailsWith<IllegalStateException> { store.revoke(identity) }
-        assertFalse(store.isTrusted(identity))
-
-        backing.dropPut = { _, _ -> false }
-        store.revoke(identity)
-        assertFalse(KeyValueShuYueReviewedStoreV2(backing).isTrusted(identity))
-
-        store.approve(identity, permissions)
-        backing.dropRemove = { key -> key.endsWith(".permissions") }
-        assertFailsWith<IllegalStateException> { store.revoke(identity) }
-        assertFalse(store.isTrusted(identity))
-        assertFalse(KeyValueShuYueReviewedStoreV2(backing).isTrusted(identity))
-    }
-
-    @Test
-    fun shuYueQuarantineAndInstallationCommitsRequireExactReadBack() = runTest {
-        val backing = SilentMutationKeyValueStore()
-        val store = KeyValueShuYueReviewedStoreV2(backing)
-        val bytes = "reviewed".encodeToByteArray()
-        val identity = shuYueIdentity(bytes)
-        val quarantine = ShuYueQuarantinedScriptV2(
-            quarantineId = "q-1",
-            identity = identity,
-            sourceIds = listOf("source"),
-            bytes = bytes,
-            provenance = ShuYueScriptProvenanceV2.REVIEWED_REPOSITORY,
-            stagedReviewStatus = ShuYueReviewStatusV2.REVIEWED,
-        )
-
-        backing.dropPut = { key, _ -> key.startsWith("plugin.shuyue.v2.quarantine.") }
-        assertFailsWith<IllegalStateException> { store.put(quarantine) }
-
-        backing.dropPut = { key, _ -> key == "plugin.shuyue.v2.installations" }
-        assertFailsWith<IllegalStateException> {
-            store.putInstalled(ShuYueReviewedInstallationV2(quarantine.quarantineId, identity))
-        }
-
-        backing.dropPut = { _, _ -> false }
-        store.putInstalled(ShuYueReviewedInstallationV2(quarantine.quarantineId, identity))
-        backing.dropRemove = { key -> key == "plugin.shuyue.v2.installations" }
-        assertFailsWith<IllegalStateException> { store.removeInstalled(identity.packageId) }
-        assertTrue(KeyValueShuYueReviewedStoreV2(backing).getInstalled(identity.packageId) != null)
-    }
-
-    @Test
     fun oversizedPersistedAuthorityCollectionsFailClosedBeforeMaterialization() = runTest {
         val backing = SilentMutationKeyValueStore()
         backing.values["plugin.trustStore.trustedTokens"] =
             List(1_025) { "\"${it}:pkg|1|${"a".repeat(64)}\"" }.joinToString(",", "[", "]")
         assertFalse(KeyValuePluginTrustStore(backing).isTrusted("pkg", 1, "a".repeat(64)))
-
-        val identity = shuYueIdentity()
-        val identityKey = approvalIdentityKey(identity)
-        backing.values["plugin.shuyue.v2.approval.$identityKey.permissions"] =
-            List(ShuYueExecutionPermissionV2.entries.size + 1) { "\"EXECUTE_SCRIPT\"" }
-                .joinToString(",", "[", "]")
-        assertTrue(KeyValueShuYueReviewedStoreV2(backing).grantedPermissions(identity).isEmpty())
     }
 
     @Test
@@ -197,18 +119,6 @@ class DurableAuthorityPersistenceTest {
         authorizer.setRuntimeStatus(scope, PluginEventRuntimeStatus(sourceCapabilities = setOf("CATALOGUE")))
         return authorizer.authorize(scope, PluginHostPermission.REPORT_DIAGNOSTIC, null).allowed
     }
-
-    private fun shuYueIdentity(bytes: ByteArray = "reviewed".encodeToByteArray()) =
-        ShuYueArtifactIdentityV2("fixture.shuyue", "1.0.0", 1, Sha256.hex(bytes))
-
-    private fun approvalIdentityKey(identity: ShuYueArtifactIdentityV2): String = Sha256.hex(
-        listOf(
-            identity.packageId,
-            identity.version,
-            identity.versionCode.toString(),
-            identity.sha256,
-        ).joinToString("|") { value -> "${value.encodeToByteArray().size}:$value" }.encodeToByteArray(),
-    )
 }
 
 private class SilentMutationKeyValueStore : PluginKeyValueStore {

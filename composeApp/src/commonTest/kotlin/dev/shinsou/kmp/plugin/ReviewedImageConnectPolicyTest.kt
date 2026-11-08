@@ -48,10 +48,16 @@ class ReviewedImageConnectPolicyTest {
             "User-Agent: WebKit"
 
     private fun assertValid(header: String) {
-        assertTrue(isValidReviewedImageConnectHeader(header, authorization))
+        assertTrue(isValidReviewedImageConnectHeader(header, authorization, "i.motiezw.com"))
+    }
+
+    @Test
+    fun onlyTheImageHostMayBeTunnelled() {
+        assertFalse(isValidReviewedImageConnectHeader(validHeader(), authorization, "other.example.com"))
+        assertFalse(isValidReviewedImageConnectHeader(validHeader(), authorization, "evil:443 HTTP/1.1\r\nX: y"))
     }
 
     private fun assertInvalid(header: String) {
-        assertFalse(isValidReviewedImageConnectHeader(header, authorization))
+        assertFalse(isValidReviewedImageConnectHeader(header, authorization, "i.motiezw.com"))
     }
 }

@@ -22,8 +22,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.plugin.events.PluginSystemEventDeclaration
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry
-import dev.shinsou.kmp.plugin.shuyue.ShuYueRepositorySource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
@@ -35,7 +33,6 @@ public sealed class RepositoryIndex {
     public data class Legacy(val entries: List<LegacyExtensionIndexEntry>) : RepositoryIndex()
     public data class Combined(
         val plugins: List<PluginIndexEntry>,
-        val shuyue: List<dev.shinsou.kmp.plugin.shuyue.ShuYueRepositoryEntry>,
     ) : RepositoryIndex()
 }
 
@@ -76,11 +73,6 @@ public class ExtensionRepositoryClient(
     private val repositoryHostResolver: PluginHostResolver = PluginHostResolver.Unavailable,
     /** Production transport must bind sockets to the already-vetted DNS answer set. */
     private val repositoryTransport: PluginHttpTransport? = null,
-    /** Explicit process-start admission for one app-reviewed loopback repository. */
-    private val reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy =
-        ReviewedLocalRepositoryPolicy.DISABLED,
-    /** Dedicated credential-free loopback transport; never reused for ordinary repositories. */
-    private val reviewedLocalRepositoryTransport: PluginHttpTransport? = null,
     /**
      * ADR-0002 §8.1: the development servers developer mode currently admits (checked against the
      * origin on every request, so switching the mode off takes effect at once). They may use HTTP.
@@ -105,11 +97,6 @@ public class ExtensionRepositoryClient(
             MAX_REPOSITORY_BYTES,
         )
         val document = decodeElement<RepositoryDocument>(url, verified.payload)
-        if (reviewedLocalRepositoryPolicy.admits(normalized) && verified.admission == null) {
-            require(document.meta.signingKeyFingerprint.isNullOrEmpty()) {
-                "Unsigned reviewed local repository cannot advertise signing authority"
-            }
-        }
         val repository = ExtensionRepository(
             baseUrl = normalized,
             name = document.meta.name,
@@ -182,7 +169,6 @@ public class ExtensionRepositoryClient(
             MAX_INDEX_BYTES,
         )
         val root = verified.payload
-        requireReviewedLocalV2Index(normalized, root)
         validateIndexJsonShape(root)
         if (root is JsonObject && isUnifiedEnvelope(root)) {
             val document = decodeElement<UnifiedRepositoryDocument>(url, root)
@@ -208,11 +194,6 @@ public class ExtensionRepositoryClient(
 
     public suspend fun fetchLegacyIndex(baseUrl: String): List<LegacyExtensionIndexEntry> {
         val normalized = normalizeBaseUrl(baseUrl)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            throw ExtensionRepositoryException.InvalidUrl(
-                "Legacy index is outside the reviewed local repository contract",
-            )
-        }
         val url = resolve(normalized, "index.min.json", cacheBust = true)
         val verified = fetchVerifiedJson(
             normalized,
@@ -245,8 +226,7 @@ public class ExtensionRepositoryClient(
                     MAX_INDEX_BYTES,
                 )
                 val root = verified.payload
-                requireReviewedLocalV2Index(normalized, root)
-                validateIndexJsonShape(root)
+                        validateIndexJsonShape(root)
                 if (root is JsonObject && isUnifiedEnvelope(root)) {
                     val document = decodeElement<UnifiedRepositoryDocument>(url, root)
                     validatePluginEntries(
@@ -256,7 +236,6 @@ public class ExtensionRepositoryClient(
                     validateUnifiedIds(document)
                     val index = RepositoryIndex.Combined(
                         plugins = document.shinsou + document.legacy,
-                        shuyue = document.shuyue,
                     )
                     val admission = commitAuthenticatedIndex(normalized, index.plugins, verified.admission)
                     return@run RepositoryIndexSnapshot(index, admission)
@@ -278,7 +257,6 @@ public class ExtensionRepositoryClient(
                 )
             } catch (pluginFailure: Throwable) {
                 if (pluginFailure.hasRepositorySecurityFailure()) throw pluginFailure
-                if (reviewedLocalRepositoryPolicy.admits(normalized)) throw pluginFailure
                 try {
                     val legacyUrl = resolve(normalized, "index.min.json", cacheBust = true)
                     val legacyVerified = fetchVerifiedJson(
@@ -319,18 +297,19 @@ public class ExtensionRepositoryClient(
         val packageIds = mutableSetOf<String>()
         val sourceIdsByPackage = mutableMapOf<String, MutableSet<String>>()
         val shinsou = mutableListOf<PluginIndexEntry>()
-        val shuyue = mutableListOf<ShuYueRepositoryEntry>()
         packages.forEach { element ->
             val pkg = element.jsonObject
             val contract = pkg["contract"]?.jsonPrimitive?.contentOrNull
-            require(contract == "shinsou" || contract == "shuyue") {
+            // ShuYue-format packages are no longer supported: such rows are skipped so a mixed
+            // index stays usable for its Shinsou-contract packages.
+            if (contract == "shuyue") return@forEach
+            require(contract == "shinsou") {
                 "Unknown or missing executable V2 contract"
             }
             val runtime = pkg.requiredString("runtime")
-            require(
-                (contract == "shinsou" && runtime == V2_SHINSOU_RUNTIME) ||
-                    (contract == "shuyue" && runtime == V2_SHUYUE_RUNTIME),
-            ) { "Unsupported V2 runtime '$runtime' for contract '$contract'" }
+            require(runtime == V2_SHINSOU_RUNTIME) {
+                "Unsupported V2 runtime '$runtime' for contract '$contract'"
+            }
             val packageId = pkg.requiredString("id")
             require(packageIds.add(packageId)) { "Duplicate V2 package id '$packageId'" }
             val sourceIds = sourceIdsByPackage.getOrPut(packageId) { mutableSetOf() }
@@ -343,55 +322,6 @@ public class ExtensionRepositoryClient(
             packageSources.forEach { source ->
                 val sourceId = source.jsonObject.requiredString("sourceId")
                 require(sourceIds.add(sourceId)) { "Duplicate V2 source id '$sourceId'" }
-            }
-            if (contract == "shuyue") {
-                val capabilityIds = pkg.requiredStringSet("capabilities")
-                val eventObject = pkg["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
-                require(eventObject.requiredString("protocol") == "dev.shinsou.system")
-                val eventDeclaration = PluginSystemEventDeclaration(
-                    minVersion = eventObject["minVersion"]?.jsonPrimitive?.intOrNull ?: error("Missing minVersion"),
-                    maxVersion = eventObject["maxVersion"]?.jsonPrimitive?.intOrNull ?: error("Missing maxVersion"),
-                    required = eventObject.stringSet("required"),
-                    optional = eventObject.stringSet("optional"),
-                )
-                val requested = pkg.stringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
-                    PluginHostPermission.valueOf(it)
-                }
-                shuyue += ShuYueRepositoryEntry(
-                    id = packageId,
-                    name = pkg.requiredString("name"),
-                    version = pkg.requiredString("version"),
-                    versionCode = pkg["versionCode"]?.jsonPrimitive?.intOrNull ?: error("Missing versionCode"),
-                    lang = pkg.requiredString("lang"),
-                    nsfw = if (pkg.requiredBoolean("nsfw")) 1 else 0,
-                    scriptUrl = pkg.requiredString("scriptUrl"),
-                    sources = packageSources.map { sourceElement ->
-                        val source = sourceElement.jsonObject
-                        ShuYueRepositorySource(
-                            id = source.requiredString("sourceId"),
-                            name = source.requiredString("name"),
-                            lang = source.requiredString("lang"),
-                            baseUrl = source.requiredString("baseUrl"),
-                            supportsLogin = "LOGIN" in capabilityIds,
-                            supportsLatest = "LATEST" in capabilityIds,
-                            supportsFavorites = "FAVORITE" in capabilityIds,
-                            contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
-                        )
-                    },
-                    contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
-                    capabilities = capabilityIds,
-                    contract = contract,
-                    runtime = runtime,
-                    sha256 = pkg.requiredString("sha256"),
-                    byteSize = pkg["byteSize"]?.jsonPrimitive?.intOrNull ?: error("Missing byteSize"),
-                    sidecarUrl = pkg.requiredString("sidecarUrl"),
-                    systemEvents = eventDeclaration,
-                    requestedHostPermissions = requested,
-                    installable = pkg["installable"]?.jsonPrimitive?.booleanOrNull ?: true,
-                    referenceOnly = pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                    legacyCompatibilityOnly = pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                )
-                return@forEach
             }
             // Reference-only/non-installable Shinsou packages may intentionally use opaque
             // source IDs (for example, a login capability sample). They are not executable
@@ -449,7 +379,14 @@ public class ExtensionRepositoryClient(
                     SourceIndexEntry(
                         name = source.requiredString("name"),
                         lang = source.requiredString("lang"),
-                        id = rawId.toLongOrNull() ?: error("Invalid lossless source id '$rawId'"),
+                        // A numeric sourceId is its own engine id. A string sourceId (an existing
+                        // library identity, such as a former ShuYue source) names its numeric
+                        // engine and storage id in legacyLongId.
+                        id = rawId.toLongOrNull() ?: run {
+                            require(STRING_SOURCE_ID.matches(rawId)) { "Invalid source id '$rawId'" }
+                            source.requiredNullableString("legacyLongId")?.toLongOrNull()
+                                ?: error("Source '$rawId' needs a numeric legacyLongId")
+                        },
                         baseUrl = source.requiredString("baseUrl"),
                         // Preserve the raw index metadata. An omitted source refinement is
                         // meaningful to exact installed-manifest matching; sidecar validation
@@ -466,6 +403,7 @@ public class ExtensionRepositoryClient(
                         contentOrigins = source.optionalStringSet("contentOrigins"),
                         browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
                         contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
+                        browserImageOrigins = source.optionalStringSet("browserImageOrigins"),
                         originPolicyVersion = 2,
                         legacyLongId = source.requiredNullableString("legacyLongId"),
                         canonicalSourceId = rawId,
@@ -488,19 +426,7 @@ public class ExtensionRepositoryClient(
             )
         }
         require(shinsou.map { it.id }.distinct().size == shinsou.size)
-        val decoded = RepositoryIndex.Combined(shinsou, shuyue)
-        if (normalizedBaseUrl != null && reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) {
-            // A local working tree can contain ShuYue, examples, or unreviewed drafts. Project only
-            // exact current app-reviewed Shinsou rows; directory contents cannot mint authority.
-            RepositoryIndex.Combined(
-                plugins = decoded.plugins.filter { entry ->
-                    OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                        entry, reviewedLocalRepositoryPolicy, normalizedBaseUrl,
-                    ) != null
-                },
-                shuyue = emptyList(),
-            )
-        } else decoded
+        RepositoryIndex.Combined(shinsou)
     } catch (error: Throwable) {
         throw ExtensionRepositoryException.InvalidDocument(url, error)
     }
@@ -508,23 +434,10 @@ public class ExtensionRepositoryClient(
     public suspend fun downloadPluginScript(baseUrl: String, scriptUrl: String): ByteArray {
         validateRelativePath(scriptUrl)
         val normalized = normalizeBaseUrl(baseUrl)
-        val reviewedLocalDigests = if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            OfficialShinsouReviewedCatalog.reviewedLocalScriptDigests(scriptUrl).also { digests ->
-                require(digests.isNotEmpty()) {
-                    "Local repository script path is not a current app-reviewed artifact"
-                }
-            }
-        } else emptySet()
         val decision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(decision)
         val url = resolve(normalized, scriptUrl, cacheBust = true)
         val bytes = requestBytes(normalized, url, MAX_SCRIPT_BYTES, decision)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            val digest = Sha256.hex(bytes)
-            require(digest in reviewedLocalDigests) {
-                "Local repository script is not an exact current app-reviewed artifact"
-            }
-        }
         return bytes
     }
 
@@ -536,13 +449,6 @@ public class ExtensionRepositoryClient(
         val sidecarPath = entry.sidecarUrl ?: return
         validateRelativePath(sidecarPath)
         val normalized = normalizeBaseUrl(baseUrl)
-        if (reviewedLocalRepositoryPolicy.admits(normalized)) {
-            require(
-                OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                    entry, reviewedLocalRepositoryPolicy, normalized,
-                ) != null,
-            ) { "Local repository sidecar request is not bound to an exact reviewed index row" }
-        }
         val url = resolve(normalized, sidecarPath, cacheBust = true)
         val verified = fetchVerifiedJson(
             normalized,
@@ -560,9 +466,7 @@ public class ExtensionRepositoryClient(
             require(sidecar.requiredString("version") == entry.version)
             require(sidecar.requiredInt("versionCode") == entry.versionCode)
             require(sidecar.requiredString("contract") == entry.contract)
-            requireSidecarRuntimeParity(
-                normalized, sidecar, entry, reviewedLocalRepositoryPolicy,
-            )
+            requireSidecarRuntimeParity(normalized, sidecar, entry)
             require(sidecar.requiredString("name") == entry.name)
             require(sidecar.requiredString("lang") == entry.lang)
             require(sidecar.requiredBoolean("nsfw") == (entry.nsfw == 1))
@@ -624,6 +528,7 @@ public class ExtensionRepositoryClient(
                 require(match.optionalStringSet("contentOrigins") == expected.contentOrigins)
                 require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
                 require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
+                require(match.optionalStringSet("browserImageOrigins") == expected.browserImageOrigins)
                 require(match.requiredStringSet("capabilities") == entry.capabilities)
                 val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
                 require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
@@ -674,7 +579,6 @@ public class ExtensionRepositoryClient(
         admission: RepositoryIndexAdmission?,
     ) {
         val normalized = normalizeBaseUrl(baseUrl)
-        requireReviewedLocalEntry(normalized, entry)
         val trustDecision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(trustDecision)
         if (trustDecision is RepositoryTrustDecision.RequirePinnedSignature) {
@@ -769,7 +673,6 @@ public class ExtensionRepositoryClient(
         val actual = actualSha256.trim().lowercase()
         if (actual != declared) throw PluginVerificationException.HashMismatch(declared, actual)
         val normalized = normalizeBaseUrl(baseUrl)
-        requireReviewedLocalEntry(normalized, entry)
         val trustDecision = trustDecisionFor(normalized)
         repositorySecurityState.requireDurableFor(trustDecision)
         if (trustDecision is RepositoryTrustDecision.RequirePinnedSignature) {
@@ -850,13 +753,6 @@ public class ExtensionRepositoryClient(
             }
             val response = requestRepositoryHop(currentUrl, current, trustDecision, maxBytes)
             val location = response.location.trim()
-            if (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl) &&
-                (response.status in 300..399 || location.isNotEmpty())
-            ) {
-                throw ExtensionRepositoryException.InvalidUrl(
-                    "Local repository redirects are forbidden: $currentUrl",
-                )
-            }
             if (response.status in REDIRECT_STATUS_CODES && location.isNotEmpty()) {
                 if (hop >= MAX_REDIRECTS) throw ExtensionRepositoryException.InvalidUrl(currentUrl)
                 val next = resolveRedirect(currentUrl, location)
@@ -887,49 +783,7 @@ public class ExtensionRepositoryClient(
         parsed: ParsedRepositoryUrl,
         trustDecision: RepositoryTrustDecision,
         maxBytes: Long,
-    ): RepositoryHopResponse = if (reviewedLocalRepositoryPolicy.admits(parsed.origin)) {
-        val transport = reviewedLocalRepositoryTransport ?: throw IllegalStateException(
-            "Reviewed local repository transport is unavailable",
-        )
-        if (!reviewedLocalRepositoryPolicy.admitsRequestUrl(url)) {
-            throw ExtensionRepositoryException.InvalidUrl(url)
-        }
-        val response = try {
-            transport.execute(PluginHttpRequest("GET", url, maxResponseBytes = maxBytes.toInt()))
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (error: ExtensionRepositoryException) {
-            throw error
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        val responseHeaders = try {
-            boundedPluginResponseHeaders(response.headers.entries)
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        try {
-            responseHeaders.pluginContentEncoding()
-            val declared = responseHeaders.pluginDeclaredContentLength()
-            if (declared != null && declared > maxBytes) throw repositoryResponseTooLarge(url)
-        } catch (error: ExtensionRepositoryException) {
-            throw error
-        } catch (error: Throwable) {
-            throw ExtensionRepositoryException.NetworkSecurity(url, error)
-        }
-        val bounded = requireBoundedRepositoryResponse(
-            RepositoryHopResponse(
-                response.status,
-                responseHeaders.pluginHeaderValues(HttpHeaders.Location).singleOrNull().orEmpty(),
-                response.body,
-            ),
-            maxBytes,
-        )
-        if (bounded.status in 300..399 || bounded.location.isNotEmpty()) {
-            throw ExtensionRepositoryException.InvalidUrl("Local repository redirects are forbidden: $url")
-        }
-        bounded
-    } else when (trustDecision) {
+    ): RepositoryHopResponse = when (trustDecision) {
         is RepositoryTrustDecision.RequirePinnedSignature -> {
             val transport = repositoryTransport ?: throw IllegalStateException(
                 "Pinned repository transport is unavailable; refusing an unbound DNS request",
@@ -1131,50 +985,14 @@ public class ExtensionRepositoryClient(
 
     private fun requireAllowedRepositoryScheme(parsed: ParsedRepositoryUrl, original: String) {
         if (parsed.scheme == "https") return
-        if (reviewedLocalRepositoryPolicy.admits(parsed.origin) &&
-            (parsed.path == "/" || reviewedLocalRepositoryPolicy.admitsRequestUrl(original))
-        ) return
         if (developerRepository(parsed.origin)) return
         if (!allowInsecureDeveloperHttp || !isPrivateHost(parsed.host)) {
             throw ExtensionRepositoryException.InvalidUrl(original)
         }
     }
 
-    private fun requireReviewedLocalEntry(normalizedBaseUrl: String, entry: PluginIndexEntry) {
-        if (!reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) return
-        require(
-            OfficialShinsouReviewedCatalog.matchReviewedRepositoryEntry(
-                entry, reviewedLocalRepositoryPolicy, normalizedBaseUrl,
-            ) != null,
-        ) { "Local repository entry is not an exact current app-reviewed artifact" }
-    }
-
-    private fun requireReviewedLocalV2Index(normalizedBaseUrl: String, root: JsonElement) {
-        if (!reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) return
-        val format = (root as? JsonObject)?.get("format")?.jsonPrimitive?.contentOrNull
-        if (format != "shinsou-extension-v2" || root !is JsonObject ||
-            listOf("shinsou", "legacy", "shuyue").any { it in root }
-        ) {
-            throw RepositoryTrustException.Malformed(
-                "Reviewed local repository must expose the fixed Shinsou V2 index contract",
-            )
-        }
-    }
-
-    /**
-     * Configured author pins retain precedence. Only the exact explicitly enabled loopback origin
-     * may replace an ordinary untrusted-repository result with compiled-catalogue compatibility;
-     * malformed policy/configuration failures are never downgraded.
-     */
-    private suspend fun trustDecisionFor(normalizedBaseUrl: String): RepositoryTrustDecision = try {
+    private suspend fun trustDecisionFor(normalizedBaseUrl: String): RepositoryTrustDecision =
         repositoryTrustPolicy.decisionFor(normalizedBaseUrl)
-    } catch (untrusted: RepositoryTrustException.UntrustedRepository) {
-        if (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl)) {
-            RepositoryTrustDecision.UnsignedDeveloperCompatibility
-        } else {
-            throw untrusted
-        }
-    }
 
     private fun JsonElement.stringSet(): Set<String> = (this as? JsonArray).orEmpty().mapTo(linkedSetOf()) { it.jsonPrimitive.content }
 
@@ -1279,48 +1097,25 @@ public class ExtensionRepositoryClient(
     }
 
     private fun validateUnifiedIds(document: UnifiedRepositoryDocument) {
-        require(document.shinsou.size + document.legacy.size + document.shuyue.size <= MAX_INDEX_PACKAGES) {
+        require(document.shinsou.size + document.legacy.size <= MAX_INDEX_PACKAGES) {
             "Repository contains too many packages"
         }
         val ids = mutableSetOf<String>()
-        (document.shinsou.map { it.id } + document.legacy.map { it.id } + document.shuyue.map { it.id })
+        (document.shinsou.map { it.id } + document.legacy.map { it.id })
             .forEach { require(ids.add(it)) { "Duplicate plugin package id '$it'" } }
-        document.shuyue.forEach { packageEntry ->
-            requireIndexString(packageEntry.id, MAX_INDEX_ID_BYTES, "package id")
-            requireIndexString(packageEntry.name, MAX_INDEX_NAME_BYTES, "package name")
-            requireIndexString(packageEntry.version, MAX_INDEX_VERSION_BYTES, "package version")
-            requireIndexString(packageEntry.lang, MAX_INDEX_LANG_BYTES, "package language")
-            requireIndexString(packageEntry.scriptUrl, MAX_INDEX_URL_BYTES, "script URL")
-            packageEntry.description?.let { requireIndexString(it, MAX_INDEX_DESCRIPTION_BYTES, "description") }
-            require(packageEntry.sources.size <= MAX_INDEX_SOURCES_PER_PACKAGE) {
-                "Repository package '${packageEntry.id}' contains too many sources"
-            }
-            val sourceIds = mutableSetOf<String>()
-            packageEntry.sources.forEach { source ->
-                requireIndexString(source.id, MAX_INDEX_ID_BYTES, "source id")
-                requireIndexString(source.name, MAX_INDEX_NAME_BYTES, "source name")
-                requireIndexString(source.lang, MAX_INDEX_LANG_BYTES, "source language")
-                requireIndexString(source.baseUrl, MAX_INDEX_URL_BYTES, "source URL")
-                require(sourceIds.add(source.id)) { "Duplicate source id '${source.id}' in '${packageEntry.id}'" }
-            }
-        }
         require(
             document.shinsou.sumOf { it.sources.orEmpty().size } +
-                document.legacy.sumOf { it.sources.orEmpty().size } +
-                document.shuyue.sumOf { it.sources.size } <= MAX_INDEX_TOTAL_SOURCES,
+                document.legacy.sumOf { it.sources.orEmpty().size } <= MAX_INDEX_TOTAL_SOURCES,
         ) { "Repository contains too many sources" }
     }
 
     private fun validateCombinedIndex(index: RepositoryIndex.Combined) {
-        require(index.plugins.size + index.shuyue.size <= MAX_INDEX_PACKAGES) {
+        require(index.plugins.size <= MAX_INDEX_PACKAGES) {
             "Repository contains too many packages"
         }
         validatePluginEntries(index.plugins)
-        val synthetic = UnifiedRepositoryDocument(shuyue = index.shuyue)
-        validateUnifiedIds(synthetic)
-        require(index.plugins.sumOf { it.sources.orEmpty().size } +
-            index.shuyue.sumOf { it.sources.size } <= MAX_INDEX_TOTAL_SOURCES
-        ) { "Repository contains too many sources" }
+        validateUnifiedIds(UnifiedRepositoryDocument(shinsou = index.plugins))
+        require(index.plugins.sumOf { it.sources.orEmpty().size } <= MAX_INDEX_TOTAL_SOURCES) { "Repository contains too many sources" }
     }
 
     private fun validateIndexSource(source: SourceIndexEntry) {
@@ -1334,6 +1129,7 @@ public class ExtensionRepositoryClient(
             source.contentOrigins,
             source.browserSessionOrigins,
             source.contentHostSuffixes,
+            source.browserImageOrigins,
         )
         require(declarations.all { it.size <= MAX_INDEX_SET_VALUES }) {
             "Repository source declaration contains too many values"
@@ -1377,6 +1173,7 @@ public class ExtensionRepositoryClient(
             source.optionalStringSet("contentOrigins")
             source.optionalStringSet("browserSessionOrigins")
             source.optionalStringSet("contentHostSuffixes")
+            source.optionalStringSet("browserImageOrigins")
         }
     }
 
@@ -1421,7 +1218,6 @@ public class ExtensionRepositoryClient(
 }
 
 private const val V2_SHINSOU_RUNTIME = "legacy-shinsou-adapter-v2"
-private const val V2_SHUYUE_RUNTIME = "reviewed-shuyue-adapter-v2"
 
 private fun JsonObject.requiredString(key: String): String =
     this[key]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
@@ -1432,7 +1228,6 @@ private fun requireSidecarRuntimeParity(
     normalizedBaseUrl: String,
     sidecar: JsonObject,
     entry: PluginIndexEntry,
-    reviewedLocalRepositoryPolicy: ReviewedLocalRepositoryPolicy = ReviewedLocalRepositoryPolicy.DISABLED,
 ) {
     val expected = entry.runtime
     val element = sidecar["runtime"]
@@ -1441,12 +1236,9 @@ private fun requireSidecarRuntimeParity(
         // Keep this narrowly scoped compatibility exception; every other repository must bind
         // the sidecar runtime explicitly to the index runtime.
         require(
-            (normalizedBaseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL &&
+            normalizedBaseUrl == OFFICIAL_SHINSOU_REPOSITORY_BASE_URL &&
                 entry.contract == "shinsou" &&
-                expected == V2_SHINSOU_RUNTIME) ||
-                (reviewedLocalRepositoryPolicy.admits(normalizedBaseUrl) &&
-                    entry.contract == "shinsou" &&
-                    expected == V2_SHINSOU_RUNTIME),
+                expected == V2_SHINSOU_RUNTIME,
         ) { "Missing 'runtime'" }
         return
     }
@@ -1509,3 +1301,6 @@ private fun Throwable.hasRepositorySecurityFailure(): Boolean {
     }
     return false
 }
+
+/** A non-numeric `sourceId`: a lowercase dotted identifier such as `zh.wenku8`. */
+private val STRING_SOURCE_ID = Regex("^[a-z0-9][a-z0-9._-]{0,127}$")

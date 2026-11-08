@@ -4,7 +4,10 @@ package dev.shinsou.kmp.plugin
 internal fun isValidReviewedImageConnectHeader(
     header: String,
     expectedAuthorization: String,
+    /** The image origin's host, from [browserImageOriginOf] (a lowercase DNS name). */
+    expectedHost: String,
 ): Boolean {
+    if (browserImageOriginOf("https://$expectedHost/") != "https://$expectedHost") return false
     if (header.encodeToByteArray().size > REVIEWED_IMAGE_CONNECT_MAX_HEADER_BYTES) return false
     // Validate raw input before splitting or trimming so whitespace normalization cannot hide
     // controls, obs-fold, or DEL. CR and LF are admitted only as exact CRLF pairs below.
@@ -14,7 +17,7 @@ internal fun isValidReviewedImageConnectHeader(
     ) return false
     if ('\n' in header.replace("\r\n", "") || '\r' in header.replace("\r\n", "")) return false
     val lines = header.split("\r\n")
-    if (lines.firstOrNull() != "CONNECT i.motiezw.com:443 HTTP/1.1") return false
+    if (lines.firstOrNull() != "CONNECT $expectedHost:443 HTTP/1.1") return false
     if (lines.drop(1).any { it.isEmpty() || it.first().isWhitespace() }) return false
     val fields = lines.drop(1).map { line ->
         val separator = line.indexOf(':')
@@ -28,7 +31,7 @@ internal fun isValidReviewedImageConnectHeader(
     if (fields.any { it.first == "content-length" || it.first == "transfer-encoding" }) return false
     val hosts = fields.filter { it.first == "host" }
     val authorizations = fields.filter { it.first == "proxy-authorization" }
-    return hosts.size == 1 && hosts.single().second in setOf("i.motiezw.com", "i.motiezw.com:443") &&
+    return hosts.size == 1 && hosts.single().second.lowercase() in setOf(expectedHost, "$expectedHost:443") &&
         authorizations.size == 1 && authorizations.single().second == expectedAuthorization
 }
 
