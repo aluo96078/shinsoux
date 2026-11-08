@@ -607,7 +607,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.12' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.13' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.14' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.15'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.15' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.16'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -678,6 +679,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.14"
             $expectedHash = "185003762e1a5e73f5b9638f186c2e80540c814ef17650379134668cbc987baa"
             $baselineProductCode = "{918A1763-1AA5-3B3F-A496-7A2A058E92AE}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.16") {
+            $baselineVersion = "1.0.1-beta.15"
+            $expectedHash = "f82bf820d977555fcbd24936c23ff285f29dda078dc82665cbcd1196fce1ca95"
+            $baselineProductCode = "{732EDC42-3238-300B-B61C-77D72F3EF60D}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -911,7 +916,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.12 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.13 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.14 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.15 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.15 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.16 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -997,6 +1003,11 @@ jobs:
                 "Plugin note: after updating, confirm the community repository's publisher (fingerprint A3E9 1699 D2CA E49B 0F04 8933 341D 0536) and review each plugin's updated permissions. Comic plugins now declare their own sites." \
                 "Plugin note: the old ShuYue-format novel sources no longer run here. Their Shinsou-format versions are published shortly and keep your library, reading progress and saved logins." \
                 "Plugin note: plugins can now offer a site bookcase and favorites, and load images through a private browser on macOS and iOS (each a permission you grant)."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.16 ]]; then
+              printf '%s\n' \
+                "Plugin note: \"Confirm publisher\" now works on devices that never used sync; in beta.15 it failed and the community repository could not be trusted there." \
+                "Library note: opening a book with many downloaded chapters no longer freezes the screen for a second or two; reading marks load in the background."
             fi
           } > release-notes.md
 
