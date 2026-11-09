@@ -27,61 +27,22 @@ import dev.shinsou.kmp.sync.v2.ContentPublicationSyncDraftFactory
 import dev.shinsou.kmp.sync.v2.ContentPortableGraphReplacementSyncDraftFactory
 import dev.shinsou.kmp.sync.v2.ContentSyncFields
 import dev.shinsou.kmp.sync.v2.SyncDraft
-import dev.shinsou.kmp.sync.v2.SyncProvider
-import dev.shinsou.kmp.sync.v2.SyncSessionStatus
-import dev.shinsou.kmp.sync.v2.SyncSessionStore
-import dev.shinsou.kmp.sync.v2.SyncWorkspaceDeparture
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2RestoreResult
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-
-/** The irreversible boundary crossed by a failed device-only restore. */
-public enum class PortableContentBackupV2RestoreFailurePhase {
-    LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-}
-
-/** The only safe continuation after the local transaction rolls back post-departure. */
-public enum class PortableContentBackupV2RestoreRecoveryStatus {
-    RETRY_SAME_VERIFIED_ARCHIVE,
-}
-
-/**
- * A device-only restore left its Cloudflare workspace, then failed inside the local transaction.
- *
- * The legacy snapshot, portable graph, auxiliary metadata/aliases/ledgers, annotations, rights
- * grants, attachments and outbox were rolled back together. Published immutable bodies and their
- * process-local receipts intentionally remain staged. Retrying the same verified archive on this
- * coordinator reuses those receipts; a restarted process claims the same verified bodies and
- * creates replacement receipts.
- */
-public class PortableContentBackupV2RecoverableRestoreException(
-    public val phase: PortableContentBackupV2RestoreFailurePhase,
-    public val recoveryStatus: PortableContentBackupV2RestoreRecoveryStatus,
-    public val archiveManifestSha256: String,
-    public val stagedContentBlobCount: Int,
-    cause: Throwable,
-) : IllegalStateException(
-    "The workspace was left, but the device-local content restore rolled back. " +
-        "Retry the same verified archive.",
-    cause,
-)
 
 /**
  * Production restore boundary for a verified content-backup v2 archive.
  *
  * It deliberately does not call `replaceSnapshot`. The legacy-compatible portable projection is
  * published through [ShinsouRepository.commitSnapshotMutationAtomically], after annotation rows,
- * content rows/body receipts, and the selected target's v2 journals commit on the shared driver.
+ * content rows and body receipts commit on the shared driver. The restore is device-local.
  */
 public class PortableContentBackupV2RestoreCoordinator(
     private val repository: ShinsouRepository,
     private val foundation: ContentFoundationRuntime,
-    private val sessionStore: SyncSessionStore,
-    private val workspaceDeparture: SyncWorkspaceDeparture,
     private val offlineStoreAuthorizer: ContentBodyOfflineStoreAuthorizer,
 ) {
     private val restoreMutex = Mutex()
@@ -90,18 +51,15 @@ public class PortableContentBackupV2RestoreCoordinator(
     public suspend fun restore(
         expectedInspection: BackupV2Inspection,
         encodedArchive: ByteArray,
-        target: SnapshotRestoreTarget,
     ): PortableContentBackupV2RestoreResult = restore(
         expectedInspection = expectedInspection,
         archiveSource = ByteArrayBackupV2ArchiveSource(encodedArchive),
-        target = target,
     )
 
     /** File/channel-backed restore path; encoded bodies are never collected into a whole archive. */
     public suspend fun restore(
         expectedInspection: BackupV2Inspection,
         archiveSource: BackupV2ArchiveSource,
-        target: SnapshotRestoreTarget,
     ): PortableContentBackupV2RestoreResult = restoreMutex.withLock {
         val restoreContext = currentCoroutineContext()
         val ensureRestoreActive: () -> Unit = { restoreContext.ensureActive() }
@@ -116,29 +74,19 @@ public class PortableContentBackupV2RestoreCoordinator(
             "Verified backup inspection does not match the selected archive"
         }
         val state = inspection.portableState
-        val previousPublications = foundation.publications.all()
-        val previousAnnotations = foundation.annotations.list(includeTombstones = true)
         val bodyPlans = buildBodyPublishPlans(inspection)
-        // Validate every exact grant/scope/byte tuple before workspace departure and before the
-        // first externally visible body publish. A later denial cannot strand earlier bodies.
+        // Validate every exact grant/scope/byte tuple before the first externally visible body
+        // publish. A later denial cannot strand earlier bodies.
         bodyPlans.flatMap(BackupV2BodyPublishPlan::authorizations)
             .forEach(offlineStoreAuthorizer::requireAllowed)
         ensureRestoreActive()
         val provisionalGrants = state.rightsGrants.filter { grant ->
             foundation.rightsGrants.find(grant.grantId) == null
         }
-        val session = sessionStore.load()
-        val cloudflareConfigured = session?.provider == SyncProvider.CLOUDFLARE_V2
-        if (target == SnapshotRestoreTarget.ALL_SYNCED_DEVICES) {
-            require(cloudflareConfigured && session.status == SyncSessionStatus.READY) {
-                "Restoring to all devices requires a ready Cloudflare v2 workspace"
-            }
-        }
 
         val archiveDigest = inspection.envelope.manifestSha256
         // Body publication is durable but deliberately invisible to readers until the manifest
-        // transaction consumes the receipts. Finish this retryable staging before leaving a
-        // workspace: a publish/claim failure must never strand the device outside sync.
+        // transaction consumes the receipts.
         val published = publishBodiesForRetry(
             archive = archive,
             inspection = inspection,
@@ -149,71 +97,29 @@ public class PortableContentBackupV2RestoreCoordinator(
         val restoredPublications = state.publications.withLocalBodyAvailability(
             published.receipts.mapTo(hashSetOf()) { it.reference.blobId },
         )
-        val synchronized = target == SnapshotRestoreTarget.ALL_SYNCED_DEVICES
-        val outbox = if (synchronized) {
-            BackupV2SyncDraftFactory.build(
-                archiveDigest = inspection.envelope.manifestSha256,
-                publications = restoredPublications,
-                annotations = state.annotations,
-                attachments = published.attachments,
-                grants = state.rightsGrants,
-                previousPublications = previousPublications,
-                previousAnnotations = previousAnnotations,
-            )
-        } else {
-            BackupV2SyncBundle(emptyList(), emptyList())
-        }
-        val batch = ContentCommitBatch(
-            commitId = "backup-v2-restore:${target.name.lowercase()}:${inspection.envelope.manifestSha256}",
+        val batch = ContentCommitBatch<SyncDraft>(
+            // Unchanged from the former device-only restore, so a commit journalled by an earlier
+            // build keeps the same id and (empty) outbox fingerprint.
+            commitId = "backup-v2-restore:this_device_only:${inspection.envelope.manifestSha256}",
             receipts = published.receipts,
             attachments = published.attachments,
             metadata = state.auxiliary.metadata,
             aliases = state.auxiliary.aliases,
-            outbox = outbox.drafts,
+            outbox = emptyList(),
             migrations = state.auxiliary.migrations,
             publications = restoredPublications.map(::ContentPublicationMutation),
             rightsGrants = state.rightsGrants.map(::ContentRightsGrantMutation),
-            blobSyncJobs = outbox.blobSyncJobs,
+            blobSyncJobs = emptyList(),
             semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
         )
-        val origin = if (synchronized) {
-            SnapshotReplacementOrigin.SYNCHRONIZED_BULK
-        } else {
-            SnapshotReplacementOrigin.DIRECT
-        }
-        var departedForDeviceOnlyRestore = false
-        var workspaceDepartureAttempted = false
         try {
-            if (target == SnapshotRestoreTarget.THIS_DEVICE_ONLY && cloudflareConfigured) {
-                ensureRestoreActive()
-                workspaceDepartureAttempted = true
-                workspaceDeparture.leaveWorkspace()
-                // A successful return crosses the irreversible boundary. From this assignment
-                // onward, cancellation or an unreadable session postcondition must be reported as
-                // typed recovery instead of leaking a plain failure after the workspace is gone.
-                departedForDeviceOnlyRestore = true
-                ensureRestoreActive()
-                if (sessionStore.load()?.provider == SyncProvider.CLOUDFLARE_V2) {
-                    // A host which returned without clearing Cloudflare violated the departure
-                    // contract and did not establish the irreversible boundary.
-                    departedForDeviceOnlyRestore = false
-                    error("Workspace departure did not clear the active Cloudflare session")
-                }
-            }
-            // Also fail closed if a workspace was provisioned while the archive was being staged.
-            // The repository guard repeats this check at its serialized mutation boundary.
-            if (target == SnapshotRestoreTarget.THIS_DEVICE_ONLY) {
-                check(sessionStore.load()?.provider != SyncProvider.CLOUDFLARE_V2) {
-                    "A device-only restore cannot commit while Cloudflare sync is active"
-                }
-            }
             repository.commitSnapshotMutationAtomically(
                 requested = state.legacySnapshot,
-                origin = origin,
+                origin = SnapshotReplacementOrigin.DIRECT,
             ) { _, _, commitSyncJournal ->
                 foundation.transaction {
-                    // Failures before the content participant commits leave both annotations and the
-                    // sync journal inside the enclosing SQLite rollback. No network operation occurs.
+                    // Failures before the content participant commits leave the annotations inside
+                    // the enclosing SQLite rollback. No network operation occurs.
                     foundation.annotations.replaceAllAtomically(state.annotations)
                     commitSyncJournal()
                     foundation.transactions.commit(batch).also { result ->
@@ -222,19 +128,6 @@ public class PortableContentBackupV2RestoreCoordinator(
                 }
             }
         } catch (failure: Throwable) {
-            if (!departedForDeviceOnlyRestore && workspaceDepartureAttempted) {
-                // A cancellable departure implementation may finish clearing the session on a
-                // worker dispatcher, then deliver cancellation instead of its successful result.
-                // Recheck without cancellation before deciding whether the irreversible boundary
-                // was crossed. An unreadable postcondition is conservatively recoverable.
-                departedForDeviceOnlyRestore = withContext(NonCancellable) {
-                    try {
-                        sessionStore.load()?.provider != SyncProvider.CLOUDFLARE_V2
-                    } catch (_: Throwable) {
-                        true
-                    }
-                }
-            }
             // The content participant can hydrate the in-memory authority before the enclosing
             // SQLite transaction later rolls back. Remove only grants that were provisional for
             // this restore; a durable, explicitly revoked grant must remain revoked.
@@ -242,17 +135,6 @@ public class PortableContentBackupV2RestoreCoordinator(
                 if (foundation.rightsGrants.find(grant.grantId) == null) {
                     foundation.rightsAuthority.revoke(grant.grantId)
                 }
-            }
-            if (departedForDeviceOnlyRestore) {
-                throw PortableContentBackupV2RecoverableRestoreException(
-                    phase = PortableContentBackupV2RestoreFailurePhase
-                        .LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-                    recoveryStatus = PortableContentBackupV2RestoreRecoveryStatus
-                        .RETRY_SAME_VERIFIED_ARCHIVE,
-                    archiveManifestSha256 = archiveDigest,
-                    stagedContentBlobCount = published.receipts.size,
-                    cause = failure,
-                )
             }
             throw failure
         }
@@ -263,7 +145,6 @@ public class PortableContentBackupV2RestoreCoordinator(
             contentBlobCount = inspection.envelope.manifest.entries.count {
                 it.kind == BackupV2EntryKind.CONTENT_BLOB
             },
-            synchronizedTarget = target,
         ).also {
             stagedReceiptsByArchive.remove(archiveDigest)
         }
@@ -459,12 +340,16 @@ private class CancellationCheckingBackupV2ArchiveSource(
     }
 }
 
-private data class BackupV2SyncBundle(
+internal data class BackupV2SyncBundle(
     val drafts: List<SyncDraft>,
     val blobSyncJobs: List<ContentBlobSyncJobMutation>,
 )
 
-private object BackupV2SyncDraftFactory {
+/**
+ * Builds the sync outbox drafts and body-sync jobs that publish a restored archive to other devices.
+ * Unused while no sync service exists; kept for the replacement sync service.
+ */
+internal object BackupV2SyncDraftFactory {
     fun build(
         archiveDigest: String,
         publications: List<Publication>,

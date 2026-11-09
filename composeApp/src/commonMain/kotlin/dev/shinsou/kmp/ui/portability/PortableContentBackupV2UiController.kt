@@ -10,8 +10,6 @@ import dev.shinsou.kmp.backup.BackupV2Inspection
 import dev.shinsou.kmp.backup.BackupV2OmissionReason
 import dev.shinsou.kmp.backup.DEFAULT_MAX_ARCHIVE_BYTES
 import dev.shinsou.kmp.backup.PortableContentBackupV2Service
-import dev.shinsou.kmp.backup.PortableContentBackupV2RecoverableRestoreException
-import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.DEFAULT_BINARY_DOCUMENT_BYTE_ARRAY_COMPATIBILITY_BYTES
@@ -51,7 +49,6 @@ public data class PortableContentBackupV2RestoreResult(
     val publicationCount: Int,
     val annotationCount: Int,
     val contentBlobCount: Int,
-    val synchronizedTarget: SnapshotRestoreTarget,
 )
 
 public data class PortableContentBackupV2UiState(
@@ -100,13 +97,12 @@ public fun interface PortableContentBackupV2CreateAction {
 
 public fun interface PortableContentBackupV2RestoreAction {
     /**
-     * Implementations must publish bodies and commit portable state, attachments, annotations,
-     * and the selected target's sync outbox through one host-owned transaction.
+     * Implementations must publish bodies and commit portable state, attachments and annotations
+     * through one host-owned transaction.
      */
     public suspend fun restore(
         inspection: BackupV2Inspection,
         archiveSource: BackupV2ArchiveSource,
-        target: SnapshotRestoreTarget,
     ): PortableContentBackupV2RestoreResult
 }
 
@@ -118,7 +114,7 @@ public interface PortableContentBackupV2UiController {
         inspectForRestore(ByteArrayBackupV2ArchiveSource(encoded))
     }
     public suspend fun inspectForRestore(source: BackupV2ArchiveSource)
-    public suspend fun restore(target: SnapshotRestoreTarget)
+    public suspend fun restore()
     public fun discardRestoreReview()
 }
 
@@ -234,8 +230,8 @@ public class DefaultPortableContentBackupV2UiController(
         }
     }
 
-    override suspend fun restore(target: SnapshotRestoreTarget): Unit = operationMutex.withLock {
-        val action = checkNotNull(restoreAction) { "Sync-aware content restore is unavailable" }
+    override suspend fun restore(): Unit = operationMutex.withLock {
+        val action = checkNotNull(restoreAction) { "Content restore is unavailable" }
         val inspection = checkNotNull(pendingInspection) { "No verified content archive is ready" }
         val source = checkNotNull(pendingArchiveSource) { "No verified content archive is ready" }
         val before = mutableState.value
@@ -247,10 +243,7 @@ public class DefaultPortableContentBackupV2UiController(
             failure = null,
         )
         try {
-            val result = action.restore(inspection, source, target)
-            check(result.synchronizedTarget == target) {
-                "Portable restore result reported a different synchronization target"
-            }
+            val result = action.restore(inspection, source)
             pendingArchiveSource = null
             pendingInspection = null
             mutableState.value = mutableState.value.copy(
@@ -262,17 +255,6 @@ public class DefaultPortableContentBackupV2UiController(
         } catch (cancelled: CancellationException) {
             mutableState.value = before
             throw cancelled
-        } catch (_: PortableContentBackupV2RecoverableRestoreException) {
-            // Keep the exact verified source and inspection so the only safe recovery can be
-            // retried without asking the user to select or re-verify a different archive.
-            mutableState.value = before.copy(
-                phase = PortableContentBackupV2UiPhase.REVIEW,
-                failure = PortabilityUiFailure(
-                    code = "backup_v2_restore_retry_same_verified_archive",
-                    message = "The sync workspace was left, but the device-local restore rolled back. " +
-                        "Retry the same verified archive.",
-                ),
-            )
         } catch (_: Throwable) {
             mutableState.value = before.copy(
                 failure = PortabilityUiFailure(

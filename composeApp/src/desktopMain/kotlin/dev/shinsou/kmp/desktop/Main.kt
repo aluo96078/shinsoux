@@ -41,8 +41,6 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.DesktopTextToSpeechEngine
 import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
@@ -138,7 +136,7 @@ fun main(args: Array<String>) {
             ?.takeUnless { it.equals("system", ignoreCase = true) }
             ?: Locale.getDefault().toLanguageTag()
         val strings = remember(languageTag) { shinsouStringsFor(languageTag) }
-        val syncInfrastructure = remember { DesktopSyncInfrastructure() }
+        val contentInfrastructure = remember { DesktopContentInfrastructure() }
         val sandboxScope = rememberCoroutineScope()
         desktopProbeStage("before composition")
         val composition = remember {
@@ -150,16 +148,13 @@ fun main(args: Array<String>) {
                 // ADR-0002 §10.1: every package runs in the OS-confined
                 // shinsou-sandbox helper.
                 runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(desktopSandboxRuntimeFactory(sandboxScope)),
-                syncInfrastructure = syncInfrastructure,
+                contentInfrastructure = contentInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
                 pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
             )
         }
-        val syncRuntime = requireNotNull(composition.syncRuntime)
-        val readerProgressReporter by syncRuntime.readerProgressReporter.collectAsState()
-        val syncBoundaryReady by composition.syncBoundaryReady.collectAsState()
         val autoBackupScope = rememberCoroutineScope()
         val autoBackupScheduler = remember(composition, autoBackupScope) {
             ForegroundAutoBackupScheduler(composition.autoBackups, autoBackupScope)
@@ -308,19 +303,8 @@ fun main(args: Array<String>) {
                 content = composition.content,
                 contentFeatures = composition.contentFeatures,
                 tracking = composition.tracking,
-                cloudflareSync = composition.cloudflareSync,
-                syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
                 portableContentBackupV2 = composition.portableContentBackupV2,
                 shuYueMigration = composition.shuYueMigration,
-                snapshotSync = SnapshotSyncController(
-                    repository = repository,
-                    transport = UnavailableSnapshotSyncTransport(
-                        "iCloud Drive snapshot sync is available only on iOS.",
-                    ),
-                    deviceId = "desktop",
-                    deviceIdProvider = composition::installationDeviceId,
-                    writerAllowed = composition::isLegacySnapshotWriterAllowed,
-                ),
                 closeApplication = ::requestClose,
                 frame = { hostFrame },
                 stringsProvider = {
@@ -487,8 +471,6 @@ fun main(args: Array<String>) {
                 repository = repository,
                 appServices = services,
                 autoBackupService = composition.autoBackups,
-                readerProgressReporter = readerProgressReporter,
-                interactionReady = syncBoundaryReady,
             )
         }
     }

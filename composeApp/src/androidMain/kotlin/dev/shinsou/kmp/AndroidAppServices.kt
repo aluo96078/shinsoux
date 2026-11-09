@@ -24,10 +24,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.domain.model.ReaderOrientation
-import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.BrowseCallbacks
@@ -70,9 +67,6 @@ internal class AndroidAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
-    override val snapshotSync: SnapshotSyncController? = null,
-    override val cloudflareSync: CloudflareSyncUiController? = null,
-    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
@@ -80,7 +74,6 @@ internal class AndroidAppServices(
     private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
     private val mutableReaderVolumeKeyEvents = MutableSharedFlow<ReaderVolumeKeyEvent>(extraBufferCapacity = 2)
-    private val qrCodeScanner = AndroidQrCodeScanner(activity)
     private var previousRequestedOrientation: Int? = null
     @Volatile
     private var monitorReaderVolumeKeys: Boolean = false
@@ -137,8 +130,6 @@ internal class AndroidAppServices(
         val clipboard = activity.getSystemService(ClipboardManager::class.java)
         clipboard.primaryClip?.getItemAt(0)?.coerceToText(activity)?.toString()
     }.getOrNull()
-
-    override suspend fun scanQrCode(): String? = qrCodeScanner.scan()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean =
         documentLauncher.export(suggestedName, contents.encodeToByteArray())

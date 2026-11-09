@@ -26,7 +26,7 @@ data class HlcTimestamp(
 }
 
 /**
- * Mutable clock state intended to be serialized by its owning [LocalSyncStore] transaction.
+ * Mutable clock state intended to be serialized by its owning sync store transaction.
  * Callers must not share one instance between unsynchronised threads.
  */
 class HybridLogicalClock(

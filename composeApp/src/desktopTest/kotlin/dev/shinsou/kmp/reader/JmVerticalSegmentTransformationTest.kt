@@ -19,7 +19,7 @@ class JmVerticalSegmentTransformationTest {
         val transformation = JmVerticalSegmentTransformation(segmentCount = 4)
         val output = transformation.transform(input, Size.ORIGINAL)
         try {
-            assertEquals("shinsou-jm-reverse-vertical:4:v1", transformation.cacheKey)
+            assertEquals("shinsou-jm-reverse-vertical:4:decoded:v3", transformation.cacheKey)
             assertEquals(
                 listOf(6, 7, 8, 9, 4, 5, 2, 3, 0, 1),
                 List(output.height) { row -> Color.getR(output.getColor(0, row)) },

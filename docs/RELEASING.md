@@ -100,7 +100,7 @@ export ANDROID_KEY_PASSWORD='...'
 ## iOS：不發布 IPA，必須自行建置
 
 GitHub Release workflow 完全不執行 iOS job，也不接受或上傳 IPA。iOS App 包含 SwiftUI
-host、Widget、App Group、Keychain 與 iCloud entitlements；建置者必須在 macOS 使用完整
+host、Widget、App Group 與 Keychain entitlements；建置者必須在 macOS 使用完整
 Xcode 與 XcodeGen，並自行提供與 bundle identifiers／capabilities 相符的 Apple 開發帳號、
 憑證及 provisioning profiles。
 
@@ -128,7 +128,6 @@ Development Team，再由 Xcode 執行或 Archive。若使用不同 bundle prefi
 - App：`dev.aluo.shinsoux`
 - Widget：`dev.aluo.shinsoux.widget`
 - App Group：`group.dev.aluo.shinsoux`
-- iCloud container：`iCloud.dev.aluo.shinsoux`
 
 App Store／TestFlight distribution 需要有效的付費 Apple Developer Program 會籍、Apple
 Distribution certificate 與 App Store profiles。免費 Personal Team 只能用支援範圍較小的

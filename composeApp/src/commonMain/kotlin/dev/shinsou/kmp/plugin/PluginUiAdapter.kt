@@ -2425,7 +2425,7 @@ public class PluginContentAdapter(
                     ReaderPage(
                         index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
                         imageBytes = imageBytes,
-                        imageTransform = metadata.imageTransform(source.id),
+                        imageTransform = metadata.imageTransform(source),
                     )
                 },
             )

@@ -20,8 +20,6 @@ jsoup = "1.18.3"
 jna = "5.18.1"
 sqldelight = "2.1.0"
 libsodium = "0.9.5"
-qrose = "1.0.1"
-google-code-scanner = "16.1.0"
 android-avif = "1.1.1.14d8e3c4"
 javafx = "21.0.12"
 androidx-test-runner = "1.6.2"
@@ -51,15 +49,12 @@ ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "kto
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-encoding = { module = "io.ktor:ktor-client-encoding", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
-ktor-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
 rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 libsodium-bindings = { module = "com.ionspin.kotlin:multiplatform-crypto-libsodium-bindings", version.ref = "libsodium" }
-qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
-google-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "google-code-scanner" }
 android-avif = { module = "org.aomedia.avif.android:avif", version.ref = "android-avif" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }

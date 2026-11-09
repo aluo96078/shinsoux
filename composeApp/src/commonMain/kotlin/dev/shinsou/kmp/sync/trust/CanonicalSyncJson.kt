@@ -28,16 +28,19 @@ private fun canonicalPrimitive(value: JsonPrimitive): String {
     val content = value.content
     if (content == "true" || content == "false") return content
     val integer = content.toLongOrNull()
-        ?: throw DeviceDirectoryTrustException.Malformed("Canonical sync JSON forbids non-integral numbers")
+        ?: throw CanonicalSyncJsonException("Canonical sync JSON forbids non-integral numbers")
     if (integer !in -MAX_SAFE_JSON_INTEGER..MAX_SAFE_JSON_INTEGER) {
-        throw DeviceDirectoryTrustException.Malformed("Canonical sync JSON number exceeds the safe integer range")
+        throw CanonicalSyncJsonException("Canonical sync JSON number exceeds the safe integer range")
     }
     if (content != integer.toString()) {
-        throw DeviceDirectoryTrustException.Malformed(
+        throw CanonicalSyncJsonException(
             "Canonical sync JSON number has a non-canonical representation",
         )
     }
     return content
 }
+
+/** A value outside the canonical JSON profile (a malformed signed manifest). */
+internal class CanonicalSyncJsonException(message: String) : IllegalStateException(message)
 
 private const val MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L

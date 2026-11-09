@@ -9,8 +9,6 @@
     <!-- Android 14+: downloads run as a user-initiated data transfer job. -->
     <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Google Code Scanner owns camera access, so Shinsou X does not request CAMERA itself. -->
-    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <queries>
         <intent>
@@ -28,11 +26,6 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
         android:zygotePreloadName="dev.shinsou.kmp.plugin.sandbox.SandboxZygotePreload">
-        <!-- Ask Play services to download the permissionless QR scanner module ahead of use. -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode_ui" />
-
         <!--
           ADR-0002 §4.3: third-party plugin sandbox. One isolated process per package, bound with
           Context.bindIsolatedService and a unique instance name. Isolated uid: no app permissions

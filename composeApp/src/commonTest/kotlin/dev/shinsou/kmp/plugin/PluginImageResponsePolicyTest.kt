@@ -44,6 +44,23 @@ class PluginImageResponsePolicyTest {
     }
 
     @Test
+    fun textPlainIsAcceptedOnlyWhenTheBytesAreARasterImage() {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 0x10)
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0)
+        val webp = "RIFF\u0000\u0000\u0000\u0000WEBPVP8 ".encodeToByteArray()
+        listOf(jpeg, png, webp).forEach { bytes ->
+            val response = PluginHttpResponse(200, bytes, mapOf("Content-Type" to listOf("text/plain; charset=UTF-8")))
+            assertSame(bytes, response.imageBodyForDecoderOrNull())
+        }
+        listOf("hello", "<html><body>no</body></html>", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>").forEach { text ->
+            val response = PluginHttpResponse(200, text.encodeToByteArray(), mapOf("Content-Type" to listOf("text/plain")))
+            assertNull(response.imageBodyForDecoderOrNull())
+        }
+        // A real image signature never rescues an explicit document type.
+        assertNull(PluginHttpResponse(200, jpeg, mapOf("Content-Type" to listOf("text/html"))).imageBodyForDecoderOrNull())
+    }
+
+    @Test
     fun emptyUnsuccessfulMalformedAndAmbiguousResponsesAreRejected() {
         assertNull(response(contentType = "image/png", status = 404).imageBodyForDecoderOrNull())
         assertNull(

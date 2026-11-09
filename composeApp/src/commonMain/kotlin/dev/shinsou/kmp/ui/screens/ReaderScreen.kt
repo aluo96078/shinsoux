@@ -98,7 +98,6 @@ import coil3.SingletonImageLoader
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
-import coil3.request.transformations
 import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.Manga
@@ -119,7 +118,8 @@ import dev.shinsou.kmp.ui.effectiveReaderVolumeKeysEnabled
 import dev.shinsou.kmp.ui.shouldShowReaderVolumeKeySetting
 import dev.shinsou.kmp.reader.readerTapAction
 import dev.shinsou.kmp.reader.restoredReaderPageOffsetPixels
-import dev.shinsou.kmp.reader.toCoilTransformation
+import dev.shinsou.kmp.reader.encodedImageHeight
+import dev.shinsou.kmp.reader.readerImageTransform
 import dev.shinsou.kmp.sync.v2.ReaderPosition
 import dev.shinsou.kmp.ui.ReaderPage
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
@@ -559,9 +559,7 @@ fun ReaderScreen(
             val request = ImageRequest.Builder(platformContext)
                 .data(requireNotNull(readerImageData(page)))
                 .httpHeaders(networkHeaders)
-                .apply {
-                    page.imageTransform?.let { transformations(it.toCoilTransformation()) }
-                }
+                .readerImageTransform(page.imageTransform, readerImageNaturalHeight(page))
                 .build()
             loader.enqueue(request)
         }
@@ -1158,6 +1156,12 @@ internal fun readerImageData(page: ReaderPage): Any? = when {
     else -> null
 }
 
+/** Natural height for a transformed page, from its bytes' header or the value read for a local file. */
+internal fun readerImageNaturalHeight(page: ReaderPage): Int? {
+    if (page.imageTransform == null) return null
+    return page.imageBytes?.takeIf { it.isNotEmpty() }?.let(::encodedImageHeight) ?: page.imageNaturalHeight
+}
+
 @Composable
 private fun LazyResolvedReaderPageImage(
     page: ReaderPage,
@@ -1252,9 +1256,7 @@ private fun ResolvedReaderPageImage(
         ImageRequest.Builder(platformContext)
             .data(imageData)
             .httpHeaders(networkHeaders)
-            .apply {
-                page.imageTransform?.let { transformations(it.toCoilTransformation()) }
-            }
+            .readerImageTransform(page.imageTransform, readerImageNaturalHeight(page))
             .build()
     }
     Box(

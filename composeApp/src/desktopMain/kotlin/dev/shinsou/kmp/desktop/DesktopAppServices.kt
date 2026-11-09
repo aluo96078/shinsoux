@@ -1,10 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import dev.shinsou.kmp.app.ContentFeatureRuntime
-import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.tracking.TrackingCoordinator
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.BrowseCallbacks
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
@@ -57,9 +54,6 @@ internal class DesktopAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
-    override val snapshotSync: SnapshotSyncController? = null,
-    override val cloudflareSync: CloudflareSyncUiController? = null,
-    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val closeApplication: () -> Unit,

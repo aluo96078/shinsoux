@@ -3,11 +3,7 @@ package dev.shinsou.kmp.ui.portability
 import dev.shinsou.kmp.backup.BackupV2CreatePolicy
 import dev.shinsou.kmp.backup.BackupV2BinaryCodec
 import dev.shinsou.kmp.backup.BackupV2PortableState
-import dev.shinsou.kmp.backup.PortableContentBackupV2RecoverableRestoreException
-import dev.shinsou.kmp.backup.PortableContentBackupV2RestoreFailurePhase
-import dev.shinsou.kmp.backup.PortableContentBackupV2RestoreRecoveryStatus
 import dev.shinsou.kmp.backup.PortableContentBackupV2Service
-import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.content.ContentCommitResult
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.access.ContentAccessRequest
@@ -105,7 +101,7 @@ class ContentPortabilityUiControllerTest {
     }
 
     @Test
-    fun contentBackupControllerValidatesBeforeCallingTargetedRestore() = runTest {
+    fun contentBackupControllerValidatesBeforeCallingRestore() = runTest {
         val created = PortableContentBackupV2Service.create(
             state = BackupV2PortableState(legacySnapshot = AppSnapshot()),
             candidates = emptyList(),
@@ -115,12 +111,12 @@ class ContentPortabilityUiControllerTest {
             appVersion = "test",
             policy = BackupV2CreatePolicy(includeContentBlobs = true),
         )
-        var restoredTarget: SnapshotRestoreTarget? = null
+        var restored = false
         var restoredBytes = 0
         val controller = DefaultPortableContentBackupV2UiController(
             createAction = PortableContentBackupV2CreateAction { created },
-            restoreAction = PortableContentBackupV2RestoreAction { inspection, source, target ->
-                restoredTarget = target
+            restoreAction = PortableContentBackupV2RestoreAction { inspection, source ->
+                restored = true
                 restoredBytes = source.byteSize.toInt()
                 PortableContentBackupV2RestoreResult(
                     publicationCount = inspection.portableState.publications.size,
@@ -128,7 +124,6 @@ class ContentPortabilityUiControllerTest {
                     contentBlobCount = inspection.envelope.manifest.entries.count {
                         it.kind.name == "CONTENT_BLOB"
                     },
-                    synchronizedTarget = target,
                 )
             },
         )
@@ -157,71 +152,22 @@ class ContentPortabilityUiControllerTest {
         controller.inspectForRestore(artifact.copyEncoded())
         assertEquals(PortableContentBackupV2UiPhase.REVIEW, controller.state.value.phase)
         assertEquals(123, controller.state.value.restoreReview?.createdAtEpochMillis)
-        assertNull(restoredTarget)
+        assertFalse(restored)
 
-        controller.restore(SnapshotRestoreTarget.ALL_SYNCED_DEVICES)
+        controller.restore()
 
-        assertEquals(SnapshotRestoreTarget.ALL_SYNCED_DEVICES, restoredTarget)
+        assertTrue(restored)
         assertEquals(artifact.byteSize, restoredBytes)
         assertEquals(PortableContentBackupV2UiPhase.COMPLETE, controller.state.value.phase)
-    }
-
-    @Test
-    fun recoverableRestoreKeepsVerifiedReviewAndRetriesSameArchive() = runTest {
-        val created = PortableContentBackupV2Service.create(
-            state = BackupV2PortableState(legacySnapshot = AppSnapshot()),
-            candidates = emptyList(),
-            blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1_024),
-            operationGate = AllowGate,
-            createdAtEpochMillis = 321,
-            appVersion = "test",
-            policy = BackupV2CreatePolicy(includeContentBlobs = true),
-        )
-        var restoreCalls = 0
-        val controller = DefaultPortableContentBackupV2UiController(
-            restoreAction = PortableContentBackupV2RestoreAction { inspection, _, target ->
-                restoreCalls += 1
-                if (restoreCalls == 1) {
-                    throw PortableContentBackupV2RecoverableRestoreException(
-                        phase = PortableContentBackupV2RestoreFailurePhase
-                            .LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-                        recoveryStatus = PortableContentBackupV2RestoreRecoveryStatus
-                            .RETRY_SAME_VERIFIED_ARCHIVE,
-                        archiveManifestSha256 = inspection.envelope.manifestSha256,
-                        stagedContentBlobCount = 0,
-                        cause = IllegalStateException("injected local transaction failure"),
-                    )
-                }
-                PortableContentBackupV2RestoreResult(0, 0, 0, target)
-            },
-        )
-        controller.inspectForRestore(BackupV2BinaryCodec.encode(created.archive))
-        val verifiedReview = assertNotNull(controller.state.value.restoreReview)
-
-        controller.restore(SnapshotRestoreTarget.THIS_DEVICE_ONLY)
-
-        assertEquals(PortableContentBackupV2UiPhase.REVIEW, controller.state.value.phase)
-        assertEquals(verifiedReview, controller.state.value.restoreReview)
-        assertEquals(
-            "backup_v2_restore_retry_same_verified_archive",
-            controller.state.value.failure?.code,
-        )
-        assertTrue(controller.state.value.failure?.message?.contains("same verified archive") == true)
-
-        controller.restore(SnapshotRestoreTarget.THIS_DEVICE_ONLY)
-
-        assertEquals(2, restoreCalls)
-        assertEquals(PortableContentBackupV2UiPhase.COMPLETE, controller.state.value.phase)
-        assertNull(controller.state.value.failure)
     }
 
     @Test
     fun invalidContentArchiveFailsBeforeRestoreAction() = runTest {
         var restoreCalls = 0
         val controller = DefaultPortableContentBackupV2UiController(
-            restoreAction = PortableContentBackupV2RestoreAction { _, _, target ->
+            restoreAction = PortableContentBackupV2RestoreAction { _, _ ->
                 restoreCalls += 1
-                PortableContentBackupV2RestoreResult(0, 0, 0, target)
+                PortableContentBackupV2RestoreResult(0, 0, 0)
             },
         )
 

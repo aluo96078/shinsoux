@@ -59,8 +59,8 @@ public fun interface ContentRightsAdmissionLease {
  * Importers atomically commit publications, aliases, manifests, blob receipts, body jobs and
  * portable drafts here. Blob construction restores only bounded metadata; immutable payloads stay
  * outside the cold-start path until [ContentBlobStore.openRead].
- * [dev.shinsou.kmp.sync.v2.ContentSyncOutboxDrainBridge] then re-clocks drafts inside LocalSyncStore
- * and acknowledges them only after that journal is durable.
+ * No sync service drains the drafts; the composition discards them in the background
+ * ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
  */
 public class ContentFoundationRuntime(
     private val driver: SqlDriver,

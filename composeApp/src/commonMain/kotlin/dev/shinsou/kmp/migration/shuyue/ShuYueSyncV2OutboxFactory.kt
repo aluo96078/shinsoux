@@ -23,10 +23,9 @@ import dev.shinsou.kmp.sync.v2.SyncValue
 /**
  * Production schema-v2 ShuYue writer.
  *
- * Draft clocks are deliberately inert placeholders. [ContentSyncOutboxDrainBridge] replaces
- * every clock inside the LocalSyncStore transaction, after observing the durable remote clock.
- * Operation ids remain deterministic so a crash between LocalSyncStore commit and content-outbox
- * acknowledgement is an idempotent replay rather than a duplicate import.
+ * Draft clocks are deliberately inert placeholders for a sync service to re-clock when it drains
+ * the outbox (none exists now; the drafts are discarded). Operation ids remain deterministic so a
+ * replayed import is idempotent rather than a duplicate.
  */
 public object ShuYueSyncV2OutboxFactory : ShuYueImportOutboxFactory<SyncDraft> {
     override fun build(plan: ShuYuePortableImportPlan): ShuYueImportOutboxBundle<SyncDraft> {

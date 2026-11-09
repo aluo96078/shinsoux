@@ -30,8 +30,6 @@ import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.UnavailableSnapshotSyncTransport
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.ImportedDocumentLimits
@@ -79,7 +77,6 @@ class MainActivity : FragmentActivity() {
         val runtime = AndroidAppRuntime.get(applicationContext)
         val repository = runtime.repository
         composition = runtime.composition
-        val syncRuntime = requireNotNull(composition.syncRuntime)
         appServices = AndroidAppServices(
             activity = this,
             documentLauncher = documentLauncher,
@@ -87,20 +84,9 @@ class MainActivity : FragmentActivity() {
             content = composition.content,
             contentFeatures = composition.contentFeatures,
             tracking = composition.tracking,
-            cloudflareSync = composition.cloudflareSync,
-            syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
             portableContentBackupV2 = composition.portableContentBackupV2,
             shuYueMigration = composition.shuYueMigration,
             stringsProvider = runtime::strings,
-            snapshotSync = SnapshotSyncController(
-                repository = repository,
-                transport = UnavailableSnapshotSyncTransport(
-                    "iCloud Drive snapshot sync is available only on iOS.",
-                ),
-                deviceId = "android",
-                deviceIdProvider = composition::installationDeviceId,
-                writerAllowed = composition::isLegacySnapshotWriterAllowed,
-            ),
         )
         onBackPressedDispatcher.addCallback(
             this,
@@ -113,8 +99,6 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val snapshot by repository.snapshot.collectAsState()
-            val readerProgressReporter by syncRuntime.readerProgressReporter.collectAsState()
-            val syncBoundaryReady by composition.syncBoundaryReady.collectAsState()
             val darkTheme = when (snapshot.settings.appearance.theme) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -133,8 +117,6 @@ class MainActivity : FragmentActivity() {
                 repository = repository,
                 appServices = appServices,
                 autoBackupService = composition.autoBackups,
-                readerProgressReporter = readerProgressReporter,
-                interactionReady = syncBoundaryReady,
             )
         }
         platformScope.launch { runtime.start() }

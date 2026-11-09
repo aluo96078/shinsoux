@@ -175,6 +175,7 @@ internal class SandboxScriptPluginRuntime(
     override val pluginId: String = manifest.id
     override val packageId: String get() = manifest.id
     override val id: Long = source.id
+    override val canonicalSourceId: String = source.canonicalSourceId ?: source.id.toString()
     override val name: String = source.name
     override val lang: String = source.lang
     override var baseUrl: String = source.baseUrl.orEmpty()

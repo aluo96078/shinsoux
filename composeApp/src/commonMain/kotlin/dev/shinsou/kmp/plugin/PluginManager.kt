@@ -2923,6 +2923,7 @@ private class MetadataStubCatalogueSource(
     private val entry: SourceIndexEntry,
 ) : CatalogueSource {
     override val id: Long = entry.id
+    override val canonicalSourceId: String = entry.canonicalSourceId ?: entry.id.toString()
     override val name: String = entry.name
     override val lang: String = entry.lang
     override val baseUrl: String = entry.baseUrl.orEmpty()

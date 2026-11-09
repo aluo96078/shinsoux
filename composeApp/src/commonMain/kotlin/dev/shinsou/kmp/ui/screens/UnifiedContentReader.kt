@@ -64,7 +64,6 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
-import coil3.request.transformations
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.app.ContentFeatureRuntime
@@ -91,7 +90,8 @@ import dev.shinsou.kmp.reader.ImageSequenceNavigation
 import dev.shinsou.kmp.reader.readerLogicalPageIndex
 import dev.shinsou.kmp.reader.readerPhysicalPageIndex
 import dev.shinsou.kmp.reader.readerTapAction
-import dev.shinsou.kmp.reader.toCoilTransformation
+import dev.shinsou.kmp.reader.encodedImageHeight
+import dev.shinsou.kmp.reader.readerImageTransform
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.search.FullTextDocumentSegment
 import dev.shinsou.kmp.search.FullTextSearchHit
@@ -923,11 +923,10 @@ private fun ImageSequencePage(
                 val imageRequest = remember(loaded, platformContext) {
                     ImageRequest.Builder(platformContext)
                         .data(loaded.bytes)
-                        .apply {
-                            loaded.readerTransform?.let { transform ->
-                                transformations(transform.toCoilTransformation())
-                            }
-                        }
+                        .readerImageTransform(
+                            loaded.readerTransform,
+                            loaded.readerTransform?.let { encodedImageHeight(loaded.bytes) },
+                        )
                         .build()
                 }
                 AsyncImage(

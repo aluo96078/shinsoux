@@ -96,7 +96,7 @@ class ReaderHistoryPresentationTest {
             progression = 0.8,
         )
 
-        val accepted = V2ReaderProgressCoordinator(repository, reporter = null).commitLocal(
+        val accepted = V2ReaderProgressCoordinator(repository).commitLocal(
             progressEvent(locator, pageIndex = 8, readAt = 3_000),
         )
 
@@ -108,7 +108,7 @@ class ReaderHistoryPresentationTest {
     @Test
     fun finalExtensionPageWinsAndAnOlderDelayedWriteCannotRevertIt() = runTest {
         val repository = ShinsouRepository()
-        val coordinator = V2ReaderProgressCoordinator(repository, reporter = null)
+        val coordinator = V2ReaderProgressCoordinator(repository)
         val locator = ReadingLocator.Text(
             schemaVersion = 1,
             scope = scope(),
@@ -150,7 +150,7 @@ class ReaderHistoryPresentationTest {
         )
         repository.markChapterProgress(chapter.id, lastPageRead = 7, read = false, readAt = 2_000)
 
-        V2ReaderProgressCoordinator(repository, reporter = null).commit(
+        V2ReaderProgressCoordinator(repository).commit(
             progressEvent(locator, pageIndex = 0, readAt = 1_000),
         )
 

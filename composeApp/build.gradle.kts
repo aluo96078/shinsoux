@@ -506,10 +506,8 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.encoding)
             implementation(libs.ktor.serialization.kotlinx.json)
-            implementation(libs.ktor.websockets)
             implementation(libs.sqldelight.runtime)
             implementation(libs.libsodium.bindings)
-            implementation(libs.qrose)
         }
 
         commonTest.dependencies {
@@ -540,7 +538,6 @@ kotlin {
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
                 implementation(libs.sqldelight.android.driver)
-                implementation(libs.google.code.scanner)
             }
         }
 

@@ -93,8 +93,14 @@ internal fun SourceLoginDialog(
                     } else {
                         challengeRequest = challenge
                     }
-                }.onFailure {
-                    errorMessage = strings.text("Unable to start the web challenge.")
+                }.onFailure { failure ->
+                    // The reason (e.g. the page is outside the source's declared browser-session
+                    // origins, or the permission was not granted) tells the user or the plugin
+                    // author what to fix; the generic text alone hid it.
+                    errorMessage = listOfNotNull(
+                        strings.text("Unable to start the web challenge."),
+                        failure.message?.takeIf(String::isNotBlank),
+                    ).joinToString("\n")
                 }
                 busy = false
                 return@launch

@@ -49,9 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.backup.BackupV2OmissionReason
-import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationIssueSeverity
-import dev.shinsou.kmp.sync.v2.SyncSessionStatus
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
@@ -451,7 +449,6 @@ public fun ShuYueMigrationScreen(
 @Composable
 public fun ContentBackupV2Screen(
     controller: PortableContentBackupV2UiController,
-    syncStatus: SyncSessionStatus,
     onChooseRestoreArchive: () -> Unit,
     onExportReady: (PortableContentBackupV2ExportArtifact) -> Unit,
     onOpenShuYueMigration: () -> Unit,
@@ -463,7 +460,6 @@ public fun ContentBackupV2Screen(
     val scope = rememberCoroutineScope()
     var includeContentBlobs by remember { mutableStateOf(true) }
     var confirmLocalRestore by remember { mutableStateOf(false) }
-    var chooseSyncedTarget by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
@@ -570,13 +566,7 @@ public fun ContentBackupV2Screen(
                 item("restore-action") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = {
-                                if (syncStatus == SyncSessionStatus.NOT_CONFIGURED) {
-                                    confirmLocalRestore = true
-                                } else {
-                                    chooseSyncedTarget = true
-                                }
-                            },
+                            onClick = { confirmLocalRestore = true },
                             enabled = state.restoreAvailable && !state.busy,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -655,24 +645,12 @@ public fun ContentBackupV2Screen(
                 TextButton(
                     onClick = {
                         confirmLocalRestore = false
-                        scope.launch { controller.restore(SnapshotRestoreTarget.THIS_DEVICE_ONLY) }
+                        scope.launch { controller.restore() }
                     },
                 ) { Text(strings.restoreBackup) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmLocalRestore = false }) { Text(strings.cancel) }
-            },
-        )
-    }
-
-    if (chooseSyncedTarget) {
-        ContentBackupV2TargetDialog(
-            allDevicesEnabled = syncStatus == SyncSessionStatus.READY && state.restoreAvailable,
-            thisDeviceEnabled = state.restoreAvailable,
-            onDismiss = { chooseSyncedTarget = false },
-            onSelect = { target ->
-                chooseSyncedTarget = false
-                scope.launch { controller.restore(target) }
             },
         )
     }
@@ -793,46 +771,6 @@ private fun ContentBackupSummaryCard(title: String, summary: PortableContentBack
             }
         }
     }
-}
-
-@Composable
-private fun ContentBackupV2TargetDialog(
-    allDevicesEnabled: Boolean,
-    thisDeviceEnabled: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (SnapshotRestoreTarget) -> Unit,
-) {
-    val strings = LocalShinsouStrings.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(strings.text("Where should this archive be restored?")) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { onSelect(SnapshotRestoreTarget.ALL_SYNCED_DEVICES) },
-                    enabled = allDevicesEnabled,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(strings.text("Restore and sync to all devices")) }
-                Text(
-                    strings.text("This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit."),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(
-                    onClick = { onSelect(SnapshotRestoreTarget.THIS_DEVICE_ONLY) },
-                    enabled = thisDeviceEnabled,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(strings.text("Leave workspace and restore this device")) }
-                Text(
-                    strings.text("The device must leave the workspace before its local state is replaced."),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
-    )
 }
 
 private fun backupV2OmissionLabel(strings: ShinsouStrings, reason: BackupV2OmissionReason): String = when (reason) {

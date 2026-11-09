@@ -14,7 +14,7 @@ import kotlin.concurrent.Volatile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Raw key pair used at the crypto boundary. Private bytes must only enter SyncSecretStore. */
+/** Raw key pair used at the crypto boundary. Private bytes must only enter protected storage. */
 data class SodiumKeyPair(
     val publicKey: ByteArray,
     val privateKey: ByteArray,

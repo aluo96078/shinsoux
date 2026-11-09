@@ -14,6 +14,7 @@ import dev.shinsou.kmp.download.DownloadPageFetcher
 import dev.shinsou.kmp.download.DownloadedPage
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.reader.ReaderImageTransform
+import dev.shinsou.kmp.reader.encodedImageHeight
 import dev.shinsou.kmp.ui.BrowseManga
 import dev.shinsou.kmp.ui.ContentCallbacks
 import dev.shinsou.kmp.ui.MigrationCandidate
@@ -350,6 +351,8 @@ public class RepositoryPluginCoordinator(
                 imageUrl = fileSystem.uri(path),
                 local = true,
                 imageTransform = imageTransform,
+                // Header only: the bytes are dropped right away and never decoded to pixels.
+                imageNaturalHeight = imageTransform?.let { fileSystem.read(path)?.let(::encodedImageHeight) },
             )
         }
         return ReaderChapter(
@@ -413,7 +416,7 @@ public class RepositoryPluginCoordinator(
                 url = absoluteSourceUrl(source.baseUrl, metadata.cleanUrl),
                 headers = metadata.headers,
                 referer = chapterReferer,
-                imageTransform = metadata.imageTransform(source.id),
+                imageTransform = metadata.imageTransform(source),
             )
         }
 
@@ -428,7 +431,7 @@ public class RepositoryPluginCoordinator(
                 url = absoluteSourceUrl(source.baseUrl, metadata.cleanUrl),
                 headers = metadata.headers,
                 referer = chapterReferer,
-                imageTransform = metadata.imageTransform(source.id),
+                imageTransform = metadata.imageTransform(source),
             )
         }
 
@@ -462,7 +465,7 @@ public class RepositoryPluginCoordinator(
                 url = viewerUrl,
                 headers = viewerMetadata.headers,
                 referer = chapterReferer,
-                imageTransform = viewerMetadata.imageTransform(source.id),
+                imageTransform = viewerMetadata.imageTransform(source),
             )
         }
 
@@ -480,7 +483,7 @@ public class RepositoryPluginCoordinator(
                 url = viewerUrl,
                 headers = viewerMetadata.headers,
                 referer = chapterReferer,
-                imageTransform = viewerMetadata.imageTransform(source.id),
+                imageTransform = viewerMetadata.imageTransform(source),
             )
         }
 
@@ -491,7 +494,7 @@ public class RepositoryPluginCoordinator(
             url = ViewerImageParser.resolveUrl(viewerUrl, imageMetadata.cleanUrl),
             headers = imageMetadata.headers,
             referer = viewerUrl,
-            imageTransform = PageRequestMetadata("", emptyMap(), combinedMetadata).imageTransform(source.id),
+            imageTransform = PageRequestMetadata("", emptyMap(), combinedMetadata).imageTransform(source),
         )
     }
 

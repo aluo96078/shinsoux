@@ -23,14 +23,12 @@
 | 統一內容／Local source `0` | 已實作 | 已實作 | 已實作 | TXT、圖片、ZIP、CBZ 與完整 EPUB package/resource graph；正文與資源存入 immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交。EPUB 保留 XHTML／CSS／font／image，三平台 browser-grade renderer 以 private scheme 按需讀取 |
 | 統一 Reader／全文搜尋／TTS／註記 | 已實作 | 已實作 | 已實作 | 文字、圖片、EPUB 共用 portable locator；搜尋、TTS 與 range annotation 都經 host rights gate。平台 TTS／browser engine 的真實 voice、排版與 accessibility 行為仍需各平台 smoke |
 | JavaScript extension 管理 | 已實作 | 已實作 | 已實作 | 安裝／更新／卸載、execution grant、preferences、credentials、login/logout；撤銷會立即卸載 runtime 但保留 package，重啟不會自行恢復授權。JVM Rhino、iOS JavaScriptCore |
-| Extension repository 可攜狀態 | 已實作 | 已實作 | 已實作 | `AppSnapshot.extensionRepositories` 是 source of truth；舊 KV 只做一次性遷移，之後 add／remove／default 及 restore／sync 結果會精確覆蓋 KV mirror，不會 union stale KV |
+| Extension repository 可攜狀態 | 已實作 | 已實作 | 已實作 | `AppSnapshot.extensionRepositories` 是 source of truth；舊 KV 只做一次性遷移，之後 add／remove／default 及 restore 結果會精確覆蓋 KV mirror，不會 union stale KV |
 | 官方 extension fixture | 已實作 | 受限 | 已實作 | Desktop test 在 Rhino 初始化 workspace 官方腳本；iOS test 驗證同步 JavaScriptCore contract，但未逐一執行全部 workspace 腳本 |
 | 手動 cookie 與檔案匯入 | 已實作 | 已實作 | 已實作 | 手動編輯及 Netscape `cookies.txt`／JSON；1 MiB、500 筆上限，驗證 domain/path/expiry／字元。picker 先驗 declared size 再 bounded read；macOS Desktop file picker 已做 packaged-app 開啟／取消 smoke，Windows Desktop 及 Android／iOS provider 仍需各平台驗證 |
 | Cloudflare／Web challenge | 已實作 | 已實作 | 受限 | Android WebView 先清 cookie jar 再 seed；iOS 使用 non-persistent WKWebView；兩者擷取後再次驗證。macOS Desktop 使用獨立原生 non-persistent WKWebView 視窗，可擷取該隔離 session 的 cookie／真實 User-Agent，並在來源帳密已保存時只對同源頁面與同源 form 自動登入。Windows Desktop 只開外部瀏覽器，無法自動讀取或匯入外部 cookie |
 | 可攜式備份／還原 | 已實作 | 已實作 | 已實作 | legacy BackupEnvelope 與 checksummed Content Backup v2 並存；v2 同時保存 publication graph 與 body-free metadata／aliases／migration ledgers，可選擇納入 rights 允許的 immutable body，metadata-only restore 不宣告缺失 body 已存在。[ShuYue](https://github.com/aluo96078/shuyue) v1 先 staging/report/quarantine，再以 shared transaction 匯入；secrets 只經明確 consent 進平台安全儲存 |
-| Cloudflare schema v2／encrypted body sync | 已實作 | 已實作 | 已實作 | publication/unit/annotation/blob-ref metadata 走 event/checkpoint；使用者選擇且 `SYNC_BLOB` 允許的 body 走隔離 R2、分塊 AEAD、resume、DEK re-wrap 與 checkpoint-ack GC。真實四平台跨裝置矩陣仍是外部上線 Gate |
 | App-private 自動備份 | 已實作 | 已實作 | 已實作 | 原子快照、due check、retention、損毀標示、立即建立／列表／還原／刪除；WorkManager、BGProcessingTask、Desktop 前景 scheduler |
-| iCloud Drive snapshot sync | 不適用 | 受限 | 不適用 | `Documents/Shinsou/shinsou-sync.shinsoubackup` 單檔、NSFileCoordinator、repository CAS 與 deterministic merge；不採用遠端 download queue、保留本機 proxy secret。無 deletion tombstone、非 record-level CloudKit，entitlement 尚需簽章真機驗證 |
 | MyAnimeList tracking | 未接 | 未接 | 未接 | adapter/test 存在，但 [舊版 Shinsou](https://github.com/aluo96078/shinsou) 未提供可用 client ID；UI 明示未配置，不能登入 |
 | App lock／secure screen | 已實作 | 已實作 | 未接 | Android Biometric 與 secure window、iOS LocalAuthentication／privacy cover；手機端會依 passcode／PIN／密碼／biometric 的執行時可用性動態 gate app lock，驗證不可用時忽略 stale enabled 值、恢復可用時重新鎖定；secure screen 仍可用。Desktop capability 明示 unavailable，Settings 停用且 `authenticate` 不會回傳假成功 |
 | 敏感狀態儲存 | 已實作 | 已實作 | 受限 | Android 敏感 KV 使用 Keystore AES-GCM；iOS 使用 Keychain；Desktop 使用 AES-256-GCM，master key 在 macOS 存入 Keychain，在 Windows 以目前使用者範圍 DPAPI 保護且不使用 machine scope。macOS Keychain prompt／簽章後存取／legacy file migration，以及 Windows 安裝版重啟解密與不同使用者 fail-closed 行為仍需各平台 smoke |
@@ -58,7 +56,7 @@ zip cbz epub
 
 匯入器使用 natural page ordering，拒絕 path traversal、absolute／Windows drive path、symlink page、加密 archive、ZIP64 與多卷 ZIP，並限制單頁 64 MiB、整次圖片 512 MiB 及最多 10,000 entries。所有頁面寫入並核對後，才原子發布列出連續受控檔名的 v2 manifest；Reader 要求 manifest 與實際頁面集合完全一致。舊 v1 marker 只有在 canonical marker 與完整連續頁面集吻合時才原子升級。這些限制屬於安全邊界，不是一般 archive 解壓器的完整格式支援，也不是 page-content checksum。
 
-頁面 bytes 與 v2 manifest 存在裝置的 app-private storage，不會寫入 `AppSnapshot`、portable backup 或 iCloud snapshot。若只搬移 snapshot，Local manga record 仍在，但 Reader 會要求重新匯入原始圖片／archive。
+頁面 bytes 與 v2 manifest 存在裝置的 app-private storage，不會寫入 `AppSnapshot` 或 portable backup。若只搬移 snapshot，Local manga record 仍在，但 Reader 會要求重新匯入原始圖片／archive。
 
 ## Cookie 與 Cloudflare 邊界
 
@@ -79,21 +77,19 @@ zip cbz epub
 
 MyAnimeList HTTP adapter 與 deterministic tests 已存在，但 composition 刻意把 provider 標成 `configured = false`。在取得合法 client ID、補入安全設定並完成登入流程前，不應把 MAL 標成可用。
 
-## 備份與同步邊界
+## 備份邊界
 
-- Portable backup、automatic backup 與 iCloud sync 共用 versioned `BackupEnvelope`，但目的地與排程不同。
-- Envelope 會保存 `AppSnapshot.extensionRepositories`，但 installed JavaScript packages 與 per-source plugin key-value store 在 snapshot 外；跨裝置仍需重新安裝 extension 並重新設定來源 secrets／preferences。舊版 KV repository 清單只在首次升級遷移，之後 restore／sync 的 snapshot 清單會精確回填 KV mirror。
+- Portable backup 與 automatic backup 共用 versioned `BackupEnvelope`，但目的地與排程不同。
+- Envelope 會保存 `AppSnapshot.extensionRepositories`，但 installed JavaScript packages 與 per-source plugin key-value store 在 snapshot 外；跨裝置仍需重新安裝 extension 並重新設定來源 secrets／preferences。舊版 KV repository 清單只在首次升級遷移，之後 restore 的 snapshot 清單會精確回填 KV mirror。
 - proxy API key 雖由 live settings 提供 runtime 使用，但在 snapshot／backup encode 前固定 redaction，並路由到各平台敏感 KV；restore 與 merge 只保留目的裝置的本機值。
 - Download completion manifest、Local v2 manifest 與 page bytes 都是裝置本機檔案。Clear completed 只把完成 queue row 設為 `visibleInQueue=false`，因此不會讓 Reader 或下載徽章失去完成狀態。
 - Automatic backup 是每台裝置的 app-private recoverable 檔案；Android／iOS 的 OS scheduler 不保證精確執行時間，Desktop 只在 app 存活時檢查。
-- iCloud 只在 iOS 提供 transport。流程是 pull 單檔、decode、deterministic merge、以 repository revision CAS 寫回本地，再原子 replace 遠端單檔。Resolver 不重映射或採用遠端 `downloadQueue`，合併結果保留本機 queue；備份 restore 同樣保留並清理本機 dangling rows。
-- 此模型沒有 CloudKit record、subscription、push notification、逐筆 server conflict 或 deletion tombstone。包含 extension repository 在內的 key-based merge 可能讓 stale replica 在衝突時帶回已刪除 record，因此不能描述為 [舊版 Shinsou](https://github.com/aluo96078/shinsou) record-level CloudKit 的等價實作。
 
 ## 驗證層級
 
 Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重新執行 [BUILDING.md](BUILDING.md) 的完整命令矩陣。
 
-1. `desktopTest`：common／Desktop deterministic tests、本地 mock transport、Local ZIP、cookie parser、backup/sync、Reader／plugin fixture；在 Windows runner 另會執行 native DPAPI round-trip。
+1. `desktopTest`：common／Desktop deterministic tests、本地 mock transport、Local ZIP、cookie parser、backup、Reader／plugin fixture；在 Windows runner 另會執行 native DPAPI round-trip。
 2. Android `assembleDebug`、macOS／Windows Desktop compile、iOS Simulator compile/link：target API 與 expect/actual 編譯。macOS 的 `desktopTest`／Desktop application task 會先以 `xcrun --sdk macosx swiftc` 編譯原生 WKWebView helper，因此還會驗證 Xcode Command Line Tools、macOS SDK 與 Swift compiler 可用。
 3. `iosSimulatorArm64Test`：共用 tests 與 JavaScriptCore contract。
 4. 無簽章 Xcode Simulator build：SwiftUI host、Widget target 與 Kotlin framework linkage。
@@ -104,7 +100,7 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 - Android／iOS 真機互動與 OS 背景排程
 - Android 實體音量鍵攔截／HUD／系統音量不變，以及 iOS 實體音量鍵、HUD、audio-session／使用者音量恢復
 - Android Keystore／iOS Keychain／macOS Keychain／Windows 使用者範圍 DPAPI 的首次建立、legacy plaintext migration、重啟後解密與作業系統 access-control 行為
-- App Group、Widget、Keychain sharing 與 iCloud entitlement
+- App Group、Widget 與 Keychain sharing
 - 來源登入、實際下載或 Cloudflare challenge
 - Android content provider、iOS security-scoped URL，以及 Desktop 實際選取檔案後的 bounded-import 路徑
 - macOS／Windows Desktop 實體鍵盤 accelerator、含資料的 master/detail／Reader，以及 packaged app 的 macOS Keychain prompt／ACL／legacy key migration 與 Windows DPAPI 使用者隔離／fail-closed 行為

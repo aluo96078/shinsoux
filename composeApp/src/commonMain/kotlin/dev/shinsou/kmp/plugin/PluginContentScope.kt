@@ -33,8 +33,25 @@ internal fun PluginHttpResponse.imageBodyForDecoderOrNull(): ByteArray? {
     val mediaType = declaredTypes.single().normalizedPluginMediaTypeOrNull() ?: return null
     return body.takeIf {
         mediaType == "application/octet-stream" || mediaType == "binary/octet-stream" ||
-            mediaType.isDecoderCompatibleImageMediaType()
+            mediaType.isDecoderCompatibleImageMediaType() ||
+            // Some object-storage CDNs (e.g. img.czbooks.net) label real JPEGs as text/plain.
+            // Accept that mislabel only when the bytes carry a raster image signature, so an
+            // actual text, HTML or SVG document is still rejected before decoding.
+            (mediaType == "text/plain" && body.hasRasterImageSignature())
     }
+}
+
+/** True when [this] starts with a JPEG, PNG, GIF, WebP or AVIF/HEIF file signature. */
+internal fun ByteArray.hasRasterImageSignature(): Boolean {
+    fun at(offset: Int, ascii: String): Boolean =
+        size >= offset + ascii.length && ascii.indices.all { this[offset + it] == ascii[it].code.toByte() }
+    fun bytes(vararg values: Int): Boolean =
+        size >= values.size && values.indices.all { this[it] == values[it].toByte() }
+    return bytes(0xFF, 0xD8, 0xFF) ||
+        bytes(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) ||
+        at(0, "GIF87a") || at(0, "GIF89a") ||
+        (at(0, "RIFF") && at(8, "WEBP")) ||
+        (at(4, "ftyp") && listOf("avif", "avis", "heic", "heix", "mif1").any { at(8, it) })
 }
 
 /** Normalized single response media type, or null when it is absent or ambiguous. */

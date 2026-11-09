@@ -18,6 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RepositoryPluginReaderParityTest {
@@ -246,6 +247,44 @@ class RepositoryPluginReaderParityTest {
         } finally {
             fixture.close()
         }
+    }
+
+    @Test
+    fun jmTransformFollowsThePublishedSourceIdOfAPublisherScopedInstall() = runTest {
+        // A signed third-party repository installs JM under a projected runtime id; only the
+        // published (canonical) id still identifies the source.
+        val encodedUrl = "https://images.example/page.jpg#" +
+            "${JmImageDescrambler.SCRAMBLE_ID_KEY}=220980&" +
+            "${JmImageDescrambler.PHOTO_ID_KEY}=300000&" +
+            "${JmImageDescrambler.FILENAME_KEY}=abc"
+        val projectedId = PluginInstallKeys.projectedSourceId(
+            "zh.jinmantiantang~0123456789abcdef",
+            JmImageDescrambler.SOURCE_ID.toString(),
+        )
+        assertTrue(projectedId != JmImageDescrambler.SOURCE_ID)
+        suspend fun onlineTransform(publishedSourceId: String): ReaderImageTransform? {
+            val source = ReaderParityRuntime(
+                sourceId = projectedId,
+                pages = listOf(Page(0, imageUrl = encodedUrl)),
+                publishedSourceId = publishedSourceId,
+            )
+            val fixture = createReaderParityFixture(source) {
+                PluginHttpResponse(200, byteArrayOf(9, 8, 7), mapOf("Content-Type" to listOf("image/jpeg")))
+            }
+            try {
+                val online = fixture.coordinator.loadReaderChapter(fixture.mangaId, fixture.chapterId)
+                val page = assertNotNull(online.pages.single().imageResolver).invoke()
+                assertEquals(page.imageTransform, fixture.coordinator.pages(fixture.mangaId, fixture.chapterId).single().imageTransform)
+                return page.imageTransform
+            } finally {
+                fixture.close()
+            }
+        }
+        assertEquals(
+            ReaderImageTransform.ReverseVerticalSegments(4),
+            onlineTransform(JmImageDescrambler.SOURCE_ID.toString()),
+        )
+        assertNull(onlineTransform("9001"))
     }
 
     @Test
@@ -562,9 +601,11 @@ private class ReaderParityRuntime(
     private val pages: List<Page>,
     private val resolveImageUrl: (suspend (String) -> String?)? = null,
     override val headers: Map<String, String> = mapOf("X-Source" to "fixture-source"),
+    publishedSourceId: String? = null,
 ) : ScriptPluginRuntime {
     override val pluginId: String = "reader.fixture.$sourceId"
     override val id: Long = sourceId
+    override val canonicalSourceId: String = publishedSourceId ?: sourceId.toString()
     override val name: String = "Reader fixture $sourceId"
     override val lang: String = "en"
     override val baseUrl: String = "https://reader.example"

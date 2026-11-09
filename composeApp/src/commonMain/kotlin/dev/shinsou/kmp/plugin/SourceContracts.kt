@@ -5,6 +5,12 @@ import dev.shinsou.kmp.reader.ReaderImageTransform
 
 public interface Source {
     public val id: Long
+
+    /**
+     * The source id its publisher declared. A publisher-scoped install runs the source under a
+     * projected [id] (ADR-0002 D6), so source-specific host behaviour must match this instead.
+     */
+    public val canonicalSourceId: String get() = id.toString()
     public val name: String
     public val lang: String
 
@@ -207,8 +213,8 @@ public data class PageRequestMetadata(
     val headers: Map<String, String>,
     val metadata: Map<String, String>,
 ) {
-    public fun imageTransform(sourceId: Long): ReaderImageTransform? =
-        JmImageDescrambler.transform(sourceId, metadata)
+    public fun imageTransform(source: Source): ReaderImageTransform? =
+        JmImageDescrambler.transform(source.canonicalSourceId, metadata)
 
     public companion object {
         private val metadataKeys = setOf(

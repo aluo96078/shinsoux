@@ -1,8 +1,6 @@
 package dev.shinsou.kmp
 
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.window.ComposeUIViewController
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
@@ -12,7 +10,6 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
-import dev.shinsou.kmp.sync.SnapshotSyncController
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
@@ -37,14 +34,10 @@ public fun MainViewController(): UIViewController {
     val container = IosApplicationContainer
     return ComposeUIViewController {
         LaunchedEffect(container) { container.start() }
-        val readerProgressReporter by container.readerProgressReporter.collectAsState()
-        val syncBoundaryReady by container.syncBoundaryReady.collectAsState()
         App(
             repository = container.repository,
             appServices = container.services,
             autoBackupService = container.autoBackups,
-            readerProgressReporter = readerProgressReporter,
-            interactionReady = syncBoundaryReady,
         )
     }
 }
@@ -132,7 +125,7 @@ internal object IosApplicationContainer {
         persist = IosSnapshotPersistence::save,
     )
 
-    private val syncInfrastructure = IosSyncInfrastructure()
+    private val contentInfrastructure = IosContentInfrastructure()
 
     private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)
 
@@ -147,19 +140,11 @@ internal object IosApplicationContainer {
         // ADR-0002 §10.1: every package runs in the WASM sandbox (§4.5),
         // one interpreter instance each.
         runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(iosSandboxRuntimeFactory(sandboxScope)),
-        syncInfrastructure = syncInfrastructure,
+        contentInfrastructure = contentInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
-    )
-
-    private val snapshotSync = SnapshotSyncController(
-        repository = repository,
-        transport = IosICloudDriveSnapshotTransport(),
-        deviceId = "ios",
-        deviceIdProvider = composition::installationDeviceId,
-        writerAllowed = composition::isLegacySnapshotWriterAllowed,
     )
 
     private val startupMutex = Mutex()
@@ -173,20 +158,13 @@ internal object IosApplicationContainer {
 
     val autoBackups = composition.autoBackups
 
-    val readerProgressReporter = requireNotNull(composition.syncRuntime).readerProgressReporter
-
-    val syncBoundaryReady = composition.syncBoundaryReady
-
     val services = IosAppServices(
         browse = composition.browse,
         content = composition.content,
         contentFeatures = composition.contentFeatures,
         tracking = composition.tracking,
-        cloudflareSync = composition.cloudflareSync,
-        syncAwareSnapshotRestore = composition.syncAwareSnapshotRestore,
         portableContentBackupV2 = composition.portableContentBackupV2,
         shuYueMigration = composition.shuYueMigration,
-        snapshotSync = snapshotSync,
     )
 
     private val downloadKeeper = IosDownloadBackgroundKeeper(

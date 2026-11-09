@@ -1,7 +1,6 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.app.ContentFeatureRuntime
-import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
@@ -23,9 +22,6 @@ import dev.shinsou.kmp.plugin.isBlockedPluginAddress
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.ReaderTapAction
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
-import dev.shinsou.kmp.sync.v2.EphemeralSyncPayload
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
@@ -370,18 +366,6 @@ interface ShinsouAppServices {
     val tracking: TrackingCoordinator?
         get() = null
 
-    /** Complete-snapshot sync; iOS supplies iCloud Drive while other targets report unavailable. */
-    val snapshotSync: SnapshotSyncController?
-        get() = null
-
-    /** Event-based E2EE sync. Runtime state and one-time secrets stay outside AppSnapshot. */
-    val cloudflareSync: CloudflareSyncUiController?
-        get() = null
-
-    /** Safe bulk restore/reset policy bound to the same v2 runtime/local store as cloud sync. */
-    val syncAwareSnapshotRestore: SyncAwareSnapshotRestore?
-        get() = null
-
     /** Checksummed binary content archive controller; null only when shared atomic storage is absent. */
     val portableContentBackupV2: PortableContentBackupV2UiController?
         get() = null
@@ -447,9 +431,6 @@ interface ShinsouAppServices {
     fun copyText(label: String, text: String): Boolean = false
 
     suspend fun readClipboardText(): String? = null
-
-    /** Mobile camera scanner; every platform must retain paste/manual-code fallback. */
-    suspend fun scanQrCode(): String? = null
 
     suspend fun exportDocument(suggestedName: String, contents: String): Boolean = false
 
@@ -740,9 +721,6 @@ sealed interface ShinsouDeepLink {
 
     data object OpenSettings : ShinsouDeepLink
 
-    /** One-time Cloudflare setup, invite, pairing, recovery, or operator handoff action. */
-    data class OpenSyncLink(val payload: SyncLinkPayload) : ShinsouDeepLink
-
     /**
      * ADR-0002 §8.1 `shinsou://add-repository?url=…&fp=…`: a publisher's repository and, optionally,
      * the full fingerprint to match. Nothing is trusted until the user confirms the key.
@@ -759,8 +737,7 @@ sealed interface ShinsouDeepLink {
 
 /**
  * Retains OS-delivered links in FIFO order until common navigation acknowledges the exact event.
- * This is especially important for one-time sync links received while the app is locked or while
- * an earlier provisioning request is still running. The small bound prevents custom-scheme spam
+ * The small bound prevents custom-scheme spam
  * from growing memory without limit; a full queue rejects the new link without disturbing secrets
  * that were already accepted.
  */
@@ -805,33 +782,6 @@ internal class RetainedDeepLinkQueue(
         val id: Long,
         val link: ShinsouDeepLink,
     )
-}
-
-/**
- * Parsed sync links deliberately keep secrets out of AppSnapshot and navigation route strings.
- * Callers must consume the payload once and must never include it in logs or error messages.
- */
-class SyncLinkPayload(
-    val action: SyncLinkAction,
-    val endpoint: String,
-    val oneTimeSecret: EphemeralSyncPayload?,
-    val sessionId: String? = null,
-    val instanceId: String? = null,
-    val userId: String? = null,
-    val workspaceId: String? = null,
-) {
-    override fun toString(): String =
-        "SyncLinkPayload(action=$action, endpoint=$endpoint, sessionId=$sessionId, " +
-            "instanceId=$instanceId, userId=$userId, workspaceId=$workspaceId, " +
-            "oneTimeSecret=${if (oneTimeSecret == null) "absent" else "REDACTED"})"
-}
-
-enum class SyncLinkAction {
-    SETUP,
-    INVITE,
-    PAIR,
-    RECOVERY,
-    EMERGENCY_RESET,
 }
 
 enum class DeepLinkSection {
@@ -947,6 +897,8 @@ data class ReaderPage(
     val headers: Map<String, String> = emptyMap(),
     val local: Boolean = false,
     val imageTransform: ReaderImageTransform? = null,
+    /** Encoded height of a local [imageUrl] page, read once so [imageTransform] needs no full-size decode. */
+    val imageNaturalHeight: Int? = null,
     /**
      * Resolves viewer HTML only when this page is about to be displayed. Large galleries can
      * therefore open without fetching hundreds of viewer pages up front. The returned page must

@@ -98,7 +98,6 @@ import dev.shinsou.kmp.backup.AutoBackupEntry
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.BackupV2ArchiveSource
 import dev.shinsou.kmp.backup.DEFAULT_MAX_ARCHIVE_BYTES
-import dev.shinsou.kmp.backup.SnapshotRestoreTarget
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.SnapshotBackupService
@@ -129,15 +128,6 @@ import dev.shinsou.kmp.reader.ReaderPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerPositionUpdateDecision
 import dev.shinsou.kmp.reader.readerTrackingProgress
 import dev.shinsou.kmp.reader.readerStoryOrderComparator
-import dev.shinsou.kmp.sync.v2.HlcTimestamp
-import dev.shinsou.kmp.sync.v2.ContentProgressKeyV2
-import dev.shinsou.kmp.sync.v2.ReaderPosition
-import dev.shinsou.kmp.sync.v2.ReaderProgressReporter
-import dev.shinsou.kmp.sync.v2.ReadingPositionRegister
-import dev.shinsou.kmp.sync.v2.SyncSessionStatus
-import dev.shinsou.kmp.sync.v2.syncChapterEntityKey
-import dev.shinsou.kmp.sync.v2.syncMangaEntityKey
-import dev.shinsou.kmp.sync.provisioning.asProvisioningControllerInput
 import dev.shinsou.kmp.plugin.admits
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.isPlaceholderPublicationTitle
@@ -196,7 +186,6 @@ fun ShinsouApp(
     repository: ShinsouRepository,
     appServices: ShinsouAppServices = ShinsouAppServices.None,
     autoBackupService: AutoBackupService? = null,
-    readerProgressReporter: ReaderProgressReporter? = null,
     interactionReady: Boolean = true,
 ) {
     val snapshot by repository.snapshot.collectAsState()
@@ -219,7 +208,6 @@ fun ShinsouApp(
                             snapshot = snapshot,
                             appServices = appServices,
                             autoBackupService = autoBackupService,
-                            readerProgressReporter = readerProgressReporter,
                         )
                     }
                 } else {
@@ -295,7 +283,6 @@ private fun ShinsouAppContent(
     snapshot: AppSnapshot,
     appServices: ShinsouAppServices,
     autoBackupService: AutoBackupService?,
-    readerProgressReporter: ReaderProgressReporter?,
 ) {
     val strings = LocalShinsouStrings.current
     val pluginImages = LocalPluginImageLoader.current
@@ -326,9 +313,6 @@ private fun ShinsouAppContent(
     var readerSessionSerial by remember { mutableStateOf(0L) }
     var readerTransitionInFlight by remember { mutableStateOf(false) }
     var readerPositionInitializedFor by remember { mutableStateOf<ReaderSession?>(null) }
-    var readerInitialPosition by remember { mutableStateOf<ReaderPosition?>(null) }
-    var readerLastObservedHlc by remember { mutableStateOf<HlcTimestamp?>(null) }
-    var readerRemotePosition by remember { mutableStateOf<ReadingPositionRegister?>(null) }
     var readerCategoryPickerMangaId by remember { mutableStateOf<Long?>(null) }
     var readerBackRequest by remember { mutableStateOf(0L) }
     var detailBackRequest by remember { mutableStateOf(0L) }
@@ -392,21 +376,8 @@ private fun ShinsouAppContent(
             },
         )
     }
-    val v2ReaderProgressCoordinator = remember(
-        repository,
-        readerProgressReporter,
-        snackbar,
-        strings,
-    ) {
-        V2ReaderProgressCoordinator(
-            repository = repository,
-            reporter = readerProgressReporter,
-            onReporterFailure = { failure ->
-                snackbar.showSnackbar(
-                    failure.message ?: strings.text("The latest reading position is queued for retry."),
-                )
-            },
-        )
+    val v2ReaderProgressCoordinator = remember(repository) {
+        V2ReaderProgressCoordinator(repository = repository)
     }
     val appLifecycle by appServices.appLifecycle.collectAsState()
     val sourceLoginRequests by appServices.browse.loginRequests.collectAsState()
@@ -701,9 +672,7 @@ private fun ShinsouAppContent(
         if (snapshot.settings.security.incognitoMode) return
         val sessionKey = "${locator.scope.publicationId.value}:${locator.scope.unitId.value}"
         val progressSessionId = v2ReaderProgressSessions.getOrPut(sessionKey) {
-            runCatching { readerProgressReporter?.newReaderSessionId() }
-                .getOrNull()
-                ?: "v2-reader-${sessionKey.hashCode()}"
+            "v2-reader-${sessionKey.hashCode()}"
         }
         v2ReaderProgressCoordinator.enqueue(
             V2ReaderProgressEvent(
@@ -847,9 +816,6 @@ private fun ShinsouAppContent(
 
     fun resetReaderPositionState() {
         readerPositionInitializedFor = null
-        readerInitialPosition = null
-        readerLastObservedHlc = null
-        readerRemotePosition = null
     }
 
     fun openReader(mangaId: Long, chapterId: Long) {
@@ -866,8 +832,7 @@ private fun ShinsouAppContent(
             readerSession = ReaderSession(
                 mangaId = mangaId,
                 chapterId = chapterId,
-                progressSessionId = readerProgressReporter?.newReaderSessionId()
-                    ?: "local-reader-$readerSessionSerial",
+                progressSessionId = "local-reader-$readerSessionSerial",
             )
             selectedMangaId = mangaId
         }
@@ -881,8 +846,7 @@ private fun ShinsouAppContent(
             ReaderSession(
                 mangaId = targetMangaId,
                 chapterId = targetChapterId,
-                progressSessionId = readerProgressReporter?.newReaderSessionId()
-                    ?: "local-reader-$readerSessionSerial",
+                progressSessionId = "local-reader-$readerSessionSerial",
             )
         } else {
             null
@@ -893,18 +857,6 @@ private fun ShinsouAppContent(
                 .onFailure { failure ->
                     snackbar.showSnackbar(
                         failure.message ?: strings.text("The latest reading position could not be saved."),
-                    )
-                }
-            runCatching {
-                readerProgressReporter?.let { reporter ->
-                    withContext(Dispatchers.Default) {
-                        reporter.flushReaderSession(closing.progressSessionId)
-                    }
-                }
-            }
-                .onFailure { failure ->
-                    snackbar.showSnackbar(
-                        failure.message ?: strings.text("The latest reading position is queued for retry."),
                     )
                 }
             if (readerSession == closing) {
@@ -975,16 +927,9 @@ private fun ShinsouAppContent(
                         .firstOrNull { it.chapterId == session.chapterId }
                     val localLocator = localHistory?.lastLocator
                         ?.takeIf { navigation.indexOf(it) != null }
-                    val remoteLocatorRegister = readerProgressReporter
-                        ?.currentContentReadingLocator(ContentProgressKeyV2.from(typed.content.initialLocator))
-                    val localHistoryTouchedAt = localHistory?.lastRead ?: Long.MIN_VALUE
-                    val remoteLocator = remoteLocatorRegister
-                        ?.takeIf { it.hlc.millis > localHistoryTouchedAt }
-                        ?.value
-                        ?.takeIf { navigation.indexOf(it) != null }
                     TypedReaderContentSession(
                         content = typed.content.copy(
-                            initialLocator = remoteLocator ?: localLocator ?: typed.content.initialLocator,
+                            initialLocator = localLocator ?: typed.content.initialLocator,
                         ),
                         canonicalText = typed.canonicalText,
                         access = typed.access,
@@ -1106,24 +1051,6 @@ private fun ShinsouAppContent(
         )
         if (shouldLock) unlocked = false
     }
-    LaunchedEffect(
-        appLifecycle,
-        snapshot.settings.sync.enabled,
-        snapshot.settings.sync.syncOnForeground,
-        appServices.snapshotSync,
-    ) {
-        if (
-            appLifecycle == AppLifecycleState.FOREGROUND &&
-            snapshot.settings.sync.enabled &&
-            snapshot.settings.sync.syncOnForeground
-        ) {
-            appServices.snapshotSync?.let { controller ->
-                // A pulled snapshot may change sync settings. Finish the current atomic cycle before
-                // Compose restarts this effect so the remote file is never left half-updated.
-                withContext(NonCancellable) { controller.sync() }
-            }
-        }
-    }
     LaunchedEffect(effectiveAppLockEnabled, unlocked, appLifecycle) {
         if (
             effectiveAppLockEnabled &&
@@ -1138,8 +1065,8 @@ private fun ShinsouAppContent(
         }
     }
     LaunchedEffect(appServices, unlocked) {
-        // Every platform retains the current deep link until deepLinkHandled is called. Do not
-        // consume one-time provisioning material while the application is still locked.
+        // Every platform retains the current deep link until deepLinkHandled is called. Links
+        // are handled only once the application is unlocked.
         if (!unlocked) return@LaunchedEffect
         appServices.deepLinks.collect { link ->
             try {
@@ -1196,29 +1123,8 @@ private fun ShinsouAppContent(
                         pendingRepositoryLink = link
                         return@collect
                     }
-                    is ShinsouDeepLink.OpenSyncLink -> {
-                        // Navigate first so the controller's progress and any safe diagnostic are
-                        // visible while claim/checkpoint verification runs. The payload never
-                        // enters saved Compose state or AppSnapshot.
-                        section = MainSection.MORE
-                        selectedMangaId = null
-                        moreBackRequest = 0L
-                        moreDestination = MoreDestination.Settings
-                        val controller = appServices.cloudflareSync
-                            ?: error("Encrypted sync is unavailable in this runtime")
-                        if (link.payload.action == SyncLinkAction.RECOVERY) {
-                            val recoveryKit = link.payload.oneTimeSecret
-                                ?: error("Recovery link is missing its Recovery Kit")
-                            recoveryKit.useSuspending(controller::importRecoveryKit)
-                        } else {
-                            link.payload.asProvisioningControllerInput().useSuspending(
-                                controller::submitOneTimeLinkOrCode,
-                            )
-                        }
-                    }
                 }
-                // A setup/pair/recovery link is acknowledged only after the controller has
-                // durably queued or fully consumed it. Failures remain pending for a later retry.
+                // Failures remain pending for a later retry.
                 appServices.deepLinkHandled(link)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -1467,55 +1373,9 @@ private fun ShinsouAppContent(
                         .filter { it.state == DownloadState.DOWNLOADED }
                         .mapTo(mutableSetOf()) { it.chapterId },
                 )
-                LaunchedEffect(session, snapshot.revision, readerProgressReporter) {
-                    val initialized = readerPositionInitializedFor == session
-                    val observedHlc = readerLastObservedHlc.takeIf { initialized }
-                    val incoming = readerProgressReporter?.let { reporter ->
-                        runCatching {
-                            reporter.currentReadingPosition(syncChapterEntityKey(chapter, manga))
-                        }.getOrNull()
-                    }
-                    val localHistoryTouchedAt = repository.currentSnapshot.histories
-                        .firstOrNull { it.chapterId == chapter.id }
-                        ?.lastRead
-                        ?: Long.MIN_VALUE
-                    val applicableIncoming = incoming?.takeIf { it.hlc.millis > localHistoryTouchedAt }
-                    when (
-                        readerPositionUpdateDecision(
-                            initialized = initialized,
-                            activeSessionId = session.progressSessionId,
-                            lastObservedHlc = observedHlc,
-                            incoming = applicableIncoming,
-                        )
-                    ) {
-                        ReaderPositionUpdateDecision.RESTORE_ON_OPEN -> {
-                            readerInitialPosition = applicableIncoming?.position
-                            readerRemotePosition = null
-                        }
-                        ReaderPositionUpdateDecision.OFFER_APPLY -> {
-                            readerRemotePosition = incoming
-                        }
-                        ReaderPositionUpdateDecision.IGNORE -> {
-                            if (
-                                applicableIncoming != null &&
-                                applicableIncoming.sessionId == session.progressSessionId &&
-                                (observedHlc == null || applicableIncoming.hlc > observedHlc)
-                            ) {
-                                readerRemotePosition = null
-                            }
-                        }
-                    }
-                    if (!initialized) {
-                        readerPositionInitializedFor = session
-                        readerInitialPosition = applicableIncoming?.position
-                        readerLastObservedHlc = incoming?.hlc
-                        readerRemotePosition = null
-                    } else if (
-                        incoming != null &&
-                        (observedHlc == null || incoming.hlc > observedHlc)
-                    ) {
-                        readerLastObservedHlc = incoming.hlc
-                    }
+                LaunchedEffect(session) {
+                    // Reading progress is local only: the reader restores from the chapter itself.
+                    if (readerPositionInitializedFor != session) readerPositionInitializedFor = session
                 }
                 ReaderScreen(
                     manga = manga,
@@ -1531,8 +1391,6 @@ private fun ShinsouAppContent(
                     previousChapter = navigation.previous,
                     nextChapter = navigation.next,
                     readerSessionId = session.progressSessionId,
-                    initialPosition = readerInitialPosition,
-                    remotePositionSuggestion = readerRemotePosition?.position,
                     positionReportingEnabled = readerPositionInitializedFor == session,
                     volumeKeyRouter = readerVolumeKeyRouter,
                     systemBackRequest = readerBackRequest,
@@ -1578,42 +1436,6 @@ private fun ShinsouAppContent(
                                 ),
                             )
                             mutate {
-                                val reporter = readerProgressReporter
-                                var reporterFailure: Throwable? = null
-                                if (reporter != null) {
-                                    try {
-                                        val result = withContext(Dispatchers.Default) {
-                                            reporter.recordReadingProgress(
-                                                chapterKey = syncChapterEntityKey(chapter, manga),
-                                                mangaKey = syncMangaEntityKey(manga),
-                                                readingMode = position.readingMode,
-                                                pageIndex = position.pageIndex,
-                                                normalizedOffsetFraction = position.normalizedOffsetFraction,
-                                                sessionId = session.progressSessionId,
-                                                completed = chapter.read || completedNow,
-                                                historyTouchedAt = readAt,
-                                            )
-                                        }
-                                        result.positionRegister?.hlc?.let { reportedHlc ->
-                                            if (readerLastObservedHlc == null || reportedHlc > requireNotNull(readerLastObservedHlc)) {
-                                                readerLastObservedHlc = reportedHlc
-                                            }
-                                        }
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (failure: Throwable) {
-                                        // A sync outage must not make the local reader lose its
-                                        // history entry. The reporter's durable draft remains
-                                        // retryable; the error is surfaced after the compatibility
-                                        // projection has been committed below.
-                                        reporterFailure = failure
-                                    }
-                                }
-                                reporterFailure?.let { failure ->
-                                    snackbar.showSnackbar(
-                                        failure.message ?: strings.text("The latest reading position is queued for retry."),
-                                    )
-                                }
                                 if (completedNow && snapshot.settings.downloads.deleteAfterReading) {
                                     snapshot.downloadQueue
                                         .filter { it.chapterId == chapter.id && it.state == DownloadState.DOWNLOADED }
@@ -1651,12 +1473,6 @@ private fun ShinsouAppContent(
                                 }
                             }
                         }
-                    },
-                    onApplyRemotePosition = {
-                        readerRemotePosition = null
-                    },
-                    onDismissRemotePositionSuggestion = {
-                        readerRemotePosition = null
                     },
                     onToggleFavorite = {
                         mutate {
@@ -1744,32 +1560,6 @@ private fun ShinsouAppContent(
                                                         pageCount = pageCount,
                                                     ),
                                                 )
-                                                mutate {
-                                                    var reporterFailure: Throwable? = null
-                                                    readerProgressReporter?.let { reporter ->
-                                                        try {
-                                                            withContext(Dispatchers.Default) {
-                                                                reporter.recordContentReadingProgress(
-                                                                    locator = locator,
-                                                                    sessionId = session.progressSessionId,
-                                                                    completed = completed,
-                                                                    historyTouchedAt = readAt,
-                                                                )
-                                                            }
-                                                        } catch (cancelled: CancellationException) {
-                                                            throw cancelled
-                                                        } catch (failure: Throwable) {
-                                                            // Sync readiness/network failures must not prevent the
-                                                            // compatibility history row from being committed below.
-                                                            reporterFailure = failure
-                                                        }
-                                                    }
-                                                    reporterFailure?.let { failure ->
-                                                        snackbar.showSnackbar(
-                                                            failure.message ?: strings.text("The latest reading position is queued for retry."),
-                                                        )
-                                                    }
-                                                }
                                             }
                                         }
                                     },
@@ -3117,8 +2907,6 @@ private fun MoreDestinationPane(
         MoreDestination.Settings -> SettingsScreen(
             settings = snapshot.settings,
             categories = snapshot.categories.sortedBy { it.sort },
-            snapshotSync = appServices.snapshotSync,
-            cloudflareSync = appServices.cloudflareSync,
             appServices = appServices,
             securityCapabilities = securityCapabilities,
             wideLayout = wideLayout,
@@ -3142,7 +2930,6 @@ private fun MoreDestinationPane(
         MoreDestination.Backup -> BackupScreen(
             state = snapshot.backupState,
             automaticBackups = automaticBackups,
-            cloudflareSync = appServices.cloudflareSync,
             onBack = onBack,
             onCreate = {
                 mutate {
@@ -3174,22 +2961,13 @@ private fun MoreDestinationPane(
                     )
                     val encoded = document.contents.decodeToString()
                     val envelope = runCatching { SnapshotBackupService.decode(encoded) }.getOrNull()
-                    val coordinator = appServices.syncAwareSnapshotRestore
-                    if (coordinator != null) {
-                        if (envelope != null) {
-                            coordinator.restoreBackup(
-                                envelope = envelope,
-                                restoredAt = Clock.System.now().toEpochMilliseconds(),
-                                target = SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                            )
-                        } else {
-                            coordinator.importSnapshot(encoded, SnapshotRestoreTarget.THIS_DEVICE_ONLY)
-                        }
+                    if (envelope != null) {
+                        repository.restoreBackup(
+                            envelope = envelope,
+                            restoredAt = Clock.System.now().toEpochMilliseconds(),
+                        )
                     } else {
-                        // Preview/test roots without platform sync infrastructure retain the
-                        // legacy local-only path. Every production root supplies a coordinator.
-                        if (envelope != null) repository.restoreBackup(envelope)
-                        else repository.importSnapshot(encoded)
+                        repository.importSnapshot(encoded)
                     }
                     repository.setBackupState(
                         repository.currentSnapshot.backupState.copy(
@@ -3239,72 +3017,12 @@ private fun MoreDestinationPane(
             onRestoreAutomatic = { backup ->
                 mutate {
                     if (autoBackupService != null) {
-                        val coordinator = appServices.syncAwareSnapshotRestore
-                        if (coordinator != null) {
-                            autoBackupService.restore(
-                                fileName = backup.fileName,
-                                target = SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                                coordinator = coordinator,
-                            )
-                        } else {
-                            autoBackupService.restore(backup.fileName)
-                        }
+                        autoBackupService.restore(backup.fileName)
                         automaticBackups = autoBackupService.listBackups()
                     }
                 }
             },
-            onRestoreWithTarget = appServices.syncAwareSnapshotRestore?.let { coordinator ->
-                { target ->
-                    mutate {
-                        val document = appServices.importDocument(setOf("json", "shinsoubackup"))
-                            ?: return@mutate
-                        repository.setBackupState(
-                            repository.currentSnapshot.backupState.copy(
-                                status = BackupStatus.RESTORING,
-                                errorMessage = null,
-                            ),
-                        )
-                        val encoded = document.contents.decodeToString()
-                        val envelope = runCatching { SnapshotBackupService.decode(encoded) }.getOrNull()
-                        if (envelope != null) {
-                            coordinator.restoreBackup(
-                                envelope = envelope,
-                                restoredAt = Clock.System.now().toEpochMilliseconds(),
-                                target = target,
-                            )
-                        } else {
-                            coordinator.importSnapshot(encoded, target)
-                        }
-                        repository.setBackupState(
-                            repository.currentSnapshot.backupState.copy(
-                                status = BackupStatus.COMPLETED,
-                                lastRestoreAt = Clock.System.now().toEpochMilliseconds(),
-                                lastFileName = document.name,
-                                errorMessage = null,
-                            ),
-                        )
-                    }
-                }
-            },
-            onRestoreAutomaticWithTarget = if (
-                autoBackupService != null && appServices.syncAwareSnapshotRestore != null
-            ) {
-                { backup, target ->
-                    mutate {
-                        autoBackupService.restore(
-                            fileName = backup.fileName,
-                            target = target,
-                            coordinator = requireNotNull(appServices.syncAwareSnapshotRestore),
-                        )
-                        automaticBackups = autoBackupService.listBackups()
-                    }
-                }
-            } else {
-                null
-            },
-            onResetWithTarget = appServices.syncAwareSnapshotRestore?.let { coordinator ->
-                { target -> mutate { coordinator.reset(target) } }
-            },
+            onReset = { mutate { repository.reset() } },
             onDeleteAutomatic = { backup ->
                 mutate {
                     if (autoBackupService != null) {
@@ -3325,11 +3043,8 @@ private fun MoreDestinationPane(
                     onBack = onBack,
                 )
             } else {
-                val observedCloudflareState = appServices.cloudflareSync?.state?.collectAsState()
                 ContentBackupV2Screen(
                     controller = controller,
-                    syncStatus = observedCloudflareState?.value?.status
-                        ?: SyncSessionStatus.NOT_CONFIGURED,
                     onChooseRestoreArchive = {
                         mutate {
                             val document = appServices.importDocument(
@@ -3634,13 +3349,11 @@ internal data class V2ReaderProgressEvent(
 }
 
 /**
- * App-owned progress lanes for extension readers. Local compatibility writes preserve every
- * observation in order; typed sync reporting runs separately so it cannot delay local resume.
+ * App-owned progress lane for extension readers. Local compatibility writes preserve every
+ * observation in order.
  */
 internal class V2ReaderProgressCoordinator(
     private val repository: ShinsouRepository,
-    private val reporter: ReaderProgressReporter?,
-    private val onReporterFailure: suspend (Throwable) -> Unit = {},
 ) {
     private sealed interface LocalCommand {
         data class Progress(val event: V2ReaderProgressEvent) : LocalCommand
@@ -3648,7 +3361,6 @@ internal class V2ReaderProgressCoordinator(
     }
 
     private val events = Channel<LocalCommand>(Channel.UNLIMITED)
-    private val reporterEvents = Channel<V2ReaderProgressEvent>(Channel.UNLIMITED)
     private val lastCommittedAtByUnit = mutableMapOf<String, Long>()
 
     fun enqueue(event: V2ReaderProgressEvent) {
@@ -3663,32 +3375,23 @@ internal class V2ReaderProgressCoordinator(
     }
 
     suspend fun run() {
-        kotlinx.coroutines.coroutineScope {
-            launch {
-                for (command in events) {
-                    when (command) {
-                        is LocalCommand.Progress -> {
-                            if (commitLocal(command.event)) reporterEvents.send(command.event)
-                        }
-                        is LocalCommand.Flush -> {
-                            try {
-                                repository.flushPersistence()
-                                command.completion.complete(Unit)
-                            } catch (failure: Throwable) {
-                                command.completion.completeExceptionally(failure)
-                            }
-                        }
+        for (command in events) {
+            when (command) {
+                is LocalCommand.Progress -> commitLocal(command.event)
+                is LocalCommand.Flush -> {
+                    try {
+                        repository.flushPersistence()
+                        command.completion.complete(Unit)
+                    } catch (failure: Throwable) {
+                        command.completion.completeExceptionally(failure)
                     }
                 }
-            }
-            launch {
-                for (event in reporterEvents) report(event)
             }
         }
     }
 
     internal suspend fun commit(event: V2ReaderProgressEvent) {
-        if (commitLocal(event)) report(event)
+        commitLocal(event)
     }
 
     internal suspend fun commitLocal(event: V2ReaderProgressEvent): Boolean {
@@ -3758,26 +3461,6 @@ internal class V2ReaderProgressCoordinator(
         )
         lastCommittedAtByUnit[unitKey] = event.readAt
         return true
-    }
-
-    private suspend fun report(event: V2ReaderProgressEvent) {
-        val completed = (event.locator.progression ?: 0.0) >= 0.995
-        reporter?.let { progressReporter ->
-            try {
-                withContext(Dispatchers.Default) {
-                    progressReporter.recordContentReadingProgress(
-                        locator = event.locator,
-                        sessionId = event.progressSessionId,
-                        completed = completed,
-                        historyTouchedAt = event.readAt,
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                onReporterFailure(failure)
-            }
-        }
     }
 }
 

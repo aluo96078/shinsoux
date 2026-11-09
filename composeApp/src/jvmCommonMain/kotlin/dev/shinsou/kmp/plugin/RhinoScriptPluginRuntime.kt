@@ -107,6 +107,8 @@ private class RhinoScriptPluginRuntime private constructor(
 
     override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
         private set
+    override val canonicalSourceId: String
+        get() = selectedSource?.canonicalSourceId ?: id.toString()
     override var name: String = selectedSource?.name ?: manifest.name
         private set
     override var lang: String = selectedSource?.lang ?: manifest.lang

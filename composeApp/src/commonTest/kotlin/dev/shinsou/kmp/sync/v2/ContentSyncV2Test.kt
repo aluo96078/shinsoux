@@ -9,7 +9,6 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.reader.ReadingLocator
 import dev.shinsou.kmp.reader.ReadingRange
 import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.sync.crypto.DeterministicSyncEventCodec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -71,9 +70,6 @@ class ContentSyncV2Test {
         assertTrue(forward.contentAnnotations.getValue(ANNOTATION_ID).isPresent)
         assertTrue(forward.blobReferences.getValue(blob.blobId).isRemotelyAvailable)
 
-        val codec = DeterministicSyncEventCodec()
-        val canonical = codec.canonicalCheckpointState(forward)
-        assertEquals(forward.normalized(), codec.decodeCheckpointState(canonical))
     }
 
     @Test

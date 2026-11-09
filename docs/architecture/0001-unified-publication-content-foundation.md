@@ -390,7 +390,7 @@ workspaces/{workspaceId}/blobs/v1/{blobId}/{chunkIndex}-{ciphertextHash}.bin
 - `SYNC_BLOB` rights deny 時不得上傳；新裝置改走合法 reacquisition／DRM reauthorization。
 
 M0 不建立上述 endpoint、migration 或新 wire mutation。當 body plane 開始實作時，
-`CROSS_PLATFORM_SYNC_ARCHITECTURE.md` 中「R2 只保存 checkpoint」與「Local/EPUB bytes 預設
+已移除的舊同步架構文件中「R2 只保存 checkpoint」與「Local/EPUB bytes 預設
 不同步」必須以版本化 scope amendment 更新，並提高 schema/min-reader/min-writer gate。
 
 ## [ShuYue](https://github.com/aluo96078/shuyue) backup/plugin migration safety

@@ -1,12 +1,7 @@
 package dev.shinsou.kmp.sync.crypto
 
 import dev.shinsou.kmp.sync.v2.BinaryData
-import dev.shinsou.kmp.sync.v2.SyncCheckpointCompression
-import dev.shinsou.kmp.sync.v2.SyncCheckpointHeader
 import dev.shinsou.kmp.sync.v2.SyncEvent
-import dev.shinsou.kmp.sync.v2.SyncEventCodec
-import dev.shinsou.kmp.sync.v2.SyncEventHeader
-import dev.shinsou.kmp.sync.v2.SyncState
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -335,7 +330,10 @@ internal object DeterministicCbor {
     private const val MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 }
 
-/** Versioned event/checkpoint codec shared by every KMP target. */
+/**
+ * Canonical event codec. Only event encoding remains: the content layer sizes its outbox drafts
+ * by the exact deterministic-CBOR length of their event.
+ */
 class DeterministicSyncEventCodec(
     private val json: Json = Json {
         encodeDefaults = true
@@ -344,122 +342,10 @@ class DeterministicSyncEventCodec(
         allowStructuredMapKeys = true
         classDiscriminator = "type"
     },
-) : SyncEventCodec {
-    override fun encodeEvent(event: SyncEvent): BinaryData = encode(SyncEvent.serializer(), event)
+) {
+    fun encodeEvent(event: SyncEvent): BinaryData = encode(SyncEvent.serializer(), event)
 
-    override fun decodeEvent(payload: BinaryData): SyncEvent = decode(SyncEvent.serializer(), payload)
-
-    override fun canonicalEventAssociatedData(headerWithoutCiphertextHash: SyncEventHeader): BinaryData =
-        BinaryData.copyOf(
-            DeterministicCbor.encode(
-                JsonObject(
-                    mapOf(
-                        "envelopeVersion" to JsonPrimitive(headerWithoutCiphertextHash.envelopeVersion),
-                        "protocolVersion" to JsonPrimitive(headerWithoutCiphertextHash.protocolVersion),
-                        "schemaVersion" to JsonPrimitive(headerWithoutCiphertextHash.schemaVersion),
-                        "cipherSuite" to JsonPrimitive(headerWithoutCiphertextHash.cipherSuite.name),
-                        "nonce" to JsonPrimitive(headerWithoutCiphertextHash.nonceBase64Url),
-                        "instanceId" to JsonPrimitive(headerWithoutCiphertextHash.instanceId),
-                        "workspaceId" to JsonPrimitive(headerWithoutCiphertextHash.workspaceId),
-                        "eventId" to JsonPrimitive(headerWithoutCiphertextHash.eventId),
-                        "deviceId" to JsonPrimitive(headerWithoutCiphertextHash.deviceId),
-                        "deviceSeq" to JsonPrimitive(headerWithoutCiphertextHash.deviceSeq),
-                        "keyEpoch" to JsonPrimitive(headerWithoutCiphertextHash.keyEpoch),
-                    ),
-                ),
-            ),
-        )
-
-    override fun canonicalCheckpointAssociatedData(headerWithoutCiphertextHash: SyncCheckpointHeader): BinaryData =
-        BinaryData.copyOf(
-        DeterministicCbor.encode(
-            JsonObject(
-                mapOf(
-                    "envelopeVersion" to JsonPrimitive(headerWithoutCiphertextHash.envelopeVersion),
-                    "protocolVersion" to JsonPrimitive(headerWithoutCiphertextHash.protocolVersion),
-                    "schemaVersion" to JsonPrimitive(headerWithoutCiphertextHash.schemaVersion),
-                    "cipherSuite" to JsonPrimitive(headerWithoutCiphertextHash.cipherSuite.name),
-                    "nonce" to JsonPrimitive(headerWithoutCiphertextHash.nonceBase64Url),
-                    "instanceId" to JsonPrimitive(headerWithoutCiphertextHash.instanceId),
-                    "workspaceId" to JsonPrimitive(headerWithoutCiphertextHash.workspaceId),
-                    "checkpointId" to JsonPrimitive(headerWithoutCiphertextHash.checkpointId),
-                    "deviceId" to JsonPrimitive(headerWithoutCiphertextHash.deviceId),
-                    "throughWorkspaceSeq" to JsonPrimitive(headerWithoutCiphertextHash.throughWorkspaceSeq),
-                    "keyEpoch" to JsonPrimitive(headerWithoutCiphertextHash.keyEpoch),
-                    "previousStableCheckpointHash" to JsonPrimitive(
-                        headerWithoutCiphertextHash.previousStableCiphertextSha256Base64Url.orEmpty(),
-                    ),
-                    "compression" to JsonPrimitive(headerWithoutCiphertextHash.compression.name),
-                    "uncompressedSize" to JsonPrimitive(headerWithoutCiphertextHash.uncompressedSize),
-                    "stateFormat" to JsonPrimitive("sync-state-v1"),
-                ),
-            ),
-        ),
-    )
-
-    override fun canonicalCheckpointState(state: SyncState): BinaryData = encode(SyncState.serializer(), state.normalized())
-
-    override fun decodeCheckpointState(payload: BinaryData): SyncState = decode(SyncState.serializer(), payload).normalized()
-
-    fun decodeEventAssociatedData(payload: BinaryData, ciphertextSha256Base64Url: String): SyncEventHeader {
-        val map = decodeExactMap(
-            payload,
-            setOf(
-                "envelopeVersion", "protocolVersion", "schemaVersion", "cipherSuite", "nonce",
-                "instanceId", "workspaceId", "eventId", "deviceId", "deviceSeq", "keyEpoch",
-            ),
-        )
-        return SyncEventHeader(
-            envelopeVersion = map.requiredInt("envelopeVersion"),
-            protocolVersion = map.requiredInt("protocolVersion"),
-            schemaVersion = map.requiredInt("schemaVersion"),
-            cipherSuite = map.requiredCipherSuite(),
-            nonceBase64Url = map.requiredString("nonce"),
-            instanceId = map.requiredString("instanceId"),
-            workspaceId = map.requiredString("workspaceId"),
-            eventId = map.requiredString("eventId"),
-            deviceId = map.requiredString("deviceId"),
-            deviceSeq = map.requiredLong("deviceSeq"),
-            keyEpoch = map.requiredInt("keyEpoch"),
-            ciphertextSha256Base64Url = ciphertextSha256Base64Url,
-        )
-    }
-
-    fun decodeCheckpointAssociatedData(
-        payload: BinaryData,
-        ciphertextSha256Base64Url: String,
-    ): SyncCheckpointHeader {
-        val map = decodeExactMap(
-            payload,
-            setOf(
-                "envelopeVersion", "protocolVersion", "schemaVersion", "cipherSuite", "nonce",
-                "instanceId", "workspaceId", "checkpointId", "deviceId", "throughWorkspaceSeq",
-                "keyEpoch", "previousStableCheckpointHash", "compression", "uncompressedSize", "stateFormat",
-            ),
-        )
-        require(map.requiredString("stateFormat") == "sync-state-v1") { "Unsupported checkpoint state format" }
-        val compression = runCatching {
-            SyncCheckpointCompression.valueOf(map.requiredString("compression"))
-        }.getOrElse { throw IllegalArgumentException("Unsupported checkpoint compression", it) }
-        return SyncCheckpointHeader(
-            envelopeVersion = map.requiredInt("envelopeVersion"),
-            protocolVersion = map.requiredInt("protocolVersion"),
-            schemaVersion = map.requiredInt("schemaVersion"),
-            cipherSuite = map.requiredCipherSuite(),
-            nonceBase64Url = map.requiredString("nonce"),
-            instanceId = map.requiredString("instanceId"),
-            workspaceId = map.requiredString("workspaceId"),
-            checkpointId = map.requiredString("checkpointId"),
-            deviceId = map.requiredString("deviceId"),
-            throughWorkspaceSeq = map.requiredLong("throughWorkspaceSeq"),
-            keyEpoch = map.requiredInt("keyEpoch"),
-            previousStableCiphertextSha256Base64Url = map.requiredString("previousStableCheckpointHash")
-                .ifEmpty { null },
-            compression = compression,
-            uncompressedSize = map.requiredInt("uncompressedSize"),
-            ciphertextSha256Base64Url = ciphertextSha256Base64Url,
-        )
-    }
+    fun decodeEvent(payload: BinaryData): SyncEvent = decode(SyncEvent.serializer(), payload)
 
     private fun <T> encode(serializer: KSerializer<T>, value: T): BinaryData = BinaryData.copyOf(
         DeterministicCbor.encode(json.encodeToJsonElement(serializer, value)),
@@ -467,32 +353,5 @@ class DeterministicSyncEventCodec(
 
     private fun <T> decode(serializer: KSerializer<T>, value: BinaryData): T =
         json.decodeFromJsonElement(serializer, DeterministicCbor.decode(value.copyBytes()))
-
-    private fun decodeExactMap(payload: BinaryData, expectedKeys: Set<String>): JsonObject {
-        val decoded = DeterministicCbor.decode(payload.copyBytes()) as? JsonObject
-            ?: throw IllegalArgumentException("Canonical sync header must be a CBOR map")
-        require(decoded.keys == expectedKeys) { "Canonical sync header contains unexpected fields" }
-        return decoded
-    }
-
-    private fun JsonObject.requiredString(name: String): String {
-        val primitive = this[name] as? JsonPrimitive ?: throw IllegalArgumentException("Missing header field $name")
-        require(primitive.isString) { "Header field $name must be text" }
-        return primitive.content
-    }
-
-    private fun JsonObject.requiredLong(name: String): Long {
-        val primitive = this[name] as? JsonPrimitive ?: throw IllegalArgumentException("Missing header field $name")
-        return primitive.longOrNull ?: throw IllegalArgumentException("Header field $name must be an integer")
-    }
-
-    private fun JsonObject.requiredInt(name: String): Int {
-        val value = requiredLong(name)
-        require(value in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) { "Header field $name is out of range" }
-        return value.toInt()
-    }
-
-    private fun JsonObject.requiredCipherSuite(): dev.shinsou.kmp.sync.v2.SyncCipherSuite =
-        runCatching { dev.shinsou.kmp.sync.v2.SyncCipherSuite.valueOf(requiredString("cipherSuite")) }
-            .getOrElse { throw IllegalArgumentException("Unsupported sync cipher suite", it) }
 }
+

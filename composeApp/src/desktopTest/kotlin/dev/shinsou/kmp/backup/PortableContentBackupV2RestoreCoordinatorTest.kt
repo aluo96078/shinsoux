@@ -52,23 +52,12 @@ import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.sync.v2.AcquisitionPatchV2
 import dev.shinsou.kmp.sync.v2.BlobReferencePresenceSetV2
-import dev.shinsou.kmp.sync.v2.CloudflareSnapshotReplacementGuard
 import dev.shinsou.kmp.sync.v2.ContentAnnotationPatchV2
 import dev.shinsou.kmp.sync.v2.ContentManifestPatchV2
 import dev.shinsou.kmp.sync.v2.ContentSyncFields
 import dev.shinsou.kmp.sync.v2.EntityPresenceSet
-import dev.shinsou.kmp.sync.v2.InMemorySyncSessionStore
 import dev.shinsou.kmp.sync.v2.PublicationPatchV2
 import dev.shinsou.kmp.sync.v2.PublicationUnitPatchV2
-import dev.shinsou.kmp.sync.v2.PersistentLocalSyncStore
-import dev.shinsou.kmp.sync.v2.RepositorySyncBridge
-import dev.shinsou.kmp.sync.v2.SyncPortableIdGenerator
-import dev.shinsou.kmp.sync.v2.SyncProvider
-import dev.shinsou.kmp.sync.v2.SyncSession
-import dev.shinsou.kmp.sync.v2.SyncSessionStore
-import dev.shinsou.kmp.sync.v2.SyncSessionStatus
-import dev.shinsou.kmp.sync.v2.SyncWorkspaceDeparture
-import dev.shinsou.kmp.sync.persistence.SqlDriverSyncStatePersistence
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -84,18 +73,14 @@ import kotlinx.coroutines.test.runTest
 
 class PortableContentBackupV2RestoreCoordinatorTest {
     @Test
-    fun missingOfflineStoreGrantDeniesBeforeBodyPublishOrWorkspaceDeparture() = runTest {
+    fun missingOfflineStoreGrantDeniesBeforeBodyPublish() = runTest {
         val archive = archiveFixture(
             allowedOperations = DEFAULT_ALLOWED_OPERATIONS - ContentOperation.OFFLINE_STORE,
         )
         withRuntime("backup-v2-offline-denied") { _, foundation ->
-            val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-            var departed = false
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = ShinsouRepository(),
                 foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { departed = true },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
 
@@ -103,11 +88,9 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 coordinator.restore(
                     archive.inspection,
                     archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                 )
             }
 
-            assertFalse(departed)
             assertFalse(foundation.blobStore.contains(archive.blobReference))
             assertTrue(foundation.publications.all().isEmpty())
             assertTrue(foundation.rightsGrants.all().isEmpty())
@@ -124,8 +107,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = ShinsouRepository(),
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
 
@@ -133,7 +114,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 coordinator.restore(
                     archive.inspection,
                     archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                 )
             }
 
@@ -150,15 +130,12 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = ShinsouRepository(),
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = authorizer,
             )
 
             coordinator.restore(
                 archive.inspection,
                 archive.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
             val preflight = authorizer.preflightRequests.single()
@@ -180,15 +157,12 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = repository,
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
 
             val result = coordinator.restore(
                 archive.inspection,
                 archive.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
             assertEquals(archive.state.legacySnapshot.mangas, repository.currentSnapshot.mangas)
@@ -215,15 +189,12 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = repository,
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
 
             val result = coordinator.restore(
                 expectedInspection = archive.inspection,
                 archiveSource = source,
-                target = SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
             assertTrue(source.readSizes.size > 1, "Restore must not materialize the whole archive in one read")
@@ -242,15 +213,12 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = ShinsouRepository(),
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = authorizer,
             )
 
             val result = coordinator.restore(
                 archive.inspection,
                 archive.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
             val restored = foundation.publications.all().single()
@@ -281,16 +249,13 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = repository,
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
 
-            coordinator.restore(first.inspection, first.encoded, SnapshotRestoreTarget.THIS_DEVICE_ONLY)
+            coordinator.restore(first.inspection, first.encoded)
             coordinator.restore(
                 replacement.inspection,
                 replacement.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
             assertEquals(listOf("After replacement"), foundation.publications.all().map(Publication::title))
@@ -321,17 +286,14 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = repository,
                 foundation = foundation,
-                sessionStore = InMemorySyncSessionStore(),
-                workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                 offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
             )
-            coordinator.restore(first.inspection, first.encoded, SnapshotRestoreTarget.THIS_DEVICE_ONLY)
+            coordinator.restore(first.inspection, first.encoded)
 
             assertFailsWith<ContentTransactionException.CommitConflict> {
                 coordinator.restore(
                     conflicting.inspection,
                     conflicting.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                 )
             }
 
@@ -342,172 +304,13 @@ class PortableContentBackupV2RestoreCoordinatorTest {
     }
 
     @Test
-    fun readyCloudflareRestoreWritesCompleteSchemaV2OutboxAndBlobJob() = runTest {
+    fun bodyStagingFailureAfterDurablePublishKeepsTheReceiptForRetry() = runTest {
         val archive = archiveFixture()
-        withRuntime("backup-v2-ready-sync") { driver, foundation ->
+        withRuntime("backup-v2-stage-retry") { _, foundation ->
             val repository = ShinsouRepository()
-            val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-            createJournalTable(driver)
-            repository.configureSyncMutationBoundary(
-                observer = journalObserver(driver, archive.inspection.envelope.manifestSha256),
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
             val coordinator = PortableContentBackupV2RestoreCoordinator(
                 repository = repository,
                 foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { error("Synchronized restore must not leave") },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-
-            coordinator.restore(
-                archive.inspection,
-                archive.encoded,
-                SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
-            )
-
-            val mutations = foundation.transactions.pendingOutbox().flatMap { it.event.mutations }
-            assertTrue(mutations.any { it is PublicationPatchV2 })
-            assertTrue(mutations.any { it is AcquisitionPatchV2 })
-            assertTrue(mutations.any { it is PublicationUnitPatchV2 })
-            assertTrue(mutations.any { it is ContentManifestPatchV2 })
-            assertTrue(mutations.any { it is ContentAnnotationPatchV2 })
-            assertTrue(mutations.filterIsInstance<AcquisitionPatchV2>().any {
-                ContentSyncFields.Acquisition.RIGHTS_DOCUMENT_SHA256 in it.fields
-            })
-            assertTrue(mutations.filterIsInstance<ContentManifestPatchV2>().any {
-                ContentSyncFields.Manifest.DOCUMENT_SHA256 in it.fields
-            })
-            assertEquals(1, foundation.transactions.pendingBlobSyncJobs().size)
-            assertEquals(1, scalarLong(driver, "SELECT COUNT(*) FROM test_sync_journal"))
-        }
-    }
-
-    @Test
-    fun synchronizedReplacementTombstonesEveryRemovedPortableEntityAndBlobReference() = runTest {
-        val original = archiveFixture()
-        val emptyArchive = PortableContentBackupV2Service.create(
-            state = BackupV2PortableState(legacySnapshot = AppSnapshot()),
-            candidates = emptyList(),
-            blobStore = InMemoryContentBlobStore(),
-            operationGate = AllowGate,
-            createdAtEpochMillis = 20,
-        ).let { created ->
-            val encoded = BackupV2BinaryCodec.encode(created.archive)
-            PortableContentBackupV2Service.inspect(created.archive) to encoded
-        }
-
-        withRuntime("backup-v2-replacement-tombstones") { driver, foundation ->
-            val repository = ShinsouRepository()
-            val sessions = InMemorySyncSessionStore()
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { error("Synchronized restore must not leave") },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-            coordinator.restore(
-                original.inspection,
-                original.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-            )
-            sessions.save(session(SyncSessionStatus.READY))
-            createJournalTable(driver)
-            repository.configureSyncMutationBoundary(
-                observer = journalObserver(driver, emptyArchive.first.envelope.manifestSha256),
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-
-            coordinator.restore(
-                emptyArchive.first,
-                emptyArchive.second,
-                SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
-            )
-
-            val mutations = foundation.transactions.pendingOutbox().flatMap { it.event.mutations }
-            val removedEntityTypes = mutations.filterIsInstance<EntityPresenceSet>()
-                .filter { !it.present }
-                .mapTo(hashSetOf()) { it.key.entityType }
-            assertTrue(dev.shinsou.kmp.sync.v2.SyncEntityType.PUBLICATION in removedEntityTypes)
-            assertTrue(dev.shinsou.kmp.sync.v2.SyncEntityType.ACQUISITION in removedEntityTypes)
-            assertTrue(dev.shinsou.kmp.sync.v2.SyncEntityType.PUBLICATION_UNIT in removedEntityTypes)
-            assertTrue(dev.shinsou.kmp.sync.v2.SyncEntityType.CONTENT_MANIFEST in removedEntityTypes)
-            assertEquals(
-                listOf(BlobReferencePresenceSetV2(original.blobReference.blobId, false)),
-                mutations.filterIsInstance<BlobReferencePresenceSetV2>(),
-            )
-            val annotationTombstone = mutations.filterIsInstance<ContentAnnotationPatchV2>()
-                .let { patches ->
-                    dev.shinsou.kmp.sync.v2.SyncReducer.reduce(
-                        dev.shinsou.kmp.sync.v2.SyncState(),
-                        dev.shinsou.kmp.sync.v2.SyncEvent(
-                            opId = "replacement-tombstone-test",
-                            hlc = dev.shinsou.kmp.sync.v2.HlcTimestamp(1, 0, "device"),
-                            mutations = patches,
-                        ),
-                    ).contentAnnotations[ANNOTATION_ID]?.annotation?.value
-                }
-            assertEquals(ContentAnnotationState.TOMBSTONE, annotationTombstone?.state)
-            assertNull(annotationTombstone?.body)
-            assertNull(annotationTombstone?.range?.quote)
-            assertTrue(foundation.publications.all().isEmpty())
-        }
-    }
-
-    @Test
-    fun configuredButUnreadyCloudflareFailsBeforePublishingOrCommitting() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-unready-sync") { _, foundation ->
-            val repository = ShinsouRepository()
-            val before = repository.currentSnapshot
-            val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.LINKING))
-            var departed = false
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { departed = true },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-
-            assertFailsWith<IllegalArgumentException> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
-                )
-            }
-
-            assertEquals(before, repository.currentSnapshot)
-            assertFalse(departed)
-            assertFalse(foundation.blobStore.contains(archive.blobReference))
-            assertTrue(foundation.publications.all().isEmpty())
-            assertTrue(foundation.annotations.list(includeTombstones = true).isEmpty())
-            assertTrue(foundation.transactions.pendingOutbox().isEmpty())
-        }
-    }
-
-    @Test
-    fun bodyStagingFailureAfterDurablePublishKeepsWorkspaceAndReceiptForRetry() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-stage-before-departure") { _, foundation ->
-            val repository = ShinsouRepository()
-            val activeSession = session(SyncSessionStatus.READY)
-            val sessions = InMemorySyncSessionStore(activeSession)
-            repository.configureSyncMutationBoundary(
-                observer = null,
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-            var departureCalls = 0
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture {
-                    departureCalls += 1
-                    sessions.clear()
-                },
                 offlineStoreAuthorizer = FailOnceAfterBodyPublishAuthorizer(
                     offlineStoreAuthorizer(foundation),
                 ),
@@ -518,12 +321,9 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 coordinator.restore(
                     archive.inspection,
                     archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                 )
             }
 
-            assertEquals(activeSession, sessions.load())
-            assertEquals(0, departureCalls)
             assertEquals(before, repository.currentSnapshot)
             assertTrue(foundation.publications.all().isEmpty())
             assertTrue(foundation.annotations.list(includeTombstones = true).isEmpty())
@@ -536,307 +336,12 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             coordinator.restore(
                 archive.inspection,
                 archive.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
             )
 
-            assertNull(sessions.load())
-            assertEquals(1, departureCalls)
             assertEquals(stagedGeneration, foundation.blobStore.currentGeneration)
             assertEquals(0, foundation.blobStore.pendingReceiptCount)
             assertEquals(archive.state.publications, foundation.publications.all())
             assertEquals(archive.state.annotations, foundation.annotations.list(includeTombstones = true))
-        }
-    }
-
-    @Test
-    fun workspaceDepartureFailurePreservesSessionDataAndStagedReceiptForRetry() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-departure-failure") { _, foundation ->
-            val repository = ShinsouRepository()
-            val activeSession = session(SyncSessionStatus.READY)
-            val sessions = InMemorySyncSessionStore(activeSession)
-            repository.configureSyncMutationBoundary(
-                observer = null,
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-            val sentinel = archive.state.annotations.single().copy(
-                annotationId = SENTINEL_ANNOTATION_ID,
-                body = "departure sentinel",
-            )
-            foundation.annotations.put(sentinel)
-            var failDeparture = true
-            var departureCalls = 0
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture {
-                    departureCalls += 1
-                    assertTrue(foundation.blobStore.contains(archive.blobReference))
-                    assertEquals(1, foundation.blobStore.pendingReceiptCount)
-                    if (failDeparture) throw InjectedWorkspaceDepartureFailure()
-                    sessions.clear()
-                },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-            val before = repository.currentSnapshot
-
-            assertFailsWith<InjectedWorkspaceDepartureFailure> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                )
-            }
-
-            assertEquals(activeSession, sessions.load())
-            assertEquals(before, repository.currentSnapshot)
-            assertEquals(listOf(sentinel), foundation.annotations.list(includeTombstones = true))
-            assertTrue(foundation.publications.all().isEmpty())
-            assertTrue(foundation.rightsGrants.all().isEmpty())
-            assertTrue(foundation.transactions.pendingOutbox().isEmpty())
-            assertEquals(1, foundation.blobStore.pendingReceiptCount)
-            val stagedGeneration = foundation.blobStore.currentGeneration
-
-            failDeparture = false
-            coordinator.restore(
-                archive.inspection,
-                archive.encoded,
-                SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-            )
-
-            assertNull(sessions.load())
-            assertEquals(2, departureCalls)
-            assertEquals(stagedGeneration, foundation.blobStore.currentGeneration)
-            assertEquals(0, foundation.blobStore.pendingReceiptCount)
-            assertEquals(archive.state.publications, foundation.publications.all())
-            assertEquals(archive.state.annotations, foundation.annotations.list(includeTombstones = true))
-        }
-    }
-
-    @Test
-    fun departureThatLeavesCloudflareActiveCannotBypassTheSyncBoundary() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-departure-postcondition") { _, foundation ->
-            val repository = ShinsouRepository()
-            val activeSession = session(SyncSessionStatus.READY)
-            val sessions = InMemorySyncSessionStore(activeSession)
-            repository.configureSyncMutationBoundary(
-                observer = null,
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { /* Deliberately violates contract. */ },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-            val before = repository.currentSnapshot
-
-            val failure = assertFailsWith<IllegalStateException> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                )
-            }
-
-            assertTrue(failure.message.orEmpty().contains("did not clear"))
-            assertEquals(activeSession, sessions.load())
-            assertEquals(before, repository.currentSnapshot)
-            assertTrue(foundation.publications.all().isEmpty())
-            assertTrue(foundation.annotations.list(includeTombstones = true).isEmpty())
-            assertTrue(foundation.transactions.pendingOutbox().isEmpty())
-            assertEquals(1, foundation.blobStore.pendingReceiptCount)
-        }
-    }
-
-    @Test
-    fun postDepartureAnnotationAndContentFailuresAreTypedRecoverableAndRetryCleanly() = runTest {
-        val archive = archiveFixture()
-        FAILURE_TRIGGERS.filter { it.name == "annotation" || it.name == "content" }.forEach { failure ->
-            withRuntime("backup-v2-device-only-${failure.name}") { driver, foundation ->
-                val repository = ShinsouRepository()
-                val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-                repository.configureSyncMutationBoundary(
-                    observer = null,
-                    guard = CloudflareSnapshotReplacementGuard(sessions),
-                )
-                val sentinel = archive.state.annotations.single().copy(
-                    annotationId = SENTINEL_ANNOTATION_ID,
-                    body = "pre-departure ${failure.name} sentinel",
-                )
-                foundation.annotations.put(sentinel)
-                var departureCalls = 0
-                val coordinator = PortableContentBackupV2RestoreCoordinator(
-                    repository = repository,
-                    foundation = foundation,
-                    sessionStore = sessions,
-                    workspaceDeparture = SyncWorkspaceDeparture {
-                        departureCalls += 1
-                        sessions.clear()
-                    },
-                    offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-                )
-                val before = repository.currentSnapshot
-                driver.execute(null, failure.createSql, 0).value
-
-                val recoverable = assertFailsWith<PortableContentBackupV2RecoverableRestoreException> {
-                    coordinator.restore(
-                        archive.inspection,
-                        archive.encoded,
-                        SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                    )
-                }
-
-                assertEquals(
-                    PortableContentBackupV2RestoreFailurePhase
-                        .LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-                    recoverable.phase,
-                    failure.name,
-                )
-                assertEquals(
-                    PortableContentBackupV2RestoreRecoveryStatus.RETRY_SAME_VERIFIED_ARCHIVE,
-                    recoverable.recoveryStatus,
-                    failure.name,
-                )
-                assertEquals(
-                    archive.inspection.envelope.manifestSha256,
-                    recoverable.archiveManifestSha256,
-                    failure.name,
-                )
-                assertEquals(1, recoverable.stagedContentBlobCount, failure.name)
-                assertNotNull(recoverable.cause, failure.name)
-                assertNull(sessions.load(), failure.name)
-                assertEquals(1, departureCalls, failure.name)
-                assertEquals(before, repository.currentSnapshot, failure.name)
-                assertEquals(
-                    listOf(sentinel),
-                    foundation.annotations.list(includeTombstones = true),
-                    failure.name,
-                )
-                assertTrue(foundation.publications.all().isEmpty(), failure.name)
-                assertTrue(foundation.rightsGrants.all().isEmpty(), failure.name)
-                assertTrue(foundation.transactions.pendingOutbox().isEmpty(), failure.name)
-                assertTrue(foundation.transactions.pendingBlobSyncJobs().isEmpty(), failure.name)
-                assertTrue(foundation.blobStore.contains(archive.blobReference), failure.name)
-                assertEquals(1, foundation.blobStore.pendingReceiptCount, failure.name)
-                val stagedGeneration = foundation.blobStore.currentGeneration
-
-                driver.execute(null, "DROP TRIGGER ${failure.triggerName}", 0).value
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                )
-
-                assertEquals(1, departureCalls, failure.name)
-                assertEquals(stagedGeneration, foundation.blobStore.currentGeneration, failure.name)
-                assertEquals(0, foundation.blobStore.pendingReceiptCount, failure.name)
-                assertEquals(archive.state.legacySnapshot.mangas, repository.currentSnapshot.mangas)
-                assertEquals(archive.state.publications, foundation.publications.all(), failure.name)
-                assertEquals(
-                    archive.state.annotations,
-                    foundation.annotations.list(includeTombstones = true),
-                    failure.name,
-                )
-            }
-        }
-    }
-
-    @Test
-    fun cancellationAfterWorkspaceDepartureReportsTheTypedRetryBoundary() = runTest {
-        val archive = archiveFixture()
-        listOf(2, 3).forEach { cancellationLoadCall ->
-        withRuntime("backup-v2-device-only-cancelled-$cancellationLoadCall") { _, foundation ->
-            val backingSessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-            var loadCalls = 0
-            var departed = false
-            val sessions = object : SyncSessionStore {
-                override suspend fun load(): SyncSession? {
-                    loadCalls += 1
-                    if (departed && loadCalls >= cancellationLoadCall) {
-                        throw CancellationException("cancelled after workspace departure")
-                    }
-                    return backingSessions.load()
-                }
-
-                override suspend fun save(session: SyncSession) = backingSessions.save(session)
-                override suspend fun clear() = backingSessions.clear()
-            }
-            val repository = ShinsouRepository()
-            repository.configureSyncMutationBoundary(
-                observer = null,
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture {
-                    backingSessions.clear()
-                    departed = true
-                },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-
-            val recoverable = assertFailsWith<PortableContentBackupV2RecoverableRestoreException> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                )
-            }
-
-            assertEquals(
-                PortableContentBackupV2RestoreFailurePhase.LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-                recoverable.phase,
-            )
-            assertEquals(
-                PortableContentBackupV2RestoreRecoveryStatus.RETRY_SAME_VERIFIED_ARCHIVE,
-                recoverable.recoveryStatus,
-            )
-            assertTrue(recoverable.cause is CancellationException)
-            assertNull(backingSessions.load())
-            assertTrue(foundation.publications.all().isEmpty())
-            assertTrue(foundation.blobStore.contains(archive.blobReference))
-        }
-        }
-    }
-
-    @Test
-    fun cancellationDeliveredByDepartureAfterSessionClearIsTypedRecoverable() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-device-only-departure-cancelled") { _, foundation ->
-            val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = ShinsouRepository(),
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture {
-                    sessions.clear()
-                    throw CancellationException("departure completed before cancellation delivery")
-                },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-
-            val recoverable = assertFailsWith<PortableContentBackupV2RecoverableRestoreException> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.THIS_DEVICE_ONLY,
-                )
-            }
-
-            assertEquals(
-                PortableContentBackupV2RestoreFailurePhase.LOCAL_COMMIT_AFTER_WORKSPACE_DEPARTURE,
-                recoverable.phase,
-            )
-            assertTrue(recoverable.cause is CancellationException)
-            assertNull(sessions.load())
-            assertTrue(foundation.publications.all().isEmpty())
-            assertTrue(foundation.blobStore.contains(archive.blobReference))
         }
     }
 
@@ -847,7 +352,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             withRuntime("backup-v2-${failure.name}") { driver, foundation ->
                 val repository = ShinsouRepository()
                 val before = repository.currentSnapshot
-                val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
                 val sentinel = archive.state.annotations.single().copy(
                     annotationId = SENTINEL_ANNOTATION_ID,
                     body = "pre-existing annotation",
@@ -856,13 +360,11 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 createJournalTable(driver)
                 repository.configureSyncMutationBoundary(
                     observer = journalObserver(driver, archive.inspection.envelope.manifestSha256),
-                    guard = CloudflareSnapshotReplacementGuard(sessions),
+                    guard = null,
                 )
                 val coordinator = PortableContentBackupV2RestoreCoordinator(
                     repository = repository,
                     foundation = foundation,
-                    sessionStore = sessions,
-                    workspaceDeparture = SyncWorkspaceDeparture { error("Synchronized restore must not leave") },
                     offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
                 )
                 driver.execute(null, failure.createSql, 0).value
@@ -871,7 +373,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                     coordinator.restore(
                         archive.inspection,
                         archive.encoded,
-                        SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
                     )
                 }
 
@@ -895,7 +396,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 coordinator.restore(
                     archive.inspection,
                     archive.encoded,
-                    SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
                 )
 
                 assertEquals(archive.state.legacySnapshot.mangas, repository.currentSnapshot.mangas, failure.name)
@@ -934,30 +434,17 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 try {
                     driver.execute(null, failure.createSql, 0).value
                     val repository = ShinsouRepository()
-                    val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-                    repository.configureSyncMutationBoundary(
-                        observer = null,
-                        guard = CloudflareSnapshotReplacementGuard(sessions),
-                    )
                     val coordinator = PortableContentBackupV2RestoreCoordinator(
                         repository = repository,
                         foundation = foundation,
-                        sessionStore = sessions,
-                        workspaceDeparture = SyncWorkspaceDeparture { sessions.clear() },
                         offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
                     )
-                    val recoverable = assertFailsWith<PortableContentBackupV2RecoverableRestoreException> {
+                    assertFailsWith<Throwable> {
                         coordinator.restore(
                             archive.inspection,
                             archive.encoded,
-                            SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                         )
                     }
-                    assertEquals(
-                        PortableContentBackupV2RestoreRecoveryStatus.RETRY_SAME_VERIFIED_ARCHIVE,
-                        recoverable.recoveryStatus,
-                    )
-                    assertNull(sessions.load())
                     assertTrue(foundation.blobStore.contains(archive.blobReference))
                     assertTrue(foundation.publications.all().isEmpty())
                     assertEquals(1, foundation.blobStore.pendingReceiptCount)
@@ -981,14 +468,11 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                     val coordinator = PortableContentBackupV2RestoreCoordinator(
                         repository = ShinsouRepository(),
                         foundation = foundation,
-                        sessionStore = InMemorySyncSessionStore(),
-                        workspaceDeparture = SyncWorkspaceDeparture { error("No workspace should be left") },
                         offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
                     )
                     coordinator.restore(
                         archive.inspection,
                         archive.encoded,
-                        SnapshotRestoreTarget.THIS_DEVICE_ONLY,
                     )
 
                     assertEquals(publishedGeneration + 1, foundation.blobStore.currentGeneration)
@@ -1003,62 +487,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             }
         } finally {
             deleteSqliteFiles(database)
-        }
-    }
-
-    @Test
-    fun productionSyncJournalReconcilesItsMemoryAfterOuterContentRollback() = runTest {
-        val archive = archiveFixture()
-        withRuntime("backup-v2-production-journal-rollback") { driver, foundation ->
-            val repository = ShinsouRepository()
-            val sessions = InMemorySyncSessionStore(session(SyncSessionStatus.READY))
-            val persistence = SqlDriverSyncStatePersistence(driver, ownsDriver = false)
-            val localStore = PersistentLocalSyncStore.open(persistence)
-            var nextId = 0
-            repository.configureSyncMutationBoundary(
-                observer = RepositorySyncBridge(
-                    localStore = localStore,
-                    sessionStore = sessions,
-                    idGenerator = SyncPortableIdGenerator { "backup-rollback-${++nextId}" },
-                    nowMillis = { 1_000 },
-                ),
-                guard = CloudflareSnapshotReplacementGuard(sessions),
-            )
-            val coordinator = PortableContentBackupV2RestoreCoordinator(
-                repository = repository,
-                foundation = foundation,
-                sessionStore = sessions,
-                workspaceDeparture = SyncWorkspaceDeparture { error("Synchronized restore must not leave") },
-                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
-            )
-            val failure = FailureTrigger(
-                "production-content",
-                "fail_backup_production_content",
-                "content_publications",
-            )
-            driver.execute(null, failure.createSql, 0).value
-
-            assertFailsWith<Throwable> {
-                coordinator.restore(
-                    archive.inspection,
-                    archive.encoded,
-                    SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
-                )
-            }
-
-            assertTrue(localStore.readState().drafts.isEmpty())
-            assertTrue(localStore.readState().replica.entities.isEmpty())
-            assertTrue(repository.currentSnapshot.mangas.isEmpty())
-
-            driver.execute(null, "DROP TRIGGER ${failure.triggerName}", 0).value
-            coordinator.restore(
-                archive.inspection,
-                archive.encoded,
-                SnapshotRestoreTarget.ALL_SYNCED_DEVICES,
-            )
-
-            assertTrue(localStore.readState().drafts.isNotEmpty())
-            assertEquals(archive.state.legacySnapshot.mangas, repository.currentSnapshot.mangas)
         }
     }
 
@@ -1288,9 +716,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
 
     private class InjectedBodyStagingFailure : IllegalStateException("injected body staging failure")
 
-    private class InjectedWorkspaceDepartureFailure :
-        IllegalStateException("injected workspace departure failure")
-
     private class RecordingArchiveSource(private val bytes: ByteArray) : BackupV2ArchiveSource {
         val readSizes = mutableListOf<Int>()
         override val byteSize: Long get() = bytes.size.toLong()
@@ -1301,21 +726,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             return bytes.copyOfRange(offset.toInt(), offset.toInt() + byteCount)
         }
     }
-
-    private fun session(status: SyncSessionStatus) = SyncSession(
-        endpoint = "https://sync.example",
-        instanceId = "instance",
-        userId = "user",
-        workspaceId = "workspace",
-        deviceId = "device",
-        deviceDisplayName = "Desktop",
-        platform = "desktop",
-        status = status,
-        deviceAuthEpoch = 1,
-        membershipAuthEpoch = 1,
-        activeKeyEpoch = 1,
-        provider = SyncProvider.CLOUDFLARE_V2,
-    )
 
     private fun createJournalTable(driver: SqlDriver) {
         driver.execute(
@@ -1435,7 +845,6 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             FailureTrigger("migration", "fail_backup_migration", "content_transaction_migrations"),
             FailureTrigger("annotation", "fail_backup_annotation", "content_annotations"),
             FailureTrigger("content", "fail_backup_content", "content_publications"),
-            FailureTrigger("outbox", "fail_backup_outbox", "content_transaction_outbox"),
         )
     }
 }

@@ -278,7 +278,7 @@ public class LegacyMangaExtensionSourceV2(
                             headerHints = (source.headers + parsed.headers).safeV2HeaderHints(),
                         ),
                         mediaType = resolvedUrl.inferredImageMediaType(),
-                        transform = parsed.imageTransform(source.id)?.toV2(),
+                        transform = parsed.imageTransform(source)?.toV2(),
                         layout = imageLayout,
                     )
                 },

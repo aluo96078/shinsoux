@@ -693,7 +693,7 @@ public interface SharedContentTransactionStore<D : Any> {
     public fun pendingOutbox(): List<D> = emptyList()
 
     /**
-     * Deletes only drafts already durably accepted by the authoritative LocalSyncStore.
+     * Deletes drafts that were delivered (or, with no sync service, deliberately discarded).
      * Implementations must acknowledge the complete id set atomically or leave it unchanged.
      */
     public fun acknowledgeOutbox(draftIds: Set<String>): Int {

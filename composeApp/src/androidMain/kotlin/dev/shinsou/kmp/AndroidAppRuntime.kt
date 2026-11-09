@@ -61,7 +61,7 @@ internal class AndroidAppRuntime private constructor(context: Context) {
                 ),
             ),
             autoBackupService = sharedState.autoBackups,
-            syncInfrastructure = AndroidSyncInfrastructure(applicationContext),
+            contentInfrastructure = AndroidContentInfrastructure(applicationContext),
             platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),

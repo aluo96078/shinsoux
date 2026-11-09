@@ -63,17 +63,7 @@ project/
 ./gradlew :composeApp:desktopTest --rerun-tasks
 ```
 
-這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／[ShuYue](https://github.com/aluo96078/shuyue) transactional import、encrypted body sync、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
-
-Cloudflare Worker 的協定、雙 R2 bucket 與維運工具另需執行：
-
-```bash
-cd syncWorker
-npm test
-npm run typecheck
-npm run smoke
-npm run ops:test
-```
+這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／[ShuYue](https://github.com/aluo96078/shuyue) transactional import、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
 
 測試使用 memory filesystem、mock transport 與本地 HTML／script fixture；不會登入第三方帳號、不會向正式來源站發 request，也不會真的通過 Cloudflare challenge。
 
@@ -102,7 +92,7 @@ Desktop 的 macOS Security.framework／Windows DPAPI JNA binding；不會啟動 
 ./gradlew :composeApp:iosSimulatorArm64Test
 ```
 
-iOS test 覆蓋 JavaScriptCore 同步 extension contract 與共用測試。Simulator test 不會驗證實體音量鍵、系統音量／HUD、iCloud 帳號與 entitlement，也不代表 workspace 中的官方腳本已逐一在 JavaScriptCore 執行。
+iOS test 覆蓋 JavaScriptCore 同步 extension contract 與共用測試。Simulator test 不會驗證實體音量鍵、系統音量／HUD 與 entitlement，也不代表 workspace 中的官方腳本已逐一在 JavaScriptCore 執行。
 
 ### 4. iOS Xcode Simulator app
 
@@ -226,19 +216,10 @@ distribution certificate、profiles 與 export method。
 - App：`dev.aluo.shinsoux`
 - Widget：`dev.aluo.shinsoux.widget`
 - App Group：`group.dev.aluo.shinsoux`
-- iCloud container：`iCloud.dev.aluo.shinsoux`
 
-來源檔是 `iosApp/Shinsou/Shinsou.entitlements`、`iosApp/ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements` 與 `iosApp/project.yml`。若組織使用不同 bundle prefix，需同步修改 app、Widget、App Group、iCloud container、Info.plist／XcodeGen 設定；只改 app target 會使 Widget、Keychain 或 iCloud capability 無法簽章。
+來源檔是 `iosApp/Shinsou/Shinsou.entitlements`、`iosApp/ShinsouWidgetExtension/ShinsouWidgetExtension.entitlements` 與 `iosApp/project.yml`。若組織使用不同 bundle prefix，需同步修改 app、Widget、App Group、Info.plist／XcodeGen 設定；只改 app target 會使 Widget 或 Keychain capability 無法簽章。
 
-Apple Personal Team 不支援 iCloud／App Group capability，因此 Debug 真機部署使用 `Shinsou/Shinsou.debug.entitlements` 與 `ShinsouWidgetExtension/ShinsouWidgetExtension.debug.entitlements`；Release 仍使用完整 entitlements，以保留正式版 iCloud 與 Widget 功能。
-
-iCloud Drive 實作會存取：
-
-```text
-Documents/Shinsou/shinsou-sync.shinsoubackup
-```
-
-它使用 `NSFileCoordinator` 讀寫單一 `BackupEnvelope` 並在共用層合併 snapshot。這不是 record-level CloudKit；無簽章 Simulator 只能確認程式可編譯，不能確認 ubiquity container 可用。
+Apple Personal Team 不支援 App Group capability，因此 Debug 真機部署使用 `Shinsou/Shinsou.debug.entitlements` 與 `ShinsouWidgetExtension/ShinsouWidgetExtension.debug.entitlements`；Release 仍使用完整 entitlements，以保留正式版 Widget 功能。
 
 ## 平台背景工作
 
@@ -262,7 +243,7 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 
 - Library 多分類、Always Ask 收藏分類、批次分類與持久化
 - Browse pin/unpin、來源偏好、登入／登出、手動 cookie 與 `cookies.txt`／JSON 匯入
-- 新增／刪除／預設 extension repository 後重新啟動，並在備份還原／同步後確認 Browse 使用 snapshot 清單而非 stale KV
+- 新增／刪除／預設 extension repository 後重新啟動，並在備份還原後確認 Browse 使用 snapshot 清單而非 stale KV
 - 安裝 extension 後撤銷執行授權，確認 runtime／source 立即消失、package 仍可重新授權或卸載，重啟不會自行恢復已撤銷授權
 - Android WebView／iOS non-persistent WKWebView challenge；只匯入符合來源 domain/path 且未過期的 cookie
 - Local source 分別匯入直接圖片、ZIP、CBZ、EPUB，重啟後離線閱讀
@@ -281,7 +262,7 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 - 實體 Volume Up／Down 對應上一頁／下一頁
 - 離開 Reader、進入背景、音訊中斷與 media-services reset 後，使用者音量及 audio session 可恢復
 - Reader 啟用期間的系統音量 HUD 行為
-- App Group Widget timeline 與 iCloud Drive container
+- App Group Widget timeline
 
 ### Desktop GUI（macOS／Windows）
 
@@ -289,7 +270,7 @@ Documents/Shinsou/shinsou-sync.shinsoubackup
 - macOS 的 `⌘1`～`⌘5`、`⌘,`、`⌘Q`，以及 Windows 的 `Ctrl+1`～`Ctrl+5`、`Ctrl+,`、`Ctrl+Q`
 - 最小化、一般關閉與 Alt+F4 關閉確認
 - Updates Upcoming、Local import、Reader 鍵盤／章節切換
-- Settings 的 Backup／Sync 說明、More 模式切換與 Browse pinned sources
+- Settings 的 Backup 說明、More 模式切換與 Browse pinned sources
 - macOS Web challenge 開啟獨立 non-persistent WKWebView 視窗；確認 seed cookie、擷取後的 cookie／真實 User-Agent 只寫回該來源，關閉後不保留可供其他 challenge 共用的 WebKit session
 - macOS 只有在 challenge request 明確帶入該來源已保存帳密時，才會於同源頁面與同源 form action 自動填入並提交；跨 origin 頁面／form 必須拒絕，帳密不可出現在 process command line、log 或錯誤訊息
 - macOS challenge 不會讀取 Safari／Chrome 的 cookie database；Windows fallback 只開外部瀏覽器，且不誤報已匯入 Edge／Chrome 等外部 cookie
@@ -324,6 +305,6 @@ EPUB 不走圖片 archive 相容路徑。它由 typed acquisition pipeline 解�
 
 Download 會在所有 page／transform sidecar 完成並核對後，最後原子發布 completion manifest。Clear completed 只把完成 queue row 設成 hidden；manifest、下載徽章與離線內容仍保留。缺少、損壞或與檔案集合不一致的 manifest 不會被 Reader 當作完整離線章節。
 
-舊版 portable snapshot、automatic backup envelope 與 iCloud snapshot 仍以 `AppSnapshot` 為資料模型。Content Backup v2 則保存 checksummed publication／manifest／rights graph，以及 body-free content metadata、legacy aliases 與 migration ledgers，並可依當下 `EXPORT` rights 明確選擇納入 immutable content blobs；metadata-only restore 不會宣告缺失 body 已存在。auxiliary rows 與 portable graph 由同一 restore transaction 驗證／提交，舊 v2 archive 缺少該 optional 欄位時仍可 decode。兩種格式都不包含已安裝的 JavaScript package、per-source plugin key-value state、credentials、cookies、OAuth token、proxy API key 或其他 secrets；proxy key 在 encode 前 redaction，restore／sync 保留本機 secure-store 值。未納入 v2 body、rights 不允許 export，或只還原舊 snapshot 時，目的裝置仍需合法重新匯入、重新取得或下載內容。
+舊版 portable snapshot 與 automatic backup envelope 仍以 `AppSnapshot` 為資料模型。Content Backup v2 則保存 checksummed publication／manifest／rights graph，以及 body-free content metadata、legacy aliases 與 migration ledgers，並可依當下 `EXPORT` rights 明確選擇納入 immutable content blobs；metadata-only restore 不會宣告缺失 body 已存在。auxiliary rows 與 portable graph 由同一 restore transaction 驗證／提交，舊 v2 archive 缺少該 optional 欄位時仍可 decode。兩種格式都不包含已安裝的 JavaScript package、per-source plugin key-value state、credentials、cookies、OAuth token、proxy API key 或其他 secrets；proxy key 在 encode 前 redaction，restore 保留本機 secure-store 值。未納入 v2 body、rights 不允許 export，或只還原舊 snapshot 時，目的裝置仍需合法重新匯入、重新取得或下載內容。
 
-同步 conflict resolver 不重映射或套用遠端 `downloadQueue`，合併結果保留本機 queue；備份還原同樣保留並移除本機 dangling rows，不會啟動另一台裝置的下載工作。`AppSnapshot.extensionRepositories` 則是可攜 source of truth：舊 KV 清單只做一次性遷移，之後 snapshot 會精確覆蓋 KV mirror。Repository 與其他 entity 的同步合併目前沒有 deletion tombstone，因此 stale replica 仍可能在衝突時帶回已刪除 record；不可把這描述成 record-level CloudKit 等價物。
+備份還原會保留本機 queue 並移除本機 dangling rows，不會啟動下載工作。`AppSnapshot.extensionRepositories` 則是可攜 source of truth：舊 KV 清單只做一次性遷移，之後 snapshot 會精確覆蓋 KV mirror。

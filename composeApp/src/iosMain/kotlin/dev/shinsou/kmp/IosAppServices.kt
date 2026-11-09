@@ -1,11 +1,8 @@
 package dev.shinsou.kmp
 
 import dev.shinsou.kmp.app.ContentFeatureRuntime
-import dev.shinsou.kmp.backup.SyncAwareSnapshotRestore
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
-import dev.shinsou.kmp.sync.SnapshotSyncController
-import dev.shinsou.kmp.sync.v2.CloudflareSyncUiController
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
@@ -106,9 +103,6 @@ internal class IosAppServices(
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
-    override val snapshotSync: SnapshotSyncController? = null,
-    override val cloudflareSync: CloudflareSyncUiController? = null,
-    override val syncAwareSnapshotRestore: SyncAwareSnapshotRestore? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
 ) : ShinsouAppServices {
@@ -122,7 +116,6 @@ internal class IosAppServices(
     private val systemBackGestureChannel = Channel<SystemBackGestureEvent>(capacity = Channel.CONFLATED)
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
     private val documentPickerMutex = Mutex()
-    private val qrCodeScanner = IosQrCodeScanner(::topViewController)
     private var activeDocumentDelegate: IosDocumentPickerDelegate? = null
     private var fallbackSafariController: SFSafariViewController? = null
 
@@ -293,8 +286,6 @@ internal class IosAppServices(
     }
 
     override suspend fun readClipboardText(): String? = UIPasteboard.generalPasteboard.string
-
-    override suspend fun scanQrCode(): String? = qrCodeScanner.scan()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean {
         val fileName = safeFileName(suggestedName)

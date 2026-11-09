@@ -181,6 +181,7 @@ private class NoopScriptPluginRuntime(
 ) : ScriptPluginRuntime {
     override val pluginId: String = manifest.id
     override val id: Long = source?.id ?: stableSourceId(manifest.id)
+    override val canonicalSourceId: String = source?.canonicalSourceId ?: id.toString()
     override val name: String = source?.name ?: manifest.name
     override val lang: String = source?.lang ?: manifest.lang
     override val baseUrl: String = source?.baseUrl.orEmpty()
