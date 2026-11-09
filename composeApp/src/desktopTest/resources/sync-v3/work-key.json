@@ -1,0 +1,350 @@
+{
+  "spec": "docs/spec/work-key.md",
+  "version": 1,
+  "notes": "Hashes are lowercase hex SHA-256 of the UTF-8 canonical string. Lone UTF-16 surrogates cannot be expressed reliably in JSON; Kotlin implementations must test that case separately.",
+  "valid": [
+    {
+      "name": "simple numeric id",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      },
+      "canonical": "w1|9:zh.wenku89:zh.wenku84:1973",
+      "hash": "25528b2ef2f17e8c647befcab185a78c3bdcbf9f6ec5994f11f9243132d69a9a",
+      "units": [
+        {
+          "unitRemoteId": "1973/12345",
+          "canonical": "u1|9:zh.wenku89:zh.wenku84:197310:1973/12345",
+          "hash": "3aaadf8c37b2e9aed9a63769e4428ed17d077eed8e870154c4d975f7ee443a17"
+        },
+        {
+          "unitRemoteId": "1",
+          "canonical": "u1|9:zh.wenku89:zh.wenku84:19731:1",
+          "hash": "90e9e6a0c299e703501828ca3d9af3bb2cfd606b09a611e271a618d967e5d2d1"
+        }
+      ]
+    },
+    {
+      "name": "legacy numeric source id",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.manhuagui",
+        "sourceId": "6475943416587419206",
+        "remoteId": "/comic/12345/"
+      },
+      "canonical": "w1|12:zh.manhuagui19:647594341658741920613:/comic/12345/",
+      "hash": "508fbc54f581aed1b5a7c7a2b8979f9e7430f3157e84ff25ee42f1a7fc96c940",
+      "units": [
+        {
+          "unitRemoteId": "/comic/12345/678901.html",
+          "canonical": "u1|12:zh.manhuagui19:647594341658741920613:/comic/12345/24:/comic/12345/678901.html",
+          "hash": "fc35bff0e47968455fd8f3473effdab0840ad060841737a7f2984c9f8948d96c"
+        }
+      ]
+    },
+    {
+      "name": "url id keeps case, slash, query order",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "all.mangadex",
+        "sourceId": "all.mangadex",
+        "remoteId": "https://MangaDex.org/Title/ABC/?b=2&a=1"
+      },
+      "canonical": "w1|12:all.mangadex12:all.mangadex39:https://MangaDex.org/Title/ABC/?b=2&a=1",
+      "hash": "cfc50912a8f4c7284cd5de870a16fa290daca0160bfdb33e545354bbf326e4f5",
+      "units": [
+        {
+          "unitRemoteId": "https://mangadex.org/chapter/X",
+          "canonical": "u1|12:all.mangadex12:all.mangadex39:https://MangaDex.org/Title/ABC/?b=2&a=130:https://mangadex.org/chapter/X",
+          "hash": "e980bcb94478ae779508b314bda6c3a4e04d485faa7437c12dc474b6933c2747"
+        }
+      ]
+    },
+    {
+      "name": "leading and inner spaces are kept",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.baozimh",
+        "sourceId": "zh.baozimh",
+        "remoteId": "  some id  with spaces"
+      },
+      "canonical": "w1|10:zh.baozimh10:zh.baozimh22:  some id  with spaces",
+      "hash": "7f8edfd99275ce7b07e681b3ba150a226bf5226dd0754e5a30dbfed602f3c646",
+      "units": [
+        {
+          "unitRemoteId": "  ch 1",
+          "canonical": "u1|10:zh.baozimh10:zh.baozimh22:  some id  with spaces6:  ch 1",
+          "hash": "96b899ca0559db5dc3d26a48117a4fce9b2589cbadffa9b69d61f3e7f9d5882d"
+        }
+      ]
+    },
+    {
+      "name": "cjk counts utf-8 bytes",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.biquge.tw",
+        "sourceId": "zh.biquge.tw",
+        "remoteId": "斗破蒼穹"
+      },
+      "canonical": "w1|12:zh.biquge.tw12:zh.biquge.tw12:斗破蒼穹",
+      "hash": "efbec07ea8c0566f961debdac1fcdae06ab5767d6a82bbc66d31b1502abeec33",
+      "units": [
+        {
+          "unitRemoteId": "第一章 隕落的天才",
+          "canonical": "u1|12:zh.biquge.tw12:zh.biquge.tw12:斗破蒼穹25:第一章 隕落的天才",
+          "hash": "bf42b43105dd7f0765d88f770be483f47cef389375548e9c86e1a1f776653d0c"
+        }
+      ]
+    },
+    {
+      "name": "emoji is four bytes",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "example.dual",
+        "sourceId": "novel",
+        "remoteId": "📚book"
+      },
+      "canonical": "w1|12:example.dual5:novel8:📚book",
+      "hash": "86a3d3c8f3bc5f8e7c5896f9ddf65b03706400a816fd2a09dc1e3ff4696ffd55",
+      "units": [
+        {
+          "unitRemoteId": "😀",
+          "canonical": "u1|12:example.dual5:novel8:📚book4:😀",
+          "hash": "fcebbbb1ed0638567e1cd3f81ea7cb9608e2956e8c60c947db5b80d8f5b98620"
+        }
+      ]
+    },
+    {
+      "name": "separators inside components",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "a|b",
+        "sourceId": "1:2",
+        "remoteId": "w1|9:x"
+      },
+      "canonical": "w1|3:a|b3:1:26:w1|9:x",
+      "hash": "25585f1601edfb7ed3caf6ff20d70bb53818d77e453b15e581d1b4848afed205",
+      "units": [
+        {
+          "unitRemoteId": "u1|0:",
+          "canonical": "u1|3:a|b3:1:26:w1|9:x5:u1|0:",
+          "hash": "48529548dfe3203ac36d5613bdb6fe04ab2ee49fc4d36aabbf4ae821f553b9df"
+        }
+      ]
+    },
+    {
+      "name": "different source id is a different work",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8.api",
+        "remoteId": "1973"
+      },
+      "canonical": "w1|9:zh.wenku813:zh.wenku8.api4:1973",
+      "hash": "57986e50cc2e6c9d2af365cfdc739ee7311797226aaa3856673824abc4b18bc5",
+      "units": []
+    },
+    {
+      "name": "case differs means a different work",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "ABC"
+      },
+      "canonical": "w1|9:zh.wenku89:zh.wenku83:ABC",
+      "hash": "63f6654c26839707292df2f10f36ed6bc99e51ebe91135b6fc1525cc54bb1ada",
+      "units": []
+    },
+    {
+      "name": "case differs means a different work (lower)",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "abc"
+      },
+      "canonical": "w1|9:zh.wenku89:zh.wenku83:abc",
+      "hash": "d0e77663beefd816d7e04851d26272e45190578f06f3394e3cbf3354dfe132c8",
+      "units": []
+    },
+    {
+      "name": "max lengths",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "sourceId": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        "remoteId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+      },
+      "canonical": "w1|128:pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp128:ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss1024:rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "hash": "16575255fb093ece9354a665ac7a82d3fcef337dde47d202f4d2b758c3697660",
+      "units": [
+        {
+          "unitRemoteId": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "canonical": "u1|128:pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp128:ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss1024:rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr1024:uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "hash": "262109a7af20e3bc952ee8b43c0a2e0c5774294bcbfe838efa686d94b242e7aa"
+        }
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty package id",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      }
+    },
+    {
+      "name": "blank source id",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "   ",
+        "remoteId": "1973"
+      }
+    },
+    {
+      "name": "only no-break spaces",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "  "
+      }
+    },
+    {
+      "name": "only ideographic space",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "　"
+      }
+    },
+    {
+      "name": "tab inside",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "a\tb"
+      }
+    },
+    {
+      "name": "newline inside",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "a\nb"
+      }
+    },
+    {
+      "name": "bell control",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "a\u0007"
+      }
+    },
+    {
+      "name": "delete control",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "a"
+      }
+    },
+    {
+      "name": "c1 control NEL",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "ab"
+      }
+    },
+    {
+      "name": "c1 control U+009F",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "a"
+      }
+    },
+    {
+      "name": "key version 0",
+      "input": {
+        "keyVersion": 0,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      }
+    },
+    {
+      "name": "key version 2",
+      "input": {
+        "keyVersion": 2,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      }
+    },
+    {
+      "name": "package id over 128 bytes",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      }
+    },
+    {
+      "name": "remote id over 1024 bytes in cjk (342 chars)",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字"
+      }
+    },
+    {
+      "name": "empty unit id",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      },
+      "unitRemoteId": ""
+    },
+    {
+      "name": "unit id with control",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      },
+      "unitRemoteId": "ch\u00001"
+    },
+    {
+      "name": "unit id over 1024 bytes",
+      "input": {
+        "keyVersion": 1,
+        "packageId": "zh.wenku8",
+        "sourceId": "zh.wenku8",
+        "remoteId": "1973"
+      },
+      "unitRemoteId": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+    }
+  ]
+}

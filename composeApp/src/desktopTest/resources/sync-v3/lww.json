@@ -1,0 +1,984 @@
+{
+  "spec": "docs/spec/sync-semantics.md",
+  "version": 1,
+  "notes": "Each merge case starts from `initial` (null = record absent), applies `pushes` in order with server time `now`, and must produce `results` and `expect`. Cases with anyOrder=true must also reach `expect` for every permutation of `pushes`. Field values compare as JSON values, not bytes. In `hlc.ordered`, the first timestamp is strictly smaller.",
+  "hlc": {
+    "valid": [
+      "0:0:a",
+      "9007199254740991:2147483647:dev_A-1",
+      "1731200000000:0:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ],
+    "invalid": [
+      "",
+      "1:0",
+      "1:0:a:b",
+      "01:0:a",
+      "1:00:a",
+      "-1:0:a",
+      "+1:0:a",
+      " 1:0:a",
+      "1:0:a b",
+      "9007199254740992:0:a",
+      "1:2147483648:a",
+      "1:0:ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "1:0:dév",
+      "1:0:a.b"
+    ],
+    "ordered": [
+      [
+        "1:0:z",
+        "2:0:a"
+      ],
+      [
+        "9:0:a",
+        "10:0:a"
+      ],
+      [
+        "1:9:a",
+        "1:10:a"
+      ],
+      [
+        "1:1:z",
+        "1:2:a"
+      ],
+      [
+        "1:0:A",
+        "1:0:a"
+      ],
+      [
+        "1:0:a",
+        "1:0:a-"
+      ],
+      [
+        "1:0:-",
+        "1:0:0"
+      ],
+      [
+        "1:0:Z",
+        "1:0:_"
+      ]
+    ]
+  },
+  "merge": [
+    {
+      "name": "new record with one field",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "read": true
+          },
+          "clocks": {
+            "read": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "read": true
+        },
+        "clocks": {
+          "read": "1731200000000:0:a"
+        }
+      }
+    },
+    {
+      "name": "newer clock wins",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "read": false
+        },
+        "clocks": {
+          "read": "1731200000000:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "read": true
+          },
+          "clocks": {
+            "read": "1731200000000:1:a"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "read": true
+        },
+        "clocks": {
+          "read": "1731200000000:1:a"
+        }
+      }
+    },
+    {
+      "name": "older clock loses",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "read": true
+        },
+        "clocks": {
+          "read": "1731200000010:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "read": false
+          },
+          "clocks": {
+            "read": "1731200000000:0:b"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "read": true
+        },
+        "clocks": {
+          "read": "1731200000010:0:a"
+        }
+      }
+    },
+    {
+      "name": "device id breaks a tie (greater wins)",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "x": 2
+          },
+          "clocks": {
+            "x": "1731200000000:0:b"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "x": 2
+        },
+        "clocks": {
+          "x": "1731200000000:0:b"
+        }
+      }
+    },
+    {
+      "name": "device id breaks a tie (smaller loses)",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:b"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "x": 2
+          },
+          "clocks": {
+            "x": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:b"
+        }
+      }
+    },
+    {
+      "name": "equal clock keeps the stored value",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "x": 2
+          },
+          "clocks": {
+            "x": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:a"
+        }
+      }
+    },
+    {
+      "name": "resending the same push is idempotent",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "title": "t"
+          },
+          "clocks": {
+            "title": "1731200000000:0:a"
+          }
+        },
+        {
+          "fields": {
+            "title": "t"
+          },
+          "clocks": {
+            "title": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "applied",
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "title": "t"
+        },
+        "clocks": {
+          "title": "1731200000000:0:a"
+        }
+      }
+    },
+    {
+      "name": "fields merge independently",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "a": 1,
+          "b": 1
+        },
+        "clocks": {
+          "a": "1731200000000:5:a",
+          "b": "1731200000000:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "a": 2,
+            "b": 2
+          },
+          "clocks": {
+            "a": "1731200000000:1:b",
+            "b": "1731200000000:1:b"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "a": 1,
+          "b": 2
+        },
+        "clocks": {
+          "a": "1731200000000:5:a",
+          "b": "1731200000000:1:b"
+        }
+      }
+    },
+    {
+      "name": "values may be any json",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "locator": {
+              "type": "text",
+              "progression": 0.4275,
+              "offset": 1200,
+              "quote": {
+                "exact": "天才"
+              }
+            },
+            "categoryIds": [
+              "c1",
+              "c2"
+            ],
+            "customTitle": null
+          },
+          "clocks": {
+            "locator": "1731200000000:0:a",
+            "categoryIds": "1731200000000:0:a",
+            "customTitle": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "locator": {
+            "type": "text",
+            "progression": 0.4275,
+            "offset": 1200,
+            "quote": {
+              "exact": "天才"
+            }
+          },
+          "categoryIds": [
+            "c1",
+            "c2"
+          ],
+          "customTitle": null
+        },
+        "clocks": {
+          "locator": "1731200000000:0:a",
+          "categoryIds": "1731200000000:0:a",
+          "customTitle": "1731200000000:0:a"
+        }
+      }
+    },
+    {
+      "name": "three devices converge in any order",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "title": "x",
+            "order": 1
+          },
+          "clocks": {
+            "title": "1731200000000:0:a",
+            "order": "1731200000000:3:a"
+          }
+        },
+        {
+          "fields": {
+            "title": "y"
+          },
+          "clocks": {
+            "title": "1731200000000:2:b"
+          }
+        },
+        {
+          "fields": {
+            "order": 5,
+            "title": "z"
+          },
+          "clocks": {
+            "order": "1731200000000:1:c",
+            "title": "1731200000000:1:c"
+          }
+        }
+      ],
+      "results": [
+        "applied",
+        "applied",
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "title": "y",
+          "order": 1
+        },
+        "clocks": {
+          "title": "1731200000000:2:b",
+          "order": "1731200000000:3:a"
+        }
+      },
+      "anyOrder": true
+    },
+    {
+      "name": "delete clears older fields",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "categoryIds": [
+            "c1"
+          ],
+          "pinned": true
+        },
+        "clocks": {
+          "categoryIds": "1731200000000:0:a",
+          "pinned": "1731200000000:1:a"
+        }
+      },
+      "pushes": [
+        {
+          "deleted": {
+            "value": true,
+            "clock": "1731200000000:2:b"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      }
+    },
+    {
+      "name": "re-adding after a delete starts fresh",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      },
+      "pushes": [
+        {
+          "fields": {
+            "pinned": false
+          },
+          "clocks": {
+            "pinned": "1731200000000:3:a"
+          },
+          "deleted": {
+            "value": false,
+            "clock": "1731200000000:3:a"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "pinned": false
+        },
+        "clocks": {
+          "pinned": "1731200000000:3:a"
+        },
+        "deleted": {
+          "value": false,
+          "clock": "1731200000000:3:a"
+        },
+        "cleared": "1731200000000:2:b"
+      }
+    },
+    {
+      "name": "a late write older than the delete is dropped",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      },
+      "pushes": [
+        {
+          "fields": {
+            "pinned": true
+          },
+          "clocks": {
+            "pinned": "1731200000000:1:c"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      }
+    },
+    {
+      "name": "a write equal to the delete clock is dropped",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      },
+      "pushes": [
+        {
+          "fields": {
+            "pinned": true
+          },
+          "clocks": {
+            "pinned": "1731200000000:2:b"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:2:b"
+      }
+    },
+    {
+      "name": "delete versus newer and older writes in any order",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "deleted": {
+            "value": true,
+            "clock": "1731200000000:5:a"
+          }
+        },
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {
+            "x": "1731200000000:6:b"
+          }
+        },
+        {
+          "fields": {
+            "x": 0
+          },
+          "clocks": {
+            "x": "1731200000000:4:c"
+          }
+        },
+        {
+          "fields": {
+            "y": 1
+          },
+          "clocks": {
+            "y": "1731200000000:3:a"
+          }
+        }
+      ],
+      "results": [
+        "applied",
+        "applied",
+        "unchanged",
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:6:b"
+        },
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:5:a"
+        },
+        "cleared": "1731200000000:5:a"
+      },
+      "anyOrder": true
+    },
+    {
+      "name": "delete then undelete in any order",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "deleted": {
+            "value": true,
+            "clock": "1731200000000:1:a"
+          }
+        },
+        {
+          "deleted": {
+            "value": false,
+            "clock": "1731200000000:2:b"
+          }
+        },
+        {
+          "fields": {
+            "k": 1
+          },
+          "clocks": {
+            "k": "1731200000000:0:c"
+          }
+        }
+      ],
+      "results": [
+        "applied",
+        "applied",
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": false,
+          "clock": "1731200000000:2:b"
+        },
+        "cleared": "1731200000000:1:a"
+      },
+      "anyOrder": true
+    },
+    {
+      "name": "a stale delete still clears older fields",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "x": 1,
+          "y": 2
+        },
+        "clocks": {
+          "x": "1731200000000:0:a",
+          "y": "1731200000000:6:a"
+        },
+        "deleted": {
+          "value": false,
+          "clock": "1731200000000:5:a"
+        }
+      },
+      "pushes": [
+        {
+          "deleted": {
+            "value": true,
+            "clock": "1731200000000:3:b"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "y": 2
+        },
+        "clocks": {
+          "y": "1731200000000:6:a"
+        },
+        "deleted": {
+          "value": false,
+          "clock": "1731200000000:5:a"
+        },
+        "cleared": "1731200000000:3:b"
+      }
+    },
+    {
+      "name": "equal delete clock keeps the stored register",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:1:a"
+        },
+        "cleared": "1731200000000:1:a"
+      },
+      "pushes": [
+        {
+          "deleted": {
+            "value": false,
+            "clock": "1731200000000:1:a"
+          }
+        }
+      ],
+      "results": [
+        "unchanged"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {},
+        "deleted": {
+          "value": true,
+          "clock": "1731200000000:1:a"
+        },
+        "cleared": "1731200000000:1:a"
+      }
+    },
+    {
+      "name": "clock exactly five minutes ahead is accepted",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {
+            "x": "1731200300000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "applied"
+      ],
+      "expect": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200300000:0:a"
+        }
+      }
+    },
+    {
+      "name": "clock more than five minutes ahead is rejected",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {
+            "x": "1731200300001:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:clock_skew"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "delete clock ahead is rejected",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "deleted": {
+            "value": true,
+            "clock": "1731200300001:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:clock_skew"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "a rejected push changes nothing",
+      "now": 1731200000000,
+      "initial": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:a"
+        }
+      },
+      "pushes": [
+        {
+          "fields": {
+            "x": 2,
+            "y": 3
+          },
+          "clocks": {
+            "x": "1731200000000:1:a",
+            "y": "1731200999999:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:clock_skew"
+      ],
+      "expect": {
+        "fields": {
+          "x": 1
+        },
+        "clocks": {
+          "x": "1731200000000:0:a"
+        }
+      }
+    },
+    {
+      "name": "missing clock",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {}
+        }
+      ],
+      "results": [
+        "rejected:missing_clock"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "clock without a field",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {
+            "x": "1731200000000:0:a",
+            "y": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:invalid_record"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "clock with a leading zero",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "x": 1
+          },
+          "clocks": {
+            "x": "01:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:invalid_clock"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "field name starting with uppercase",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "Read": true
+          },
+          "clocks": {
+            "Read": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:invalid_record"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "field name starting with underscore",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {
+          "fields": {
+            "_x": true
+          },
+          "clocks": {
+            "_x": "1731200000000:0:a"
+          }
+        }
+      ],
+      "results": [
+        "rejected:invalid_record"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    },
+    {
+      "name": "empty push",
+      "now": 1731200000000,
+      "initial": null,
+      "pushes": [
+        {}
+      ],
+      "results": [
+        "rejected:invalid_record"
+      ],
+      "expect": {
+        "fields": {},
+        "clocks": {}
+      }
+    }
+  ]
+}
