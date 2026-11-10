@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  *
  * The JSON files under `resources/sync-v3` are copies of `shinsou_sync_service/api/vectors/`; that repository is
  * the source of truth, so update the copies whenever the server's vectors change. The `merge`
- * section of lww.json is exercised once the v3 merger lands (P2a).
+ * section of lww.json is run against [LwwMerge] by SyncV3MergeVectorTest.
  */
 class SyncV3VectorTest {
     @Test

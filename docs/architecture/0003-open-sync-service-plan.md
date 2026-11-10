@@ -64,7 +64,7 @@
 | API 規格 | OpenAPI 3.1（`api/openapi.yaml`）+ `oapi-codegen`（只產生型別與介面） | 單一事實來源 |
 | 密碼 | `argon2id`（m=64 MiB, t=3, p=1，可設定） | |
 | 即時通知 | WebSocket（`coder/websocket`），SSE 退路 | 只推「有新變更」 |
-| 網頁前台 | Vite + Svelte + TypeScript，`openapi-typescript` 產生型別 | 打包後由 Go `embed` 提供 |
+| 網頁前台 | Vue 3 + Vite + TypeScript，`openapi-typescript` 產生型別 | 打包後由 Go `embed` 提供 |
 | 測試 | `testcontainers-go` 跑真的 PostgreSQL | |
 | 發佈 | GoReleaser：多平台執行檔 + 多架構 Docker 映像 | |
 
@@ -269,14 +269,23 @@ create index on sync_records (user_id, seq);
 |---|---|
 | 測試伺服器 | Mac 本機，使用 podman 的 PostgreSQL；手機以區網 IP 連線 |
 | App 預設伺服器 | 不內建，使用者自行輸入網址 |
-| 網頁前台框架 | **未決**，P3 開始前決定 |
+| 網頁前台框架 | Vue 3 + Vite + TypeScript |
 | Commit | 每階段測試通過後在兩個儲存庫各自 commit，不 push |
 | email 驗證 | 由架設者決定（disabled / optional / required）；開放註冊且有 SMTP 時預設 required |
 | 分享 | 做追蹤功能；可封鎖、可設「只接受追蹤對象的分享」、可完全關閉接收 |
 | 訪客瀏覽 | 由架設者決定是否開放未登入者唯讀瀏覽作品頁與評論，預設關閉 |
 | 評論 | 照計畫全做：評分、文字、有雷、按讚、一層回覆、檢舉、版主管理；不提供匿名發文 |
 | iOS 驗證 | 使用 iOS 模擬器 |
-| 可攜設定 | P2b 前列出建議清單由使用者勾選 |
+| 可攜設定 | 全部候選皆同步（見下方清單）；裝置相關設定（下載、書庫欄數、螢幕方向、常亮、音量鍵、安全、進階網路、同步本身）不同步 |
 | 同步時機 | 前景即時（推送＋WebSocket 通知），另加 Android WorkManager / iOS BGTask 背景定期同步 |
 | 部署範本 | Docker Compose＋Caddy |
 | 沿用第 3 版建議 | 不做 SQLite 模式；一台裝置一個帳號；角色分使用者、版主、管理員；第一版不做聯邦但保留 `@user@host`；作品顯示資料採最新提交者勝並記錄提交者 |
+
+### 13.1 可攜設定白名單（setting 記錄鍵）
+
+- 一般：`general.languagePreference`、`general.dateFormat`、`general.defaultStartingScreen`
+- 外觀：`appearance.theme`、`appearance.amoledDark`、`appearance.tintColor`、`appearance.timestampFormat`、`appearance.relativeTimestamps`
+- 書庫：`library.sort`、`library.filter`、`library.categoryUpdateBehaviour`、`library.globalUpdateRestrictions`、`library.autoRefreshMetadata`、`library.displayMode`、`library.defaultCategory`（改存分類 UUID 或 `default` / `ask`，不同步本機 Long ID）
+- 閱讀器：`reader.readingMode`、`reader.animatePageTransitions`、`reader.doubleTapToZoom`、`reader.showPageNumber`、`reader.novelFontSizeSp`、`reader.novelLineHeightMultiplier`、`reader.novelMaxWidthDp`、`reader.skipFilteredChapters`、`reader.skipReadChapters`、`reader.skipDuplicateChapters`、`reader.colorFilter`、`reader.splitTallImages`、`reader.webtoonSidePadding`
+- 瀏覽：`browse.checkExtensionUpdates`、`browse.showNsfwSources`、`browse.enabledLanguages`、`browse.pinnedSourceKeys`（舊的數字 `pinnedSourceIds` 不同步）
+- 追蹤：`tracking.autoSyncAfterRead`、`tracking.updateProgressAfterRead`

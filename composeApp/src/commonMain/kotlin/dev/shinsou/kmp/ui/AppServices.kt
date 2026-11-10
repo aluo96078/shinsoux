@@ -22,6 +22,7 @@ import dev.shinsou.kmp.plugin.isBlockedPluginAddress
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.ReaderTapAction
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
@@ -368,6 +369,10 @@ interface ShinsouAppServices {
 
     /** Checksummed binary content archive controller; null only when shared atomic storage is absent. */
     val portableContentBackupV2: PortableContentBackupV2UiController?
+        get() = null
+
+    /** Sync v3 account, status and manual sync; null only in previews/tests without shared storage. */
+    val sync: SyncV3Service?
         get() = null
 
     /** Staged, redacted ShuYue v1 migration controller. */

@@ -10,6 +10,7 @@ import dev.shinsou.kmp.plugin.sandbox.AndroidSandboxTransportProvider
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
+import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
@@ -66,6 +67,11 @@ internal class AndroidAppRuntime private constructor(context: Context) {
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),
+            syncDeviceInfo = SyncDeviceInfo(
+                defaultName = android.os.Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android",
+                platform = "android",
+                appVersion = ANDROID_APP_VERSION,
+            ),
         )
     }
 

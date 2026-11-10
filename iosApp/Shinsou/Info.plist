@@ -8,6 +8,7 @@
 		<string>dev.aluo.shinsoux.update</string>
 		<string>dev.aluo.shinsoux.downloads</string>
 		<string>dev.aluo.shinsoux.downloads.catchup</string>
+		<string>dev.aluo.shinsoux.sync</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
@@ -47,10 +48,16 @@
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Lets a self-hosted sync server on the local network (http://192.168.x.x, *.local) work; the app itself refuses plain HTTP to public hosts. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Shinsou X 使用 Face ID 保護您的閱讀資料。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Shinsou X 在開發模式連線至區域網路內的受審核插件伺服器。</string>
+	<string>Shinsou X 在開發模式連線至區域網路內的受審核插件伺服器，並可連線至你自行架設的同步伺服器。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Shinsou X 需要權限以儲存漫畫封面與頁面。</string>
 	<key>UIApplicationSceneManifest</key>

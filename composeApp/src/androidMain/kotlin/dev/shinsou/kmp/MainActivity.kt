@@ -85,6 +85,7 @@ class MainActivity : FragmentActivity() {
             contentFeatures = composition.contentFeatures,
             tracking = composition.tracking,
             portableContentBackupV2 = composition.portableContentBackupV2,
+            sync = composition.sync,
             shuYueMigration = composition.shuYueMigration,
             stringsProvider = runtime::strings,
         )
@@ -120,6 +121,7 @@ class MainActivity : FragmentActivity() {
             )
         }
         platformScope.launch { runtime.start() }
+        AndroidSyncScheduler.ensureScheduled(applicationContext)
         platformScope.launch {
             // Without notifications the download progress is invisible and the work looks
             // ignorable to the system; ask once per process, when downloads first start.

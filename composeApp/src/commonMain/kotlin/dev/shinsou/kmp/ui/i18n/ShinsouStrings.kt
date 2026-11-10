@@ -3554,7 +3554,7 @@ private val TraditionalChineseStrings = EnglishStrings.copy(
     clearFilters = "清除篩選", noMatches = "沒有符合項目", libraryEmpty = "書庫是空的",
     noUpdates = "沒有最近更新", noHistory = "沒有閱讀歷史", createBackup = "建立備份", restoreBackup = "還原備份",
     translations = TraditionalLongTranslations + TraditionalSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-TW") + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
-        TraditionalReviewedExtensionTranslations,
+        TraditionalReviewedExtensionTranslations + SyncV3TraditionalTranslations,
 )
 
 private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
@@ -3574,7 +3574,7 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
     // Explicit Simplified wording wins over the character-converted Traditional fallback.
     translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + SimplifiedSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-CN") + SimplifiedReaderTranslations +
-        SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations,
+        SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations + SyncV3SimplifiedTranslations,
 )
 
 private val JapaneseStrings = EnglishStrings.copy(

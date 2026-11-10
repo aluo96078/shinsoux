@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.BrowseCallbacks
@@ -55,6 +56,7 @@ internal class DesktopAppServices(
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val sync: SyncV3Service? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val closeApplication: () -> Unit,
     private val frame: () -> Frame? = { null },

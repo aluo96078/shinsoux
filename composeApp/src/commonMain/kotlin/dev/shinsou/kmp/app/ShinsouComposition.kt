@@ -16,6 +16,9 @@ import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.download.DownloadManager
 import dev.shinsou.kmp.domain.model.TrackerIds
 import dev.shinsou.kmp.domain.model.Publication
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
@@ -141,6 +144,7 @@ public class ShinsouComposition(
         PluginBrowserSessionTransport.Unavailable,
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
+    private val syncDeviceInfo: SyncDeviceInfo = SyncDeviceInfo("This device", "desktop", ""),
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -378,6 +382,27 @@ public class ShinsouComposition(
     )
     private val trackingJob = SupervisorJob()
     private val trackingScope = CoroutineScope(trackingJob + Dispatchers.Default)
+
+    /**
+     * Sync v3 (ADR-0003): account, dirty tracking and push/pull against a user-chosen server.
+     * Null only when no shared SQLite foundation is supplied (previews); the repository observer
+     * is installed by [SyncV3Service.start] once an account is signed in.
+     */
+    public val sync: SyncV3Service? = contentInfrastructure?.let { infrastructure ->
+        SyncV3Service.create(
+            repository = repository,
+            driver = infrastructure.contentDriver(),
+            keyValues = pluginKeyValueStore,
+            http = httpClient,
+            scope = trackingScope,
+            device = syncDeviceInfo,
+            publications = { key -> contentFoundation?.publications?.find(key) },
+            resolveLegacySource = { id -> pluginManager.exactSourceKeyForLegacyId(id) },
+            resolveCreatableSource = { packageId, sourceId ->
+                pluginManager.extensionSourceV2(SourceKey(packageId = packageId, sourceId = sourceId))?.descriptor?.sourceKey
+            },
+        )
+    }
     /** Staged ShuYue migration. */
     public val shuYueMigration: ShuYueMigrationUiController? = contentFoundation?.let { foundation ->
         val offlineStoreAuthorizer = HostContentBodyOfflineStoreAuthorizer(
@@ -631,6 +656,14 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // Stays pending; the next content operation loads it and reports the failure.
             }
+            try {
+                // Restores a stored sync session (observer, stream) once content storage is ready.
+                sync?.start()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The Sync settings page shows the error; startup continues.
+            }
             // Before any refresh: repository trust and install keys read it synchronously, and
             // until it is loaded developer mode counts as off.
             try {
@@ -787,11 +820,26 @@ public class ShinsouComposition(
         previousRecovery?.join()
         previousSearchReconciliation?.join()
         scheduleContentOutboxDiscard()
+        try {
+            sync?.onForeground()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Sync problems surface on the Sync settings page.
+        }
     }
 
     /** Flushes the snapshot, then schedules background-only maintenance. */
     public suspend fun onBackground() {
         repository.flushPersistence()
+        try {
+            // Pushes what is pending and closes the realtime stream.
+            sync?.onBackground()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Retried by the next foreground sync or the periodic background worker.
+        }
         scheduleContentOutboxDiscard()
         scheduleContentBlobRecovery()
         startSearchIndexReconciler()
@@ -878,6 +926,7 @@ public class ShinsouComposition(
 
     /** [stage] names each shutdown step before it runs (the desktop startup probe records them). */
     public suspend fun close(stage: (String) -> Unit = {}) {
+        sync?.close()
         startupHydrationJob?.cancel()
         startupHydrationJob = null
         contentOutboxDiscardJob?.cancel()

@@ -101,8 +101,11 @@ public fun handleSystemBackGestureSettled(committed: Boolean): Boolean =
     IosApplicationContainer.services.emitSystemBackGestureSettled(committed)
 
 /** Called synchronously from the SwiftUI App initializer, before any suspend startup work. */
-public fun registerAutomaticBackupBackgroundTask(): Boolean =
-    IosApplicationContainer.autoBackupScheduler.register()
+public fun registerAutomaticBackupBackgroundTask(): Boolean {
+    // The sync refresh task shares this launch-time hook so the Swift side stays unchanged.
+    IosApplicationContainer.syncScheduler.register()
+    return IosApplicationContainer.autoBackupScheduler.register()
+}
 
 /** Called synchronously from the SwiftUI App initializer, like the backup task above. */
 public fun registerBackgroundDownloadTasks() {
@@ -116,8 +119,10 @@ public fun registerBackgroundDownloadTasks() {
 public fun isDownloadSilentAudioInUse(): Boolean = IosApplicationContainer.downloadSilentAudioInUse
 
 /** Re-submits the earliest-begin-date hint when the scene moves to the background. */
-public fun scheduleAutomaticBackupBackgroundTask(): Boolean =
-    IosApplicationContainer.autoBackupScheduler.apply(IosApplicationContainer.repository.currentSnapshot.backupState)
+public fun scheduleAutomaticBackupBackgroundTask(): Boolean {
+    IosApplicationContainer.syncScheduler.schedule()
+    return IosApplicationContainer.autoBackupScheduler.apply(IosApplicationContainer.repository.currentSnapshot.backupState)
+}
 
 internal object IosApplicationContainer {
     val repository = ShinsouRepository(
@@ -145,6 +150,11 @@ internal object IosApplicationContainer {
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
+        syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
+            defaultName = platform.UIKit.UIDevice.currentDevice.name.ifBlank { "iPhone" },
+            platform = "ios",
+            appVersion = "1.0.1-beta.18",
+        ),
     )
 
     private val startupMutex = Mutex()
@@ -158,12 +168,22 @@ internal object IosApplicationContainer {
 
     val autoBackups = composition.autoBackups
 
+    val syncScheduler = IosSyncScheduler(
+        sync = composition.sync,
+        scope = applicationScope,
+        startApp = {
+            start()
+            composition.awaitStartup()
+        },
+    )
+
     val services = IosAppServices(
         browse = composition.browse,
         content = composition.content,
         contentFeatures = composition.contentFeatures,
         tracking = composition.tracking,
         portableContentBackupV2 = composition.portableContentBackupV2,
+        sync = composition.sync,
         shuYueMigration = composition.shuYueMigration,
     )
 

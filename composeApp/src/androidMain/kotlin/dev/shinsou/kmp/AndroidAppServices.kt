@@ -1,5 +1,6 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.os.PowerManager
@@ -68,6 +69,7 @@ internal class AndroidAppServices(
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val sync: SyncV3Service? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
 ) : ShinsouAppServices {

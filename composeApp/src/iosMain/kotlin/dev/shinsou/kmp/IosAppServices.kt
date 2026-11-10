@@ -1,5 +1,6 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
@@ -104,6 +105,7 @@ internal class IosAppServices(
     override val contentFeatures: ContentFeatureRuntime? = null,
     override val tracking: TrackingCoordinator? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
+    override val sync: SyncV3Service? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
 ) : ShinsouAppServices {
     private val pendingDeepLinks = RetainedDeepLinkQueue()

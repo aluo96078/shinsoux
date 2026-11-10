@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -97,6 +98,7 @@ private enum class SettingsSection(val icon: ImageVector) {
     Reader(Icons.Outlined.Brightness4),
     Downloads(Icons.Outlined.Download),
     Tracking(Icons.Outlined.Sync),
+    SyncAccount(Icons.Outlined.CloudSync),
     Browse(Icons.Outlined.Extension),
     Security(Icons.Outlined.Security),
     Advanced(Icons.Outlined.Tune),
@@ -281,6 +283,7 @@ private fun SettingsDetail(
             SettingsSection.Reader -> ReaderSettingsPane(settings, onChange)
             SettingsSection.Downloads -> DownloadSettingsPane(settings, onChange)
             SettingsSection.Tracking -> TrackingSettingsPane(settings, onChange)
+            SettingsSection.SyncAccount -> SyncSettingsPane(appServices.sync)
             SettingsSection.Browse -> BrowseSettingsPane(settings, onChange)
             SettingsSection.Security -> SecuritySettingsPane(
                 settings = settings,
@@ -912,7 +915,7 @@ internal fun CategoryNameDialog(
 }
 
 @Composable
-private fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+internal fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 96.dp),
@@ -1017,7 +1020,7 @@ private fun SliderSetting(
 }
 
 @Composable
-private fun SettingDescription(text: String) {
+internal fun SettingDescription(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
@@ -1034,6 +1037,7 @@ private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.Shinsou
     SettingsSection.Reader -> strings.text("Reader")
     SettingsSection.Downloads -> strings.downloads
     SettingsSection.Tracking -> strings.text("Tracking")
+    SettingsSection.SyncAccount -> strings.text("Sync")
     SettingsSection.Browse -> strings.browse
     SettingsSection.Security -> strings.text("Security")
     SettingsSection.Advanced -> strings.text("Advanced")

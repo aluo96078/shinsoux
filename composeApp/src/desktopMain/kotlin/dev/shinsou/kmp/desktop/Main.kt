@@ -153,6 +153,16 @@ fun main(args: Array<String>) {
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
                 pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
+                syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
+                    defaultName = when (desktopPlatform) {
+                        DesktopPlatform.MAC_OS -> "Mac"
+                        DesktopPlatform.WINDOWS -> "Windows PC"
+                        DesktopPlatform.LINUX -> "Linux PC"
+                        DesktopPlatform.OTHER -> "Desktop"
+                    },
+                    platform = "desktop",
+                    appVersion = "1.0.1-beta.18",
+                ),
             )
         }
         val autoBackupScope = rememberCoroutineScope()
@@ -304,6 +314,7 @@ fun main(args: Array<String>) {
                 contentFeatures = composition.contentFeatures,
                 tracking = composition.tracking,
                 portableContentBackupV2 = composition.portableContentBackupV2,
+                sync = composition.sync,
                 shuYueMigration = composition.shuYueMigration,
                 closeApplication = ::requestClose,
                 frame = { hostFrame },
