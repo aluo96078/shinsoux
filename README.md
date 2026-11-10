@@ -26,7 +26,8 @@
   隔離的沙箱中執行（Android isolated process、macOS／Windows OS 隔離 helper、iOS WebAssembly）
 - 下載佇列、本地 TXT／ZIP／CBZ／完整 EPUB／圖片匯入與備份還原
 - 多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
-- Local-first 設計：專案本身不提供廣告或分析服務，主要資料保存在使用者裝置
+- 可自行架設的帳號同步：書庫、分類、已讀與閱讀進度、來源儲存庫與可攜設定跨裝置同步，並可在同一台伺服器的帳號之間分享作品、撰寫評論
+- Local-first 設計：專案本身不提供廣告或分析服務，也不內建任何同步伺服器；未登入時所有資料只在使用者裝置
 
 ## [ShuYue](https://github.com/aluo96078/shuyue) 風格小說閱讀器
 
@@ -48,6 +49,7 @@
 - Reader 的 LTR、RTL、直向、Webtoon、縮放、濾鏡、章節清單、章末切換、錯誤重試與預取
 - 下載佇列、暫停／重試／重排，以及原子 completion manifest 驗證的離線頁面；「清除完成項目」只隱藏完成列，不刪除離線狀態
 - 可攜式 snapshot 備份／還原、選擇性還原、deterministic 衝突合併，以及 app-private 自動備份
+- 帳號同步（更多 → 同步）：連到自行架設的 [Shinsou 同步服務](https://github.com/aluo96078/shinsou_sync_service)，逐欄位合併、即時通知其他裝置；作品分享、收件匣與作品頁評論
 - Shinsou X JavaScript extension repository 的驗證、安裝、更新、卸載與授權管理；所有套件都是第三方套件，
   一律在沙箱中執行、只取得使用者逐項同意的權限；未簽章的開發中套件僅限開發者模式；repository 設定納入可攜 snapshot
 - 從 [ShuYue](https://github.com/aluo96078/shuyue) 匯入書庫與閱讀進度；原 ShuYue 小說來源改寫成一般 Shinsou 套件後保留同一份書庫身分與登入
@@ -60,9 +62,37 @@
 
 ## 本機資料與同步
 
-目前此版本不提供跨裝置同步；舊的 Cloudflare 端對端加密同步、裝置配對與 iCloud 單檔同步已移除，新的同步服務規劃中。
+Shinsou X 預設完全在本機運作。自 v1.0.1-beta.19 起可以選擇登入一台**自行架設**的 [Shinsou 同步服務](https://github.com/aluo96078/shinsou_sync_service)，讓多台裝置共用同一份書庫；App 沒有內建或預設的伺服器，未登入時不會上傳任何資料。舊的 Cloudflare 端對端加密同步、裝置配對與 iCloud 單檔同步已在 beta.18 移除，沒有遷移路徑。
 
-以下資料維持裝置本機：一般 download cache／queue、Local content、Local source 原始容器、extension packages、cookies、OAuth token、密碼、API key、tracker credentials、閱讀進度及平台專屬設定。
+### 帳號同步
+
+在「更多 → 同步」輸入伺服器網址（例如 `https://sync.example.com`）後登入或註冊。同一個畫面可以查看已登入的裝置、上次同步時間，並手動同步或登出。
+
+| 會同步 | 內容 |
+|---|---|
+| 書庫 | 是否在書庫、加入時間、所屬分類、自訂標題等 |
+| 分類 | 名稱與順序 |
+| 章節狀態與進度 | 已讀、書籤、最後閱讀位置與閱讀紀錄 |
+| 來源儲存庫 | 儲存庫網址與信任的發佈者指紋（套件本身要在每台裝置各自安裝） |
+| 可攜設定 | 語言、外觀、書庫排序與篩選、閱讀器偏好、瀏覽語言等與裝置無關的設定 |
+
+運作方式：
+
+- **作品身分**：來自擴充套件的作品以「儲存庫＋來源＋作品」組成的作品鍵辨識，不同裝置安裝同一個來源就會對到同一部作品；本機匯入的書（TXT、EPUB、圖片）只同步書庫條目與進度，內文不上傳。
+- **合併**：每個欄位各自帶混合邏輯時鐘（HLC），伺服器逐欄位取較新的值，兩台裝置同時修改不同欄位不會互相覆蓋。
+- **時機**：App 在前景時，修改會在幾秒內推送，其他裝置經 WebSocket 收到通知後拉取；Android（WorkManager）與 iOS（BGTask）另有背景定期同步，實際執行時間由作業系統決定。
+- **第一次登入**：這台裝置既有的書庫、進度、儲存庫與可攜設定會整批上傳，再與伺服器上的資料合併。
+- **隱私模型**：伺服器看得到同步的資料（不是端對端加密），傳輸走 HTTPS；只有區域網路或本機位址才允許未加密的 HTTP。請只登入你信任的伺服器，或自己架一台；架設方式見同步服務的[架設指南](https://github.com/aluo96078/shinsou_sync_service/blob/main/docs/deploy/self-hosting.md)。
+
+### 分享與評論
+
+同一台伺服器的帳號之間可以分享書庫中的作品，收到的分享出現在收件匣；伺服器啟用評論時，作品頁可以閱讀與撰寫評論、評分。兩者都只在該伺服器內部，沒有跨伺服器的聯邦。
+
+### 只留在本機的資料
+
+不論是否登入，以下資料都不會離開裝置：章節內文與圖片、下載 cache／queue、Local content 與 Local source 原始容器、extension packages、cookies、OAuth token、密碼、API key、tracker credentials，以及與裝置相關的設定（下載、版面、螢幕方向、安全、進階網路與同步本身）。
+
+設計與決策紀錄見 [ADR-0003](docs/architecture/0003-open-sync-service-plan.md)。
 
 Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`heic`、`bmp`，以及 `zip`、`cbz`、`epub`。EPUB 會保留 OCF／OPF、manifest、spine、nav、XHTML、CSS、font、image 與 rendition metadata；renderer 不會在開書時一次 hydration 全部資源。
 
@@ -202,6 +232,8 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - [插件系統總覽](docs/PLUGIN_SYSTEM.md)：repository 相容矩陣、package／SourceKey、內容契約、安裝與信任生命週期、runtime、網路、登入與資料邊界
 - [統一插件儲存庫契約](docs/UNIFIED_PLUGIN_REPOSITORY.md)：歷史索引、unified-v1 與 Extension v2 的偵測規則（`shuyue` 契約項目會被略過）
 - [插件系統事件接口架構](docs/PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：production V1 handler、exact-artifact grant、安全邊界與尚未接通的保留能力
+- [開放式同步服務計畫（ADR-0003）](docs/architecture/0003-open-sync-service-plan.md)：同步模型、作品身分、API 與 App 接入方式
+- [shinsou_sync_service](https://github.com/aluo96078/shinsou_sync_service)：可自行架設的同步伺服器（Go＋PostgreSQL，含網頁前台與管理後台）
 - [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin)：Shinsou X JavaScript 擴充套件儲存庫
 - [ShuYue](https://github.com/aluo96078/shuyue)：原小說閱讀器專案
 - [Shinsou（停止開發）](https://github.com/aluo96078/shinsou)：舊 Swift／SwiftUI 版本的歷史封存
@@ -215,6 +247,7 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 - 舊版可攜 snapshot 與自動備份仍以 `AppSnapshot` 為資料模型；Content Backup v2 另保存 checksummed publication graph、body-free content metadata、legacy aliases 與 migration ledgers，並可選擇納入當下 rights 明確允許匯出的 immutable blobs。兩者都不包含已安裝的 JavaScript package、credentials、cookies、OAuth token、proxy API key 或其他 secrets。
 - Local source 與已下載頁面的檔案 bytes 不在舊 snapshot envelope 內。Content Backup v2 未附 body 時，目的裝置只還原 metadata/ref，並要求合法重新匯入、重新取得或授權後下載；不會虛構本機 blob 已存在。
 - Download completion manifest 與 Local v2 manifest 都留在 app-private storage，不會隨 portable snapshot 移動。備份還原也保留並清理本機 queue，不會啟動下載工作。
+- 帳號同步的登入權杖與其他 secrets 一樣存在各平台的敏感 KV（見上方各平台說明），不寫入 snapshot 或備份；同步的資料以明文存在你選擇的伺服器上，不包含任何 credentials、cookies 或 secrets。
 - 自動備份是 app-private 原子快照，提供立即建立、列表、損毀標示、還原、刪除與 retention。Android 使用 WorkManager、iOS 使用 BGProcessingTask；實際背景執行時間由作業系統決定，Desktop 則只在 app 存活時以前景 scheduler 檢查。
 
 ## 使用責任
