@@ -283,7 +283,7 @@ private fun SettingsDetail(
             SettingsSection.Reader -> ReaderSettingsPane(settings, onChange)
             SettingsSection.Downloads -> DownloadSettingsPane(settings, onChange)
             SettingsSection.Tracking -> TrackingSettingsPane(settings, onChange)
-            SettingsSection.SyncAccount -> SyncSettingsPane(appServices.sync)
+            SettingsSection.SyncAccount -> SyncSettingsPane(appServices.sync, appServices::copyText)
             SettingsSection.Browse -> BrowseSettingsPane(settings, onChange)
             SettingsSection.Security -> SecuritySettingsPane(
                 settings = settings,

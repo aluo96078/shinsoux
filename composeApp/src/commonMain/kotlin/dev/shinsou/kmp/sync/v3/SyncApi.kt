@@ -13,6 +13,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.encodeURLParameter
+import io.ktor.http.encodeURLPathPart
 import io.ktor.http.content.TextContent
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -70,6 +72,56 @@ internal class SyncApi(http: HttpClient) {
     suspend fun changes(baseUrl: String, token: String, since: Long, limit: Int = PAGE_SIZE): WireChanges = call<Unit, WireChanges>(
         baseUrl, HttpMethod.Get, "/api/v1/sync/changes?since=$since&limit=$limit", token, null, null, WireChanges.serializer(),
     )!!
+
+    // ---- sharing ----------------------------------------------------------------------------
+
+    suspend fun searchUsers(baseUrl: String, token: String, query: String, limit: Int): List<WireUserSummary> = call<Unit, WireUserList>(
+        baseUrl, HttpMethod.Get, "/api/v1/users?q=${query.encodeURLParameter()}&limit=$limit", token, null, null, WireUserList.serializer(),
+    )!!.users
+
+    /** [relation] is `following`, `followers` or `blocks`. */
+    suspend fun listRelation(baseUrl: String, token: String, relation: String, offset: Int, limit: Int): WireUserPage =
+        call<Unit, WireUserPage>(
+            baseUrl, HttpMethod.Get, "/api/v1/me/$relation?offset=$offset&limit=$limit", token, null, null, WireUserPage.serializer(),
+        )!!
+
+    /** Adds ([on]) or removes a follow (`following`) or a block (`blocks`). */
+    suspend fun setRelation(baseUrl: String, token: String, relation: String, userId: String, on: Boolean) {
+        call<Unit, Unit>(
+            baseUrl, if (on) HttpMethod.Put else HttpMethod.Delete, "/api/v1/me/$relation/${userId.encodeURLPathPart()}", token, null, null, null,
+        )
+    }
+
+    suspend fun sharingPreferences(baseUrl: String, token: String): WireSharingPreferences = call<Unit, WireSharingPreferences>(
+        baseUrl, HttpMethod.Get, "/api/v1/me/sharing", token, null, null, WireSharingPreferences.serializer(),
+    )!!
+
+    suspend fun setSharingPreferences(baseUrl: String, token: String, receiveFrom: String): WireSharingPreferences = call(
+        baseUrl, HttpMethod.Put, "/api/v1/me/sharing", token, WireSharingPreferences(receiveFrom),
+        WireSharingPreferences.serializer(), WireSharingPreferences.serializer(),
+    )!!
+
+    suspend fun listShares(baseUrl: String, token: String, sent: Boolean, offset: Int, limit: Int): WireSharePage = call<Unit, WireSharePage>(
+        baseUrl, HttpMethod.Get, "/api/v1/shares?box=${if (sent) "sent" else "inbox"}&offset=$offset&limit=$limit", token,
+        null, null, WireSharePage.serializer(),
+    )!!
+
+    suspend fun pendingShares(baseUrl: String, token: String): Int = call<Unit, WireShareSummary>(
+        baseUrl, HttpMethod.Get, "/api/v1/shares/summary", token, null, null, WireShareSummary.serializer(),
+    )!!.pending
+
+    suspend fun createShare(baseUrl: String, token: String, request: WireShareRequest): WireShare = call(
+        baseUrl, HttpMethod.Post, "/api/v1/shares", token, request, WireShareRequest.serializer(), WireShare.serializer(),
+    )!!
+
+    /** [action] is `accept` or `dismiss`. */
+    suspend fun answerShare(baseUrl: String, token: String, id: String, action: String): WireShare = call<Unit, WireShare>(
+        baseUrl, HttpMethod.Post, "/api/v1/shares/${id.encodeURLPathPart()}/$action", token, null, null, WireShare.serializer(),
+    )!!
+
+    suspend fun deleteShare(baseUrl: String, token: String, id: String) {
+        call<Unit, Unit>(baseUrl, HttpMethod.Delete, "/api/v1/shares/${id.encodeURLPathPart()}", token, null, null, null)
+    }
 
     /**
      * Holds a WebSocket open and reports every `{"seq": N}` message. Returns when the server (or

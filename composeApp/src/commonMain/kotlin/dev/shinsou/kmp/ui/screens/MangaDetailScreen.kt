@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.Sync
@@ -99,6 +100,7 @@ fun MangaDetailScreen(
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
     onShare: () -> Unit,
+    onShareWithUser: (() -> Unit)? = null,
     onOpenWeb: () -> Unit,
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -226,6 +228,7 @@ fun MangaDetailScreen(
                 onToggleFavorite = onToggleFavorite,
                 onRefresh = onRefresh,
                 onShare = onShare,
+                onShareWithUser = onShareWithUser,
                 onOpenWeb = onOpenWeb,
                 onOpenTracking = onOpenTracking,
                 onUpdateNotes = onUpdateNotes,
@@ -255,6 +258,7 @@ fun MangaDetailScreen(
                     onToggleFavorite = onToggleFavorite,
                     onRefresh = onRefresh,
                     onShare = onShare,
+                    onShareWithUser = onShareWithUser,
                     onOpenWeb = onOpenWeb,
                     onOpenTracking = onOpenTracking,
                     onUpdateNotes = onUpdateNotes,
@@ -285,6 +289,7 @@ private fun MangaInfoPane(
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
     onShare: () -> Unit,
+    onShareWithUser: (() -> Unit)? = null,
     onOpenWeb: () -> Unit,
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -323,6 +328,9 @@ private fun MangaInfoPane(
             }
             IconButton(onClick = onOpenWeb) { Icon(Icons.Outlined.OpenInBrowser, strings.text("Open original page")) }
             IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, strings.share) }
+            if (onShareWithUser != null) {
+                IconButton(onClick = onShareWithUser) { Icon(Icons.Outlined.Send, strings.text("Share with a user")) }
+            }
         }
         CoverImage(
             manga.title,

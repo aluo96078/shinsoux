@@ -51,7 +51,10 @@ import kotlin.time.Instant
 
 /** Settings → Sync: choose a server, sign in or register, then see status and manage devices. */
 @Composable
-internal fun SyncSettingsPane(sync: SyncV3Service?) {
+internal fun SyncSettingsPane(
+    sync: SyncV3Service?,
+    copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
+) {
     val strings = LocalShinsouStrings.current
     if (sync == null) {
         SettingsList { item { SettingDescription(strings.text("Sync is unavailable in this build.")) } }
@@ -61,6 +64,7 @@ internal fun SyncSettingsPane(sync: SyncV3Service?) {
     SettingsList {
         if (state.signedIn) {
             item { SignedInSection(sync, state) }
+            if (state.sharingEnabled) item { SharingSection(sync, copyText) }
         } else {
             item { SignedOutSection(sync, state) }
         }
@@ -68,7 +72,7 @@ internal fun SyncSettingsPane(sync: SyncV3Service?) {
 }
 
 @Composable
-private fun SyncCard(content: @Composable () -> Unit) {
+internal fun SyncCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(11.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -79,7 +83,7 @@ private fun SyncCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ErrorText(message: String?) {
+internal fun ErrorText(message: String?) {
     if (message != null) {
         Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
     }
@@ -271,6 +275,8 @@ private fun SignedInSection(sync: SyncV3Service, state: SyncUiState) {
     var confirmLogout by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
 
+    // The operator can turn sharing on or off at any time; ask again whenever this page opens.
+    LaunchedEffect(state.serverUrl) { sync.refreshFeatures() }
     LaunchedEffect(refreshTick, state.signedIn) {
         sync.listDevices().fold(
             onSuccess = { devices = it; deviceError = null },
@@ -422,14 +428,14 @@ private fun registrationLabel(strings: ShinsouStrings, policy: String): String =
     else -> strings.text("Registration closed")
 }
 
-private fun formatTime(epochMillis: Long): String {
+internal fun formatTime(epochMillis: Long): String {
     if (epochMillis <= 0) return "—"
     val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(TimeZone.currentSystemDefault())
     fun two(value: Int) = value.toString().padStart(2, '0')
     return "${local.year}-${two(local.month.ordinal + 1)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}"
 }
 
-private fun Throwable.userMessage(strings: ShinsouStrings): String = when (this) {
+internal fun Throwable.userMessage(strings: ShinsouStrings): String = when (this) {
     is SyncServerAddressException -> when (reason) {
         SyncServerAddressException.Reason.EMPTY -> strings.text("Enter the server address.")
         SyncServerAddressException.Reason.INSECURE_PUBLIC_HOST ->
@@ -448,6 +454,13 @@ private fun Throwable.userMessage(strings: ShinsouStrings): String = when (this)
         "unsupported_api_version" -> strings.text("This app and the server are not compatible. Update the app or the server.")
         "network" -> strings.text("Cannot reach the server: {0}", message.orEmpty())
         "forbidden" -> strings.text("The server refused this request.")
+        "feature_disabled" -> strings.text("Sharing is turned off on this server.")
+        "email_unverified" -> strings.text("Verify your email address on the server's website to use sharing.")
+        "user_blocked" -> strings.text("Unblock this person first.")
+        "share_refused" -> strings.text("This person does not accept shares from you.")
+        "unknown_work" -> strings.text("This title has not reached the server yet. Sync, then try again.")
+        "quota_exceeded" -> strings.text("Your account has no room for another library entry.")
+        "not_found" -> strings.text("This no longer exists on the server.")
         else -> message.orEmpty().ifBlank { code }
     }
     else -> message ?: strings.text("Something went wrong.")

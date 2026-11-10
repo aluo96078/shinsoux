@@ -173,6 +173,64 @@ public data class WireChanges(val records: List<WireRecord>, val nextSince: Long
 @Serializable
 internal data class WireStreamMessage(val seq: Long = 0)
 
+// ---- sharing (P4) -------------------------------------------------------------------------------
+
+@Serializable
+public data class WireUserSummary(
+    val id: String,
+    val username: String,
+    val following: Boolean = false,
+    val followsYou: Boolean = false,
+    val blocked: Boolean = false,
+    val canShare: Boolean = false,
+    val since: Long? = null,
+)
+
+@Serializable
+internal data class WireUserList(val users: List<WireUserSummary> = emptyList())
+
+@Serializable
+public data class WireUserPage(
+    val users: List<WireUserSummary> = emptyList(),
+    val total: Int = 0,
+    val offset: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+internal data class WireSharingPreferences(val receiveFrom: String = "everyone")
+
+@Serializable
+internal data class WireShareRequest(val recipientId: String, val work: String, val message: String? = null)
+
+@Serializable
+public data class WireShareParty(val id: String, val username: String)
+
+@Serializable
+public data class WireShare(
+    val id: String,
+    val sender: WireShareParty,
+    val recipient: WireShareParty,
+    val work: WireWork,
+    val message: String = "",
+    val status: String = "pending",
+    val createdAt: Long = 0,
+    val respondedAt: Long? = null,
+    val inLibrary: Boolean = false,
+)
+
+@Serializable
+public data class WireSharePage(
+    val shares: List<WireShare> = emptyList(),
+    val total: Int = 0,
+    val offset: Int = 0,
+    val limit: Int = 0,
+    val pending: Int = 0,
+)
+
+@Serializable
+internal data class WireShareSummary(val pending: Int = 0)
+
 /** An API failure with the server's stable error [code] (empty for transport failures). */
 public class SyncApiException(
     public val status: Int,

@@ -76,7 +76,16 @@ public data class SyncUiState(
     val rejectedCount: Int = 0,
     val streamConnected: Boolean = false,
     val lastError: String? = null,
+    /** The server lets accounts share works with each other (last known answer). */
+    val sharingEnabled: Boolean = false,
 )
+
+/** The three lists of people an account keeps. */
+public enum class SyncRelation(internal val path: String) {
+    Following("following"),
+    Followers("followers"),
+    Blocks("blocks"),
+}
 
 /**
  * Sync v3 client: account and device management, dirty tracking, push, pull, realtime stream and
@@ -138,6 +147,7 @@ public class SyncV3Service internal constructor(
         // Edits keep being tracked after the session expired, so signing in again uploads them.
         activateSession()
         publishState()
+        if (store.meta(META_SIGNED_IN) == "1") scope.launch { refreshFeatures() }
         if (foreground && store.meta(META_SIGNED_IN) == "1") scope.launch { syncNow() }
     }
 
@@ -239,6 +249,7 @@ public class SyncV3Service internal constructor(
             activateSession()
         }
         publishState()
+        scope.launch { refreshFeatures() }
         if (autoSyncAfterSignIn) scope.launch { syncNow() }
     }
 
@@ -279,6 +290,106 @@ public class SyncV3Service internal constructor(
             val url = baseUrl
             authed { api.signOutDevice(url, it, id) }
         }
+    }
+
+    // ---- sharing ----------------------------------------------------------------------------
+
+    /** Asks the server which optional features it offers and remembers the answer. */
+    public suspend fun refreshFeatures(): Result<WireFeatures> = runCatching {
+        val url = baseUrl
+        val features = api.instance(url).features
+        // The store is only written under the cycle lock, never beside a running sync cycle.
+        // Signing out or switching servers while the request was in flight makes the answer stale.
+        val stored = cycleMutex.withLock {
+            val current = store.meta(META_SIGNED_IN) == "1" && store.meta(META_SERVER_URL) == url
+            if (current) store.setMeta(META_SHARING, if (features.sharing) "1" else "0")
+            current
+        }
+        if (stored) publishState()
+        features
+    }
+
+    /**
+     * The work hash to share [manga] by, or null when it cannot be shared: it has to be in the
+     * library and come from a source (local-only titles have no identity another account can use).
+     */
+    public fun shareableWork(manga: Manga): String? {
+        if (!manga.favorite) return null
+        val work = runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced ?: return null
+        return work.recordKey
+    }
+
+    /** Shares [workHash] with another account. Uploads pending changes first so the server knows the work. */
+    public suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = runCatching {
+        val url = baseUrl
+        if (mutableState.value.pendingCount > 0) syncNow()
+        val text = message.trim().take(MAX_SHARE_MESSAGE).ifEmpty { null }
+        authed { api.createShare(url, it, WireShareRequest(recipientId, workHash, text)) }
+    }
+
+    public suspend fun listShares(sent: Boolean, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireSharePage> = runCatching {
+        val url = baseUrl
+        authed { api.listShares(url, it, sent, offset, limit) }
+    }
+
+    /** Received shares still waiting for an answer. */
+    public suspend fun pendingShares(): Result<Int> = runCatching {
+        val url = baseUrl
+        authed { api.pendingShares(url, it) }
+    }
+
+    /** Accepting adds the work to the library on the server; a sync brings it to this device. */
+    public suspend fun acceptShare(id: String): Result<WireShare> = runCatching {
+        val url = baseUrl
+        val share = authed { api.answerShare(url, it, id, "accept") }
+        scope.launch { syncNow() }
+        share
+    }
+
+    public suspend fun dismissShare(id: String): Result<WireShare> = runCatching {
+        val url = baseUrl
+        authed { api.answerShare(url, it, id, "dismiss") }
+    }
+
+    /** Removes a received share from the inbox, or withdraws one that was sent. */
+    public suspend fun deleteShare(id: String): Result<Unit> = runCatching {
+        val url = baseUrl
+        authed { api.deleteShare(url, it, id) }
+    }
+
+    /** Accounts whose username starts with [query]; a leading `@` is ignored. */
+    public suspend fun searchUsers(query: String, limit: Int = SOCIAL_PAGE_SIZE): Result<List<WireUserSummary>> = runCatching {
+        val q = query.trim().removePrefix("@")
+        if (q.isEmpty()) return@runCatching emptyList()
+        val url = baseUrl
+        authed { api.searchUsers(url, it, q, limit) }
+    }
+
+    public suspend fun listRelation(relation: SyncRelation, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireUserPage> = runCatching {
+        val url = baseUrl
+        authed { api.listRelation(url, it, relation.path, offset, limit) }
+    }
+
+    public suspend fun setFollowing(userId: String, following: Boolean): Result<Unit> = runCatching {
+        val url = baseUrl
+        authed { api.setRelation(url, it, SyncRelation.Following.path, userId, following) }
+    }
+
+    /** Blocking also removes follows in both directions and dismisses that account's open shares. */
+    public suspend fun setBlocked(userId: String, blocked: Boolean): Result<Unit> = runCatching {
+        val url = baseUrl
+        authed { api.setRelation(url, it, SyncRelation.Blocks.path, userId, blocked) }
+    }
+
+    /** Who may share with this account: `everyone`, `following` or `nobody`. */
+    public suspend fun receiveSharesFrom(): Result<String> = runCatching {
+        val url = baseUrl
+        authed { api.sharingPreferences(url, it) }.receiveFrom
+    }
+
+    public suspend fun setReceiveSharesFrom(value: String): Result<String> = runCatching {
+        val url = baseUrl
+        authed { api.setSharingPreferences(url, it, value) }.receiveFrom
     }
 
     // ---- tokens -----------------------------------------------------------------------------
@@ -1062,6 +1173,7 @@ public class SyncV3Service internal constructor(
                 unsyncableCount = unsyncable,
                 rejectedCount = if (signedIn) store.rejectedCount() else 0,
                 lastError = store.meta(META_ERROR),
+                sharingEnabled = signedIn && store.meta(META_SHARING) == "1",
             )
         }
     }
@@ -1088,6 +1200,7 @@ public class SyncV3Service internal constructor(
         const val META_ACCESS_EXPIRES = "access_expires_at"
         const val META_INITIAL_DONE = "initial_done"
         const val META_RESYNC = "resync"
+        const val META_SHARING = "sharing_enabled"
 
         const val KEY_ACCESS_TOKEN = "sync.v3.access_token"
         const val KEY_REFRESH_TOKEN = "sync.v3.refresh_token"
@@ -1103,6 +1216,8 @@ public class SyncV3Service internal constructor(
         const val APPLY_ATTEMPTS = 5
         const val MARK_CHUNK = 5_000
         const val TOKEN_REFRESH_MARGIN_MILLIS = 60_000L
+        const val SOCIAL_PAGE_SIZE = 20
+        const val MAX_SHARE_MESSAGE = 500
         const val BACKGROUND_FLUSH_TIMEOUT_MILLIS = 15_000L
         const val BACKGROUND_SYNC_TIMEOUT_MILLIS = 8 * 60_000L
         const val STREAM_BACKOFF_MIN_MILLIS = 1_000L

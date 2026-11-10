@@ -118,4 +118,70 @@ class SyncV3RealServerE2ETest {
             a.close(); b.close()
         }
     }
+
+    @Test
+    fun aShareTravelsBetweenTwoAccounts() = runBlocking<Unit> {
+        org.junit.Assume.assumeTrue("SHINSOU_SYNC_E2E_URL is not set", url != null)
+        val baseUrl = url!!
+        val suffix = Random.nextBytes(4).joinToString("") { "%02x".format(it) }
+        val password = "e2e-password-" + Random.nextInt(100_000, 999_999)
+        val a = TestDevice(baseUrl, "e2e-share-A", createPlatformHttpClient(), pushDebounceMillis = 300)
+        val b = TestDevice(baseUrl, "e2e-share-B", createPlatformHttpClient(), pushDebounceMillis = 300)
+        try {
+            a.signIn(register = true, user = "e2e_a$suffix", password = password)
+            b.signIn(register = true, user = "e2e_b$suffix", password = password)
+            val features = a.service.refreshFeatures().getOrThrow()
+            org.junit.Assume.assumeTrue("sharing is turned off on this server", features.sharing)
+            assertTrue(a.service.state.value.sharingEnabled)
+
+            // A title that is in A's library but has not been uploaded yet: sharing uploads it first.
+            val manga = a.repository.upsertManga(a.fixtures.manga("e2e-shared-$suffix", "E2E Shared"))
+            a.repository.upsertChapters(a.fixtures.chapters(manga.id, "e2e-shared-$suffix", listOf("c1")))
+            val work = a.service.shareableWork(a.repository.currentSnapshot.mangas.single())
+            assertTrue(work != null && work.length == 64, "a sourced library title has a work hash")
+            assertEquals(null, a.service.shareableWork(a.fixtures.manga("e2e-other", "Not in library", favorite = false)))
+
+            val bob = a.service.searchUsers("e2e_b$suffix").getOrThrow().single()
+            val alice = b.service.searchUsers("e2e_a$suffix").getOrThrow().single()
+            assertTrue(bob.canShare)
+
+            // B only accepts shares from people B follows.
+            assertEquals("following", b.service.setReceiveSharesFrom("following").getOrThrow())
+            assertEquals("following", b.service.receiveSharesFrom().getOrThrow())
+            val refused = a.service.shareWork(work!!, bob.id, "").exceptionOrNull() as? SyncApiException
+            assertEquals("share_refused", refused?.code)
+            b.service.setFollowing(alice.id, true).getOrThrow()
+            assertEquals(listOf(alice.id), b.service.listRelation(SyncRelation.Following, 0).getOrThrow().users.map { it.id })
+            assertEquals(listOf(bob.id), a.service.listRelation(SyncRelation.Followers, 0).getOrThrow().users.map { it.id })
+
+            val share = a.service.shareWork(work, bob.id, "  read this  ").getOrThrow()
+            assertEquals("pending", share.status)
+            assertEquals(0, a.service.state.value.pendingCount)
+
+            // B sees it, accepts it, and the title arrives through ordinary sync.
+            assertEquals(1, b.service.pendingShares().getOrThrow())
+            val received = b.service.listShares(sent = false, offset = 0).getOrThrow().shares.single()
+            assertEquals("E2E Shared", received.work.title)
+            assertEquals("read this", received.message)
+            assertEquals("e2e_a$suffix", received.sender.username)
+            assertTrue(b.repository.currentSnapshot.mangas.isEmpty())
+            assertEquals("accepted", b.service.acceptShare(received.id).getOrThrow().status)
+            assertTrue(b.sync(), b.service.state.value.lastError.orEmpty())
+            val arrived = b.repository.currentSnapshot.mangas.single()
+            assertEquals("E2E Shared", arrived.title)
+            assertTrue(arrived.favorite)
+            assertEquals(0, b.service.pendingShares().getOrThrow())
+            assertEquals("accepted", a.service.listShares(sent = true, offset = 0).getOrThrow().shares.single().status)
+
+            // A block stops further shares; the old one can still be deleted from the inbox.
+            b.service.setBlocked(alice.id, true).getOrThrow()
+            assertTrue(a.service.shareWork(work, bob.id, "").isFailure)
+            b.service.deleteShare(received.id).getOrThrow()
+            assertTrue(b.service.listShares(sent = false, offset = 0).getOrThrow().shares.isEmpty())
+            assertEquals(1, b.repository.currentSnapshot.mangas.size)
+            println("E2E accounts used: e2e_a$suffix, e2e_b$suffix")
+        } finally {
+            a.close(); b.close()
+        }
+    }
 }

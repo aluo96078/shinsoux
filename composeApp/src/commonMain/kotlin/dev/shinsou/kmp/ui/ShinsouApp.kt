@@ -150,6 +150,7 @@ import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
 import dev.shinsou.kmp.ui.screens.BackupScreen
 import dev.shinsou.kmp.ui.screens.BrowseScreen
 import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
+import dev.shinsou.kmp.ui.screens.ShareWithUserDialog
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
 import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
 import dev.shinsou.kmp.ui.screens.DownloadsScreen
@@ -2561,6 +2562,7 @@ private fun DetailPane(
     val scope = rememberCoroutineScope()
     var trackingSheetVisible by remember(mangaId) { mutableStateOf(false) }
     var categoryPickerVisible by remember(mangaId) { mutableStateOf(false) }
+    var shareWithUserVisible by remember(mangaId) { mutableStateOf(false) }
     var handledSystemBackRequest by remember(mangaId) { mutableStateOf(systemBackRequest) }
     val nestedBackAvailable = trackingSheetVisible || categoryPickerVisible
     val currentBackCallback = rememberUpdatedState(onBack)
@@ -2633,6 +2635,12 @@ private fun DetailPane(
             resolved?.let(action)
         }
     }
+    // Sharing needs a signed-in account on a server that offers it, and a title the server can know.
+    val sync = appServices.sync
+    val syncState = sync?.state?.collectAsState()?.value
+    val shareWorkHash = remember(manga, syncState?.signedIn, syncState?.sharingEnabled) {
+        if (sync != null && syncState?.signedIn == true && syncState.sharingEnabled) sync.shareableWork(manga) else null
+    }
     MangaDetailScreen(
         manga = manga,
         chapters = chapters,
@@ -2667,6 +2675,7 @@ private fun DetailPane(
         },
         onRefresh = ::refreshFromSource,
         onShare = { withOriginalUrl { appServices.shareText(manga.title, it) } },
+        onShareWithUser = if (shareWorkHash != null) ({ shareWithUserVisible = true }) else null,
         onOpenWeb = { withOriginalUrl(appServices::openExternalUrl) },
         onOpenTracking = {
             if (appServices.tracking != null) {
@@ -2723,6 +2732,15 @@ private fun DetailPane(
                     categoryPickerVisible = false
                 }
             },
+        )
+    }
+
+    if (shareWithUserVisible && sync != null && shareWorkHash != null) {
+        ShareWithUserDialog(
+            sync = sync,
+            workHash = shareWorkHash,
+            title = manga.title,
+            onDismiss = { shareWithUserVisible = false },
         )
     }
 
