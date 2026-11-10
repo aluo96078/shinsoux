@@ -590,4 +590,63 @@ class SyncV3ServiceTest {
             a.close()
         }
     }
+
+    @Test
+    fun aTitleSyncedByADeviceWithoutTheSourceIsDescribedByOneThatHasIt() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            val source = TestSourceKey.packageId to TestSourceKey.sourceId
+            // B knows the source and has already settled what it can describe: nothing yet.
+            b.sources = mapOf(source to SyncSourceInfo("Test Source", "zh-Hant", "https://repo.example/index"))
+            b.signIn(register = true)
+            assertTrue(b.sync())
+
+            // A does not have the package; its title reaches the server without a source name.
+            a.addTitle("book-1", "One", listOf("u1"))
+            a.signIn(register = false)
+            assertTrue(a.sync())
+            assertNull(server.accountWork("alice", workHash("book-1"))?.sourceName)
+
+            assertTrue(b.sync())
+            val described = server.accountWork("alice", workHash("book-1"))
+            assertEquals("Test Source", described?.sourceName)
+            assertEquals("https://repo.example/index", described?.repositoryUrl)
+        } finally {
+            a.close()
+            b.close()
+        }
+    }
+
+    @Test
+    fun aDeviceWithoutTheSourceNeverSendsItsStoredCopyOfTheSourceData() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            val source = TestSourceKey.packageId to TestSourceKey.sourceId
+            a.sources = mapOf(source to SyncSourceInfo("Old Name", "zh-Hant", null))
+            a.addTitle("book-1", "One", listOf("u1"))
+            a.signIn(register = true)
+            assertTrue(a.sync())
+
+            // B stores the title with the name of that moment.
+            b.signIn(register = false)
+            assertTrue(b.sync())
+
+            // The package is updated on A; only descriptors are sent, so B's stored copy stays old.
+            a.sources = mapOf(source to SyncSourceInfo("New Name", "zh-Hant", null))
+            assertTrue(a.sync())
+            assertEquals("New Name", server.accountWork("alice", workHash("book-1"))?.sourceName)
+
+            // B installs something unrelated: that is no reason to send what it has stored.
+            b.sources = mapOf(("other.package" to "other") to SyncSourceInfo("Other", "en", null))
+            assertTrue(b.sync())
+            assertEquals("New Name", server.accountWork("alice", workHash("book-1"))?.sourceName)
+        } finally {
+            a.close()
+            b.close()
+        }
+    }
 }

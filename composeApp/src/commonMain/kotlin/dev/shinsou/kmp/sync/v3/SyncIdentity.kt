@@ -157,6 +157,9 @@ internal class SyncIdentityResolver(
         ).let(::withSource)
     }
 
+    /** Whether an installed source describes [work]'s source on this device. */
+    fun describes(work: WireWork): Boolean = (work.packageId to work.sourceId) in sources
+
     /** [work] with what the installed sources say about its source; unchanged when none describes it. */
     fun withSource(work: WireWork): WireWork {
         val source = sources[work.packageId to work.sourceId] ?: return work

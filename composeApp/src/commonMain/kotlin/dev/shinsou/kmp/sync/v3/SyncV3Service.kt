@@ -800,7 +800,6 @@ public class SyncV3Service internal constructor(
             emptyMap()
         }
         val described = sourcesFingerprint(identity.sources)
-        val describeSources = described != null && store.meta(META_DESCRIPTORS) != described
         promoteAll()
         if (store.meta(META_RESYNC) == "1") {
             resync()
@@ -822,7 +821,8 @@ public class SyncV3Service internal constructor(
                 throw error
             }
         }
-        if (describeSources) refreshDescriptors(described)
+        // Checked after the pull: a title that arrived without its source reopens the question.
+        if (described != null && store.meta(META_DESCRIPTORS) != described) refreshDescriptors(described)
         if (pushed > 0) pullAll()
         applyUnapplied(force)
     }
@@ -839,6 +839,9 @@ public class SyncV3Service internal constructor(
         val works = LinkedHashMap<String, WireWork>()
         for (json in store.liveWorkJson()) {
             val stored = runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), json) }.getOrNull() ?: continue
+            // Only what this device has installed: for any other source the stored copy may be
+            // older than what the server has, and sending it would put the old values back.
+            if (!identity.describes(stored)) continue
             val described = identity.withSource(stored)
             if (described.sourceName != null) works[described.hash] = described
         }
@@ -1079,6 +1082,7 @@ public class SyncV3Service internal constructor(
     /** Merges server states into the sync tables; projection onto the library happens later. */
     private fun ingest(records: List<WireRecord>, cursorAfter: Long?) {
         val remoteClocks = ArrayList<String>()
+        var undescribed = false
         store.transaction {
             for (wr in records) {
                 val previous = store.loadRecord(wr.kind, wr.key)
@@ -1087,6 +1091,8 @@ public class SyncV3Service internal constructor(
                 remoteClocks += remote.fields.values.map { it.clock }
                 remote.deleted?.let { remoteClocks += it.clock }
                 val needsProjection = previous == null || previous.unapplied || projectionDiffers(previous.state, merged)
+                // Another device synced this title without knowing its source, and this one knows it.
+                if (wr.work?.let { it.sourceName == null && identity.describes(it) } == true) undescribed = true
                 store.saveRecord(
                     StoredRecord(
                         kind = wr.kind,
@@ -1103,6 +1109,7 @@ public class SyncV3Service internal constructor(
                     ),
                 )
             }
+            if (undescribed) store.setMeta(META_DESCRIPTORS, null)
             cursorAfter?.let { store.setMeta(META_CURSOR, it.toString()) }
         }
         observeRemote(remoteClocks)
