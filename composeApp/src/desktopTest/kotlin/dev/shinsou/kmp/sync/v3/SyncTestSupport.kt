@@ -107,6 +107,9 @@ internal class TestDevice(
     /** Runs every time the service reads the clock; lets a test interleave work mid-cycle. */
     @Volatile var onClockRead: (() -> Unit)? = null
 
+    /** What the installed packages say about their sources; empty means nothing is installed. */
+    @Volatile var sources: Map<Pair<String, String>, SyncSourceInfo> = emptyMap()
+
     private val file = Files.createTempFile("sync-v3-$name", ".db").toFile().also { it.deleteOnExit() }
     val driver = JdbcSqliteDriver("jdbc:sqlite:${file.absolutePath}")
     val repository = ShinsouRepository(initial)
@@ -133,6 +136,7 @@ internal class TestDevice(
         pushDebounceMillis = pushDebounceMillis,
         autoSyncAfterSignIn = false,
         automaticIntervalMillis = automaticIntervalMillis,
+        sourceInfo = { sources },
     )
 
     suspend fun signIn(register: Boolean = false, user: String = "alice", password: String = "password-123") {

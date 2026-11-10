@@ -40,6 +40,9 @@ internal class SyncIdentityResolver(
 ) {
     private val publicationCache = HashMap<PublicationKey, Publication?>()
 
+    /** What the installed packages say about their sources, by (packageId, sourceId); see [describe]. */
+    @Volatile var sources: Map<Pair<String, String>, SyncSourceInfo> = emptyMap()
+
     /** Publication lookups are cached for the duration of one batch; call between batches. */
     fun resetCache() {
         publicationCache.clear()
@@ -151,14 +154,38 @@ internal class SyncIdentityResolver(
             author = manga.author?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_TITLE_CHARS),
             coverUrl = manga.thumbnailUrl?.takeIf { it.startsWith("https://") && it.length <= MAX_URL_CHARS },
             contentKind = contentKindOf(manga, work),
+        ).let(::withSource)
+    }
+
+    /** [work] with what the installed sources say about its source; unchanged when none describes it. */
+    fun withSource(work: WireWork): WireWork {
+        val source = sources[work.packageId to work.sourceId] ?: return work
+        return work.copy(
+            language = source.language?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_LANGUAGE_CHARS },
+            sourceName = source.name?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_SOURCE_NAME_CHARS),
+            repositoryUrl = source.repositoryUrl?.takeIf {
+                (it.startsWith("https://") || it.startsWith("http://")) && it.length <= MAX_URL_CHARS
+            },
         )
     }
 
     companion object {
         const val MAX_TITLE_CHARS: Int = 512
         const val MAX_URL_CHARS: Int = 2048
+        const val MAX_LANGUAGE_CHARS: Int = 35
+        const val MAX_SOURCE_NAME_CHARS: Int = 128
     }
 }
+
+/**
+ * Display data of an installed source, sent with the work descriptor so the web front end and
+ * other accounts can name the source without having the package installed.
+ */
+public data class SyncSourceInfo(
+    val name: String?,
+    val language: String?,
+    val repositoryUrl: String?,
+)
 
 internal fun String.truncated(maxChars: Int): String {
     if (length <= maxChars) return this

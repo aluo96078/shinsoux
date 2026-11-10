@@ -2140,6 +2140,9 @@ public class PluginManager(
         return native + scripted
     }
 
+    /** The V2 packages loaded right now (native ones and adapted script packages); starts nothing. */
+    public suspend fun loadedExtensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()
+
     public suspend fun close(): Unit = withContext(NonCancellable + Dispatchers.Default) {
         packageMutationMutex.withLock {
             invalidateWebChallengeGrants()

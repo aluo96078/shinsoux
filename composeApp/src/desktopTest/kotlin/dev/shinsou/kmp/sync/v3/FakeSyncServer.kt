@@ -46,6 +46,8 @@ internal class FakeSyncServer {
     val engine = MockEngine { request -> handle(request) }
     fun client() = HttpClient(engine)
 
+    fun accountWork(username: String, hash: String): WireWork? = accounts[username]?.works?.get(hash)
+
     fun accountRecords(username: String): Map<Pair<String, String>, RecordState> =
         accounts.getValue(username).records.mapValues { it.value.state }
 
@@ -197,7 +199,13 @@ internal class FakeSyncServer {
             ) {
                 return error(HttpStatusCode.UnprocessableEntity, "invalid_work_key")
             }
-            account.works[work.hash] = work
+            // The real server keeps what it knows about the source when a descriptor omits it.
+            val known = account.works[work.hash]
+            account.works[work.hash] = work.copy(
+                language = work.language ?: known?.language,
+                sourceName = work.sourceName ?: known?.sourceName,
+                repositoryUrl = work.repositoryUrl ?: known?.repositoryUrl,
+            )
         }
         for (record in req.records) {
             if (record.kind == SyncKinds.UNIT) {

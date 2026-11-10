@@ -110,6 +110,7 @@ public class SyncV3Service internal constructor(
     private val pushDebounceMillis: Long = PUSH_DEBOUNCE_MILLIS,
     private val autoSyncAfterSignIn: Boolean = true,
     private val automaticIntervalMillis: Long = MIN_AUTOMATIC_INTERVAL_MILLIS,
+    private val sourceInfo: suspend () -> Map<Pair<String, String>, SyncSourceInfo> = { emptyMap() },
 ) {
     private val mutableState = MutableStateFlow(SyncUiState())
     public val state: StateFlow<SyncUiState> = mutableState.asStateFlow()
@@ -790,6 +791,16 @@ public class SyncV3Service internal constructor(
     private suspend fun cycleBody(force: Boolean) {
         legacyKeys.refresh(repository.currentSnapshot.mangas.mapTo(HashSet()) { it.source }, resolveLegacySource)
         if (store.meta(META_INITIAL_DONE) != "1") markEverythingDirty()
+        // Read every cycle: installing a package later is what makes its titles describable.
+        identity.sources = try {
+            sourceInfo()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        val described = sourcesFingerprint(identity.sources)
+        val describeSources = described != null && store.meta(META_DESCRIPTORS) != described
         promoteAll()
         if (store.meta(META_RESYNC) == "1") {
             resync()
@@ -811,8 +822,51 @@ public class SyncV3Service internal constructor(
                 throw error
             }
         }
+        if (describeSources) refreshDescriptors(described)
         if (pushed > 0) pullAll()
         applyUnapplied(force)
+    }
+
+    /**
+     * Titles synced before this device knew their source (an older app, or the package was
+     * installed later) get the source's name, language and repository now, so the web front end can
+     * show where a title comes from. Works are sent without records; the server keeps the descriptor
+     * (records.md §3). Runs again whenever the installed sources change, tracked by [fingerprint].
+     */
+    private suspend fun refreshDescriptors(fingerprint: String) {
+        // From the stored records rather than the library: a title that is only in the reading
+        // history has records too, and no library entry.
+        val works = LinkedHashMap<String, WireWork>()
+        for (json in store.liveWorkJson()) {
+            val stored = runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), json) }.getOrNull() ?: continue
+            val described = identity.withSource(stored)
+            if (described.sourceName != null) works[described.hash] = described
+        }
+        val url = baseUrl
+        try {
+            works.values.chunked(DESCRIPTOR_CHUNK).forEach { chunk ->
+                authed { api.push(url, it, WirePushRequest(Uuid.random().toString(), cursor, chunk, emptyList())) }
+            }
+        } catch (_: SyncApiException) {
+            return // retried on the next cycle
+        }
+        store.setMeta(META_DESCRIPTORS, fingerprint)
+    }
+
+    /** Identifies what the installed sources say about themselves; null when nothing is installed. */
+    private fun sourcesFingerprint(sources: Map<Pair<String, String>, SyncSourceInfo>): String? {
+        if (sources.isEmpty()) return null
+        var hash = -0x340d631b7bdddcdbL // FNV-1a 64
+        sources.entries
+            .map { (key, info) ->
+                listOf(key.first, key.second, info.name, info.language, info.repositoryUrl).joinToString("\u0000") { it.orEmpty() }
+            }
+            .sorted()
+            .forEach { line ->
+                for (char in line) hash = (hash xor char.code.toLong()) * 0x100000001b3L
+                hash = (hash xor 0x1eL) * 0x100000001b3L
+            }
+        return "v$DESCRIPTORS_VERSION:" + hash.toULong().toString(16)
     }
 
     // ---- promote ----------------------------------------------------------------------------
@@ -1296,6 +1350,9 @@ public class SyncV3Service internal constructor(
         const val META_ACCESS_EXPIRES = "access_expires_at"
         const val META_INITIAL_DONE = "initial_done"
         const val META_RESYNC = "resync"
+        const val META_DESCRIPTORS = "descriptors"
+        const val DESCRIPTORS_VERSION = "3"
+        const val DESCRIPTOR_CHUNK = 200
         const val META_SHARING = "sharing_enabled"
         const val META_REVIEWS = "reviews_enabled"
 
@@ -1339,6 +1396,7 @@ public class SyncV3Service internal constructor(
             resolveLegacySource: suspend (Long) -> SourceKey?,
             resolveCreatableSource: suspend (String, String) -> SourceKey?,
             pushDebounceMillis: Long = PUSH_DEBOUNCE_MILLIS,
+            sourceInfo: suspend () -> Map<Pair<String, String>, SyncSourceInfo> = { emptyMap() },
         ): SyncV3Service {
             val legacy = LegacySourceKeyCache()
             return SyncV3Service(
@@ -1353,6 +1411,7 @@ public class SyncV3Service internal constructor(
                 resolveLegacySource = resolveLegacySource,
                 resolveCreatableSource = resolveCreatableSource,
                 pushDebounceMillis = pushDebounceMillis,
+                sourceInfo = sourceInfo,
             )
         }
     }

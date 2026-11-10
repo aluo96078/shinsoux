@@ -18,6 +18,7 @@ import dev.shinsou.kmp.domain.model.TrackerIds
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
+import dev.shinsou.kmp.sync.v3.SyncSourceInfo
 import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.files.AppFileSystem
@@ -400,6 +401,25 @@ public class ShinsouComposition(
             resolveLegacySource = { id -> pluginManager.exactSourceKeyForLegacyId(id) },
             resolveCreatableSource = { packageId, sourceId ->
                 pluginManager.extensionSourceV2(SourceKey(packageId = packageId, sourceId = sourceId))?.descriptor?.sourceKey
+            },
+            sourceInfo = {
+                // Native packages have no stored manifest; what they have loaded describes them.
+                val loaded = pluginManager.loadedExtensionDescriptorsV2().flatMap { extension ->
+                    extension.sources.map { source ->
+                        (source.sourceKey.packageId to source.sourceKey.sourceId) to
+                            SyncSourceInfo(name = source.displayName, language = source.languageTag, repositoryUrl = null)
+                    }
+                }
+                val stored = pluginManager.installedPlugins().flatMap { stored ->
+                    stored.manifest.sources.orEmpty().map { source ->
+                        (stored.manifest.id to (source.canonicalSourceId ?: source.id.toString())) to SyncSourceInfo(
+                            name = source.name,
+                            language = source.lang,
+                            repositoryUrl = stored.metadata.repositoryBaseUrl,
+                        )
+                    }
+                }
+                (loaded + stored).toMap()
             },
         )
     }

@@ -146,6 +146,14 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 
     // ---- records ----------------------------------------------------------------------------
 
+    /** The stored descriptor of every work this account has live records for (library, history, progress, units). */
+    fun liveWorkJson(): List<String> = query(
+        "SELECT work_hash, MAX(work_json) FROM sync3_record WHERE work_hash IS NOT NULL AND work_json IS NOT NULL " +
+            "AND (del_value IS NULL OR del_value = 0) GROUP BY work_hash",
+        0,
+        null,
+    ) { it.getString(1)!! }
+
     fun loadRecord(kind: String, key: String): StoredRecord? {
         val head = query(RECORD_SELECT + " WHERE kind = ? AND key = ?", 2, { bindString(0, kind); bindString(1, key) }) {
             it.readRecordHead()

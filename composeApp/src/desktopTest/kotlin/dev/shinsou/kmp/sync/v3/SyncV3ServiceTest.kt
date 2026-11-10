@@ -546,4 +546,48 @@ class SyncV3ServiceTest {
             a.close()
         }
     }
+
+    @Test
+    fun descriptorsCarryTheSourceAndTitlesSyncedWithoutItAreDescribedOnce() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        try {
+            a.addTitle("book-1", "One", listOf("u1"))
+            a.signIn(register = true)
+            assertTrue(a.sync())
+            // Nothing installed describes the source yet: the title is synced without a source name.
+            assertNull(server.accountWork("alice", workHash("book-1"))?.sourceName)
+
+            a.sources = mapOf(
+                (TestSourceKey.packageId to TestSourceKey.sourceId) to
+                    SyncSourceInfo(name = " Test Source ", language = "zh-Hant", repositoryUrl = "https://repo.example/index"),
+            )
+            assertTrue(a.sync())
+            val described = server.accountWork("alice", workHash("book-1"))
+            assertEquals("Test Source", described?.sourceName)
+            assertEquals("zh-Hant", described?.language)
+            assertEquals("https://repo.example/index", described?.repositoryUrl)
+
+            // The refresh runs once per set of installed sources; a later title is described by its own push.
+            val pushes = server.pushCount
+            assertTrue(a.sync())
+            assertEquals(pushes, server.pushCount)
+            a.addTitle("book-2", "Two", listOf("u1"))
+            assertTrue(a.sync())
+            assertEquals("Test Source", server.accountWork("alice", workHash("book-2"))?.sourceName)
+
+            // An unrelated package does not describe these titles, and does not end the matter:
+            // when the source's own package changes, the titles are described again.
+            a.sources = mapOf(("other.package" to "other") to SyncSourceInfo("Other", "en", null))
+            assertTrue(a.sync())
+            a.sources = mapOf(
+                (TestSourceKey.packageId to TestSourceKey.sourceId) to SyncSourceInfo("Renamed Source", "zh-Hant", null),
+            )
+            assertTrue(a.sync())
+            assertEquals("Renamed Source", server.accountWork("alice", workHash("book-1"))?.sourceName)
+            assertEquals("Renamed Source", server.accountWork("alice", workHash("book-2"))?.sourceName)
+        } finally {
+            a.close()
+        }
+    }
 }
