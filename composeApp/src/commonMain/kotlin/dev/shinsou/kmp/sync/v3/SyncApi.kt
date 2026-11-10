@@ -123,6 +123,54 @@ internal class SyncApi(http: HttpClient) {
         call<Unit, Unit>(baseUrl, HttpMethod.Delete, "/api/v1/shares/${id.encodeURLPathPart()}", token, null, null, null)
     }
 
+    // ---- reviews ----------------------------------------------------------------------------
+
+    suspend fun workPage(baseUrl: String, token: String, hash: String): WireWorkPage = call<Unit, WireWorkPage>(
+        baseUrl, HttpMethod.Get, "/api/v1/works/${hash.encodeURLPathPart()}", token, null, null, WireWorkPage.serializer(),
+    )!!
+
+    /** [sort] is `newest` or `helpful`. */
+    suspend fun listReviews(baseUrl: String, token: String, hash: String, sort: String, offset: Int, limit: Int): WireReviewPage =
+        call<Unit, WireReviewPage>(
+            baseUrl, HttpMethod.Get, "/api/v1/works/${hash.encodeURLPathPart()}/reviews?sort=${sort.encodeURLParameter()}&offset=$offset&limit=$limit",
+            token, null, null, WireReviewPage.serializer(),
+        )!!
+
+    suspend fun putReview(baseUrl: String, token: String, hash: String, input: WireReviewInput): WireReview = call(
+        baseUrl, HttpMethod.Put, "/api/v1/works/${hash.encodeURLPathPart()}/review", token, input,
+        WireReviewInput.serializer(), WireReview.serializer(),
+    )!!
+
+    suspend fun deleteReview(baseUrl: String, token: String, hash: String) {
+        call<Unit, Unit>(baseUrl, HttpMethod.Delete, "/api/v1/works/${hash.encodeURLPathPart()}/review", token, null, null, null)
+    }
+
+    suspend fun setHelpful(baseUrl: String, token: String, reviewId: String, on: Boolean): WireVote = call<Unit, WireVote>(
+        baseUrl, if (on) HttpMethod.Put else HttpMethod.Delete, "/api/v1/reviews/${reviewId.encodeURLPathPart()}/helpful", token,
+        null, null, WireVote.serializer(),
+    )!!
+
+    suspend fun listReplies(baseUrl: String, token: String, reviewId: String, offset: Int, limit: Int): WireReplyPage =
+        call<Unit, WireReplyPage>(
+            baseUrl, HttpMethod.Get, "/api/v1/reviews/${reviewId.encodeURLPathPart()}/replies?offset=$offset&limit=$limit",
+            token, null, null, WireReplyPage.serializer(),
+        )!!
+
+    suspend fun createReply(baseUrl: String, token: String, reviewId: String, body: String): WireReply = call(
+        baseUrl, HttpMethod.Post, "/api/v1/reviews/${reviewId.encodeURLPathPart()}/replies", token, WireReplyInput(body),
+        WireReplyInput.serializer(), WireReply.serializer(),
+    )!!
+
+    suspend fun deleteReply(baseUrl: String, token: String, replyId: String) {
+        call<Unit, Unit>(baseUrl, HttpMethod.Delete, "/api/v1/replies/${replyId.encodeURLPathPart()}", token, null, null, null)
+    }
+
+    /** [target] is `reviews` or `replies`. */
+    suspend fun report(baseUrl: String, token: String, target: String, id: String, input: WireReportInput): WireReport = call(
+        baseUrl, HttpMethod.Post, "/api/v1/$target/${id.encodeURLPathPart()}/report", token, input,
+        WireReportInput.serializer(), WireReport.serializer(),
+    )!!
+
     /**
      * Holds a WebSocket open and reports every `{"seq": N}` message. Returns when the server (or
      * network) closes the connection; cancellation closes it from our side.

@@ -78,6 +78,8 @@ public data class SyncUiState(
     val lastError: String? = null,
     /** The server lets accounts share works with each other (last known answer). */
     val sharingEnabled: Boolean = false,
+    /** The server offers work reviews (last known answer). */
+    val reviewsEnabled: Boolean = false,
 )
 
 /** The three lists of people an account keeps. */
@@ -302,7 +304,10 @@ public class SyncV3Service internal constructor(
         // Signing out or switching servers while the request was in flight makes the answer stale.
         val stored = cycleMutex.withLock {
             val current = store.meta(META_SIGNED_IN) == "1" && store.meta(META_SERVER_URL) == url
-            if (current) store.setMeta(META_SHARING, if (features.sharing) "1" else "0")
+            if (current) {
+                store.setMeta(META_SHARING, if (features.sharing) "1" else "0")
+                store.setMeta(META_REVIEWS, if (features.reviews) "1" else "0")
+            }
             current
         }
         if (stored) publishState()
@@ -395,6 +400,84 @@ public class SyncV3Service internal constructor(
     public suspend fun setReceiveSharesFrom(value: String): Result<String> = runCatching {
         val url = baseUrl
         authed { api.setSharingPreferences(url, it, value) }.receiveFrom
+    }
+
+    // ---- reviews ----------------------------------------------------------------------------
+
+    /**
+     * The work hash to read reviews of [manga] by, or null for titles without a portable identity
+     * (local-only imports, uninstalled legacy sources). Unlike [shareableWork] this does not need
+     * the title to be in the library: anyone may read reviews, only writing needs the library.
+     */
+    public fun reviewableWork(manga: Manga): String? =
+        (runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced)?.recordKey
+
+    /** The work page: average rating, review count and the caller's own review. 404 when the server does not know the work. */
+    public suspend fun workPage(workHash: String): Result<WireWorkPage> = runCatching {
+        val url = baseUrl
+        authed { api.workPage(url, it, workHash) }
+    }
+
+    /** [sort] is `newest` or `helpful`. */
+    public suspend fun listReviews(
+        workHash: String,
+        sort: String,
+        offset: Int,
+        limit: Int = REVIEW_PAGE_SIZE,
+    ): Result<WireReviewPage> = runCatching {
+        val url = baseUrl
+        authed { api.listReviews(url, it, workHash, sort, offset, limit) }
+    }
+
+    /**
+     * Writes or edits the caller's review. Pending library changes are uploaded first, so the
+     * server knows the work and the title is in the account's library (422 unknown_work otherwise).
+     */
+    public suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = runCatching {
+        val url = baseUrl
+        val pending = cycleMutex.withLock { store.dirtyRefCount() + store.dirtyRecordCount() }
+        if (pending > 0) syncNow()
+        val input = WireReviewInput(rating, body.trim().take(MAX_REVIEW_BODY), spoiler)
+        authed { api.putReview(url, it, workHash, input) }
+    }
+
+    public suspend fun deleteReview(workHash: String): Result<Unit> = runCatching {
+        val url = baseUrl
+        authed { api.deleteReview(url, it, workHash) }
+    }
+
+    /** Idempotent: sets or clears the caller's "helpful" vote and returns the current count. */
+    public suspend fun setHelpful(reviewId: String, helpful: Boolean): Result<WireVote> = runCatching {
+        val url = baseUrl
+        authed { api.setHelpful(url, it, reviewId, helpful) }
+    }
+
+    public suspend fun listReplies(reviewId: String, offset: Int, limit: Int = REVIEW_PAGE_SIZE): Result<WireReplyPage> = runCatching {
+        val url = baseUrl
+        authed { api.listReplies(url, it, reviewId, offset, limit) }
+    }
+
+    public suspend fun writeReply(reviewId: String, body: String): Result<WireReply> = runCatching {
+        val url = baseUrl
+        authed { api.createReply(url, it, reviewId, body.trim().take(MAX_REPLY_BODY)) }
+    }
+
+    public suspend fun deleteReply(replyId: String): Result<Unit> = runCatching {
+        val url = baseUrl
+        authed { api.deleteReply(url, it, replyId) }
+    }
+
+    /** [reason] is `spam`, `harassment`, `spoiler`, `illegal` or `other`. */
+    public suspend fun reportReview(reviewId: String, reason: String, note: String): Result<WireReport> = runCatching {
+        val url = baseUrl
+        val text = note.trim().take(MAX_REPORT_NOTE).ifEmpty { null }
+        authed { api.report(url, it, "reviews", reviewId, WireReportInput(reason, text)) }
+    }
+
+    public suspend fun reportReply(replyId: String, reason: String, note: String): Result<WireReport> = runCatching {
+        val url = baseUrl
+        val text = note.trim().take(MAX_REPORT_NOTE).ifEmpty { null }
+        authed { api.report(url, it, "replies", replyId, WireReportInput(reason, text)) }
     }
 
     // ---- tokens -----------------------------------------------------------------------------
@@ -1179,6 +1262,7 @@ public class SyncV3Service internal constructor(
                 rejectedCount = if (signedIn) store.rejectedCount() else 0,
                 lastError = store.meta(META_ERROR),
                 sharingEnabled = signedIn && store.meta(META_SHARING) == "1",
+                reviewsEnabled = signedIn && store.meta(META_REVIEWS) == "1",
             )
         }
     }
@@ -1206,6 +1290,7 @@ public class SyncV3Service internal constructor(
         const val META_INITIAL_DONE = "initial_done"
         const val META_RESYNC = "resync"
         const val META_SHARING = "sharing_enabled"
+        const val META_REVIEWS = "reviews_enabled"
 
         const val KEY_ACCESS_TOKEN = "sync.v3.access_token"
         const val KEY_REFRESH_TOKEN = "sync.v3.refresh_token"
@@ -1223,6 +1308,10 @@ public class SyncV3Service internal constructor(
         const val TOKEN_REFRESH_MARGIN_MILLIS = 60_000L
         const val SOCIAL_PAGE_SIZE = 20
         const val MAX_SHARE_MESSAGE = 500
+        const val REVIEW_PAGE_SIZE = 20
+        const val MAX_REVIEW_BODY = 5000
+        const val MAX_REPLY_BODY = 2000
+        const val MAX_REPORT_NOTE = 500
         const val BACKGROUND_FLUSH_TIMEOUT_MILLIS = 15_000L
         const val BACKGROUND_SYNC_TIMEOUT_MILLIS = 8 * 60_000L
         const val STREAM_BACKOFF_MIN_MILLIS = 1_000L

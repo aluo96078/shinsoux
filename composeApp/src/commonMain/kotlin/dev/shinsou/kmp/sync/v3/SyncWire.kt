@@ -231,6 +231,88 @@ public data class WireSharePage(
 @Serializable
 internal data class WireShareSummary(val pending: Int = 0)
 
+// ---- reviews (P5) -------------------------------------------------------------------------------
+
+@Serializable
+public data class WireReview(
+    val id: String,
+    val author: WireShareParty,
+    val rating: Int? = null,
+    val body: String = "",
+    val spoiler: Boolean = false,
+    /** `visible` or `hidden`; hidden reviews are only returned to their author. */
+    val status: String = "visible",
+    val hiddenReason: String? = null,
+    val helpful: Int = 0,
+    val votedHelpful: Boolean = false,
+    val replyCount: Int = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val edited: Boolean = false,
+    val mine: Boolean = false,
+)
+
+@Serializable
+public data class WireReviewPage(
+    val reviews: List<WireReview> = emptyList(),
+    val total: Int = 0,
+    val offset: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+public data class WireRating(val average: Double? = null, val count: Int = 0)
+
+@Serializable
+public data class WireWorkPage(
+    val work: WireWork,
+    val rating: WireRating = WireRating(),
+    val reviewCount: Int = 0,
+    val myReview: WireReview? = null,
+    val inLibrary: Boolean = false,
+)
+
+@Serializable
+public data class WireReply(
+    val id: String,
+    val reviewId: String,
+    val author: WireShareParty,
+    val body: String = "",
+    val status: String = "visible",
+    val hiddenReason: String? = null,
+    val createdAt: Long = 0,
+    val mine: Boolean = false,
+)
+
+@Serializable
+public data class WireReplyPage(
+    val replies: List<WireReply> = emptyList(),
+    val total: Int = 0,
+    val offset: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+public data class WireVote(val helpful: Int = 0, val votedHelpful: Boolean = false)
+
+@Serializable
+public data class WireReport(
+    val id: String,
+    val reason: String = "",
+    val note: String = "",
+    val status: String = "open",
+    val createdAt: Long = 0,
+)
+
+@Serializable
+internal data class WireReviewInput(val rating: Int? = null, val body: String = "", val spoiler: Boolean = false)
+
+@Serializable
+internal data class WireReplyInput(val body: String)
+
+@Serializable
+internal data class WireReportInput(val reason: String, val note: String? = null)
+
 /** An API failure with the server's stable error [code] (empty for transport failures). */
 public class SyncApiException(
     public val status: Int,

@@ -101,6 +101,7 @@ fun MangaDetailScreen(
     onRefresh: () -> Unit,
     onShare: () -> Unit,
     onShareWithUser: (() -> Unit)? = null,
+    reviewsEntry: (@Composable () -> Unit)? = null,
     onOpenWeb: () -> Unit,
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -229,6 +230,7 @@ fun MangaDetailScreen(
                 onRefresh = onRefresh,
                 onShare = onShare,
                 onShareWithUser = onShareWithUser,
+                reviewsEntry = reviewsEntry,
                 onOpenWeb = onOpenWeb,
                 onOpenTracking = onOpenTracking,
                 onUpdateNotes = onUpdateNotes,
@@ -259,6 +261,7 @@ fun MangaDetailScreen(
                     onRefresh = onRefresh,
                     onShare = onShare,
                     onShareWithUser = onShareWithUser,
+                    reviewsEntry = reviewsEntry,
                     onOpenWeb = onOpenWeb,
                     onOpenTracking = onOpenTracking,
                     onUpdateNotes = onUpdateNotes,
@@ -290,6 +293,7 @@ private fun MangaInfoPane(
     onRefresh: () -> Unit,
     onShare: () -> Unit,
     onShareWithUser: (() -> Unit)? = null,
+    reviewsEntry: (@Composable () -> Unit)? = null,
     onOpenWeb: () -> Unit,
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -414,6 +418,10 @@ private fun MangaInfoPane(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         )
+        if (reviewsEntry != null) {
+            Spacer(Modifier.height(14.dp))
+            reviewsEntry()
+        }
         Spacer(Modifier.height(14.dp))
         Surface(
             shape = RoundedCornerShape(12.dp),

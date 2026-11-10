@@ -150,6 +150,7 @@ import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
 import dev.shinsou.kmp.ui.screens.BackupScreen
 import dev.shinsou.kmp.ui.screens.BrowseScreen
 import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
+import dev.shinsou.kmp.ui.screens.ReviewsEntry
 import dev.shinsou.kmp.ui.screens.ShareWithUserDialog
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
 import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
@@ -2641,6 +2642,11 @@ private fun DetailPane(
     val shareWorkHash = remember(manga, syncState?.signedIn, syncState?.sharingEnabled) {
         if (sync != null && syncState?.signedIn == true && syncState.sharingEnabled) sync.shareableWork(manga) else null
     }
+    // Reviews need a server that offers them and a title with a portable identity. The row itself
+    // loads lazily and hides when the server does not know the work (unless it is in the library).
+    val reviewsWorkHash = remember(manga, syncState?.signedIn, syncState?.reviewsEnabled) {
+        if (sync != null && syncState?.signedIn == true && syncState.reviewsEnabled) sync.reviewableWork(manga) else null
+    }
     MangaDetailScreen(
         manga = manga,
         chapters = chapters,
@@ -2676,6 +2682,9 @@ private fun DetailPane(
         onRefresh = ::refreshFromSource,
         onShare = { withOriginalUrl { appServices.shareText(manga.title, it) } },
         onShareWithUser = if (shareWorkHash != null) ({ shareWithUserVisible = true }) else null,
+        reviewsEntry = if (sync != null && reviewsWorkHash != null) ({
+            ReviewsEntry(sync, reviewsWorkHash, manga.title, manga.favorite)
+        }) else null,
         onOpenWeb = { withOriginalUrl(appServices::openExternalUrl) },
         onOpenTracking = {
             if (appServices.tracking != null) {
