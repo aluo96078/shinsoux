@@ -49,6 +49,15 @@ class SyncV3IdentityTest {
     }
 
     @Test
+    fun aSourceTitleHasTheSameWorkBeforeAndAfterItIsInTheLibrary() {
+        val inLibrary = assertIs<SyncedWork.Sourced>(identity.workOf(fixtures.manga("remote-1", "T")))
+        assertEquals(inLibrary, identity.sourceWorkOf(TestSourceKey, "remote-1"))
+        assertEquals(inLibrary.recordKey, identity.sourceWorkOf(TestSourceKey.copy(contractVersion = 3), "remote-1")?.recordKey)
+        // An id the work key cannot carry gives no work instead of throwing.
+        assertNull(identity.sourceWorkOf(TestSourceKey, ""))
+    }
+
+    @Test
     fun legacyV1TitlesNeedTheirSourceToBeResolved() {
         val resolved = Manga(id = 1, source = 77, url = "/b/1", title = "L", favorite = true)
         val unresolved = Manga(id = 2, source = 88, url = "/b/2", title = "U", favorite = true)

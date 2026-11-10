@@ -412,6 +412,13 @@ public class SyncV3Service internal constructor(
     public fun reviewableWork(manga: Manga): String? =
         (runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced)?.recordKey
 
+    /**
+     * The work hash of a source title by its source and remote id, for detail pages that show a
+     * source's title directly. It is the hash [reviewableWork] gives once the title is in the library.
+     */
+    public fun sourceWorkHash(sourceKey: SourceKey, remotePublicationId: String): String? =
+        identity.sourceWorkOf(sourceKey, remotePublicationId)?.recordKey
+
     /** The work page: average rating, review count and the caller's own review. 404 when the server does not know the work. */
     public suspend fun workPage(workHash: String): Result<WireWorkPage> = runCatching {
         val url = baseUrl

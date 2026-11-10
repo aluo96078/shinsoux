@@ -73,6 +73,10 @@ internal class SyncIdentityResolver(
         return sourced(sourceKey.packageId, sourceKey.sourceId, manga.url)
     }
 
+    /** The identity of a source's title that is not (or not yet) a library entry; equals [workOf] once it is. */
+    fun sourceWorkOf(sourceKey: SourceKey, remotePublicationId: String): SyncedWork.Sourced? =
+        sourced(sourceKey.packageId, sourceKey.sourceId, remotePublicationId)
+
     private fun typedLocalChapterUnitKeyOfAnyChapterUrl(url: String): PublicationKey? =
         typedLocalChapterUnitKey(url)?.publicationKey
 

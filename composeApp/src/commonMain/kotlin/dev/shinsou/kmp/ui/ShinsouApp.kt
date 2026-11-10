@@ -1765,6 +1765,7 @@ private fun ShinsouAppContent(
                                             }
                                         is PhoneDestination.LocalExtension -> ExtensionV2PublicationPane(
                                             callbacks = appServices.browse,
+                                            sync = appServices.sync,
                                             item = destination.item,
                                             supportsFavorite = true,
                                             favoriteDestination = ExtensionFavoriteDestination.LOCAL_LIBRARY,
@@ -2016,6 +2017,7 @@ private fun ShinsouAppContent(
                         val publication = localLibraryPublication!!
                         ExtensionV2PublicationPane(
                             callbacks = appServices.browse,
+                            sync = appServices.sync,
                             item = publication,
                             supportsFavorite = true,
                             favoriteDestination = ExtensionFavoriteDestination.LOCAL_LIBRARY,
@@ -2407,6 +2409,7 @@ private fun SectionPane(
             )
             MainSection.BROWSE -> BrowseScreen(
                 callbacks = appServices.browse,
+                sync = appServices.sync,
                 showNsfw = snapshot.settings.browse.showNsfwSources,
                 enabledLanguages = snapshot.settings.browse.enabledLanguages,
                 pinnedSourceIds = snapshot.settings.browse.pinnedSourceIds,

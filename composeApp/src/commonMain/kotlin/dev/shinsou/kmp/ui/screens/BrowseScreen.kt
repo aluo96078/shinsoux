@@ -56,6 +56,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -94,6 +95,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.domain.model.DownloadState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -318,6 +320,7 @@ internal data class BrowseOverlayState(
 @Composable
 fun BrowseScreen(
     callbacks: BrowseCallbacks,
+    sync: SyncV3Service? = null,
     initialSection: BrowseSection = BrowseSection.Sources,
     showNsfw: Boolean,
     enabledLanguages: Set<String>,
@@ -1030,6 +1033,7 @@ fun BrowseScreen(
                 ) {
                     ExtensionV2PublicationPane(
                         callbacks = callbacks,
+                        sync = sync,
                         item = publication,
                         supportsFavorite = supportsFavorite,
                         favoriteDestination = favoriteDestination,
@@ -1935,6 +1939,7 @@ private fun ExtensionNovelReaderShell(
 @Composable
 internal fun ExtensionV2PublicationPane(
     callbacks: BrowseCallbacks,
+    sync: SyncV3Service? = null,
     item: BrowseManga,
     supportsFavorite: Boolean,
     favoriteDestination: ExtensionFavoriteDestination,
@@ -2002,6 +2007,14 @@ internal fun ExtensionV2PublicationPane(
         mutableStateOf(localLibrary && localLibraryFavorite)
     }
     var notes by remember(item.identityKey) { mutableStateOf("") }
+    // Reviews and sharing need a signed-in account on a server that offers them. The work hash is
+    // the same one the library record syncs under, so both work before and after adding the title.
+    val syncState = sync?.state?.collectAsState()?.value
+    val workHash = remember(sync, sourceKey, remotePublicationId) { sync?.sourceWorkHash(sourceKey, remotePublicationId) }
+    val inLibrary = favorite && (localLibrary || favoriteDestination == ExtensionFavoriteDestination.LOCAL_LIBRARY)
+    val reviewsWorkHash = workHash?.takeIf { syncState?.signedIn == true && syncState.reviewsEnabled }
+    val shareWorkHash = workHash?.takeIf { syncState?.signedIn == true && syncState.sharingEnabled && inLibrary }
+    var shareWithUserVisible by remember(item.identityKey) { mutableStateOf(false) }
     var selectedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     var readUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
     // Read/unread marks the user set by hand on this screen. Reading state loads in the
@@ -2598,6 +2611,10 @@ internal fun ExtensionV2PublicationPane(
                         onShare = {
                             onShareText(displayPublication.title, targetUrl ?: displayPublication.title)
                         },
+                        onShareWithUser = if (shareWorkHash != null) ({ shareWithUserVisible = true }) else null,
+                        reviewsEntry = if (sync != null && reviewsWorkHash != null) ({
+                            ReviewsEntry(sync, reviewsWorkHash, displayPublication.title, inLibrary)
+                        }) else null,
                         onOpenWeb = {
                             targetUrl?.let(onOpenExternalUrl)
                                 ?: run { operationMessage = strings.text("This title has no original URL.") }
@@ -2681,6 +2698,10 @@ internal fun ExtensionV2PublicationPane(
                             onShare = {
                                 onShareText(displayPublication.title, targetUrl ?: displayPublication.title)
                             },
+                            onShareWithUser = if (shareWorkHash != null) ({ shareWithUserVisible = true }) else null,
+                            reviewsEntry = if (sync != null && reviewsWorkHash != null) ({
+                                ReviewsEntry(sync, reviewsWorkHash, displayPublication.title, inLibrary)
+                            }) else null,
                             onOpenWeb = {
                                 targetUrl?.let(onOpenExternalUrl)
                                     ?: run { operationMessage = strings.text("This title has no original URL.") }
@@ -2769,6 +2790,15 @@ internal fun ExtensionV2PublicationPane(
             },
         )
     }
+
+    if (shareWithUserVisible && sync != null && shareWorkHash != null) {
+        ShareWithUserDialog(
+            sync = sync,
+            workHash = shareWorkHash,
+            title = displayPublication.title,
+            onDismiss = { shareWithUserVisible = false },
+        )
+    }
 }
 
 /** Native publication metadata pane deliberately mirrors MangaInfoPane's layout and actions. */
@@ -2792,6 +2822,8 @@ private fun ExtensionV2PublicationInfoPane(
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
     onShare: () -> Unit,
+    onShareWithUser: (() -> Unit)? = null,
+    reviewsEntry: (@Composable () -> Unit)? = null,
     onOpenWeb: () -> Unit,
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -2826,6 +2858,9 @@ private fun ExtensionV2PublicationInfoPane(
                 Icon(Icons.Outlined.OpenInBrowser, strings.text("Open original page"))
             }
             IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, strings.share) }
+            if (onShareWithUser != null) {
+                IconButton(onClick = onShareWithUser) { Icon(Icons.Outlined.Send, strings.text("Share with a user")) }
+            }
         }
         CoverImage(
             title = publication.title,
@@ -2943,6 +2978,10 @@ private fun ExtensionV2PublicationInfoPane(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         )
+        if (reviewsEntry != null) {
+            Spacer(Modifier.height(14.dp))
+            reviewsEntry()
+        }
         Spacer(Modifier.height(14.dp))
         Surface(
             shape = RoundedCornerShape(12.dp),
