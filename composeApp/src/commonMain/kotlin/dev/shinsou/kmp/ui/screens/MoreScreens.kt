@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -86,6 +87,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
@@ -103,6 +105,7 @@ enum class MoreDestination {
     Downloads,
     Statistics,
     Settings,
+    Sync,
     Backup,
     ContentBackupV2,
     ShuYueMigration,
@@ -113,6 +116,7 @@ enum class MoreDestination {
 fun MoreScreen(
     downloadCount: Int,
     lastBackupLabel: String?,
+    syncLabel: String,
     incognitoMode: Boolean,
     downloadOnlyMode: Boolean,
     onOpen: (MoreDestination) -> Unit,
@@ -126,6 +130,7 @@ fun MoreScreen(
         MoreRow(MoreDestination.Downloads, strings.downloads, strings.text("{0} queued or active", downloadCount), Icons.Outlined.Download),
         MoreRow(MoreDestination.Statistics, strings.statistics, strings.text("Library and reading insights"), Icons.Outlined.BarChart),
         MoreRow(MoreDestination.Settings, strings.settings, strings.text("Appearance, reader, sources and privacy"), Icons.Outlined.Settings),
+        MoreRow(MoreDestination.Sync, strings.text("Sync"), syncLabel, Icons.Outlined.CloudSync),
         MoreRow(MoreDestination.Backup, strings.backup, lastBackupLabel ?: strings.text("No backup yet"), Icons.Outlined.Backup),
         MoreRow(MoreDestination.About, strings.about, strings.text("Version, licenses and project links"), Icons.Outlined.Info),
     )
@@ -1199,6 +1204,34 @@ private fun formatByteCount(bytes: Long): String = when {
 
 private val BACKUP_INTERVAL_OPTIONS = listOf(1, 6, 12, 24, 48, 72, 168)
 private const val MAX_RETAINED_BACKUPS = 20
+
+/** The line under "Sync" on the More screen: who is signed in, if anyone. */
+@Composable
+internal fun syncSummary(sync: SyncV3Service?): String {
+    val strings = LocalShinsouStrings.current
+    if (sync == null) return strings.text("Sync is unavailable in this build.")
+    val state by sync.state.collectAsState()
+    val username = state.username
+    return if (state.signedIn && username != null) strings.text("Signed in as {0}", username) else strings.text("Not signed in")
+}
+
+/** More → Sync: the sync account, its status and its devices. */
+@Composable
+internal fun SyncScreen(
+    sync: SyncV3Service?,
+    copyText: (label: String, text: String) -> Boolean,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = strings.text("Sync"),
+            leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
+        )
+        SyncSettingsPane(sync, copyText)
+    }
+}
 
 @Composable
 fun AboutScreen(

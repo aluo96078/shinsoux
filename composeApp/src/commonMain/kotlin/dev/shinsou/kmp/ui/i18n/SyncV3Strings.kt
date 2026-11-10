@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.i18n
 
-/** Strings of Settings → Sync (sync v3). Simplified Chinese is written out, not converted. */
+/** Strings of More → Sync (sync v3). Simplified Chinese is written out, not converted. */
 internal val SyncV3TraditionalTranslations: Map<String, String> = mapOf(
     "Sync" to "同步",
     "Sync is unavailable in this build." to "此版本無法使用同步。",

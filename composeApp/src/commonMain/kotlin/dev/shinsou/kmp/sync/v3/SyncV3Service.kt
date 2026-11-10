@@ -155,7 +155,7 @@ public class SyncV3Service internal constructor(
     private suspend fun activateSession() {
         val deviceId = store.meta(META_SYNC_DEVICE_ID) ?: return
         clockLock.withLock { clock = buildClock(deviceId) }
-        if (store.meta(META_INITIAL_DONE) != "1") markEverythingDirty()
+        ensureSeeded()
         installObserver()
         if (store.meta(META_SIGNED_IN) != "1") return
         startDebounce()
@@ -716,6 +716,25 @@ public class SyncV3Service internal constructor(
         entries.chunked(MARK_CHUNK).forEach { store.mark(it) }
         persistClock()
         store.setMeta(META_INITIAL_DONE, "1")
+        store.setMeta(META_SEEDED_KINDS, SEEDED_KINDS_VERSION)
+    }
+
+    /**
+     * Everything is marked once per session. A session that began before a kind was synced
+     * (repositories and settings came later) gets that kind marked once here, without touching
+     * edits still waiting to be sent.
+     */
+    private suspend fun ensureSeeded() {
+        if (store.meta(META_INITIAL_DONE) != "1") return markEverythingDirty()
+        if (store.meta(META_SEEDED_KINDS) == SEEDED_KINDS_VERSION) return
+        val pending = HashMap<Pair<String, String>, Set<String>>()
+        val entries = SyncDiff.markAll(repository.currentSnapshot, ::clockAt).filter { e ->
+            (e.kind == SyncKinds.REPOSITORY || e.kind == SyncKinds.SETTING) &&
+                e.field !in pending.getOrPut(e.kind to e.ref) { store.dirtyFor(e.kind, e.ref).mapTo(HashSet()) { it.field } }
+        }
+        entries.chunked(MARK_CHUNK).forEach { store.mark(it) }
+        persistClock()
+        store.setMeta(META_SEEDED_KINDS, SEEDED_KINDS_VERSION)
     }
 
     private inner class DirtyObserver : SnapshotMutationObserver {
@@ -796,7 +815,7 @@ public class SyncV3Service internal constructor(
 
     private suspend fun cycleBody(force: Boolean) {
         legacyKeys.refresh(repository.currentSnapshot.mangas.mapTo(HashSet()) { it.source }, resolveLegacySource)
-        if (store.meta(META_INITIAL_DONE) != "1") markEverythingDirty()
+        ensureSeeded()
         // Read every cycle: installing a package later is what makes its titles describable.
         identity.sources = try {
             sourceInfo()
@@ -1384,6 +1403,8 @@ public class SyncV3Service internal constructor(
         const val META_HLC = "hlc"
         const val META_ACCESS_EXPIRES = "access_expires_at"
         const val META_INITIAL_DONE = "initial_done"
+        const val META_SEEDED_KINDS = "seeded_kinds"
+        const val SEEDED_KINDS_VERSION = "2"
         const val META_RESYNC = "resync"
         const val META_DESCRIPTORS = "descriptors"
         const val DESCRIPTORS_VERSION = "3"

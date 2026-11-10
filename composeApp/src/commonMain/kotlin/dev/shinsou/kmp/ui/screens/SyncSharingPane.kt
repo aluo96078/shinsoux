@@ -50,7 +50,7 @@ private const val SHARE_MESSAGE_MAX = 500
 private const val USERNAME_QUERY_MAX = 33
 private const val SEARCH_DEBOUNCE_MILLIS = 350L
 
-/** Settings → Sync → Sharing: received and sent shares, and the people this account follows or blocks. */
+/** More → Sync → Sharing: received and sent shares, and the people this account follows or blocks. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SharingSection(sync: SyncV3Service, copyText: (label: String, text: String) -> Boolean) {

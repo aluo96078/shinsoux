@@ -49,7 +49,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
-/** Settings → Sync: choose a server, sign in or register, then see status and manage devices. */
+/** More → Sync: choose a server, sign in or register, then see status and manage devices. */
 @Composable
 internal fun SyncSettingsPane(
     sync: SyncV3Service?,

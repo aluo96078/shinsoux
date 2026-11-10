@@ -292,4 +292,45 @@ class SyncV3RepositorySettingTest {
             a.close()
         }
     }
+
+    @Test
+    fun aSessionFromBeforeTheseKindsSyncedSendsWhatItAlreadyHas() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(
+            server,
+            "A",
+            initial = AppSnapshot(
+                extensionRepositories = listOf(repo),
+                settings = AppSettings().let { it.copy(appearance = it.appearance.copy(amoledDark = true)) },
+            ),
+        )
+        try {
+            a.signIn(register = true)
+            assertTrue(a.sync())
+            // As the older version left it: signed in and marked, but neither kind ever sent.
+            server.purgeRecord("alice", SyncKinds.REPOSITORY, repoUrl)
+            server.purgeRecord("alice", SyncKinds.SETTING, "appearance.amoledDark")
+            a.store.deleteRecord(SyncKinds.REPOSITORY, repoUrl)
+            a.store.deleteRecord(SyncKinds.SETTING, "appearance.amoledDark")
+            a.store.setMeta(SyncV3Service.META_SEEDED_KINDS, null)
+            // An edit made after upgrading and not sent yet keeps its own clock.
+            a.repository.upsertExtensionRepository(repo.copy(name = "Renamed"))
+
+            assertTrue(a.sync())
+            val records = server.accountRecords("alice")
+            val repository = records.getValue(SyncKinds.REPOSITORY to repoUrl)
+            assertEquals(JsonPrimitive(repoUrl), repository.fields.getValue("url").value)
+            assertEquals(JsonPrimitive("Renamed"), repository.fields.getValue("name").value)
+            assertFalse(repository.fields.getValue("name").clock.startsWith("0:"), "the pending edit is not re-stamped")
+            assertEquals(JsonPrimitive(true), records.getValue(SyncKinds.SETTING to "appearance.amoledDark").fields.getValue("value").value)
+            assertEquals(0, a.store.dirtyRefCount())
+
+            // Once only: nothing is marked again on later cycles.
+            server.purgeRecord("alice", SyncKinds.SETTING, "appearance.amoledDark")
+            assertTrue(a.sync())
+            assertNull(server.accountRecords("alice")[SyncKinds.SETTING to "appearance.amoledDark"])
+        } finally {
+            a.close()
+        }
+    }
 }

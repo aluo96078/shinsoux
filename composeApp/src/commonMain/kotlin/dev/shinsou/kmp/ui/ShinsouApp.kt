@@ -160,6 +160,8 @@ import dev.shinsou.kmp.ui.screens.HistoryScreen
 import dev.shinsou.kmp.ui.screens.LibraryScreen
 import dev.shinsou.kmp.ui.screens.MangaDetailScreen
 import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.screens.SyncScreen
+import dev.shinsou.kmp.ui.screens.syncSummary
 import dev.shinsou.kmp.ui.screens.MoreScreen
 import dev.shinsou.kmp.ui.screens.ReaderScreen
 import dev.shinsou.kmp.ui.screens.SettingsScreen
@@ -2467,6 +2469,7 @@ private fun SectionPane(
             MainSection.MORE -> MoreScreen(
                 downloadCount = pendingDownloadCount(snapshot.downloadQueue, appServices),
                 lastBackupLabel = snapshot.backupState.lastFileName,
+                syncLabel = syncSummary(appServices.sync),
                 incognitoMode = snapshot.settings.security.incognitoMode,
                 downloadOnlyMode = snapshot.settings.library.downloadOnly,
                 onOpen = onOpenMore,
@@ -3136,6 +3139,7 @@ private fun MoreDestinationPane(
                 )
             }
         }
+        MoreDestination.Sync -> SyncScreen(appServices.sync, appServices::copyText, onBack)
         MoreDestination.About -> AboutScreen(onBack, appServices::openExternalUrl)
     }
 }

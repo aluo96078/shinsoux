@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -98,7 +97,6 @@ private enum class SettingsSection(val icon: ImageVector) {
     Reader(Icons.Outlined.Brightness4),
     Downloads(Icons.Outlined.Download),
     Tracking(Icons.Outlined.Sync),
-    SyncAccount(Icons.Outlined.CloudSync),
     Browse(Icons.Outlined.Extension),
     Security(Icons.Outlined.Security),
     Advanced(Icons.Outlined.Tune),
@@ -283,7 +281,6 @@ private fun SettingsDetail(
             SettingsSection.Reader -> ReaderSettingsPane(settings, onChange)
             SettingsSection.Downloads -> DownloadSettingsPane(settings, onChange)
             SettingsSection.Tracking -> TrackingSettingsPane(settings, onChange)
-            SettingsSection.SyncAccount -> SyncSettingsPane(appServices.sync, appServices::copyText)
             SettingsSection.Browse -> BrowseSettingsPane(settings, onChange)
             SettingsSection.Security -> SecuritySettingsPane(
                 settings = settings,
@@ -1037,7 +1034,6 @@ private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.Shinsou
     SettingsSection.Reader -> strings.text("Reader")
     SettingsSection.Downloads -> strings.downloads
     SettingsSection.Tracking -> strings.text("Tracking")
-    SettingsSection.SyncAccount -> strings.text("Sync")
     SettingsSection.Browse -> strings.browse
     SettingsSection.Security -> strings.text("Security")
     SettingsSection.Advanced -> strings.text("Advanced")
