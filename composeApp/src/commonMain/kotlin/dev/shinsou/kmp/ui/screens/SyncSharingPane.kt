@@ -451,9 +451,12 @@ private fun PeoplePanel(sync: SyncV3Service, onChanged: () -> Unit) {
                     enabled = !busy,
                     onClick = {
                         busy = true
+                        val requested = relation
                         scope.launch {
-                            sync.listRelation(relation, offset = rows.size).fold(
+                            sync.listRelation(requested, offset = rows.size).fold(
                                 onSuccess = { page ->
+                                    // The tab may have changed while this page was loading.
+                                    if (relation != requested || list !== rows) return@fold
                                     val known = rows.mapTo(HashSet()) { it.id }
                                     list = rows + page.users.filterNot { it.id in known }
                                     listTotal = page.total

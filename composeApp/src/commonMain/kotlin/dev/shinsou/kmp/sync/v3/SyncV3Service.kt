@@ -322,7 +322,12 @@ public class SyncV3Service internal constructor(
     /** Shares [workHash] with another account. Uploads pending changes first so the server knows the work. */
     public suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = runCatching {
         val url = baseUrl
-        if (mutableState.value.pendingCount > 0) syncNow()
+        // Ask the store, not the published state: a title just added to the library is marked
+        // dirty before the state is republished. The store is only read under the cycle lock.
+        val pending = cycleMutex.withLock { store.dirtyRefCount() + store.dirtyRecordCount() }
+        if (pending > 0 && !syncNow()) {
+            throw SyncApiException(0, "unknown_work", "Pending changes could not be uploaded before sharing")
+        }
         val text = message.trim().take(MAX_SHARE_MESSAGE).ifEmpty { null }
         authed { api.createShare(url, it, WireShareRequest(recipientId, workHash, text)) }
     }
