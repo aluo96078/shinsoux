@@ -158,18 +158,38 @@ internal class SyncIdentityResolver(
     }
 
     /** Whether an installed source describes [work]'s source on this device. */
-    fun describes(work: WireWork): Boolean = (work.packageId to work.sourceId) in sources
+    fun describes(work: WireWork): Boolean = sourceOf(work) != null
 
-    /** [work] with what the installed sources say about its source; unchanged when none describes it. */
+    /** Whether [work]'s own source is installed here, rather than only its package being known. */
+    fun hasInstalled(work: WireWork): Boolean = (work.packageId to work.sourceId) in sources
+
+    private fun sourceOf(work: WireWork): SyncSourceInfo? =
+        sources[work.packageId to work.sourceId] ?: sources[work.packageId to SyncSourceInfo.WHOLE_PACKAGE]
+
+    /**
+     * [work] with what this device knows about its source; unchanged when it knows nothing.
+     *
+     * An installed source replaces what the descriptor said. A package known only from a repository
+     * index fills in what is missing and leaves the rest: a device that has the package installed
+     * names the source better than the index names the package.
+     */
     fun withSource(work: WireWork): WireWork {
-        val source = sources[work.packageId to work.sourceId] ?: return work
-        return work.copy(
-            language = source.language?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_LANGUAGE_CHARS },
-            sourceName = source.name?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_SOURCE_NAME_CHARS),
-            repositoryUrl = source.repositoryUrl?.takeIf {
-                (it.startsWith("https://") || it.startsWith("http://")) && it.length <= MAX_URL_CHARS
-            },
-        )
+        val exact = sources[work.packageId to work.sourceId]
+        val source = exact ?: sources[work.packageId to SyncSourceInfo.WHOLE_PACKAGE] ?: return work
+        val language = source.language?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_LANGUAGE_CHARS }
+        val name = source.name?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_SOURCE_NAME_CHARS)
+        val repository = source.repositoryUrl?.takeIf {
+            (it.startsWith("https://") || it.startsWith("http://")) && it.length <= MAX_URL_CHARS
+        }
+        return if (exact != null) {
+            work.copy(language = language, sourceName = name, repositoryUrl = repository)
+        } else {
+            work.copy(
+                language = work.language ?: language,
+                sourceName = work.sourceName ?: name,
+                repositoryUrl = work.repositoryUrl ?: repository,
+            )
+        }
     }
 
     companion object {
@@ -181,14 +201,22 @@ internal class SyncIdentityResolver(
 }
 
 /**
- * Display data of an installed source, sent with the work descriptor so the web front end and
+ * Display data of a source, sent with the work descriptor so the web front end and
  * other accounts can name the source without having the package installed.
  */
 public data class SyncSourceInfo(
     val name: String?,
     val language: String?,
     val repositoryUrl: String?,
-)
+) {
+    public companion object {
+        /**
+         * The source id under which a package is described as a whole, for one known from a
+         * repository index but not installed. No real source id is empty.
+         */
+        public const val WHOLE_PACKAGE: String = ""
+    }
+}
 
 internal fun String.truncated(maxChars: Int): String {
     if (length <= maxChars) return this

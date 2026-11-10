@@ -591,6 +591,14 @@ public class SyncV3Service internal constructor(
 
     public suspend fun syncNow(): Boolean = runCycle(manual = true)
 
+    /**
+     * What this device knows about packages changed (a repository list arrived, a package was
+     * installed): ask for an automatic cycle so titles waiting for a description get one.
+     */
+    public fun sourcesChanged() {
+        dirtySignal.trySend(Unit)
+    }
+
     /** Re-evaluates server records that were waiting for a title, chapter or source (no network). */
     public suspend fun retryPendingRemote() {
         if (store.meta(META_SIGNED_IN) != "1") return
@@ -839,10 +847,13 @@ public class SyncV3Service internal constructor(
         val works = LinkedHashMap<String, WireWork>()
         for (json in store.liveWorkJson()) {
             val stored = runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), json) }.getOrNull() ?: continue
-            // Only what this device has installed: for any other source the stored copy may be
-            // older than what the server has, and sending it would put the old values back.
+            // Only what this device can say something about: for any other source the stored copy
+            // may be older than what the server has, and sending it would put the old values back.
             if (!identity.describes(stored)) continue
             val described = identity.withSource(stored)
+            // A package known only from a repository index adds to the stored copy; with nothing
+            // to add there is nothing to send.
+            if (described == stored && !identity.hasInstalled(stored)) continue
             if (described.sourceName != null) works[described.hash] = described
         }
         val url = baseUrl
@@ -1091,8 +1102,15 @@ public class SyncV3Service internal constructor(
                 remoteClocks += remote.fields.values.map { it.clock }
                 remote.deleted?.let { remoteClocks += it.clock }
                 val needsProjection = previous == null || previous.unapplied || projectionDiffers(previous.state, merged)
-                // Another device synced this title without knowing its source, and this one knows it.
-                if (wr.work?.let { it.sourceName == null && identity.describes(it) } == true) undescribed = true
+                // Another device synced this title without knowing its source or repository, and this one knows.
+                wr.work?.let { work ->
+                    val known = identity.withSource(work)
+                    if ((work.sourceName == null && known.sourceName != null) ||
+                        (work.repositoryUrl == null && known.repositoryUrl != null)
+                    ) {
+                        undescribed = true
+                    }
+                }
                 store.saveRecord(
                     StoredRecord(
                         kind = wr.kind,

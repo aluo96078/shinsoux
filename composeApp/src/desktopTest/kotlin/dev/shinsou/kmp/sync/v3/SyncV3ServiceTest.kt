@@ -649,4 +649,39 @@ class SyncV3ServiceTest {
             b.close()
         }
     }
+
+    @Test
+    fun aPackageKnownOnlyFromARepositoryAddsItsRepositoryWithoutRenamingTheSource() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            // A has the package installed, from a build that names the source but not its repository.
+            a.sources = mapOf((TestSourceKey.packageId to TestSourceKey.sourceId) to SyncSourceInfo("Test Source", null, null))
+            a.addTitle("book-1", "One", listOf("u1"))
+            a.signIn(register = true)
+            assertTrue(a.sync())
+            assertNull(server.accountWork("alice", workHash("book-1"))?.repositoryUrl)
+
+            // B does not have it installed; one of its repositories publishes the package.
+            b.sources = mapOf(
+                (TestSourceKey.packageId to SyncSourceInfo.WHOLE_PACKAGE) to
+                    SyncSourceInfo("Test Package", "zh", "https://repo.example/index"),
+            )
+            b.signIn(register = false)
+            assertTrue(b.sync())
+            val described = server.accountWork("alice", workHash("book-1"))
+            assertEquals("https://repo.example/index", described?.repositoryUrl)
+            assertEquals("zh", described?.language)
+            assertEquals("Test Source", described?.sourceName)
+
+            // Nothing more to add: later syncs send nothing.
+            val pushes = server.pushCount
+            assertTrue(b.sync())
+            assertEquals(pushes, server.pushCount)
+        } finally {
+            a.close()
+            b.close()
+        }
+    }
 }

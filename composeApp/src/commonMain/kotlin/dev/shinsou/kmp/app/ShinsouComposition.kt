@@ -419,7 +419,15 @@ public class ShinsouComposition(
                         )
                     }
                 }
-                (loaded + stored).toMap()
+                // A title synced from another device may belong to a package that is not installed
+                // here. The added repositories still say which of them publishes it; that describes
+                // the package as a whole, not one source of it.
+                val published = pluginManager.knownRepositoryPackages().mapNotNull { known ->
+                    val repository = known.repositoryBaseUrl ?: return@mapNotNull null
+                    (known.id to SyncSourceInfo.WHOLE_PACKAGE) to
+                        SyncSourceInfo(name = known.name, language = known.lang, repositoryUrl = repository)
+                }
+                (published + loaded + stored).toMap()
             },
         )
     }
@@ -752,6 +760,8 @@ public class ShinsouComposition(
             } catch (_: Throwable) {
                 // PluginBrowseAdapter publishes its actionable error in BrowseSnapshot.
             }
+            // The repository lists say which repository publishes a synced title's package.
+            sync?.sourcesChanged()
             browse.openExtensionDownloadsV2()
             try {
                 // Do not turn a readable local reviewed favorite into an unavailable remote row.
@@ -780,6 +790,7 @@ public class ShinsouComposition(
                             } catch (_: Throwable) {
                                 // BrowseSnapshot already exposes the repository refresh failure.
                             }
+                            sync?.sourcesChanged()
                         }
                 }
             }

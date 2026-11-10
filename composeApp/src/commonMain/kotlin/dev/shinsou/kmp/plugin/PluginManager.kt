@@ -606,6 +606,7 @@ public class PluginManager(
                 }
             }
         }
+        repositoryPackages = repositoryPackages + result
         return RepositoryRefreshResult(result.values.sortedWith(
             compareBy<ExtensionDescriptor> { it.state == ExtensionState.AVAILABLE }
                 .thenBy { it.name.lowercase() },
@@ -2139,6 +2140,14 @@ public class PluginManager(
         }
         return native + scripted
     }
+
+    @Volatile private var repositoryPackages: Map<String, ExtensionDescriptor> = emptyMap()
+
+    /**
+     * What the added repositories last said they publish, by install key, installed here or not.
+     * Empty until a repository has been refreshed in this run; starts nothing.
+     */
+    public fun knownRepositoryPackages(): Collection<ExtensionDescriptor> = repositoryPackages.values
 
     /** The V2 packages loaded right now (native ones and adapted script packages); starts nothing. */
     public suspend fun loadedExtensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()
