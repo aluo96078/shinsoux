@@ -55,26 +55,25 @@ keygen → init → 寫腳本 → build → lint → test
 
 需要 Node.js 20 以上。
 
-`@shinsou/plugin` **目前尚未發佈到 npm**，`npm install @shinsou/plugin` 暫時不會成功。請從原始碼使用：
+CLI 以 [`@shinsou/plugin`](https://www.npmjs.com/package/@shinsou/plugin) 發佈在 npm：
 
 ```bash
-git clone <shinsou-plugin-cli 的位置> shinsou-plugin-cli
-cd shinsou-plugin-cli
-npm install
-npm run build        # 產生 dist/cli.js
-npm link             # 讓 shinsou-plugin 指令全域可用
-```
-
-不想 `npm link` 的話，也可以直接用 Node 執行建置後的檔案：
-
-```bash
-node /path/to/shinsou-plugin-cli/dist/cli.js <指令> [選項]
+npm install --global @shinsou/plugin
 ```
 
 下文一律寫成 `shinsou-plugin <指令>`。`shinsou-plugin help` 會列出全部指令。
 
-> `init` 產生的 `package.json` 內有 `"@shinsou/plugin": "^0.1.0"` 這個 devDependency。CLI 發佈到 npm 之前，
-> 對它做 `npm install` 會失敗；請改用上面的 `npm link` 或 `node dist/cli.js`，必要時把該行從 `package.json` 刪掉。
+`init` 產生的 `package.json` 內有 `"@shinsou/plugin": "^0.1.0"` 這個 devDependency，在專案裡執行 `npm install`
+之後也可以用 `npx shinsou-plugin <指令>`，不需要全域安裝。
+
+要修改 CLI 本身或試用尚未發佈的版本時，從[原始碼](https://github.com/aluo96078/shinsou-plugin-cli)使用：
+
+```bash
+git clone https://github.com/aluo96078/shinsou-plugin-cli && cd shinsou-plugin-cli
+npm install
+npm run build        # 產生 dist/cli.js
+npm link             # 讓 shinsou-plugin 指令全域可用
+```
 
 ## 3. 產生金鑰與金鑰安全
 

@@ -125,8 +125,8 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 
 ### 撰寫與發佈你自己的套件
 
-任何人都可以為 Shinsou X 撰寫並發佈套件，不需要任何人核准：用作者工具 `@shinsou/plugin`（目前尚未發佈到 npm，
-從原始碼使用）產生 Ed25519 發佈者金鑰、建立專案、本機測試、在 App 的**開發者模式**即時試用，再簽章並放到任何靜態主機
+任何人都可以為 Shinsou X 撰寫並發佈套件，不需要任何人核准：用作者工具 [`@shinsou/plugin`](https://www.npmjs.com/package/@shinsou/plugin)
+（`npm install --global @shinsou/plugin`）產生 Ed25519 發佈者金鑰、建立專案、本機測試、在 App 的**開發者模式**即時試用，再簽章並放到任何靜態主機
 （GitHub Pages、raw GitHub 等）。使用者以你公布的完整指紋信任你的金鑰，並對每個套件的敏感權限逐項授權；你也能自行撤回版本、
 輪替或撤銷金鑰。完整流程見[套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)。
 
