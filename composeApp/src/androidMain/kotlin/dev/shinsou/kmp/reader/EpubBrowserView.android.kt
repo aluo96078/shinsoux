@@ -48,7 +48,7 @@ public actual fun EpubBrowserView(
     val currentSelectionChanged = rememberUpdatedState(onSelectionChanged)
     val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
-    val state = remember(request.publicationRootUrl) {
+    val state = remember<AndroidEpubBrowserState>(request.publicationRootUrl) {
         val webView = WebView(context).apply {
             settings.apply {
                 // Publisher scripts remain blocked by the injected/response CSP. JavaScript is
