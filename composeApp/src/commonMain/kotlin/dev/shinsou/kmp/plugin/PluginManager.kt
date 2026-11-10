@@ -606,7 +606,11 @@ public class PluginManager(
                 }
             }
         }
-        repositoryPackages = repositoryPackages + result
+        // Only a repository that answered replaces what it was last known to publish: a list
+        // that could not be fetched says nothing about what was withdrawn.
+        repositoryPackages = repositoryPackages + snapshots.keys.associateWith { baseUrl ->
+            result.values.filter { it.repositoryBaseUrl == baseUrl }
+        }
         return RepositoryRefreshResult(result.values.sortedWith(
             compareBy<ExtensionDescriptor> { it.state == ExtensionState.AVAILABLE }
                 .thenBy { it.name.lowercase() },
@@ -2141,13 +2145,19 @@ public class PluginManager(
         return native + scripted
     }
 
-    @Volatile private var repositoryPackages: Map<String, ExtensionDescriptor> = emptyMap()
+    @Volatile private var repositoryPackages: Map<String, List<ExtensionDescriptor>> = emptyMap()
 
     /**
-     * What the added repositories last said they publish, by install key, installed here or not.
-     * Empty until a repository has been refreshed in this run; starts nothing.
+     * What the added repositories last said they publish, installed here or not. Empty until a
+     * repository has been refreshed in this run; starts nothing.
      */
-    public fun knownRepositoryPackages(): Collection<ExtensionDescriptor> = repositoryPackages.values
+    public fun knownRepositoryPackages(): Collection<ExtensionDescriptor> = repositoryPackages.values.flatten()
+
+    /** Forgets what repositories other than [baseUrls] published: they are no longer added. */
+    public fun retainRepositoryPackages(baseUrls: Collection<String>) {
+        val kept = baseUrls.toSet()
+        repositoryPackages = repositoryPackages.filterKeys { it in kept }
+    }
 
     /** The V2 packages loaded right now (native ones and adapted script packages); starts nothing. */
     public suspend fun loadedExtensionDescriptorsV2(): List<ExtensionPackageV2> = extensionRegistryV2.descriptors()

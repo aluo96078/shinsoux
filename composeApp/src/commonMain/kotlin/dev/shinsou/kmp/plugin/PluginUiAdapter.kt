@@ -530,6 +530,7 @@ public class PluginBrowseAdapter(
         repositoryStore.select(selected)
 
         repositorySnapshots = repositorySnapshots.filterKeys { !belongsToRemovedRepository(it) }
+        manager.retainRepositoryPackages(remaining.map { it.baseUrl })
         val removedGenericIds = descriptors.values.filter {
             it.repositoryBaseUrl?.let(::belongsToRemovedRepository) == true && it.state == ExtensionState.AVAILABLE
         }.map { it.id }.toSet()
@@ -1750,6 +1751,7 @@ public class PluginBrowseAdapter(
             // can therefore render immediately while discovery continues in the background.
             rebuildSnapshot(errorMessage = null, isRefreshing = true)
             val repositories = repositoryStore.list()
+            manager.retainRepositoryPackages(repositories.map { it.baseUrl })
             val selected = repositoryStore.selected().takeIf { selected ->
                 repositories.any { it.baseUrl == selected }
             }
