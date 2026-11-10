@@ -1,4 +1,4 @@
-package dev.shinsou.kmp.sync.v2
+package dev.shinsou.kmp.sync.v3
 
 import kotlinx.serialization.Serializable
 

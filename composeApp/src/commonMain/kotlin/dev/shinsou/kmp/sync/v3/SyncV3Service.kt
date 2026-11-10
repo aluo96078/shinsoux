@@ -12,8 +12,6 @@ import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
-import dev.shinsou.kmp.sync.v2.HlcTimestamp
-import dev.shinsou.kmp.sync.v2.HybridLogicalClock
 import kotlinx.coroutines.CancellationException
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
@@ -900,6 +898,8 @@ public class SyncV3Service internal constructor(
     }
 
     private fun entityMissing(kind: String, ref: String, out: SyncOutgoing): Boolean {
+        if (kind == SyncKinds.REPOSITORY) return ref.substring(2) !in out.repositoryByUrl
+        if (kind == SyncKinds.SETTING) return false
         val id = ref.substring(2).toLongOrNull() ?: return true
         return when (kind) {
             SyncKinds.CATEGORY -> id !in out.categoryById
@@ -916,6 +916,16 @@ public class SyncV3Service internal constructor(
     private fun promoteRef(kind: String, ref: String, out: SyncOutgoing) {
         val rows = store.dirtyFor(kind, ref)
         if (rows.isEmpty()) return
+        if (kind == SyncKinds.REPOSITORY) {
+            val url = ref.substring(2)
+            val repo = out.repositoryByUrl[url] ?: return tombstone(kind, rows)
+            return promoteInto(kind, url, rows, null, null, null, live = true) { field -> out.repositoryValue(repo, field) }
+        }
+        if (kind == SyncKinds.SETTING) {
+            val path = ref.substring(2)
+            if (!PortableSettings.isPortable(path)) { store.deleteDirty(rows); return }
+            return promoteInto(kind, path, rows, null, null, null, live = true) { field -> out.settingValue(path, field) }
+        }
         val id = ref.substring(2).toLongOrNull() ?: run { store.deleteDirty(rows); return }
         when (kind) {
             SyncKinds.CATEGORY -> {
@@ -1216,7 +1226,7 @@ public class SyncV3Service internal constructor(
         var budget = 0
         for (record in batch) {
             val workJson = record.workJson
-            val needsWork = record.kind != SyncKinds.CATEGORY && !record.key.startsWith("local:")
+            val needsWork = SyncKinds.needsWork(record.kind, record.key)
             val work = workJson?.let { runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), it) }.getOrNull() }
             if (needsWork && work == null) {
                 reject(record, "missing_work")
@@ -1384,7 +1394,15 @@ public class SyncV3Service internal constructor(
         const val KEY_ACCESS_TOKEN = "sync.v3.access_token"
         const val KEY_REFRESH_TOKEN = "sync.v3.refresh_token"
 
-        val APPLY_ORDER = listOf(SyncKinds.CATEGORY, SyncKinds.LIBRARY, SyncKinds.UNIT, SyncKinds.HISTORY, SyncKinds.PROGRESS)
+        val APPLY_ORDER = listOf(
+            SyncKinds.CATEGORY,
+            SyncKinds.LIBRARY,
+            SyncKinds.UNIT,
+            SyncKinds.HISTORY,
+            SyncKinds.PROGRESS,
+            SyncKinds.REPOSITORY,
+            SyncKinds.SETTING,
+        )
 
         const val PUSH_DEBOUNCE_MILLIS = 2_000L
         const val MIN_AUTOMATIC_INTERVAL_MILLIS = 5_000L

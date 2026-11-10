@@ -3,19 +3,6 @@ package dev.shinsou.kmp.content
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.sync.v2.CategoryMembershipSet
-import dev.shinsou.kmp.sync.v2.CategoryPatch
-import dev.shinsou.kmp.sync.v2.ChapterStatePatch
-import dev.shinsou.kmp.sync.v2.EntityKeyRemap
-import dev.shinsou.kmp.sync.v2.EntityPresenceSet
-import dev.shinsou.kmp.sync.v2.ExtensionRepositoryPatch
-import dev.shinsou.kmp.sync.v2.ExtensionRepositoryPresenceSet
-import dev.shinsou.kmp.sync.v2.LibraryEntryPatch
-import dev.shinsou.kmp.sync.v2.PortableSettingPatch
-import dev.shinsou.kmp.sync.v2.ReadingProgressPresenceSet
-import dev.shinsou.kmp.sync.v2.ReadingProgressSet
-import dev.shinsou.kmp.sync.v2.SyncDraft
-import dev.shinsou.kmp.sync.v2.SyncMutation
 import dev.shinsou.kmp.domain.model.AcquisitionAvailability
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.Publication
@@ -445,55 +432,35 @@ public interface ContentOutboxPersistenceAdapter<D : Any> : ContentOutboxAdapter
     public fun decode(payload: String): D
 }
 
-/** Adapter for the application's existing v1 sync outbox authority. */
-public object SyncDraftContentOutboxAdapter : ContentOutboxPersistenceAdapter<SyncDraft> {
-    override fun validate(draft: SyncDraft) {
-        requireSafeTransactionKey(draft.draftId, "Sync draft id")
-        require(draft.event.opId == draft.draftId) { "Sync draft id must equal its operation id" }
-        require(draft.event.mutations.isNotEmpty()) { "Sync draft event cannot be empty" }
-        require(draft.createdAtMillis >= 0 && draft.updatedAtMillis >= draft.createdAtMillis) {
-            "Sync draft timestamps are invalid"
-        }
+/**
+ * An outbox row left behind by a version of the app that queued sync drafts next to its content
+ * commits. Nothing produces one any more and nothing reads the payload: it is kept only so the
+ * rows can be listed and removed ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
+ */
+public data class LegacyOutboxDraft(val draftId: String, val payload: String)
+
+/** Stores a [LegacyOutboxDraft] as the payload it was read from. */
+public object LegacyOutboxDraftAdapter : ContentOutboxPersistenceAdapter<LegacyOutboxDraft> {
+    override fun validate(draft: LegacyOutboxDraft) {
+        requireSafeTransactionKey(draft.draftId, "Outbox draft id")
     }
 
-    override fun id(draft: SyncDraft): String = draft.draftId
+    override fun id(draft: LegacyOutboxDraft): String = draft.draftId
 
-    override fun fingerprint(draft: SyncDraft): ByteArray =
-        canonicalJsonBytes(CANONICAL_JSON.encodeToJsonElement(SyncDraft.serializer(), draft))
+    override fun fingerprint(draft: LegacyOutboxDraft): ByteArray = draft.payload.encodeToByteArray()
 
-    override fun encode(draft: SyncDraft): String =
-        CANONICAL_JSON.encodeToString(SyncDraft.serializer(), draft)
+    override fun encode(draft: LegacyOutboxDraft): String = draft.payload
 
-    override fun decode(payload: String): SyncDraft =
-        CANONICAL_JSON.decodeFromString(SyncDraft.serializer(), payload).also(::validate)
-
-    override fun isRepresentableByCurrentV1(draft: SyncDraft): Boolean =
-        draft.event.schemaVersion == 1 &&
-            draft.event.mutations.all(::isCurrentV1Mutation)
-
-    private fun isCurrentV1Mutation(mutation: SyncMutation): Boolean = when (mutation) {
-        is LibraryEntryPatch,
-        is ChapterStatePatch,
-        is CategoryPatch,
-        is CategoryMembershipSet,
-        is ExtensionRepositoryPatch,
-        is ExtensionRepositoryPresenceSet,
-        is EntityPresenceSet,
-        is ReadingProgressSet,
-        is ReadingProgressPresenceSet,
-        is PortableSettingPatch,
-        is EntityKeyRemap,
-        -> true
-        else -> false
+    override fun decode(payload: String): LegacyOutboxDraft {
+        val draftId = ((Json.parseToJsonElement(payload) as? JsonObject)?.get("draftId") as? JsonPrimitive)
+            ?.takeIf(JsonPrimitive::isString)
+            ?.content
+        return LegacyOutboxDraft(requireNotNull(draftId) { "Outbox payload has no draft id" }, payload)
+            .also(::validate)
     }
+
+    override fun isRepresentableByCurrentV1(draft: LegacyOutboxDraft): Boolean = true
 }
-
-/** Short alias used by storage hosts while retaining the real [SyncDraft] serialization. */
-public val SyncDraftOutboxAdapter: ContentOutboxAdapter<SyncDraft> = SyncDraftContentOutboxAdapter
-
-/** Explicitly typed durable adapter for SQL-backed content transaction stores. */
-public val SyncDraftPersistenceOutboxAdapter: ContentOutboxPersistenceAdapter<SyncDraft> =
-    SyncDraftContentOutboxAdapter
 
 public enum class ContentSyncMode { V1_ACTIVE, V2_ACTIVE, INACTIVE }
 public enum class UnrepresentableDraftPolicy { REJECT, DEFER }

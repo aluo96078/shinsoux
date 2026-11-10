@@ -3,6 +3,7 @@ package dev.shinsou.kmp.app
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentCommitBatch
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentCommitSemantics
 import dev.shinsou.kmp.content.ContentMigrationLookupStatus
 import dev.shinsou.kmp.content.ContentSyncMode
@@ -16,7 +17,6 @@ import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
 import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import dev.shinsou.kmp.ui.ImportedDocument
 import java.nio.file.Files
 import kotlin.test.Test
@@ -64,7 +64,7 @@ class LegacyPublicationStartupMigrationTest {
             // Backup v2 replaces the portable graph but deliberately retains the device-local
             // migration ledger. The exact source/result replay must repair the removed rows.
             foundation.transactions.commit(
-                ContentCommitBatch<SyncDraft>(
+                ContentCommitBatch<LegacyOutboxDraft>(
                     commitId = "test-empty-portable-restore",
                     semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
                 ),

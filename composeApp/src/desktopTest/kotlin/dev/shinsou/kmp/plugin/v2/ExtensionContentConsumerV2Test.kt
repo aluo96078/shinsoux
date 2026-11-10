@@ -61,7 +61,7 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
-    fun exactHostSelectionCommitsInlineTextBindingsRightsBlobAndOutboxAtomically() = runTest {
+    fun exactHostSelectionCommitsInlineTextBindingsRightsAndBlobAtomically() = runTest {
         withFoundation { foundation ->
             val source = FixtureSource(payloads = { remoteUnitId ->
                 listOf(
@@ -131,7 +131,7 @@ class ExtensionContentConsumerV2Test {
             assertFalse(ContentOperation.COPY in grant.allowedOperations)
             assertFalse(ContentOperation.EXPORT in grant.allowedOperations)
             assertFalse(ContentOperation.SYNC_BLOB in grant.allowedOperations)
-            assertTrue(foundation.transactions.pendingOutbox().isNotEmpty())
+            assertTrue(foundation.transactions.pendingOutbox().isEmpty())
             assertEquals(0, foundation.blobStore.pendingReceiptCount)
             assertEquals(listOf(publication.key.value), materialized.commit.publicationIds)
             assertEquals(listOf(grant.grantId.value), materialized.commit.rightsGrantIds)
@@ -307,10 +307,7 @@ class ExtensionContentConsumerV2Test {
 
             val readingBefore = consumer.localReadingState(publicationKey)
             val bindingBefore = assertNotNull(consumer.extensionLibraryBinding(publicationKey))
-            // The sync bridge has drained the download's drafts; the purge must add none of its own.
-            foundation.transactions.acknowledgeOutbox(
-                foundation.transactions.pendingOutbox().mapTo(linkedSetOf()) { it.draftId },
-            )
+            // Neither the download nor the purge writes outbox drafts.
             val outboxBefore = foundation.transactions.pendingOutbox()
             assertEquals(emptyList(), outboxBefore)
 
@@ -343,7 +340,7 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
-    fun purgeDropsUndrainedDownloadDraftsSoNothingSyncsOutAndRedownloadDoesNotCollide() = runTest {
+    fun purgeLeavesNoOutboxDraftsAndRedownloadDoesNotCollide() = runTest {
         withFoundation { foundation ->
             val source = FixtureSource(
                 payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, remoteUnitId)) },
@@ -353,9 +350,6 @@ class ExtensionContentConsumerV2Test {
             val consumer = consumer(foundation = foundation, source = source)
             val selection = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single()
             consumer.materialize(selection)
-            // Not drained yet (offline, or the purge comes right after the download).
-            assertTrue(foundation.transactions.pendingOutbox().isNotEmpty())
-
             assertEquals(1, consumer.purgeStoredContent(SOURCE_KEY, PUBLICATION_ID))
             assertEquals(emptyList(), foundation.transactions.pendingOutbox())
 

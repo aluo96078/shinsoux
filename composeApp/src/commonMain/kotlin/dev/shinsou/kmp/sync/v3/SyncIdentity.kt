@@ -12,6 +12,7 @@ import dev.shinsou.kmp.local.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.local.typedLocalChapterUnitKey
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.reader.ReadingScope
+import kotlin.concurrent.Volatile
 
 /** The cross-device identity of a title. Local ids (Manga.id, Chapter.id) never appear in it. */
 internal sealed interface SyncedWork {

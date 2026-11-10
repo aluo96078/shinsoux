@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 /** ADR-0002 §10.1 inside [PluginManager]: the publisher-trust tier decides whether a package runs; it only ever runs in the sandbox. */
 class PluginManagerExecutionTierTest {
     @BeforeTest
-    fun initializeCrypto() = runTest { SodiumSyncPrimitives.initialize() }
+    fun initializeCrypto() = runTest { SodiumPrimitives.initialize() }
 
     private class Engine : ScriptPluginRuntimeFactory {
         val created = mutableListOf<String>()
@@ -76,7 +76,7 @@ class PluginManagerExecutionTierTest {
         )
     }
 
-    private val keys = mutableListOf<dev.shinsou.kmp.sync.crypto.SodiumKeyPair>()
+    private val keys = mutableListOf<dev.shinsou.kmp.crypto.SodiumKeyPair>()
 
     /** The local install key of the single installed fixture (publisher-scoped when signed, D6). */
     private suspend fun Host.key(): String = manager.installedPlugins().singleOrNull()?.manifest?.id ?: PLUGIN_ID
@@ -86,11 +86,11 @@ class PluginManagerExecutionTierTest {
         manager.installedPlugins().singleOrNull()?.manifest?.sources?.singleOrNull()?.id ?: SOURCE_ID
 
     @kotlin.test.AfterTest
-    fun destroyKeys() = keys.forEach { SodiumSyncPrimitives.destroy(it.privateKey) }
+    fun destroyKeys() = keys.forEach { SodiumPrimitives.destroy(it.privateKey) }
 
     /** Trusts a fresh publisher for [REPOSITORY], with the current (empty) revocation list installs require. */
     private suspend fun Host.trustPublisher(repository: ExtensionRepository = REPOSITORY): String {
-        val key = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val key = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
         val publisher = publishers.trustRepository(repository.baseUrl, publisherRoot(key)).publisherId
         revocations.applyRevocations(repository.baseUrl, signedRevocations(key, repository.baseUrl, publisher, expiresAt = 10_000))
         return publisher
@@ -310,7 +310,7 @@ class PluginManagerExecutionTierTest {
 
     @Test
     fun noRepositorySpellingTurnsAnUncheckedInstallIntoARunningPackage() = runTest {
-        val key = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val key = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
         // Trusted, but without the revocation list installs require.
         for (spelling in listOf("https://repo.example/", "https://repo.example//", "https://REPO.example", "https://repo.example:443", "HTTPS://Repo.Example/")) {
             val host = Host()
@@ -336,11 +336,11 @@ class PluginManagerExecutionTierTest {
 
     @Test
     fun aTrustPromptOnlyEverTrustsTheKeyItShowed() = runTest {
-        val first = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
-        val second = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val first = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
+        val second = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
         val repository = "https://signed.example/repo"
         var presenting = first
-        suspend fun repoJson(key: dev.shinsou.kmp.sync.crypto.SodiumKeyPair, at: String) = signedPublisherEnvelope(
+        suspend fun repoJson(key: dev.shinsou.kmp.crypto.SodiumKeyPair, at: String) = signedPublisherEnvelope(
             key, at, RepositorySignedDocumentType.REPOSITORY, "repo.json", 1,
             kotlinx.serialization.json.buildJsonObject {
                 put("meta", kotlinx.serialization.json.buildJsonObject {
@@ -386,7 +386,7 @@ class PluginManagerExecutionTierTest {
         assertTrue(assertNotNull(adapter.inspectRepositoryTrust(repository)).alreadyTrusted)
 
         // The repository is configured: another key there is still a key substitution.
-        val third = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+        val third = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
         presenting = third
         val substituted = assertNotNull(adapter.inspectRepositoryTrust(repository))
         assertFalse(substituted.alreadyTrusted)

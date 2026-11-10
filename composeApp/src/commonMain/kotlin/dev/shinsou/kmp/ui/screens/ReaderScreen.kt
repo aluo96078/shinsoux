@@ -120,7 +120,7 @@ import dev.shinsou.kmp.reader.readerTapAction
 import dev.shinsou.kmp.reader.restoredReaderPageOffsetPixels
 import dev.shinsou.kmp.reader.encodedImageHeight
 import dev.shinsou.kmp.reader.readerImageTransform
-import dev.shinsou.kmp.sync.v2.ReaderPosition
+import dev.shinsou.kmp.reader.ReaderPosition
 import dev.shinsou.kmp.ui.ReaderPage
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.ReaderVolumeKeyHandlerSlot

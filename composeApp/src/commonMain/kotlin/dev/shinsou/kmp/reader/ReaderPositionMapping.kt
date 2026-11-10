@@ -1,9 +1,7 @@
 package dev.shinsou.kmp.reader
 
 import dev.shinsou.kmp.domain.model.ReadingMode
-import dev.shinsou.kmp.sync.v2.HlcTimestamp
-import dev.shinsou.kmp.sync.v2.ReaderPosition
-import dev.shinsou.kmp.sync.v2.ReadingPositionRegister
+import dev.shinsou.kmp.sync.v3.HlcTimestamp
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 

@@ -2,6 +2,7 @@ package dev.shinsou.kmp.app
 
 import dev.shinsou.kmp.content.ContentAliasMutation
 import dev.shinsou.kmp.content.ContentCommitBatch
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentCommitResult
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
@@ -23,7 +24,6 @@ import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.local.isTypedLocalCompatibilityUrl
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -125,7 +125,7 @@ public class LegacyPublicationStartupMigration(
             ledger.commitId
         }
         val commit = foundation.transactions.commit(
-            ContentCommitBatch<SyncDraft>(
+            ContentCommitBatch<LegacyOutboxDraft>(
                 commitId = commitId,
                 aliases = aliases,
                 migrations = if (repairingPortableReplacement) emptyList() else listOf(ledger),

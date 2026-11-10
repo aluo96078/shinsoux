@@ -32,6 +32,7 @@ import dev.shinsou.kmp.plugin.v2.LegacyMangaPackageRuntimeV2
 import dev.shinsou.kmp.ui.SourceCookie
 import dev.shinsou.kmp.ui.SourceWebChallengeCapability
 import io.ktor.http.Url
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable

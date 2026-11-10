@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.sync.v3
 
-import dev.shinsou.kmp.sync.v2.HlcTimestamp
 
 /**
  * Canonical wire form of an HLC timestamp (shinsou_sync_service `docs/spec/sync-semantics.md` §1):

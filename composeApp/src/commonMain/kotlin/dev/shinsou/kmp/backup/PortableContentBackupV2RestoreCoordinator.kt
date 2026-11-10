@@ -8,6 +8,7 @@ import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.ContentCommitSemantics
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentManifestOwner
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentPublicationMutation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
 import dev.shinsou.kmp.content.ManifestAttachment
@@ -21,12 +22,6 @@ import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.ContentAnnotationSyncDraftFactory
-import dev.shinsou.kmp.sync.v2.ContentAnnotationPatchV2
-import dev.shinsou.kmp.sync.v2.ContentPublicationSyncDraftFactory
-import dev.shinsou.kmp.sync.v2.ContentPortableGraphReplacementSyncDraftFactory
-import dev.shinsou.kmp.sync.v2.ContentSyncFields
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2RestoreResult
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -97,15 +92,14 @@ public class PortableContentBackupV2RestoreCoordinator(
         val restoredPublications = state.publications.withLocalBodyAvailability(
             published.receipts.mapTo(hashSetOf()) { it.reference.blobId },
         )
-        val batch = ContentCommitBatch<SyncDraft>(
-            // Unchanged from the former device-only restore, so a commit journalled by an earlier
-            // build keeps the same id and (empty) outbox fingerprint.
+        val batch = ContentCommitBatch<LegacyOutboxDraft>(
+            // Unchanged since the first device-only restore, so a commit journalled by an earlier
+            // build keeps the same id and fingerprint.
             commitId = "backup-v2-restore:this_device_only:${inspection.envelope.manifestSha256}",
             receipts = published.receipts,
             attachments = published.attachments,
             metadata = state.auxiliary.metadata,
             aliases = state.auxiliary.aliases,
-            outbox = emptyList(),
             migrations = state.auxiliary.migrations,
             publications = restoredPublications.map(::ContentPublicationMutation),
             rightsGrants = state.rightsGrants.map(::ContentRightsGrantMutation),
@@ -338,116 +332,6 @@ private class CancellationCheckingBackupV2ArchiveSource(
         cancellationCheckpoint()
         return delegate.read(offset, byteCount).also { cancellationCheckpoint() }
     }
-}
-
-internal data class BackupV2SyncBundle(
-    val drafts: List<SyncDraft>,
-    val blobSyncJobs: List<ContentBlobSyncJobMutation>,
-)
-
-/**
- * Builds the sync outbox drafts and body-sync jobs that publish a restored archive to other devices.
- * Unused while no sync service exists; kept for the replacement sync service.
- */
-internal object BackupV2SyncDraftFactory {
-    fun build(
-        archiveDigest: String,
-        publications: List<Publication>,
-        annotations: List<ContentAnnotation>,
-        attachments: List<ManifestAttachment>,
-        grants: List<RightsGrant>,
-        previousPublications: List<Publication>,
-        previousAnnotations: List<ContentAnnotation>,
-    ): BackupV2SyncBundle {
-        val publicationDrafts = publications.sortedBy { it.key.value }.flatMap { publication ->
-            ContentPublicationSyncDraftFactory.build(
-                publication = publication,
-                rightsGrants = grants.filter { it.scope.publicationId == publication.key },
-                operationNamespace = "backup-v2:$archiveDigest:${publication.key.value}",
-                createdAtMillis = 0,
-            ).drafts
-        }
-        val annotationDrafts = ContentAnnotationSyncDraftFactory.build(
-            annotations = annotations,
-            operationNamespace = "backup-v2:$archiveDigest:annotations",
-            createdAtMillis = 0,
-        ).drafts
-        val replacementTombstones = ContentPortableGraphReplacementSyncDraftFactory.build(
-            previousPublications = previousPublications,
-            replacementPublications = publications,
-            previousAnnotations = previousAnnotations,
-            replacementAnnotations = annotations,
-            operationNamespace = "backup-v2:$archiveDigest:replacement-tombstones",
-            createdAtMillis = 0,
-        )
-        val drafts = publicationDrafts + annotationDrafts + replacementTombstones.drafts
-        val jobs = bodyJobs(archiveDigest, attachments, grants)
-        // The authoritative replacement contains both the annotations present in the archive and
-        // redacted tombstones for annotations removed by it.  Validate the complete draft set;
-        // looking only at [annotationDrafts] incorrectly rejects every non-empty replacement and
-        // can hide a missing tombstone in the negative half of the graph update.
-        val committedAnnotationIds = drafts
-            .flatMap { it.event.mutations }
-            .filterIsInstance<ContentAnnotationPatchV2>()
-            .filter { ContentSyncFields.Annotation.COMMITTED_SHA256 in it.fields }
-            .map { it.key.canonicalValue }
-            .sorted()
-        val expectedAnnotationIds = (
-            annotations.map(ContentAnnotation::annotationId) +
-                replacementTombstones.tombstonedAnnotationIds
-            ).sorted()
-        require(drafts.map(SyncDraft::draftId).distinct().size == drafts.size &&
-            committedAnnotationIds == expectedAnnotationIds) {
-            "Backup v2 sync metadata drafts are incomplete or collide"
-        }
-        return BackupV2SyncBundle(drafts, jobs)
-    }
-
-    private fun bodyJobs(
-        archiveDigest: String,
-        attachments: List<ManifestAttachment>,
-        grants: List<RightsGrant>,
-    ): List<ContentBlobSyncJobMutation> {
-        val grantsById = grants.associateBy(RightsGrant::grantId)
-        data class Candidate(
-            val attachment: ManifestAttachment,
-            val blob: BlobRef,
-            val grant: RightsGrant,
-        )
-        val candidates = attachments.flatMap { attachment ->
-            val publication = attachment.owner.publicationKey
-            grants.asSequence()
-                .filter { grant ->
-                    grant.scope.publicationId == publication &&
-                        grant.scope.acquisitionId == attachment.owner.acquisitionId &&
-                        ContentOperation.SYNC_BLOB in grant.allowedOperations
-                }
-                .flatMap { grant -> attachment.blobs.asSequence().map { Candidate(attachment, it, grant) } }
-                .toList()
-        }
-        return candidates.groupBy { it.blob.blobId }.entries.sortedBy { it.key }.map { (blobId, choices) ->
-            val selected = choices.minBy {
-                "${it.attachment.owner.scopeKey}/${it.attachment.manifestId}/${it.attachment.contentRevision}"
-            }
-            check(grantsById[selected.grant.grantId] == selected.grant)
-            ContentBlobSyncJobMutation(
-                jobId = stableId(archiveDigest, "blob:$blobId"),
-                blob = selected.blob,
-                owner = ContentManifestOwner(
-                    selected.attachment.owner.publicationKey,
-                    selected.attachment.owner.acquisitionId,
-                    selected.attachment.owner.unitKey,
-                ),
-                manifestId = selected.attachment.manifestId,
-                contentRevision = selected.attachment.contentRevision,
-                grantReference = selected.grant.grantId,
-            )
-        }
-    }
-
-    private fun stableId(archiveDigest: String, label: String): String =
-        "backup-v2:${Sha256.hex("$archiveDigest|$label".encodeToByteArray())}"
-
 }
 
 private fun List<Publication>.withLocalBodyAvailability(

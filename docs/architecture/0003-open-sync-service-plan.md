@@ -1,16 +1,16 @@
 # ADR-0003（草案）：獨立開放式同步服務
 
-狀態：規劃中，尚未實作
+狀態：P0–P6 已實作（2026-11-10）；尚未推送、尚未正式部署，三台實機互相同步的驗收仍待確認
 日期：2026-11-09（2026-11-10 修訂：補上現況、資料模型、API、App 接入方式與里程碑驗收條件）
 
 ## 1. 現況（v1.0.1-beta.18 之後）
 
 - 舊同步已在 `f07cd0a` 移除：iCloud 快照同步、v2 同步引擎、Cloudflare `syncWorker`、裝置配對、復原套件、blob 同步、同步設定頁。
-- App 內**仍留下約 4,000 行 v2 模型**（`composeApp/.../sync/v2`、`sync/crypto`、`sync/trust`）：
-  - 內容寫入路徑（`ContentTransactions`、`LocalTypedContentController`、備份還原等 14 個檔案）仍在每次提交時寫入 `SyncDraft` 到 outbox。
-  - `ContentOutboxDiscarder` 在背景把它們丟掉，因為提交日誌的指紋包含 outbox，所以暫時不能直接停寫。
-  - v2 的事件格式是為端對端加密設計的（文件切塊、`documentSha256`、blob DEK 信封），**不適合直接沿用到新服務**。
-- `HlcTimestamp`、`SyncEntityKey`、`SyncEntityKey.normalizeNamespace` 等身分與時鐘規則仍可重用。
+- v2 模型（`sync/v2`、`sync/crypto`、`sync/trust`、`sync/network`）已在 P2b 全部移除：
+  - 內容寫入路徑不再產生 `SyncDraft`；v3 由 `SyncDiff` 比對前後快照來標記髒欄位。
+  - 簽章與正規化 JSON 是擴充套件信任鏈在用，搬到 `dev.shinsou.kmp.crypto`（`SodiumPrimitives`、`canonicalJson`）；只留下 Ed25519、SHA-256 與常數時間比較。
+  - `HybridLogicalClock`、`HlcTimestamp` 搬到 `sync/v3`。
+  - 內容交易層的 outbox 通道（`content_transaction_outbox` 資料表與提交批次的 `outbox` 欄位）**保留**，型別改為 `LegacyOutboxDraft`：舊版寫下的列仍要能讀出來丟棄（`ContentOutboxDiscarder`），而且提交日誌的指紋格式不能變。沒有任何路徑再寫入新的 draft。移除通道本身需要一次資料庫遷移，另案處理。
 - 進度鍵 `ContentProgressKeyV2` 用的是本機內容 UUID（publication / acquisition / unit）。新服務改用作品鍵，App 端需要一張「作品鍵 ↔ 本機 UUID」對照表（見第 10 節）。
 - 新服務的儲存庫：`~/project/shinsou_sync_service`（模組 `github.com/aluo96078/shinsou_sync_service`，執行檔 `shinsou-server`）。P0 的規格以該儲存庫的 `docs/spec/` 與 `api/` 為準，本文件只保留摘要。
 
@@ -218,7 +218,7 @@ create index on sync_records (user_id, seq);
 ### 10.1 接入點：用髒標記取代 v2 outbox
 
 1. **第一步（相容）**：新增 `sync/v3/DirtyMarker`，把現有 outbox 中的 `SyncDraft` 轉成「哪些實體被改過」，寫進新的 `sync_dirty(kind, key)` 表，再照舊確認 draft。`ContentOutboxDiscarder` 變成這個轉換器。
-2. **第二步（清理）**：各寫入路徑直接標記髒實體，不再產生 v2 draft；移除 `ContentPublicationSyncDraftFactory` 等 v2 產生器、`sync/crypto`、blob 相關模型。提交日誌的指紋改為涵蓋 `sync_dirty`。
+2. **第二步（清理，P2b 已完成）**：各寫入路徑不再產生 v2 draft；移除 `ContentPublicationSyncDraftFactory` 等 v2 產生器、`sync/crypto`、blob 相關模型。實作上髒標記不是由寫入路徑各自呼叫，而是 `SyncDiff` 在快照提交前（`SnapshotMutationObserver.beforeCommit`）比對前後狀態得出，寫入 `sync3_dirty`；內容交易的提交日誌因此不需要涵蓋髒標記，指紋格式維持不變。
 3. **推送時**才讀本機目前狀態組成 v3 記錄。佇列大小上限就是實體數量。
 
 ### 10.2 本機新增資料表
@@ -255,7 +255,7 @@ create index on sync_records (user_id, seq);
 | P0 規格（2026-11-10 完成初稿） | OpenAPI 初稿；作品鍵與 LWW 規格及測試向量；記錄欄位規格；資料表遷移初稿 | Go 參考實作通過全部向量與隨機收斂測試；Kotlin `WorkKey`、`SyncClock` 通過作品鍵與 HLC 向量；遷移在 PostgreSQL 16 上可執行 |
 | P1 伺服器核心 | 帳號、裝置、權杖、`/.well-known`、push / changes / stream、墓碑清理、限流、Docker Compose | 整合測試涵蓋 8.5 節的收斂性；`docker compose up` 後 curl 可走完註冊 → 推送 → 拉取 |
 | P2a App 接入（書庫與進度） | `DirtyMarker` 相容層、伺服器選擇、登入、`library`/`unit`/`progress`/`history`/`category` 同步 | Android、iOS、桌面三台實機互相同步；斷網改動後恢復可收斂；佇列在 1 萬筆變更後仍只有實體數量那麼大 |
-| P2b App 清理 | 移除 v2 draft 產生器與 `sync/crypto`；`repository`、`setting` 同步 | v2 相關程式碼刪除，`./gradlew check` 通過 |
+| P2b App 清理（2026-11-10 完成） | 移除 v2 draft 產生器與 `sync/crypto`；`repository`、`setting` 同步 | v2 相關程式碼刪除，`./gradlew check` 通過 |
 | P3 網頁前台 | 註冊登入、裝置管理、書庫與進度檢視、匯出與刪除、管理員後台 | 不用 App 也能完成帳號全生命週期 |
 | P4 分享 | 使用者搜尋、分享、收件匣、封鎖（App 與網頁） | |
 | P5 評論 | 作品頁、評論、按讚、回覆、檢舉、管理工具 | |

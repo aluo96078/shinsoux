@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumKeyPair
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumKeyPair
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -29,11 +29,11 @@ class PublisherTrustTest {
     private val clients = mutableListOf<HttpClient>()
 
     @BeforeTest
-    fun initializeCrypto() = runTest { SodiumSyncPrimitives.initialize() }
+    fun initializeCrypto() = runTest { SodiumPrimitives.initialize() }
 
     @AfterTest
     fun cleanUp() {
-        keys.forEach { SodiumSyncPrimitives.destroy(it.privateKey) }
+        keys.forEach { SodiumPrimitives.destroy(it.privateKey) }
         clients.forEach(HttpClient::close)
     }
 
@@ -512,15 +512,15 @@ class PublisherTrustTest {
 
     // ---------------------------------------------------------------- helpers
 
-    private fun newKey(): SodiumKeyPair = SodiumSyncPrimitives.generateEd25519KeyPair().also { keys += it }
+    private fun newKey(): SodiumKeyPair = SodiumPrimitives.generateEd25519KeyPair().also { keys += it }
 
     private fun root(key: SodiumKeyPair) = RepositoryTrustRoot(
-        SodiumSyncPrimitives.base64UrlEncode(key.publicKey),
+        SodiumPrimitives.base64UrlEncode(key.publicKey),
         PublisherFingerprint.of(key.publicKey),
     )
 
     private fun hex(key: SodiumKeyPair): String =
-        SodiumSyncPrimitives.sha256(key.publicKey).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        SodiumPrimitives.sha256(key.publicKey).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
     private fun candidate(publisher: String, artifact: String = ARTIFACT) =
         ExecutionTierCandidate("pkg", artifact, publisher, userAuthorized = true)
@@ -534,7 +534,7 @@ class PublisherTrustTest {
         payload: JsonElement,
     ): JsonObject {
         val root = root(key)
-        val signature = SodiumSyncPrimitives.signEd25519(
+        val signature = SodiumPrimitives.signEd25519(
             RepositorySignedDocumentVerifier.signingMessage(repository, type, documentId, sequence, root.fingerprint, payload),
             key.privateKey,
         )
@@ -546,7 +546,7 @@ class PublisherTrustTest {
             put("payloadType", type.wireValue)
             put("sequence", sequence)
             put("payload", payload)
-            put("signature", SodiumSyncPrimitives.base64UrlEncode(signature))
+            put("signature", SodiumPrimitives.base64UrlEncode(signature))
         }
     }
 
@@ -568,7 +568,7 @@ class PublisherTrustTest {
         sequence: Long,
     ): JsonObject {
         val statement = PublisherTrustStore.rotationStatement(publisher, root(signedByOld).fingerprint, root(next), effective)
-        val agreement = SodiumSyncPrimitives.base64UrlEncode(SodiumSyncPrimitives.signEd25519(statement, signedByNew.privateKey))
+        val agreement = SodiumPrimitives.base64UrlEncode(SodiumPrimitives.signEd25519(statement, signedByNew.privateKey))
         val payload = buildJsonObject {
             put("publisherId", publisher)
             put("newPublicKey", root(next).publicKeyBase64Url)

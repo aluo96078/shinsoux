@@ -17,6 +17,7 @@ import dev.shinsou.kmp.acquisition.TextAcquisitionMetadata
 import dev.shinsou.kmp.acquisition.TextAcquisitionRequest
 import dev.shinsou.kmp.acquisition.TextAcquisitionService
 import dev.shinsou.kmp.content.ContentCommitBatch
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentManifestOwner
@@ -43,8 +44,6 @@ import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.ContentPublicationSyncDraftFactory
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import dev.shinsou.kmp.ui.ImportedDocument
 import dev.shinsou.kmp.ui.TypedReaderContentSession
 import okio.Buffer
@@ -326,21 +325,14 @@ internal class LocalTypedContentController(
             acquisitionId = publication.acquisitions.single().id,
             unitKey = publication.acquisitions.single().units.single().key,
         )
-        val outbox = ContentPublicationSyncDraftFactory.build(
-            publication = publication,
-            rightsGrants = listOf(grant),
-            operationNamespace = "local-import:${acquired.manifest.manifestId}",
-            createdAtMillis = acquiredAt,
-        )
         val bodySyncJobs = if (syncContentBodies) bodySyncJobs(publication) else emptyList()
         foundation.transactions.commit(
-            ContentCommitBatch<SyncDraft>(
+            ContentCommitBatch<LegacyOutboxDraft>(
                 commitId = "local-import:${acquired.manifest.manifestId}",
                 receipts = acquired.publishedBlobs,
                 attachments = listOf(ManifestAttachment(owner, acquired.manifest)),
                 publications = listOf(ContentPublicationMutation(publication)),
                 rightsGrants = listOf(ContentRightsGrantMutation(grant)),
-                outbox = outbox.drafts,
                 blobSyncJobs = bodySyncJobs,
             ),
         )
@@ -357,7 +349,7 @@ internal class LocalTypedContentController(
         require(jobs.isNotEmpty()) { "The local publication has no rights-allowed body to synchronize" }
         val fingerprint = Sha256.hex(jobs.joinToString("|") { it.jobId }.encodeToByteArray())
         foundation.transactions.commit(
-            ContentCommitBatch<SyncDraft>(
+            ContentCommitBatch<LegacyOutboxDraft>(
                 commitId = "local-body-sync-opt-in:$fingerprint",
                 blobSyncJobs = jobs,
             ),

@@ -11,7 +11,6 @@ import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -102,7 +101,7 @@ class ContentFoundationDirectReadTest {
                 allowedOperations = setOf(ContentOperation.DISPLAY),
             )
             runtime.transactions.commit(
-                ContentCommitBatch<SyncDraft>(
+                ContentCommitBatch<LegacyOutboxDraft>(
                     commitId = "direct-read-fixture",
                     publications = listOf(ContentPublicationMutation(publication)),
                     rightsGrants = listOf(ContentRightsGrantMutation(grant)),

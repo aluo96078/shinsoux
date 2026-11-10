@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumKeyPair
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumKeyPair
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -28,7 +28,7 @@ class RepositoryTrustTest {
     private val clients = mutableListOf<HttpClient>()
 
     @BeforeTest
-    fun initializeCrypto() = runTest { SodiumSyncPrimitives.initialize() }
+    fun initializeCrypto() = runTest { SodiumPrimitives.initialize() }
 
     @AfterTest
     fun closeClients() {
@@ -87,7 +87,7 @@ class RepositoryTrustTest {
 
     @Test
     fun configuredPinTakesPrecedenceOverUnsignedDeveloperCompatibility() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val roots = KeyValueRepositoryTrustRootStore(InMemoryPluginKeyValueStore())
             roots.put(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL, root(keys))
@@ -101,7 +101,7 @@ class RepositoryTrustTest {
                 policy.decisionFor(OFFICIAL_SHINSOU_REPOSITORY_BASE_URL),
             )
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
@@ -139,7 +139,7 @@ class RepositoryTrustTest {
 
     @Test
     fun pinnedRepositoryWithoutDurableSecurityStateFailsBeforeTransport() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             var transportRequests = 0
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
@@ -171,13 +171,13 @@ class RepositoryTrustTest {
             }
             assertEquals(0, transportRequests)
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun explicitlyDisabledStateCannotBeCombinedWithPinnedTrust() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val client = clientFor(
                 body = signedEnvelope(keys, PluginJson.parseToJsonElement(unsignedIndex()), sequence = 1),
@@ -189,7 +189,7 @@ class RepositoryTrustTest {
                 client.fetchIndex(REPOSITORY)
             }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
@@ -209,7 +209,7 @@ class RepositoryTrustTest {
 
     @Test
     fun pinnedRepositoryValidatesEveryHopAndRejectsPrivateDnsBeforeTransport() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val signed = signedEnvelope(keys, PluginJson.parseToJsonElement(unsignedIndex()), 1)
             val answers = ArrayDeque(listOf(listOf("93.184.216.34"), listOf("127.0.0.1")))
@@ -242,13 +242,13 @@ class RepositoryTrustTest {
             assertEquals(1, transportCalls)
             assertTrue(answers.isEmpty())
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun pinnedRepositoryPropagatesItsDocumentBudgetToEveryTransportHop() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
             val signed = signedEnvelope(keys, payload, sequence = 1)
@@ -284,13 +284,13 @@ class RepositoryTrustTest {
             assertIs<RepositoryIndex.Plugins>(client.fetchIndex(REPOSITORY))
             assertEquals(listOf(2 * 1_024 * 1_024, 2 * 1_024 * 1_024), seenLimits)
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun validPinnedSignatureAdmitsCanonicalPayload() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
             val client = clientFor(
@@ -301,13 +301,13 @@ class RepositoryTrustTest {
             val result = assertIs<RepositoryIndex.Plugins>(client.fetchIndex(REPOSITORY))
             assertEquals("pkg", result.entries.single().id)
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun signedExecutableCannotFallBackToTofuArtifactMetadata() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val missingDigest = PluginJson.parseToJsonElement(
                 unsignedIndex().replace(",\"sha256\":\"${"a".repeat(64)}\"", ""),
@@ -323,13 +323,13 @@ class RepositoryTrustTest {
                 clientFor(signedEnvelope(keys, missingSize, 2), policy(keys)).fetchIndex(REPOSITORY)
             }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun strictArtifactAdmissionRequiresEntryFromCurrentAuthenticatedIndex() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
             val state = KeyValueRepositorySecurityStateStore(InMemoryPluginKeyValueStore())
@@ -357,13 +357,13 @@ class RepositoryTrustTest {
                 freshClient.requireArtifactNotDowngraded(REPOSITORY, entry, snapshot.admission)
             }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun artifactCommitRejectsSelectionInvalidatedByIndexRefresh() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         val state = KeyValueRepositorySecurityStateStore(InMemoryPluginKeyValueStore())
         try {
             val oldEntry = PluginJson.decodeFromString<List<PluginIndexEntry>>(
@@ -433,14 +433,14 @@ class RepositoryTrustTest {
                 )
             }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun payloadTamperingAndKeySubstitutionFailClosed() = runTest {
-        val trusted = SodiumSyncPrimitives.generateEd25519KeyPair()
-        val attacker = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val trusted = SodiumPrimitives.generateEd25519KeyPair()
+        val attacker = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
             val signed = signedEnvelope(trusted, payload, sequence = 3)
@@ -459,14 +459,14 @@ class RepositoryTrustTest {
                 ).fetchIndex(REPOSITORY)
             }.also { assertIs<RepositoryTrustException.KeySubstitution>(it.cause) }
         } finally {
-            SodiumSyncPrimitives.destroy(trusted.privateKey)
-            SodiumSyncPrimitives.destroy(attacker.privateKey)
+            SodiumPrimitives.destroy(trusted.privateKey)
+            SodiumPrimitives.destroy(attacker.privateKey)
         }
     }
 
     @Test
     fun signatureCannotBeMovedAcrossRepositoryOrDocumentPath() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         try {
             val payload = PluginJson.parseToJsonElement(unsignedIndex())
             val signedForOriginal = signedEnvelope(keys, payload, sequence = 1)
@@ -477,13 +477,13 @@ class RepositoryTrustTest {
                     .fetchIndex(otherRepository)
             }.also { assertIs<RepositoryTrustException.InvalidSignature>(it.cause) }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun persistedSequenceRejectsReplayAndSameSequenceEquivocation() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         val state = KeyValueRepositorySecurityStateStore(InMemoryPluginKeyValueStore())
         try {
             val first = clientFor(
@@ -509,13 +509,13 @@ class RepositoryTrustTest {
                 ).fetchIndex(REPOSITORY)
             }.also { assertIs<RepositoryTrustException.Equivocation>(it.cause) }
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun invalidSignedPayloadDoesNotBurnSequence() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         val state = KeyValueRepositorySecurityStateStore(InMemoryPluginKeyValueStore())
         try {
             val malformedPayload = buildJsonObject { put("unexpected", true) }
@@ -529,7 +529,7 @@ class RepositoryTrustTest {
             )
             assertEquals("pkg", assertIs<RepositoryIndex.Plugins>(valid.fetchIndex(REPOSITORY)).entries.single().id)
         } finally {
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
@@ -556,7 +556,7 @@ class RepositoryTrustTest {
 
     @Test
     fun newerAuthenticatedIndexClearsStaleArtifactCapabilityBeforeCancellableCommit() = runTest {
-        val keys = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val keys = SodiumPrimitives.generateEd25519KeyPair()
         val backing = KeyValueRepositorySecurityStateStore(InMemoryPluginKeyValueStore())
         val state = BlockingDocumentAdmissionStateStore(backing, blockedSequence = 2)
         val oldEntry = PluginJson.decodeFromString<List<PluginIndexEntry>>(
@@ -624,23 +624,23 @@ class RepositoryTrustTest {
             }
         } finally {
             state.release.complete(Unit)
-            SodiumSyncPrimitives.destroy(keys.privateKey)
+            SodiumPrimitives.destroy(keys.privateKey)
         }
     }
 
     @Test
     fun trustRootReplacementRequiresExplicitApprovalApi() = runTest {
         val store = KeyValueRepositoryTrustRootStore(InMemoryPluginKeyValueStore())
-        val first = SodiumSyncPrimitives.generateEd25519KeyPair()
-        val second = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val first = SodiumPrimitives.generateEd25519KeyPair()
+        val second = SodiumPrimitives.generateEd25519KeyPair()
         try {
             store.put(REPOSITORY, root(first))
             assertFailsWith<RepositoryTrustException.KeySubstitution> { store.put(REPOSITORY, root(second)) }
             store.replaceAfterExplicitApproval(REPOSITORY, root(second))
             assertEquals(root(second), store.get(REPOSITORY))
         } finally {
-            SodiumSyncPrimitives.destroy(first.privateKey)
-            SodiumSyncPrimitives.destroy(second.privateKey)
+            SodiumPrimitives.destroy(first.privateKey)
+            SodiumPrimitives.destroy(second.privateKey)
         }
     }
 
@@ -683,8 +683,8 @@ class RepositoryTrustTest {
         PinnedRepositoryTrustPolicy(mapOf(REPOSITORY to root(keys)))
 
     private fun root(keys: SodiumKeyPair): RepositoryTrustRoot {
-        val public = SodiumSyncPrimitives.base64UrlEncode(keys.publicKey)
-        val fingerprint = "sha256:${SodiumSyncPrimitives.base64UrlEncode(SodiumSyncPrimitives.sha256(keys.publicKey))}"
+        val public = SodiumPrimitives.base64UrlEncode(keys.publicKey)
+        val fingerprint = "sha256:${SodiumPrimitives.base64UrlEncode(SodiumPrimitives.sha256(keys.publicKey))}"
         return RepositoryTrustRoot(public, fingerprint)
     }
 
@@ -694,7 +694,7 @@ class RepositoryTrustTest {
         sequence: Long,
     ): String {
         val root = root(keys)
-        val signature = SodiumSyncPrimitives.signEd25519(
+        val signature = SodiumPrimitives.signEd25519(
             RepositorySignedDocumentVerifier.signingMessage(
                 REPOSITORY,
                 RepositorySignedDocumentType.INDEX,
@@ -713,7 +713,7 @@ class RepositoryTrustTest {
             put("payloadType", RepositorySignedDocumentType.INDEX.wireValue)
             put("sequence", sequence)
             put("payload", payload)
-            put("signature", SodiumSyncPrimitives.base64UrlEncode(signature))
+            put("signature", SodiumPrimitives.base64UrlEncode(signature))
         }.toString()
     }
 

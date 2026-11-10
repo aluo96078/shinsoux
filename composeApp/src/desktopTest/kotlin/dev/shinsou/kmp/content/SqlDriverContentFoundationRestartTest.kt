@@ -27,7 +27,6 @@ import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -416,7 +415,7 @@ class SqlDriverContentFoundationRestartTest {
             val orphan = first.blobStore.put("orphaned after publish".encodeToByteArray(), "text/plain")
             val attached = first.blobStore.put("committed attachment".encodeToByteArray(), "text/plain")
             first.transactions.commit(
-                ContentCommitBatch<SyncDraft>(
+                ContentCommitBatch<LegacyOutboxDraft>(
                     commitId = "runtime-recovery-attached",
                     receipts = listOf(attached),
                     auxiliaryAttachments = listOf(
@@ -653,7 +652,7 @@ class SqlDriverContentFoundationRestartTest {
             assertNull(runtime.rightsAuthority.resolve(fixture.grant.grantId, fixture.grant.scope, 0L))
 
             runtime.transactions.commit(
-                ContentCommitBatch<SyncDraft>(
+                ContentCommitBatch<LegacyOutboxDraft>(
                     commitId = "runtime-rights-first",
                     receipts = listOf(receipt),
                     attachments = listOf(fixture.attachment),

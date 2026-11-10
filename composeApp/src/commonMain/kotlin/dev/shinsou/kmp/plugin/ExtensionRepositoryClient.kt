@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -123,7 +123,7 @@ public class ExtensionRepositoryClient(
         val bytes = requestBytes(normalized, url, MAX_REPOSITORY_BYTES, INSPECTION_DECISION)
         // The first signed-repository step on a device that never used sync: libsodium may not be
         // loaded yet, and a decode failure here would read as "not a signed repository".
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         return try {
             val envelope = parseRoot(url, bytes) as? JsonObject ?: error("repo.json is not a signed envelope")
             val publicKey = envelope["publicKey"]?.jsonPrimitive?.content ?: error("repo.json is not signed")

@@ -176,7 +176,7 @@ class LocalTypedContentControllerTest {
             assertTrue(scopeRequests.isEmpty())
             assertEquals(null, firstSession.remoteAssetScope)
             assertIs<ContentRepresentation.PlainText>(firstSession.content.representation)
-            assertTrue(firstFoundation.transactions.pendingOutbox().isNotEmpty())
+            assertTrue(firstFoundation.transactions.pendingOutbox().isEmpty())
             assertTrue(
                 firstFoundation.transactions.pendingBlobSyncJobs().isEmpty(),
                 "A normal local import must not imply consent to upload its body",

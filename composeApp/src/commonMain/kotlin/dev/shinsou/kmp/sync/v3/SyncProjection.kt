@@ -4,6 +4,7 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
+import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaCategory
@@ -61,6 +62,8 @@ internal class SyncOutgoing(
     val mangaById: Map<Long, Manga> by lazy { snapshot.mangas.associateBy { it.id } }
     val chapterById: Map<Long, Chapter> by lazy { snapshot.chapters.associateBy { it.id } }
     val categoryById: Map<Long, Category> by lazy { snapshot.categories.associateBy { it.id } }
+    val repositoryByUrl: Map<String, ExtensionRepo> by lazy { snapshot.extensionRepositories.associateBy { it.baseUrl } }
+    private val settingsJson: JsonObject by lazy { PortableSettings.encode(snapshot.settings) }
 
     fun libraryValue(manga: Manga, field: String): JsonElement? = when (field) {
         "addedAt" -> JsonPrimitive(manga.dateAdded)
@@ -106,7 +109,25 @@ internal class SyncOutgoing(
         "flags" -> JsonPrimitive(category.flags)
         else -> null
     }
+
+    /**
+     * `trustedPublishers` only says which key the repository was signed with when it was added.
+     * Trust itself is granted per device and never travels (see [SyncApplier.applyRepository]).
+     */
+    fun repositoryValue(repo: ExtensionRepo, field: String): JsonElement? = when (field) {
+        "url" -> JsonPrimitive(repo.baseUrl)
+        "name" -> JsonPrimitive(repo.name.truncated(MAX_REPOSITORY_NAME_CHARS))
+        "trustedPublishers" -> JsonArray(listOfNotNull(repo.signingKeyFingerprint.takeIf { it.isNotBlank() }?.let(::JsonPrimitive)))
+        else -> null
+    }
+
+    fun settingValue(path: String, field: String): JsonElement? =
+        if (field == SyncDiff.SETTING_FIELD && PortableSettings.isPortable(path)) PortableSettings.valueAt(settingsJson, path) else null
 }
+
+internal const val MAX_REPOSITORY_NAME_CHARS = 200
+internal const val MAX_REPOSITORY_URL_CHARS = 2048
+private const val MAX_FINGERPRINT_CHARS = 128
 
 internal sealed interface ApplyOutcome {
     data object Applied : ApplyOutcome
@@ -150,6 +171,7 @@ internal class SyncApplier(
     private var links = snapshot.mangaCategories
     private var histories = snapshot.histories
     private var settings = snapshot.settings
+    private var repositories = snapshot.extensionRepositories
     private var changed = false
 
     private val mangaIndex: HashMap<Long, Int> by lazy { indexOf(mangas) { it.id } }
@@ -176,7 +198,9 @@ internal class SyncApplier(
                     SyncKinds.UNIT -> applyUnit(record)
                     SyncKinds.HISTORY -> applyHistory(record)
                     SyncKinds.PROGRESS -> applyProgress(record)
-                    // Kinds introduced later (repository, setting) are kept in the sync tables untouched.
+                    SyncKinds.REPOSITORY -> applyRepository(record)
+                    SyncKinds.SETTING -> applySetting(record)
+                    // Kinds this version does not know are kept in the sync tables untouched.
                     else -> ApplyOutcome.Applied
                 }
             } catch (error: IllegalArgumentException) {
@@ -190,6 +214,7 @@ internal class SyncApplier(
             mangaCategories = links,
             histories = histories,
             settings = settings,
+            extensionRepositories = repositories,
         )
         return SyncApplyResult(next, outcomes, newBindings, removedBindings, changed)
     }
@@ -260,6 +285,74 @@ internal class SyncApplier(
             settings = settings.copy(library = settings.library.copy(defaultCategoryId = Category.Default.id))
         }
         changed = true
+    }
+
+    // ---- repository, setting ----------------------------------------------------------------
+
+    /**
+     * Adds or removes an entry of the repository list. Only the list travels: whether this device
+     * trusts the repository's publisher is decided here, by its user, so a repository that arrives
+     * this way shows up as needing trust and nothing is installed from it until then.
+     */
+    private fun applyRepository(r: StoredRecord): ApplyOutcome {
+        val url = r.key
+        val dirty = ctx.dirtyFields(SyncKinds.REPOSITORY, repositoryRef(url))
+        val index = repositories.indexOfFirst { it.baseUrl == url }
+        if (!r.state.isLive) {
+            if (index >= 0 && DirtyEntry.DELETED_FIELD !in dirty) {
+                repositories = repositories.filterNot { it.baseUrl == url }
+                changed = true
+            }
+            return ApplyOutcome.Applied
+        }
+        fun field(name: String): JsonElement? =
+            r.state.fields[name]?.takeIf { !it.dirty && name !in dirty }?.value
+        val name = field("name")?.str()?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_REPOSITORY_NAME_CHARS)
+        val fingerprint = (field("trustedPublishers") as? JsonArray)?.let { list ->
+            list.firstOrNull()?.str()?.trim()?.takeIf { it.length <= MAX_FINGERPRINT_CHARS }.orEmpty()
+        }
+        if (index < 0) {
+            if (DirtyEntry.DELETED_FIELD in dirty) return ApplyOutcome.Applied // removed here, not pushed yet
+            require(isPortableRepositoryUrl(url)) { "repository url" }
+            repositories = repositories + ExtensionRepo(
+                baseUrl = url,
+                name = name ?: url.substringAfter("://").substringBefore('/'),
+                signingKeyFingerprint = fingerprint.orEmpty(),
+            )
+            changed = true
+            return ApplyOutcome.Applied
+        }
+        val current = repositories[index]
+        val updated = current.copy(
+            name = name ?: current.name,
+            signingKeyFingerprint = fingerprint ?: current.signingKeyFingerprint,
+        )
+        if (updated != current) {
+            repositories = repositories.toMutableList().also { it[index] = updated }
+            changed = true
+        }
+        return ApplyOutcome.Applied
+    }
+
+    private fun isPortableRepositoryUrl(url: String): Boolean =
+        url.length <= MAX_REPOSITORY_URL_CHARS &&
+            (url.startsWith("https://") || url.startsWith("http://")) &&
+            url.substringAfter("://").isNotEmpty() &&
+            url.none { it.isWhitespace() || it.isISOControl() }
+
+    private fun applySetting(r: StoredRecord): ApplyOutcome {
+        // A setting this version does not carry, or a deletion (settings are never deleted).
+        if (!PortableSettings.isPortable(r.key) || !r.state.isLive) return ApplyOutcome.Applied
+        val dirty = ctx.dirtyFields(SyncKinds.SETTING, settingRef(r.key))
+        val value = r.state.fields[SyncDiff.SETTING_FIELD]
+            ?.takeIf { !it.dirty && SyncDiff.SETTING_FIELD !in dirty }?.value
+            ?: return ApplyOutcome.Applied
+        val updated = PortableSettings.patch(settings, r.key, value)
+        if (updated != settings) {
+            settings = updated
+            changed = true
+        }
+        return ApplyOutcome.Applied
     }
 
     // ---- library ----------------------------------------------------------------------------

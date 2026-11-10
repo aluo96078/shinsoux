@@ -31,7 +31,7 @@ import dev.shinsou.kmp.plugin.publisherRoot
 import dev.shinsou.kmp.plugin.signedRevocations
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -68,7 +68,7 @@ class SandboxAppIntegrationTest {
     @Test
     fun aTrustedPublishersPackageRunsInTheConfinedHelper() = runBlocking<Unit> {
         val bin = binary ?: run { println("SKIPPED: shinsou-sandbox not built (see SandboxNativeInteropTest)"); return@runBlocking }
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val scope = CoroutineScope(SupervisorJob())
         val keyValues = InMemoryPluginKeyValueStore()
         val state = KeyValueRepositorySecurityStateStore(keyValues)
@@ -109,11 +109,11 @@ class SandboxAppIntegrationTest {
             executionTierGate = PublisherExecutionTierGate(publishers, resolver),
         )
         try {
-            val key = SodiumSyncPrimitives.generateEd25519KeyPair()
+            val key = SodiumPrimitives.generateEd25519KeyPair()
             val publisher = publishers.trustRepository(REPOSITORY.baseUrl, publisherRoot(key)).publisherId
             // What the publisher's repository serves and the app syncs before anything installs.
             revocations.applyRevocations(REPOSITORY.baseUrl, signedRevocations(key, REPOSITORY.baseUrl, publisher, expiresAt = 10_000))
-            SodiumSyncPrimitives.destroy(key.privateKey)
+            SodiumPrimitives.destroy(key.privateKey)
             manager.install(REPOSITORY, entry)
             // A publisher-signed package runs under its local install key and projected source id (D6).
             val installed = manager.installedPlugins().single()

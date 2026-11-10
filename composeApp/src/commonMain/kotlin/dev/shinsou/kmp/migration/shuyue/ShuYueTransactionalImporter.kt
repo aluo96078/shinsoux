@@ -47,26 +47,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-public enum class ShuYueImportSyncDomain {
-    PUBLICATIONS,
-    CONTENT_REFS,
-    CONTENT_BLOBS,
-    CATEGORIES,
-    READING_PROGRESS,
-    READER_SETTINGS,
-}
-
-/** Outbox drafts and an explicit proof of what the current v2 writer represented. */
-public data class ShuYueImportOutboxBundle<D : Any>(
-    val drafts: List<D>,
-    val representedDomains: Set<ShuYueImportSyncDomain>,
-    val blobSyncJobs: List<ContentBlobSyncJobMutation> = emptyList(),
-)
-
-public fun interface ShuYueImportOutboxFactory<D : Any> {
-    public fun build(plan: ShuYuePortableImportPlan): ShuYueImportOutboxBundle<D>
-}
-
 @Serializable
 public data class ShuYueImportedCategory(
     val categoryId: String,
@@ -111,7 +91,7 @@ public data class ShuYueImportedReaderSettings(
     val showPluginErrors: Boolean,
 )
 
-/** Safe, body-free plan supplied to the active sync-v2 outbox writer. */
+/** Safe, body-free description of what one import commits. */
 @Serializable
 public data class ShuYuePortableImportPlan(
     val sourceDigestSha256: String,
@@ -162,13 +142,11 @@ public class ShuYueMigrationConflictException : IllegalStateException(
 
 /**
  * The production import boundary. All body receipts, complete manifests, publications, grants,
- * quarantine rows, migration aliases/ledger and active-sync drafts enter one shared transaction.
+ * quarantine rows and migration aliases/ledger enter one shared transaction.
  */
 public class ShuYueTransactionalImporter<D : Any>(
     private val blobStore: ContentBlobStore,
     private val transactionStore: SharedContentTransactionStore<D>,
-    private val syncActive: () -> Boolean,
-    private val outboxFactory: ShuYueImportOutboxFactory<D>,
     private val offlineStoreAuthorizer: ContentBodyOfflineStoreAuthorizer,
 ) {
     private val stagedReceiptsByCommit = mutableMapOf<String, MutableMap<String, BlobPublishReceipt>>()
@@ -293,24 +271,19 @@ public class ShuYueTransactionalImporter<D : Any>(
                 .filter { it.origin == ORIGIN_LOCAL_EPUB }
                 .mapTo(linkedSetOf()) { ShuYueReadingLocatorMapper.publicationId(it).value },
         )
-        val outbox = outboxFactory.build(plan)
-        if (syncActive()) requireSyncCoverage(plan, outbox)
-
         val metadata = buildMetadata(plan)
         val aliases = buildAliases(resolved)
-        val batch = ContentCommitBatch(
+        val batch = ContentCommitBatch<D>(
             commitId = ledger.commitId,
             receipts = receipts,
             attachments = attachments,
             metadata = metadata,
             aliases = aliases,
-            outbox = outbox.drafts,
             migrations = listOf(ledger),
             publications = publications.map(::ContentPublicationMutation),
             auxiliaryAttachments = quarantines.map { it.second },
             quarantines = quarantines.map { it.first },
             rightsGrants = rights,
-            blobSyncJobs = outbox.blobSyncJobs,
             unrepresentableDraftPolicy = UnrepresentableDraftPolicy.REJECT,
         )
         val commit = transactionStore.commit(batch)
@@ -556,33 +529,6 @@ private fun ShuYueV1ReaderSettings.toPortableSettings(): ShuYueImportedReaderSet
         imageParsingEnabled = imageParsingEnabled,
         showPluginErrors = showPluginErrors,
     )
-
-private fun <D : Any> requireSyncCoverage(
-    plan: ShuYuePortableImportPlan,
-    bundle: ShuYueImportOutboxBundle<D>,
-) {
-    val required = buildSet {
-        if (plan.publications.isNotEmpty()) add(ShuYueImportSyncDomain.PUBLICATIONS)
-        if (plan.blobReferences.isNotEmpty()) add(ShuYueImportSyncDomain.CONTENT_REFS)
-        if (plan.syncableBlobReferences.isNotEmpty()) add(ShuYueImportSyncDomain.CONTENT_BLOBS)
-        if (plan.categories.isNotEmpty() || plan.categoryMemberships.isNotEmpty()) {
-            add(ShuYueImportSyncDomain.CATEGORIES)
-        }
-        if (plan.readingProgress.isNotEmpty()) add(ShuYueImportSyncDomain.READING_PROGRESS)
-        if (plan.readerSettings != null) add(ShuYueImportSyncDomain.READER_SETTINGS)
-    }
-    val jobBlobs = bundle.blobSyncJobs.map(ContentBlobSyncJobMutation::blob)
-    require(
-        required.all { it in bundle.representedDomains } &&
-            (required.isEmpty() || bundle.drafts.isNotEmpty()) &&
-            jobBlobs.toSet() == plan.syncableBlobReferences.toSet() &&
-            jobBlobs.size == jobBlobs.distinctBy { it.blobId }.size &&
-            bundle.blobSyncJobs.map(ContentBlobSyncJobMutation::jobId).distinct().size ==
-            bundle.blobSyncJobs.size,
-    ) {
-        "Active sync v2 cannot atomically represent every selected ShuYue import domain"
-    }
-}
 
 private fun buildMetadata(plan: ShuYuePortableImportPlan): List<ContentMetadataMutation> = buildList {
     plan.categories.forEach { category ->

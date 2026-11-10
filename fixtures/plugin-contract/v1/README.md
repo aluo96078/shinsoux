@@ -22,7 +22,7 @@ App 測試每次都會重新產生並與這裡的檔案逐字比對；CLI 也必
 | `envelopes.json` | 各文件類型以 `publisher-a` 簽好的 `shinsou-signed-envelope-v1`、簽章訊息、輪替聲明，以及必須驗證失敗的案例與預期錯誤。 |
 | `sandbox-frames.json` | SandboxProtocol v1 各 frame 的 CBOR body 與含長度前綴的 envelope。 |
 
-## 正規化 JSON（`canonicalSyncJson`）
+## 正規化 JSON（`canonicalJson`）
 
 - 物件鍵依 **UTF-16 code unit** 排序（與 JavaScript 預設 `sort()` 相同，不是 code point 順序）。
 - 無空白；陣列保留順序。

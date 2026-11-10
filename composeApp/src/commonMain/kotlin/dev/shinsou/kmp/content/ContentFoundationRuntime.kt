@@ -13,7 +13,6 @@ import dev.shinsou.kmp.rights.InMemoryRightsAuthority
 import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.search.DerivedLocalFullTextIndex
-import dev.shinsou.kmp.sync.v2.SyncDraft
 
 /** Typed publication read side for acquisition/import consumers. */
 public interface PublicationStore {
@@ -56,11 +55,11 @@ public fun interface ContentRightsAdmissionLease {
 /**
  * Production M1 graph over one platform-owned SQLite driver.
  *
- * Importers atomically commit publications, aliases, manifests, blob receipts, body jobs and
- * portable drafts here. Blob construction restores only bounded metadata; immutable payloads stay
+ * Importers atomically commit publications, aliases, manifests, blob receipts and body jobs
+ * here. Blob construction restores only bounded metadata; immutable payloads stay
  * outside the cold-start path until [ContentBlobStore.openRead].
- * No sync service drains the drafts; the composition discards them in the background
- * ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
+ * The outbox only holds drafts written by earlier app versions; the composition discards them
+ * in the background ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
  */
 public class ContentFoundationRuntime(
     private val driver: SqlDriver,
@@ -78,10 +77,10 @@ public class ContentFoundationRuntime(
     public val annotations: SqlDriverContentAnnotationStore = SqlDriverContentAnnotationStore(driver)
     public val legacyProjection: LegacyPublicationProjection = LegacyPublicationProjection(aliases)
 
-    private val sqlTransactions = SqlDriverContentTransactionStore<SyncDraft>(
+    private val sqlTransactions = SqlDriverContentTransactionStore<LegacyOutboxDraft>(
         driver,
         blobStore,
-        SyncDraftContentOutboxAdapter,
+        LegacyOutboxDraftAdapter,
         syncModeProvider = syncModeProvider,
         ownsDriver = false,
     )
@@ -112,7 +111,7 @@ public class ContentFoundationRuntime(
      */
     public val contentGeneration: Long get() = generation.load()
 
-    public val transactions: SharedContentTransactionStore<SyncDraft> =
+    public val transactions: SharedContentTransactionStore<LegacyOutboxDraft> =
         SyncAuthorityCoordinatedContentTransactions(sqlTransactions, onGraphChanged = { generation.addAndFetch(1L) }) { batch, result ->
             // Resolve from the durable read side rather than trusting the caller's batch. A
             // migration semantic replay may legitimately ignore newly supplied batch fields.
@@ -292,11 +291,11 @@ public class ContentFoundationRuntime(
 }
 
 private class SyncAuthorityCoordinatedContentTransactions(
-    private val delegate: SqlDriverContentTransactionStore<SyncDraft>,
+    private val delegate: SqlDriverContentTransactionStore<LegacyOutboxDraft>,
     private val onGraphChanged: () -> Unit,
-    private val afterCommit: (ContentCommitBatch<SyncDraft>, ContentCommitResult) -> Unit,
-) : SharedContentTransactionStore<SyncDraft> {
-    override fun commit(batch: ContentCommitBatch<SyncDraft>): ContentCommitResult {
+    private val afterCommit: (ContentCommitBatch<LegacyOutboxDraft>, ContentCommitResult) -> Unit,
+) : SharedContentTransactionStore<LegacyOutboxDraft> {
+    override fun commit(batch: ContentCommitBatch<LegacyOutboxDraft>): ContentCommitResult {
         // Counted even when the commit fails: a partial outcome must not look like "no change".
         try {
             return delegate.commit(batch).also { result -> afterCommit(batch, result) }
@@ -305,18 +304,18 @@ private class SyncAuthorityCoordinatedContentTransactions(
         }
     }
 
-    override fun pendingOutbox(): List<SyncDraft> = delegate.pendingOutbox()
+    override fun pendingOutbox(): List<LegacyOutboxDraft> = delegate.pendingOutbox()
 
     override fun acknowledgeOutbox(draftIds: Set<String>): Int = delegate.acknowledgeOutbox(draftIds)
 
     override fun pendingOutboxCount(): Int = delegate.pendingOutboxCount()
 
-    override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<SyncDraft> =
+    override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<LegacyOutboxDraft> =
         delegate.pendingOutboxPage(afterDraftId, limit)
 
-    override fun pendingOutboxDraft(draftId: String): SyncDraft? = delegate.pendingOutboxDraft(draftId)
+    override fun pendingOutboxDraft(draftId: String): LegacyOutboxDraft? = delegate.pendingOutboxDraft(draftId)
 
-    override fun replaceOutboxDrafts(remove: Set<String>, add: List<SyncDraft>): Int =
+    override fun replaceOutboxDrafts(remove: Set<String>, add: List<LegacyOutboxDraft>): Int =
         delegate.replaceOutboxDrafts(remove, add)
 
     override fun pendingBlobSyncJobs(): List<ContentBlobSyncJobMutation> = delegate.pendingBlobSyncJobs()

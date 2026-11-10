@@ -7,6 +7,7 @@ import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.annotation.ContentAnnotationState
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentCommitBatch
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
@@ -34,7 +35,6 @@ import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import dev.shinsou.kmp.tts.PlatformSpeechRequest
 import dev.shinsou.kmp.tts.PlatformSpeechResult
 import dev.shinsou.kmp.tts.PlatformTextToSpeechEngine
@@ -606,7 +606,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
             )
         }
         foundation.transactions.commit(
-            ContentCommitBatch<SyncDraft>(
+            ContentCommitBatch<LegacyOutboxDraft>(
                 commitId = "search-foundation-import",
                 receipts = published.map { it.second },
                 attachments = attachments,

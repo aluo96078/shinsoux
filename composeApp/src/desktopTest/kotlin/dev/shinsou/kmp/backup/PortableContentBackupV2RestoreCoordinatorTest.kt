@@ -50,14 +50,6 @@ import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsConstraint
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.AcquisitionPatchV2
-import dev.shinsou.kmp.sync.v2.BlobReferencePresenceSetV2
-import dev.shinsou.kmp.sync.v2.ContentAnnotationPatchV2
-import dev.shinsou.kmp.sync.v2.ContentManifestPatchV2
-import dev.shinsou.kmp.sync.v2.ContentSyncFields
-import dev.shinsou.kmp.sync.v2.EntityPresenceSet
-import dev.shinsou.kmp.sync.v2.PublicationPatchV2
-import dev.shinsou.kmp.sync.v2.PublicationUnitPatchV2
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test

@@ -39,7 +39,7 @@ class DeepLinkParserTest {
 
     @Test
     fun addRepositoryLinksCarryAnHttpsRepositoryAndAFullFingerprintOnly() = kotlinx.coroutines.test.runTest {
-        dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives.initialize()
+        dev.shinsou.kmp.crypto.SodiumPrimitives.initialize()
         val hex = "ab".repeat(32)
         val link = DeepLinkParser.parse("shinsou://add-repository?url=https%3A%2F%2Frepo.example%2Fx&fp=$hex")
         val parsed = link as ShinsouDeepLink.AddRepository

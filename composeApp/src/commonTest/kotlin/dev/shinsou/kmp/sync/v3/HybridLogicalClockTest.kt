@@ -1,8 +1,7 @@
-package dev.shinsou.kmp.sync.v2
+package dev.shinsou.kmp.sync.v3
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class HybridLogicalClockTest {
@@ -34,14 +33,9 @@ class HybridLogicalClockTest {
     }
 
     @Test
-    fun lwwOrderingHasDeterministicDeviceTieBreak() {
-        val a = HlcTimestamp(5, 1, "a")
-        val b = HlcTimestamp(5, 1, "b")
-
-        assertTrue(b > a)
-        assertEquals("remote", LwwRegister("local", a).merge(LwwRegister("remote", b)).value)
-        assertFailsWith<SyncInvariantViolation> {
-            LwwRegister("one", a).merge(LwwRegister("different", a))
-        }
+    fun orderingHasDeterministicDeviceTieBreak() {
+        assertTrue(HlcTimestamp(5, 1, "b") > HlcTimestamp(5, 1, "a"))
+        assertTrue(HlcTimestamp(5, 2, "a") > HlcTimestamp(5, 1, "b"))
+        assertTrue(HlcTimestamp(6, 0, "a") > HlcTimestamp(5, 9, "b"))
     }
 }

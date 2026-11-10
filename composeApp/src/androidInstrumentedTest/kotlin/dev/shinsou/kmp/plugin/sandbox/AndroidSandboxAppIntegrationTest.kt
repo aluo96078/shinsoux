@@ -38,7 +38,7 @@ import dev.shinsou.kmp.plugin.SourceIndexEntry
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -80,7 +80,7 @@ class AndroidSandboxAppIntegrationTest {
 
     @Test
     fun aTrustedPublishersPackageRunsInAnIsolatedProcess() = runBlocking<Unit> {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val keyValues = InMemoryPluginKeyValueStore()
         val state = KeyValueRepositorySecurityStateStore(keyValues)
@@ -127,9 +127,9 @@ class AndroidSandboxAppIntegrationTest {
                 ExecutionTierResolver(publishers, revocations, blocklist, nowEpochSeconds = { 0L }),
             ),
         )
-        val key = SodiumSyncPrimitives.generateEd25519KeyPair()
+        val key = SodiumPrimitives.generateEd25519KeyPair()
         try {
-            val root = RepositoryTrustRoot(SodiumSyncPrimitives.base64UrlEncode(key.publicKey), PublisherFingerprint.of(key.publicKey))
+            val root = RepositoryTrustRoot(SodiumPrimitives.base64UrlEncode(key.publicKey), PublisherFingerprint.of(key.publicKey))
             val publisher = publishers.trustRepository(REPOSITORY.baseUrl, root).publisherId
             revocations.applyRevocations(REPOSITORY.baseUrl, emptyRevocations(key, root, publisher))
             manager.install(REPOSITORY, entry)
@@ -152,7 +152,7 @@ class AndroidSandboxAppIntegrationTest {
             manager.loadInstalled()
             assertNull(manager.source(sourceId))
         } finally {
-            SodiumSyncPrimitives.destroy(key.privateKey)
+            SodiumPrimitives.destroy(key.privateKey)
             manager.close()
             scope.cancel()
         }
@@ -166,13 +166,13 @@ class AndroidSandboxAppIntegrationTest {
             .firstOrNull { it.size >= 2 && it[0] == pid.toString() }?.get(1) ?: "missing"
     }
 
-    private suspend fun emptyRevocations(key: dev.shinsou.kmp.sync.crypto.SodiumKeyPair, root: RepositoryTrustRoot, publisher: String): JsonObject {
+    private suspend fun emptyRevocations(key: dev.shinsou.kmp.crypto.SodiumKeyPair, root: RepositoryTrustRoot, publisher: String): JsonObject {
         val payload = buildJsonObject {
             put("publisherId", publisher)
             put("revokedArtifacts", JsonArray(emptyList()))
             put("expiresAt", 10_000L)
         }
-        val signature = SodiumSyncPrimitives.signEd25519(
+        val signature = SodiumPrimitives.signEd25519(
             RepositorySignedDocumentVerifier.signingMessage(
                 REPOSITORY.baseUrl, RepositorySignedDocumentType.REVOCATIONS, PublisherRevocationStore.REVOCATIONS_DOCUMENT_ID, 1, root.fingerprint, payload,
             ),
@@ -186,7 +186,7 @@ class AndroidSandboxAppIntegrationTest {
             put("payloadType", RepositorySignedDocumentType.REVOCATIONS.wireValue)
             put("sequence", 1)
             put("payload", payload)
-            put("signature", SodiumSyncPrimitives.base64UrlEncode(signature))
+            put("signature", SodiumPrimitives.base64UrlEncode(signature))
         }
     }
 

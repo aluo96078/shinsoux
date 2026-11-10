@@ -1053,8 +1053,8 @@ internal data class AtomicSnapshotMutationResult<T>(
 )
 
 /**
- * Adapter used by Cloudflare sync v2 to atomically persist replica metadata and a durable draft
- * before a local [AppSnapshot] projection is published. Implementations must be idempotent and
+ * Hook that lets a host persist its own durable state (the sync dirty set, a restore journal)
+ * atomically with a local [AppSnapshot] change, before the new snapshot is published. Implementations must be idempotent and
  * must not call back into this repository while [beforeCommit] is running.
  */
 fun interface SnapshotMutationObserver {

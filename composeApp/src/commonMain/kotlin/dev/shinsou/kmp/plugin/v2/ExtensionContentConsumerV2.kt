@@ -21,6 +21,7 @@ import dev.shinsou.kmp.content.ContentBlobStage
 import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobStoreException
 import dev.shinsou.kmp.content.ContentCommitBatch
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentCommitResult
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentLocalBodyPurgeResult
@@ -68,8 +69,6 @@ import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.reader.ReadingScope
 import dev.shinsou.kmp.reader.UnifiedReaderContent
 import dev.shinsou.kmp.reader.UnifiedReaderNavigationFactory
-import dev.shinsou.kmp.sync.v2.ContentPublicationSyncDraftFactory
-import dev.shinsou.kmp.sync.v2.SyncDraft
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -398,7 +397,6 @@ public class ExtensionContentConsumerV2(
                             .flatMap { it.manifestRevisions }
                             .mapTo(linkedSetOf()) { "extension-v2:${it.manifestId}" }
                     },
-                    draftIdPrefixOf = ContentPublicationSyncDraftFactory::draftIdPrefix,
                 )
             } catch (busy: IllegalStateException) {
                 if (!busy.message.orEmpty().startsWith("Concurrent content transaction must retry") ||
@@ -1172,19 +1170,9 @@ public class ExtensionContentConsumerV2(
                     ).encodeToByteArray(),
                 )}"
             }
-            val outbox = if (graph.publicationChanged) {
-                ContentPublicationSyncDraftFactory.build(
-                    publication = graph.publication,
-                    rightsGrants = listOf(grant),
-                    operationNamespace = operationNamespace,
-                    createdAtMillis = nowEpochMillis(),
-                ).drafts
-            } else {
-                emptyList()
-            }
             try {
                 val commit = foundation.transactions.commit(
-                    ContentCommitBatch<SyncDraft>(
+                    ContentCommitBatch<LegacyOutboxDraft>(
                         commitId = operationNamespace,
                         receipts = prepared.receipts,
                         attachments = listOf(
@@ -1221,7 +1209,6 @@ public class ExtensionContentConsumerV2(
                             emptyList()
                         },
                         rightsGrants = listOf(ContentRightsGrantMutation(grant)),
-                        outbox = outbox,
                     ),
                 )
                 return ExtensionContentMaterializationV2(

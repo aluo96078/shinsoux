@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
-import dev.shinsou.kmp.sync.trust.canonicalSyncJson
+import dev.shinsou.kmp.crypto.SodiumPrimitives
+import dev.shinsou.kmp.crypto.canonicalJson
 import io.ktor.http.Url
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -97,7 +97,7 @@ public sealed class PublisherTrustException(message: String) : IllegalArgumentEx
 public object PublisherFingerprint {
     /** The full value, as envelopes carry it: `sha256:` + unpadded base64url of the 32-byte digest. */
     public fun of(publicKey: ByteArray): String =
-        "sha256:${SodiumSyncPrimitives.base64UrlEncode(SodiumSyncPrimitives.sha256(publicKey))}"
+        "sha256:${SodiumPrimitives.base64UrlEncode(SodiumPrimitives.sha256(publicKey))}"
 
     /** What the UI shows: the first 128 bits in hex, four characters a group. Never used to compare. */
     public fun display(fingerprint: String): String {
@@ -318,7 +318,7 @@ public class PublisherTrustStore(
         val statement = rotationStatement(record.publisherId, record.currentFingerprint, newKey, effective)
         val signature = RepositoryTrustRootValidation.canonicalBase64Url(payload.string("newKeySignature"), 64)
         val newPublicKey = RepositoryTrustRootValidation.canonicalBase64Url(newKey.publicKeyBase64Url, 32)
-        if (!SodiumSyncPrimitives.verifyEd25519(statement, signature, newPublicKey)) throw RepositoryTrustException.InvalidSignature()
+        if (!SodiumPrimitives.verifyEd25519(statement, signature, newPublicKey)) throw RepositoryTrustException.InvalidSignature()
         val rotated = record.copy(
             currentPublicKey = newKey.publicKeyBase64Url,
             currentFingerprint = newKey.fingerprint,
@@ -401,7 +401,7 @@ public class PublisherTrustStore(
     }
 
     private suspend fun requireValidKey(key: RepositoryTrustRoot) {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         RepositoryTrustRootValidation.requireValid(key)
     }
 
@@ -451,7 +451,7 @@ public class PublisherTrustStore(
             oldKeyFingerprint: String,
             newKey: RepositoryTrustRoot,
             effectiveSequence: Long,
-        ): ByteArray = ROTATION_DOMAIN + canonicalSyncJson(
+        ): ByteArray = ROTATION_DOMAIN + canonicalJson(
             JsonObject(
                 mapOf(
                     "effectiveSequence" to JsonPrimitive(effectiveSequence),

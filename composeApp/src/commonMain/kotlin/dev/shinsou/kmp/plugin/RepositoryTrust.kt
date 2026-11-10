@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
-import dev.shinsou.kmp.sync.trust.canonicalSyncJson
+import dev.shinsou.kmp.crypto.SodiumPrimitives
+import dev.shinsou.kmp.crypto.canonicalJson
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -540,7 +540,7 @@ internal class RepositorySignedDocumentVerifier(
         stateScope: String,
     ): VerifiedRepositoryPayload {
         try {
-            SodiumSyncPrimitives.initialize()
+            SodiumPrimitives.initialize()
             require(envelope.keys == ENVELOPE_FIELDS) { "Unknown or missing signed-envelope field" }
             require(envelope.requiredString("format") == ENVELOPE_FORMAT)
             require(envelope.requiredString("algorithm") == "Ed25519")
@@ -555,7 +555,7 @@ internal class RepositorySignedDocumentVerifier(
 
             val calculatedFingerprint = fingerprint(pinnedPublicKey)
             if (pinned.fingerprint != calculatedFingerprint || wireFingerprint != calculatedFingerprint ||
-                !SodiumSyncPrimitives.constantTimeEquals(wirePublicKey, pinnedPublicKey)
+                !SodiumPrimitives.constantTimeEquals(wirePublicKey, pinnedPublicKey)
             ) {
                 throw RepositoryTrustException.KeySubstitution()
             }
@@ -579,10 +579,10 @@ internal class RepositorySignedDocumentVerifier(
                 wireFingerprint,
                 payload,
             )
-            if (!SodiumSyncPrimitives.verifyEd25519(message, wireSignature, pinnedPublicKey)) {
+            if (!SodiumPrimitives.verifyEd25519(message, wireSignature, pinnedPublicKey)) {
                 throw RepositoryTrustException.InvalidSignature()
             }
-            val payloadSha = Sha256.hex(canonicalSyncJson(payload).encodeToByteArray())
+            val payloadSha = Sha256.hex(canonicalJson(payload).encodeToByteArray())
             val admission = RepositoryDocumentAdmission(
                 stateScope,
                 expectedType,
@@ -664,7 +664,7 @@ internal class RepositorySignedDocumentVerifier(
                     "sequence" to JsonPrimitive(sequence),
                 ),
             )
-            return SIGNATURE_DOMAIN + canonicalSyncJson(statement).encodeToByteArray()
+            return SIGNATURE_DOMAIN + canonicalJson(statement).encodeToByteArray()
         }
     }
 }
@@ -687,7 +687,7 @@ internal data class RepositoryDocumentAdmission(
 
 internal object RepositoryTrustRootValidation {
     suspend fun requireValid(root: RepositoryTrustRoot) {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val publicKey = canonicalBase64Url(root.publicKeyBase64Url, 32)
         require(root.fingerprint == fingerprint(publicKey)) { "Repository trust-root fingerprint does not match its key" }
     }
@@ -701,7 +701,7 @@ internal object RepositoryTrustRootValidation {
     }
 
     fun fingerprint(publicKey: ByteArray): String =
-        "sha256:${SodiumSyncPrimitives.base64UrlEncode(SodiumSyncPrimitives.sha256(publicKey))}"
+        "sha256:${SodiumPrimitives.base64UrlEncode(SodiumPrimitives.sha256(publicKey))}"
 }
 
 /**

@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.sync.crypto.SodiumKeyPair
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
+import dev.shinsou.kmp.crypto.SodiumKeyPair
+import dev.shinsou.kmp.crypto.SodiumPrimitives
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -11,7 +11,7 @@ import kotlinx.serialization.json.put
 
 /** Test publisher: signs `shinsou-signed-envelope-v1` documents the way a publisher's tooling does. */
 internal fun publisherRoot(key: SodiumKeyPair) = RepositoryTrustRoot(
-    SodiumSyncPrimitives.base64UrlEncode(key.publicKey),
+    SodiumPrimitives.base64UrlEncode(key.publicKey),
     PublisherFingerprint.of(key.publicKey),
 )
 
@@ -24,7 +24,7 @@ internal suspend fun signedPublisherEnvelope(
     payload: JsonElement,
 ): JsonObject {
     val root = publisherRoot(key)
-    val signature = SodiumSyncPrimitives.signEd25519(
+    val signature = SodiumPrimitives.signEd25519(
         RepositorySignedDocumentVerifier.signingMessage(repository, type, documentId, sequence, root.fingerprint, payload),
         key.privateKey,
     )
@@ -36,7 +36,7 @@ internal suspend fun signedPublisherEnvelope(
         put("payloadType", type.wireValue)
         put("sequence", sequence)
         put("payload", payload)
-        put("signature", SodiumSyncPrimitives.base64UrlEncode(signature))
+        put("signature", SodiumPrimitives.base64UrlEncode(signature))
     }
 }
 

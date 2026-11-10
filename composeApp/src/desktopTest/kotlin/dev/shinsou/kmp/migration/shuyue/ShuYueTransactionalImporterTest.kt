@@ -5,7 +5,6 @@ import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.ContentTransactionFailurePoint
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.InMemorySharedContentTransactionStore
-import dev.shinsou.kmp.content.SyncDraftContentOutboxAdapter
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
@@ -15,11 +14,6 @@ import dev.shinsou.kmp.content.access.PendingContentBodyStoreRequest
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.rights.InMemoryRightsAuthority
-import dev.shinsou.kmp.sync.v2.BlobReferenceCommitV2
-import dev.shinsou.kmp.sync.v2.SyncDraft
-import dev.shinsou.kmp.sync.v2.SyncEntityType
-import dev.shinsou.kmp.sync.v2.SyncReducer
-import dev.shinsou.kmp.sync.v2.SyncState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -40,7 +34,7 @@ class ShuYueTransactionalImporterTest {
             syncModeProvider = { ContentSyncMode.INACTIVE },
         )
         val authorizer = RecordingOfflineStoreAuthorizer(denyPreflightAt = 1)
-        val importer = importer(blobStore, store, syncActive = false, authorizer = authorizer)
+        val importer = importer(blobStore, store, authorizer = authorizer)
 
         assertFailsWith<ContentOperationDeniedException> { importer.import(prepared) }
 
@@ -63,7 +57,7 @@ class ShuYueTransactionalImporterTest {
         )
         val authorizer = RecordingOfflineStoreAuthorizer()
 
-        importer(blobStore, store, syncActive = false, authorizer = authorizer).import(prepared)
+        importer(blobStore, store, authorizer = authorizer).import(prepared)
 
         assertEquals(3, authorizer.preflightRequests.size)
         assertEquals(authorizer.preflightRequests, authorizer.executionRequests)
@@ -94,7 +88,7 @@ class ShuYueTransactionalImporterTest {
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
         )
-        val importer = importer(blobStore, store, syncActive = false)
+        val importer = importer(blobStore, store)
 
         val imported = importer.import(prepared)
 
@@ -141,90 +135,6 @@ class ShuYueTransactionalImporterTest {
     }
 
     @Test
-    fun activeSyncFailsClosedWhenOutboxDoesNotCoverSelectedDomains() {
-        val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
-        val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
-            blobStore = blobStore,
-            outboxAdapter = StringOutboxAdapter,
-            syncModeProvider = { ContentSyncMode.V2_ACTIVE },
-        )
-        val importer = importer(blobStore, store, syncActive = true)
-
-        assertFailsWith<IllegalArgumentException> { importer.import(prepared) }
-        assertTrue(store.state.publications.isEmpty())
-        assertTrue(store.state.migrations.isEmpty())
-        assertTrue(blobStore.pendingReceiptCount > 0)
-    }
-
-    @Test
-    fun productionV2FactoryCommitsTypedDraftsMembershipsAndExactBodyJobs() {
-        val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
-        val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
-            blobStore = blobStore,
-            outboxAdapter = SyncDraftContentOutboxAdapter,
-            syncModeProvider = { ContentSyncMode.V2_ACTIVE },
-        )
-        val importer = ShuYueTransactionalImporter(
-            blobStore = blobStore,
-            transactionStore = store,
-            syncActive = { true },
-            outboxFactory = ShuYueSyncV2OutboxFactory,
-            offlineStoreAuthorizer = offlineStoreAuthorizer(store),
-        )
-
-        val result = importer.import(
-            prepared,
-            ShuYueImportSelection(includeContentBodySync = true),
-        )
-
-        assertTrue(store.state.outbox.isNotEmpty())
-        assertTrue(store.state.blobSyncJobs.isNotEmpty())
-        assertEquals(store.state.blobSyncJobs.keys.toList(), result.commit.blobSyncJobIds)
-        assertEquals(
-            store.state.blobSyncJobs.values.map { it.blob.blobId }.toSet().size,
-            store.state.blobSyncJobs.size,
-        )
-        assertTrue(store.state.outbox.flatMap { it.event.mutations }.none { it is BlobReferenceCommitV2 })
-
-        val replica = store.state.outbox.fold(SyncState()) { state, draft ->
-            SyncReducer.reduce(state, draft.event)
-        }
-        assertEquals(
-            result.publicationCount,
-            replica.entities.keys.count { it.entityType == SyncEntityType.PUBLICATION },
-        )
-        assertEquals(result.publicationCount, replica.contentCategoryMemberships.size)
-        assertEquals(result.progressCount, replica.contentReadingProgress.size)
-        assertTrue(replica.portableSettings.isNotEmpty())
-    }
-
-    @Test
-    fun productionV2FactoryDoesNotQueueBodyJobsWithoutExplicitOptIn() {
-        val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
-        val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
-            blobStore = blobStore,
-            outboxAdapter = SyncDraftContentOutboxAdapter,
-            syncModeProvider = { ContentSyncMode.V2_ACTIVE },
-        )
-        val importer = ShuYueTransactionalImporter(
-            blobStore = blobStore,
-            transactionStore = store,
-            syncActive = { true },
-            outboxFactory = ShuYueSyncV2OutboxFactory,
-            offlineStoreAuthorizer = offlineStoreAuthorizer(store),
-        )
-
-        val result = importer.import(prepared)
-
-        assertTrue(store.state.outbox.isNotEmpty())
-        assertTrue(store.state.blobSyncJobs.isEmpty())
-        assertTrue(result.commit.blobSyncJobIds.isEmpty())
-    }
-
-    @Test
     fun injectedTransactionFailureLeavesNoMetadataOrDanglingCommittedReference() {
         val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
@@ -236,7 +146,7 @@ class ShuYueTransactionalImporterTest {
 
         val authority = InMemoryRightsAuthority()
         val authorizer = RecordingOfflineStoreAuthorizer(offlineStoreAuthorizer(store, authority))
-        val importer = importer(blobStore, store, syncActive = false, authorizer = authorizer)
+        val importer = importer(blobStore, store, authorizer = authorizer)
 
         assertFailsWith<IllegalStateException> { importer.import(prepared) }
         assertTrue(store.state.publications.isEmpty())
@@ -283,7 +193,7 @@ class ShuYueTransactionalImporterTest {
                 acceptedBatch = batch
             }
         }
-        val importer = importer(blobStore, store, syncActive = false)
+        val importer = importer(blobStore, store)
 
         assertEquals(ShuYueSecretImportResult(1, 1), importer.importSecrets(prepared, consent, protected))
         assertEquals(1, acceptedBatch?.credentials?.size)
@@ -300,15 +210,10 @@ class ShuYueTransactionalImporterTest {
     private fun importer(
         blobStore: InMemoryContentBlobStore,
         store: InMemorySharedContentTransactionStore<String>,
-        syncActive: Boolean,
         authorizer: ContentBodyOfflineStoreAuthorizer = offlineStoreAuthorizer(store),
     ): ShuYueTransactionalImporter<String> = ShuYueTransactionalImporter(
         blobStore = blobStore,
         transactionStore = store,
-        syncActive = { syncActive },
-        outboxFactory = ShuYueImportOutboxFactory {
-            ShuYueImportOutboxBundle(emptyList(), emptySet())
-        },
         offlineStoreAuthorizer = authorizer,
     )
 

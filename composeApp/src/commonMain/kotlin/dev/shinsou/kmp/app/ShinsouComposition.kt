@@ -29,7 +29,6 @@ import dev.shinsou.kmp.domain.model.InMemoryPortableAliasLedger
 import dev.shinsou.kmp.domain.model.LegacyPublicationBundle
 import dev.shinsou.kmp.migration.shuyue.ShuYueCompatibilityProjectionCoordinator
 import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
-import dev.shinsou.kmp.migration.shuyue.ShuYueSyncV2OutboxFactory
 import dev.shinsou.kmp.migration.shuyue.ShuYueTransactionalImporter
 import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
 import dev.shinsou.kmp.plugin.BiliMangaStandaloneLibraryMigration
@@ -441,9 +440,6 @@ public class ShinsouComposition(
         val localImporter = ShuYueTransactionalImporter(
             blobStore = foundation.blobStore,
             transactionStore = foundation.transactions,
-            syncActive = { false },
-            // The importer still journals its drafts; the background discard drops them.
-            outboxFactory = ShuYueSyncV2OutboxFactory,
             offlineStoreAuthorizer = offlineStoreAuthorizer,
         )
         DefaultShuYueMigrationUiController(
@@ -515,7 +511,7 @@ public class ShinsouComposition(
     /** Conflated derived-index invalidations; import/restore never waits for plaintext indexing. */
     private val searchIndexReconciliationSignals = Channel<Unit>(Channel.CONFLATED)
     private var searchIndexReconciliationJob: Job? = null
-    /** Conflated requests to drop the outbox drafts and blob-sync jobs nothing drains any more. */
+    /** Conflated requests to drop legacy outbox drafts and the blob-sync jobs nothing drains. */
     private val contentOutboxDiscardSignals = Channel<Unit>(Channel.CONFLATED)
     private var contentOutboxDiscardJob: Job? = null
     private val contentOutboxDiscarder: ContentOutboxDiscarder? =

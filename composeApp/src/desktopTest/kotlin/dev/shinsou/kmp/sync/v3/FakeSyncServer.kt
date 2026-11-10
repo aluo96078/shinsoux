@@ -221,7 +221,7 @@ internal class FakeSyncServer {
                 clocks = record.clocks.orEmpty(),
                 deleted = record.deleted?.let { DeletedRegister(it.value, it.clock) },
             )
-            val workHash = record.work ?: record.key.takeIf { record.kind != SyncKinds.CATEGORY && !it.startsWith("local:") }
+            val workHash = record.work ?: record.key.takeIf { SyncKinds.needsWork(record.kind, it) }
             if (workHash != null && workHash !in account.works) {
                 return@map WirePushResult(record.kind, record.key, "rejected:unknown_work")
             }

@@ -10,6 +10,7 @@ import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentPublicationMutation
 import dev.shinsou.kmp.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
+import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.content.ResourceRef
 import dev.shinsou.kmp.content.TextBlock
@@ -25,11 +26,6 @@ import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.sync.v2.HlcTimestamp
-import dev.shinsou.kmp.sync.v2.PortableSettingPatch
-import dev.shinsou.kmp.sync.v2.SyncDraft
-import dev.shinsou.kmp.sync.v2.SyncEvent
-import dev.shinsou.kmp.sync.v2.SyncValue
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -118,8 +114,8 @@ class ContentOutboxDiscarderTest {
             JdbcSqliteDriver("jdbc:sqlite:$database").let { driver ->
                 val foundation = ContentFoundationRuntime(driver)
                 try {
-                    // Producers keep writing drafts, so a retried commit id carries the same outbox
-                    // it was journalled with and passes the commit-journal fingerprint check.
+                    // Discarding a draft does not rewrite the journal, so the batch that wrote it
+                    // still passes the commit-journal fingerprint check.
                     val batch = ContentCommitBatch(commitId = "retried", outbox = listOf(draft("retried", 0)))
                     foundation.transactions.commit(batch)
                     ContentOutboxDiscarder(foundation.transactions).discardPending()
@@ -135,18 +131,13 @@ class ContentOutboxDiscarderTest {
         }
     }
 
-    private fun draft(commit: String, index: Int): SyncDraft {
+    /** A draft row as an earlier app version stored it: only its id is still understood. */
+    private fun draft(commit: String, index: Int): LegacyOutboxDraft {
         val id = "$commit:$index"
-        return SyncDraft(
+        return LegacyOutboxDraft(
             draftId = id,
-            event = SyncEvent(
-                opId = id,
-                hlc = HlcTimestamp(0, 0, "pending-import"),
-                mutations = listOf(
-                    PortableSettingPatch(mapOf("general.dateFormat" to SyncValue.StringValue("yyyy-MM-dd"))),
-                ),
-            ),
-            createdAtMillis = 1_000L + index,
+            payload = """{"draftId":"$id","event":{"opId":"$id","hlc":{"wallTimeMillis":0,"counter":0,""" +
+                """"nodeId":"pending-import"},"mutations":[]},"createdAtMillis":${1_000L + index}}""",
         )
     }
 

@@ -11,9 +11,9 @@ import dev.shinsou.kmp.plugin.sandbox.SandboxLimitKind
 import dev.shinsou.kmp.plugin.sandbox.SandboxLimits
 import dev.shinsou.kmp.plugin.sandbox.SandboxPeer
 import dev.shinsou.kmp.plugin.sandbox.SandboxSourceFailure
-import dev.shinsou.kmp.sync.crypto.SodiumKeyPair
-import dev.shinsou.kmp.sync.crypto.SodiumSyncPrimitives
-import dev.shinsou.kmp.sync.trust.canonicalSyncJson
+import dev.shinsou.kmp.crypto.SodiumKeyPair
+import dev.shinsou.kmp.crypto.SodiumPrimitives
+import dev.shinsou.kmp.crypto.canonicalJson
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -57,7 +57,7 @@ class PluginContractVectorTest {
 
     @Test
     fun publisherKeysMatchTheFixture() = runTest {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val keys = buildJsonArray {
             TEST_KEYS.forEach { (name, label) ->
                 val seed = seedFor(label)
@@ -68,14 +68,14 @@ class PluginContractVectorTest {
                         put("name", name)
                         put("seedLabel", label)
                         put("seedHex", seed.toHex())
-                        put("publicKey", SodiumSyncPrimitives.base64UrlEncode(pair.publicKey))
+                        put("publicKey", SodiumPrimitives.base64UrlEncode(pair.publicKey))
                         put("fingerprint", fingerprint)
                         put("displayFingerprint", PublisherFingerprint.display(fingerprint))
                     },
                 )
                 assertEquals(fingerprint, PublisherFingerprint.parse(fingerprint))
                 // The hex form a user may paste resolves to the same fingerprint.
-                assertEquals(fingerprint, PublisherFingerprint.parse(SodiumSyncPrimitives.sha256(pair.publicKey).toHex()))
+                assertEquals(fingerprint, PublisherFingerprint.parse(SodiumPrimitives.sha256(pair.publicKey).toHex()))
             }
         }
         check("keys.json", buildJsonObject {
@@ -86,23 +86,23 @@ class PluginContractVectorTest {
 
     @Test
     fun canonicalJsonMatchesTheFixture() = runTest {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val valid = buildJsonArray {
             CANONICAL_VALID.forEach { (name, text) ->
-                val canonical = canonicalSyncJson(Json.parseToJsonElement(text))
+                val canonical = canonicalJson(Json.parseToJsonElement(text))
                 add(
                     buildJsonObject {
                         put("name", name)
                         put("json", text)
                         put("canonical", canonical)
-                        put("sha256Hex", SodiumSyncPrimitives.sha256(canonical.encodeToByteArray()).toHex())
+                        put("sha256Hex", SodiumPrimitives.sha256(canonical.encodeToByteArray()).toHex())
                     },
                 )
             }
         }
         val invalid = buildJsonArray {
             CANONICAL_INVALID.forEach { (name, text) ->
-                assertFailsWith<Throwable>("$name must be rejected") { canonicalSyncJson(Json.parseToJsonElement(text)) }
+                assertFailsWith<Throwable>("$name must be rejected") { canonicalJson(Json.parseToJsonElement(text)) }
                 add(buildJsonObject { put("name", name); put("json", text) })
             }
         }
@@ -114,14 +114,14 @@ class PluginContractVectorTest {
 
     @Test
     fun signedEnvelopesMatchTheFixtureAndVerify() = runTest {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val a = keyPair(seedFor(TEST_KEYS[0].second))
         val b = keyPair(seedFor(TEST_KEYS[1].second))
         val fa = PublisherFingerprint.of(a.publicKey)
         val fb = PublisherFingerprint.of(b.publicKey)
 
         val rotationStatement = PublisherTrustStore.rotationStatement(fa, fa, publisherRoot(b), 2)
-        val newKeySignature = SodiumSyncPrimitives.signEd25519(rotationStatement, b.privateKey)
+        val newKeySignature = SodiumPrimitives.signEd25519(rotationStatement, b.privateKey)
         val cases = listOf(
             EnvelopeCase("repository-meta", "publisher-a", a, REPOSITORY, RepositorySignedDocumentType.REPOSITORY, "repo.json", 1,
                 buildJsonObject {
@@ -178,10 +178,10 @@ class PluginContractVectorTest {
                 PublisherTrustStore.ROTATION_DOCUMENT_ID, 5,
                 buildJsonObject {
                     put("publisherId", fa)
-                    put("newPublicKey", SodiumSyncPrimitives.base64UrlEncode(b.publicKey))
+                    put("newPublicKey", SodiumPrimitives.base64UrlEncode(b.publicKey))
                     put("newKeyFingerprint", fb)
                     put("effectiveSequence", 2)
-                    put("newKeySignature", SodiumSyncPrimitives.base64UrlEncode(newKeySignature))
+                    put("newKeySignature", SodiumPrimitives.base64UrlEncode(newKeySignature))
                 }),
             EnvelopeCase("publisher-key-revoked", "publisher-a", a, REPOSITORY, RepositorySignedDocumentType.KEY_REVOKED,
                 PublisherTrustStore.KEY_REVOKED_DOCUMENT_ID, 1,
@@ -209,9 +209,9 @@ class PluginContractVectorTest {
                         put("payloadType", case.type.wireValue)
                         put("documentId", case.documentId)
                         put("sequence", case.sequence)
-                        put("signingMessageBase64", SodiumSyncPrimitives.base64UrlEncode(message))
-                        put("signingMessageSha256Hex", SodiumSyncPrimitives.sha256(message).toHex())
-                        put("payloadCanonicalSha256Hex", SodiumSyncPrimitives.sha256(canonicalSyncJson(case.payload).encodeToByteArray()).toHex())
+                        put("signingMessageBase64", SodiumPrimitives.base64UrlEncode(message))
+                        put("signingMessageSha256Hex", SodiumPrimitives.sha256(message).toHex())
+                        put("payloadCanonicalSha256Hex", SodiumPrimitives.sha256(canonicalJson(case.payload).encodeToByteArray()).toHex())
                         put("envelope", envelope)
                     },
                 )
@@ -278,7 +278,7 @@ class PluginContractVectorTest {
                 put("oldKeyFingerprint", fa)
                 put("newKey", "publisher-b")
                 put("effectiveSequence", 2)
-                put("messageBase64", SodiumSyncPrimitives.base64UrlEncode(rotationStatement))
+                put("messageBase64", SodiumPrimitives.base64UrlEncode(rotationStatement))
             }
             put("valid", valid)
             put("invalid", invalid)
@@ -287,7 +287,7 @@ class PluginContractVectorTest {
 
     @Test
     fun sandboxFramesMatchTheFixture() = runTest {
-        SodiumSyncPrimitives.initialize()
+        SodiumPrimitives.initialize()
         val frames = buildJsonArray {
             FRAMES.forEach { case ->
                 val body = SandboxFrameCodec.encodeBody(case.frame)
@@ -422,7 +422,7 @@ class PluginContractVectorTest {
                 buildJsonObject { put("type", "LIMIT_EXCEEDED"); put("callId", 2); put("kind", SandboxLimitKind.DOM_NODES.code) }),
         )
 
-        fun seedFor(label: String): ByteArray = SodiumSyncPrimitives.sha256(label.encodeToByteArray())
+        fun seedFor(label: String): ByteArray = SodiumPrimitives.sha256(label.encodeToByteArray())
 
         fun keyPair(seed: ByteArray): SodiumKeyPair {
             val pair = Signature.seedKeypair(seed.asUByteArray())

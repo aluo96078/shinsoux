@@ -1,8 +1,10 @@
 package dev.shinsou.kmp.sync.v3
 
 import dev.shinsou.kmp.data.AppSnapshot
+import dev.shinsou.kmp.domain.model.AppSettings
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
+import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
 
@@ -14,11 +16,19 @@ internal object SyncKinds {
     const val CATEGORY = "category"
     const val REPOSITORY = "repository"
     const val SETTING = "setting"
+
+    /** Records of a sourced title are keyed by its work hash and need the work's descriptor. */
+    fun needsWork(kind: String, key: String): Boolean = when (kind) {
+        CATEGORY, REPOSITORY, SETTING -> false
+        else -> !key.startsWith("local:")
+    }
 }
 
 internal fun mangaRef(id: Long): String = "m:$id"
 internal fun chapterRef(id: Long): String = "c:$id"
 internal fun categoryRef(id: Long): String = "k:$id"
+internal fun repositoryRef(baseUrl: String): String = "r:$baseUrl"
+internal fun settingRef(path: String): String = "s:$path"
 
 /** What the diff needs from the outside world; kept small so it can be tested without a database. */
 internal interface SyncDiffEnv {
@@ -178,8 +188,38 @@ internal object SyncDiff {
             }
             if (removedChapterIds.isNotEmpty()) tombstoneEmptiedHistories(previous, next, removedChapterIds, env, ::add)
         }
+        if (previous.extensionRepositories !== next.extensionRepositories) {
+            val before = HashMap<String, ExtensionRepo>()
+            previous.extensionRepositories.forEach { before[it.baseUrl] = it }
+            val after = HashSet<String>()
+            for (repo in next.extensionRepositories) {
+                if (repo.baseUrl.isBlank() || !after.add(repo.baseUrl)) continue
+                val ref = repositoryRef(repo.baseUrl)
+                val old = before[repo.baseUrl]
+                if (old == null) {
+                    add(SyncKinds.REPOSITORY, ref, DirtyEntry.DELETED_FIELD, aux = "false")
+                    REPOSITORY_FIELDS.forEach { add(SyncKinds.REPOSITORY, ref, it) }
+                } else {
+                    if (old.name != repo.name) add(SyncKinds.REPOSITORY, ref, "name")
+                    if (old.signingKeyFingerprint != repo.signingKeyFingerprint) add(SyncKinds.REPOSITORY, ref, "trustedPublishers")
+                }
+            }
+            for (url in before.keys) {
+                if (url.isBlank() || url in after) continue
+                add(SyncKinds.REPOSITORY, repositoryRef(url), DirtyEntry.DELETED_FIELD, "true", url)
+            }
+        }
+
+        if (previous.settings !== next.settings) {
+            for (path in PortableSettings.changed(previous.settings, next.settings)) {
+                add(SyncKinds.SETTING, settingRef(path), SETTING_FIELD)
+            }
+        }
         return out
     }
+
+    val REPOSITORY_FIELDS = listOf("url", "name", "trustedPublishers")
+    const val SETTING_FIELD = "value"
 
     private fun historyTouched(chapters: List<Chapter>, history: History, locatorChanged: Boolean, touched: MutableMap<Long, Boolean>) {
         val chapter = chapters.firstOrNull { it.id == history.chapterId } ?: return
@@ -300,6 +340,16 @@ internal object SyncDiff {
                 add(SyncKinds.CATEGORY, ref, "order", 0)
             }
             add(SyncKinds.CATEGORY, ref, "flags", 0)
+        }
+        val repositories = HashSet<String>()
+        for (repo in snapshot.extensionRepositories) {
+            if (repo.baseUrl.isBlank() || !repositories.add(repo.baseUrl)) continue
+            REPOSITORY_FIELDS.forEach { add(SyncKinds.REPOSITORY, repositoryRef(repo.baseUrl), it, 0) }
+        }
+        // Only what this device customised: a fresh install must not replace the account's
+        // settings with defaults, and at millis 0 a value already on the server wins anyway.
+        for (path in PortableSettings.changed(AppSettings(), snapshot.settings)) {
+            add(SyncKinds.SETTING, settingRef(path), SETTING_FIELD, 0)
         }
         return out
     }
