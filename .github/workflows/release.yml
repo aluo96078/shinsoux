@@ -614,7 +614,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.19' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.20' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.21' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.22'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.22' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.23'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -713,6 +714,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.21"
             $expectedHash = "8b25239acbdedad0293883e5567e5b54c4ed56d04f369aebb59fcfd3df0e5716"
             $baselineProductCode = "{84229F55-68DC-3FF2-A9E3-313E339D79BE}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.23") {
+            $baselineVersion = "1.0.1-beta.22"
+            $expectedHash = "9838b4e212b0d645fd03f439c31b89ab5c59c2c7a5188c7b49b0d5a7a1922757"
+            $baselineProductCode = "{A7A0E464-6CAD-3CA8-9F0D-AD76E81BAFE3}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -953,7 +958,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.19 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.20 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.21 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.22 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.22 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.23 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -1081,6 +1087,10 @@ jobs:
               printf '%s\n' \
                 "Library note: covers no longer grow with the window; a wide desktop window shows more columns instead. The column settings now set the minimum number of columns." \
                 "Sync note: More > Sync lists the extensions that titles from your other devices need, with the repository each comes from. Once you install one, its titles join your library on their own, without pressing Sync now."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.23 ]]; then
+              printf '%s\n' \
+                "Reader note: on Windows and macOS, the arrow keys, space and Page Up/Down turn manga pages again (right-to-left mode swaps left and right). EPUB keeps its own keyboard paging."
             fi
           } > release-notes.md
 
