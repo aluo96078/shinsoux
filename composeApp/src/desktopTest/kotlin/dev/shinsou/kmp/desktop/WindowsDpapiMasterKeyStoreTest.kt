@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -67,6 +68,46 @@ class WindowsDpapiMasterKeyStoreTest {
     }
 
     @Test
+    fun blobAnotherWindowsUserProtectedIsSetAsideSoAFreshKeyCanReplaceIt() {
+        withTemporaryDirectory { directory ->
+            val protectedKeyFile = directory.resolve(DesktopMasterKeyStoreFactory.WINDOWS_PROTECTED_KEY_FILE)
+            val original = ByteArray(32) { it.toByte() }
+            WindowsDpapiMasterKeyStore(protectedKeyFile, FakeWindowsDpapiApi()).write(original)
+            val foreignBytes = Files.readAllBytes(protectedKeyFile)
+            // NTE_BAD_KEY_STATE: what DPAPI reports after the user's master key is lost.
+            val dpapi = FakeWindowsDpapiApi(unprotectError = 0x8009000B.toInt())
+            val store = WindowsDpapiMasterKeyStore(protectedKeyFile, dpapi)
+
+            assertNull(store.read())
+            assertFalse(Files.exists(protectedKeyFile))
+            val quarantined = Files.list(directory).use { files ->
+                files.filter { it.fileName.toString().startsWith("${protectedKeyFile.fileName}.unreadable-") }.toList()
+            }
+            assertEquals(1, quarantined.size)
+            assertContentEquals(foreignBytes, Files.readAllBytes(quarantined.single()))
+
+            val replacement = ByteArray(32) { (it + 100).toByte() }
+            WindowsDpapiMasterKeyStore(protectedKeyFile, FakeWindowsDpapiApi()).write(replacement)
+            assertContentEquals(replacement, WindowsDpapiMasterKeyStore(protectedKeyFile, FakeWindowsDpapiApi()).read())
+        }
+    }
+
+    @Test
+    fun unexpectedDpapiFailureKeepsTheBlobAndPropagates() {
+        withTemporaryDirectory { directory ->
+            val protectedKeyFile = directory.resolve(DesktopMasterKeyStoreFactory.WINDOWS_PROTECTED_KEY_FILE)
+            WindowsDpapiMasterKeyStore(protectedKeyFile, FakeWindowsDpapiApi()).write(ByteArray(32) { 1 })
+            val before = Files.readAllBytes(protectedKeyFile)
+            // ERROR_NOT_ENOUGH_MEMORY may be transient, so the key must not be discarded.
+            val store = WindowsDpapiMasterKeyStore(protectedKeyFile, FakeWindowsDpapiApi(unprotectError = 8))
+
+            val error = assertFailsWith<WindowsDpapiException> { store.read() }
+            assertEquals(8, error.errorCode)
+            assertContentEquals(before, Files.readAllBytes(protectedKeyFile))
+        }
+    }
+
+    @Test
     fun factoryLoadsOnlyTheCurrentOperatingSystemAdapter() {
         withTemporaryDirectory { directory ->
             val store = DesktopMasterKeyStoreFactory.create(directory)
@@ -121,7 +162,7 @@ class WindowsDpapiMasterKeyStoreTest {
         }
     }
 
-    private class FakeWindowsDpapiApi : WindowsDpapiApi {
+    private class FakeWindowsDpapiApi(private val unprotectError: Int? = null) : WindowsDpapiApi {
         var lastProtectedPlaintext: ByteArray? = null
             private set
         var lastUnprotectedBlob: ByteArray? = null
@@ -134,6 +175,7 @@ class WindowsDpapiMasterKeyStoreTest {
 
         override fun unprotect(value: ByteArray): ByteArray {
             lastUnprotectedBlob = value.copyOf()
+            unprotectError?.let { throw WindowsDpapiException(it, "fake DPAPI failure $it") }
             assertTrue(value.size > MAGIC.size)
             assertContentEquals(MAGIC, value.copyOfRange(0, MAGIC.size))
             return value.copyOfRange(MAGIC.size, value.size)

@@ -737,14 +737,22 @@ compose.desktop {
             // points that jlink cannot infer from the application bytecode. Keep
             // their JDK modules explicitly. Without jdk.accessibility, Windows users
             // with Access Bridge enabled only see jpackage's "Failed to launch JVM"
-            // dialog before the Compose window can open.
+            // dialog before the Compose window can open. On Windows, libsodium's
+            // resource-loader extracts its DLL through Paths.get(jar: URI), which needs
+            // the zip filesystem provider from jdk.zipfs; without it, verifying a
+            // repository signature fails with `Provider "jar" not installed`. JavaFX's
+            // Marlin rasterizer (WebView pages with arbitrary paths, SVG, borders) uses
+            // sun.misc.Unsafe from jdk.unsupported; without it rendering throws
+            // NoClassDefFoundError on every packaged platform.
             modules(
                 "java.sql",
                 "java.net.http",
                 "jdk.accessibility",
                 "jdk.jsobject",
+                "jdk.unsupported",
                 "jdk.unsupported.desktop",
                 "jdk.xml.dom",
+                "jdk.zipfs",
             )
             packageName = "Shinsou X"
             packageVersion = releaseVersion.get()

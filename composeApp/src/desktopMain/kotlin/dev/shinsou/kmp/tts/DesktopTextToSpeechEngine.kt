@@ -118,8 +118,12 @@ internal class DesktopTextToSpeechEngine(
 
     private fun windowsSpeechScript(request: PlatformSpeechRequest): String {
         val rate = ((request.rate - 1f) * 5f).toInt().coerceIn(-10, 10)
+        // Windows PowerShell decodes redirected stdin with the console's OEM code page (e.g. 950),
+        // so read the UTF-8 bytes written above through an explicit UTF-8 reader.
         return "Add-Type -AssemblyName System.Speech; " +
-            "\$t=[Console]::In.ReadToEnd(); " +
+            "\$r=New-Object System.IO.StreamReader([Console]::OpenStandardInput(), " +
+            "(New-Object System.Text.UTF8Encoding \$false)); " +
+            "\$t=\$r.ReadToEnd(); \$r.Dispose(); " +
             "\$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
             "\$s.Rate=$rate; \$s.Speak(\$t); \$s.Dispose()"
     }

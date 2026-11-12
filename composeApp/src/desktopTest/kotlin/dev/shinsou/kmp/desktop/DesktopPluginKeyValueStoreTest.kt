@@ -418,6 +418,39 @@ class DesktopPluginKeyValueStoreTest {
         }
     }
 
+    @Test
+    fun dataMovedToAnotherWindowsUserForgetsSecretsInsteadOfFailingForever() = runTest {
+        withTemporaryDirectory { directory ->
+            val protectedKeyFile = directory.resolve(DesktopMasterKeyStoreFactory.WINDOWS_PROTECTED_KEY_FILE)
+            DesktopPluginKeyValueStore(directory, WindowsDpapiMasterKeyStore(protectedKeyFile, UserBoundDpapi(1)))
+                .putString(SENSITIVE_KEY, "cookie-for-user-1")
+
+            val movedStore = DesktopPluginKeyValueStore(
+                directory,
+                WindowsDpapiMasterKeyStore(protectedKeyFile, UserBoundDpapi(2)),
+            )
+            assertEquals(null, movedStore.getString(SENSITIVE_KEY))
+            movedStore.putString(SENSITIVE_KEY, "cookie-for-user-2")
+            assertEquals("cookie-for-user-2", movedStore.getString(SENSITIVE_KEY))
+
+            val reopened = DesktopPluginKeyValueStore(
+                directory,
+                WindowsDpapiMasterKeyStore(protectedKeyFile, UserBoundDpapi(2)),
+            )
+            assertEquals("cookie-for-user-2", reopened.getString(SENSITIVE_KEY))
+        }
+    }
+
+    /** Stands in for DPAPI's per-user binding: another user's blob fails with ERROR_INVALID_DATA. */
+    private class UserBoundDpapi(private val user: Byte) : WindowsDpapiApi {
+        override fun protect(value: ByteArray): ByteArray = byteArrayOf(user) + value
+
+        override fun unprotect(value: ByteArray): ByteArray {
+            if (value[0] != user) throw WindowsDpapiException(13, "ERROR_INVALID_DATA")
+            return value.copyOfRange(1, value.size)
+        }
+    }
+
     private class FakeMasterKeyStore(
         initialValue: ByteArray? = null,
         private val failWrites: Boolean = false,

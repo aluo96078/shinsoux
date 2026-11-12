@@ -36,9 +36,24 @@ internal class WindowsDpapiMasterKeyStore(
         }
         return try {
             dpapi.unprotect(protectedValue)
+        } catch (error: WindowsDpapiException) {
+            if (error.errorCode !in PERMANENT_UNPROTECT_ERRORS) throw error
+            // The blob can never be opened by this Windows user again (profile restored after a
+            // reinstall, data copied to another account or machine, or the user's DPAPI master key
+            // lost to an administrator password reset). Keep it aside for diagnosis and report no
+            // key, so the store issues a fresh one and plugins ask the user to sign in again.
+            quarantine()
+            null
         } finally {
             protectedValue.fill(0)
         }
+    }
+
+    private fun quarantine() {
+        val target = protectedKeyFile.resolveSibling(
+            "${protectedKeyFile.fileName}.unreadable-${System.currentTimeMillis()}",
+        )
+        Files.move(protectedKeyFile, target, StandardCopyOption.REPLACE_EXISTING)
     }
 
     override fun write(value: ByteArray) {
@@ -84,8 +99,14 @@ internal class WindowsDpapiMasterKeyStore(
     private companion object {
         const val MAX_PLAINTEXT_VALUE_BYTES = 4 * 1024
         const val MAX_PROTECTED_VALUE_BYTES = 64 * 1024
+
+        /** ERROR_INVALID_DATA, NTE_BAD_DATA and NTE_BAD_KEY_STATE: the blob is not ours to open. */
+        val PERMANENT_UNPROTECT_ERRORS = setOf(13, 0x80090005.toInt(), 0x8009000B.toInt())
     }
 }
+
+/** A DPAPI call failed; [errorCode] is the Win32 error or HRESULT from `GetLastError`. */
+internal class WindowsDpapiException(val errorCode: Int, message: String) : IllegalStateException(message)
 
 internal interface WindowsDpapiApi {
     fun protect(value: ByteArray): ByteArray
@@ -139,9 +160,13 @@ internal class JnaWindowsDpapiApi : WindowsDpapiApi {
                     output,
                 )
             }
-            check(succeeded != 0) {
-                "Windows DPAPI ${if (protecting) "protection" else "unprotection"} failed " +
-                    "with error ${Native.getLastError()}."
+            if (succeeded == 0) {
+                val errorCode = Native.getLastError()
+                throw WindowsDpapiException(
+                    errorCode,
+                    "Windows DPAPI ${if (protecting) "protection" else "unprotection"} failed " +
+                        "with error 0x${Integer.toHexString(errorCode)}.",
+                )
             }
             output.read()
             val outputPointer = output.pbData
