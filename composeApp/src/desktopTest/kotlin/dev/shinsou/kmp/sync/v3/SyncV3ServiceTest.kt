@@ -34,6 +34,44 @@ class SyncV3ServiceTest {
         repository.currentSnapshot.chapters.filter { it.mangaId == mangaId }[index].id
 
     @Test
+    fun titlesWaitingForAnExtensionNameItAndJoinTheLibraryOnceItIsInstalled() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            val described = mapOf(
+                (TestSourceKey.packageId to TestSourceKey.sourceId) to
+                    SyncSourceInfo("Test Source", "zh", "https://plugins.example.org/repo"),
+            )
+            a.sources = described
+            a.addTitle("book-1", "One", listOf("u1"))
+            a.addTitle("book-2", "Two", listOf("u1"))
+            a.signIn(register = true)
+            assertTrue(a.sync())
+
+            b.sourceInstalled = false
+            b.signIn()
+            assertTrue(b.sync())
+            assertTrue(b.repository.currentSnapshot.mangas.isEmpty())
+            val missing = b.service.state.value.missingSources.single()
+            assertEquals(TestSourceKey.packageId, missing.packageId)
+            assertEquals("Test Source", missing.name)
+            assertEquals("zh", missing.language)
+            assertEquals("https://plugins.example.org/repo", missing.repositoryUrl)
+            assertEquals(2, missing.titleCount)
+
+            // Installing the package: the next background cycle (not "Sync now") brings the titles in.
+            b.sourceInstalled = true
+            b.sources = described
+            assertTrue(b.service.runAutomaticCycleForTest())
+            assertEquals(setOf("One", "Two"), b.repository.currentSnapshot.mangas.mapTo(HashSet()) { it.title })
+            assertTrue(b.service.state.value.missingSources.isEmpty())
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
     fun localLibraryAndProgressReachAnotherDevice() = runBlocking<Unit> {
         val server = FakeSyncServer()
         val a = TestDevice(server, "A")

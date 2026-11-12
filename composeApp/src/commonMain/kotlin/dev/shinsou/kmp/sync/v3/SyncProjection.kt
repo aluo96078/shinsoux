@@ -127,6 +127,9 @@ internal class SyncOutgoing(
 
 internal const val MAX_REPOSITORY_NAME_CHARS = 200
 internal const val MAX_REPOSITORY_URL_CHARS = 2048
+
+/** Pending reason of a title whose source is not installed on this device. */
+internal const val PENDING_SOURCE_NOT_INSTALLED = "source_not_installed"
 private const val MAX_FINGERPRINT_CHARS = 128
 
 /** A repository URL another device may suggest: bounded, http(s), and free of whitespace or control characters. */
@@ -376,7 +379,7 @@ internal class SyncApplier(
         if (!r.key.matches(HASH)) return ApplyOutcome.Pending("local_content_missing")
         val work = r.workJson?.let { runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), it) }.getOrNull() }
             ?: return ApplyOutcome.Pending("work_unknown")
-        val sourceKey = ctx.creatable[r.key] ?: return ApplyOutcome.Pending("source_not_installed")
+        val sourceKey = ctx.creatable[r.key] ?: return ApplyOutcome.Pending(PENDING_SOURCE_NOT_INSTALLED)
         val url = encodeExtensionLibraryPublicationUrl(sourceKey, work.remoteId)
         val id = (mangas.maxOfOrNull { it.id } ?: 0L).coerceAtLeast(0L) + 1L
         val now = ctx.nowMillis

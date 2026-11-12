@@ -81,6 +81,22 @@ public data class SyncUiState(
     val sharingEnabled: Boolean = false,
     /** The server offers work reviews (last known answer). */
     val reviewsEnabled: Boolean = false,
+    /**
+     * Sources the account's titles come from that are not installed here, by package. Those titles
+     * join the library on their own once the package is installed.
+     */
+    val missingSources: List<SyncMissingSource> = emptyList(),
+)
+
+/** A package this device needs for some of the account's titles. */
+public data class SyncMissingSource(
+    val packageId: String,
+    /** The source's name as the device that added the titles knew it; the package id otherwise. */
+    val name: String,
+    val language: String?,
+    /** The repository that published the package, when the adding device knew it. */
+    val repositoryUrl: String?,
+    val titleCount: Int,
 )
 
 /** The three lists of people an account keeps. */
@@ -137,6 +153,7 @@ public class SyncV3Service internal constructor(
     @Volatile private var lastCycleStartedAt = 0L
     @Volatile private var nextAutomaticAttemptAt = 0L
     @Volatile private var lastApplyRevision = -1L
+    @Volatile private var lastApplySources: String? = null
     private val dirtySignal = Channel<Unit>(Channel.CONFLATED)
     private var remoteJob: Job? = null
     private val remoteSignal = Channel<Unit>(Channel.CONFLATED)
@@ -821,6 +838,9 @@ public class SyncV3Service internal constructor(
 
     private suspend fun runCycle(manual: Boolean): Boolean = runCycleOutcome(manual) == CycleOutcome.Success
 
+    /** One background cycle, as the scheduler runs it (no forced re-evaluation); for tests. */
+    internal suspend fun runAutomaticCycleForTest(): Boolean = runCycle(manual = false)
+
     private suspend fun runCycleOutcome(manual: Boolean): CycleOutcome {
         if (store.meta(META_SIGNED_IN) != "1") return CycleOutcome.Permanent
         return cycleMutex.withLock {
@@ -894,7 +914,11 @@ public class SyncV3Service internal constructor(
         // Checked after the pull: a title that arrived without its source reopens the question.
         if (described != null && store.meta(META_DESCRIPTORS) != described) refreshDescriptors(described)
         if (pushed > 0) pullAll()
-        applyUnapplied(force)
+        // A package installed since the last attempt can make titles waiting for their source
+        // applicable even though nothing in the library changed.
+        val sourcesMoved = described != lastApplySources
+        applyUnapplied(force || sourcesMoved)
+        lastApplySources = described
     }
 
     /**
@@ -1433,6 +1457,21 @@ public class SyncV3Service internal constructor(
         mutableAccountRepositories.value = repositories
     }
 
+    private fun missingSources(): List<SyncMissingSource> =
+        store.worksWaitingForSource()
+            .mapNotNull { json -> runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), json) }.getOrNull() }
+            .groupBy { it.packageId }
+            .map { (packageId, works) ->
+                SyncMissingSource(
+                    packageId = packageId,
+                    name = works.firstNotNullOfOrNull { it.sourceName?.trim()?.takeIf(String::isNotEmpty) } ?: packageId,
+                    language = works.firstNotNullOfOrNull { it.language?.trim()?.takeIf(String::isNotEmpty) },
+                    repositoryUrl = works.firstNotNullOfOrNull { it.repositoryUrl?.trim()?.takeIf(String::isNotEmpty) },
+                    titleCount = works.distinctBy { it.hash }.size,
+                )
+            }
+            .sortedWith(compareByDescending<SyncMissingSource> { it.titleCount }.thenBy { it.name })
+
     private fun publishState(syncing: Boolean = mutableState.value.syncing) {
         val signedIn = store.meta(META_SIGNED_IN) == "1"
         publishAccountRepositories(signedIn)
@@ -1450,6 +1489,7 @@ public class SyncV3Service internal constructor(
                 lastSyncAt = store.meta(META_LAST_SYNC)?.toLongOrNull(),
                 pendingCount = if (signedIn) store.dirtyRefCount() + store.dirtyRecordCount() else 0,
                 pendingRemoteCount = if (signedIn) store.pendingRemoteCount() else 0,
+                missingSources = if (signedIn) missingSources() else emptyList(),
                 unsyncableCount = unsyncable,
                 rejectedCount = if (signedIn) store.rejectedCount() else 0,
                 lastError = store.meta(META_ERROR),

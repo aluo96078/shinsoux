@@ -280,6 +280,14 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         }
     }
 
+    /** Descriptors of titles from the account that wait for a source this device has not installed. */
+    fun worksWaitingForSource(): List<String> = query(
+        "SELECT work_json FROM sync3_record WHERE kind = ? AND unapplied = 1 AND pending_reason = ? " +
+            "AND work_json IS NOT NULL AND (del_value IS NULL OR del_value = 0)",
+        2,
+        { bindString(0, SyncKinds.LIBRARY); bindString(1, PENDING_SOURCE_NOT_INSTALLED) },
+    ) { it.getString(0)!! }
+
     fun pendingRemoteCount(): Int = query(
         "SELECT COUNT(*) FROM sync3_record WHERE unapplied = 1 AND pending_reason IS NOT NULL", 0, null,
     ) { it.getLong(0)!!.toInt() }.first()

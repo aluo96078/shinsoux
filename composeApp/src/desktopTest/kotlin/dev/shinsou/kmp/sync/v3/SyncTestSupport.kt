@@ -110,6 +110,9 @@ internal class TestDevice(
     /** What the installed packages say about their sources; empty means nothing is installed. */
     @Volatile var sources: Map<Pair<String, String>, SyncSourceInfo> = emptyMap()
 
+    /** Whether the test source's package is installed, so titles from it can be created here. */
+    @Volatile var sourceInstalled: Boolean = true
+
     private val file = Files.createTempFile("sync-v3-$name", ".db").toFile().also { it.deleteOnExit() }
     val driver = JdbcSqliteDriver("jdbc:sqlite:${file.absolutePath}")
     val repository = ShinsouRepository(initial)
@@ -128,7 +131,9 @@ internal class TestDevice(
         scope = scope,
         device = SyncDeviceInfo(name, "desktop", "test"),
         resolveLegacySource = { legacy[it] },
-        resolveCreatableSource = { pkg, source -> TestSourceKey.takeIf { it.packageId == pkg && it.sourceId == source } },
+        resolveCreatableSource = { pkg, source ->
+            TestSourceKey.takeIf { sourceInstalled && it.packageId == pkg && it.sourceId == source }
+        },
         nowMillis = {
             onClockRead?.invoke()
             System.currentTimeMillis()

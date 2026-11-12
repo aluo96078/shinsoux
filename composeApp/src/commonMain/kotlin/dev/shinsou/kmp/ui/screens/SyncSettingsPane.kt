@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.sync.v3.SyncApiException
 import dev.shinsou.kmp.sync.v3.SyncServerAddress
@@ -326,6 +327,40 @@ private fun SignedInSection(sync: SyncV3Service, state: SyncUiState) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 } else {
                     Text(strings.text("Sync now"))
+                }
+            }
+        }
+        if (state.missingSources.isNotEmpty()) {
+            SyncCard {
+                Text(strings.text("Extensions to install"), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    strings.text("Some titles from your other devices come from extensions that are not installed here. Install them under Browse > Extensions and the titles join your library on their own."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                state.missingSources.forEach { source ->
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                source.name + (source.language?.let { " ($it)" } ?: ""),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                strings.text("{0} titles", source.titleCount.toString()),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            source.repositoryUrl?.let { strings.text("From repository {0}", it) }
+                                ?: strings.text("Package {0}", source.packageId),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

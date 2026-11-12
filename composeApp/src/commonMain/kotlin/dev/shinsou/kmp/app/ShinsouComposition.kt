@@ -507,6 +507,7 @@ public class ShinsouComposition(
     )
     private var proxySecretPersistenceJob: Job? = null
     private var portableRepositoryReconciliationJob: Job? = null
+    private var installedSourcesSyncJob: Job? = null
     /** M1 orphan discovery/GC runs only after the app enters a background window. */
     private var contentBlobRecoveryJob: Job? = null
     /** Conflated derived-index invalidations; import/restore never waits for plaintext indexing. */
@@ -781,6 +782,17 @@ public class ShinsouComposition(
                 // Migration is an idempotent source/url rewrite. A missing standalone package or
                 // incomplete typed chapter graph leaves the old row intact for a later launch.
             }
+            if (sync != null && installedSourcesSyncJob == null) {
+                // Titles synced from another device wait for their source; installing or removing a
+                // package is what lets them join the library, so sync re-checks them right away.
+                installedSourcesSyncJob = trackingScope.launch {
+                    browse.state
+                        .map { snapshot -> snapshot.extensions.filter { it.installed }.mapTo(HashSet()) { it.id } }
+                        .distinctUntilChanged()
+                        .drop(1)
+                        .collect { sync.sourcesChanged() }
+                }
+            }
             if (portableRepositoryReconciliationJob == null) {
                 portableRepositoryReconciliationJob = trackingScope.launch {
                     repository.snapshot
@@ -975,6 +987,7 @@ public class ShinsouComposition(
         searchIndexReconciliationSignals.close()
         proxySecretPersistenceJob?.cancel()
         portableRepositoryReconciliationJob?.cancel()
+        installedSourcesSyncJob?.cancel()
         stage("trackerManager.cancelAll")
         trackerManager.cancelAll()
         stage("trackingJob.cancelAndJoin")

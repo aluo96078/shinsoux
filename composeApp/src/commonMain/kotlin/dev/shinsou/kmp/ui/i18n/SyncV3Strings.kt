@@ -39,6 +39,11 @@ internal val SyncV3TraditionalTranslations: Map<String, String> = mapOf(
     "Waiting to upload" to "等待上傳",
     "Waiting for a title or chapter on this device" to "等待本機出現作品或章節",
     "Titles that cannot sync" to "無法同步的作品",
+    "Extensions to install" to "需要安裝的擴充套件",
+    "Some titles from your other devices come from extensions that are not installed here. Install them under Browse > Extensions and the titles join your library on their own." to "其他裝置上有些作品來自這台裝置尚未安裝的擴充套件。到「瀏覽 > 擴充套件」安裝後，這些作品會自動加入書庫。",
+    "{0} titles" to "{0} 部作品",
+    "From repository {0}" to "來自儲存庫 {0}",
+    "Package {0}" to "套件 {0}",
     "These library titles come from a source that is not installed, so they have no portable identity yet." to
         "這些書庫作品來自尚未安裝的來源，因此還沒有可跨裝置辨識的身分。",
     "Rejected by the server" to "被伺服器拒絕",
@@ -230,6 +235,11 @@ internal val SyncV3SimplifiedTranslations: Map<String, String> = mapOf(
     "Waiting to upload" to "等待上传",
     "Waiting for a title or chapter on this device" to "等待本机出现作品或章节",
     "Titles that cannot sync" to "无法同步的作品",
+    "Extensions to install" to "需要安装的扩展",
+    "Some titles from your other devices come from extensions that are not installed here. Install them under Browse > Extensions and the titles join your library on their own." to "其他设备上有些作品来自这台设备尚未安装的扩展。到“浏览 > 扩展”安装后，这些作品会自动加入书库。",
+    "{0} titles" to "{0} 部作品",
+    "From repository {0}" to "来自仓库 {0}",
+    "Package {0}" to "软件包 {0}",
     "These library titles come from a source that is not installed, so they have no portable identity yet." to
         "这些书库作品来自尚未安装的来源，因此还没有可跨设备识别的身份。",
     "Rejected by the server" to "被服务器拒绝",
