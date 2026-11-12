@@ -1011,6 +1011,11 @@ private val TraditionalLongTranslations = mapOf(
     "Volume keys" to "音量鍵",
     "Vertical" to "垂直",
     "Webtoon" to "條漫",
+    "Repositories on other devices" to "其他裝置上的儲存庫",
+    "{0} repositories came from other devices" to "有 {0} 個儲存庫來自其他裝置",
+    "Delete repository" to "刪除儲存庫",
+    "Delete {0} from this device?" to "要從這台裝置刪除「{0}」嗎？",
+    "Also remove from the account (other devices stop receiving the suggestion)" to "也從帳號移除（其他裝置不再收到建議）",
 ).plus(TraditionalAdditionalTranslations).plus(TraditionalSyncTranslations)
 
 private val SimplifiedLongTranslations = mapOf(
@@ -1324,6 +1329,13 @@ private val JapaneseSyncTranslations = mapOf(
     "Checking iCloud Drive availability…" to "iCloud Drive の利用可能性を確認中…",
     "A single Shinsou X snapshot will be stored in the app's iCloud Drive container." to "アプリの iCloud Drive コンテナに Shinsou X のスナップショットを 1 つ保存します。",
     "The remote snapshot service is unavailable." to "リモートスナップショットサービスを利用できません。",
+    "Repositories on other devices" to "他のデバイスのリポジトリ",
+    "{0} repositories came from other devices" to "他のデバイスから {0} 件のリポジトリがあります",
+    "Delete repository" to "リポジトリを削除",
+    "Delete {0} from this device?" to "このデバイスから「{0}」を削除しますか？",
+    "Also remove from the account (other devices stop receiving the suggestion)" to "アカウントからも削除（他のデバイスに提案されなくなります）",
+    "Add" to "追加",
+    "Ignore" to "無視",
 )
 
 private val KoreanSyncTranslations = mapOf(

@@ -293,6 +293,10 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         "SELECT key FROM sync3_record WHERE kind = ?", 1, { bindString(0, kind) },
     ) { it.getString(0)!! }
 
+    /** Every record of [kind] that is not a tombstone. */
+    fun liveRecords(kind: String): List<StoredRecord> =
+        recordKeys(kind).mapNotNull { loadRecord(kind, it) }.filter { it.state.isLive }
+
     // ---- category uuid map ------------------------------------------------------------------
 
     fun categoryUuid(localId: Long): String? = query(

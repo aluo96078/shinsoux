@@ -7,6 +7,10 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -192,6 +196,80 @@ class PluginBrowseRepositoryReconciliationTest {
         }
     }
 
+    @Test
+    fun accountSuggestionsExcludeLocalAndDismissedRepositoriesAndFollowTheAccount() = runTest {
+        val kv = InMemoryPluginKeyValueStore()
+        val store = KeyValueExtensionRepositoryStore(kv)
+        val portable = ShinsouRepository()
+        val directory = FakeDirectory(
+            listOf(
+                AccountRepository("https://one.example", "One"),
+                AccountRepository("https://two.example", "Two", "ab12"),
+                AccountRepository("https://three.example", "Three"),
+            ),
+        )
+        val harness = createHarness(kv, store, portable, accountRepositories = directory, suggestionScope = backgroundScope)
+
+        try {
+            runCurrent()
+            assertEquals(3, harness.adapter.state.value.repositorySuggestions.size)
+
+            // Already on this device: not a suggestion (also when typed with an index.json suffix).
+            harness.adapter.addRepository("https://one.example/index.json")
+            assertEquals(listOf("https://two.example", "https://three.example"), harness.adapter.state.value.repositorySuggestions.map { it.url })
+            assertEquals("ab12", harness.adapter.state.value.repositorySuggestions.first().signingFingerprint)
+
+            harness.adapter.dismissRepositorySuggestion("https://two.example")
+            assertEquals(listOf("https://three.example"), harness.adapter.state.value.repositorySuggestions.map { it.url })
+            harness.adapter.refresh()
+            assertEquals(listOf("https://three.example"), harness.adapter.state.value.repositorySuggestions.map { it.url })
+
+            // A new account repository shows up without a refresh.
+            directory.flow.value = directory.flow.value + AccountRepository("https://four.example", "Four")
+            runCurrent()
+            assertEquals(
+                listOf("https://three.example", "https://four.example"),
+                harness.adapter.state.value.repositorySuggestions.map { it.url },
+            )
+
+            // Deleting a repository here dismisses it; adding it on purpose lifts the dismissal.
+            harness.adapter.removeRepository("https://one.example")
+            assertEquals(
+                listOf("https://three.example", "https://four.example"),
+                harness.adapter.state.value.repositorySuggestions.map { it.url },
+            )
+            assertTrue(directory.forgotten.isEmpty(), "a plain delete stays on this device")
+            harness.adapter.addRepository("https://two.example")
+            harness.adapter.removeRepository("https://two.example")
+            harness.adapter.addRepository("https://one.example")
+            harness.adapter.removeRepository("https://one.example")
+            harness.adapter.addRepository("https://one.example")
+            assertFalse("https://one.example" in harness.adapter.state.value.repositorySuggestions.map { it.url })
+            harness.adapter.removeRepository("https://one.example")
+            assertFalse("https://one.example" in harness.adapter.state.value.repositorySuggestions.map { it.url })
+        } finally {
+            harness.client.close()
+        }
+    }
+
+    @Test
+    fun removingFromTheAccountForgetsTheRepository() = runTest {
+        val kv = InMemoryPluginKeyValueStore()
+        val store = KeyValueExtensionRepositoryStore(kv)
+        val portable = ShinsouRepository()
+        val directory = FakeDirectory(emptyList())
+        val harness = createHarness(kv, store, portable, accountRepositories = directory)
+
+        try {
+            harness.adapter.addRepository("https://added.example")
+            harness.adapter.removeRepository("https://added.example", fromAccount = true)
+            assertEquals(listOf("https://added.example"), directory.forgotten)
+            assertTrue(portable.currentSnapshot.extensionRepositories.isEmpty())
+        } finally {
+            harness.client.close()
+        }
+    }
+
     private fun createHarness(
         kv: PluginKeyValueStore,
         store: ExtensionRepositoryStore,
@@ -199,6 +277,8 @@ class PluginBrowseRepositoryReconciliationTest {
         indexRequestStarted: CompletableDeferred<Unit>? = null,
         indexResponseGate: CompletableDeferred<Unit>? = null,
         onIndexRequest: () -> Unit = {},
+        accountRepositories: AccountRepositoryDirectory? = null,
+        suggestionScope: CoroutineScope? = null,
     ): Harness {
         val client = HttpClient(
             MockEngine { request ->
@@ -248,8 +328,20 @@ class PluginBrowseRepositoryReconciliationTest {
                 keyValueStore = kv,
                 trustStore = trustStore,
                 portableRepository = portable,
+                accountRepositories = accountRepositories,
+                suggestionScope = suggestionScope,
             ),
         )
+    }
+
+    private class FakeDirectory(initial: List<AccountRepository>) : AccountRepositoryDirectory {
+        val flow = MutableStateFlow(initial)
+        val forgotten = mutableListOf<String>()
+        override val repositories: StateFlow<List<AccountRepository>> = flow
+
+        override suspend fun forget(url: String) {
+            forgotten += url
+        }
     }
 
     private data class Harness(

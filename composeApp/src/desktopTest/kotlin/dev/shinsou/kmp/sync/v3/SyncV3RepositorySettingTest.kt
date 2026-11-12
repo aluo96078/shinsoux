@@ -64,9 +64,12 @@ class SyncV3RepositorySettingTest {
         )
         val renamed = added.copy(extensionRepositories = listOf(repo.copy(name = "Renamed", website = "https://example.org")))
         assertEquals(listOf("repository/r:$repoUrl/name"), fields(SyncDiff.diff(added, renamed, env)))
-        val tomb = SyncDiff.diff(added, base, env).single()
-        assertEquals("repository/r:$repoUrl/~deleted=true", fields(listOf(tomb)).single())
-        assertEquals(repoUrl, tomb.tombKey)
+        assertTrue(
+            SyncDiff.diff(added, base, env).isEmpty(),
+            "removing a repository here is local: the account keeps suggesting it",
+        )
+        val readded = SyncDiff.diff(base, added, env)
+        assertTrue("repository/r:$repoUrl/~deleted=false" in fields(readded), "re-adding revives a removed account record")
 
         val settings = base.settings
         val portable = base.copy(
@@ -108,8 +111,10 @@ class SyncV3RepositorySettingTest {
         assertTrue(entries.all { it.clock == "0:0:dev" }, "a value already on the server wins")
     }
 
+    private fun TestDevice.suggested() = service.accountRepositories.value.map { it.url }
+
     @Test
-    fun repositoryListFollowsTheAccountButNotTheTrust() = runBlocking<Unit> {
+    fun anAddedRepositoryIsOnlySuggestedToOtherDevices() = runBlocking<Unit> {
         val server = FakeSyncServer()
         val a = TestDevice(server, "A")
         val b = TestDevice(server, "B")
@@ -125,32 +130,207 @@ class SyncV3RepositorySettingTest {
             assertEquals(JsonArray(listOf(JsonPrimitive("ab12"))), record.fields.getValue("trustedPublishers").value)
 
             assertTrue(b.sync())
-            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories)
+            assertTrue(b.repository.currentSnapshot.extensionRepositories.isEmpty(), "never added without the user")
+            assertEquals(listOf(repoUrl), b.suggested())
+            val suggestion = b.service.accountRepositories.value.single()
+            assertEquals(AccountRepositoryExpectation("Example", "ab12"), AccountRepositoryExpectation(suggestion.name, suggestion.signingKeyFingerprint))
             assertEquals(0, b.store.dirtyRefCount(), "an applied record is not an edit")
+        } finally {
+            a.close(); b.close()
+        }
+    }
 
-            // Renaming on B reaches A; removing on A removes it from B.
-            b.repository.upsertExtensionRepository(repo.copy(name = "Renamed"))
-            assertTrue(b.sync())
-            assertTrue(a.sync())
-            assertEquals("Renamed", a.repository.currentSnapshot.extensionRepositories.single().name)
-            a.repository.deleteExtensionRepository(repoUrl)
-            assertTrue(a.sync())
-            assertFalse(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
-            assertTrue(b.sync())
-            assertTrue(b.repository.currentSnapshot.extensionRepositories.isEmpty())
+    private data class AccountRepositoryExpectation(val name: String, val fingerprint: String)
 
-            // Adding it again later brings it back everywhere.
+    @Test
+    fun removingARepositoryHereLeavesTheAccountAndOtherDevicesAlone() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            b.signIn()
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
             b.repository.upsertExtensionRepository(repo)
             assertTrue(b.sync())
+
+            a.repository.deleteExtensionRepository(repoUrl)
             assertTrue(a.sync())
-            assertEquals(listOf(repo), a.repository.currentSnapshot.extensionRepositories)
+            assertTrue(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
+            assertTrue(b.sync())
+            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories)
+            assertEquals(listOf(repoUrl), a.suggested(), "the account still knows it")
+
+            // Adding it again later is fine and stays quiet.
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+            assertTrue(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
         } finally {
             a.close(); b.close()
         }
     }
 
     @Test
-    fun aRepositoryRemovedHereBeforeSyncingIsNotBroughtBackByAnOlderRecord() = runBlocking<Unit> {
+    fun forgettingARepositoryStopsSuggestingItButKeepsItWhereItWasAdded() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        val c = TestDevice(server, "C")
+        try {
+            a.signIn(register = true)
+            b.signIn()
+            c.signIn()
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+            b.repository.upsertExtensionRepository(repo)
+            assertTrue(b.sync())
+            assertTrue(c.sync())
+            assertEquals(listOf(repoUrl), c.suggested())
+
+            a.repository.deleteExtensionRepository(repoUrl)
+            a.service.forgetRepository(repoUrl)
+            assertTrue(a.sync())
+            assertFalse(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
+
+            assertTrue(b.sync())
+            assertTrue(c.sync())
+            assertTrue(c.suggested().isEmpty())
+            assertTrue(b.suggested().isEmpty())
+            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories, "already added: kept")
+            assertTrue(c.repository.currentSnapshot.extensionRepositories.isEmpty())
+
+            // Adding it again brings the account record back.
+            c.repository.upsertExtensionRepository(repo)
+            assertTrue(c.sync())
+            assertTrue(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
+            assertTrue(a.sync())
+            assertEquals(listOf(repoUrl), a.suggested())
+        } finally {
+            a.close(); b.close(); c.close()
+        }
+    }
+
+    @Test
+    fun addingARepositoryBackBeforeTheRemovalWasSentKeepsItOnTheAccount() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            b.signIn()
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+
+            // Removed from the account, then added again, with no sync in between.
+            a.repository.deleteExtensionRepository(repoUrl)
+            a.service.forgetRepository(repoUrl)
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+
+            assertTrue(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
+            assertTrue(b.sync())
+            assertEquals(listOf(repoUrl), b.suggested())
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
+    fun aRemoteTombstoneAndA410ResyncNeverRemoveALocalRepository() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            b.signIn()
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+            b.repository.upsertExtensionRepository(repo)
+            assertTrue(b.sync())
+
+            server.deleteRecord("alice", SyncKinds.REPOSITORY, repoUrl, "${System.currentTimeMillis() + 1000}:0:other")
+            assertTrue(b.sync())
+            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories)
+            assertTrue(b.suggested().isEmpty())
+
+            // The tombstone is purged and the floor moves past B's cursor: B resyncs from zero.
+            a.repository.updateSettings { it.copy(reader = it.reader.copy(readingMode = ReadingMode.WEBTOON)) }
+            assertTrue(a.sync())
+            server.purgeRecord("alice", SyncKinds.REPOSITORY, repoUrl)
+            server.raiseFloor("alice")
+            assertTrue(b.sync())
+            assertTrue(server.goneCount > 0, "the server answered 410")
+            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories)
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
+    fun aRemoteRenameAndKeyChangeUpdateOnlyARepositoryThisDeviceHas() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            b.signIn()
+            a.repository.upsertExtensionRepository(repo)
+            assertTrue(a.sync())
+            b.repository.upsertExtensionRepository(repo)
+            assertTrue(b.sync())
+
+            a.repository.upsertExtensionRepository(repo.copy(name = "Renamed", signingKeyFingerprint = "cd34"))
+            assertTrue(a.sync())
+            assertTrue(b.sync())
+            val onB = b.repository.currentSnapshot.extensionRepositories.single()
+            assertEquals("Renamed", onB.name)
+            assertEquals("cd34", onB.signingKeyFingerprint)
+
+            val c = TestDevice(server, "C")
+            try {
+                c.signIn()
+                assertTrue(c.sync())
+                assertTrue(c.repository.currentSnapshot.extensionRepositories.isEmpty())
+                assertEquals("Renamed", c.service.accountRepositories.value.single().name)
+            } finally {
+                c.close()
+            }
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
+    fun reseedingRevivesARepositoryOlderVersionsRemovedFromTheAccount() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A", initial = AppSnapshot(extensionRepositories = listOf(repo)))
+        try {
+            a.signIn(register = true)
+            assertTrue(a.sync())
+            // As the old behaviour left it: the account holds a newer tombstone, and one more
+            // removal is still queued locally.
+            Thread.sleep(5)
+            server.deleteRecord("alice", SyncKinds.REPOSITORY, repoUrl, "${System.currentTimeMillis()}:0:other")
+            assertFalse(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive)
+            Thread.sleep(5)
+            a.store.mark(
+                listOf(DirtyEntry(SyncKinds.REPOSITORY, repositoryRef("https://gone.example.org/r"), DirtyEntry.DELETED_FIELD, "1:0:x", "true", "https://gone.example.org/r")),
+            )
+            a.store.setMeta(SyncV3Service.META_SEEDED_KINDS, "2")
+
+            assertTrue(a.sync())
+            assertTrue(server.accountRecords("alice").getValue(SyncKinds.REPOSITORY to repoUrl).isLive, "the repository still on this device is back")
+            assertNull(server.accountRecords("alice")[SyncKinds.REPOSITORY to "https://gone.example.org/r"])
+            assertEquals(listOf(repo), a.repository.currentSnapshot.extensionRepositories)
+            assertEquals(SyncV3Service.SEEDED_KINDS_VERSION, a.store.meta(SyncV3Service.META_SEEDED_KINDS))
+        } finally {
+            a.close()
+        }
+    }
+
+    @Test
+    fun signingOutEmptiesTheSuggestions() = runBlocking<Unit> {
         val server = FakeSyncServer()
         val a = TestDevice(server, "A")
         val b = TestDevice(server, "B")
@@ -160,13 +340,9 @@ class SyncV3RepositorySettingTest {
             a.repository.upsertExtensionRepository(repo)
             assertTrue(a.sync())
             assertTrue(b.sync())
-            a.repository.upsertExtensionRepository(repo.copy(name = "Renamed"))
-            assertTrue(a.sync())
-            b.repository.deleteExtensionRepository(repoUrl)
-            assertTrue(b.sync())
-            assertTrue(a.sync())
-            assertTrue(a.repository.currentSnapshot.extensionRepositories.isEmpty())
-            assertTrue(b.repository.currentSnapshot.extensionRepositories.isEmpty())
+            assertEquals(listOf(repoUrl), b.suggested())
+            b.service.logout()
+            assertTrue(b.suggested().isEmpty())
         } finally {
             a.close(); b.close()
         }
@@ -184,7 +360,8 @@ class SyncV3RepositorySettingTest {
             a.repository.upsertExtensionRepository(repo)
             assertTrue(a.sync())
             assertTrue(b.sync())
-            assertEquals(listOf(repoUrl), b.repository.currentSnapshot.extensionRepositories.map { it.baseUrl })
+            assertTrue(b.repository.currentSnapshot.extensionRepositories.isEmpty())
+            assertEquals(listOf(repoUrl), b.suggested(), "only a web address is ever suggested")
         } finally {
             a.close(); b.close()
         }
@@ -255,7 +432,8 @@ class SyncV3RepositorySettingTest {
             b.signIn()
             assertTrue(b.sync())
             assertEquals(ThemeMode.DARK, b.repository.currentSnapshot.settings.appearance.theme)
-            assertEquals(listOf(repo), b.repository.currentSnapshot.extensionRepositories)
+            assertTrue(b.repository.currentSnapshot.extensionRepositories.isEmpty(), "repositories are suggested, not copied")
+            assertEquals(listOf(repoUrl), b.suggested())
             assertTrue(a.sync())
             assertEquals(ThemeMode.DARK, a.repository.currentSnapshot.settings.appearance.theme)
         } finally {

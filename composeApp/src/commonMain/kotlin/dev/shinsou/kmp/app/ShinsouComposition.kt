@@ -56,6 +56,7 @@ import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
 import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
 import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
+import dev.shinsou.kmp.plugin.AccountRepositoryDirectory
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
@@ -567,6 +568,14 @@ public class ShinsouComposition(
         exactSourceRefreshInvalidations = pluginSourceInvalidations,
         packageSecurity = PluginPackageSecurity(publisherTrustStore, publisherRevocationStore, pluginBlocklist, repositoryClient),
         developerMode = pluginDeveloperMode,
+        accountRepositories = sync?.let { service ->
+            object : AccountRepositoryDirectory {
+                override val repositories = service.accountRepositories
+
+                override suspend fun forget(url: String) = service.forgetRepository(url)
+            }
+        },
+        suggestionScope = trackingScope,
         extensionContentConsumerV2 = contentFoundation?.let { foundation ->
             ExtensionContentConsumerV2(
                 gateway = ExtensionBrowseContentGatewayV2(

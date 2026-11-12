@@ -11,6 +11,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.AccountRepository
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import kotlinx.coroutines.CancellationException
 import kotlin.concurrent.Volatile
@@ -29,10 +30,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlin.time.Clock
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -112,6 +115,14 @@ public class SyncV3Service internal constructor(
 ) {
     private val mutableState = MutableStateFlow(SyncUiState())
     public val state: StateFlow<SyncUiState> = mutableState.asStateFlow()
+
+    private val mutableAccountRepositories = MutableStateFlow<List<AccountRepository>>(emptyList())
+
+    /**
+     * Repositories the account knows about (live server records), as suggestions for this device.
+     * Merging them never changes this device's own repository list; empty when signed out.
+     */
+    public val accountRepositories: StateFlow<List<AccountRepository>> = mutableAccountRepositories.asStateFlow()
 
     private val cycleMutex = Mutex()
     private val authMutex = Mutex()
@@ -597,6 +608,18 @@ public class SyncV3Service internal constructor(
         dirtySignal.trySend(Unit)
     }
 
+    /**
+     * Removes [url] from the account: other devices stop receiving it as a suggestion, while
+     * devices that already added it keep it. Marked with a fresh clock so it also beats the live
+     * record other devices hold; adding the repository again later revives it.
+     */
+    public suspend fun forgetRepository(url: String) {
+        if (store.meta(META_SIGNED_IN) != "1" || url.isBlank()) return
+        store.mark(listOf(DirtyEntry(SyncKinds.REPOSITORY, repositoryRef(url), DirtyEntry.DELETED_FIELD, nextClock(), "true", url)))
+        persistClock()
+        dirtySignal.trySend(Unit)
+    }
+
     /** Re-evaluates server records that were waiting for a title, chapter or source (no network). */
     public suspend fun retryPendingRemote() {
         if (store.meta(META_SIGNED_IN) != "1") return
@@ -729,12 +752,34 @@ public class SyncV3Service internal constructor(
         if (store.meta(META_SEEDED_KINDS) == SEEDED_KINDS_VERSION) return
         val pending = HashMap<Pair<String, String>, Set<String>>()
         val entries = SyncDiff.markAll(repository.currentSnapshot, ::clockAt).filter { e ->
-            (e.kind == SyncKinds.REPOSITORY || e.kind == SyncKinds.SETTING) &&
+            e.kind == SyncKinds.SETTING &&
                 e.field !in pending.getOrPut(e.kind to e.ref) { store.dirtyFor(e.kind, e.ref).mapTo(HashSet()) { it.field } }
         }
         entries.chunked(MARK_CHUNK).forEach { store.mark(it) }
+        reseedRepositories()
         persistClock()
         store.setMeta(META_SEEDED_KINDS, SEEDED_KINDS_VERSION)
+    }
+
+    /**
+     * Repositories used to be deleted from the account whenever they were deleted here, so an
+     * account can hold tombstones for repositories some device still has. Marking each local
+     * repository live with the current clock (not the clock 0 of [SyncDiff.markAll]) lets such a
+     * device bring them back, and a queued removal from the old behaviour is dropped rather than
+     * pushed.
+     */
+    private fun reseedRepositories() {
+        val queued = store.allDirty().filter { it.kind == SyncKinds.REPOSITORY }
+        val repositories = LinkedHashSet<String>()
+        val entries = ArrayList<DirtyEntry>()
+        for (repo in repository.currentSnapshot.extensionRepositories) {
+            if (repo.baseUrl.isBlank() || !repositories.add(repo.baseUrl)) continue
+            val ref = repositoryRef(repo.baseUrl)
+            entries += DirtyEntry(SyncKinds.REPOSITORY, ref, DirtyEntry.DELETED_FIELD, nextClock(), "false")
+            SyncDiff.REPOSITORY_FIELDS.forEach { entries += DirtyEntry(SyncKinds.REPOSITORY, ref, it, nextClock()) }
+        }
+        store.deleteDirty(queued.filter { it.field == DirtyEntry.DELETED_FIELD && it.aux == "true" })
+        store.mark(entries)
     }
 
     private inner class DirtyObserver : SnapshotMutationObserver {
@@ -937,7 +982,16 @@ public class SyncV3Service internal constructor(
         if (rows.isEmpty()) return
         if (kind == SyncKinds.REPOSITORY) {
             val url = ref.substring(2)
-            val repo = out.repositoryByUrl[url] ?: return tombstone(kind, rows)
+            // The newest delete mark decides: "remove from the account" followed by adding the
+            // repository again before the next push must go out live, not as a tombstone.
+            val removedFromAccount = rows
+                .filter { it.field == DirtyEntry.DELETED_FIELD }
+                .maxWithOrNull { a, b -> LwwMerge.compare(a.clock, b.clock) }
+                ?.aux == "true"
+            val repo = out.repositoryByUrl[url]
+            if (removedFromAccount) return tombstone(kind, rows)
+            // Deleted here only: the account keeps suggesting it, so nothing goes out.
+            if (repo == null) return store.deleteDirty(rows)
             return promoteInto(kind, url, rows, null, null, null, live = true) { field -> out.repositoryValue(repo, field) }
         }
         if (kind == SyncKinds.SETTING) {
@@ -1026,7 +1080,10 @@ public class SyncV3Service internal constructor(
                 if (!live) {
                     deleted = LwwMerge.LocalDeleted(true, row.clock, dirty = true)
                     if (cleared == null || LwwMerge.compare(row.clock, cleared) > 0) cleared = row.clock
-                } else if (known?.value == true) {
+                } else if (known?.value == true || (known == null && kind == SyncKinds.REPOSITORY)) {
+                    // A repository's tombstone can sit on the account without this device having
+                    // pulled it yet (it is a removal from the account, not a local event), so the
+                    // "live" mark must be sent even when no tombstone is known here.
                     deleted = LwwMerge.LocalDeleted(false, row.clock, dirty = true)
                 }
                 continue
@@ -1357,8 +1414,28 @@ public class SyncV3Service internal constructor(
 
     // ---- state ------------------------------------------------------------------------------
 
+    private fun publishAccountRepositories(signedIn: Boolean) {
+        val repositories = if (!signedIn) {
+            emptyList()
+        } else {
+            store.liveRecords(SyncKinds.REPOSITORY).mapNotNull { record ->
+                if (!isPortableRepositoryUrl(record.key)) return@mapNotNull null
+                val name = (record.state.fields["name"]?.value as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+                val fingerprint = (record.state.fields["trustedPublishers"]?.value as? JsonArray)
+                    ?.firstOrNull()?.let { (it as? JsonPrimitive)?.contentOrNull }?.trim().orEmpty()
+                AccountRepository(
+                    url = record.key,
+                    name = name.ifEmpty { record.key.substringAfter("://").substringBefore('/') },
+                    signingKeyFingerprint = fingerprint,
+                )
+            }.sortedBy { it.url }
+        }
+        mutableAccountRepositories.value = repositories
+    }
+
     private fun publishState(syncing: Boolean = mutableState.value.syncing) {
         val signedIn = store.meta(META_SIGNED_IN) == "1"
+        publishAccountRepositories(signedIn)
         val snapshot = repository.currentSnapshot
         val unsyncable = if (signedIn) snapshot.mangas.count { it.favorite && runCatching { identity.workOf(it) }.getOrNull() == null } else 0
         mutableState.update { previous ->
@@ -1404,7 +1481,7 @@ public class SyncV3Service internal constructor(
         const val META_ACCESS_EXPIRES = "access_expires_at"
         const val META_INITIAL_DONE = "initial_done"
         const val META_SEEDED_KINDS = "seeded_kinds"
-        const val SEEDED_KINDS_VERSION = "2"
+        const val SEEDED_KINDS_VERSION = "3"
         const val META_RESYNC = "resync"
         const val META_DESCRIPTORS = "descriptors"
         const val DESCRIPTORS_VERSION = "3"

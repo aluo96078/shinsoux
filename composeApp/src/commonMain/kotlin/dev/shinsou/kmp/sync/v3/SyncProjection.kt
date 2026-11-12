@@ -129,6 +129,13 @@ internal const val MAX_REPOSITORY_NAME_CHARS = 200
 internal const val MAX_REPOSITORY_URL_CHARS = 2048
 private const val MAX_FINGERPRINT_CHARS = 128
 
+/** A repository URL another device may suggest: bounded, http(s), and free of whitespace or control characters. */
+internal fun isPortableRepositoryUrl(url: String): Boolean =
+    url.length <= MAX_REPOSITORY_URL_CHARS &&
+        (url.startsWith("https://") || url.startsWith("http://")) &&
+        url.substringAfter("://").isNotEmpty() &&
+        url.none { it.isWhitespace() || it.isISOControl() }
+
 internal sealed interface ApplyOutcome {
     data object Applied : ApplyOutcome
     data class Pending(val reason: String) : ApplyOutcome
@@ -290,37 +297,23 @@ internal class SyncApplier(
     // ---- repository, setting ----------------------------------------------------------------
 
     /**
-     * Adds or removes an entry of the repository list. Only the list travels: whether this device
-     * trusts the repository's publisher is decided here, by its user, so a repository that arrives
-     * this way shows up as needing trust and nothing is installed from it until then.
+     * Keeps the name and signing key of a repository this device already has in step with the
+     * account. It never adds or removes an entry: the account's repository records are suggestions
+     * for other devices (surfaced through `SyncV3Service.accountRepositories`), and the list a
+     * device actually uses is decided by its own user. Trust is likewise granted per device and
+     * never travels.
      */
     private fun applyRepository(r: StoredRecord): ApplyOutcome {
         val url = r.key
-        val dirty = ctx.dirtyFields(SyncKinds.REPOSITORY, repositoryRef(url))
+        if (!r.state.isLive) return ApplyOutcome.Applied
         val index = repositories.indexOfFirst { it.baseUrl == url }
-        if (!r.state.isLive) {
-            if (index >= 0 && DirtyEntry.DELETED_FIELD !in dirty) {
-                repositories = repositories.filterNot { it.baseUrl == url }
-                changed = true
-            }
-            return ApplyOutcome.Applied
-        }
+        if (index < 0) return ApplyOutcome.Applied
+        val dirty = ctx.dirtyFields(SyncKinds.REPOSITORY, repositoryRef(url))
         fun field(name: String): JsonElement? =
             r.state.fields[name]?.takeIf { !it.dirty && name !in dirty }?.value
         val name = field("name")?.str()?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_REPOSITORY_NAME_CHARS)
         val fingerprint = (field("trustedPublishers") as? JsonArray)?.let { list ->
             list.firstOrNull()?.str()?.trim()?.takeIf { it.length <= MAX_FINGERPRINT_CHARS }.orEmpty()
-        }
-        if (index < 0) {
-            if (DirtyEntry.DELETED_FIELD in dirty) return ApplyOutcome.Applied // removed here, not pushed yet
-            require(isPortableRepositoryUrl(url)) { "repository url" }
-            repositories = repositories + ExtensionRepo(
-                baseUrl = url,
-                name = name ?: url.substringAfter("://").substringBefore('/'),
-                signingKeyFingerprint = fingerprint.orEmpty(),
-            )
-            changed = true
-            return ApplyOutcome.Applied
         }
         val current = repositories[index]
         val updated = current.copy(
@@ -333,12 +326,6 @@ internal class SyncApplier(
         }
         return ApplyOutcome.Applied
     }
-
-    private fun isPortableRepositoryUrl(url: String): Boolean =
-        url.length <= MAX_REPOSITORY_URL_CHARS &&
-            (url.startsWith("https://") || url.startsWith("http://")) &&
-            url.substringAfter("://").isNotEmpty() &&
-            url.none { it.isWhitespace() || it.isISOControl() }
 
     private fun applySetting(r: StoredRecord): ApplyOutcome {
         // A setting this version does not carry, or a deletion (settings are never deleted).

@@ -204,10 +204,9 @@ internal object SyncDiff {
                     if (old.signingKeyFingerprint != repo.signingKeyFingerprint) add(SyncKinds.REPOSITORY, ref, "trustedPublishers")
                 }
             }
-            for (url in before.keys) {
-                if (url.isBlank() || url in after) continue
-                add(SyncKinds.REPOSITORY, repositoryRef(url), DirtyEntry.DELETED_FIELD, "true", url)
-            }
+            // A repository removed here is deliberately not tombstoned: the account's list is a set of
+            // suggestions for other devices, and deleting locally must not take the suggestion away.
+            // Removing it from the account is an explicit act (SyncV3Service.forgetRepository).
         }
 
         if (previous.settings !== next.settings) {

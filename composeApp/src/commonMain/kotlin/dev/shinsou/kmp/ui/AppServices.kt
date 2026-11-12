@@ -1015,7 +1015,17 @@ interface BrowseCallbacks {
 
     suspend fun unblockPackageEntry(key: String) = Unit
 
-    suspend fun removeRepository(repositoryId: String) = Unit
+    suspend fun removeRepository(repositoryId: String) = removeRepository(repositoryId, fromAccount = false)
+
+    /**
+     * Removes a repository from this device. Deleting is local by default; with [fromAccount] the
+     * repository also stops being suggested to the account's other devices (those that already
+     * added it keep it).
+     */
+    suspend fun removeRepository(repositoryId: String, fromAccount: Boolean) = Unit
+
+    /** Hides a repository suggested by the account on this device only; it is never suggested here again. */
+    suspend fun dismissRepositorySuggestion(url: String) = Unit
 
     suspend fun selectRepository(repositoryId: String?) = Unit
 
@@ -1349,6 +1359,8 @@ interface BrowseCallbacks {
 data class BrowseSnapshot(
     val repositories: List<BrowseRepository> = emptyList(),
     val selectedRepositoryId: String? = null,
+    /** Repositories the account knows that this device neither has nor dismissed. */
+    val repositorySuggestions: List<BrowseRepositorySuggestion> = emptyList(),
     val sources: List<BrowseSource> = emptyList(),
     val extensions: List<BrowseExtension> = emptyList(),
     val migrations: List<MigrationCandidate> = emptyList(),
@@ -1364,6 +1376,13 @@ data class BrowseRepository(
     val signingFingerprint: String? = null,
     /** It now publishes signed documents; confirm its publisher to refresh it again. */
     val needsPublisherTrust: Boolean = false,
+)
+
+/** A repository another device added to the account; adding it here goes through the usual trust flow. */
+data class BrowseRepositorySuggestion(
+    val url: String,
+    val name: String,
+    val signingFingerprint: String? = null,
 )
 
 data class BrowseSource(

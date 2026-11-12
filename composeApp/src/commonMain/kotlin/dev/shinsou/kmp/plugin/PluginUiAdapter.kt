@@ -38,6 +38,7 @@ import dev.shinsou.kmp.ui.RepositoryTrustPrompt
 import dev.shinsou.kmp.ui.BrowseExtension
 import dev.shinsou.kmp.ui.BrowseFilter
 import dev.shinsou.kmp.ui.BrowseManga
+import dev.shinsou.kmp.ui.BrowseRepositorySuggestion
 import dev.shinsou.kmp.ui.BrowsePage
 import dev.shinsou.kmp.ui.BrowseRepository
 import dev.shinsou.kmp.ui.BrowseSnapshot
@@ -63,12 +64,18 @@ import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.ui.resolvedAgainst
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.TimeoutCancellationException
@@ -147,6 +154,13 @@ public class PluginBrowseAdapter(
     private val packageSecurity: PluginPackageSecurity? = null,
     /** ADR-0002 §8.1: device-local developer mode. Null in previews and older tests. */
     private val developerMode: PluginDeveloperModeStore? = null,
+    /**
+     * The sync account's repository list, offered here as suggestions (never applied on its own).
+     * Null when sync is unavailable.
+     */
+    private val accountRepositories: AccountRepositoryDirectory? = null,
+    /** Keeps the suggestions in step with [accountRepositories]; without it they refresh with the next snapshot rebuild. */
+    suggestionScope: CoroutineScope? = null,
 ) : BrowseCallbacks {
     /** Keys shown to the user by [inspectRepositoryTrust], by normalized URL, until trusted or replaced. */
     private val inspectedRepositoryKeys = mutableMapOf<String, RepositoryKeyPresentation>()
@@ -273,6 +287,16 @@ public class PluginBrowseAdapter(
     private val v2SourceKeysByStorageId = linkedMapOf<Long, SourceKey>()
 
     override val state: StateFlow<BrowseSnapshot> = mutableState
+    private val dismissedSuggestionsMutex = Mutex()
+
+    init {
+        val directory = accountRepositories
+        if (directory != null && suggestionScope != null) {
+            suggestionScope.launch {
+                directory.repositories.collect { publishRepositorySuggestions() }
+            }
+        }
+    }
     override val loginRequests: StateFlow<List<SourceLoginRequest>> = loginRequestCoordinator.loginRequests
 
     override fun dismissSourceLoginRequest(sourceId: Long) {
@@ -513,7 +537,7 @@ public class PluginBrowseAdapter(
         }
     }
 
-    override suspend fun removeRepository(repositoryId: String): Unit = operationMutex.withLock {
+    override suspend fun removeRepository(repositoryId: String, fromAccount: Boolean): Unit = operationMutex.withLock {
         // Deletion is local maintenance. Never load scripts, migrate remote indexes, or refresh
         // another repository as a prerequisite (or after the durable removal has succeeded).
         reconcilePortableRepositoryStorage()
@@ -521,6 +545,8 @@ public class PluginBrowseAdapter(
         fun belongsToRemovedRepository(value: String): Boolean =
             value == repositoryId || runCatching { normalizeRepositoryInput(value) == base }.getOrDefault(false)
         deleteRepository(base)
+        // Deleting here must not bring the repository straight back as a suggestion from the account.
+        updateDismissedSuggestions { it + base }
         // Removing a repository releases its URL -> publisher mapping (the publisher, its other
         // URLs and all watermarks stay), so the URL can later be trusted under another key.
         packageSecurity?.publishers?.forgetRepository(base)
@@ -548,6 +574,13 @@ public class PluginBrowseAdapter(
             isRefreshing = false,
             errorMessage = null,
         )
+        if (fromAccount) accountRepositories?.forget(base)
+    }
+
+    override suspend fun dismissRepositorySuggestion(url: String) {
+        val key = suggestionKey(url)
+        updateDismissedSuggestions { it + key }
+        publishRepositorySuggestions()
     }
 
     override suspend fun selectRepository(repositoryId: String?): Unit = operationMutex.withLock {
@@ -1839,10 +1872,62 @@ public class PluginBrowseAdapter(
         val portable = portableRepository
         if (portable == null) {
             repositoryStore.put(repository)
-            return
+        } else {
+            portable.upsertExtensionRepository(repository.toPortableRepository())
+            mirrorPortableRepositoriesToKeyValue(portable)
         }
-        portable.upsertExtensionRepository(repository.toPortableRepository())
-        mirrorPortableRepositoriesToKeyValue(portable)
+        // Added on purpose (possibly after an earlier dismissal): it is no longer a suggestion to hide.
+        val added = suggestionKey(repository.baseUrl)
+        updateDismissedSuggestions { it - added }
+    }
+
+    // ---- repository suggestions from the account ---------------------------------------------
+
+    private fun suggestionKey(url: String): String = runCatching { normalizeRepositoryInput(url) }.getOrDefault(url.trim())
+
+    /** URLs the user removed or dismissed on this device. Device-local: not synced, kept across sign-out. */
+    private suspend fun dismissedSuggestions(): Set<String> =
+        keyValueStore.getString(DISMISSED_SUGGESTIONS_KEY)
+            ?.let { raw ->
+                runCatching { Json.decodeFromString(ListSerializer(String.serializer()), raw) }.getOrNull()
+            }
+            .orEmpty()
+            .toSet()
+
+    private suspend fun updateDismissedSuggestions(change: (Set<String>) -> Set<String>) {
+        dismissedSuggestionsMutex.withLock {
+            val current = dismissedSuggestions()
+            val updated = change(current)
+            if (updated != current) {
+                keyValueStore.putString(
+                    DISMISSED_SUGGESTIONS_KEY,
+                    Json.encodeToString(ListSerializer(String.serializer()), updated.sorted()),
+                )
+            }
+        }
+    }
+
+    /** The account's repositories minus those this device already has and those it dismissed. */
+    private suspend fun repositorySuggestions(): List<BrowseRepositorySuggestion> {
+        val directory = accountRepositories ?: return emptyList()
+        val suggested = directory.repositories.value
+        if (suggested.isEmpty()) return emptyList()
+        val local = (portableRepository?.currentSnapshot?.extensionRepositories?.map { it.baseUrl }
+            ?: repositoryStore.list().map { it.baseUrl })
+            .mapTo(hashSetOf(), ::suggestionKey)
+        val dismissed = dismissedSuggestions()
+        return suggested
+            .filter { suggestionKey(it.url).let { key -> key !in local && key !in dismissed } }
+            .distinctBy { suggestionKey(it.url) }
+            .map { BrowseRepositorySuggestion(it.url, it.name, it.signingKeyFingerprint.takeIf(String::isNotBlank)) }
+    }
+
+    private suspend fun publishRepositorySuggestions() {
+        val suggestions = repositorySuggestions()
+        // Atomic, so a concurrent snapshot rebuild is not overwritten with stale rows.
+        mutableState.update { current ->
+            if (current.repositorySuggestions == suggestions) current else current.copy(repositorySuggestions = suggestions)
+        }
     }
 
     private suspend fun isConfiguredRepository(normalizedBaseUrl: String): Boolean =
@@ -2107,6 +2192,7 @@ public class PluginBrowseAdapter(
         mutableState.value = BrowseSnapshot(
             repositories = repositoryRows,
             selectedRepositoryId = selectedRowId,
+            repositorySuggestions = repositorySuggestions(),
             sources = sources,
             extensions = extensions,
             migrations = migrationProvider.candidates().map { it.resolvedAgainst(sources) },
@@ -2341,6 +2427,9 @@ public class PluginBrowseAdapter(
         private const val V2_PASSWORD_REFERENCE_PREFIX: String = "shinsou-v2-password-"
         private const val PORTABLE_REPOSITORY_MIGRATION_KEY: String =
             "plugin.repositories.portable-migration.v1"
+
+        private const val DISMISSED_SUGGESTIONS_KEY: String =
+            "plugin.repositories.dismissed-suggestions.v1"
 
         private const val LEGACY_BUNDLED_REPOSITORY_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/master"

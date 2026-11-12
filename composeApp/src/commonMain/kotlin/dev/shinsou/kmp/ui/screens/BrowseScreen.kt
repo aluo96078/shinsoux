@@ -3,6 +3,7 @@ package dev.shinsou.kmp.ui.screens
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -72,6 +73,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -127,6 +129,7 @@ import dev.shinsou.kmp.ui.BrowseFilter
 import dev.shinsou.kmp.ui.BrowseManga
 import dev.shinsou.kmp.ui.BrowsePage
 import dev.shinsou.kmp.ui.BrowseRepository
+import dev.shinsou.kmp.ui.BrowseRepositorySuggestion
 import dev.shinsou.kmp.ui.BrowseSource
 import dev.shinsou.kmp.plugin.ExtensionArtifactNotReviewedException
 import dev.shinsou.kmp.plugin.PluginContentType
@@ -850,7 +853,12 @@ fun BrowseScreen(
                     onBlock = { extension ->
                         launchOperation { callbacks.setExtensionBlocked(extension.id, blocked = true) }
                     },
-                    onRemoveRepository = { id -> launchOperation { callbacks.removeRepository(id) } },
+                    repositorySuggestions = snapshot.repositorySuggestions,
+                    canRemoveFromAccount = sync?.state?.collectAsState()?.value?.signedIn == true,
+                    onRemoveRepository = { id, fromAccount ->
+                        launchOperation { callbacks.removeRepository(id, fromAccount) }
+                    },
+                    onDismissRepositorySuggestion = { url -> launchOperation { callbacks.dismissRepositorySuggestion(url) } },
                     onSelectRepository = { id -> launchOperation { callbacks.selectRepository(id) } },
                     onInstall = { extension ->
                         if (extension.installed && extension.updateAvailable) launchExtensionOperation(
@@ -4261,7 +4269,10 @@ private fun ExtensionsPane(
     selectedRepositoryId: String?,
     extensions: List<BrowseExtension>,
     onAddRepository: (String) -> Unit,
-    onRemoveRepository: (String) -> Unit,
+    repositorySuggestions: List<BrowseRepositorySuggestion>,
+    canRemoveFromAccount: Boolean,
+    onRemoveRepository: (id: String, fromAccount: Boolean) -> Unit,
+    onDismissRepositorySuggestion: (String) -> Unit,
     onSelectRepository: (String?) -> Unit,
     onInstall: (BrowseExtension) -> Unit,
     onUninstall: (BrowseExtension) -> Unit,
@@ -4274,6 +4285,8 @@ private fun ExtensionsPane(
     var repositoryDialog by remember { mutableStateOf(false) }
     var repositoryUrl by remember { mutableStateOf("") }
     var manageRepositories by remember { mutableStateOf(false) }
+    var repositoryPendingRemoval by remember { mutableStateOf<BrowseRepository?>(null) }
+    var removeFromAccount by remember { mutableStateOf(false) }
     // Headings collapsed in the all-repositories view, by group key; kept while the screen lives.
     var collapsedGroups by rememberSaveable { mutableStateOf(emptyList<String>()) }
     LazyColumn(
@@ -4287,6 +4300,14 @@ private fun ExtensionsPane(
                     IconButton(enabled = operation == null, onClick = { manageRepositories = true }) {
                         Icon(Icons.Outlined.Settings, strings.text("Manage repositories"))
                     }
+                }
+                if (repositorySuggestions.isNotEmpty()) {
+                    Text(
+                        strings.text("{0} repositories came from other devices", repositorySuggestions.size.toString()),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable(enabled = operation == null) { manageRepositories = true },
+                    )
                 }
                 if (repositories.isEmpty()) {
                     Surface(
@@ -4400,8 +4421,49 @@ private fun ExtensionsPane(
                                 }
                             }
                             // No repository is official (ADR-0002): none gets a badge.
-                            IconButton(enabled = operation == null, onClick = { onRemoveRepository(repository.id) }) {
+                            IconButton(
+                                enabled = operation == null,
+                                onClick = {
+                                    removeFromAccount = false
+                                    repositoryPendingRemoval = repository
+                                },
+                            ) {
                                 Icon(Icons.Outlined.Delete, strings.delete)
+                            }
+                        }
+                    }
+                    if (repositorySuggestions.isNotEmpty()) {
+                        item("suggestions-title") {
+                            Text(
+                                strings.text("Repositories on other devices"),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                        items(repositorySuggestions, key = { "suggestion-${it.url}" }) { suggestion ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(suggestion.name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        suggestion.url,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                // Adding goes through the usual flow, including the publisher trust prompt.
+                                TextButton(
+                                    enabled = operation == null,
+                                    onClick = {
+                                        manageRepositories = false
+                                        onAddRepository(suggestion.url)
+                                    },
+                                ) { Text(strings.text("Add")) }
+                                TextButton(
+                                    enabled = operation == null,
+                                    onClick = { onDismissRepositorySuggestion(suggestion.url) },
+                                ) { Text(strings.text("Ignore")) }
                             }
                         }
                     }
@@ -4433,6 +4495,36 @@ private fun ExtensionsPane(
                     Text(strings.text("Package security"))
                 }
             },
+        )
+    }
+
+    repositoryPendingRemoval?.let { repository ->
+        AlertDialog(
+            onDismissRequest = { repositoryPendingRemoval = null },
+            title = { Text(strings.text("Delete repository")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(strings.text("Delete {0} from this device?", repository.name))
+                    if (canRemoveFromAccount) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { removeFromAccount = !removeFromAccount },
+                        ) {
+                            Checkbox(checked = removeFromAccount, onCheckedChange = { removeFromAccount = it })
+                            Text(strings.text("Also remove from the account (other devices stop receiving the suggestion)"))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveRepository(repository.id, canRemoveFromAccount && removeFromAccount)
+                        repositoryPendingRemoval = null
+                    },
+                ) { Text(strings.delete) }
+            },
+            dismissButton = { TextButton(onClick = { repositoryPendingRemoval = null }) { Text(strings.cancel) } },
         )
     }
 
