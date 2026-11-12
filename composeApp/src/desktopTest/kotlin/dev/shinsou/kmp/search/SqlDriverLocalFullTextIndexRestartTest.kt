@@ -106,14 +106,14 @@ class SqlDriverLocalFullTextIndexRestartTest {
                     "start_utf16 INTEGER NOT NULL, end_utf16 INTEGER NOT NULL, " +
                     "PRIMARY KEY(document_id, token, start_utf16, end_utf16)) WITHOUT ROWID",
             ).forEach { driver.execute(null, it, 0).value }
-            repeat(1_200) { index ->
-                driver.execute(
-                    null,
-                    "INSERT INTO content_search_documents VALUES ('legacy-$index', 'p', 'old text')",
-                    0,
-                ).value
-                driver.execute(null, "INSERT INTO content_search_tokens VALUES ('legacy-$index', 'o', 0, 1)", 0).value
-            }
+            // 1,200 legacy documents, each inserted by one statement rather than 2,400 autocommitted
+            // ones: on Windows runners every commit's fsync made this test exceed runTest's minute.
+            val legacyIndexes = "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1199) "
+            listOf(
+                legacyIndexes + "INSERT INTO content_search_documents SELECT 'legacy-' || i, 'p', 'old text' FROM n",
+                legacyIndexes + "INSERT INTO content_search_tokens SELECT 'legacy-' || i, 'o', 0, 1 FROM n",
+            ).forEach { driver.execute(null, it, 0).value }
+            assertEquals(1_200, scalarLong(driver, "SELECT COUNT(*) FROM content_search_tokens"))
             val foundation = foundation(driver)
             val fixture = importTwoTextUnits(foundation)
             val features = features(foundation)
