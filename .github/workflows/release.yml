@@ -611,7 +611,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.16' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.17' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.18' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.19'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.19' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.20'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -698,6 +699,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.18"
             $expectedHash = "82fa244fab608930fc653b27ab688bf3fc4ffd142a06c37902e2df238959e047"
             $baselineProductCode = "{C1891F87-E6EF-31E6-83C8-81698D7E6E96}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.20") {
+            $baselineVersion = "1.0.1-beta.19"
+            $expectedHash = "300b8cd52291181f3f6b4bef028b1700e6d217f7d63be8a0907928bf333d9aa3"
+            $baselineProductCode = "{B0F75299-C429-360C-842C-321383967E46}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -935,7 +940,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.16 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.17 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.18 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.19 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.19 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.20 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -1045,6 +1051,13 @@ jobs:
                 "Sync note: sync is back, against a server you choose. More > Sync signs in to a self-hosted Shinsou sync service (https://github.com/aluo96078/shinsou_sync_service); there is no built-in server. Your library and reading progress, plus repositories and the settings that are not device-specific, follow the account." \
                 "Sharing note: titles can be shared with other accounts on the same server, and reviews can be read and written from the title page when the server enables them." \
                 "Upgrade note: nothing is uploaded until you sign in; the first sign-in sends what this device already has."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.20 ]]; then
+              printf '%s\n' \
+                "Windows note: adding an extension repository no longer fails with ‘Provider \"jar\" not installed’, and text-to-speech reads Chinese and Japanese text correctly." \
+                "Desktop note: pages in the built-in browser and EPUB reader that draw shapes or SVG no longer fail to render in the packaged app on macOS and Windows." \
+                "Credentials note: on Windows, if saved extension sign-ins can no longer be decrypted (for example after copying the data folder to another account or PC), Shinsou X starts fresh and asks you to sign in to those extensions again instead of failing." \
+                "Extension note: search forms on sites such as 十八书屋 and 七猫 return results again."
             fi
           } > release-notes.md
 

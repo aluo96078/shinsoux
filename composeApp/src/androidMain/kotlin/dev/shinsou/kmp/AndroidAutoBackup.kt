@@ -95,4 +95,4 @@ internal class AndroidAutoBackupWorker(
     }
 }
 
-internal const val ANDROID_APP_VERSION = "1.0.1-beta.19"
+internal const val ANDROID_APP_VERSION = "1.0.1-beta.20"

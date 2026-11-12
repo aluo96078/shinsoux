@@ -161,7 +161,7 @@ fun main(args: Array<String>) {
                         DesktopPlatform.OTHER -> "Desktop"
                     },
                     platform = "desktop",
-                    appVersion = "1.0.1-beta.19",
+                    appVersion = "1.0.1-beta.20",
                 ),
             )
         }
