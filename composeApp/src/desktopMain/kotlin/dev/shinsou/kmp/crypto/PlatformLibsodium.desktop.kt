@@ -35,11 +35,9 @@ internal actual suspend fun initializePlatformLibsodium() {
 internal object DesktopLibsodium {
     fun load(directory: Path) {
         val resource = bundledLibraryName()
-        val bytes = JnaLibsodiumInterface::class.java.getResourceAsStream("/$resource")
-            ?.use { it.readBytes() }
-            ?: error("The bundled libsodium library $resource is missing.")
+        val bytes = bundledLibraryBytes(resource)
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        val target = directory.resolve("${digest.toHex().take(DIGEST_PREFIX_CHARS)}-$resource")
+        val target = directory.resolve(installedFileName(resource, digest))
         val library = if (holds(target, digest)) target else install(directory, target, bytes, digest)
         val sodium = Native.load(library.toAbsolutePath().toString(), JnaLibsodiumInterface::class.java)
         // sodium_init: 0 initialized now, 1 already initialized, -1 failed.
@@ -56,6 +54,20 @@ internal object DesktopLibsodium {
             }.forEach { runCatching { Files.deleteIfExists(it) } }
         }
     }
+
+    /** Name of the verified copy in the app's directory: the library's name behind its digest. */
+    internal fun installedFileName(): String {
+        val resource = bundledLibraryName()
+        return installedFileName(resource, MessageDigest.getInstance("SHA-256").digest(bundledLibraryBytes(resource)))
+    }
+
+    private fun installedFileName(resource: String, digest: ByteArray): String =
+        "${digest.toHex().take(DIGEST_PREFIX_CHARS)}-$resource"
+
+    private fun bundledLibraryBytes(resource: String): ByteArray =
+        JnaLibsodiumInterface::class.java.getResourceAsStream("/$resource")
+            ?.use { it.readBytes() }
+            ?: error("The bundled libsodium library $resource is missing.")
 
     /** The same choice the bindings make, so the resource names stay in step with their jar. */
     internal fun bundledLibraryName(): String = when {

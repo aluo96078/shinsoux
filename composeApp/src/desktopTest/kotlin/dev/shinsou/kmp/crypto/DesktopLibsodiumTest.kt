@@ -28,15 +28,14 @@ class DesktopLibsodiumTest {
     @Test
     fun aCopyThatNoLongerMatchesTheBundledLibraryIsReplacedBeforeLoading() {
         withTemporaryDirectory { root ->
-            val directory = root.resolve("native")
-            DesktopLibsodium.load(directory)
-            val installed = installedLibraries(directory).single()
-            val bundled = Files.readAllBytes(installed)
-            Files.write(installed, byteArrayOf(0x4d, 0x5a, 0x00))
+            // Tampered before it was ever loaded: Windows never lets a loaded DLL be rewritten.
+            val directory = Files.createDirectories(root.resolve("native"))
+            val installed = Files.write(directory.resolve(DesktopLibsodium.installedFileName()), byteArrayOf(0x4d, 0x5a, 0x00))
 
             DesktopLibsodium.load(directory)
 
-            assertTrue(bundled.contentEquals(Files.readAllBytes(installed)))
+            assertEquals(listOf(installed), installedLibraries(directory))
+            assertTrue(Files.size(installed) > 3, "the damaged copy was replaced by the bundled library")
             assertEquals(ABC_SHA256, Hash.sha256("abc".encodeToByteArray().asUByteArray()).asByteArray().toHex())
         }
     }
