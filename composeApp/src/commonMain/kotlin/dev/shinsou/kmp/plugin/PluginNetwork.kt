@@ -1149,6 +1149,10 @@ public class PluginNetworkClient(
                     currentRequest.headers,
                     includeReferer = explicitRefererWithoutCredentials,
                     includeImageTicket = policy.isContentOnlyScope && sameInitialOrigin,
+                    // Content-Type describes the body this hop carries; it is not a credential.
+                    // Dropping it turned form POSTs to non-credential origins into untyped
+                    // bodies that servers (PHP $_POST, form APIs) silently ignore.
+                    includeContentType = currentRequest.body.isNotEmpty(),
                 )
             }
             val built = requestBuilder.build(
@@ -1449,9 +1453,11 @@ public class PluginNetworkClient(
         headers: Map<String, String>,
         includeReferer: Boolean,
         includeImageTicket: Boolean = false,
+        includeContentType: Boolean = false,
     ): Map<String, String> = headers.filterKeys {
         (it.lowercase() in SAFE_CROSS_ORIGIN_HEADERS ||
-            includeImageTicket && it.equals("x-image-ticket", ignoreCase = true)) &&
+            includeImageTicket && it.equals("x-image-ticket", ignoreCase = true) ||
+            includeContentType && it.equals("content-type", ignoreCase = true)) &&
             (includeReferer || !it.equals("referer", true))
     }
 

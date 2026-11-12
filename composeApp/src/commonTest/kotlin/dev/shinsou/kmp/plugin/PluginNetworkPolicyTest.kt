@@ -415,6 +415,62 @@ class PluginNetworkPolicyTest {
     }
 
     @Test
+    fun formPostToANonCredentialOriginKeepsItsContentTypeButNoCredentials() = runTest {
+        // zh.shibashuwu / zh.qimao declare no credential origin. Their form POSTs used to lose
+        // Content-Type, so the site answered 200 with an empty search page.
+        val storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore()).also {
+            it.setCookie(7, PluginCookie("session", "secret", "api.example", secure = true))
+        }
+        val requests = mutableListOf<PluginHttpRequest>()
+        val bridge = PluginNetworkClient(
+            transport = resolvedTransport { request ->
+                requests += request
+                if (requests.size == 1) {
+                    PluginHttpResponse(
+                        303,
+                        byteArrayOf(),
+                        mapOf("Location" to listOf("/result"), "Set-Cookie" to listOf("PHPSESSID=planted")),
+                    )
+                } else {
+                    PluginHttpResponse(200, "ok".encodeToByteArray(), emptyMap())
+                }
+            },
+            storage = storage,
+            hostResolver = publicResolver,
+        ).scopedToPolicy(
+            PluginNetworkPolicy(
+                requestOrigins = setOf("https://api.example"),
+                credentialOrigins = emptySet(),
+            ),
+        )
+
+        bridge.post(
+            7,
+            "https://api.example/search/",
+            "keyword=%E6%80%BB%E8%A3%81",
+            headers = mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "Referer" to "https://api.example/",
+                "X-Api-Sign" to "drop-me",
+            ),
+            sourceHeaders = mapOf("X-Source" to "drop-me"),
+        )
+
+        val post = requests.first()
+        assertEquals("POST", post.method)
+        assertEquals("keyword=%E6%80%BB%E8%A3%81", post.body.decodeToString())
+        assertEquals("application/x-www-form-urlencoded", post.headers["Content-Type"])
+        listOf("Cookie", "Referer", "X-Api-Sign", "X-Source").forEach { name ->
+            assertFalse(post.headers.keys.any { it.equals(name, true) }, "$name must stay credential-only")
+        }
+        // The 303 follow-up is a body-less GET, so it carries no Content-Type either.
+        val followUp = requests[1]
+        assertEquals("GET", followUp.method)
+        assertFalse(followUp.headers.keys.any { it.equals("Content-Type", true) })
+        assertTrue(storage.getCookies(7).none { it.name == "PHPSESSID" })
+    }
+
+    @Test
     fun undeclaredActiveRuntimeOriginIsDeniedEvenWhenContentOriginIsAllowed() = runTest {
         val source = SourceIndexEntry(
             name = "Content only",
