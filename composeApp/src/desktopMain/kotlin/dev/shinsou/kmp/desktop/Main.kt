@@ -504,6 +504,23 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
     check(ModuleLayer.boot().findModule("jdk.accessibility").isPresent) {
         "The packaged desktop runtime is missing jdk.accessibility."
     }
+    // JavaFX's Marlin rasterizer needs sun.misc.Unsafe; without it WebView pages fail to render.
+    check(ModuleLayer.boot().findModule("jdk.unsupported").isPresent) {
+        "The packaged desktop runtime is missing jdk.unsupported."
+    }
+    // Every repository and publisher signature goes through libsodium. Load it from the packaged
+    // jar, whose install path contains a space, and prove a signature round trip.
+    runBlocking { dev.shinsou.kmp.crypto.SodiumPrimitives.initialize() }
+    val probeKeys = dev.shinsou.kmp.crypto.SodiumPrimitives.generateEd25519KeyPair()
+    val probeMessage = "Shinsou X runtime probe".encodeToByteArray()
+    try {
+        val probeSignature = dev.shinsou.kmp.crypto.SodiumPrimitives.signEd25519(probeMessage, probeKeys.privateKey)
+        check(dev.shinsou.kmp.crypto.SodiumPrimitives.verifyEd25519(probeMessage, probeSignature, probeKeys.publicKey)) {
+            "The packaged libsodium did not verify its own Ed25519 signature."
+        }
+    } finally {
+        probeKeys.privateKey.fill(0)
+    }
     // ReaderScreen is one of the largest Compose-generated classes in the application. A prior
     // ProGuard output rebuilt an invalid stack-map frame in this class, so the packaged app opened
     // normally but failed with VerifyError only when a chapter entered the reader. Force the JVM

@@ -2,7 +2,6 @@
 
 package dev.shinsou.kmp.crypto
 
-import com.ionspin.kotlin.crypto.LibsodiumInitializer
 import com.ionspin.kotlin.crypto.hash.Hash
 import com.ionspin.kotlin.crypto.signature.Signature
 import com.ionspin.kotlin.crypto.util.Base64Variants
@@ -33,7 +32,7 @@ object SodiumPrimitives {
         if (initialized) return
         initializationMutex.withLock {
             if (initialized) return
-            LibsodiumInitializer.initialize()
+            initializePlatformLibsodium()
             initialized = true
         }
     }
