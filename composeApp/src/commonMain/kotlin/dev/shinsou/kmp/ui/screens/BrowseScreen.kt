@@ -1712,7 +1712,7 @@ private fun ExtensionNovelReaderShell(
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (!readerPreviewKeyIsHostOwned(
                         key = event.key,
-                        unifiedImageOrEpubReader = imageReader || epubReader,
+                        embeddedSurfaceOwnsPaging = epubReader,
                     )
                 ) {
                     return@onPreviewKeyEvent false

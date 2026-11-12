@@ -82,11 +82,20 @@ class ImageSequenceReaderTest {
     }
 
     @Test
-    fun unifiedImageReadersKeepHardwareVolumeKeysOnTheHost() {
-        assertEquals(true, readerPreviewKeyIsHostOwned(Key.VolumeDown, unifiedImageOrEpubReader = true))
-        assertEquals(true, readerPreviewKeyIsHostOwned(Key.VolumeUp, unifiedImageOrEpubReader = true))
-        assertEquals(true, readerPreviewKeyIsHostOwned(Key.Escape, unifiedImageOrEpubReader = true))
-        assertEquals(false, readerPreviewKeyIsHostOwned(Key.DirectionRight, unifiedImageOrEpubReader = true))
-        assertEquals(true, readerPreviewKeyIsHostOwned(Key.DirectionRight, unifiedImageOrEpubReader = false))
+    fun theEpubSurfacePagesItselfButKeepsVolumeAndBackOnTheHost() {
+        assertEquals(true, readerPreviewKeyIsHostOwned(Key.VolumeDown, embeddedSurfaceOwnsPaging = true))
+        assertEquals(true, readerPreviewKeyIsHostOwned(Key.VolumeUp, embeddedSurfaceOwnsPaging = true))
+        assertEquals(true, readerPreviewKeyIsHostOwned(Key.Escape, embeddedSurfaceOwnsPaging = true))
+        assertEquals(false, readerPreviewKeyIsHostOwned(Key.DirectionRight, embeddedSurfaceOwnsPaging = true))
+    }
+
+    @Test
+    fun theImageReaderLeavesEveryPagingKeyToTheHost() {
+        for (key in listOf(
+            Key.DirectionRight, Key.DirectionLeft, Key.DirectionDown, Key.DirectionUp,
+            Key.Spacebar, Key.PageDown, Key.PageUp, Key.VolumeDown, Key.Escape,
+        )) {
+            assertEquals(true, readerPreviewKeyIsHostOwned(key, embeddedSurfaceOwnsPaging = false), key.toString())
+        }
     }
 }

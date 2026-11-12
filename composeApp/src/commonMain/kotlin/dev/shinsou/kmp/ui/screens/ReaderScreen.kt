@@ -587,7 +587,7 @@ fun ReaderScreen(
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (!readerPreviewKeyIsHostOwned(
                         key = event.key,
-                        unifiedImageOrEpubReader = unifiedReaderEnabled && !unifiedTextReader,
+                        embeddedSurfaceOwnsPaging = unifiedEpubReader,
                     )
                 ) {
                     // Let the injected text/EPUB surface own swipe and keyboard paging. Hardware

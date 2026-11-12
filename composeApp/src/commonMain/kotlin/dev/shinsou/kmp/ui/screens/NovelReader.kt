@@ -113,15 +113,17 @@ internal fun isReaderNavigationKey(key: Key): Boolean = when (key) {
 }
 
 /**
- * Unified image/EPUB surfaces own swipe/keyboard paging, but hardware volume keys still belong
- * to the host reader. Dropping them here made manga paging ignore Compose/HID volume events.
+ * Only the EPUB surface (a web view) pages from the keyboard itself, so only it is handed the
+ * paging keys; hardware volume keys and back stay with the host even there. The image reader has
+ * no key handling of its own and pages through the host's page request, so arrow keys, space and
+ * Page Up/Down must stay with the host: handing them over left manga unturnable from the keyboard.
  */
 internal fun readerPreviewKeyIsHostOwned(
     key: Key,
-    unifiedImageOrEpubReader: Boolean,
+    embeddedSurfaceOwnsPaging: Boolean,
 ): Boolean {
     if (key == Key.VolumeUp || key == Key.VolumeDown) return true
-    if (!unifiedImageOrEpubReader) return true
+    if (!embeddedSurfaceOwnsPaging) return true
     return key == Key.Escape || key == Key.Back || key == Key.NavigatePrevious
 }
 
