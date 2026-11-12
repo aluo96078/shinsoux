@@ -485,7 +485,7 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Proxy API key" to "Proxy API 金鑰",
     "Proxy URL" to "Proxy URL",
     "Pulling, merging and uploading" to "擷取、合併與上傳中",
-    "Questions about this policy can be sent to aluo96078@gmail.com." to "關於此政策的問題可以寄至 aluo96078@gmail.com。",
+    "Questions about this policy can be sent to aszxc96078@gmail.com." to "關於此政策的問題可以寄至 aszxc96078@gmail.com。",
     "Read chapter" to "閱讀章節",
     "Read {0}" to "閱讀 {0}",
     "Reading cookies from the isolated browser session…" to "正在從隔離的瀏覽器工作階段讀取 Cookie…",

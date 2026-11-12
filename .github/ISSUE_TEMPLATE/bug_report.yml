@@ -1,0 +1,93 @@
+name: 問題回報 / Bug report
+description: 回報 Shinsou X App 的問題 / Report a problem with the Shinsou X app
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **安全漏洞請勿在此回報**，請依 [SECURITY.md](https://github.com/aluo96078/shinsoux/blob/master/SECURITY.md) 寄信。
+        **Do not report security vulnerabilities here.** Follow SECURITY.md instead.
+
+        外掛抓不到內容、網站改版等來源問題，請回報至 [shinsou_plugin](https://github.com/aluo96078/shinsou_plugin/issues)。
+        Source issues (broken sources, site changes) belong in shinsou_plugin.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台 / Platform
+      options:
+        - Android
+        - iOS / iPadOS
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App 版本 / App version
+      description: 在「更多 → 關於」查看，例如 v1.0.1-beta.19 / Found in More → About
+      placeholder: v1.0.1-beta.19
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: 系統版本與裝置 / OS version and device
+      placeholder: Android 15, Pixel 8 / iOS 18.2, iPhone 15 / macOS 15.1
+    validations:
+      required: true
+
+  - type: input
+    id: plugin
+    attributes:
+      label: 相關的外掛與來源（若有）/ Related plugin and source (if any)
+      description: 套件 ID、版本與儲存庫 / Package ID, version, and repository
+      placeholder: dev.shinsou.example 1.2.0 (shinsou_plugin)
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟 / Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 預期結果 / Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 實際結果 / Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日誌或截圖 / Logs or screenshots
+      description: |
+        貼上前請移除 Cookie、Token、密碼、同步伺服器網址與登入權杖、電子郵件、裝置識別碼等私人資料。
+        Remove cookies, tokens, passwords, sync server URLs and login tokens, email addresses, and device identifiers first.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認事項 / Checklist
+      options:
+        - label: 我已搜尋過既有 Issue，沒有重複回報 / I searched existing issues and this is not a duplicate
+          required: true
+        - label: 日誌與截圖已移除私人資料 / I removed private data from logs and screenshots
+          required: true

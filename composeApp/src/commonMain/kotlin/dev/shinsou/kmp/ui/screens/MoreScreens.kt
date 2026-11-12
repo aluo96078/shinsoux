@@ -1284,7 +1284,7 @@ fun AboutScreen(
                     onOpenUrl("https://github.com/aluo96078/shinsoux")
                 }
                 AboutLink(strings.text("Contact developer")) {
-                    onOpenUrl("mailto:aluo96078@gmail.com?subject=Shinsou%20Feedback")
+                    onOpenUrl("mailto:aszxc96078@gmail.com?subject=Shinsou%20Feedback")
                 }
                 AboutLink(strings.text("Open-source license")) {
                     onOpenUrl("https://github.com/aluo96078/shinsoux/blob/master/LICENSE")
@@ -1338,7 +1338,7 @@ private fun PrivacyPolicyScreen(
             item {
                 PrivacySection(
                     strings.text("Contact"),
-                    strings.text("Questions about this policy can be sent to aluo96078@gmail.com."),
+                    strings.text("Questions about this policy can be sent to aszxc96078@gmail.com."),
                 )
             }
         }

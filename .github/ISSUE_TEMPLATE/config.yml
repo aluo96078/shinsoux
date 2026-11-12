@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞 / Security vulnerability
+    url: https://github.com/aluo96078/shinsoux/blob/master/SECURITY.md
+    about: 請私下寄信回報，勿公開揭露 / Report privately by email; do not disclose publicly
+  - name: 外掛與來源問題 / Plugin and source issues
+    url: https://github.com/aluo96078/shinsou_plugin/issues
+    about: 外掛抓不到內容、網站改版等問題 / Broken sources and site changes
+  - name: 同步伺服器問題 / Sync server issues
+    url: https://github.com/aluo96078/shinsou_sync_service/issues
+    about: 自架同步服務的問題 / Problems with the self-hosted sync service
+  - name: Discord 社群 / Discord community
+    url: https://discord.gg/EAKYuJPKG
+    about: 使用問題、功能建議與閒聊 / Questions, feature ideas, and discussion
