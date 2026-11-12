@@ -84,6 +84,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.LibraryDisplayMode
@@ -107,6 +108,7 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlin.math.absoluteValue
+import kotlin.math.ceil
 
 @Composable
 fun LibraryScreen(
@@ -649,6 +651,25 @@ private fun CategoryManagementDialog(
     }
 }
 
+private val LIBRARY_GRID_HORIZONTAL_PADDING = 20.dp
+private val LIBRARY_GRID_SPACING = 14.dp
+
+/** Covers stop growing past this width; a wider window shows more of them instead. */
+internal val LIBRARY_MAX_COVER_WIDTH = 200.dp
+
+/**
+ * The configured column count is a minimum. On a window wider than those columns can fill at
+ * [LIBRARY_MAX_COVER_WIDTH] each (a maximized desktop window), more columns are added so covers
+ * keep their size instead of scaling with the window.
+ */
+internal fun libraryColumnCount(availableWidth: Dp, configuredColumns: Int): Int {
+    val configured = configuredColumns.coerceAtLeast(1)
+    if (availableWidth <= 0.dp) return configured
+    val perColumn = LIBRARY_MAX_COVER_WIDTH + LIBRARY_GRID_SPACING
+    val needed = ceil((availableWidth + LIBRARY_GRID_SPACING) / perColumn).toInt()
+    return maxOf(configured, needed)
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryGrid(
@@ -666,11 +687,19 @@ private fun LibraryGrid(
 ) {
     val strings = LocalShinsouStrings.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val columnCount = if (maxWidth > maxHeight) landscapeColumns else portraitColumns
+        val configuredColumns = if (maxWidth > maxHeight) landscapeColumns else portraitColumns
+        val columnCount = libraryColumnCount(
+            availableWidth = maxWidth - LIBRARY_GRID_HORIZONTAL_PADDING * 2,
+            configuredColumns = configuredColumns,
+        )
         LazyVerticalGrid(
-            columns = GridCells.Fixed(columnCount.coerceAtLeast(1)),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 104.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            columns = GridCells.Fixed(columnCount),
+            contentPadding = PaddingValues(
+                start = LIBRARY_GRID_HORIZONTAL_PADDING,
+                end = LIBRARY_GRID_HORIZONTAL_PADDING,
+                bottom = 104.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             items(items, key = { it.id }) { item ->
