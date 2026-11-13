@@ -1117,6 +1117,9 @@ public class SyncV3Service internal constructor(
             if (!PortableSettings.isPortable(path)) { store.deleteDirty(rows); return }
             return promoteInto(kind, path, rows, null, null, null, live = true) { field -> out.settingValue(path, field) }
         }
+        // A removal marked with its own record key (see removedRef): the id may belong to
+        // another entity by now.
+        if (REMOVED_REF_SEPARATOR in ref) return tombstone(kind, rows)
         val id = ref.substring(2).toLongOrNull() ?: run { store.deleteDirty(rows); return }
         when (kind) {
             SyncKinds.CATEGORY -> {
@@ -1190,7 +1193,9 @@ public class SyncV3Service internal constructor(
         val fields = LinkedHashMap(state.fields)
         var deleted = state.deleted
         var cleared = state.cleared
-        for (row in rows) {
+        var revived = false
+        // The delete register first, so the fields know whether a live mark goes out with them.
+        for (row in rows.sortedBy { if (it.field == DirtyEntry.DELETED_FIELD) 0 else 1 }) {
             if (row.field == DirtyEntry.DELETED_FIELD) {
                 val known = deleted
                 val newer = known == null || LwwMerge.compare(row.clock, known.clock) > 0
@@ -1198,11 +1203,14 @@ public class SyncV3Service internal constructor(
                 if (!live) {
                     deleted = LwwMerge.LocalDeleted(true, row.clock, dirty = true)
                     if (cleared == null || LwwMerge.compare(row.clock, cleared) > 0) cleared = row.clock
-                } else if (known?.value == true || (known == null && kind == SyncKinds.REPOSITORY)) {
-                    // A repository's tombstone can sit on the account without this device having
-                    // pulled it yet (it is a removal from the account, not a local event), so the
-                    // "live" mark must be sent even when no tombstone is known here.
+                } else {
+                    // A tombstone can sit on the account without this device having pulled it yet
+                    // (another device removed the title, or the repository was removed from the
+                    // account), so the "live" mark is sent whatever is known here: otherwise only
+                    // the fields would go out, the newer re-add would lose to the older removal
+                    // on the next pull, and the title would vanish from this device.
                     deleted = LwwMerge.LocalDeleted(false, row.clock, dirty = true)
+                    revived = true
                 }
                 continue
             }
@@ -1211,7 +1219,10 @@ public class SyncV3Service internal constructor(
             val current = fields[row.field]
             if (current != null) {
                 if (LwwMerge.compare(current.clock, row.clock) >= 0) continue
-                if (!current.dirty && current.value == value) continue
+                // With a live mark going out, an unchanged value is sent again too: if the
+                // account holds a removal this device has not pulled, its floor would otherwise
+                // drop the old clocks and leave a live record without its fields.
+                if (!revived && !current.dirty && current.value == value) continue
             }
             fields[row.field] = LwwMerge.LocalField(value, row.clock, dirty = true)
         }
@@ -1287,6 +1298,10 @@ public class SyncV3Service internal constructor(
             val page = authed { api.changes(url, it, since, SyncApi.PAGE_SIZE) }
             ingest(page.records, page.nextSince)
             seen?.let { set -> page.records.forEach { set += seenKey(it.kind, it.key) } }
+            // A server that says there is more without moving the cursor would loop forever.
+            if (page.hasMore && page.nextSince <= since) {
+                throw SyncApiException(502, "bad_response", "The sync server did not advance past $since")
+            }
             since = page.nextSince
             if (!page.hasMore) break
         }

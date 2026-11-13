@@ -415,6 +415,68 @@ class SyncV3ServiceTest {
     }
 
     @Test
+    fun aCategoryDeletedAndAnotherCreatedBeforeTheNextSyncStaysDeleted() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            val old = a.repository.createCategory("Old")
+            assertTrue(a.sync())
+            b.signIn()
+            assertTrue(b.sync())
+            assertTrue(b.repository.currentSnapshot.categories.any { it.name == "Old" })
+
+            // Local ids are reused: the new category takes the deleted one's id before any sync.
+            a.repository.deleteCategory(old.id)
+            val new = a.repository.createCategory("New")
+            assertEquals(old.id, new.id)
+            assertTrue(a.sync())
+            assertTrue(a.sync())
+
+            assertEquals(listOf("New"), a.repository.currentSnapshot.categories.filter { it.id != Category.Default.id }.map { it.name })
+            assertTrue(b.sync())
+            assertEquals(listOf("New"), b.repository.currentSnapshot.categories.filter { it.id != Category.Default.id }.map { it.name })
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
+    fun aTitleAddedAgainAfterAnotherDeviceRemovedItStaysInTheLibrary() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        val b = TestDevice(server, "B")
+        try {
+            a.signIn(register = true)
+            a.addTitle("book-21", "Twenty-one", listOf("u1"))
+            assertTrue(a.sync())
+            b.signIn()
+            assertTrue(b.sync())
+
+            // A removes it; B has not synced since and takes it out and back in.
+            a.repository.upsertManga(a.repository.currentSnapshot.mangas.single().copy(favorite = false))
+            assertTrue(a.sync())
+            assertFalse(server.accountRecords("alice").getValue(SyncKinds.LIBRARY to workHash("book-21")).isLive)
+            delay(5)
+            val onB = b.repository.currentSnapshot.mangas.single()
+            b.repository.upsertManga(onB.copy(favorite = false))
+            b.repository.upsertManga(b.repository.currentSnapshot.mangas.single().copy(favorite = true))
+            assertTrue(b.sync())
+
+            assertTrue(b.repository.currentSnapshot.mangas.single().favorite, "the newer re-add must win over the older removal")
+            val revived = server.accountRecords("alice").getValue(SyncKinds.LIBRARY to workHash("book-21"))
+            assertTrue(revived.isLive)
+            assertNotNull(revived.fields["addedAt"], "the re-added title keeps its fields: $revived")
+            assertNotNull(revived.fields["categoryIds"], "the re-added title keeps its categories: $revived")
+            assertTrue(a.sync())
+            assertTrue(a.repository.currentSnapshot.mangas.single().favorite)
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test
     fun removingAndReAddingATitleUnderANewLocalIdStaysLiveEverywhere() = runBlocking<Unit> {
         val server = FakeSyncServer()
         val a = TestDevice(server, "A")

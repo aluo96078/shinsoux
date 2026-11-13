@@ -46,6 +46,13 @@ internal object SyncKinds {
 internal fun mangaRef(id: Long): String = "m:$id"
 internal fun chapterRef(id: Long): String = "c:$id"
 internal fun categoryRef(id: Long): String = "k:$id"
+/**
+ * The ref of a removal that carries its own record key. Local ids are reused (the next id is the
+ * highest one plus one), so a removal marked under the plain ref would be overwritten by whatever
+ * takes that id before the next sync, and the removed record would stay live on the account.
+ */
+internal fun removedRef(ref: String, recordKey: String): String = "$ref$REMOVED_REF_SEPARATOR$recordKey"
+internal const val REMOVED_REF_SEPARATOR: Char = '#'
 internal fun repositoryRef(baseUrl: String): String = "r:$baseUrl"
 internal fun settingRef(path: String): String = "s:$path"
 internal fun packageRef(packageId: String): String = "p:$packageId"
@@ -96,7 +103,7 @@ internal object SyncDiff {
                 removed = { m ->
                     if (m.favorite) {
                         env.tombstoneWork(m)?.let { (key, hash) ->
-                            add(SyncKinds.LIBRARY, mangaRef(m.id), DirtyEntry.DELETED_FIELD, "true", key, hash)
+                            add(SyncKinds.LIBRARY, removedRef(mangaRef(m.id), key), DirtyEntry.DELETED_FIELD, "true", key, hash)
                         }
                     }
                 },
@@ -147,7 +154,7 @@ internal object SyncDiff {
                 removed = { c ->
                     if (c.id != Category.Default.id) {
                         env.categoryUuid(c.id)?.let { uuid ->
-                            add(SyncKinds.CATEGORY, categoryRef(c.id), DirtyEntry.DELETED_FIELD, "true", uuid)
+                            add(SyncKinds.CATEGORY, removedRef(categoryRef(c.id), uuid), DirtyEntry.DELETED_FIELD, "true", uuid)
                         }
                         env.forgetCategory(c.id)
                     }
@@ -327,6 +334,9 @@ internal object SyncDiff {
         for (m in snapshot.mangas) {
             if (!m.favorite) continue
             val millis = m.favoriteModifiedAt ?: m.dateAdded
+            // Live as of the time it was added: a removal the account already holds wins only
+            // when it is newer than that.
+            add(SyncKinds.LIBRARY, mangaRef(m.id), DirtyEntry.DELETED_FIELD, millis, aux = "false")
             add(SyncKinds.LIBRARY, mangaRef(m.id), "addedAt", millis)
             add(SyncKinds.LIBRARY, mangaRef(m.id), "categoryIds", millis)
         }
