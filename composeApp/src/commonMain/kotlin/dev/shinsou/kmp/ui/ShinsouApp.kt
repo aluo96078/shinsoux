@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.ui
 
+import dev.shinsou.kmp.ui.components.toDiagnostics
+import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -206,6 +208,7 @@ fun ShinsouApp(
                         LocalMobileKeyboardDismissEnabled provides !appServices.prefersDesktopChrome,
                         dev.shinsou.kmp.ui.components.LocalPluginImageLoader provides pluginImages,
                         dev.shinsou.kmp.ui.components.LocalImageSaver provides appServices::saveImage,
+                        dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics provides snapshot.settings.developer.toDiagnostics(),
                     ) {
                         ShinsouAppContent(
                             repository = repository,
@@ -2539,7 +2542,7 @@ private fun PendingMangaDetailPane(
                     sourceId = item.sourceId,
                     sourceKey = item.sourceKey,
                 )
-                CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp)
+                ShinsouLoadingIndicator(indicatorModifier = Modifier.size(30.dp), strokeWidth = 3.dp)
                 Text(
                     strings.text("Loading title details"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

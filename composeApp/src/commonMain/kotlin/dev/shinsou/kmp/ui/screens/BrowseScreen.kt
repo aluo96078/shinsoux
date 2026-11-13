@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -1362,7 +1363,7 @@ private fun GlobalSearchScreen(
                 icon = { Icon(Icons.Outlined.TravelExplore, null, Modifier.size(30.dp)) },
             )
             searching && results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                ShinsouLoadingIndicator()
             }
             !hasSearched -> EmptyState(
                 title = strings.text("Search across sources"),
@@ -3224,7 +3225,7 @@ private fun ExtensionV2ChapterPane(
             loading && units.isEmpty() -> Box(
                 Modifier.fillMaxWidth().height(220.dp),
                 contentAlignment = Alignment.Center,
-            ) { CircularProgressIndicator() }
+            ) { ShinsouLoadingIndicator() }
             loadError != null && units.isEmpty() -> EmptyState(
                 title = strings.text("Unable to load chapters"),
                 message = loadError,
@@ -3326,7 +3327,7 @@ private fun ExtensionV2ChapterPane(
             ) {
                 loadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (loadingMore) {
-                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                    ShinsouLoadingIndicator(indicatorModifier = Modifier.size(26.dp), strokeWidth = 3.dp)
                 } else if (hasNextPage) {
                     OutlinedButton(onClick = onLoadMore) { Text(strings.text("Load more")) }
                 }
@@ -5264,7 +5265,7 @@ private fun SourceCatalogueScreen(
         }
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                ShinsouLoadingIndicator()
             }
             error != null && page.items.isEmpty() -> EmptyState(
                 title = strings.text("Source error"),
@@ -5347,7 +5348,7 @@ private fun SourceCatalogueScreen(
                                 }
                             }
                             if (loadingMore) {
-                                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                                ShinsouLoadingIndicator(indicatorModifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                             } else if (page.hasNextPage) {
                                 OutlinedButton(onClick = ::requestLoadMore) {
                                     Text(strings.text("Load more"))

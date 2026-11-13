@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -960,7 +961,9 @@ private fun ImageSequencePage(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(16.dp),
             )
-            else -> CircularProgressIndicator(Modifier.padding(24.dp))
+            // The page is read from a verified local blob, not requested from the network, so the
+            // diagnostic is the processing time only.
+            else -> ShinsouLoadingIndicator(Modifier.padding(24.dp))
         }
     }
 }
@@ -1365,7 +1368,7 @@ private fun EpubUnifiedContentReader(
                 onError = { message = strings.text("The EPUB resources could not be opened.") },
             )
         }
-        if (loading) CircularProgressIndicator()
+        if (loading) ShinsouLoadingIndicator()
 
         AnimatedVisibility(
             visible = readerControlsVisible && !searchOpen,

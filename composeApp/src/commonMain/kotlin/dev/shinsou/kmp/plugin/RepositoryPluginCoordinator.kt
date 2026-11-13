@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.ui.components.diagnosticUrl
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -136,6 +137,7 @@ public class RepositoryPluginCoordinator(
             // Coil would create a second, policy-free network path (including its own redirects).
             ReaderPage(
                 index = page.index.takeIf { it >= 0 } ?: fallbackIndex,
+                diagnosticUrl = diagnosticUrl(page.imageUrl?.takeIf(String::isNotBlank) ?: page.url),
                 imageResolver = {
                     buildReaderPage(
                         source = source,

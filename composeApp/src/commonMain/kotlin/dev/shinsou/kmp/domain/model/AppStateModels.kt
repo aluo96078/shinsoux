@@ -14,6 +14,8 @@ data class AppSettings(
     val browse: BrowseSettings = BrowseSettings(),
     val security: SecuritySettings = SecuritySettings(),
     val advanced: AdvancedSettings = AdvancedSettings(),
+    /** Device-local diagnostics; intentionally absent from the portable sync settings. */
+    val developer: DeveloperSettings = DeveloperSettings(),
 )
 
 @Serializable
@@ -177,6 +179,17 @@ data class AdvancedSettings(
     val proxyWorkerUrl: String = "",
     val proxyApiKey: String = "",
     val customUserAgent: String = "",
+)
+
+/**
+ * App-level developer mode (unrelated to the plugin developer mode). The sub-switches only take
+ * effect while [enabled] is on.
+ */
+@Serializable
+data class DeveloperSettings(
+    val enabled: Boolean = false,
+    val showLoadingElapsed: Boolean = false,
+    val showImageRequests: Boolean = false,
 )
 
 @Serializable

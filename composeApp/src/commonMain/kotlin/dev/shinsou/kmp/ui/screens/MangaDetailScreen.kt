@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -657,7 +658,7 @@ private fun ChapterPane(
                     Modifier.fillMaxWidth().height(180.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp)
+                    ShinsouLoadingIndicator(indicatorModifier = Modifier.size(30.dp), strokeWidth = 3.dp)
                 }
             }
         } else if (chapters.isEmpty()) {

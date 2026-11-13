@@ -246,6 +246,14 @@ private val LibraryContentTypeTranslations = mapOf(
 
 /** Additional copy for settings, tracking, and platform screens. */
 private val TraditionalAdditionalTranslations = mapOf(
+    "Developer mode" to "開發者模式",
+    "Diagnostic overlays for troubleshooting. Stored on this device only." to "用於排查問題的診斷顯示，僅儲存在這台裝置。",
+    "Show elapsed time under loading indicators" to "在載入動畫下顯示已處理時間",
+    "Show URL and elapsed request time while images load" to "圖片載入時顯示網址與已請求時間",
+    "Processed {0}" to "已處理 {0}",
+    "Requested {0}" to "已請求 {0}",
+    "{0} s" to "{0} 秒",
+    "{0} min {1} s" to "{0} 分 {1} 秒",
     "Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized." to
         "下載內容、本機來源檔案、擴充套件安裝包、Cookie、密碼與 API 金鑰不會同步。",
     "Shinsou X" to "Shinsou X",
@@ -1260,6 +1268,14 @@ private fun String.toSimplifiedChinese(): String {
 }
 
 private val JapaneseSyncTranslations = mapOf(
+    "Developer mode" to "開発者モード",
+    "Diagnostic overlays for troubleshooting. Stored on this device only." to "トラブルシューティング用の診断表示です。この端末にのみ保存されます。",
+    "Show elapsed time under loading indicators" to "読み込みアニメーションの下に処理時間を表示",
+    "Show URL and elapsed request time while images load" to "画像の読み込み中に URL とリクエスト経過時間を表示",
+    "Processed {0}" to "処理時間 {0}",
+    "Requested {0}" to "リクエスト経過 {0}",
+    "{0} s" to "{0} 秒",
+    "{0} min {1} s" to "{0} 分 {1} 秒",
     "Cloudflare encrypted sync" to "Cloudflare 暗号化同期",
     "Not configured" to "未設定", "Deploying" to "デプロイ中", "Linking" to "リンク中",
     "Ready" to "準備完了", "Device revoked" to "デバイスを失効", "Error" to "エラー",

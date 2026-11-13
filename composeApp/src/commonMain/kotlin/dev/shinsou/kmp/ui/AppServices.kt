@@ -910,6 +910,8 @@ data class ReaderPage(
      * contain a final image URL and no further resolver.
      */
     val imageResolver: (suspend () -> ReaderPage)? = null,
+    /** Display-only request URL (fragment stripped) for developer-mode diagnostics; never fetched. */
+    val diagnosticUrl: String? = null,
 )
 
 /** A non-blocking login prompt requested by an executable source. */

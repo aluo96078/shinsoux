@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -673,9 +674,10 @@ fun ReaderScreen(
             },
     ) {
         when {
-            loading -> CircularProgressIndicator(
-                color = Color.White,
+            loading -> ShinsouLoadingIndicator(
                 modifier = Modifier.align(Alignment.Center),
+                color = Color.White,
+                captionColor = Color.White,
             )
             errorMessage != null -> ReaderError(
                 message = errorMessage,
@@ -1231,7 +1233,7 @@ private fun LazyResolvedReaderPageImage(
                 }
             }
         } else {
-            CircularProgressIndicator(color = Color.White)
+            ShinsouLoadingIndicator(color = Color.White, captionColor = Color.White, requestUrl = page.diagnosticUrl)
         }
     }
 }

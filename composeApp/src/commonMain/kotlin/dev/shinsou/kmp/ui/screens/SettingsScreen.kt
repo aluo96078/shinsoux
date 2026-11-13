@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -100,6 +101,7 @@ private enum class SettingsSection(val icon: ImageVector) {
     Browse(Icons.Outlined.Extension),
     Security(Icons.Outlined.Security),
     Advanced(Icons.Outlined.Tune),
+    Developer(Icons.Outlined.Code),
 }
 
 @Composable
@@ -289,6 +291,7 @@ private fun SettingsDetail(
                 authenticate = authenticate,
             )
             SettingsSection.Advanced -> AdvancedSettingsPane(settings, onChange)
+            SettingsSection.Developer -> DeveloperSettingsPane(settings, onChange)
         }
     }
 }
@@ -699,6 +702,37 @@ private fun SecuritySettingsPane(
 }
 
 @Composable
+private fun DeveloperSettingsPane(settings: AppSettings, onChange: (AppSettings) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    val developer = settings.developer
+    SettingsList {
+        item {
+            ToggleSetting(
+                strings.text("Developer mode"),
+                strings.text("Diagnostic overlays for troubleshooting. Stored on this device only."),
+                developer.enabled,
+            ) { onChange(settings.copy(developer = developer.copy(enabled = it))) }
+        }
+        item {
+            ToggleSetting(
+                strings.text("Show elapsed time under loading indicators"),
+                null,
+                developer.showLoadingElapsed,
+                enabled = developer.enabled,
+            ) { onChange(settings.copy(developer = developer.copy(showLoadingElapsed = it))) }
+        }
+        item {
+            ToggleSetting(
+                strings.text("Show URL and elapsed request time while images load"),
+                null,
+                developer.showImageRequests,
+                enabled = developer.enabled,
+            ) { onChange(settings.copy(developer = developer.copy(showImageRequests = it))) }
+        }
+    }
+}
+
+@Composable
 private fun AdvancedSettingsPane(settings: AppSettings, onChange: (AppSettings) -> Unit) {
     val strings = LocalShinsouStrings.current
     SettingsList {
@@ -1037,6 +1071,7 @@ private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.Shinsou
     SettingsSection.Browse -> strings.browse
     SettingsSection.Security -> strings.text("Security")
     SettingsSection.Advanced -> strings.text("Advanced")
+    SettingsSection.Developer -> strings.text("Developer mode")
 }
 
 private fun Enum<*>.pretty(): String = name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
