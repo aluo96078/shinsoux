@@ -31,7 +31,9 @@ internal object IosWidgetPublisher {
     private var lastPayload: String? = null
 
     fun publish(snapshot: AppSnapshot) {
-        val payload = json.encodeToString(serializer, snapshot.toWidgetManga())
+        // With the app lock on, the home and lock screen must not show what the lock protects.
+        val items = if (snapshot.settings.security.appLockEnabled) emptyList() else snapshot.toWidgetManga()
+        val payload = json.encodeToString(serializer, items)
         if (payload == lastPayload) return
 
         val data = NSString.create(string = payload).dataUsingEncoding(NSUTF8StringEncoding)

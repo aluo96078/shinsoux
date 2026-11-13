@@ -6,7 +6,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.0.1"
-    CURRENT_PROJECT_VERSION: "25600117"
+    CURRENT_PROJECT_VERSION: "25600199"
     SWIFT_VERSION: "5.10"
 targets:
   Shinsou:
@@ -33,7 +33,7 @@ targets:
         CADisableMinimumFrameDurationOnPhone: true
         NSFaceIDUsageDescription: Shinsou X 使用 Face ID 保護您的閱讀資料。
         NSPhotoLibraryAddUsageDescription: Shinsou X 需要權限以儲存漫畫封面與頁面。
-        NSLocalNetworkUsageDescription: Shinsou X 在開發模式連線至區域網路內的受審核插件伺服器，並可連線至你自行架設的同步伺服器。
+        NSLocalNetworkUsageDescription: Shinsou X 在開發模式連線至區域網路內的開發用插件伺服器，並可連線至你自行架設的同步伺服器。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
