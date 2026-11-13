@@ -788,8 +788,16 @@ private fun ChapterPane(
                 TextButton(onClick = { scanlatorFilterVisible = false }) { Text(strings.done) }
             },
             dismissButton = {
-                if (excludedScanlators.isNotEmpty()) {
-                    TextButton(onClick = { onExcludedScanlatorsChange(emptySet()) }) { Text(strings.text("Show all")) }
+                Row {
+                    // Clearing every group lets the user then tick only the one they follow.
+                    if (availableScanlators.any { it !in excludedScanlators }) {
+                        TextButton(onClick = { onExcludedScanlatorsChange(availableScanlators.toSet()) }) {
+                            Text(strings.text("Deselect all"))
+                        }
+                    }
+                    if (excludedScanlators.isNotEmpty()) {
+                        TextButton(onClick = { onExcludedScanlatorsChange(emptySet()) }) { Text(strings.text("Show all")) }
+                    }
                 }
             },
         )
