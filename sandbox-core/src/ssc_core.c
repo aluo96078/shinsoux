@@ -257,6 +257,12 @@ static JSValue js_bridge(JSContext *ctx, JSValueConst this_val, int argc, JSValu
     }
     size_t args_len = 0;
     const char *args = JS_ToCStringLen(ctx, &args_len, argv[1]);
+    if (!args) {
+        /* The conversion failed (out of memory) and left its exception pending: propagate it
+         * instead of returning null with an exception a later call would pick up. */
+        JS_FreeCString(ctx, method);
+        return JS_EXCEPTION;
+    }
     JSValue result = JS_NULL;
     int rc = -1;
     if (method && args) {
