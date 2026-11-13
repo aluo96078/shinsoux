@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.data.AppSnapshot
+import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.tracking.TrackingCoordinator
@@ -349,14 +351,45 @@ internal object DesktopPersistence {
     private val directory: Path by lazy { DesktopAppDirectories.dataRoot }
     private val stateFile: Path get() = directory.resolve("shinsou-state.json")
 
-    fun loadState(): String? = runCatching {
-        if (Files.exists(stateFile)) Files.readString(stateFile, StandardCharsets.UTF_8) else null
-    }.getOrNull()
+    /**
+     * The saved state, or a fresh one when there is none. A file that exists but cannot be read
+     * fails the start instead: starting empty would let the next save replace the user's library.
+     * A file that reads but does not decode is moved aside (kept recoverable) before starting fresh.
+     */
+    fun loadSnapshot(): AppSnapshot = loadSnapshot(stateFile)
+
+    internal fun loadSnapshot(file: Path): AppSnapshot {
+        if (!Files.exists(file)) return AppSnapshot()
+        val payload = try {
+            String(Files.readAllBytes(file), StandardCharsets.UTF_8)
+        } catch (error: java.io.IOException) {
+            throw IllegalStateException("Shinsou X could not read its saved state at $file", error)
+        }
+        return try {
+            AppSnapshotJson.decode(payload)
+        } catch (_: Exception) {
+            // Not Throwable: an OutOfMemoryError says nothing about the file.
+            val quarantine = file.resolveSibling("shinsou-state.corrupt-${System.currentTimeMillis()}.json")
+            Files.move(file, quarantine, StandardCopyOption.REPLACE_EXISTING)
+            AppSnapshot()
+        }
+    }
 
     fun saveState(payload: String) {
         Files.createDirectories(directory)
         val temporary = directory.resolve("shinsou-state.json.tmp")
-        Files.writeString(temporary, payload, StandardCharsets.UTF_8)
+        // Forced to disk before the rename: a power loss must leave the old state or the new one,
+        // never an empty file under the real name.
+        java.nio.channels.FileChannel.open(
+            temporary,
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.WRITE,
+            java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+        ).use { channel ->
+            val bytes = java.nio.ByteBuffer.wrap(payload.toByteArray(StandardCharsets.UTF_8))
+            while (bytes.hasRemaining()) channel.write(bytes)
+            channel.force(true)
+        }
         try {
             Files.move(
                 temporary,

@@ -126,9 +126,7 @@ fun main(args: Array<String>) {
     application {
         desktopProbeStage("application")
         val repository = remember {
-            val initial = DesktopPersistence.loadState()?.let { payload ->
-                runCatching { AppSnapshotJson.decode(payload) }.getOrNull()
-            } ?: AppSnapshot()
+            val initial = DesktopPersistence.loadSnapshot()
             ShinsouRepository(initial, DesktopPersistence::saveState)
         }
         val snapshot by repository.snapshot.collectAsState()
@@ -161,7 +159,7 @@ fun main(args: Array<String>) {
                         DesktopPlatform.OTHER -> "Desktop"
                     },
                     platform = "desktop",
-                    appVersion = "1.0.1-beta.25",
+                    appVersion = dev.shinsou.kmp.app.SHINSOU_APP_VERSION,
                 ),
             )
         }

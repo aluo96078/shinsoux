@@ -41,8 +41,13 @@ internal class AndroidSnapshotPersistence(context: Context) {
 
     private fun loadStateFile(): AppSnapshot? {
         if (!stateFile.isFile) return null
-        val payload = runCatching { stateFile.readText(StandardCharsets.UTF_8) }.getOrNull() ?: return null
-        return runCatching { AppSnapshotJson.decode(payload) }.getOrElse {
+        // A read failure propagates: returning "no state" here would start an empty library and
+        // let the next save replace the real file.
+        val payload = stateFile.readText(StandardCharsets.UTF_8)
+        return try {
+            AppSnapshotJson.decode(payload)
+        } catch (_: Exception) {
+            // Not Throwable: an OutOfMemoryError says nothing about the file.
             quarantineCorruptState()
             null
         }
