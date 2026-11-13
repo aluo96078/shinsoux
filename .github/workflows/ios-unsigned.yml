@@ -60,6 +60,10 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Install iOS sandbox toolchain
+        shell: bash
+        run: brew install llvm lld wasi-libc wasi-runtimes wabt
+
       - name: Install XcodeGen
         shell: bash
         run: brew install xcodegen
