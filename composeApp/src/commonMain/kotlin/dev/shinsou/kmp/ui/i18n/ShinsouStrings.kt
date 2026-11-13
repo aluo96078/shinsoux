@@ -947,6 +947,7 @@ private val TraditionalLongTranslations = mapOf(
     "Blocked" to "已封鎖",
     "Block" to "封鎖",
     "Unblock" to "解除封鎖",
+    "Blocked on this device; it will not run" to "已在本機封鎖，不會執行",
     "Match fingerprint" to "比對指紋",
     "Match" to "比對",
     "Blocked on this device" to "本機封鎖名單",
@@ -3387,6 +3388,8 @@ private val JapaneseReviewedExtensionTranslations = mapOf(
     "The script remains blocked until you approve this exact version and digest." to
         "この正確なバージョンとダイジェストを承認するまで、スクリプトはブロックされたままです。",
     "Execution blocked" to "実行をブロック中",
+    "Blocked on this device; it will not run" to "この端末でブロック中（実行されません）",
+    "Unblock" to "ブロック解除",
     "Execute reviewed script" to "レビュー済みスクリプトを実行",
     "Network access" to "ネットワークアクセス",
     "Cookie storage" to "Cookie ストレージ",

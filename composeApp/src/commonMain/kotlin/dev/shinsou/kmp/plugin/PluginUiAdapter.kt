@@ -2131,6 +2131,9 @@ public class PluginBrowseAdapter(
             .distinctBy(BrowseRepository::url)
         val selectedRowId = repositoryStore.selected()
         val installed = manager.installedPlugins().associateBy { it.manifest.id }
+        val blockedPackages = packageSecurity?.blocklist?.entries().orEmpty()
+            .filterIsInstance<PluginBlockEntry.Package>()
+            .associateBy { it.packageId }
         val extensionDescriptorsV2 = manager.extensionDescriptorsV2()
         val liveV2SourceKeys = extensionDescriptorsV2.flatMap { it.sources }
             .mapTo(linkedSetOf()) { it.sourceKey }
@@ -2309,6 +2312,11 @@ public class PluginBrowseAdapter(
                 installed = descriptor.state != ExtensionState.AVAILABLE,
                 updateAvailable = descriptor.state == ExtensionState.UPDATE_AVAILABLE,
                 trusted = trusted,
+                blockedByUser = blockedPackages.containsKey(PluginInstallKeys.publishedPackageId(descriptor.id)),
+                blockEntryKey = blockedPackages[PluginInstallKeys.publishedPackageId(descriptor.id)]?.let { entry ->
+                    if (entry.publisherId.isEmpty()) "package::${entry.packageId}"
+                    else "package:${entry.publisherId}:${entry.packageId}"
+                },
                 isNsfw = descriptor.nsfw,
                 sourceIds = descriptor.sources.map { it.id },
                 contentType = descriptor.contentType,

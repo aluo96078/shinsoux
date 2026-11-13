@@ -1625,6 +1625,9 @@ data class BrowseExtension(
     val installed: Boolean = false,
     val updateAvailable: Boolean = false,
     val trusted: Boolean = false,
+    /** User blocklist state; exposed so the row can offer an immediate unblock action. */
+    val blockedByUser: Boolean = false,
+    val blockEntryKey: String? = null,
     val isNsfw: Boolean = false,
     val sourceIds: List<Long> = emptyList(),
     val description: String? = null,

@@ -853,6 +853,9 @@ fun BrowseScreen(
                         }
                     },
                     onOpenPackageSecurity = { launchOperation { packageSecurity = callbacks.packageSecurity() } },
+                    onUnblock = { extension ->
+                        extension.blockEntryKey?.let { key -> launchOperation { callbacks.unblockPackageEntry(key) } }
+                    },
                     onBlock = { extension ->
                         launchOperation { callbacks.setExtensionBlocked(extension.id, blocked = true) }
                     },
@@ -4282,6 +4285,7 @@ private fun ExtensionsPane(
     onTrust: (BrowseExtension, Boolean) -> Unit,
     onOpenPackageSecurity: () -> Unit,
     onBlock: (BrowseExtension) -> Unit,
+    onUnblock: (BrowseExtension) -> Unit,
     onPermissions: (BrowseExtension) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
@@ -4386,7 +4390,16 @@ private fun ExtensionsPane(
                 }
                 if (!collapsed) {
                     items(group.extensions, key = { "extension-${group.key()}-${it.id}" }) { extension ->
-                        ExtensionRow(extension, operation, onInstall, onUninstall, onTrust, onBlock, onPermissions)
+                        ExtensionRow(
+                            extension,
+                            operation,
+                            onInstall,
+                            onUninstall,
+                            onTrust,
+                            onBlock,
+                            onPermissions,
+                            onUnblock = { onUnblock(extension) },
+                        )
                     }
                 }
             }
@@ -4568,6 +4581,7 @@ private fun ExtensionRow(
     onTrust: (BrowseExtension, Boolean) -> Unit,
     onBlock: (BrowseExtension) -> Unit,
     onPermissions: (BrowseExtension) -> Unit,
+    onUnblock: () -> Unit,
 ) {
     val strings = LocalShinsouStrings.current
     var menuVisible by remember(extension.id) { mutableStateOf(false) }
@@ -4604,7 +4618,18 @@ private fun ExtensionRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (extension.installed) {
+                // The user's block list wins over the permission grant: a blocked package never
+                // runs, installed or not, and the only way back is unblocking it here.
+                if (extension.blockedByUser) {
+                    Text(
+                        strings.text("Blocked on this device; it will not run"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = onUnblock, contentPadding = PaddingValues(0.dp)) {
+                        Text(strings.text("Unblock"), style = MaterialTheme.typography.labelSmall)
+                    }
+                } else if (extension.installed) {
                     Text(
                         if (extension.trusted) strings.text("Execution allowed") else strings.text("Execution blocked"),
                         style = MaterialTheme.typography.labelSmall,
@@ -4665,10 +4690,10 @@ private fun ExtensionRow(
                         }
                         // ADR-0002 D5: the user's own block list; undone from Package security.
                         DropdownMenuItem(
-                            text = { Text(strings.text("Block")) },
+                            text = { Text(strings.text(if (extension.blockedByUser) "Unblock" else "Block")) },
                             onClick = {
                                 menuVisible = false
-                                onBlock(extension)
+                                if (extension.blockedByUser) onUnblock() else onBlock(extension)
                             },
                         )
                         DropdownMenuItem(
