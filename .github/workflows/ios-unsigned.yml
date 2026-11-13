@@ -2,6 +2,12 @@ name: iOS unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Source tag to build (for example v1.0.1-beta.25)"
+        required: true
+        default: "v1.0.1-beta.25"
+        type: string
   push:
     tags:
       - "v*"
@@ -19,9 +25,23 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
+      - name: Resolve source ref
+        id: source
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          ref="${INPUT_TAG:-$EVENT_REF}"
+          [[ "$ref" == v* ]] || { echo "release_tag must be a v* tag" >&2; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
       - name: Check out Shinsou X
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.source.outputs.ref }}
           persist-credentials: false
 
       - name: Select newest Xcode
@@ -70,7 +90,7 @@ jobs:
       - name: Package unsigned IPA
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/Shinsou.xcarchive/Products/Applications/Shinsou.app"
@@ -85,7 +105,7 @@ jobs:
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Shinsou-X-${{ github.ref_name }}-ios-unsigned
-          path: Shinsou-X-${{ github.ref_name }}-ios-unsigned.ipa
+          name: Shinsou-X-${{ steps.source.outputs.version }}-ios-unsigned
+          path: Shinsou-X-${{ steps.source.outputs.version }}-ios-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
