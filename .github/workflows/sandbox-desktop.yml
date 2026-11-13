@@ -37,7 +37,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-26]
+        # macos-26 jobs currently do not start reliably on GitHub-hosted runners.
+        # Keep the supported macOS 15 lane required for the desktop sandbox gate.
+        runner: [macos-15]
     steps:
       - uses: actions/checkout@v4
         with:
