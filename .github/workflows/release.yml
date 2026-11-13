@@ -16,8 +16,7 @@ on:
         type: string
 
 permissions:
-  # Release publishing uses the repository GITHUB_TOKEN; repository Actions defaults
-  # must also allow write access (Settings > Actions > General).
+  # The publish job uses the RELEASE_PAT repository secret (a token with contents: write).
   contents: write
 
 concurrency:
@@ -288,6 +287,7 @@ jobs:
         run: |
           ./gradlew :composeApp:packageReleaseDmg \
             -PreleaseVersion="$RELEASE_PACKAGE_VERSION" \
+            -PreleaseDisplayVersion="$RELEASE_VERSION" \
             -PreleaseVersionCode="$RELEASE_VERSION_CODE" \
             --stacktrace
 
@@ -413,6 +413,117 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  ios:
+    name: iOS unsigned IPA
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
+      RELEASE_VERSION_CODE: ${{ needs.metadata.outputs.version_code }}
+    steps:
+      - name: Check out Shinsou X
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Select newest Xcode
+        shell: bash
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app /Applications/Xcode.app 2>/dev/null | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install iOS sandbox toolchain and XcodeGen
+        shell: bash
+        run: brew install llvm lld wasi-libc wasi-runtimes wabt xcodegen
+
+      - name: Generate Xcode project
+        working-directory: iosApp
+        run: xcodegen generate
+
+      - name: Archive without signing
+        shell: bash
+        env:
+          # The Xcode build phase runs Gradle; this names the version the app shows.
+          SHINSOU_RELEASE_DISPLAY_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The Debug configuration: Release expects distribution profiles nobody but the
+          # person re-signing the IPA can provide.
+          xcodebuild archive \
+            -project iosApp/Shinsou.xcodeproj \
+            -scheme Shinsou \
+            -configuration Debug \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/Shinsou.xcarchive" \
+            MARKETING_VERSION="$RELEASE_PACKAGE_VERSION" \
+            CURRENT_PROJECT_VERSION="$RELEASE_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            SKIP_INSTALL=NO
+
+      - name: Verify and stage unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/Shinsou.xcarchive/Products/Applications/Shinsou.app"
+          [[ -d "$app" ]] || { echo "::error title=Missing iOS app::The archive holds no Shinsou.app."; exit 1; }
+          plist="$app/Info.plist"
+          actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+          actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          actual_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
+          [[ "$actual_bundle_id" == dev.aluo.shinsoux ]] || {
+            echo "::error title=Unexpected bundle identifier::Found $actual_bundle_id."
+            exit 1
+          }
+          [[ "$actual_version" == "$RELEASE_PACKAGE_VERSION" ]] || {
+            echo "::error title=Unexpected iOS version::Found $actual_version; expected $RELEASE_PACKAGE_VERSION."
+            exit 1
+          }
+          [[ "$actual_build" == "$RELEASE_VERSION_CODE" ]] || {
+            echo "::error title=Unexpected iOS build number::Found $actual_build; expected $RELEASE_VERSION_CODE."
+            exit 1
+          }
+          compgen -G "$app/PlugIns/*.appex" > /dev/null || {
+            echo "::error title=Missing widget extension::The app carries no widget extension."
+            exit 1
+          }
+          [[ ! -e "$app/embedded.mobileprovision" ]] || {
+            echo "::error title=Unexpected signature::The published IPA must be unsigned."
+            exit 1
+          }
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" build/release/ios
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          output="$PWD/build/release/ios/Shinsou-X-$RELEASE_VERSION-ios-unsigned.ipa"
+          /usr/bin/ditto -c -k --keepParent "$RUNNER_TEMP/ipa/Payload" "$output"
+          [[ -s "$output" ]] || { echo "::error title=Empty IPA::$output is empty."; exit 1; }
+          unzip -l "$output" | grep -Eq 'Payload/Shinsou\.app/Info\.plist$'
+          shasum -a 256 "$output"
+
+      - name: Upload IPA workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ios
+          path: build/release/ios/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
     name: Windows release MSI and EXE
     needs: metadata
@@ -494,6 +605,7 @@ jobs:
             :composeApp:packageReleaseMsi `
             :composeApp:packageReleaseExe `
             "-PreleaseVersion=$env:RELEASE_PACKAGE_VERSION" `
+            "-PreleaseDisplayVersion=$env:RELEASE_VERSION" `
             "-PwindowsPackageVersion=$env:WINDOWS_PACKAGE_VERSION" `
             "-PreleaseVersionCode=$env:RELEASE_VERSION_CODE" `
             "-Pkotlin.native.enableKlibsCrossCompilation=false" `
@@ -619,7 +731,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.22' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.23' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.24' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.25'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.25' ||
+          needs.metadata.outputs.tag == 'v1.0.1'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -730,6 +843,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.24"
             $expectedHash = "4362e166faf421e2f081e1931461a0cfb84366adab3f4328281137f64814c795"
             $baselineProductCode = "{BE85BA46-56AD-39CF-8A0B-900DDFFC635F}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1") {
+            $baselineVersion = "1.0.1-beta.25"
+            $expectedHash = "ee5c8c4b5ba0a615cba1994cef18e18f1303eb165026bc7343cb81e1ffcf4264"
+            $baselineProductCode = "{2581A958-DC7E-3545-9924-E4324F428FB9}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -860,6 +977,7 @@ jobs:
     needs:
       - metadata
       - android
+      - ios
       - macos
       - windows
     if: >-
@@ -867,6 +985,7 @@ jobs:
         always() &&
         needs.metadata.result == 'success' &&
         needs.android.result == 'success' &&
+        needs.ios.result == 'success' &&
         needs.macos.result == 'success' &&
         needs.windows.result == 'success'
       }}
@@ -904,7 +1023,11 @@ jobs:
             echo "Unexpected Android APK name: ${apks[0]##*/}." >&2
             exit 1
           }
-          [[ ${#ipas[@]} -eq 0 ]] || { echo "Expected no iOS IPA, found ${#ipas[@]}." >&2; exit 1; }
+          [[ ${#ipas[@]} -eq 1 ]] || { echo "Expected one unsigned iOS IPA, found ${#ipas[@]}." >&2; exit 1; }
+          [[ "${ipas[0]##*/}" == "Shinsou-X-$RELEASE_VERSION-ios-unsigned.ipa" ]] || {
+            echo "Unexpected iOS IPA name: ${ipas[0]##*/}." >&2
+            exit 1
+          }
           [[ ${#dmgs[@]} -eq 1 ]] || { echo "Expected one DMG, found ${#dmgs[@]}." >&2; exit 1; }
           [[ ${#msis[@]} -eq 1 ]] || { echo "Expected one MSI, found ${#msis[@]}." >&2; exit 1; }
           [[ ${#exes[@]} -eq 1 ]] || { echo "Expected one EXE, found ${#exes[@]}." >&2; exit 1; }
@@ -938,12 +1061,9 @@ jobs:
               "Included platforms:"
             printf '%s\n' \
               "- Android: debug-signed APK for testing; it is not a production-signed release build." \
+              "- iOS: unsigned IPA. It cannot be installed as it is: sign it with your own Apple ID or certificate first (for example with AltStore, Sideloadly or Xcode). The home screen widget needs an App Group, which most re-signing tools do not provide; build from source for a fully entitled app: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md" \
               "- macOS: DMG (not notarized; Gatekeeper may warn)." \
               "- Windows: MSI and EXE (not Authenticode-signed; SmartScreen may warn)."
-
-            printf '\n%s\n%s\n' \
-              "Not distributed:" \
-              "- iOS: no IPA is published. Build from source on macOS with Xcode: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md"
 
             printf '\n%s\n' "Verify every download with SHA256SUMS.txt."
             if [[ "$RELEASE_VERSION" == 1.0.0-beta.4 ||
@@ -1114,6 +1234,22 @@ jobs:
             if [[ "$RELEASE_VERSION" == 1.0.1-beta.25 ]]; then
               printf '%s\n' \
                 "Extension note: a blocked extension now says so on its row and offers Unblock right there, even after it was uninstalled."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1 ]]; then
+              printf '\n%s\n\n' "Changes since 1.0.0:"
+              printf '%s\n' \
+                "- Extensions: every extension runs in a sandbox (an isolated process on Android, an OS-confined helper on macOS and Windows, WebAssembly on iOS) with the permissions you grant. Extensions come from repositories signed by their publisher; you confirm the publisher's fingerprint before installing, and there is no built-in review list any more." \
+                "- Sync: the old iCloud and hosted sync were removed. More > Sync signs in to a Shinsou sync service you host yourself (https://github.com/aluo96078/shinsou_sync_service); you choose which categories each device sends and receives." \
+                "- Downloads: novel downloads survive restarts and keep running in the background on every platform." \
+                "- Reader: page-level progress for extension manga and novels, loading feedback, keyboard and volume-key paging, AVIF pages, and an illustration viewer." \
+                "- Library and storage: faster start-up, a compact full-text search index, and extension titles that open from the local library, offline included." \
+                "- Desktop: fixes for packaged start-up, MSI upgrades, repository signature checks and page rendering on Windows and macOS." \
+                "" \
+                "Upgrade notes:" \
+                "- Android now requires Android 10 (API 29) or later." \
+                "- Coming from 1.0.0: export a backup first. After updating, confirm the community repository's publisher (fingerprint A3E9 1699 D2CA E49B 0F04 8933 341D 0536) and review each extension's permissions. Old ShuYue-format novel sources no longer run; their Shinsou-format versions in the community repository keep your library, progress and saved logins." \
+                "- 1.0.1-beta.14 and older cannot read the community repository any more; update to this release." \
+                "- Backups are local files, and automatic backups live inside the app: export one before uninstalling or switching devices."
             fi
           } > release-notes.md
 
