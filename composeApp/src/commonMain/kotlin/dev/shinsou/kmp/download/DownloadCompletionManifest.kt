@@ -98,6 +98,27 @@ internal object DownloadCompletionManifests {
         }.getOrNull()
     }
 
+    /**
+     * The start-up check: a current manifest whose exact file set is on disk, without reading the
+     * pages. Reading and hashing every downloaded chapter at each launch costs as much as the
+     * whole download folder; the bytes are verified by [readValid] when a chapter is opened.
+     * Null means "not provably complete this way" (older manifest, missing file, no manifest).
+     */
+    suspend fun readPresent(
+        fileSystem: AppFileSystem,
+        mangaId: Long,
+        chapterId: Long,
+    ): DownloadCompletionManifest? {
+        val bytes = fileSystem.read(manifestPath(mangaId, chapterId))
+            ?.takeIf { it.isNotEmpty() && it.size <= MAX_MANIFEST_BYTES }
+            ?: return null
+        val decoded = runCatching {
+            AppSnapshotJson.format.decodeFromString<DownloadCompletionManifest>(bytes.decodeToString())
+        }.getOrNull() ?: return null
+        if (decoded.version != DownloadCompletionManifest.CURRENT_VERSION || !isStructurallyValid(decoded)) return null
+        return decoded.takeIf { fileSetMatchesManifest(fileSystem, mangaId, chapterId, it) }
+    }
+
     /** One-time upgrade for queues completed by builds that predate the atomic manifest. */
     suspend fun readValidOrMigrateLegacy(
         fileSystem: AppFileSystem,
@@ -158,7 +179,7 @@ internal object DownloadCompletionManifests {
         }
     }
 
-    private suspend fun filesMatchManifest(
+    private suspend fun fileSetMatchesManifest(
         fileSystem: AppFileSystem,
         mangaId: Long,
         chapterId: Long,
@@ -176,7 +197,21 @@ internal object DownloadCompletionManifests {
         val actualTransforms = listed.filterTo(linkedSetOf()) {
             transformName.matches(it.substringAfterLast('/'))
         }
-        if (actualImages != expectedImages || actualTransforms != expectedTransforms) return false
+        return actualImages == expectedImages && actualTransforms == expectedTransforms
+    }
+
+    private suspend fun filesMatchManifest(
+        fileSystem: AppFileSystem,
+        mangaId: Long,
+        chapterId: Long,
+        manifest: DownloadCompletionManifest,
+    ): Boolean {
+        val directory = directory(mangaId, chapterId)
+        val expectedImages = manifest.pages.mapTo(linkedSetOf()) { "$directory/${it.fileName}" }
+        val expectedTransforms = manifest.pages.mapNotNullTo(linkedSetOf()) {
+            it.transformFileName?.let { name -> "$directory/$name" }
+        }
+        if (!fileSetMatchesManifest(fileSystem, mangaId, chapterId, manifest)) return false
         // Validate sequentially: retaining every chapter page at once would turn a reopen check
         // into an unbounded aggregate allocation for long/high-resolution chapters.
         for (page in manifest.pages) {

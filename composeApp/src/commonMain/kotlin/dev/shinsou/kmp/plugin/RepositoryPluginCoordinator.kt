@@ -340,7 +340,11 @@ public class RepositoryPluginCoordinator(
                     it.totalPages,
                 )
             }
-            ?: return ReaderChapter()
+        if (completed == null) {
+            // Marked complete but its bytes do not verify: read online now, download it again.
+            downloadManager?.requeueBrokenDownload(mangaId, chapterId)
+            return ReaderChapter()
+        }
         val directory = downloadDirectory(mangaId, chapterId)
         val pages = mutableListOf<ReaderPage>()
         completed.pages.sortedBy { it.index }.forEach { completedPage ->

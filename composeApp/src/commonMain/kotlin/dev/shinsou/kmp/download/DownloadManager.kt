@@ -67,8 +67,25 @@ class DownloadManager(
     private var globallyPaused = false
 
     suspend fun restoreQueue() {
-        repository.currentSnapshot.downloadQueue.forEach { item ->
-            val completed = if (
+        try {
+            repository.currentSnapshot.downloadQueue.forEach { item ->
+                try {
+                    restoreItem(item)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // A file that cannot be read right now says nothing about the download: leave
+                    // this entry as it is, and keep restoring the rest of the queue.
+                }
+            }
+        } finally {
+            schedule()
+        }
+    }
+
+    private suspend fun restoreItem(item: DownloadQueueItem) {
+        val completed = DownloadCompletionManifests.readPresent(fileSystem, item.mangaId, item.chapterId)
+            ?: if (
                 item.state == DownloadState.DOWNLOADED &&
                 item.totalPages > 0 &&
                 item.downloadedPages == item.totalPages
@@ -82,35 +99,33 @@ class DownloadManager(
             } else {
                 DownloadCompletionManifests.readValid(fileSystem, item.mangaId, item.chapterId)
             }
-            when {
-                completed != null && item.state != DownloadState.DOWNLOADED -> {
-                    repository.setDownloadState(
-                        item.id,
-                        DownloadState.DOWNLOADED,
-                        progress = 1.0,
-                        downloadedPages = completed.pageCount,
-                        totalPages = completed.pageCount,
-                        updatedAt = now(),
-                    )
-                }
-                completed == null && item.state == DownloadState.DOWNLOADED -> {
-                    // A stale marker, missing page, or digest mismatch must not leave the queue
-                    // permanently claiming that unreadable bytes are available offline.
-                    repository.setDownloadState(
-                        item.id,
-                        DownloadState.QUEUED,
-                        progress = 0.0,
-                        downloadedPages = 0,
-                        totalPages = 0,
-                        updatedAt = now(),
-                    )
-                }
-                item.state == DownloadState.DOWNLOADING -> {
-                    repository.setDownloadState(item.id, DownloadState.QUEUED, updatedAt = now())
-                }
+        when {
+            completed != null && item.state != DownloadState.DOWNLOADED -> {
+                repository.setDownloadState(
+                    item.id,
+                    DownloadState.DOWNLOADED,
+                    progress = 1.0,
+                    downloadedPages = completed.pageCount,
+                    totalPages = completed.pageCount,
+                    updatedAt = now(),
+                )
+            }
+            completed == null && item.state == DownloadState.DOWNLOADED -> {
+                // A stale marker or a missing page must not leave the queue permanently
+                // claiming that unreadable bytes are available offline.
+                repository.setDownloadState(
+                    item.id,
+                    DownloadState.QUEUED,
+                    progress = 0.0,
+                    downloadedPages = 0,
+                    totalPages = 0,
+                    updatedAt = now(),
+                )
+            }
+            item.state == DownloadState.DOWNLOADING -> {
+                repository.setDownloadState(item.id, DownloadState.QUEUED, updatedAt = now())
             }
         }
-        schedule()
     }
 
     suspend fun enqueue(mangaId: Long, chapterId: Long): DownloadQueueItem {
@@ -237,6 +252,29 @@ class DownloadManager(
                 schedule()
             }
         }
+    }
+
+    /**
+     * Start-up no longer reads every page, so a truncated or corrupted page is found when the
+     * chapter is opened. The entry must not keep claiming the chapter is available offline (it
+     * could then never be downloaded again without deleting it by hand): download it again.
+     */
+    suspend fun requeueBrokenDownload(mangaId: Long, chapterId: Long) {
+        val item = repository.currentSnapshot.downloadQueue.firstOrNull {
+            it.mangaId == mangaId && it.chapterId == chapterId && it.state == DownloadState.DOWNLOADED
+        } ?: return
+        // Back into the visible queue first ("Clear completed" hides finished entries): a hidden
+        // entry gets no background keep-alive, and its failure would not show up for a retry.
+        repository.enqueueDownload(mangaId, chapterId, queuedAt = now())
+        repository.setDownloadState(
+            item.id,
+            DownloadState.QUEUED,
+            progress = 0.0,
+            downloadedPages = 0,
+            totalPages = 0,
+            updatedAt = now(),
+        )
+        schedule()
     }
 
     suspend fun downloadedPages(mangaId: Long, chapterId: Long): List<String> =

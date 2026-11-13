@@ -399,12 +399,92 @@ class DownloadManagerTest {
         assertEquals(1, manager.downloadedPages(1, 3).size)
         manager.close()
     }
+
+    @Test
+    fun restoreChecksCompletedChaptersWithoutReadingTheirPagesAndSurvivesAnUnreadableOne() = runTest {
+        val repository = ShinsouRepository(
+            AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 2, title = "A")),
+                chapters = listOf(
+                    Chapter(id = 3, mangaId = 1, name = "One"),
+                    Chapter(id = 4, mangaId = 1, name = "Two"),
+                    Chapter(id = 5, mangaId = 1, name = "Three"),
+                ),
+            ),
+        )
+        val files = MemoryFileSystem()
+        var fetches = 0
+        val manager = DownloadManager(
+            repository,
+            files,
+            ChapterPageProvider { _, _ -> listOf(DownloadPage(0, "page")) },
+            DownloadPageFetcher {
+                fetches++
+                DownloadedPage(byteArrayOf(1, 2, 3), "image/jpeg")
+            },
+            now = { 20 },
+        )
+        // One at a time: the in-memory file system is not thread-safe.
+        manager.enqueue(1, 3)
+        manager.awaitIdle()
+        manager.enqueue(1, 4)
+        manager.awaitIdle()
+        assertEquals(2, fetches)
+
+        // Chapter 5 is queued and its folder cannot be listed; chapters 3 and 4 are complete.
+        repository.enqueueDownload(1, 5, queuedAt = 30)
+        files.failing = "downloads/1/5"
+        files.reads.clear()
+        manager.restoreQueue()
+        manager.awaitIdle()
+
+        assertTrue(files.reads.none { it.substringAfterLast('/').startsWith("page-") && "/1/3/" in it }, files.reads.toString())
+        assertTrue(files.reads.none { it.substringAfterLast('/').startsWith("page-") && "/1/4/" in it }, files.reads.toString())
+        val states = repository.currentSnapshot.downloadQueue.associate { it.chapterId to it.state }
+        assertEquals(DownloadState.DOWNLOADED, states[3])
+        assertEquals(DownloadState.DOWNLOADED, states[4])
+        // Only the queued chapter was started: the unreadable folder did not stop the scheduler,
+        // and the complete chapters were not downloaded again.
+        assertEquals(3, fetches)
+        // Opening a chapter still verifies its bytes.
+        assertEquals(1, manager.downloadedPages(1, 3).size)
+        assertTrue(files.reads.any { it.substringAfterLast('/').startsWith("page-") && "/1/3/" in it })
+
+        // A page corrupted in place passes the start-up check, fails when opened, and is then
+        // downloaded again instead of staying marked as available offline.
+        files.write("downloads/1/4/page-0.jpg", byteArrayOf(9))
+        manager.restoreQueue()
+        manager.awaitIdle()
+        assertEquals(DownloadState.DOWNLOADED, repository.currentSnapshot.downloadQueue.single { it.chapterId == 4L }.state)
+        assertTrue(manager.downloadedPages(1, 4).isEmpty())
+        val before = fetches
+        // "Clear completed" hid the entry; the replacement download must show up in the queue.
+        repository.clearCompletedDownloads()
+        assertTrue(repository.currentSnapshot.downloadQueue.none { it.chapterId == 4L && it.visibleInQueue })
+        manager.requeueBrokenDownload(1, 4)
+        manager.awaitIdle()
+        assertEquals(before + 1, fetches)
+        assertTrue(repository.currentSnapshot.downloadQueue.single { it.chapterId == 4L }.visibleInQueue)
+        assertEquals(DownloadState.DOWNLOADED, repository.currentSnapshot.downloadQueue.single { it.chapterId == 4L }.state)
+        assertEquals(1, manager.downloadedPages(1, 4).size)
+        manager.close()
+    }
 }
 
 private class MemoryFileSystem : AppFileSystem {
     private val data = mutableMapOf<String, ByteArray>()
+    val reads = mutableListOf<String>()
+    /** Paths under this prefix fail like a file system that cannot be read right now. */
+    var failing: String? = null
+    private fun check(path: String) {
+        failing?.let { if (path.startsWith(it)) throw IllegalStateException("unreadable: $path") }
+    }
     override suspend fun write(relativePath: String, bytes: ByteArray) { data[relativePath] = bytes }
-    override suspend fun read(relativePath: String): ByteArray? = data[relativePath]
+    override suspend fun read(relativePath: String): ByteArray? {
+        check(relativePath)
+        reads += relativePath
+        return data[relativePath]
+    }
     override suspend fun exists(relativePath: String): Boolean = relativePath in data
     override suspend fun delete(relativePath: String): Boolean = data.remove(relativePath) != null
     override suspend fun deleteTree(relativeDirectory: String): Boolean {
@@ -412,6 +492,9 @@ private class MemoryFileSystem : AppFileSystem {
         keys.forEach(data::remove)
         return keys.isNotEmpty()
     }
-    override suspend fun list(relativeDirectory: String): List<String> = data.keys.filter { it.startsWith(relativeDirectory) }
+    override suspend fun list(relativeDirectory: String): List<String> {
+        check(relativeDirectory)
+        return data.keys.filter { it.startsWith(relativeDirectory) }
+    }
     override fun uri(relativePath: String): String = "memory://$relativePath"
 }
