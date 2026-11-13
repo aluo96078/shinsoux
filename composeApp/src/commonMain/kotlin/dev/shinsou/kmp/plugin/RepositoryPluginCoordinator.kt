@@ -260,7 +260,7 @@ public class RepositoryPluginCoordinator(
                 }
             }
             match?.id?.let(claimedIds::add)
-            remote.toDomain(mangaId, order, now(), match)
+            remote.toDomain(mangaId, newestFirstSourceOrder(order, remoteChapters.size), now(), match)
         }
 
         repository.updateManga(mangaId) { latest ->
@@ -311,7 +311,7 @@ public class RepositoryPluginCoordinator(
             )
         }
         val chapters = remoteChapters.mapIndexed { order, remote ->
-            remote.toDomain(mangaId, order, fetchedAt, knownUrls[remote.url])
+            remote.toDomain(mangaId, newestFirstSourceOrder(order, remoteChapters.size), fetchedAt, knownUrls[remote.url])
         }
         val saved = repository.upsertChapters(chapters)
         if (refreshedManga.favorite) {
@@ -650,3 +650,10 @@ private fun String.hasUnsafeUrlCharacter(): Boolean =
     any { character -> character == '\\' || character.code < 0x20 || character.code == 0x7f }
 
 private val SOURCE_URL_SCHEME = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
+
+/**
+ * Extensions list chapters in story order (first chapter first), the order the extension reader
+ * pages through. [Chapter.sourceOrder] counts from the newest chapter instead (0 is the latest;
+ * see `buildReaderChapterNavigation`), so a list position is turned around when it is stored.
+ */
+internal fun newestFirstSourceOrder(storyIndex: Int, size: Int): Int = size - 1 - storyIndex

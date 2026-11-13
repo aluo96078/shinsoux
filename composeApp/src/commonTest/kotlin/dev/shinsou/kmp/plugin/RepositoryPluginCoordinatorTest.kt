@@ -132,6 +132,19 @@ class RepositoryPluginCoordinatorTest {
         source.includeNewChapter = true
         coordinator.refreshManga(mangaId)
         assertEquals(3, repository.currentSnapshot.chapters.size)
+        // The source lists chapters in story order; the stored order counts from the newest one,
+        // so library titles list the latest chapter first and "next" moves forward in the story.
+        val stored = repository.currentSnapshot.chapters.associateBy { it.url }
+        assertEquals(0, stored.getValue("/chapter/3").sourceOrder)
+        assertEquals(2, stored.getValue("/chapter/1").sourceOrder)
+        val navigation = dev.shinsou.kmp.reader.buildReaderChapterNavigation(
+            chapters = repository.currentSnapshot.chapters,
+            currentChapterId = stored.getValue("/chapter/1").id,
+            manga = repository.currentSnapshot.mangas.single(),
+            settings = dev.shinsou.kmp.domain.model.ReaderSettings(),
+        )
+        assertEquals("/chapter/2", navigation.next?.url)
+        assertNull(navigation.previous)
         assertEquals(1, repository.currentSnapshot.updates.size)
         assertTrue(repository.currentSnapshot.mangas.single().favorite)
 

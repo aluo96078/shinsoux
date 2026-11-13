@@ -62,7 +62,7 @@ internal fun planExtensionLibraryMigrationV2(
         moved += chapter.copy(
             url = encodeTypedLocalChapterUrl(publicationKey, acquisitionId, unitKey),
             name = match.value.title,
-            sourceOrder = match.index,
+            sourceOrder = dev.shinsou.kmp.plugin.newestFirstSourceOrder(match.index, units.size),
         )
     }
     return ExtensionLibraryMigrationPlanV2(

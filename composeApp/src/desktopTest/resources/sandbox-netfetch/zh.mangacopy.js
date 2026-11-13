@@ -362,12 +362,12 @@ var source = {
                 var orderedLeft = Number(left.item.ordered);
                 var orderedRight = Number(right.item.ordered);
                 if (!isNaN(orderedLeft) && !isNaN(orderedRight) && orderedLeft !== orderedRight) {
-                    return orderedRight - orderedLeft;
+                    return orderedLeft - orderedRight;
                 }
                 var indexLeft = Number(left.item.index);
                 var indexRight = Number(right.item.index);
                 if (!isNaN(indexLeft) && !isNaN(indexRight) && indexLeft !== indexRight) {
-                    return indexRight - indexLeft;
+                    return indexLeft - indexRight;
                 }
                 return left.order - right.order;
             });
@@ -480,7 +480,7 @@ var source = {
         }
 
         chapters.sort(function(left, right) {
-            var numberOrder = right.chapter.chapterNumber - left.chapter.chapterNumber;
+            var numberOrder = left.chapter.chapterNumber - right.chapter.chapterNumber;
             return numberOrder || left.order - right.order;
         });
 
