@@ -27,7 +27,7 @@ Remove cookies, tokens, passwords, sync login tokens, publisher private keys, em
 
 ## 支援版本｜Supported Versions
 
-只有最新發佈的版本（目前為 `v1.0.1-beta` 系列的最新版）會收到安全修正。
+只有最新發佈的正式版會收到安全修正；beta 版請先更新到最新版本再回報。
 Only the latest released version receives security fixes.
 
 ## 範圍｜Scope

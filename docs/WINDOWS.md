@@ -1,6 +1,6 @@
 # Windows 建置與發布
 
-Shinsou X 的 Windows 版本使用既有 Compose Desktop JVM target，支援 Windows 10／11 x64。書庫、Reader、下載、備份、Rhino 擴充套件與主要 Compose UI 皆與 macOS Desktop 共用；Windows 專屬層負責資料目錄、DPAPI 安全儲存、快捷鍵與安裝包。
+Shinsou X 的 Windows 版本使用既有 Compose Desktop JVM target，支援 Windows 10／11 x64。書庫、Reader、下載、備份、沙箱化擴充套件與主要 Compose UI 皆與 macOS Desktop 共用；Windows 專屬層負責資料目錄、DPAPI 安全儲存、快捷鍵與安裝包。
 
 ## 環境需求
 
@@ -58,9 +58,7 @@ MSI 與 EXE 必須在 Windows host 建立；macOS 無法交叉產生 Windows ins
 workflow 會在強制啟用 Access Bridge 的條件下，對 release app image 執行 runtime 及完整
 startup probe；tag release workflow 還會靜默安裝 MSI，再執行同一項檢查。完整 probe 使用
 隔離 `%USERPROFILE%`，要求 SQLite database 建立並在 Compose 首幀後寫出隨機 marker，防止
-再次發布只能打包、卻在啟動時顯示 `Failed to launch JVM` 的安裝程式。Runtime probe 也會
-在經 ProGuard 縮減後執行 ShuYue 隔離資料與權限的寫入／重讀，避免正式安裝包把有效插件
-誤報為 `ShuYue script is not in quarantine`。
+再次發布只能打包、卻在啟動時顯示 `Failed to launch JVM` 的安裝程式。Runtime probe 另會確認精簡後的 runtime 含 `jdk.accessibility` 與 `jdk.unsupported`，並從封裝內的 JAR 載入 libsodium 完成一次 Ed25519 簽章往返，防止只在正式封裝才出現的啟動或儲存庫簽章驗證故障。
 
 machine-scoped installer 固定把程式放在 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，與下方 `%USERPROFILE%\ShinsouXData` 使用者資料目錄分離。固定安裝根目錄可避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；MSI 刻意不採 jpackage per-user 安裝，避免其卸載清理可能觸及使用者 profile。資料目錄位於使用者 profile 根目錄，避開 `%APPDATA%`／`%LOCALAPPDATA%` 樹及程式安裝路徑。升級與解除安裝可以替換或移除程式檔，但不得碰觸書庫、內容與 DPAPI protected blob；machine-scoped MSI 需要管理員或 UAC 提權。
 
@@ -98,18 +96,10 @@ Windows 資料預設位於：
 一般 push／pull request 會做 Windows 編譯、測試與 app image 啟動檢查。推送 `vMAJOR.MINOR.PATCH` 或
 `vMAJOR.MINOR.PATCH-beta.N` tag 觸發的
 `.github/workflows/release.yml` 才會在 Windows runner 建立 MSI／EXE，並與 Android debug
-APK 及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。Release workflow 不建置
-iOS，也不發布 IPA；iOS 必須在 macOS／Xcode 自行建置。該流程也會核對 ProductVersion、
-ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；第一個
-修復版另包含從公開 beta.3 覆蓋升級的測試，正式 `v1.0.0` 也必須通過從公開 beta.5
-覆蓋升級的測試；`v1.0.1-beta.1` 必須通過從公開 `v1.0.0` 覆蓋升級的測試，
-`v1.0.1-beta.2` 必須通過從公開 `v1.0.1-beta.1` 覆蓋升級的測試，`v1.0.1-beta.3` 則必須
-通過從公開 `v1.0.1-beta.2` 覆蓋升級的測試；`v1.0.1-beta.4` 必須通過從公開
-`v1.0.1-beta.3` 覆蓋升級的測試，`v1.0.1-beta.5` 必須通過從公開
-`v1.0.1-beta.4` 覆蓋升級的測試，`v1.0.1-beta.6` 必須通過從公開
-`v1.0.1-beta.5` 覆蓋升級的測試，`v1.0.1-beta.7` 必須通過從公開
-`v1.0.1-beta.6` 覆蓋升級的測試，`v1.0.1-beta.8` 必須通過從公開
-`v1.0.1-beta.7` 覆蓋升級的測試。若需在本機驗證安裝器，
+APK、未簽章的 iOS IPA 及 macOS DMG 聚合發布；beta tag 會建立 GitHub prerelease。該流程也會核對 ProductVersion、
+ProductCode、UpgradeCode，靜默安裝 MSI，並啟動已安裝程式的完整 startup probe；每個 tag 還會先安裝前一個公開版本的 MSI
+（例如 `v1.0.1` 先安裝 `v1.0.1-beta.25`），再確認新的 ProductCode 取代舊版，基準表見
+`release.yml`。若需在本機驗證安裝器，
 仍可依照上方的 WiX 建置命令手動產生。
 
 Release workflow 產物目前是未簽章 installer。公開正式版本應另以受信任的 Authenticode 憑證簽章；否則 Windows SmartScreen 可能顯示未知發行者警告。請勿將 PFX、密碼或簽章 token 提交至 repository。

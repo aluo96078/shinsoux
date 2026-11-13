@@ -1,9 +1,9 @@
 # GitHub Actions 發布
 
 推送格式為 `vMAJOR.MINOR.PATCH` 或 `vMAJOR.MINOR.PATCH-beta.N` 的 tag 會觸發
-`.github/workflows/release.yml`。流程在 Linux 建置 Android debug APK、在 macOS 建置 DMG、
-在 Windows 建置 MSI／EXE；所有必要產物與啟動驗證通過後，才會發布同一個 GitHub
-Release。流程不建置 iOS App，也不發布 IPA。Beta 會建立 GitHub prerelease，且不會標記為
+`.github/workflows/release.yml`。流程在 Linux 建置 Android debug APK、在 macOS 建置 DMG 與
+未簽章的 iOS IPA、在 Windows 建置 MSI／EXE；所有必要產物與驗證通過後，才會發布同一個 GitHub
+Release（任一平台失敗，包括 iOS，都不會公開）。`ios-unsigned.yml` 只保留為手動重建既有 tag 的 IPA 之用。Beta 會建立 GitHub prerelease，且不會標記為
 Latest。
 
 例如：
@@ -46,13 +46,28 @@ windows package version = MAJOR.MINOR.windows build
 65535。穩定的 UpgradeCode 配合每個 package version 產生的新 ProductCode，讓 MSI 能辨識
 並取代舊版；不可讓兩個公開 tag 重用相同 Windows package version。
 
+## 發布前準備
+
+1. 把 `composeApp/build.gradle.kts` 的預設版本（`releaseDisplayVersion`、`windowsPackageVersion`、
+   `releaseVersionCode`）與 `iosApp/project.yml` 的 `CURRENT_PROJECT_VERSION` 改成新版本。應用內顯示的
+   版本由 Gradle 產生，不需要改其他原始碼。
+2. 在 `release.yml` 的「Install previous Windows upgrade baseline」步驟加入新 tag：`if:` 清單與
+   基準分支（前一個公開版本、其 MSI 的 SHA-256 與 ProductCode）。沒有加入的 tag 會略過升級測試。
+3. 在 `release.yml` 的「Prepare release notes」加入該版本的說明。
+
+需要的 repository secrets：
+
+- `RELEASE_PAT`：具 repository `contents: write` 權限的 token，Publish job 用它建立並公開 GitHub Release。
+- `ANDROID_PUBLIC_DEBUG_KEYSTORE_BASE64`：固定的公開 Android 測試 signer。
+
 ## 發布產物
 
-每個 tag workflow 都必須建立以下檔案，並附加涵蓋四個二進位產物的
+每個 tag workflow 都必須建立以下檔案，並附加涵蓋五個二進位產物的
 `SHA256SUMS.txt`：
 
 ```text
 Shinsou-X-<version>-android-debug.apk
+Shinsou-X-<version>-ios-unsigned.ipa
 Shinsou-X-<version>-macos-<arch>.dmg
 Shinsou-X-<version>-windows-x64.msi
 Shinsou-X-<version>-windows-x64.exe
@@ -97,9 +112,16 @@ export ANDROID_KEY_PASSWORD='...'
 不得提交 keystore 或密碼。官方測試 keystore 只存在 GitHub Actions secret，repository 中
 沒有私鑰；自行建置的 release APK 不會加入官方 Release。
 
-## iOS：不發布 IPA，必須自行建置
+## iOS：未簽章 IPA 與自行建置
 
-GitHub Release workflow 完全不執行 iOS job，也不接受或上傳 IPA。iOS App 包含 SwiftUI
+Release workflow 的 iOS job 以 Debug 組態、`CODE_SIGNING_ALLOWED=NO` 封存 App，核對 bundle identifier、
+`CFBundleShortVersionString`／`CFBundleVersion` 與 tag 相符、內含 Widget extension 且沒有 provisioning
+profile，再封裝為 `Shinsou-X-<version>-ios-unsigned.ipa` 附加到 Release。這份 IPA **沒有簽章，不能直接安裝**：
+使用者必須以自己的 Apple ID 或憑證重新簽章（例如 AltStore、Sideloadly 或 Xcode）。它使用 Debug
+entitlements（不含 App Group），重新簽章工具通常也不提供 App Group，因此主畫面小工具不會有資料；
+免費 Apple ID 簽章的 App 每 7 天需要重新簽一次。官方不提供已簽章、TestFlight 或 App Store 版本。
+
+要取得完整 entitlements 的 App 必須自行建置。iOS App 包含 SwiftUI
 host、Widget、App Group 與 Keychain entitlements；建置者必須在 macOS 使用完整
 Xcode 與 XcodeGen，並自行提供與 bundle identifiers／capabilities 相符的 Apple 開發帳號、
 憑證及 provisioning profiles。
@@ -131,7 +153,7 @@ Development Team，再由 Xcode 執行或 Archive。若使用不同 bundle prefi
 
 App Store／TestFlight distribution 需要有效的付費 Apple Developer Program 會籍、Apple
 Distribution certificate 與 App Store profiles。免費 Personal Team 只能用支援範圍較小的
-development signing，不能產生可公開分發的 App Store IPA。自行產生的 IPA 不屬於官方
+development signing，不能產生可公開分發的 App Store IPA。自行簽章的 IPA 不屬於官方
 GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](BUILDING.md)。
 
 ## Desktop 分發邊界
@@ -145,15 +167,10 @@ GitHub Release 產物；完整 entitlement 與真機限制見 [建置與驗證](
 - macOS producer 會掛載 DMG，檢查縮減後的 SQLite JDBC provider，使用隔離資料目錄啟動
   其中的 App，並要求 SQLite 初始化及 Compose 首幀 marker 完成。
 - Windows producer 會在 Java Access Bridge 啟用條件下，對 app image 與安裝後程式執行
-  同樣的 SQLite／首幀 marker probe；runtime probe 也會在經 ProGuard 縮減後執行 ShuYue
-  隔離資料與權限的寫入／重讀，防止僅發生於正式封裝的安全狀態解碼故障。beta.4／beta.5
-  會先安裝公開 beta.3 MSI，正式 `v1.0.0` 會先安裝公開 beta.5 MSI，`v1.0.1-beta.1`
-  會先安裝公開 `v1.0.0` MSI，`v1.0.1-beta.2` 會先安裝公開 `v1.0.1-beta.1` MSI，
-  `v1.0.1-beta.3` 會先安裝公開 `v1.0.1-beta.2` MSI，而 `v1.0.1-beta.4` 會先安裝公開
-  `v1.0.1-beta.3` MSI，`v1.0.1-beta.5` 會先安裝公開 `v1.0.1-beta.4` MSI，而
-  `v1.0.1-beta.6` 會先安裝公開 `v1.0.1-beta.5` MSI，`v1.0.1-beta.7` 會先安裝公開
-  `v1.0.1-beta.6` MSI，而 `v1.0.1-beta.8` 會先安裝公開 `v1.0.1-beta.7` MSI，再驗證新
-  ProductCode 真正取代舊版。任一步無法啟動或升級都不會發布 Release。
+  同樣的 SQLite／首幀 marker probe；runtime probe 也會確認精簡後的 runtime 含 `jdk.accessibility` 與
+  `jdk.unsupported`，並從封裝內的 JAR 載入 libsodium 完成一次 Ed25519 簽章往返。每個 tag 都會先安裝
+  前一個公開版本的 MSI（`v1.0.1` 先安裝 `v1.0.1-beta.25`；基準版本、SHA-256 與 ProductCode 寫在
+  `release.yml`，新增 tag 前必須補上，否則該步驟會被略過），再驗證新 ProductCode 真正取代舊版。任一步無法啟動或升級都不會發布 Release。
 
 Beta.3 的 Desktop 安裝包雖可完成打包，縮減後的 `sqlite-jdbc` 遺失 provider class，啟動時
 會出現 `No suitable driver found`，Windows launcher 通常只顯示 `Failed to launch JVM`；

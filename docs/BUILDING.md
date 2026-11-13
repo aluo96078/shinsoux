@@ -25,17 +25,18 @@
 Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 
 建立正式或 beta tag 時，GitHub Actions 會產生 Android debug APK、macOS DMG 與 Windows
-MSI／EXE；不建置 iOS App，也不發布 IPA。iOS 必須在 macOS／Xcode 自行建置。版本格式、
+MSI／EXE，並附上未簽章的 iOS IPA（需自行重新簽章才能安裝）。完整 entitlements 的 iOS App 必須在 macOS／Xcode 自行建置。版本格式、
 公開產物與分發邊界請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用
 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫 package version 與正整數 build
 number；Android 若需顯示 prerelease suffix，可另傳
 `-PreleaseDisplayVersion=X.Y.Z-beta.N`。Windows installer 還需傳入 tag parser 產生的
 `-PwindowsPackageVersion=MAJOR.MINOR.BUILD`；公式及限制見發布文件。
 
-目前原始碼中的預設版本為 `1.0.1-beta.8`：Android `versionName` 與應用內顯示使用完整
-beta 版本，Android `versionCode` 為 `25600108`，Desktop／iOS 的 package／marketing
-version 為 `1.0.1`，Windows installer package version 為 `1.0.108`。iOS 本機建置為保留
-已完成真機驗證的版本，build number 使用 `25600117`。上述 `-P` 參數只用於後續 tag 發布時
+目前原始碼中的預設版本為 `1.0.1`：Android `versionName` 與應用內顯示為 `1.0.1`，Android
+`versionCode` 與 iOS build number 為 `25600199`，Desktop／iOS 的 package／marketing version 為
+`1.0.1`，Windows installer package version 為 `1.0.199`。應用內顯示的版本由 Gradle 依
+`releaseDisplayVersion` 產生（`SHINSOU_APP_VERSION`），不需要另外修改原始碼；由 Xcode build phase
+呼叫 Gradle 時可改用環境變數 `SHINSOU_RELEASE_DISPLAY_VERSION`。上述 `-P` 參數只用於 tag 發布時
 覆寫這些預設值。
 
 ## Workspace 佈局
@@ -96,7 +97,7 @@ iOS test 覆蓋 JavaScriptCore 同步 extension contract 與共用測試。Simul
 
 ### 4. iOS Xcode Simulator app
 
-> GitHub Release workflow 不建置 iOS，也不提供 IPA。以下 iOS 步驟必須由使用者在
+> GitHub Release 只提供未簽章的 IPA。以下 iOS 步驟必須由使用者在
 > macOS／Xcode 自行執行；實機或 Archive 還需自己的 Apple 開發帳號、憑證與
 > provisioning profiles。
 
@@ -198,20 +199,18 @@ Bridge 而 runtime 缺少此模組，AWT 會在視窗出現前終止，jpackage 
 Windows CI 會強制設定 Access Bridge，對 release app image 執行 runtime 與完整 startup
 probe；release workflow 再靜默安裝 MSI 並對已安裝程式重跑。完整 probe 必須建立
 `%USERPROFILE%\ShinsouXData\SyncV2\local-sync.db`、渲染 Compose 首幀、寫出隨機 marker，
-並確認執行中的原生視窗已載入品牌 icon 且沒有額外的 Windows menu bar。Runtime probe
-另會從縮減後 JAR 執行 ShuYue 隔離資料與權限的 durable round-trip，防止 ProGuard 導致
-正式包無法安裝已審核插件。
+並確認執行中的原生視窗已載入品牌 icon 且沒有額外的 Windows menu bar。Runtime probe 另會確認精簡後的 runtime 含 `jdk.accessibility` 與 `jdk.unsupported`，並從封裝內的 JAR 載入 libsodium 完成一次 Ed25519 簽章往返，防止只在正式封裝才出現的啟動或儲存庫簽章驗證故障。
 
 Windows installer 採 machine-scoped install，程式固定位於 `%ProgramFiles%\Shinsou X`，不提供安裝目錄選擇，並建立桌面捷徑與開始功能表項目；穩定的 UpgradeCode 與單調的 `MAJOR.MINOR.(PATCH × 100 + stage)` package version 讓後續版本取得新 ProductCode 並覆蓋升級，而不是並存或被判定為相同版本。beta.3 錯誤重用了 `1.0.0`；修復版的 release workflow 會先安裝公開 beta.3 MSI，再驗證新 MSI 移除舊 ProductCode。固定安裝根目錄是為了避免 jpackage `RemoveFolderEx` 在使用者選取既有目錄時遞迴清理該目錄；將 MSI 改為 machine scope 則避開 per-user 卸載器可能清理使用者 profile。程式安裝目錄與 `%USERPROFILE%\ShinsouXData` 使用者資料目錄完全分離，資料根目錄也避開 `%APPDATA%`／`%LOCALAPPDATA%`。舊版 `%APPDATA%\ShinsouXData` 與 `%LOCALAPPDATA%\Shinsou X` 會在新目錄不存在時於首次啟動遷移；若新目錄已存在，舊目錄會保留供手動合併。Windows Desktop 的敏感 plugin KV 仍使用 AES-256-GCM，但 master key 只以目前使用者範圍 DPAPI 保護後寫入 `%USERPROFILE%\ShinsouXData\plugin-secrets.dpapi`；未使用 machine scope，也沒有明文 file fallback。只有 Windows 原生執行與 native DPAPI round-trip test 能驗證這條路徑，macOS 上的 Desktop compile 不等同於 DPAPI 已驗證。
 
 ## iOS 簽章與 capability
 
-本專案只提供 iOS 原始碼與建置設定，不提供官方 IPA。Simulator 可使用上方無簽章命令；
+本專案提供 iOS 原始碼、建置設定與未簽章的 IPA，不提供已簽章的官方 IPA。Simulator 可使用上方無簽章命令；
 真機請以 Xcode 開啟 `iosApp/Shinsou.xcodeproj`，替 App 與 Widget 選擇自己的 Team 後
 Build／Run。Archive、Ad Hoc、TestFlight 或 App Store 分發則由自行建置者管理對應的
 distribution certificate、profiles 與 export method。
 
-實機／Archive 目前使用 Team `5UKY38ZLK6`；若改用其他 Apple 開發者帳號，需在 Xcode 更新 Team，並建立與以下 identifier 相符的 provisioning：
+實機／Archive 的 Development Team 寫在 `iosApp/project.yml`（`DEVELOPMENT_TEAM`）；請換成自己的 Apple 開發者 Team，並建立與以下 identifier 相符的 provisioning：
 
 - App：`dev.aluo.shinsoux`
 - Widget：`dev.aluo.shinsoux.widget`

@@ -1,5 +1,7 @@
 # Unified Shinsou／ShuYue repository contract
 
+> 注意：本文件部分章節描述 v1.0.1-beta.15 移除審核層級與 ShuYue 執行路徑之前的契約。App 現在不執行也不安裝 `contract: "shuyue"` 的項目，也沒有 reviewed catalog；現況以[插件系統總覽](PLUGIN_SYSTEM.md)為準。
+
 - 導覽：[插件系統總覽](PLUGIN_SYSTEM.md) · [插件系統事件接口架構](PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)
 - 上游歷史專案：[Shinsou](https://github.com/aluo96078/shinsou) · [ShuYue](https://github.com/aluo96078/shuyue)
 - 官方 V2 repository：<https://github.com/aluo96078/shinsou_plugin>
@@ -170,7 +172,7 @@ exact reviewed runtime，generic steady-state 記憶體與效能不變。
 從官方 plugin repository 根目錄啟動靜態 server：
 
 ```sh
-python3 -m http.server 18081 --directory /Users/aluoexpiry/project/shinsou_plugin
+python3 -m http.server 18081 --directory /path/to/shinsou_plugin
 ```
 
 在 App 加入以下基底 URL：

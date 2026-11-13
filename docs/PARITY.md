@@ -22,7 +22,7 @@
 | 下載佇列與離線閱讀 | 已實作 | 已實作 | 已實作 | 暫停、重試、重排、刪除與持久化 queue；page／transform 完成後最後原子發布 completion manifest。Clear completed 只把完成 row 設為 hidden，保留徽章、manifest 與離線閱讀 |
 | 統一內容／Local source `0` | 已實作 | 已實作 | 已實作 | TXT、圖片、ZIP、CBZ 與完整 EPUB package/resource graph；正文與資源存入 immutable blob store，metadata/ref/outbox 由 shared SQLite 原子提交。EPUB 保留 XHTML／CSS／font／image，三平台 browser-grade renderer 以 private scheme 按需讀取 |
 | 統一 Reader／全文搜尋／TTS／註記 | 已實作 | 已實作 | 已實作 | 文字、圖片、EPUB 共用 portable locator；搜尋、TTS 與 range annotation 都經 host rights gate。平台 TTS／browser engine 的真實 voice、排版與 accessibility 行為仍需各平台 smoke |
-| JavaScript extension 管理 | 已實作 | 已實作 | 已實作 | 安裝／更新／卸載、execution grant、preferences、credentials、login/logout；撤銷會立即卸載 runtime 但保留 package，重啟不會自行恢復授權。JVM Rhino、iOS JavaScriptCore |
+| JavaScript extension 管理 | 已實作 | 已實作 | 已實作 | 安裝／更新／卸載、execution grant、preferences、credentials、login/logout；撤銷會立即卸載 runtime 但保留 package，重啟不會自行恢復授權。所有套件一律在 sandbox-core 沙箱執行（Android isolated process、macOS／Windows helper、iOS WebAssembly） |
 | Extension repository 可攜狀態 | 已實作 | 已實作 | 已實作 | `AppSnapshot.extensionRepositories` 是 source of truth；舊 KV 只做一次性遷移，之後 add／remove／default 及 restore 結果會精確覆蓋 KV mirror，不會 union stale KV |
 | 官方 extension fixture | 已實作 | 受限 | 已實作 | Desktop test 在 Rhino 初始化 workspace 官方腳本；iOS test 驗證同步 JavaScriptCore contract，但未逐一執行全部 workspace 腳本 |
 | 手動 cookie 與檔案匯入 | 已實作 | 已實作 | 已實作 | 手動編輯及 Netscape `cookies.txt`／JSON；1 MiB、500 筆上限，驗證 domain/path/expiry／字元。picker 先驗 declared size 再 bounded read；macOS Desktop file picker 已做 packaged-app 開啟／取消 smoke，Windows Desktop 及 Android／iOS provider 仍需各平台驗證 |
@@ -110,7 +110,7 @@ Repository 提供以下可重現驗證路徑；每次整合或發布前仍應重
 ## 其他已知限制
 
 - DoH toggle 不會改變 runtime。直接改寫目的 IP 並覆寫 `Host` 會破壞 HTTPS SNI／憑證語義，因此未複製不安全行為。
-- JavaScript runtime 以官方同步式 extension contract 為準；任意第三方 Promise／async／`fetch` 腳本不保證相容。
+- 沙箱內的 JavaScript 支援 Promise／async 與 `bridge.net.fetch`，但有記憶體、時間、bridge 呼叫數與回傳大小上限。
 - Extension execution trust token 綁定 `pluginId + versionCode + SHA-256`，不是作者身分或 repository signing chain 的完整驗證；system-event grant 則另以 `packageId + version + versionCode + SHA-256` 及 exact `SourceKey` 核准。沒有 repository digest 的現行格式在明確 install／update 時採下載 bytes 的 SHA-256 作 TOFU execution grant。
 - UI 已有字串 provider，但仍存在不少直接寫在 Compose 中的英文；多語介面尚未達 [舊版 Shinsou](https://github.com/aluo96078/shinsou) 完整度。
 - macOS Keychain 與 Windows DPAPI 只保護 Desktop 敏感 KV 的 AES master key，不等於 app lock。Desktop app lock／secure screen capability 明示 unavailable；若需要獨立驗證，仍需 LocalAuthentication 或等價桌面安全設計。

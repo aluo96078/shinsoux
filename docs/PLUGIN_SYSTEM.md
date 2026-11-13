@@ -104,7 +104,7 @@ Mihon/Tachiyomi metadata、`shinsou-unified-v1` envelope 或 `shinsou-extension-
 | 傳統 Shinsou `index.json` array | 讀取 JavaScript package metadata | 只有簽章發佈者的套件、或開發者模式下的開發中套件可執行；其餘（含未簽章且不在開發者模式者）保持 inert | 舊索引可能沒有發布端 digest；不執行沒有發佈者金鑰的未簽章套件。 |
 | Mihon／Tachiyomi `index.min.json` | 建立 metadata-only stub source | APK 不執行 | 只提供相容 metadata，不代表支援 Android APK extension runtime。 |
 | `shinsou-unified-v1` | 同一 URL 投影 `shinsou`／`legacy` 與 `shuyue` 清單 | 依各自 admission 路徑 | 保留給遷移與相容；不要由 URL 或 hostname 猜 contract。 |
-| `shinsou-extension-v2`、`contractVersion: 2` | 驗證 V2 package、sidecar、digest、內容與權限宣告 | `contract: "shinsou"` 在沙箱執行（需簽章與使用者授權）；`shuyue` 另有內建相容路徑 | `referenceOnly`、`installable: false`、`legacyCompatibilityOnly` 不可作一般新安裝。 |
+| `shinsou-extension-v2`、`contractVersion: 2` | 驗證 V2 package、sidecar、digest、內容與權限宣告 | `contract: "shinsou"` 在沙箱執行（需簽章與使用者授權）；`shuyue` 項目會被略過 | `referenceOnly`、`installable: false`、`legacyCompatibilityOnly` 不可作一般新安裝。 |
 
 V2 根索引可以同時包含 `contract: "shinsou"` 與 `contract: "shuyue"`。這表示共用發布目錄，
 不表示兩種 script contract 可以互換。完整欄位與偵測規則見

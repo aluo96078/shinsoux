@@ -14,7 +14,7 @@
 | 平台 | 最低目標／產物 | 平台整合 |
 |------|---------------|----------|
 | Android | Android 10（API 29）以上；GitHub Release 提供測試用 Debug APK | Android Keystore、WorkManager、Biometric、WebView、文件選擇器 |
-| iOS／iPadOS | iOS 16 以上；僅提供原始碼，需在 macOS／Xcode 自行建置 App＋Widget | Keychain、BGTask、WKWebView、Widget |
+| iOS／iPadOS | iOS 16 以上；GitHub Release 提供未簽章 IPA（需自行重新簽章），或在 macOS／Xcode 自行建置 App＋Widget | Keychain、BGTask、WKWebView、Widget |
 | macOS | Compose Desktop App／DMG；目前打包目標為 Apple Silicon | Menu Bar、快捷鍵、系統文件選擇器、macOS Keychain |
 | Windows | Windows 10／11 x64；MSI／EXE | `%USERPROFILE%` 資料根目錄、使用者範圍 DPAPI、Ctrl 快捷鍵、原生文件選擇器 |
 
@@ -113,7 +113,7 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 - Plugin HTTP redirect 由共用層逐 hop 處理：限制 hop 數、拒絕 HTTPS 降級、跨 origin 丟棄 credentials／自訂秘密 header，並依新目標重新選 cookie。`Set-Cookie` 支援 `Max-Age`／`Expires`、精確 path 刪除與保守 suffix 防護；這套 suffix 規則不是完整 Public Suffix List。
 - Android 只有在裝置的 System WebView 同時支援 dedicated non-default profile 與 complete browsing-data deletion 時，才會在 App 內完成 Cloudflare／Web challenge；否則只開外部瀏覽器，絕不退回共用預設 profile。專用 profile 在每次 challenge 前後都完整清除 Cookie、cache 與 JavaScript storage，因此開啟與關閉可能稍有延遲。iOS 以 non-persistent WKWebView 完成 challenge 後擷取並驗證 cookie。macOS Desktop 會開啟獨立原生、non-persistent WKWebView 視窗，擷取該隔離 session 的 cookie 與真實 User-Agent；若 challenge request 明確屬於某來源且該來源已保存帳密，Host 只會在同源頁面、同源 form action 下填入並提交，帳密經 helper stdin 傳送而不放入 command line。Windows Desktop 只開外部瀏覽器，無法讀取或自動匯入 Safari／Chrome／Edge 的既有 cookie；可改用 `cookies.txt`／JSON 匯入或手動輸入。
 - DNS over HTTPS 設定目前只會保存，不會改變 runtime DNS。專案刻意不採「直接連 IP 再覆寫 Host」的作法，因其無法安全保留 HTTPS SNI／憑證語義。
-- Production repository 必須使用 pinned Ed25519 signed envelope；Host 會檢查 sequence replay／equivocation、payload SHA-256 與 size。Unsigned repository 僅能在明示啟用的 local/developer 相容流程使用，不能宣稱為官方簽章；目前未宣稱官方簽章已部署，正式發布前仍須配置並分發 out-of-band trust root、產生 envelope、完成 key rotation／撤銷與跨平台驗證。
+- Production repository 必須使用 pinned Ed25519 signed envelope；Host 會檢查 sequence replay／equivocation、payload SHA-256 與 size。信任由使用者以發佈者的完整指紋授予，App 不內建任何「官方」金鑰；未簽章的 repository 僅能在開發者模式使用。發佈者須自行保管金鑰、產生 envelope，並規劃 key rotation／撤銷與跨平台驗證。
 - JVM（Android／Desktop）對 plugin DNS 解析結果做 socket-level pinning，並沿用 OkHttp shared connection pool；iOS production generic plugin network／repository transport 在無法安全 pinning 時 fail closed。`BROWSER_CHALLENGE` 只有在 exact artifact 的 runtime permission 獲准，且請求 origin 命中 `browserSessionOrigins` 時才可使用。
 - Plugin runtime、repository 與 content body 都受有界 resource limits（index／script／sidecar、package/source 數、redirect、response bytes、logs、頁面／資源／文字大小）；超限或不符 exact artifact／SourceKey／permission approval 會拒絕或 fail closed。沙箱為每個套件提供獨立的記憶體、時間與 bridge 呼叫上限；未經審核或未受信任發行者的 repository JavaScript 維持 inert，審核套件的 provenance 仍綁定最終 evaluated bytes 與 exact source。
 - Package store V2 以 script SHA-256 content-addressing 與 atomic metadata commit 保存套件；write/readback 會驗證 SHA-256、strict UTF-8 與 metadata。Host bounds 為 script 8 MiB、metadata 512 KiB、256 packages、每包 256 sources、128 KiB index、1,024 discovered files；corrupt V2 不會 fallback 到 V1 split keys。Response headers 另限 128 fields、256B name、16KiB value、64KiB aggregate、64 `Set-Cookie`、32 cookie attributes，且 `Location` 必須唯一並限 4KiB。
@@ -135,8 +135,7 @@ Local source 支援 `txt`、`jpg`、`jpeg`、`png`、`webp`、`gif`、`avif`、`
 
 App 不自動加入任何來源儲存庫；首次啟動與刪除最後一個儲存庫後皆保持空白，來源需由使用者自行新增。刪除儲存庫只修改本機設定，不會因遠端索引、遷移或套件執行錯誤而失敗，也不會連帶解除安裝既有套件。
 
-僅供已審核套件使用的本機開發儲存庫入口，啟用方式與限制見
-[本機開發儲存庫](docs/REVIEWED_LOCAL_REPOSITORY.md)。正式建置預設關閉；手機 Debug 僅開放指定內網開發位址，不開放任意 HTTP／LAN 套件來源。
+若要在本機試用開發中的套件，請在 App 開啟「開發者模式」，細節見[套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)。開發者模式只接受本機與使用者自行輸入的私有網路位址，不開放任意 HTTP／LAN 套件來源。
 
 Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；它不是 AppKit 或 WinUI 原生介面。目前包含：
 
@@ -152,7 +151,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 - `composeApp/src/commonMain`：跨平台資料模型、repository、網路／外掛 runtime、下載、備份與 Compose UI
 - `composeApp/src/androidMain`：Android Activity、文件選擇器、Biometric、WebView、WorkManager 與持久化接線
 - `composeApp/src/iosMain`：iOS framework entry、WASM 沙箱接線、Keychain、WKWebView、BGTask、文件選擇器與 Widget payload
-- `composeApp/src/jvmCommonMain`：Android／Desktop 共用的 Rhino runtime（僅供相容性測試比對）
+- `composeApp/src/jvmCommonMain`：Android／Desktop 共用的 Rhino runtime（隨 App 打包，但正式 App 不以它執行套件，僅供相容性測試比對）
 - `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
 - `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
@@ -200,14 +199,14 @@ Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
 正式分發仍必須自行安全保存 keystore 並建置 release APK。
 自行簽署 release APK 的環境變數與命令見 [GitHub Actions 發布](docs/RELEASING.md)。
 
-GitHub Release 不建置或發布 iOS IPA。iOS 使用者／維護者必須在 macOS 安裝完整 Xcode
+GitHub Release 另附一份未簽章的 iOS IPA（`Shinsou-X-<version>-ios-unsigned.ipa`）：它不能直接安裝，必須先用自己的 Apple ID 或憑證重新簽章（例如 AltStore、Sideloadly 或 Xcode）；主畫面小工具需要 App Group，多數重新簽章工具不會提供。要取得完整 entitlements 的版本，iOS 使用者／維護者必須在 macOS 安裝完整 Xcode
 與 XcodeGen，執行上方 Simulator 命令，或以 `open iosApp/Shinsou.xcodeproj` 在 Xcode
 選擇自己的 Development Team 後建置實機版本。真機、Archive、Ad Hoc、TestFlight 與 App
 Store 分發所需的憑證、profiles、entitlements 與 Apple Developer 會籍均由自行建置者負責。
 
-只有已公開的 GitHub Release 才代表有可下載的 Android／Desktop 安裝包；repository 內存在
+只有已公開的 GitHub Release 才代表有可下載的安裝包；repository 內存在
 workflow 或產物設計，不等於目前已發布版本。每個 tag release 固定包含 Android debug APK、
-macOS DMG 與 Windows MSI／EXE，不包含 iOS IPA。若 Releases 頁面沒有項目，請依本節自行建置。
+未簽章的 iOS IPA、macOS DMG 與 Windows MSI／EXE。若 Releases 頁面沒有項目，請依本節自行建置。
 
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
 
@@ -258,3 +257,5 @@ Shinsou X 只提供書庫、閱讀器與來源擴充機制，不營運或託管�
 ## 授權
 
 本專案採用 [MIT License](LICENSE)。Copyright (c) 2026 Aluo.
+
+安裝包內含的第三方元件與其授權見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
