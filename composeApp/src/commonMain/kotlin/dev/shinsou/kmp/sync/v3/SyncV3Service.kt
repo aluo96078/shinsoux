@@ -1621,6 +1621,10 @@ public class SyncV3Service internal constructor(
         val snapshot = repository.currentSnapshot
         val unsyncable = if (signedIn) snapshot.mangas.count { it.favorite && runCatching { identity.workOf(it) }.getOrNull() == null } else 0
         mutableState.update { previous ->
+            // The session can end (expireSession) after `signedIn` was read above. Publishing that
+            // stale view would mark the device signed in again and clear "session expired", and
+            // the next publish would then report signed out with the flag gone for good.
+            if (signedIn && store.meta(META_SIGNED_IN) != "1") return@update previous
             previous.copy(
                 signedIn = signedIn,
                 sessionExpired = if (signedIn) false else previous.sessionExpired,
