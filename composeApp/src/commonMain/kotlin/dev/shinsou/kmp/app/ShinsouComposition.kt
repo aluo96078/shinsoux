@@ -1093,7 +1093,7 @@ public class ShinsouComposition(
     private companion object {
         const val PROXY_API_KEY_STORAGE_KEY = "network.proxy.secret"
         const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
-        const val CONTENT_BACKUP_APP_VERSION = "1.0.1-beta.25"
+        const val CONTENT_BACKUP_APP_VERSION = SHINSOU_APP_VERSION
     }
 }
 

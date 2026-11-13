@@ -1253,7 +1253,7 @@ fun AboutScreen(
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.about,
-            subtitle = strings.text("Shinsou X · version 1.0.1-beta.25"),
+            subtitle = strings.text("Shinsou X · version {0}", dev.shinsou.kmp.app.SHINSOU_APP_VERSION),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
         )
         LazyColumn(
