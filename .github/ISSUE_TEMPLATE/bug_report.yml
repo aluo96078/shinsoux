@@ -28,8 +28,8 @@ body:
     id: version
     attributes:
       label: App 版本 / App version
-      description: 在「更多 → 關於」查看，例如 v1.0.1-beta.23 / Found in More → About
-      placeholder: v1.0.1-beta.23
+      description: 在「更多 → 關於」查看，例如 v1.0.1-beta.24 / Found in More → About
+      placeholder: v1.0.1-beta.24
     validations:
       required: true
 

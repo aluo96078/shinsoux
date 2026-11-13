@@ -615,7 +615,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.20' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.21' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.22' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.23'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.23' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.24'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -718,6 +719,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.22"
             $expectedHash = "9838b4e212b0d645fd03f439c31b89ab5c59c2c7a5188c7b49b0d5a7a1922757"
             $baselineProductCode = "{A7A0E464-6CAD-3CA8-9F0D-AD76E81BAFE3}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.24") {
+            $baselineVersion = "1.0.1-beta.23"
+            $expectedHash = "620261807be93a298915ddbed12c3686db13f3743c993104fe3b55c6af436e0f"
+            $baselineProductCode = "{3784BB7B-5D97-358D-9CFD-5FF5D2DD414D}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -959,7 +964,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.20 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.21 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.22 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.23 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.23 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.24 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -1091,6 +1097,11 @@ jobs:
             if [[ "$RELEASE_VERSION" == 1.0.1-beta.23 ]]; then
               printf '%s\n' \
                 "Reader note: on Windows and macOS, the arrow keys, space and Page Up/Down turn manga pages again (right-to-left mode swaps left and right). EPUB keeps its own keyboard paging."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.24 ]]; then
+              printf '%s\n' \
+                "Sync note: choose which categories this device sends and receives under More > Sync. Installed extensions can now be pre-installed on another device from a repository that device already trusts; opening a title there asks for permission first." \
+                "Developer note: Settings > Developer mode can show elapsed loading time and image request URLs while troubleshooting."
             fi
           } > release-notes.md
 
