@@ -72,8 +72,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode \
-            -Pkotlin.native.enableKlibsCrossCompilation=false
           xcodebuild archive \
             -project iosApp/Shinsou.xcodeproj \
             -scheme Shinsou \
