@@ -16,6 +16,8 @@ on:
         type: string
 
 permissions:
+  # Release publishing uses the repository GITHUB_TOKEN; repository Actions defaults
+  # must also allow write access (Settings > Actions > General).
   contents: write
 
 concurrency:
