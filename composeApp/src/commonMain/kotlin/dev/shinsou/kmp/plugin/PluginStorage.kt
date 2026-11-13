@@ -105,6 +105,13 @@ public interface PluginStorage {
     }
     public suspend fun clearCookies(sourceId: Long)
 
+    /**
+     * Drops the cookies that expired before [nowEpochMillis], as one step: a cookie another
+     * response refreshed in the meantime is checked at its current expiry and kept. Stores
+     * without a jar of their own have nothing to drop.
+     */
+    public suspend fun deleteExpiredCookies(sourceId: Long, nowEpochMillis: Long) {}
+
     /** UA captured with browser-bound anti-bot cookies; never shared across source scopes. */
     public suspend fun getWebChallengeUserAgent(sourceId: Long): String? = null
     public suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) = Unit
@@ -193,6 +200,11 @@ public class BoundPluginStorage(
         scoped.deleteCookieExact(legacySourceId, name, domain, path)
     }
 
+    override suspend fun deleteExpiredCookies(sourceId: Long, nowEpochMillis: Long) {
+        requireBound(sourceId)
+        scoped.deleteExpiredCookies(legacySourceId, nowEpochMillis)
+    }
+
     override suspend fun clearCookies(sourceId: Long) {
         requireBound(sourceId)
         scoped.clearCookies(legacySourceId)
@@ -264,6 +276,11 @@ public class PermissionFilteredPluginStorage(
     override suspend fun deleteCookieExact(sourceId: Long, name: String, domain: String, path: String) {
         require(cookiesAllowedForNetwork) { "Plugin runtime lacks COOKIE_STORAGE permission" }
         delegate.deleteCookieExact(sourceId, name, domain, path)
+    }
+
+    override suspend fun deleteExpiredCookies(sourceId: Long, nowEpochMillis: Long) {
+        require(cookiesAllowedForNetwork) { "Plugin runtime lacks COOKIE_STORAGE permission" }
+        delegate.deleteExpiredCookies(sourceId, nowEpochMillis)
     }
 
     override suspend fun clearCookies(sourceId: Long) {
@@ -414,6 +431,12 @@ public class KeyValuePluginStorage(
 
     override suspend fun getCookies(sourceId: Long): List<PluginCookie> = mutex.withLock {
         cachedCookies(sourceId).toList()
+    }
+
+    override suspend fun deleteExpiredCookies(sourceId: Long, nowEpochMillis: Long): Unit = mutex.withLock {
+        val cookies = cachedCookies(sourceId)
+        val live = cookies.filterNot { cookie -> cookie.expiresAtEpochMillis?.let { it <= nowEpochMillis } == true }
+        if (live.size != cookies.size) writeCookies(sourceId, live)
     }
 
     override suspend fun setCookie(sourceId: Long, cookie: PluginCookie): Unit = mutex.withLock {
@@ -623,6 +646,16 @@ public class KeyValuePluginStorage(
                 writeExactCookies((exactCookieCache[namespace] ?: readExactCookies()).filterNot {
                     it.name == name && it.domain.equals(canonicalDomain, true) && it.path == canonicalPath
                 })
+            }
+        }
+
+        override suspend fun deleteExpiredCookies(sourceId: Long, nowEpochMillis: Long) {
+            requireSource(sourceId)
+            mutex.withLock {
+                claimOwnerLocked(false)
+                val cookies = exactCookieCache[namespace] ?: readExactCookies()
+                val live = cookies.filterNot { cookie -> cookie.expiresAtEpochMillis?.let { it <= nowEpochMillis } == true }
+                if (live.size != cookies.size) writeExactCookies(live)
             }
         }
 

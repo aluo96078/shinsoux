@@ -1284,9 +1284,29 @@ public class PluginNetworkClient(
                 if (cookie.expiresAtEpochMillis != null && cookie.expiresAtEpochMillis <= nowEpochMillis()) {
                     storage.deleteCookieExact(sourceId, cookie.name, cookie.domain, cookie.path)
                 } else {
-                    storage.setCookie(sourceId, cookie)
+                    storeCookieWithinQuota(sourceId, cookie)
                 }
             }
+    }
+
+    /**
+     * A full cookie jar must not fail a request whose response already arrived. Expired cookies
+     * are only removed when the site replaces them, so a site that keeps issuing new names fills
+     * the jar: drop the expired ones and try once more, then give up on this cookie only.
+     */
+    private suspend fun storeCookieWithinQuota(sourceId: Long, cookie: PluginCookie) {
+        try {
+            storage.setCookie(sourceId, cookie)
+            return
+        } catch (_: IllegalArgumentException) {
+            // Quota (or an invalid cookie): fall through.
+        }
+        storage.deleteExpiredCookies(sourceId, nowEpochMillis())
+        try {
+            storage.setCookie(sourceId, cookie)
+        } catch (_: IllegalArgumentException) {
+            // Still over quota with live cookies only: the request itself succeeded.
+        }
     }
 
     public suspend fun get(

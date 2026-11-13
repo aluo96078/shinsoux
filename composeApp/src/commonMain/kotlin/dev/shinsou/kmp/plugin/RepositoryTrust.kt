@@ -601,6 +601,8 @@ internal class RepositorySignedDocumentVerifier(
             return VerifiedRepositoryPayload(payload, admission)
         } catch (error: RepositoryTrustException) {
             throw error
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
         } catch (error: Throwable) {
             throw RepositoryTrustException.Malformed("Malformed signed repository envelope", error)
         }

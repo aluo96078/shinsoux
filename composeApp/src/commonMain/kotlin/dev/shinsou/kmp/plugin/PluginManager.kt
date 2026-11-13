@@ -713,8 +713,6 @@ public class PluginManager(
         repositoryAdmission: RepositoryIndexAdmission? = null,
     ): ScriptPluginRuntime =
         withContext(Dispatchers.Default) {
-            packageMutationMutex.withLock {
-            invalidateWebChallengeGrants()
             PluginVerifier.validateSafeFileComponent(entry.id)
             require(entry.installable && !entry.referenceOnly && !entry.legacyCompatibilityOnly) {
                 "Plugin '${entry.id}' is migration/reference metadata and cannot be installed"
@@ -725,6 +723,21 @@ public class PluginManager(
             require(entry.runtimePermissions != null) {
                 "New plugin '${entry.id}' must declare runtimePermissions"
             }
+            // The artifact is fetched before taking packageMutationMutex: that lock is also taken
+            // by every reader image request, by uninstall and by repository refresh, and a slow
+            // repository must not hold all of them for the length of a download. Nothing fetched
+            // here is trusted yet: every check against installed and repository state runs again
+            // under the lock, on these bytes.
+            if (entry.sha256 != null) {
+                repositoryClient.requireArtifactNotDowngraded(repository.baseUrl, entry, repositoryAdmission)
+            }
+            repositoryClient.verifyPluginV2Sidecar(repository.baseUrl, entry)
+            val scriptBytes = repositoryClient.downloadPluginScript(repository.baseUrl, entry.scriptUrl)
+            require(entry.byteSize == null || scriptBytes.size == entry.byteSize) {
+                "Plugin '${entry.id}' artifact size does not match its V2 declaration"
+            }
+            packageMutationMutex.withLock {
+            invalidateWebChallengeGrants()
             // The publisher is fixed by the repository's pinned key, never by what the index says.
             // Keyed exactly as the client keys trust: an equivalent spelling must not miss the publisher.
             val canonicalRepository = repositoryClient.canonicalBaseUrl(repository.baseUrl)
@@ -742,11 +755,6 @@ public class PluginManager(
             }
             if (entry.sha256 != null) {
                 repositoryClient.requireArtifactNotDowngraded(repository.baseUrl, entry, repositoryAdmission)
-            }
-            repositoryClient.verifyPluginV2Sidecar(repository.baseUrl, entry)
-            val scriptBytes = repositoryClient.downloadPluginScript(repository.baseUrl, entry.scriptUrl)
-            require(entry.byteSize == null || scriptBytes.size == entry.byteSize) {
-                "Plugin '${entry.id}' artifact size does not match its V2 declaration"
             }
             val actualHash = Sha256.hex(scriptBytes)
             val expectedHash = entry.sha256?.trim()?.lowercase()

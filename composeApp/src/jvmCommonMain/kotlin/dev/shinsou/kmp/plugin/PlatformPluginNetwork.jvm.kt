@@ -31,6 +31,10 @@ private class JvmPinnedPluginHttpTransport : PluginHttpTransport {
         .proxy(java.net.Proxy.NO_PROXY)
         .followRedirects(false)
         .followSslRedirects(false)
+        // The whole call, body included, like the Ktor clients' 45 s request timeout. OkHttp's
+        // default only bounds each read, so a server sending a byte every few seconds could hold
+        // a blocked IO thread (which coroutine cancellation cannot interrupt) for hours.
+        .callTimeout(java.time.Duration.ofSeconds(45))
         .build()
 
     override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse =

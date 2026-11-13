@@ -135,6 +135,8 @@ public class ExtensionRepositoryClient(
             RepositoryKeyPresentation(normalized, document.meta.name, presented)
         } catch (error: ExtensionRepositoryException) {
             throw error
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
         } catch (error: Throwable) {
             throw ExtensionRepositoryException.InvalidDocument(url, error)
         }
@@ -261,6 +263,7 @@ public class ExtensionRepositoryClient(
                     commitAuthenticatedIndex(normalized, index.entries, verified.admission),
                 )
             } catch (pluginFailure: Throwable) {
+                if (pluginFailure is kotlinx.coroutines.CancellationException) throw pluginFailure
                 if (pluginFailure.hasRepositorySecurityFailure()) throw pluginFailure
                 try {
                     val legacyUrl = resolve(normalized, "index.min.json", cacheBust = true)

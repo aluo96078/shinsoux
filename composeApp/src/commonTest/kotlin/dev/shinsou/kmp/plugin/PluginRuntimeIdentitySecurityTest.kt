@@ -567,6 +567,22 @@ class BoundPluginStorageSecurityTest {
     }
 
     @Test
+    fun expiredCookiesAreDroppedTogetherFromTheJarARuntimeUses() = runTest {
+        val keyValues = RoutingRecordingPluginKeyValueStore()
+        val raw = KeyValuePluginStorage(keyValues)
+        val exact = BoundPluginStorage(raw, SourceKey.fromLegacy("package.expiry", 708L))
+        for ((storage, sourceId) in listOf(exact to 708L, raw to 709L)) {
+            storage.setCookie(sourceId, PluginCookie("old", "1", "source.example", expiresAtEpochMillis = 1_000))
+            storage.setCookie(sourceId, PluginCookie("refreshed", "2", "source.example", expiresAtEpochMillis = 9_000))
+            storage.setCookie(sourceId, PluginCookie("session", "3", "source.example"))
+
+            storage.deleteExpiredCookies(sourceId, nowEpochMillis = 5_000)
+
+            assertEquals(setOf("refreshed", "session"), storage.getCookies(sourceId).map { it.name }.toSet())
+        }
+    }
+
+    @Test
     fun exactCookieJarUsesTheSameDurableAggregateByteBound() = runTest {
         val keyValues = RoutingRecordingPluginKeyValueStore()
         val exact = BoundPluginStorage(
