@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -914,7 +915,11 @@ private fun ImageSequencePage(
             }
         }
         loaded.onSuccess { page = it }
-            .onFailure { error = strings.text("The image resource could not be opened.") }
+            .onFailure { failure ->
+                error = failure.ungrantedContentHostSuffix()?.let { suffix ->
+                    strings.text("Its images come from {0}, which this plugin's permissions do not allow yet. Switch it on under Browse > Extensions > the plugin > Permissions.", suffix.displaySuffix(strings))
+                } ?: strings.text("The image resource could not be opened.")
+            }
     }
     Box(modifier, contentAlignment = Alignment.Center) {
         val loaded = page

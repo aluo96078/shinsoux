@@ -1405,7 +1405,10 @@ public class PluginManager(
         val policy = source.networkPolicy()
         if (eventGrantAdmission == null) return policy
         val granted = grant?.contentHostSuffixes.orEmpty()
-        return policy.copy(contentHostSuffixes = policy.contentHostSuffixes intersect granted)
+        return policy.copy(
+            contentHostSuffixes = policy.contentHostSuffixes intersect granted,
+            ungrantedContentHostSuffixes = policy.contentHostSuffixes - granted,
+        )
     }
 
     private suspend fun grantFor(stored: StoredPlugin): PluginGrantSelection? =
@@ -1423,8 +1426,9 @@ public class PluginManager(
     }
 
     /**
-     * Withdraws sensitive items from an installed plugin (source settings → permissions, ADR-0002
-     * §6.5) and reloads it under a new generation, so the old runtime's authority ends now.
+     * Applies source settings → permissions (ADR-0002 §6.5) to an installed plugin: sensitive items
+     * can be withdrawn, and declared content host families switched on or off. The plugin reloads
+     * under a new generation, so the old runtime's authority ends now.
      */
     public suspend fun narrowGrant(pluginId: String, selection: PluginGrantSelection): Unit = packageMutationMutex.withLock {
         invalidateWebChallengeGrants()

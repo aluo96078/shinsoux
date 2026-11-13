@@ -177,8 +177,11 @@ public class KeyValuePluginEventGrantAdmission(
     }
 
     /**
-     * Withdraws items from a GRANTED [artifact] (source settings → permissions, §6.5). Only ever
-     * narrows: [selection] must be within the current grant. The caller reloads the runtime.
+     * Changes a GRANTED [artifact] from source settings → permissions (§6.5). Host and runtime
+     * permissions can only be withdrawn. Content host families may also be switched on, but only
+     * among those this exact artifact declared: they fetch images and text without cookies or the
+     * account, and a family left off at install otherwise had no way back short of reinstalling.
+     * The caller reloads the runtime.
      */
     public suspend fun narrow(artifact: PluginArtifactIdentity, selection: PluginGrantSelection): Unit = mutex.withLock {
         require(artifact !in locallyRevokedArtifacts) { "Plugin grant was revoked" }
@@ -189,9 +192,11 @@ public class KeyValuePluginEventGrantAdmission(
         val current = record.grant ?: PluginGrantSelection.all(review)
         require(
             current.hostPermissions.containsAll(selection.hostPermissions) &&
-                current.runtimePermissions.containsAll(selection.runtimePermissions) &&
-                current.contentHostSuffixes.containsAll(selection.contentHostSuffixes),
+                current.runtimePermissions.containsAll(selection.runtimePermissions),
         ) { "A permission change from settings can only withdraw items" }
+        require(review.requestedContentHostSuffixes.containsAll(selection.contentHostSuffixes)) {
+            "Only declared content host families can be allowed"
+        }
         // Durable first: a failed write changes nothing (the previous grant stays both stored and
         // live). Once it is stored, the live authority is narrowed to match.
         writeRecord(grantedRecord(review, selection.takeUnless { it == PluginGrantSelection.all(review) }))

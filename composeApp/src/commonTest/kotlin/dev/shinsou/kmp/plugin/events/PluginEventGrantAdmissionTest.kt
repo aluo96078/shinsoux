@@ -371,11 +371,24 @@ class PluginEventGrantAdmissionTest {
         restarted.hydrate(review)
         assertEquals(partial, restarted.grantedSelection(review.artifact))
 
-        // Settings can withdraw, never add.
+        // Settings never add runtime or host permissions, nor an undeclared content family...
         assertFailsWith<IllegalArgumentException> {
-            restarted.narrow(review.artifact, partial.copy(contentHostSuffixes = setOf("cdn.example.com")))
+            restarted.narrow(
+                review.artifact,
+                partial.copy(runtimePermissions = partial.runtimePermissions + dev.shinsou.kmp.plugin.PluginRuntimePermission.CREDENTIAL_ACCESS),
+            )
         }
-        val narrower = partial.copy(runtimePermissions = setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT))
+        assertFailsWith<IllegalArgumentException> {
+            restarted.narrow(review.artifact, partial.copy(contentHostSuffixes = setOf("other.example.com")))
+        }
+        // ...but a declared content family left off at install can be switched on later.
+        val withFamily = partial.copy(contentHostSuffixes = setOf("cdn.example.com"))
+        restarted.narrow(review.artifact, withFamily)
+        assertEquals(withFamily, restarted.grantedSelection(review.artifact))
+        val narrower = withFamily.copy(
+            runtimePermissions = setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT),
+            contentHostSuffixes = emptySet(),
+        )
         restarted.narrow(review.artifact, narrower)
         assertEquals(narrower, restarted.grantedSelection(review.artifact))
     }

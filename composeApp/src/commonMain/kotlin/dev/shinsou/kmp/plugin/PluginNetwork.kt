@@ -345,6 +345,22 @@ private val FORBIDDEN_PLUGIN_CONTROLLED_HEADERS: Set<String> = setOf(
     ConfiguredPluginProxyResolver.PROXY_KEY_HEADER.lowercase(),
 )
 
+/**
+ * A content request reached a host family its package declared but the user has not granted
+ * (plugin permissions → "Download from every site under …"). Still an [IllegalArgumentException],
+ * as every other denied origin is.
+ */
+public class PluginContentHostNotGrantedException(
+    public val hostSuffix: String,
+) : IllegalArgumentException("Content host family $hostSuffix is declared but not granted")
+
+/** The [PluginContentHostNotGrantedException] behind this failure, if any. */
+public fun Throwable.ungrantedContentHostSuffix(): String? =
+    generateSequence(this) { it.cause }
+        .filterIsInstance<PluginContentHostNotGrantedException>()
+        .firstOrNull()
+        ?.hostSuffix
+
 /** Exact-origin egress policy for one plugin runtime/source. Empty origins deny all requests. */
 public data class PluginNetworkPolicy(
     val requestOrigins: Set<String> = emptySet(),
@@ -359,6 +375,12 @@ public data class PluginNetworkPolicy(
      * (GET/HEAD, no cookies), never the executable bridge's request origins.
      */
     internal val contentHostSuffixes: Set<String> = emptySet(),
+    /**
+     * Families the package declared but the user has not granted. They authorize nothing; a content
+     * request into one fails with [PluginContentHostNotGrantedException] so the reader can say
+     * which permission to switch on instead of a bare load failure.
+     */
+    internal val ungrantedContentHostSuffixes: Set<String> = emptySet(),
     private val contentOnlyScope: Boolean = false,
     val browserSessionOrigins: Set<String> = emptySet(),
     /** Per-policy resolver override, primarily for deterministic tests/developer embeddings. */
@@ -404,11 +426,16 @@ public data class PluginNetworkPolicy(
         }
         require(url.host.isNotBlank() && url.user.isNullOrEmpty() && url.password.isNullOrEmpty()) { "Invalid plugin network URL" }
         val origin = pluginOrigin(url)
-        require(origin in effectiveRequestOrigins() ||
+        val allowed = origin in effectiveRequestOrigins() ||
             contentOnlyScope && credentialOrigins.isEmpty() &&
             contentHostSuffixes.any { suffix ->
                 isContentHostSuffixMatch(url, suffix)
-            }) {
+            }
+        if (!allowed && contentOnlyScope) {
+            ungrantedContentHostSuffixes.firstOrNull { isContentHostSuffixMatch(url, it) }
+                ?.let { throw PluginContentHostNotGrantedException(it) }
+        }
+        require(allowed) {
             "Plugin network origin was not declared"
         }
         return resolvePluginHost(
@@ -441,6 +468,7 @@ public data class PluginNetworkPolicy(
         credentialOrigins = emptySet(),
         contentOrigins = emptySet(),
         contentHostSuffixes = contentHostSuffixes,
+        ungrantedContentHostSuffixes = ungrantedContentHostSuffixes,
         contentOnlyScope = true,
         browserSessionOrigins = emptySet(),
         resolver = resolver,

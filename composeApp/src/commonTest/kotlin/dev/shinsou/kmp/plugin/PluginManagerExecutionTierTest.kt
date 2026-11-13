@@ -194,10 +194,11 @@ class PluginManagerExecutionTierTest {
         )
         assertNotNull(host.manager.contentNetworkForSource(exactKey))
         assertNotNull(host.manager.contentNetworkForSource(exactKey.copy(legacyLongId = null)))
-        val refused = assertFailsWith<IllegalArgumentException> {
+        // Still refused, and the refusal names the family to switch on in the plugin's permissions.
+        val refused = assertFailsWith<PluginContentHostNotGrantedException> {
             content.execute(host.sourceId(), PluginHttpRequest("GET", "https://img1.cdn.example.net/a.jpg", ByteArray(0), emptyMap()))
         }
-        assertTrue(refused.message.orEmpty().contains("not declared"), refused.message)
+        assertEquals("cdn.example.net", refused.hostSuffix)
     }
 
     @Test

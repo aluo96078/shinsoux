@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PluginNetworkPolicyTest {
@@ -294,6 +295,40 @@ class PluginNetworkPolicyTest {
                 content.get(1, url)
             }
         }
+    }
+
+    @Test
+    fun aDeclaredButUngrantedFamilyNamesItselfWhenAPageIsRefused() = runTest {
+        val policy = PluginNetworkPolicy(
+            requestOrigins = setOf("https://mangadex.org", "https://api.mangadex.org"),
+            contentOrigins = setOf("https://uploads.mangadex.org"),
+            ungrantedContentHostSuffixes = setOf("mangadex.network"),
+            resolver = PluginHostResolver { listOf("93.184.216.34") },
+        )
+        val content = PluginNetworkClient(
+            transport = object : PluginHttpTransport {
+                override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse =
+                    error("content scope must use resolved transport")
+
+                override suspend fun executeResolved(
+                    request: PluginHttpRequest,
+                    resolution: PluginHostResolution,
+                ): PluginHttpResponse = PluginHttpResponse(200, byteArrayOf(1))
+            },
+            storage = KeyValuePluginStorage(InMemoryPluginKeyValueStore()),
+        ).scopedToContentPolicy(policy)
+
+        val refused = assertFailsWith<PluginContentHostNotGrantedException> {
+            content.get(1, "https://cmdxd98sb0x3yprd.mangadex.network/data/hash/1.png")
+        }
+        assertEquals("mangadex.network", refused.hostSuffix)
+        assertEquals("mangadex.network", RuntimeException("reader", refused).ungrantedContentHostSuffix())
+        // An exact content origin still loads, and an undeclared host is refused as before.
+        content.get(1, "https://uploads.mangadex.org/covers/id/file.jpg.256.jpg")
+        val undeclared = assertFailsWith<IllegalArgumentException> {
+            content.get(1, "https://cdn.other.example/page.png")
+        }
+        assertNull(undeclared.ungrantedContentHostSuffix())
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -1175,15 +1176,18 @@ private fun LazyResolvedReaderPageImage(
     var retryKey by remember(page.index, page.imageResolver) { mutableStateOf(0) }
     var resolved by remember(page.index, page.imageResolver, retryKey) { mutableStateOf<ReaderPage?>(null) }
     var resolutionFailed by remember(page.index, page.imageResolver, retryKey) { mutableStateOf(false) }
+    var ungrantedSuffix by remember(page.index, page.imageResolver, retryKey) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(page.index, page.imageResolver, retryKey) {
         resolutionFailed = false
+        ungrantedSuffix = null
         resolved = try {
             requireNotNull(page.imageResolver).invoke()
                 .takeIf { it.imageResolver == null && readerImageData(it) != null }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (failure: Throwable) {
+            ungrantedSuffix = failure.ungrantedContentHostSuffix()
             resolutionFailed = true
             null
         }
@@ -1210,6 +1214,14 @@ private fun LazyResolvedReaderPageImage(
                         color = Color.White,
                         style = MaterialTheme.typography.titleSmall,
                     )
+                    ungrantedSuffix?.let { suffix ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            strings.text("Its images come from {0}, which this plugin's permissions do not allow yet. Switch it on under Browse > Extensions > the plugin > Permissions.", suffix.displaySuffix(strings)),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { retryKey++ }) {
                         Icon(Icons.Outlined.Refresh, null, tint = Color.White)
