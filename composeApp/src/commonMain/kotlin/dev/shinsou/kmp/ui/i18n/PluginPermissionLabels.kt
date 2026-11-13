@@ -6,7 +6,7 @@ import dev.shinsou.kmp.plugin.events.PluginHostPermission
 /** Localized, human-readable labels for permissions shown in plugin review UI. */
 public fun PluginRuntimePermission.localizedLabel(strings: ShinsouStrings): String = strings.text(
     when (this) {
-        PluginRuntimePermission.EXECUTE_SCRIPT -> "Execute reviewed script"
+        PluginRuntimePermission.EXECUTE_SCRIPT -> "Run extension script"
         PluginRuntimePermission.NETWORK -> "Network access"
         PluginRuntimePermission.COOKIE_STORAGE -> "Cookie storage"
         PluginRuntimePermission.CREDENTIAL_ACCESS -> "Credential access"

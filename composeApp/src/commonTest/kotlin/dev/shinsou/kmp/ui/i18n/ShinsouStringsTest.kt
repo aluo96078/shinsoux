@@ -44,7 +44,7 @@ class ShinsouStringsTest {
             }
         }
         assertEquals("Request login UI", PluginHostPermission.REQUEST_LOGIN_UI.localizedLabel(english))
-        assertEquals("Execute reviewed script", PluginRuntimePermission.EXECUTE_SCRIPT.localizedLabel(english))
+        assertEquals("Run extension script", PluginRuntimePermission.EXECUTE_SCRIPT.localizedLabel(english))
         assertEquals("Preparing installation…", english.text("Preparing installation…"))
     }
 
@@ -233,7 +233,7 @@ class ShinsouStringsTest {
             "Required permissions",
             "The script remains blocked until you approve this exact version and digest.",
             "Execution blocked",
-            "Execute reviewed script",
+            "Run extension script",
             "Network access",
             "Cookie storage",
             "Credential access",
@@ -251,7 +251,7 @@ class ShinsouStringsTest {
 
         val traditional = shinsouStringsFor("zh-TW")
         assertEquals("必要權限", traditional.text("Required permissions"))
-        assertEquals("執行已審核腳本", traditional.text("Execute reviewed script"))
+        assertEquals("執行擴充套件腳本", traditional.text("Run extension script"))
         assertEquals("網路存取", traditional.text("Network access"))
     }
 
