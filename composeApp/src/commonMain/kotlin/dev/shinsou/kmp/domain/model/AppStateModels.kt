@@ -142,6 +142,29 @@ data class TrackingSettings(
 data class SyncSettings(
     val enabled: Boolean = false,
     val syncOnForeground: Boolean = true,
+    /** Which kinds of data this device sends to and applies from the account. */
+    val kinds: SyncKindSettings = SyncKindSettings(),
+)
+
+/**
+ * Per-device switches for what is synced; all on by default. A kind that is off is neither sent
+ * nor applied on this device: what the account already holds stays stored here and is applied when
+ * the switch is turned back on. Device-local on purpose (never part of the portable settings), so
+ * one device can opt out without changing the others.
+ */
+@Serializable
+data class SyncKindSettings(
+    /** Library titles (the `library` records). */
+    val library: Boolean = true,
+    /** Reading progress and history (the `unit`, `progress` and `history` records). */
+    val readingProgress: Boolean = true,
+    val categories: Boolean = true,
+    /** Repository suggestions (the `repository` records). */
+    val repositories: Boolean = true,
+    /** Portable settings (the `setting` records). */
+    val settings: Boolean = true,
+    /** Installed packages (the `package` records). */
+    val packages: Boolean = true,
 )
 
 @Serializable

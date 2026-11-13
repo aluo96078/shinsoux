@@ -6,6 +6,7 @@ import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.History
+import dev.shinsou.kmp.domain.model.SyncKindSettings
 import dev.shinsou.kmp.domain.model.Manga
 
 internal object SyncKinds {
@@ -16,10 +17,28 @@ internal object SyncKinds {
     const val CATEGORY = "category"
     const val REPOSITORY = "repository"
     const val SETTING = "setting"
+    const val PACKAGE = "package"
+
+    /**
+     * The kinds that follow one switch of [SyncKindSettings]. Reading progress and history travel
+     * together; a history row without its progress (or the other way round) would be half a
+     * bookmark.
+     */
+    fun enabled(kinds: SyncKindSettings): Set<String> = buildSet {
+        if (kinds.library) add(LIBRARY)
+        if (kinds.readingProgress) { add(UNIT); add(PROGRESS); add(HISTORY) }
+        if (kinds.categories) add(CATEGORY)
+        if (kinds.repositories) add(REPOSITORY)
+        if (kinds.settings) add(SETTING)
+        if (kinds.packages) add(PACKAGE)
+    }
+
+    /** Every kind, in the order records are applied. */
+    val ALL: List<String> = listOf(CATEGORY, LIBRARY, UNIT, HISTORY, PROGRESS, REPOSITORY, SETTING, PACKAGE)
 
     /** Records of a sourced title are keyed by its work hash and need the work's descriptor. */
     fun needsWork(kind: String, key: String): Boolean = when (kind) {
-        CATEGORY, REPOSITORY, SETTING -> false
+        CATEGORY, REPOSITORY, SETTING, PACKAGE -> false
         else -> !key.startsWith("local:")
     }
 }
@@ -29,6 +48,7 @@ internal fun chapterRef(id: Long): String = "c:$id"
 internal fun categoryRef(id: Long): String = "k:$id"
 internal fun repositoryRef(baseUrl: String): String = "r:$baseUrl"
 internal fun settingRef(path: String): String = "s:$path"
+internal fun packageRef(packageId: String): String = "p:$packageId"
 
 /** What the diff needs from the outside world; kept small so it can be tested without a database. */
 internal interface SyncDiffEnv {

@@ -57,6 +57,9 @@ import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
 import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
 import dev.shinsou.kmp.plugin.AccountRepositoryDirectory
+import dev.shinsou.kmp.plugin.PluginInstallKeys
+import dev.shinsou.kmp.plugin.AccountPackageDirectory
+import dev.shinsou.kmp.plugin.AccountPackage
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
@@ -401,6 +404,10 @@ public class ShinsouComposition(
             resolveLegacySource = { id -> pluginManager.exactSourceKeyForLegacyId(id) },
             resolveCreatableSource = { packageId, sourceId ->
                 pluginManager.extensionSourceV2(SourceKey(packageId = packageId, sourceId = sourceId))?.descriptor?.sourceKey
+                    // A package installed from another device's list waits for its permission review and
+                    // has no runtime yet; its stored manifest still names the source, so the title can be
+                    // created and the review is asked for when it is first opened.
+                    ?: pluginManager.installedSourceKey(packageId, sourceId)
             },
             sourceInfo = {
                 // Native packages have no stored manifest; what they have loaded describes them.
@@ -508,6 +515,7 @@ public class ShinsouComposition(
     private var proxySecretPersistenceJob: Job? = null
     private var portableRepositoryReconciliationJob: Job? = null
     private var installedSourcesSyncJob: Job? = null
+    private var syncKindsJob: Job? = null
     /** M1 orphan discovery/GC runs only after the app enters a background window. */
     private var contentBlobRecoveryJob: Job? = null
     /** Conflated derived-index invalidations; import/restore never waits for plaintext indexing. */
@@ -574,6 +582,11 @@ public class ShinsouComposition(
                 override val repositories = service.accountRepositories
 
                 override suspend fun forget(url: String) = service.forgetRepository(url)
+            }
+        },
+        accountPackages = sync?.let { service ->
+            object : AccountPackageDirectory {
+                override val packages = service.accountPackages
             }
         },
         suggestionScope = trackingScope,
@@ -786,11 +799,24 @@ public class ShinsouComposition(
                 // Titles synced from another device wait for their source; installing or removing a
                 // package is what lets them join the library, so sync re-checks them right away.
                 installedSourcesSyncJob = trackingScope.launch {
+                    var first = true
                     browse.state
                         .map { snapshot -> snapshot.extensions.filter { it.installed }.mapTo(HashSet()) { it.id } }
                         .distinctUntilChanged()
+                        .collect {
+                            // The account also records which packages were installed (the package kind).
+                            sync.packagesChanged(installedAccountPackages())
+                            if (!first) sync.sourcesChanged()
+                            first = false
+                        }
+                }
+                // Switching a sync item on or off: what waited while it was off is sent or applied now.
+                syncKindsJob = trackingScope.launch {
+                    repository.snapshot
+                        .map { it.settings.sync.kinds }
+                        .distinctUntilChanged()
                         .drop(1)
-                        .collect { sync.sourcesChanged() }
+                        .collect { sync.kindsChanged() }
                 }
             }
             if (portableRepositoryReconciliationJob == null) {
@@ -825,6 +851,27 @@ public class ShinsouComposition(
             // the startup work above is done.
             startContentOutboxDiscarder()
             scheduleContentOutboxDiscard()
+        }
+    }
+
+    /**
+     * The packages installed from a repository, for the account's package list. Developer builds and
+     * packages without a repository are left out: another device could not install them anyway.
+     */
+    private suspend fun installedAccountPackages(): List<AccountPackage> {
+        val fingerprints = repository.currentSnapshot.extensionRepositories
+            .associate { it.baseUrl.trim().trimEnd('/') to it.signingKeyFingerprint }
+        return pluginManager.installedPlugins().mapNotNull { stored ->
+            val url = stored.metadata.repositoryBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            if (PluginInstallKeys.isDeveloperKey(stored.manifest.id)) return@mapNotNull null
+            AccountPackage(
+                packageId = stored.manifest.id,
+                repositoryUrl = url,
+                name = stored.manifest.name,
+                version = stored.manifest.version,
+                versionCode = (stored.manifest.versionCode ?: PluginVerifier.versionInt(stored.manifest.version)).toLong(),
+                signingKeyFingerprint = fingerprints[url].orEmpty(),
+            )
         }
     }
 
@@ -988,6 +1035,7 @@ public class ShinsouComposition(
         proxySecretPersistenceJob?.cancel()
         portableRepositoryReconciliationJob?.cancel()
         installedSourcesSyncJob?.cancel()
+        syncKindsJob?.cancel()
         stage("trackerManager.cancelAll")
         trackerManager.cancelAll()
         stage("trackingJob.cancelAndJoin")

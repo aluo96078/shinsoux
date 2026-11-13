@@ -151,6 +151,7 @@ import dev.shinsou.kmp.ui.screens.AboutScreen
 import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
 import dev.shinsou.kmp.ui.screens.BackupScreen
 import dev.shinsou.kmp.ui.screens.BrowseScreen
+import dev.shinsou.kmp.ui.screens.PluginPermissionReviewDialog
 import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
 import dev.shinsou.kmp.ui.screens.ReviewsEntry
 import dev.shinsou.kmp.ui.screens.ShareWithUserDialog
@@ -295,6 +296,8 @@ private fun ShinsouAppContent(
     val pluginImages = LocalPluginImageLoader.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    /** The permission review shown when a title of a package still waiting for approval is opened. */
+    var sourceReviewGate by remember { mutableStateOf<SourceReviewGate?>(null) }
     /** ADR-0002 §8.1: a repository opened from an add-repository link, waiting for the user. */
     var linkedRepositoryTrust by remember { mutableStateOf<RepositoryTrustPrompt?>(null) }
     /** An add-repository link to a repository without a signing key: added only once confirmed. */
@@ -550,6 +553,30 @@ private fun ShinsouAppContent(
         remotePublicationId = remotePublicationId,
     )
 
+    /**
+     * Runs [proceed] once the package [packageId] may run. A package pre-installed from the account
+     * has no runtime until its permissions are reviewed, so opening its title first shows that
+     * review (approving continues, dismissing stays where the user was). Anything else proceeds at
+     * once, without waiting on the plugin manager.
+     */
+    fun afterFirstAccessReview(packageId: String, proceed: () -> Unit) {
+        val extension = appServices.browse.state.value.extensions.firstOrNull { it.id == packageId }
+        if (extension == null || !extension.installed || extension.trusted || extension.inDevelopment) {
+            proceed()
+            return
+        }
+        scope.launch {
+            val review = try {
+                appServices.browse.pendingPluginEventGrantReview(packageId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            if (review == null) proceed() else sourceReviewGate = SourceReviewGate(extension, review, proceed)
+        }
+    }
+
     fun openLocalExtensionManga(manga: Manga): Boolean {
         return when (
             val route = localLibraryExtensionRoute(
@@ -560,23 +587,25 @@ private fun ShinsouAppContent(
         ) {
             LocalLibraryExtensionRoute.LocalDetail -> false
             is LocalLibraryExtensionRoute.Open -> {
-                section = localLibraryExtensionHostSection()
-                if (route.migrateLegacyUrl) {
-                    mutate {
-                        repository.updateManga(manga.id) { stored ->
-                            stored.copy(
-                                url = encodeExtensionLibraryPublicationUrl(
-                                    route.binding.sourceKey,
-                                    route.binding.remotePublicationId,
-                                ),
-                            )
+                afterFirstAccessReview(route.binding.sourceKey.packageId) {
+                    section = localLibraryExtensionHostSection()
+                    if (route.migrateLegacyUrl) {
+                        mutate {
+                            repository.updateManga(manga.id) { stored ->
+                                stored.copy(
+                                    url = encodeExtensionLibraryPublicationUrl(
+                                        route.binding.sourceKey,
+                                        route.binding.remotePublicationId,
+                                    ),
+                                )
+                            }
                         }
                     }
+                    selectedMangaId = null
+                    moreDestination = null
+                    localLibraryReaderBackRequest = 0L
+                    localLibraryPublication = route.binding.toBrowseManga(manga)
                 }
-                selectedMangaId = null
-                moreDestination = null
-                localLibraryReaderBackRequest = 0L
-                localLibraryPublication = route.binding.toBrowseManga(manga)
                 true
             }
             is LocalLibraryExtensionRoute.RecoverLegacy -> {
@@ -2083,6 +2112,40 @@ private fun ShinsouAppContent(
             }
         }
 
+        sourceReviewGate?.let { gate ->
+            var details by remember(gate) { mutableStateOf<PluginPermissionDetails?>(null) }
+            LaunchedEffect(gate) {
+                details = runCatching { appServices.browse.pluginPermissionDetails(gate.extension.id, gate.review) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+            }
+            PluginPermissionReviewDialog(
+                review = gate.review,
+                details = details,
+                onConfirm = { selection ->
+                    sourceReviewGate = null
+                    scope.launch {
+                        try {
+                            appServices.browse.approvePluginEventGrantReview(
+                                gate.extension.id,
+                                gate.review,
+                                selection.hostPermissions,
+                                selection,
+                            )
+                            // The package runs now: titles and progress that waited for it can apply.
+                            appServices.sync?.sourcesChanged()
+                            gate.proceed()
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            snackbar.showSnackbar(error.message ?: error::class.simpleName.orEmpty())
+                        }
+                    }
+                },
+                onDismiss = { sourceReviewGate = null },
+            )
+        }
+
         if (unlocked && pendingSourceLoginRequest != null) {
             PendingSourceLoginDialog(
                 request = pendingSourceLoginRequest,
@@ -3142,7 +3205,13 @@ private fun MoreDestinationPane(
                 )
             }
         }
-        MoreDestination.Sync -> SyncScreen(appServices.sync, appServices::copyText, onBack)
+        MoreDestination.Sync -> SyncScreen(
+            appServices.sync,
+            appServices::copyText,
+            onBack,
+            kinds = snapshot.settings.sync.kinds,
+            onKindsChange = { kinds -> mutate { repository.updateSettings { it.copy(sync = it.sync.copy(kinds = kinds)) } } },
+        )
         MoreDestination.About -> AboutScreen(onBack, appServices::openExternalUrl)
     }
 }
@@ -3535,3 +3604,10 @@ private fun DeepLinkSection.toMainSection(): MainSection = when (this) {
     DeepLinkSection.Browse -> MainSection.BROWSE
     DeepLinkSection.More -> MainSection.MORE
 }
+
+/** A title of a package waiting for its permission review was opened; [proceed] opens it once approved. */
+private class SourceReviewGate(
+    val extension: BrowseExtension,
+    val review: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
+    val proceed: () -> Unit,
+)

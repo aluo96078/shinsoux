@@ -210,7 +210,9 @@ internal class SyncApplier(
                     SyncKinds.PROGRESS -> applyProgress(record)
                     SyncKinds.REPOSITORY -> applyRepository(record)
                     SyncKinds.SETTING -> applySetting(record)
-                    // Kinds this version does not know are kept in the sync tables untouched.
+                    // Packages are read straight from the sync tables (SyncV3Service.accountPackages);
+                    // they never change the snapshot. Kinds this version does not know are kept untouched.
+                    SyncKinds.PACKAGE -> ApplyOutcome.Applied
                     else -> ApplyOutcome.Applied
                 }
             } catch (error: IllegalArgumentException) {

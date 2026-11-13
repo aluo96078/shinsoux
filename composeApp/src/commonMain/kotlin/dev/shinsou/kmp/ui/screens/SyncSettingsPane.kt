@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.domain.model.SyncKindSettings
 import dev.shinsou.kmp.sync.v3.SyncApiException
 import dev.shinsou.kmp.sync.v3.SyncServerAddress
 import dev.shinsou.kmp.sync.v3.SyncServerAddressException
@@ -55,6 +57,8 @@ import kotlin.time.Instant
 internal fun SyncSettingsPane(
     sync: SyncV3Service?,
     copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
+    kinds: SyncKindSettings = SyncKindSettings(),
+    onKindsChange: (SyncKindSettings) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     if (sync == null) {
@@ -64,7 +68,7 @@ internal fun SyncSettingsPane(
     val state by sync.state.collectAsState()
     SettingsList {
         if (state.signedIn) {
-            item { SignedInSection(sync, state) }
+            item { SignedInSection(sync, state, kinds, onKindsChange) }
             if (state.sharingEnabled) item { SharingSection(sync, copyText) }
         } else {
             item { SignedOutSection(sync, state) }
@@ -265,8 +269,49 @@ private fun InsecureLanWarning() {
     )
 }
 
+/** Which kinds of data this device sends and applies; all on by default, kept on this device only. */
 @Composable
-private fun SignedInSection(sync: SyncV3Service, state: SyncUiState) {
+private fun SyncKindsCard(kinds: SyncKindSettings, onChange: (SyncKindSettings) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    @Composable
+    fun Row(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, hint: String? = null) {
+        androidx.compose.foundation.layout.Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyLarge)
+                if (hint != null) {
+                    Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+    SyncCard {
+        Text(strings.text("Sync items"), style = MaterialTheme.typography.titleMedium)
+        Text(
+            strings.text("Choose what this device sends to your account and applies from it. Whatever arrives while an item is off is kept and applied when you switch it on."),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(strings.text("Library titles"), kinds.library, { onChange(kinds.copy(library = it)) })
+        Row(strings.text("Reading progress and history"), kinds.readingProgress, { onChange(kinds.copy(readingProgress = it)) })
+        Row(strings.text("Categories"), kinds.categories, { onChange(kinds.copy(categories = it)) })
+        Row(strings.text("Repository suggestions"), kinds.repositories, { onChange(kinds.copy(repositories = it)) })
+        Row(strings.settings, kinds.settings, { onChange(kinds.copy(settings = it)) })
+        Row(
+            strings.text("Installed packages"),
+            kinds.packages,
+            { onChange(kinds.copy(packages = it)) },
+            hint = strings.text("Packages installed on this device are recorded on your account. Another device installs them (without approving them) only from a repository it has added and trusts."),
+        )
+    }
+}
+
+@Composable
+private fun SignedInSection(sync: SyncV3Service, state: SyncUiState, kinds: SyncKindSettings, onKindsChange: (SyncKindSettings) -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<WireDevice>?>(null) }
@@ -330,6 +375,7 @@ private fun SignedInSection(sync: SyncV3Service, state: SyncUiState) {
                 }
             }
         }
+        SyncKindsCard(kinds, onKindsChange)
         if (state.missingSources.isNotEmpty()) {
             SyncCard {
                 Text(strings.text("Extensions to install"), style = MaterialTheme.typography.titleMedium)

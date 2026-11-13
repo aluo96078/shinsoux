@@ -11,6 +11,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.AccountPackage
 import dev.shinsou.kmp.plugin.AccountRepository
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import kotlinx.coroutines.CancellationException
@@ -36,6 +37,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlin.time.Clock
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -139,6 +141,17 @@ public class SyncV3Service internal constructor(
      * Merging them never changes this device's own repository list; empty when signed out.
      */
     public val accountRepositories: StateFlow<List<AccountRepository>> = mutableAccountRepositories.asStateFlow()
+
+    private val mutableAccountPackages = MutableStateFlow<List<AccountPackage>>(emptyList())
+
+    /**
+     * Packages the account has used (live `package` records), so this device can offer to install
+     * them. Empty when signed out or when the packages switch is off here.
+     */
+    public val accountPackages: StateFlow<List<AccountPackage>> = mutableAccountPackages.asStateFlow()
+
+    /** What this device has installed, as last reported by the composition; null until reported. */
+    @Volatile private var installedPackages: List<AccountPackage>? = null
 
     private val cycleMutex = Mutex()
     private val authMutex = Mutex()
@@ -356,7 +369,7 @@ public class SyncV3Service internal constructor(
         val url = baseUrl
         // Ask the store, not the published state: a title just added to the library is marked
         // dirty before the state is republished. The store is only read under the cycle lock.
-        val pending = cycleMutex.withLock { store.dirtyRefCount() + store.dirtyRecordCount() }
+        val pending = cycleMutex.withLock { pendingLocalCount() }
         if (pending > 0 && !syncNow()) {
             throw SyncApiException(0, "unknown_work", "Pending changes could not be uploaded before sharing")
         }
@@ -469,7 +482,7 @@ public class SyncV3Service internal constructor(
      */
     public suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = runCatching {
         val url = baseUrl
-        val pending = cycleMutex.withLock { store.dirtyRefCount() + store.dirtyRecordCount() }
+        val pending = cycleMutex.withLock { pendingLocalCount() }
         if (pending > 0) syncNow()
         val input = WireReviewInput(rating, body.trim().take(MAX_REVIEW_BODY), spoiler)
         authed { api.putReview(url, it, workHash, input) }
@@ -626,6 +639,69 @@ public class SyncV3Service internal constructor(
     }
 
     /**
+     * A "sync items" switch changed. What a kind accumulated while it was off is still waiting
+     * (local edits stay marked, server records stay unapplied), so turning it on only needs a
+     * cycle; turning it off takes effect from the next one. The lists derived from the account
+     * are republished at once.
+     */
+    public fun kindsChanged() {
+        publishState()
+        dirtySignal.trySend(Unit)
+    }
+
+    /**
+     * The packages installed on this device (its install keys and where they came from) changed.
+     * Newly installed packages are recorded on the account; a package that was uninstalled is
+     * deliberately not removed from it, as with repositories: the account's list is "what this
+     * account has used", and removing here must not take it away from the other devices.
+     */
+    public fun packagesChanged(installed: List<AccountPackage>) {
+        installedPackages = installed
+        if (store.meta(META_USER_ID) == null || clockLock.withLock { clock } == null) return
+        markPackages()
+        dirtySignal.trySend(Unit)
+    }
+
+    /** Marks every installed package whose record on this device differs (or is missing); see [packagesChanged]. */
+    private fun markPackages() {
+        val installed = installedPackages ?: return
+        val entries = ArrayList<DirtyEntry>()
+        for (pkg in installed) {
+            if (!PACKAGE_KEY.matches(pkg.packageId)) continue // the server would refuse it for good
+            val stored = store.loadRecord(SyncKinds.PACKAGE, pkg.packageId)
+            val live = stored != null && stored.state.deleted?.value != true
+            for (field in PACKAGE_FIELDS) {
+                val value = packageValue(pkg, field) ?: continue
+                if (live && stored?.state?.fields?.get(field)?.value == value) continue
+                entries += DirtyEntry(SyncKinds.PACKAGE, packageRef(pkg.packageId), field, nextClock())
+            }
+        }
+        if (entries.isEmpty()) return
+        store.mark(entries)
+        persistClock()
+    }
+
+    private fun packageValue(pkg: AccountPackage, field: String): JsonElement? = when (field) {
+        "repositoryUrl" -> JsonPrimitive(pkg.repositoryUrl)
+        "name" -> JsonPrimitive(pkg.name.trim().truncated(SyncIdentityResolver.MAX_TITLE_CHARS))
+        "version" -> JsonPrimitive(pkg.version)
+        "versionCode" -> pkg.versionCode?.let(::JsonPrimitive)
+        "signingKeyFingerprint" -> JsonPrimitive(pkg.signingKeyFingerprint)
+        else -> null
+    }
+
+    /** The kinds this device sends and applies; the others keep their pending work untouched. */
+    private fun enabledKinds(): Set<String> = SyncKinds.enabled(repository.currentSnapshot.settings.sync.kinds)
+
+    /** The kinds switched off here, for the store's counters and queries. */
+    private fun disabledKinds(): Set<String> = SyncKinds.ALL.toSet() - enabledKinds()
+
+    private fun pendingLocalCount(): Int {
+        val off = disabledKinds()
+        return store.dirtyRefCount(off) + store.dirtyRecordCount(off)
+    }
+
+    /**
      * Removes [url] from the account: other devices stop receiving it as a suggestion, while
      * devices that already added it keep it. Marked with a fresh clock so it also beats the live
      * record other devices hold; adding the repository again later revives it.
@@ -754,6 +830,7 @@ public class SyncV3Service internal constructor(
         val snapshot = repository.currentSnapshot
         val entries = SyncDiff.markAll(snapshot, ::clockAt)
         entries.chunked(MARK_CHUNK).forEach { store.mark(it) }
+        markPackages()
         persistClock()
         store.setMeta(META_INITIAL_DONE, "1")
         store.setMeta(META_SEEDED_KINDS, SEEDED_KINDS_VERSION)
@@ -766,14 +843,20 @@ public class SyncV3Service internal constructor(
      */
     private suspend fun ensureSeeded() {
         if (store.meta(META_INITIAL_DONE) != "1") return markEverythingDirty()
-        if (store.meta(META_SEEDED_KINDS) == SEEDED_KINDS_VERSION) return
+        // Reported packages are compared with their stored records every time, so a report that
+        // arrived before the clock existed (or while signed out) is not lost.
+        markPackages()
+        val seeded = store.meta(META_SEEDED_KINDS)
+        if (seeded == SEEDED_KINDS_VERSION) return
+        // Version 3 already seeded settings; version 4 added packages (marked above).
+        val seedSettings = seeded != "3"
         val pending = HashMap<Pair<String, String>, Set<String>>()
         val entries = SyncDiff.markAll(repository.currentSnapshot, ::clockAt).filter { e ->
-            e.kind == SyncKinds.SETTING &&
+            seedSettings && e.kind == SyncKinds.SETTING &&
                 e.field !in pending.getOrPut(e.kind to e.ref) { store.dirtyFor(e.kind, e.ref).mapTo(HashSet()) { it.field } }
         }
         entries.chunked(MARK_CHUNK).forEach { store.mark(it) }
-        reseedRepositories()
+        if (seedSettings) reseedRepositories()
         persistClock()
         store.setMeta(META_SEEDED_KINDS, SEEDED_KINDS_VERSION)
     }
@@ -973,7 +1056,10 @@ public class SyncV3Service internal constructor(
 
     /** Turns observed edits (by local ref) into key-addressed records with their current values. */
     private fun promoteAll() {
-        val refs = store.dirtyRefs(Int.MAX_VALUE)
+        // A kind switched off here keeps its edits marked: they are promoted, with the clocks they
+        // were made at, once the switch is turned back on.
+        val enabled = enabledKinds()
+        val refs = store.dirtyRefs(Int.MAX_VALUE).filter { (kind, _) -> kind in enabled }
         if (refs.isEmpty()) return
         val snapshot = repository.currentSnapshot
         identity.resetCache()
@@ -987,7 +1073,7 @@ public class SyncV3Service internal constructor(
 
     private fun entityMissing(kind: String, ref: String, out: SyncOutgoing): Boolean {
         if (kind == SyncKinds.REPOSITORY) return ref.substring(2) !in out.repositoryByUrl
-        if (kind == SyncKinds.SETTING) return false
+        if (kind == SyncKinds.SETTING || kind == SyncKinds.PACKAGE) return false
         val id = ref.substring(2).toLongOrNull() ?: return true
         return when (kind) {
             SyncKinds.CATEGORY -> id !in out.categoryById
@@ -1017,6 +1103,14 @@ public class SyncV3Service internal constructor(
             // Deleted here only: the account keeps suggesting it, so nothing goes out.
             if (repo == null) return store.deleteDirty(rows)
             return promoteInto(kind, url, rows, null, null, null, live = true) { field -> out.repositoryValue(repo, field) }
+        }
+        if (kind == SyncKinds.PACKAGE) {
+            val packageId = ref.substring(2)
+            // Not reported yet: keep the marks until it is. Uninstalled since: nothing goes out,
+            // the account keeps the package (see packagesChanged).
+            val installed = installedPackages ?: return
+            val pkg = installed.firstOrNull { it.packageId == packageId } ?: return store.deleteDirty(rows)
+            return promoteInto(kind, packageId, rows, null, null, null, live = true) { field -> packageValue(pkg, field) }
         }
         if (kind == SyncKinds.SETTING) {
             val path = ref.substring(2)
@@ -1256,7 +1350,9 @@ public class SyncV3Service internal constructor(
         val seen = HashSet<String>()
         pullAll(fromZero = true, seen = seen)
         val pruned = ArrayList<Pair<String, String>>()
-        for (kind in APPLY_ORDER) {
+        val enabled = enabledKinds()
+        // A kind that is off keeps its stored records as they are (they are not applied here).
+        for (kind in APPLY_ORDER.filter { it in enabled }) {
             for (key in store.recordKeys(kind)) {
                 if (seenKey(kind, key) in seen) continue
                 val record = store.loadRecord(kind, key) ?: continue
@@ -1283,7 +1379,7 @@ public class SyncV3Service internal constructor(
         var applied = 0
         val url = baseUrl
         while (true) {
-            val batch = store.pushableRecords(MAX_PUSH_RECORDS, nowMillis(), ::retryAfterMillis)
+            val batch = store.pushableRecords(MAX_PUSH_RECORDS, nowMillis(), ::retryAfterMillis, disabledKinds())
             if (batch.isEmpty()) break
             val (request, sent) = buildPush(batch)
             if (sent.isEmpty()) break
@@ -1310,12 +1406,17 @@ public class SyncV3Service internal constructor(
     }
 
     private fun reject(record: StoredRecord, reason: String) {
-        store.saveRecord(record.copy(rejectReason = reason, rejectedAt = nowMillis()))
+        // A server from before the `package` kind answers `invalid_record` for those records. Park
+        // them under a reason of their own: they are retried slowly (an upgraded server accepts
+        // them) and are neither a failure to show nor a reason to stop pushing the other records.
+        val stored = if (record.kind == SyncKinds.PACKAGE && reason == "invalid_record") REJECT_UNSUPPORTED_KIND else reason
+        store.saveRecord(record.copy(rejectReason = stored, rejectedAt = nowMillis()))
     }
 
     private fun retryAfterMillis(reason: String): Long? = when (reason) {
         "clock_skew", "unknown_work", "no_result", "no_record", "missing_work" -> 10 * 60_000L
         "quota_exceeded" -> 60 * 60_000L
+        REJECT_UNSUPPORTED_KIND -> 6 * 60 * 60_000L
         else -> null // invalid_*: wait for a new local edit instead of hammering the server
     }
 
@@ -1358,16 +1459,18 @@ public class SyncV3Service internal constructor(
 
     /** Projects merged-but-unapplied records onto the library, parking those that cannot apply yet. */
     private suspend fun applyUnapplied(force: Boolean = true) {
-        val unapplied = store.unappliedCount()
+        val off = disabledKinds()
+        val unapplied = store.unappliedCount(off)
         if (unapplied == 0) return
         // Everything left is waiting for a title, chapter or source and nothing changed locally
         // since the last attempt: re-evaluating (an O(library) index build) cannot succeed.
-        if (!force && unapplied == store.pendingRemoteCount() && repository.currentSnapshot.revision == lastApplyRevision) return
+        if (!force && unapplied == store.pendingRemoteCount(off) && repository.currentSnapshot.revision == lastApplyRevision) return
         val startSnapshot = repository.currentSnapshot
         identity.resetCache()
         val baseIndex = SyncApplier.buildWorkIndex(startSnapshot, identity)
         var starved = false
-        for (kind in APPLY_ORDER) {
+        // Records of a kind switched off stay unapplied; switching it on applies them.
+        for (kind in APPLY_ORDER.filter { it !in off }) {
             var after = ""
             while (true) {
                 val chunk = store.unappliedRecords(kind, after, APPLY_CHUNK)
@@ -1438,8 +1541,31 @@ public class SyncV3Service internal constructor(
 
     // ---- state ------------------------------------------------------------------------------
 
+    private fun publishAccountPackages(signedIn: Boolean) {
+        val packages = if (!signedIn || SyncKinds.PACKAGE !in enabledKinds()) {
+            emptyList()
+        } else {
+            store.liveRecords(SyncKinds.PACKAGE).mapNotNull { record ->
+                fun text(field: String) = (record.state.fields[field]?.value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.trim().orEmpty()
+                val repositoryUrl = text("repositoryUrl")
+                // Without a repository there is nothing to install it from; with one that is not a
+                // portable URL the device must not even be offered it.
+                if (repositoryUrl.isNotEmpty() && !isPortableRepositoryUrl(repositoryUrl)) return@mapNotNull null
+                AccountPackage(
+                    packageId = record.key,
+                    repositoryUrl = repositoryUrl,
+                    name = text("name").ifEmpty { record.key },
+                    version = text("version"),
+                    versionCode = (record.state.fields["versionCode"]?.value as? JsonPrimitive)?.longOrNull,
+                    signingKeyFingerprint = text("signingKeyFingerprint"),
+                )
+            }.sortedBy { it.packageId }
+        }
+        if (mutableAccountPackages.value != packages) mutableAccountPackages.value = packages
+    }
+
     private fun publishAccountRepositories(signedIn: Boolean) {
-        val repositories = if (!signedIn) {
+        val repositories = if (!signedIn || SyncKinds.REPOSITORY !in enabledKinds()) {
             emptyList()
         } else {
             store.liveRecords(SyncKinds.REPOSITORY).mapNotNull { record ->
@@ -1475,6 +1601,8 @@ public class SyncV3Service internal constructor(
     private fun publishState(syncing: Boolean = mutableState.value.syncing) {
         val signedIn = store.meta(META_SIGNED_IN) == "1"
         publishAccountRepositories(signedIn)
+        publishAccountPackages(signedIn)
+        val off = disabledKinds()
         val snapshot = repository.currentSnapshot
         val unsyncable = if (signedIn) snapshot.mangas.count { it.favorite && runCatching { identity.workOf(it) }.getOrNull() == null } else 0
         mutableState.update { previous ->
@@ -1487,11 +1615,11 @@ public class SyncV3Service internal constructor(
                 deviceName = store.meta(META_DEVICE_NAME),
                 syncing = syncing,
                 lastSyncAt = store.meta(META_LAST_SYNC)?.toLongOrNull(),
-                pendingCount = if (signedIn) store.dirtyRefCount() + store.dirtyRecordCount() else 0,
-                pendingRemoteCount = if (signedIn) store.pendingRemoteCount() else 0,
+                pendingCount = if (signedIn) store.dirtyRefCount(off) + store.dirtyRecordCount(off) else 0,
+                pendingRemoteCount = if (signedIn) store.pendingRemoteCount(off) else 0,
                 missingSources = if (signedIn) missingSources() else emptyList(),
                 unsyncableCount = unsyncable,
-                rejectedCount = if (signedIn) store.rejectedCount() else 0,
+                rejectedCount = if (signedIn) store.rejectedCount(off) else 0,
                 lastError = store.meta(META_ERROR),
                 sharingEnabled = signedIn && store.meta(META_SHARING) == "1",
                 reviewsEnabled = signedIn && store.meta(META_REVIEWS) == "1",
@@ -1521,7 +1649,7 @@ public class SyncV3Service internal constructor(
         const val META_ACCESS_EXPIRES = "access_expires_at"
         const val META_INITIAL_DONE = "initial_done"
         const val META_SEEDED_KINDS = "seeded_kinds"
-        const val SEEDED_KINDS_VERSION = "3"
+        const val SEEDED_KINDS_VERSION = "4"
         const val META_RESYNC = "resync"
         const val META_DESCRIPTORS = "descriptors"
         const val DESCRIPTORS_VERSION = "3"
@@ -1540,7 +1668,12 @@ public class SyncV3Service internal constructor(
             SyncKinds.PROGRESS,
             SyncKinds.REPOSITORY,
             SyncKinds.SETTING,
+            SyncKinds.PACKAGE,
         )
+
+        /** What the server accepts as a package key (records.md); an install key fits. */
+        val PACKAGE_KEY = Regex("^[A-Za-z0-9._~-]{1,128}$")
+        val PACKAGE_FIELDS = listOf("repositoryUrl", "name", "version", "versionCode", "signingKeyFingerprint")
 
         const val PUSH_DEBOUNCE_MILLIS = 2_000L
         const val MIN_AUTOMATIC_INTERVAL_MILLIS = 5_000L

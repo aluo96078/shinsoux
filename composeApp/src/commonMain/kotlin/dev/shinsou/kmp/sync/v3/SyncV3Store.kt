@@ -33,6 +33,12 @@ internal data class DirtyEntry(
     }
 }
 
+/**
+ * The reject reason kept for a record whose kind the server does not know yet (an older server
+ * answers `invalid_record` for every `package` record). Retried slowly, never shown as a failure.
+ */
+internal const val REJECT_UNSUPPORTED_KIND = "unsupported_kind"
+
 /** A record as persisted on this device: the merged server view plus unpushed local edits. */
 internal data class StoredRecord(
     val kind: String,
@@ -140,7 +146,10 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         }
     }
 
-    fun dirtyRefCount(): Int = query("SELECT COUNT(*) FROM (SELECT DISTINCT kind, ref FROM sync3_dirty)", 0, null) {
+    /** Pending local edits, not counting the kinds in [excluded] (switched off on this device). */
+    fun dirtyRefCount(excluded: Set<String> = emptySet()): Int = query(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT kind, ref FROM sync3_dirty WHERE 1 = 1${notIn(excluded)})", 0, null,
+    ) {
         it.getLong(0)!!.toInt()
     }.first()
 
@@ -226,16 +235,21 @@ internal class SyncV3Store(private val driver: SqlDriver) {
      * Records that still hold unpushed edits. Fresh ones come first; records parked after a server
      * rejection come back only once [retryAfterMillis] says their waiting time is over.
      */
-    fun pushableRecords(limit: Int, nowMillis: Long, retryAfterMillis: (String) -> Long?): List<StoredRecord> {
+    fun pushableRecords(
+        limit: Int,
+        nowMillis: Long,
+        retryAfterMillis: (String) -> Long?,
+        excluded: Set<String> = emptySet(),
+    ): List<StoredRecord> {
         val out = ArrayList<StoredRecord>()
         query(
-            RECORD_SELECT + " WHERE has_dirty = 1 AND reject_reason IS NULL ORDER BY kind, key LIMIT ?",
+            RECORD_SELECT + " WHERE has_dirty = 1 AND reject_reason IS NULL${notIn(excluded)} ORDER BY kind, key LIMIT ?",
             1,
             { bindLong(0, limit.toLong()) },
         ) { it.readRecordHead() }.forEach { out += it.withFields(loadFields(it.kind, it.key)) }
         if (out.size >= limit) return out
         query(
-            RECORD_SELECT + " WHERE has_dirty = 1 AND reject_reason IS NOT NULL ORDER BY kind, key",
+            RECORD_SELECT + " WHERE has_dirty = 1 AND reject_reason IS NOT NULL${notIn(excluded)} ORDER BY kind, key",
             0,
             null,
         ) { it.readRecordHead() }.forEach { head ->
@@ -248,11 +262,23 @@ internal class SyncV3Store(private val driver: SqlDriver) {
     }
 
     /** Dirty records that were parked after a server rejection (shown in the UI). */
-    fun rejectedCount(): Int = query("SELECT COUNT(*) FROM sync3_record WHERE has_dirty = 1 AND reject_reason IS NOT NULL", 0, null) {
+    fun rejectedCount(excluded: Set<String> = emptySet()): Int = query(
+        "SELECT COUNT(*) FROM sync3_record WHERE has_dirty = 1 AND reject_reason IS NOT NULL " +
+            "AND reject_reason <> '$REJECT_UNSUPPORTED_KIND'${notIn(excluded)}",
+        0, null,
+    ) {
         it.getLong(0)!!.toInt()
     }.first()
 
-    fun dirtyRecordCount(): Int = query("SELECT COUNT(*) FROM sync3_record WHERE has_dirty = 1", 0, null) {
+    /**
+     * Records holding unpushed edits. Records an older server refused as an unknown kind are not
+     * counted: they are retried in the background and are not the user's backlog.
+     */
+    fun dirtyRecordCount(excluded: Set<String> = emptySet()): Int = query(
+        "SELECT COUNT(*) FROM sync3_record WHERE has_dirty = 1 " +
+            "AND (reject_reason IS NULL OR reject_reason <> '$REJECT_UNSUPPORTED_KIND')${notIn(excluded)}",
+        0, null,
+    ) {
         it.getLong(0)!!.toInt()
     }.first()
 
@@ -288,13 +314,23 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         { bindString(0, SyncKinds.LIBRARY); bindString(1, PENDING_SOURCE_NOT_INSTALLED) },
     ) { it.getString(0)!! }
 
-    fun pendingRemoteCount(): Int = query(
-        "SELECT COUNT(*) FROM sync3_record WHERE unapplied = 1 AND pending_reason IS NOT NULL", 0, null,
+    fun pendingRemoteCount(excluded: Set<String> = emptySet()): Int = query(
+        "SELECT COUNT(*) FROM sync3_record WHERE unapplied = 1 AND pending_reason IS NOT NULL${notIn(excluded)}", 0, null,
     ) { it.getLong(0)!!.toInt() }.first()
 
-    fun unappliedCount(): Int = query("SELECT COUNT(*) FROM sync3_record WHERE unapplied = 1", 0, null) {
+    /** Records waiting to be applied, not counting the kinds in [excluded] (switched off on this device). */
+    fun unappliedCount(excluded: Set<String> = emptySet()): Int = query(
+        "SELECT COUNT(*) FROM sync3_record WHERE unapplied = 1${notIn(excluded)}", 0, null,
+    ) {
         it.getLong(0)!!.toInt()
     }.first()
+
+    /**
+     * ` AND kind NOT IN (...)` for [excluded], or nothing. The values are the kind constants of
+     * [SyncKinds], never user input, so they are written into the statement.
+     */
+    private fun notIn(excluded: Set<String>): String =
+        if (excluded.isEmpty()) "" else " AND kind NOT IN (${excluded.joinToString(",") { "'${it.replace("'", "")}'" }})"
 
     /** Keys of every non-deleted record of [kind]; used by 410 recovery. */
     fun recordKeys(kind: String): List<String> = query(

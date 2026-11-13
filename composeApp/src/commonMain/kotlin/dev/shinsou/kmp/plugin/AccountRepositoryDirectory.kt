@@ -22,3 +22,25 @@ public interface AccountRepositoryDirectory {
     /** Removes [url] from the account so other devices stop receiving it as a suggestion. */
     public suspend fun forget(url: String)
 }
+
+/**
+ * A package the sync account has used on some device. It is a hint only: nothing about it is
+ * trusted, and another device acts on it only through a repository its own user already trusts.
+ */
+public data class AccountPackage(
+    /** The package's install key (manifest id), the same on every device that trusts the publisher. */
+    val packageId: String,
+    /** The repository the package was installed from, normalized; empty when the device did not know. */
+    val repositoryUrl: String,
+    val name: String,
+    val version: String,
+    val versionCode: Long? = null,
+    /** Signing key of the repository when installed; informational, never used to trust anything. */
+    val signingKeyFingerprint: String = "",
+)
+
+/** The account's list of used packages, as the browse layer needs it (see [AccountRepositoryDirectory]). */
+public interface AccountPackageDirectory {
+    /** Packages the account has seen (live records), empty when signed out or the switch is off. */
+    public val packages: StateFlow<List<AccountPackage>>
+}

@@ -2,6 +2,17 @@ package dev.shinsou.kmp.ui.i18n
 
 /** Strings of More → Sync (sync v3). Simplified Chinese is written out, not converted. */
 internal val SyncV3TraditionalTranslations: Map<String, String> = mapOf(
+    "Sync items" to "同步項目",
+    "Choose what this device sends to your account and applies from it. Whatever arrives while an item is off is kept and applied when you switch it on." to
+        "選擇這台裝置要把哪些資料送到帳號，又要從帳號套用哪些資料。關閉期間收到的資料會保留，重新開啟後自動套用。",
+    "Library titles" to "書庫作品",
+    "Reading progress and history" to "閱讀進度與歷史",
+    "Categories" to "分類",
+    "Repository suggestions" to "儲存庫建議",
+    "Installed packages" to "已安裝套件",
+    "Packages installed on this device are recorded on your account. Another device installs them (without approving them) only from a repository it has added and trusts." to
+        "這台裝置安裝的套件會記錄在帳號上。其他裝置只會從它自己已加入並信任的儲存庫預安裝（不會授權）。",
+    "Pre-installed from another device, waiting for permission" to "從其他裝置預安裝，尚待授權",
     "Sync" to "同步",
     "Sync is unavailable in this build." to "此版本無法使用同步。",
     "Signed out" to "已登出",
@@ -198,6 +209,17 @@ internal val SyncV3TraditionalTranslations: Map<String, String> = mapOf(
 )
 
 internal val SyncV3SimplifiedTranslations: Map<String, String> = mapOf(
+    "Sync items" to "同步项目",
+    "Choose what this device sends to your account and applies from it. Whatever arrives while an item is off is kept and applied when you switch it on." to
+        "选择这台设备要把哪些数据发送到账号，又要从账号应用哪些数据。关闭期间收到的数据会保留，重新开启后自动应用。",
+    "Library titles" to "书库作品",
+    "Reading progress and history" to "阅读进度与历史",
+    "Categories" to "分类",
+    "Repository suggestions" to "仓库建议",
+    "Installed packages" to "已安装套件",
+    "Packages installed on this device are recorded on your account. Another device installs them (without approving them) only from a repository it has added and trusts." to
+        "这台设备安装的套件会记录在账号上。其他设备只会从它自己已添加并信任的仓库预安装（不会授权）。",
+    "Pre-installed from another device, waiting for permission" to "从其他设备预安装，尚待授权",
     "Sync" to "同步",
     "Sync is unavailable in this build." to "此版本无法使用同步。",
     "Signed out" to "已登出",

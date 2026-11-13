@@ -1482,6 +1482,20 @@ public class PluginManager(
     public suspend fun source(sourceId: Long): CatalogueSource? = lifecycleMutex.withLock { sources[sourceId] }
 
     /** Resolves a legacy UI row to its exact live manifest identity; a bare number is never enough. */
+    /**
+     * The exact key of source [sourceId] declared by the installed package [packageId], read from
+     * its stored manifest. Unlike [extensionSourceV2] it needs no live runtime, so it also answers
+     * for a package that is installed but waiting for its permission review: a title can be added
+     * to the library under that key, and it opens once the package is approved.
+     */
+    public suspend fun installedSourceKey(packageId: String, sourceId: String): SourceKey? {
+        val stored = packageStore.get(packageId) ?: return null
+        val declared = stored.manifest.sources.orEmpty().firstOrNull { source ->
+            (source.canonicalSourceId ?: source.id.toString()) == sourceId
+        } ?: return null
+        return sourceKeyFor(packageId, declared.id, declared.canonicalSourceId)
+    }
+
     public suspend fun exactSourceKeyForLegacyId(sourceId: Long): SourceKey? = packageMutationMutex.withLock {
         val packageId = lifecycleMutex.withLock { sourceOwners[sourceId] } ?: return@withLock null
         val stored = packageStore.get(packageId) ?: return@withLock null

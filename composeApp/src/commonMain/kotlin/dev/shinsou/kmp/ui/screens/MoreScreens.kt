@@ -1222,6 +1222,8 @@ internal fun SyncScreen(
     copyText: (label: String, text: String) -> Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    kinds: dev.shinsou.kmp.domain.model.SyncKindSettings = dev.shinsou.kmp.domain.model.SyncKindSettings(),
+    onKindsChange: (dev.shinsou.kmp.domain.model.SyncKindSettings) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     Column(modifier.fillMaxSize()) {
@@ -1229,7 +1231,7 @@ internal fun SyncScreen(
             title = strings.text("Sync"),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
         )
-        SyncSettingsPane(sync, copyText)
+        SyncSettingsPane(sync, copyText, kinds, onKindsChange)
     }
 }
 

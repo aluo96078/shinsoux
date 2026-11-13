@@ -159,6 +159,12 @@ public class PluginBrowseAdapter(
      * Null when sync is unavailable.
      */
     private val accountRepositories: AccountRepositoryDirectory? = null,
+    /**
+     * The sync account's installed packages. Each one that a repository this device trusts
+     * publishes is installed here without being approved ([preinstallAccountPackages]). Null when
+     * sync is unavailable.
+     */
+    private val accountPackages: AccountPackageDirectory? = null,
     /** Keeps the suggestions in step with [accountRepositories]; without it they refresh with the next snapshot rebuild. */
     suggestionScope: CoroutineScope? = null,
 ) : BrowseCallbacks {
@@ -288,12 +294,35 @@ public class PluginBrowseAdapter(
 
     override val state: StateFlow<BrowseSnapshot> = mutableState
     private val dismissedSuggestionsMutex = Mutex()
+    private val packageListsMutex = Mutex()
+
+    /** Where [preinstallAccountPackages] gets an index it has not displayed; replaced by tests. */
+    internal var indexSnapshotFetcher: suspend (ExtensionRepository) -> RepositoryIndexSnapshot =
+        { repository -> repositoryClient.fetchIndexSnapshot(repository.baseUrl) }
+
+    /** Conflated: one pending pre-install pass is enough however many things asked for it. */
+    private val preinstallSignal = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
     init {
         val directory = accountRepositories
         if (directory != null && suggestionScope != null) {
             suggestionScope.launch {
                 directory.repositories.collect { publishRepositorySuggestions() }
+            }
+        }
+        val packages = accountPackages
+        if (packages != null && suggestionScope != null) {
+            suggestionScope.launch { packages.packages.collect { preinstallSignal.trySend(Unit) } }
+            suggestionScope.launch {
+                for (request in preinstallSignal) {
+                    try {
+                        preinstallAccountPackages()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        // Best effort: the next trigger (a refresh, a new list) tries again.
+                    }
+                }
             }
         }
     }
@@ -1163,6 +1192,8 @@ public class PluginBrowseAdapter(
                 entry.version
             }
         }
+        // Installing by hand is the opposite of declining a pre-install.
+        updatePackageList(DECLINED_PREINSTALL_KEY) { it - extensionId }
         // The index used above is already authoritative for this operation. Reusing the current
         // descriptor avoids fetching the same index again and rescanning every installed package.
         descriptors = descriptors + (
@@ -1195,6 +1226,7 @@ public class PluginBrowseAdapter(
         // exact-digest approval/reload transaction.
         operationMutex.withLock {
             manager.approveEventGrantReview(extensionId, expectedReview, permissions, selection)
+            updatePackageList(PREINSTALLED_KEY) { it - extensionId }
             rebuildSnapshot(errorMessage = null, reuseUnchangedSources = true)
         }
     }
@@ -1256,6 +1288,9 @@ public class PluginBrowseAdapter(
         operationMutex.withLock {
             manager.uninstall(extensionId)
             trustStore.revokeAll(extensionId)
+            // Removed on purpose: the account's list must not bring it straight back.
+            updatePackageList(DECLINED_PREINSTALL_KEY) { it + extensionId }
+            updatePackageList(PREINSTALLED_KEY) { it - extensionId }
             // The authenticated index already backing the visible row is authoritative for this
             // local mutation. Do not refetch every repository (or rescan unrelated packages): a
             // repository-backed row becomes available, while an installed-only row disappears.
@@ -1809,6 +1844,8 @@ public class PluginBrowseAdapter(
                 repositoriesNeedingTrust = refreshed.repositoriesNeedingTrust
             }
             rebuildSnapshot(errorMessage = null)
+            // The repositories and their indexes are as fresh as they get: pre-install what the account has used.
+            preinstallSignal.trySend(Unit)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1879,6 +1916,96 @@ public class PluginBrowseAdapter(
         // Added on purpose (possibly after an earlier dismissal): it is no longer a suggestion to hide.
         val added = suggestionKey(repository.baseUrl)
         updateDismissedSuggestions { it - added }
+    }
+
+    // ---- packages from the account -----------------------------------------------------------
+
+    /** A device-local set of install keys kept in the plugin KV store (see [DECLINED_PREINSTALL_KEY]). */
+    private suspend fun packageList(key: String): Set<String> =
+        keyValueStore.getString(key)
+            ?.let { raw -> runCatching { Json.decodeFromString(ListSerializer(String.serializer()), raw) }.getOrNull() }
+            .orEmpty()
+            .toSet()
+
+    private suspend fun updatePackageList(key: String, change: (Set<String>) -> Set<String>) {
+        packageListsMutex.withLock {
+            val current = packageList(key)
+            val updated = change(current)
+            if (updated != current) {
+                keyValueStore.putString(key, Json.encodeToString(ListSerializer(String.serializer()), updated.sorted()))
+            }
+        }
+    }
+
+    /**
+     * Installs, without approving, the packages the sync account has used that this device lacks.
+     * A package is only taken from a repository the user has added here and whose publisher is
+     * trusted on this device: the account's list says what to look for, never whom to trust.
+     * Anything else (an unknown or unsigned repository, a package already installed or removed
+     * here on purpose, one the repository no longer lists) is skipped. The install stops at the
+     * permission review (pending, nothing runs) and is remembered so the UI can say so; the review
+     * comes when the user first opens the package or one of its titles.
+     */
+    public suspend fun preinstallAccountPackages(): Unit = withContext(Dispatchers.Default) {
+        val wanted = accountPackages?.packages?.value.orEmpty()
+        if (wanted.isEmpty()) return@withContext
+        operationMutex.withLock {
+            ensureInstalledLoaded()
+            val installedKeys = manager.installedPlugins().mapTo(hashSetOf()) { it.manifest.id }
+            val declined = packageList(DECLINED_PREINSTALL_KEY)
+            val repositories = repositoryStore.list()
+            var installedAny = false
+            for (pkg in wanted) {
+                if (pkg.packageId in installedKeys || pkg.packageId in declined || pkg.repositoryUrl.isBlank()) continue
+                val repository = repositories.firstOrNull { suggestionKey(it.baseUrl) == suggestionKey(pkg.repositoryUrl) }
+                    ?: continue
+                try {
+                    // The displayed index when there is one; otherwise this repository's own fetch
+                    // (the user may have another repository selected).
+                    val snapshot = repositorySnapshots[repository.baseUrl] ?: indexSnapshotFetcher(repository)
+                    if (!trustedForPreinstall(repository, snapshot)) continue
+                    val entries = when (val index = snapshot.index) {
+                        is RepositoryIndex.Plugins -> index.entries
+                        is RepositoryIndex.Combined -> index.plugins
+                        is RepositoryIndex.Legacy -> continue
+                    }
+                    val entry = entries.firstOrNull { manager.installKeyFor(repository, it) == pkg.packageId } ?: continue
+                    // The latest version the repository publishes, not the account's: the repository decides.
+                    manager.install(repository, entry, snapshot.admission)
+                    updatePackageList(PREINSTALLED_KEY) { it + pkg.packageId }
+                    installedKeys += pkg.packageId
+                    installedAny = true
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // Skipped; the next trigger retries.
+                }
+            }
+            if (installedAny) {
+                try {
+                    refreshLocked()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // The browse state already carries the refresh error.
+                }
+            }
+        }
+    }
+
+    /**
+     * True when [snapshot] came from a signed index whose publisher this device trusts for
+     * [repository]. An unsigned repository (no admission) or one whose publisher is unknown,
+     * pending confirmation, replaced or revoked is never installed from automatically: without a
+     * publisher the install would be unsigned.
+     */
+    private suspend fun trustedForPreinstall(repository: ExtensionRepository, snapshot: RepositoryIndexSnapshot): Boolean {
+        if (snapshot.admission == null) return false
+        if (repository.baseUrl in repositoriesNeedingTrust) return false
+        val security = packageSecurity ?: return false
+        val publisher = security.publishers.publisherForRepository(repositoryClient.canonicalBaseUrl(repository.baseUrl))
+            ?: return false
+        return publisher.status(security.publishers.globalMode()) == PublisherTrustStatus.TRUSTED
     }
 
     // ---- repository suggestions from the account ---------------------------------------------
@@ -2167,6 +2294,7 @@ public class PluginBrowseAdapter(
             .map { it.withRepository() }
             .distinctBy(BrowseSource::identityKey)
             .sortedWith(compareBy<BrowseSource> { it.language }.thenBy { it.name.lowercase() })
+        val preinstalledIds = packageList(PREINSTALLED_KEY)
         val extensions = descriptors.values.map { descriptor ->
             val local = installed[descriptor.id]
             // A verified digest is integrity state, not permission to execute sensitive host
@@ -2186,6 +2314,7 @@ public class PluginBrowseAdapter(
                 contentType = descriptor.contentType,
                 inDevelopment = PluginInstallKeys.isDeveloperKey(descriptor.id),
                 repositoryId = descriptor.repositoryBaseUrl,
+                preinstalledFromAccount = local != null && !trusted && descriptor.id in preinstalledIds,
             )
         }
         sourceProjections = rebuiltSourceProjections
@@ -2430,6 +2559,14 @@ public class PluginBrowseAdapter(
 
         private const val DISMISSED_SUGGESTIONS_KEY: String =
             "plugin.repositories.dismissed-suggestions.v1"
+
+        /** Install keys of account packages the user removed here: never pre-installed again. */
+        private const val DECLINED_PREINSTALL_KEY: String =
+            "plugin.packages.declined-preinstall.v1"
+
+        /** Install keys installed from the account's list and not approved yet: the UI says where they came from. */
+        private const val PREINSTALLED_KEY: String =
+            "plugin.packages.preinstalled.v1"
 
         private const val LEGACY_BUNDLED_REPOSITORY_URL: String =
             "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/master"

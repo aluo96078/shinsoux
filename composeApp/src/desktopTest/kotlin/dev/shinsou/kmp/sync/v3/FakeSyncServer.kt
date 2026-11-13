@@ -39,6 +39,9 @@ internal class FakeSyncServer {
     var requests = ArrayList<String>()
     var nowMillis: () -> Long = { System.currentTimeMillis() }
     var failNextPushWith: Int? = null
+
+    /** Kinds this "older" server does not know: each record of one is refused individually. */
+    var unknownKinds: Set<String> = emptySet()
     var pushCount = 0
     var goneCount = 0
     var maxBatch = 0
@@ -216,6 +219,7 @@ internal class FakeSyncServer {
         }
         val results = req.records.map { record ->
             val id = record.kind to record.key
+            if (record.kind in unknownKinds) return@map WirePushResult(record.kind, record.key, "rejected:invalid_record")
             val input = PushInput(
                 fields = record.fields?.toMap().orEmpty(),
                 clocks = record.clocks.orEmpty(),

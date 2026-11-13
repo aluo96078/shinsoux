@@ -1633,6 +1633,11 @@ data class BrowseExtension(
     val inDevelopment: Boolean = false,
     /** The repository (its [BrowseRepository.id]) the package is listed in or was installed from. */
     val repositoryId: String? = null,
+    /**
+     * Installed from the account's package list on this device's own and still waiting for the
+     * user's permission review: nothing of it runs until then.
+     */
+    val preinstalledFromAccount: Boolean = false,
 )
 
 data class BrowseManga(

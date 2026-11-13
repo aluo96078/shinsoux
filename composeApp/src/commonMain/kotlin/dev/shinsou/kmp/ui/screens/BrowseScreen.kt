@@ -411,7 +411,9 @@ fun BrowseScreen(
         if (pendingPluginEventGrant == null && extensionOperations.active == null) {
             try {
                 val pending = withContext(Dispatchers.Default) {
-                    snapshot.extensions.filter { it.installed }
+                    // A package pre-installed from the account is reviewed on first access (opening one of
+                    // its titles, or switching it on here), not the moment this page appears.
+                    snapshot.extensions.filter { it.installed && !it.preinstalledFromAccount }
                         .firstNotNullOfOrNull { extension ->
                             callbacks.pendingPluginEventGrantReview(extension.id)?.let { review ->
                                 PendingPluginEventGrant(extension, review)
@@ -4607,6 +4609,13 @@ private fun ExtensionRow(
                         if (extension.trusted) strings.text("Execution allowed") else strings.text("Execution blocked"),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (extension.trusted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (extension.preinstalledFromAccount) {
+                    Text(
+                        strings.text("Pre-installed from another device, waiting for permission"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
                 if (operation?.extensionId == extension.id) {

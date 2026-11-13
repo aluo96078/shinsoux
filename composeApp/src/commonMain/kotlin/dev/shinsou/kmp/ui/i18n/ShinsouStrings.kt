@@ -3608,6 +3608,20 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
         SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations + SyncV3SimplifiedTranslations,
 )
 
+private val JapaneseSyncItemTranslations = mapOf(
+    "Sync items" to "同期する項目",
+    "Choose what this device sends to your account and applies from it. Whatever arrives while an item is off is kept and applied when you switch it on." to
+        "この端末がアカウントへ送信し、アカウントから適用するデータを選びます。オフの間に届いたデータは保持され、オンにすると適用されます。",
+    "Library titles" to "ライブラリの作品",
+    "Reading progress and history" to "閲覧の進捗と履歴",
+    "Categories" to "カテゴリ",
+    "Repository suggestions" to "リポジトリの候補",
+    "Installed packages" to "インストール済みパッケージ",
+    "Packages installed on this device are recorded on your account. Another device installs them (without approving them) only from a repository it has added and trusts." to
+        "この端末にインストールしたパッケージはアカウントに記録されます。他の端末は、自分で追加して信頼しているリポジトリからのみ（権限は許可せずに）事前インストールします。",
+    "Pre-installed from another device, waiting for permission" to "他の端末から事前インストール済み・権限の許可待ち",
+)
+
 private val JapaneseStrings = EnglishStrings.copy(
     library = "ライブラリ", updates = "更新", history = "履歴", browse = "ブラウズ", more = "その他",
     sources = "ソース", extensions = "拡張機能", migration = "移行", downloads = "ダウンロード",
@@ -3627,7 +3641,7 @@ private val JapaneseStrings = EnglishStrings.copy(
     noUpdates = "最近の更新はありません", noHistory = "閲覧履歴はありません", createBackup = "バックアップを作成",
     restoreBackup = "バックアップを復元",
     translations = JapaneseSyncTranslations + LibraryContentTypeTranslations.getValue("ja") + JapaneseReaderTranslations + JapanesePortabilityTranslations +
-        JapaneseReviewedExtensionTranslations,
+        JapaneseReviewedExtensionTranslations + JapaneseSyncItemTranslations,
 )
 
 private val KoreanStrings = EnglishStrings.copy(
