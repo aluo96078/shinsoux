@@ -16,7 +16,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
