@@ -153,7 +153,7 @@ internal object IosApplicationContainer {
         syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
             defaultName = platform.UIKit.UIDevice.currentDevice.name.ifBlank { "iPhone" },
             platform = "ios",
-            appVersion = "1.0.1-beta.24",
+            appVersion = "1.0.1-beta.25",
         ),
     )
 

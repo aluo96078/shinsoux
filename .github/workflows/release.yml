@@ -616,7 +616,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.21' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.22' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.23' ||
-          needs.metadata.outputs.tag == 'v1.0.1-beta.24'
+          needs.metadata.outputs.tag == 'v1.0.1-beta.24' ||
+          needs.metadata.outputs.tag == 'v1.0.1-beta.25'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -723,6 +724,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.23"
             $expectedHash = "620261807be93a298915ddbed12c3686db13f3743c993104fe3b55c6af436e0f"
             $baselineProductCode = "{3784BB7B-5D97-358D-9CFD-5FF5D2DD414D}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.1-beta.25") {
+            $baselineVersion = "1.0.1-beta.24"
+            $expectedHash = "4362e166faf421e2f081e1931461a0cfb84366adab3f4328281137f64814c795"
+            $baselineProductCode = "{BE85BA46-56AD-39CF-8A0B-900DDFFC635F}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -965,7 +970,8 @@ jobs:
                   "$RELEASE_VERSION" == 1.0.1-beta.21 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.22 ||
                   "$RELEASE_VERSION" == 1.0.1-beta.23 ||
-                  "$RELEASE_VERSION" == 1.0.1-beta.24 ]]; then
+                  "$RELEASE_VERSION" == 1.0.1-beta.24 ||
+                  "$RELEASE_VERSION" == 1.0.1-beta.25 ]]; then
               printf '%s\n' \
                 "Android note: beta.3 and older APKs used different ephemeral signatures. Back up and uninstall those versions once before installing this release; beta.5 and later official debug APKs use a fixed test signer." \
                 "Desktop note: this release restores packaged SQLite startup on macOS and Windows; Windows also uses a corrected MSI upgrade version, the Shinsou X title-bar icon, and a native Windows layout without the duplicate menu bar."
@@ -1102,6 +1108,10 @@ jobs:
               printf '%s\n' \
                 "Sync note: choose which categories this device sends and receives under More > Sync. Installed extensions can now be pre-installed on another device from a repository that device already trusts; opening a title there asks for permission first." \
                 "Developer note: Settings > Developer mode can show elapsed loading time and image request URLs while troubleshooting."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.1-beta.25 ]]; then
+              printf '%s\n' \
+                "Extension note: a blocked extension now says so on its row and offers Unblock right there, even after it was uninstalled."
             fi
           } > release-notes.md
 
