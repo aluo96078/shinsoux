@@ -69,6 +69,9 @@ if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(shinsou-translate src/stc_main.cpp)
     target_link_libraries(shinsou-translate PRIVATE shinsou_translation_core)
     if(WIN32)
+        # UTF-8 as the process code page, so the engine's narrow file functions open any path.
+        enable_language(RC)
+        target_sources(shinsou-translate PRIVATE src/shinsou-translate.rc)
         if(MINGW)
             # Self-contained: no libstdc++ or winpthread DLLs to ship beside it.
             # The engine's worker thread takes the executable's stack size: 8 MB as on Linux
