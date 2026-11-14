@@ -167,10 +167,11 @@ jobs:
             helper_windows="$(cd "$(dirname "$helper")" && pwd -W)/$(basename "$helper")"
             input_windows="$(cd "$(dirname "$input")" && pwd -W)/$(basename "$input")"
             pwsh -NoProfile -Command "\$p = Start-Process -FilePath '$helper_windows' -RedirectStandardInput '$input_windows' -NoNewWindow -Wait -PassThru; 'Windows exit status: 0x{0:X8}' -f \$p.ExitCode" || true
-            # Where it crashed, from the copy that keeps its symbols.
+            # Where it crashed, from the copy that keeps its symbols. gdb on Windows takes the
+            # redirection unquoted (the path has no spaces).
             symbols="composeApp/build/translation-core-windows/shinsou-translate.symbols.exe"
             if [[ -f "$symbols" ]]; then
-              gdb -batch -ex "run < '$input_windows'" -ex "bt 40" -ex "info sharedlibrary" "$symbols" 2>&1 | tail -n 80 || true
+              gdb -batch -ex "run < $input_windows" -ex "bt 40" -ex "info sharedlibrary" "$symbols" 2>&1 | tail -n 80 || true
             fi
             echo "::error::the translation helper exited with $status"; exit 1
           fi
