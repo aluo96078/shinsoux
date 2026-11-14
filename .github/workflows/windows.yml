@@ -155,10 +155,20 @@ jobs:
           # Git Bash's own spelling of a Windows path; no separate tool to find.
           directory="$(cd "$models" && pwd -W | tr '/' '\\')"
           echo "models in: $directory"
-          answer="$(printf 'TRANSLATE 2\n%s\n%s\n%s\n%s\n葵は剣を抜いた。\n本当に行くの？\n' \
+          input="$RUNNER_TEMP/translate-input.txt"
+          printf 'TRANSLATE 2\n%s\n%s\n%s\n%s\n葵は剣を抜いた。\n本当に行くの？\n' \
             "$directory\\model.jaen.intgemm.alphas.bin" "$directory\\vocab.jaen.spm" "$directory\\vocab.jaen.spm" \
-            "$directory\\lex.50.50.jaen.s2t.bin" | "$helper")"
+            "$directory\\lex.50.50.jaen.s2t.bin" > "$input"
+          status=0
+          answer="$("$helper" < "$input")" || status=$?
           echo "$answer"
+          if (( status != 0 )); then
+            # Git Bash reports any native crash as 127; Windows' own status tells which crash it was.
+            helper_windows="$(cd "$(dirname "$helper")" && pwd -W)/$(basename "$helper")"
+            input_windows="$(cd "$(dirname "$input")" && pwd -W)/$(basename "$input")"
+            pwsh -NoProfile -Command "\$p = Start-Process -FilePath '$helper_windows' -RedirectStandardInput '$input_windows' -NoNewWindow -Wait -PassThru; 'Windows exit status: 0x{0:X8}' -f \$p.ExitCode" || true
+            echo "::error::the translation helper exited with $status"; exit 1
+          fi
           [[ "$(sed -n 1p <<< "$answer" | tr -d '\r')" == "OK 2" ]] || { echo "::error::the translation helper did not translate"; exit 1; }
           [[ "$(sed -n 2p <<< "$answer")" =~ [A-Za-z]{3} && "$(sed -n 3p <<< "$answer")" =~ [A-Za-z]{3} ]] || {
             echo "::error::the translation helper returned no English text"; exit 1

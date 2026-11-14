@@ -31,6 +31,13 @@ if(WIN32)
     # Marian's path matching needs shlwapi. As a standard library it lands at the end of the link
     # line, after the static libraries that refer to it.
     set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lshlwapi")
+    if(MINGW)
+        # GCC on Windows cannot align the stack to 32 bytes (GCC bug 54412), yet emits aligned
+        # AVX moves for stack variables; the engine's AVX2/AVX-512 kernels, chosen at run time,
+        # then crash. The assembler turns those moves into unaligned ones, which cost nothing on
+        # aligned data.
+        add_compile_options(-Wa,-muse-unaligned-vector-move)
+    endif()
     if(NOT BUILD_ARCH)
         # A baseline every 64-bit Windows 10 machine has. The engine's default, "native", would
         # tie the helper to the build machine's CPU.
@@ -64,7 +71,9 @@ if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if(WIN32)
         if(MINGW)
             # Self-contained: no libstdc++ or winpthread DLLs to ship beside it.
-            target_link_options(shinsou-translate PRIVATE -static -s)
+            # The engine's worker thread takes the executable's stack size: 8 MB as on Linux
+            # and macOS, not MinGW's 2 MB.
+            target_link_options(shinsou-translate PRIVATE -static -s -Wl,--stack,8388608)
         endif()
     endif()
     set_target_properties(shinsou-translate PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
