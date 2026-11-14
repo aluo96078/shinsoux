@@ -477,6 +477,69 @@ class SyncV3ServiceTest {
     }
 
     @Test
+    fun editsMadeWhileTheDeviceTimeWasAheadAreSentInOrderOnceItIsCorrected() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        try {
+            a.signIn(register = true)
+            a.clockOffsetMillis = 2L * 24 * 60 * 60_000
+            val manga = a.addTitle("book-23", "Twenty-three", listOf("u1"))
+            a.sync() // refused by the server: promoted, not accepted
+            assertNull(server.accountRecords("alice")[SyncKinds.LIBRARY to workHash("book-23")])
+            // Removed and added back while the time is still ahead: a removal floor in the future.
+            a.repository.upsertManga(a.repository.currentSnapshot.mangas.single().copy(favorite = false))
+            a.repository.upsertManga(a.repository.currentSnapshot.mangas.single().copy(favorite = true))
+            a.sync()
+
+            a.clockOffsetMillis = 0L
+            // A newer edit to a field that is already pending with a clock from the future.
+            val reading = a.repository.createCategory("Reading")
+            a.repository.setMangaCategories(manga, listOf(reading.id))
+            assertTrue(a.sync())
+
+            val records = server.accountRecords("alice")
+            val uuid = records.keys.single { it.first == SyncKinds.CATEGORY && it.second != "default" }.second
+            val library = records.getValue(SyncKinds.LIBRARY to workHash("book-23"))
+            assertTrue(library.isLive, library.toString())
+            assertEquals(JsonArray(listOf(JsonPrimitive(uuid))), library.fields.getValue("categoryIds").value)
+            assertNotNull(library.fields["addedAt"], "fields written after the removal survive its floor")
+            assertEquals(0, a.service.state.value.rejectedCount)
+            assertEquals(0, a.service.state.value.pendingCount)
+        } finally {
+            a.close()
+        }
+    }
+
+    @Test
+    fun aDeviceWhoseTimeWentBackKeepsItsClockAboveWhatTheServerAccepted() = runBlocking<Unit> {
+        val server = FakeSyncServer()
+        val a = TestDevice(server, "A")
+        try {
+            a.signIn(register = true)
+            val manga = a.addTitle("book-24", "Twenty-four", listOf("u1"))
+            val first = a.repository.createCategory("First")
+            a.repository.setMangaCategories(manga, listOf(first.id))
+            assertTrue(a.sync())
+
+            // The device's time is now an hour behind; its accepted edits look "ahead" to it.
+            a.clockOffsetMillis = -60L * 60_000
+            val second = a.repository.createCategory("Second")
+            a.repository.setMangaCategories(manga, listOf(second.id))
+            assertTrue(a.sync())
+
+            val records = server.accountRecords("alice")
+            val library = records.getValue(SyncKinds.LIBRARY to workHash("book-24"))
+            val names = records.filterKeys { it.first == SyncKinds.CATEGORY && it.second != "default" }
+                .mapValues { it.value.fields.getValue("name").value }
+            val assigned = (library.fields.getValue("categoryIds").value as JsonArray).single()
+            assertEquals(JsonPrimitive("Second"), names.getValue(SyncKinds.CATEGORY to (assigned as JsonPrimitive).content))
+            assertEquals(0, a.service.state.value.pendingCount)
+        } finally {
+            a.close()
+        }
+    }
+
+    @Test
     fun removingAndReAddingATitleUnderANewLocalIdStaysLiveEverywhere() = runBlocking<Unit> {
         val server = FakeSyncServer()
         val a = TestDevice(server, "A")

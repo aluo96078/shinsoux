@@ -146,6 +146,68 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         }
     }
 
+    /** Moves [entry] to [clock] unless it was marked again since it was read. */
+    fun rebaseDirtyClock(entry: DirtyEntry, clock: String) {
+        exec("UPDATE sync3_dirty SET clock = ? WHERE kind = ? AND ref = ? AND field = ? AND clock = ?", 5) {
+            bindString(0, clock)
+            bindString(1, entry.kind)
+            bindString(2, entry.ref)
+            bindString(3, entry.field)
+            bindString(4, entry.clock)
+        }
+    }
+
+    // ---- acknowledged clock floor -----------------------------------------------------------
+
+    /**
+     * The newest clock (millis, counter) seen in a record from the server. The local clock must
+     * stay above it. It counts every record ingested since it was first kept; it covers the whole
+     * account only once [establishAcknowledgedFloor] was called after a pull from the beginning.
+     */
+    fun acknowledgedClockFloor(): Pair<Long, Int>? = meta(META_ACK_FLOOR)?.let(::clockHead)
+
+    fun acknowledgedFloorEstablished(): Boolean = meta(META_ACK_FLOOR_COMPLETE) == "1"
+
+    /** Call after every record of the account has been ingested once (a pull from sequence zero). */
+    fun establishAcknowledgedFloor() {
+        if (acknowledgedClockFloor() == null) setMeta(META_ACK_FLOOR, "0:0")
+        setMeta(META_ACK_FLOOR_COMPLETE, "1")
+    }
+
+    /** Records whose removal register or removal floor satisfies [matches] (clock strings do not sort in SQL). */
+    fun recordsWithRemovalClocks(matches: (deleted: String?, cleared: String?) -> Boolean): List<StoredRecord> =
+        query("SELECT kind, key, del_clock, cleared FROM sync3_record WHERE del_clock IS NOT NULL OR cleared IS NOT NULL", 0, null) {
+            Triple(it.getString(0)!!, it.getString(1)!!, it.getString(2) to it.getString(3))
+        }.filter { (_, _, clocks) -> matches(clocks.first, clocks.second) }
+            .mapNotNull { (kind, key, _) -> loadRecord(kind, key) }
+
+    fun noteAcknowledgedClocks(clocks: Collection<String>) {
+        if (clocks.isEmpty()) return
+        val known = acknowledgedClockFloor()
+        var best = known ?: (0L to 0)
+        var raised = known == null
+        for (clock in clocks) {
+            val head = clockHead(clock) ?: continue
+            if (head.first > best.first || (head.first == best.first && head.second > best.second)) {
+                best = head
+                raised = true
+            }
+        }
+        // Read and written through the database only: a cached value would outlive a rolled
+        // back transaction and hide the floor from the retry.
+        if (raised) setMeta(META_ACK_FLOOR, "${best.first}:${best.second}")
+    }
+
+    /** `millis:counter` of a clock (or of the stored floor), without the cost of full validation. */
+    private fun clockHead(clock: String): Pair<Long, Int>? {
+        val first = clock.indexOf(':')
+        if (first <= 0) return null
+        val second = clock.indexOf(':', first + 1).let { if (it < 0) clock.length else it }
+        val millis = clock.substring(0, first).toLongOrNull() ?: return null
+        val counter = clock.substring(first + 1, second).toIntOrNull() ?: return null
+        return millis to counter
+    }
+
     /** Pending local edits, not counting the kinds in [excluded] (switched off on this device). */
     fun dirtyRefCount(excluded: Set<String> = emptySet()): Int = query(
         "SELECT COUNT(*) FROM (SELECT DISTINCT kind, ref FROM sync3_dirty WHERE 1 = 1${notIn(excluded)})", 0, null,
@@ -254,7 +316,10 @@ internal class SyncV3Store(private val driver: SqlDriver) {
             null,
         ) { it.readRecordHead() }.forEach { head ->
             val wait = retryAfterMillis(head.rejectReason.orEmpty()) ?: return@forEach
-            if (out.size < limit && (head.rejectedAt ?: 0L) + wait <= nowMillis) {
+            val rejectedAt = head.rejectedAt ?: 0L
+            // A rejection time in the future was written while the device's time was set ahead;
+            // waiting for it would park the record for as long as the time was wrong by.
+            if (out.size < limit && (rejectedAt > nowMillis || rejectedAt + wait <= nowMillis)) {
                 out += head.withFields(loadFields(head.kind, head.key))
             }
         }
@@ -476,6 +541,8 @@ internal class SyncV3Store(private val driver: SqlDriver) {
     }
 
     private companion object {
+        const val META_ACK_FLOOR = "ack_floor"
+        const val META_ACK_FLOOR_COMPLETE = "ack_floor_complete"
         const val RECORD_SELECT =
             "SELECT kind, key, work_hash, unit_remote_id, work_json, del_value, del_clock, del_dirty, cleared, seq, " +
                 "unapplied, pending_reason, reject_reason, reject_at FROM sync3_record"

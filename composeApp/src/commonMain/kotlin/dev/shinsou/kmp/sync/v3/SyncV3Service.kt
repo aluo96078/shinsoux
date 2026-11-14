@@ -156,6 +156,16 @@ public class SyncV3Service internal constructor(
     private val cycleMutex = Mutex()
     private val authMutex = Mutex()
     private val clockLock = SynchronousLock()
+
+    /**
+     * Held while edits are stamped and marked, so [rebaseClockIfAhead] never interleaves with one.
+     * Always taken inside a store transaction ([marking]), never around one: a backup restore
+     * reaches the observer with the shared database transaction already open, and the opposite
+     * order elsewhere would deadlock against it.
+     */
+    private val markLock = SynchronousLock()
+
+    private inline fun <T> marking(crossinline block: () -> T): T = store.transaction { markLock.withLock { block() } }
     private var clock: HybridLogicalClock? = null
     private var accessToken: String? = null
     private var accessExpiresAt: Long = 0
@@ -663,8 +673,8 @@ public class SyncV3Service internal constructor(
     }
 
     /** Marks every installed package whose record on this device differs (or is missing); see [packagesChanged]. */
-    private fun markPackages() {
-        val installed = installedPackages ?: return
+    private fun markPackages(): Unit = marking {
+        val installed = installedPackages ?: return@marking
         val entries = ArrayList<DirtyEntry>()
         for (pkg in installed) {
             if (!PACKAGE_KEY.matches(pkg.packageId)) continue // the server would refuse it for good
@@ -676,7 +686,7 @@ public class SyncV3Service internal constructor(
                 entries += DirtyEntry(SyncKinds.PACKAGE, packageRef(pkg.packageId), field, nextClock())
             }
         }
-        if (entries.isEmpty()) return
+        if (entries.isEmpty()) return@marking
         store.mark(entries)
         persistClock()
     }
@@ -708,8 +718,10 @@ public class SyncV3Service internal constructor(
      */
     public suspend fun forgetRepository(url: String) {
         if (store.meta(META_SIGNED_IN) != "1" || url.isBlank()) return
-        store.mark(listOf(DirtyEntry(SyncKinds.REPOSITORY, repositoryRef(url), DirtyEntry.DELETED_FIELD, nextClock(), "true", url)))
-        persistClock()
+        marking {
+            store.mark(listOf(DirtyEntry(SyncKinds.REPOSITORY, repositoryRef(url), DirtyEntry.DELETED_FIELD, nextClock(), "true", url)))
+            persistClock()
+        }
         dirtySignal.trySend(Unit)
     }
 
@@ -868,7 +880,7 @@ public class SyncV3Service internal constructor(
      * device bring them back, and a queued removal from the old behaviour is dropped rather than
      * pushed.
      */
-    private fun reseedRepositories() {
+    private fun reseedRepositories(): Unit = marking {
         val queued = store.allDirty().filter { it.kind == SyncKinds.REPOSITORY }
         val repositories = LinkedHashSet<String>()
         val entries = ArrayList<DirtyEntry>()
@@ -899,12 +911,15 @@ public class SyncV3Service internal constructor(
 
         override suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot) {
             try {
-                val entries = SyncDiff.diff(previous, next, env)
-                if (entries.isNotEmpty()) {
-                    store.mark(entries)
-                    persistClock()
-                    dirtySignal.trySend(Unit)
+                val marked = marking {
+                    val entries = SyncDiff.diff(previous, next, env)
+                    if (entries.isNotEmpty()) {
+                        store.mark(entries)
+                        persistClock()
+                    }
+                    entries.isNotEmpty()
                 }
+                if (marked) dirtySignal.trySend(Unit)
                 if (next.chapters.size > previous.chapters.size) dirtySignal.trySend(Unit)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -983,6 +998,9 @@ public class SyncV3Service internal constructor(
                 if (error.isResyncRequired) resync() else throw error
             }
         }
+        // After the pull: the clock may only come down to what the server is known to hold, and a
+        // push whose answer was lost is only known about once it has been pulled.
+        rebaseClockIfAhead()
         var pushed = 0
         try {
             pushed = pushAll()
@@ -1320,6 +1338,7 @@ public class SyncV3Service internal constructor(
                 val merged = LwwMerge.applyRemote(previous?.state, remote)
                 remoteClocks += remote.fields.values.map { it.clock }
                 remote.deleted?.let { remoteClocks += it.clock }
+                remote.cleared?.let { remoteClocks += it }
                 val needsProjection = previous == null || previous.unapplied || projectionDiffers(previous.state, merged)
                 // Another device synced this title without knowing its source or repository, and this one knows.
                 wr.work?.let { work ->
@@ -1348,6 +1367,9 @@ public class SyncV3Service internal constructor(
             }
             if (undescribed) store.setMeta(META_DESCRIPTORS, null)
             cursorAfter?.let { store.setMeta(META_CURSOR, it.toString()) }
+            // With the cursor: a cursor that moved past records whose clocks are not in the
+            // floor would let a later clock correction go below what the server holds.
+            store.noteAcknowledgedClocks(remoteClocks)
         }
         observeRemote(remoteClocks)
     }
@@ -1426,6 +1448,97 @@ public class SyncV3Service internal constructor(
         // them) and are neither a failure to show nor a reason to stop pushing the other records.
         val stored = if (record.kind == SyncKinds.PACKAGE && reason == "invalid_record") REJECT_UNSUPPORTED_KIND else reason
         store.saveRecord(record.copy(rejectReason = stored, rejectedAt = nowMillis()))
+    }
+
+    /**
+     * Edits made while this device's time was set ahead carry clocks from the future, and so does
+     * every later edit (the clock never runs backwards): the server refuses them all until real
+     * time catches up, which can be days. Once the device's own time shows the clock is ahead, it
+     * is brought back, and everything not yet accepted by the server (marked edits, promoted
+     * fields, removal registers and the removal floors that go with them) moves to fresh clocks in
+     * its original order.
+     *
+     * The clock never goes below a clock the server holds ([SyncV3Store.acknowledgedClockFloor]):
+     * accepted values keep their clocks, and an edit stamped below one would be dropped as older.
+     * That also covers a device whose time was set *back*: there the clock stays where it is.
+     * Runs inside a cycle, after the pull and before the push, and excludes concurrent marking.
+     */
+    private suspend fun rebaseClockIfAhead() {
+        val now = nowMillis()
+        val current = clockLock.withLock { clock?.current() } ?: return
+        if (current.millis <= now + LwwMerge.MAX_CLOCK_SKEW_MILLIS) return
+        // The floor is only trusted once every record the server holds has been seen: stored
+        // records are a merged local view and cannot tell which clocks the server accepted.
+        if (!store.acknowledgedFloorEstablished()) {
+            pullAll(fromZero = true)
+            store.establishAcknowledgedFloor()
+        }
+        val floor = store.acknowledgedClockFloor()
+        val target = if (floor != null && floor.first >= now) floor else now to 0
+        fun above(millis: Long, counter: Int): Boolean =
+            millis > target.first || (millis == target.first && counter > target.second)
+        if (!above(current.millis, current.counter)) return
+        fun above(clock: String?): Boolean {
+            val parsed = clock?.let { runCatching { SyncClock.parse(it) }.getOrNull() } ?: return false
+            return above(parsed.millis, parsed.counter)
+        }
+        val original = clockLock.withLock { clock } ?: return
+        // Everything below either commits with the lowered clock saved, or leaves the clock as it
+        // was: pending clocks above a lowered clock would never be looked at again.
+        try {
+        marking {
+            clockLock.withLock {
+                clock = HybridLogicalClock(current.deviceId, HlcTimestamp(target.first, target.second, current.deviceId), nowMillis)
+            }
+            val rows = store.allDirty().filter { above(it.clock) }
+            // Unpushed records, plus records pruned locally by a resync: their removal register is
+            // stamped here without being pushed, so it is not dirty yet can be above the target.
+            val pending = store.pushableRecords(Int.MAX_VALUE, Long.MAX_VALUE, { 0L })
+            val pendingKeys = pending.mapTo(HashSet()) { it.kind to it.key }
+            val local = store.recordsWithRemovalClocks { deleted, cleared -> above(deleted) || above(cleared) }
+                .filter { (it.kind to it.key) !in pendingKeys }
+            val records = (pending + local).filter { record ->
+                val state = record.state
+                above(state.cleared) || above(state.deleted?.clock) ||
+                    state.fields.values.any { it.dirty && above(it.clock) }
+            }
+            val old = HashSet<String>()
+            rows.forEach { old += it.clock }
+            for (record in records) {
+                val state = record.state
+                state.cleared?.takeIf(::above)?.let { old += it }
+                state.deleted?.takeIf { above(it.clock) }?.let { old += it.clock }
+                state.fields.values.forEach { if (it.dirty && above(it.clock)) old += it.clock }
+            }
+            val fresh = HashMap<String, String>(old.size * 2)
+            old.sortedWith { a, b -> LwwMerge.compare(a, b) }.forEach { fresh[it] = nextClock() }
+            store.transaction {
+                for (record in records) {
+                    val state = record.state
+                    val rebased = LwwMerge.LocalState(
+                        fields = state.fields.mapValues { (_, field) ->
+                            if (field.dirty) fresh[field.clock]?.let { field.copy(clock = it) } ?: field else field
+                        },
+                        deleted = state.deleted?.let { deleted -> fresh[deleted.clock]?.let { deleted.copy(clock = it) } ?: deleted },
+                        cleared = state.cleared?.let { fresh[it] ?: it },
+                    )
+                    val skewed = record.rejectReason == "clock_skew"
+                    store.saveRecord(
+                        record.copy(
+                            state = rebased,
+                            rejectReason = if (skewed) null else record.rejectReason,
+                            rejectedAt = if (skewed) null else record.rejectedAt,
+                        ),
+                    )
+                }
+                rows.forEach { row -> store.rebaseDirtyClock(row, fresh.getValue(row.clock)) }
+            }
+            persistClock()
+        }
+        } catch (error: Throwable) {
+            clockLock.withLock { clock = original }
+            throw error
+        }
     }
 
     private fun retryAfterMillis(reason: String): Long? = when (reason) {

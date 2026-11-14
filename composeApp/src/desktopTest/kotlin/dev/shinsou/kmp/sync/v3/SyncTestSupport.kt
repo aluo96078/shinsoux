@@ -107,6 +107,9 @@ internal class TestDevice(
     /** Runs every time the service reads the clock; lets a test interleave work mid-cycle. */
     @Volatile var onClockRead: (() -> Unit)? = null
 
+    /** How far this device's time is from real time; the test server keeps real time. */
+    @Volatile var clockOffsetMillis: Long = 0L
+
     /** What the installed packages say about their sources; empty means nothing is installed. */
     @Volatile var sources: Map<Pair<String, String>, SyncSourceInfo> = emptyMap()
 
@@ -136,7 +139,7 @@ internal class TestDevice(
         },
         nowMillis = {
             onClockRead?.invoke()
-            System.currentTimeMillis()
+            System.currentTimeMillis() + clockOffsetMillis
         },
         pushDebounceMillis = pushDebounceMillis,
         autoSyncAfterSignIn = false,
