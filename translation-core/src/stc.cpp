@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "common/logging.h"
 #include "translator/parser.h"
 #include "translator/response.h"
 #include "translator/response_options.h"
@@ -69,7 +70,13 @@ void unload(stc_engine *engine) {
 
 extern "C" {
 
-stc_engine *stc_create(void) { return new (std::nothrow) stc_engine(); }
+stc_engine *stc_create(void) {
+    // The engine aborts the process on a failure such as a model file it cannot open. In the
+    // Android app that would end the app, and on the desktop it ends the helper with nothing
+    // said; as an exception it reaches stc_translate's handler and comes back as the error.
+    marian::setThrowExceptionOnAbort(true);
+    return new (std::nothrow) stc_engine();
+}
 
 void stc_destroy(stc_engine *engine) {
     if (!engine) return;
