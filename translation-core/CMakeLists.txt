@@ -31,6 +31,12 @@ if(WIN32)
     # Marian's path matching needs shlwapi. As a standard library it lands at the end of the link
     # line, after the static libraries that refer to it.
     set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lshlwapi")
+    # The engine's float matrix product (attention) needs a BLAS. On x86 it looks for MKL or
+    # OpenBLAS and, finding neither, builds anyway with a product that aborts on first use.
+    # ruy, which it already uses on ARM (Android), has x86 kernels and needs nothing installed.
+    set(USE_RUY ON CACHE BOOL "" FORCE)
+    set(USE_RUY_SGEMM ON CACHE BOOL "" FORCE)
+    set(USE_MKL OFF CACHE BOOL "" FORCE)
     if(MINGW)
         # GCC on Windows cannot align the stack to 32 bytes (GCC bug 54412), yet emits aligned
         # AVX moves for stack variables; the engine's AVX2/AVX-512 kernels, chosen at run time,
