@@ -140,9 +140,14 @@ jobs:
           models="$RUNNER_TEMP/翻譯模型 ja-en"
           mkdir -p "$models"
           base=https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/translations-models
+          # curl on Windows cannot write to a path outside the ANSI code page: download beside it,
+          # then move the file into the directory whose name is the point of this check.
+          download="$RUNNER_TEMP/translation-models-download"
+          mkdir -p "$download"
           fetch() { # name file sha256
-            curl --fail --silent --show-error --location --retry 3 --output "$models/$1" "$base/$2"
-            echo "$3  $models/$1" | sha256sum --check --quiet
+            curl --fail --silent --show-error --location --retry 3 --output "$download/$1" "$base/$2"
+            echo "$3  $download/$1" | sha256sum --check --quiet
+            mv "$download/$1" "$models/$1"
           }
           fetch model.jaen.intgemm.alphas.bin 2b066368-11b5-4cee-92e8-e6156b334f80.bin 3a603e20bfe1be86071913f9e23ab5129075bc0a8490151020ac4821e4f17302
           fetch vocab.jaen.spm 6f4898e3-ebaa-4a79-a1af-93a4f65b96fa.spm 5cb217758bae05877bb3f0c2f612e4e7c1e4cb03c10db11f4a47098d7ae62919
