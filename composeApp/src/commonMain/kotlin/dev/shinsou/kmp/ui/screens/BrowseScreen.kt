@@ -86,6 +86,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -1981,6 +1982,176 @@ private fun ExtensionNovelReaderShell(
     }
 }
 
+/**
+ * Asked before any chapter is queued: which language the work is in, which to translate into,
+ * and which service will do it (and so where the text goes and whether it costs). Starts from
+ * the work's own translation settings when it has them.
+ */
+@Composable
+private fun PrefetchSetupDialog(
+    translation: dev.shinsou.kmp.translation.ReaderTranslation,
+    workKey: String,
+    chapterCount: Int,
+    onConfirm: (from: String?, to: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val systemLanguage = androidx.compose.ui.text.intl.Locale.current.toLanguageTag()
+    var loaded by remember(workKey) { mutableStateOf(false) }
+    // Null is "detect from each chapter", the choice for a work that was never set up.
+    var from by remember(workKey) { mutableStateOf<String?>(null) }
+    var to by remember(workKey) { mutableStateOf(dev.shinsou.kmp.translation.ReaderTranslation.targetLanguage(systemLanguage)) }
+    var preferences by remember { mutableStateOf<dev.shinsou.kmp.translation.TranslationPreferences?>(null) }
+    LaunchedEffect(workKey) {
+        translation.settings(workKey)?.let { saved ->
+            from = saved.from
+            to = saved.to
+        }
+        preferences = runCatching { translation.preferences() }.getOrNull()
+        loaded = true
+    }
+    val provider = preferences?.provider
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.text("Translate chapters ahead")) },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()).testTag("prefetch-setup"),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(strings.text("{0} chapters will be translated and kept, so they open translated.", chapterCount))
+                Text(strings.text("Original language"), style = MaterialTheme.typography.titleSmall)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    FilterChip(selected = from == null, onClick = { from = null }, label = { Text(strings.text("Detect")) })
+                    translation.languages.forEach { language ->
+                        FilterChip(selected = from == language.tag, onClick = { from = language.tag }, label = { Text(language.name) })
+                    }
+                }
+                Text(strings.text("Translate into"), style = MaterialTheme.typography.titleSmall)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    translation.languages.forEach { language ->
+                        FilterChip(selected = to == language.tag, onClick = { to = language.tag }, label = { Text(language.name) })
+                    }
+                }
+                Text(strings.text("Translation service"), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when (provider) {
+                        null -> "…"
+                        dev.shinsou.kmp.translation.TranslationProviderKind.OFFLINE ->
+                            strings.text("{0}: free and on this device; nothing is sent anywhere.", provider.label(strings))
+                        else -> strings.text(
+                            "{0}: the chapters' text is sent to this service, which may charge for it. Used today: {1} of {2} characters.",
+                            provider.label(strings),
+                            preferences?.charactersUsedToday ?: 0,
+                            preferences?.dailyCharacterLimit?.takeIf { it > 0 }?.toString() ?: strings.text("No limit"),
+                        )
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    strings.text("The service and the daily limit are changed in Settings → Translation."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (from != null && from == to) {
+                    Text(strings.text("The two languages are the same."), color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(from, to) },
+                enabled = loaded && from != to,
+                modifier = Modifier.testTag("prefetch-start"),
+            ) { Text(strings.text("Start translating")) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
+    )
+}
+
+/** One chapter's place in the translation queue, under its title. */
+@Composable
+private fun PrefetchChapterStatus(entry: dev.shinsou.kmp.translation.PrefetchEntry) {
+    val strings = LocalShinsouStrings.current
+    val (text, error) = when (entry.state) {
+        dev.shinsou.kmp.translation.PrefetchState.QUEUED -> strings.text("Waiting to be translated") to false
+        dev.shinsou.kmp.translation.PrefetchState.RUNNING ->
+            (if (entry.total > 0) strings.text("Translating… {0} of {1} lines", entry.done, entry.total) else strings.text("Translating…")) to false
+        dev.shinsou.kmp.translation.PrefetchState.DONE -> return
+        dev.shinsou.kmp.translation.PrefetchState.FAILED -> strings.text("Not translated: {0}", prefetchFailureText(strings, entry.failure)) to true
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+private fun prefetchFailureText(strings: ShinsouStrings, failure: dev.shinsou.kmp.translation.TranslationFailure?): String = when (failure) {
+    null -> strings.text("the chapter could not be fetched, or it is not text.")
+    dev.shinsou.kmp.translation.TranslationFailure.MODEL_MISSING ->
+        strings.text("the translation models are not downloaded. Open a chapter and turn translation on to download them.")
+    dev.shinsou.kmp.translation.TranslationFailure.UNSUPPORTED_PAIR -> strings.text("these two languages are not supported.")
+    dev.shinsou.kmp.translation.TranslationFailure.DEVICE_UNSUPPORTED -> strings.text("offline translation is not available on this device.")
+    dev.shinsou.kmp.translation.TranslationFailure.LOW_MEMORY -> strings.text("not enough free memory right now.")
+    dev.shinsou.kmp.translation.TranslationFailure.INVALID_KEY -> strings.text("the API key is missing or was refused.")
+    dev.shinsou.kmp.translation.TranslationFailure.QUOTA_EXCEEDED -> strings.text("the quota of the API key is used up.")
+    dev.shinsou.kmp.translation.TranslationFailure.DAILY_LIMIT -> strings.text("today's limit for paid translation is reached.")
+    dev.shinsou.kmp.translation.TranslationFailure.PROVIDER_UNAVAILABLE -> strings.text("the translation service could not be reached.")
+    dev.shinsou.kmp.translation.TranslationFailure.ENGINE_FAILED -> strings.text("the translation stopped before it finished.")
+    dev.shinsou.kmp.translation.TranslationFailure.NOT_CONFIGURED -> strings.text("the AI model service needs its address and model first.")
+    dev.shinsou.kmp.translation.TranslationFailure.REFUSED -> strings.text("the model declined to translate this text.")
+}
+
+/** The work's translation queue at a glance: how far it is, what stopped it, and a way out. */
+@Composable
+private fun PrefetchProgress(
+    entries: List<dev.shinsou.kmp.translation.PrefetchEntry>,
+    onCancel: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val done = entries.count { it.state == dev.shinsou.kmp.translation.PrefetchState.DONE }
+    val failed = entries.filter { it.state == dev.shinsou.kmp.translation.PrefetchState.FAILED }
+    val pending = entries.size - done - failed.size
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().testTag("prefetch-progress"),
+    ) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (pending > 0) strings.text("Translating ahead: {0} of {1} chapters", done, entries.size)
+                    else strings.text("Translated ahead: {0} of {1} chapters", done, entries.size),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (pending > 0) {
+                    TextButton(onClick = onCancel) { Text(strings.cancel) }
+                } else {
+                    TextButton(onClick = onClear) { Text(strings.text("Dismiss")) }
+                }
+            }
+            if (pending > 0) {
+                LinearProgressIndicator(
+                    progress = { ((done + failed.size).toFloat() / entries.size.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            failed.firstOrNull()?.let { first ->
+                Text(
+                    strings.text("{0} chapters were not translated: {1}", failed.size, prefetchFailureText(strings, first.failure)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
 /** Exact-keyed native extension path; host-issued selections remain the only content authority. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2320,6 +2491,120 @@ internal fun ExtensionV2PublicationPane(
             .filter { it.state == DownloadState.DOWNLOADED }
             .mapTo(hashSetOf()) { it.remoteUnitId }
         if (!downloadedUnitIds.containsAll(finished)) downloadedUnitIds = downloadedUnitIds + finished
+    }
+
+    // Translating ahead of reading: the same app-wide queue idea as downloads.
+    val translation = contentFeatures?.translation
+    val prefetchGroup = remember(sourceKey, remotePublicationId) { sourceKey.canonicalId + "|" + remotePublicationId }
+    val prefetchEntries by (translation?.prefetch?.entries ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
+    val publicationPrefetch = remember(prefetchEntries, prefetchGroup) { prefetchEntries.filter { it.group == prefetchGroup } }
+    val prefetchByUnit = remember(publicationPrefetch) { publicationPrefetch.associateBy { it.unit } }
+    // Translating ahead fetches a chapter the way a download does: it is on the device from then on.
+    val prefetchFetched = remember(publicationPrefetch) { publicationPrefetch.filter { it.fetched }.mapTo(hashSetOf()) { it.unit } }
+    LaunchedEffect(prefetchFetched) {
+        if (!downloadedUnitIds.containsAll(prefetchFetched)) downloadedUnitIds = downloadedUnitIds + prefetchFetched
+    }
+    var storedTranslatedUnitIds by remember(item.identityKey) { mutableStateOf<Set<String>>(emptySet()) }
+    val finishedPrefetch = remember(publicationPrefetch) {
+        publicationPrefetch.count { it.state == dev.shinsou.kmp.translation.PrefetchState.DONE }
+    }
+    LaunchedEffect(translation, units.size, finishedPrefetch) {
+        if (translation == null || units.isEmpty()) return@LaunchedEffect
+        val workKey = dev.shinsou.kmp.plugin.v2.extensionPublicationKey(sourceKey, remotePublicationId).value
+        val keys = runCatching { translation.translatedChapterKeys(workKey) }.getOrDefault(emptySet())
+        storedTranslatedUnitIds = if (keys.isEmpty()) {
+            emptySet()
+        } else {
+            withContext(Dispatchers.Default) {
+                units.mapNotNullTo(hashSetOf()) { selection ->
+                    selection.unit.remoteId.takeIf {
+                        dev.shinsou.kmp.plugin.v2.extensionUnitKey(sourceKey, remotePublicationId, it).value in keys
+                    }
+                }
+            }
+        }
+    }
+
+    // Nothing is translated before the user has seen what into, from what, and through which service.
+    var prefetchSetup by remember(item.identityKey) { mutableStateOf<List<ExtensionUnitSelectionV2>?>(null) }
+
+    fun translateUnits(selections: List<ExtensionUnitSelectionV2>, onlyDownloaded: Boolean = false) {
+        if (translation == null) return
+        // Which of them are already translated depends on the language chosen next, not on
+        // whether anything at all is stored for them.
+        val candidates = selections.distinctBy { it.unit.remoteId }
+        operationFailed = false
+        if (candidates.isEmpty()) {
+            operationMessage = if (onlyDownloaded) strings.text("No chapter of this title is downloaded yet.") else null
+            return
+        }
+        operationMessage = null
+        prefetchSetup = candidates
+    }
+
+    fun startPrefetch(selections: List<ExtensionUnitSelectionV2>, from: String?, to: String) {
+        val features = contentFeatures ?: return
+        val queue = translation?.prefetch ?: return
+        val sourceName = callbacks.state.value.sources.firstOrNull { it.sourceKey == sourceKey }?.name
+        val workTitle = publicationPage?.publication?.title ?: item.title
+        val languages = dev.shinsou.kmp.translation.PrefetchLanguages(to = to, from = from)
+        val jobs = selections
+            .map { selection ->
+                dev.shinsou.kmp.translation.TranslationPrefetchJob(
+                    id = prefetchGroup + "|" + selection.unit.remoteId,
+                    group = prefetchGroup,
+                    title = selection.unit.title,
+                    languages = languages,
+                    unit = selection.unit.remoteId,
+                    load = {
+                        // Fetching the chapter stores it, exactly as a download does.
+                        val materialization = try {
+                            callbacks.materializeExtensionContentV2(selection, null)
+                        } catch (choice: ExtensionContentConsumerException.RepresentationSelectionRequired) {
+                            callbacks.materializeExtensionContentV2(selection, choice.availableIds.firstOrNull() ?: throw choice)
+                        }
+                        prefetchChapter(
+                            callbacks.openMaterializedExtensionContentV2(materialization),
+                            features,
+                            dev.shinsou.kmp.translation.TranslationLabels(workTitle, selection.unit.title, sourceName),
+                        )
+                    },
+                )
+            }
+        scope.launch {
+            // Chapters already whole in this language, from the service in use, need nothing.
+            val workKey = dev.shinsou.kmp.plugin.v2.extensionPublicationKey(sourceKey, remotePublicationId).value
+            val done = runCatching { translation?.translatedChapterKeys(workKey, to) }.getOrNull().orEmpty()
+            val pending = if (done.isEmpty()) jobs else withContext(Dispatchers.Default) {
+                jobs.filterNot { dev.shinsou.kmp.plugin.v2.extensionUnitKey(sourceKey, remotePublicationId, it.unit).value in done }
+            }
+            if (pending.isEmpty()) {
+                operationMessage = strings.text("The selected chapters are already translated.")
+                return@launch
+            }
+            val added = queue.enqueue(pending)
+            operationMessage = if (added > 0) {
+                strings.text("{0} chapters added to the translation queue.", added)
+            } else {
+                strings.text("The selected chapters are already translated or queued.")
+            }
+        }
+    }
+
+    val pendingPrefetch = prefetchSetup
+    if (pendingPrefetch != null && translation != null) {
+        PrefetchSetupDialog(
+            translation = translation,
+            workKey = remember(sourceKey, remotePublicationId) {
+                dev.shinsou.kmp.plugin.v2.extensionPublicationKey(sourceKey, remotePublicationId).value
+            },
+            chapterCount = pendingPrefetch.size,
+            onConfirm = { from, to ->
+                prefetchSetup = null
+                startPrefetch(pendingPrefetch, from, to)
+            },
+            onDismiss = { prefetchSetup = null },
+        )
     }
 
     fun downloadUnits(selections: List<ExtensionUnitSelectionV2>) {
@@ -2675,6 +2960,15 @@ internal fun ExtensionV2PublicationPane(
                         },
                         onUpdateNotes = { notes = it },
                         onDownloadAll = { downloadUnits(units) },
+                        onTranslateAll = if (translation != null) ({ translateUnits(units) }) else null,
+                        onTranslateDownloaded = if (translation != null) {
+                            { translateUnits(units.filter { it.unit.remoteId in downloadedUnitIds }, onlyDownloaded = true) }
+                        } else {
+                            null
+                        },
+                        prefetch = publicationPrefetch,
+                        onCancelPrefetch = { scope.launch { translation?.prefetch?.cancel(prefetchGroup) } },
+                        onClearPrefetch = { scope.launch { translation?.prefetch?.clearFinished(prefetchGroup) } },
                         onContinueReading = continueUnit?.let { { materialize(it, openReader = true) } },
                         onBack = onBack,
                         scrollable = true,
@@ -2703,6 +2997,9 @@ internal fun ExtensionV2PublicationPane(
                         onLoadMore = ::loadMore,
                         onReadUnit = { materialize(it, openReader = true) },
                         onDownloadUnits = { downloadUnits(it) },
+                        onTranslateUnits = if (translation != null) ({ translateUnits(it) }) else null,
+                        translatedUnitIds = storedTranslatedUnitIds,
+                        prefetchByUnit = prefetchByUnit,
                         onSelectionChange = { selectedUnitIds = it },
                         onReadStateChange = { ids, read ->
                             manualReadMarks = manualReadMarks + ids.associateWith { read }
@@ -2762,6 +3059,15 @@ internal fun ExtensionV2PublicationPane(
                             },
                             onUpdateNotes = { notes = it },
                             onDownloadAll = { downloadUnits(units) },
+                            onTranslateAll = if (translation != null) ({ translateUnits(units) }) else null,
+                        onTranslateDownloaded = if (translation != null) {
+                            { translateUnits(units.filter { it.unit.remoteId in downloadedUnitIds }, onlyDownloaded = true) }
+                        } else {
+                            null
+                        },
+                            prefetch = publicationPrefetch,
+                            onCancelPrefetch = { scope.launch { translation?.prefetch?.cancel(prefetchGroup) } },
+                            onClearPrefetch = { scope.launch { translation?.prefetch?.clearFinished(prefetchGroup) } },
                             onContinueReading = continueUnit?.let { { materialize(it, openReader = true) } },
                             onBack = onBack,
                             scrollable = false,
@@ -2791,6 +3097,9 @@ internal fun ExtensionV2PublicationPane(
                             onLoadMore = ::loadMore,
                             onReadUnit = { materialize(it, openReader = true) },
                             onDownloadUnits = { downloadUnits(it) },
+                            onTranslateUnits = if (translation != null) ({ translateUnits(it) }) else null,
+                            translatedUnitIds = storedTranslatedUnitIds,
+                            prefetchByUnit = prefetchByUnit,
                             onSelectionChange = { selectedUnitIds = it },
                             onReadStateChange = { ids, read ->
                                 manualReadMarks = manualReadMarks + ids.associateWith { read }
@@ -2878,6 +3187,13 @@ private fun ExtensionV2PublicationInfoPane(
     onOpenTracking: () -> Unit,
     onUpdateNotes: (String) -> Unit,
     onDownloadAll: () -> Unit,
+    /** Queues every chapter for translation ahead of reading (fetching those not stored yet); null where there is no translation. */
+    onTranslateAll: (() -> Unit)? = null,
+    /** Queues only the chapters that are already downloaded: nothing new is fetched from the source. */
+    onTranslateDownloaded: (() -> Unit)? = null,
+    prefetch: List<dev.shinsou.kmp.translation.PrefetchEntry> = emptyList(),
+    onCancelPrefetch: () -> Unit = {},
+    onClearPrefetch: () -> Unit = {},
     onContinueReading: (() -> Unit)?,
     scrollable: Boolean,
     modifier: Modifier = Modifier,
@@ -2979,6 +3295,65 @@ private fun ExtensionV2PublicationInfoPane(
                 Spacer(Modifier.width(7.dp))
                 Text(strings.text("Download all chapters"))
             }
+            if (onTranslateAll != null) {
+                Spacer(Modifier.height(9.dp))
+                // Two ways to translate ahead: everything (which also downloads it), or only what is already here.
+                var translateMenuVisible by remember { mutableStateOf(false) }
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { translateMenuVisible = true },
+                        modifier = Modifier.fillMaxWidth().testTag("translate-chapters"),
+                    ) {
+                        Icon(Icons.Outlined.Translate, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(strings.text("Translate chapters ahead"))
+                    }
+                    DropdownMenu(expanded = translateMenuVisible, onDismissRequest = { translateMenuVisible = false }) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(strings.text("Translate all chapters"))
+                                    Text(
+                                        strings.text("Chapters that are not downloaded yet are downloaded as well."),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Download, null) },
+                            onClick = {
+                                translateMenuVisible = false
+                                onTranslateAll()
+                            },
+                            modifier = Modifier.testTag("translate-all-chapters"),
+                        )
+                        if (onTranslateDownloaded != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(strings.text("Translate downloaded chapters"))
+                                        Text(
+                                            strings.text("Only what is already on this device; nothing new is downloaded."),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Translate, null) },
+                                onClick = {
+                                    translateMenuVisible = false
+                                    onTranslateDownloaded()
+                                },
+                                modifier = Modifier.testTag("translate-downloaded-chapters"),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (prefetch.isNotEmpty()) {
+            Spacer(Modifier.height(9.dp))
+            PrefetchProgress(prefetch, onCancelPrefetch, onClearPrefetch)
         }
         if (continueLabel != null && onContinueReading != null) {
             Spacer(Modifier.height(9.dp))
@@ -3110,6 +3485,9 @@ private fun ExtensionV2ChapterPane(
     onLoadMore: () -> Unit,
     onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
     onDownloadUnits: (List<ExtensionUnitSelectionV2>) -> Unit,
+    onTranslateUnits: ((List<ExtensionUnitSelectionV2>) -> Unit)? = null,
+    translatedUnitIds: Set<String> = emptySet(),
+    prefetchByUnit: Map<String, dev.shinsou.kmp.translation.PrefetchEntry> = emptyMap(),
     onSelectionChange: (Set<String>) -> Unit,
     onReadStateChange: (Set<String>, Boolean) -> Unit,
     onBookmarkStateChange: (Set<String>, Boolean) -> Unit,
@@ -3179,6 +3557,11 @@ private fun ExtensionV2ChapterPane(
                 }
                 IconButton(onClick = { onDownloadUnits(selectedVisible) }) {
                     Icon(Icons.Outlined.Download, strings.download)
+                }
+                if (onTranslateUnits != null) {
+                    IconButton(onClick = { onTranslateUnits(selectedVisible) }, modifier = Modifier.testTag("translate-selected-chapters")) {
+                        Icon(Icons.Outlined.Translate, strings.text("Translate"))
+                    }
                 }
                 IconButton(onClick = { onDeleteDownloads(selectedUnitIds) }) {
                     Icon(Icons.Outlined.Delete, strings.delete, tint = MaterialTheme.colorScheme.error)
@@ -3335,6 +3718,11 @@ private fun ExtensionV2ChapterPane(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            prefetchByUnit[unitId]?.let { entry -> PrefetchChapterStatus(entry) }
+                        }
+                        if (unitId in translatedUnitIds || prefetchByUnit[unitId]?.state == dev.shinsou.kmp.translation.PrefetchState.DONE) {
+                            Icon(Icons.Outlined.Translate, strings.text("Translated"), Modifier.size(17.dp))
+                            Spacer(Modifier.width(4.dp))
                         }
                         if (unitId in downloadedUnitIds) {
                             Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))

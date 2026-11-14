@@ -97,6 +97,50 @@ class CloudTranslationTest {
     }
 
     @Test
+    fun azureSendsTheKeyAndRegionInHeadersAndTheLanguagesInTheAddress() = runBlocking<Unit> {
+        val requests = ArrayList<HttpRequestData>()
+        val bodies = ArrayList<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requests += request
+                val body = (request.body as TextContent).text
+                bodies += body
+                val answer = JsonArray(
+                    Json.parseToJsonElement(body).jsonArray.map { line ->
+                        buildJsonObject {
+                            put("translations", buildJsonArray {
+                                add(buildJsonObject { put("text", "A(${line.jsonObject.getValue("Text").jsonPrimitive.content})"); put("to", "zh-Hant") })
+                            })
+                        }
+                    },
+                )
+                respond(answer.toString(), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            },
+        )
+        val regional = AzureTranslationProvider(client, " key ", " eastasia ")
+        assertEquals(listOf(TranslationHop("ja", "zh-Hant", "azure:v3")), regional.route("ja", "zh-TW"))
+        assertEquals(listOf("A(一)", "A(二)"), regional.translate(hop, listOf("一", "二")))
+        val sent = requests.single()
+        assertEquals("api.cognitive.microsofttranslator.com", sent.url.host)
+        assertEquals("3.0", sent.url.parameters["api-version"])
+        assertEquals("ja", sent.url.parameters["from"])
+        assertEquals("zh-Hant", sent.url.parameters["to"])
+        assertEquals("key", sent.headers["Ocp-Apim-Subscription-Key"])
+        assertEquals("eastasia", sent.headers["Ocp-Apim-Subscription-Region"])
+        assertFalse("key" in sent.url.toString().substringAfter("?"), "the key never goes in the address")
+        assertEquals("""[{"Text":"一"},{"Text":"二"}]""", bodies.single())
+
+        // A global resource has no region to send.
+        AzureTranslationProvider(client, "key", "").translate(hop, listOf("三"))
+        assertNull(requests.last().headers["Ocp-Apim-Subscription-Region"])
+
+        val lines = (1..230).map { "行$it" }
+        requests.clear()
+        assertEquals(lines.map { "A($it)" }, regional.translate(hop, lines))
+        assertEquals(3, requests.size)
+    }
+
+    @Test
     fun refusalsAreToldApart() = runBlocking<Unit> {
         suspend fun failure(provider: TranslationProvider) = assertFailsWith<TranslationException> { provider.translate(hop, listOf("一")) }.failure
         assertEquals(TranslationFailure.INVALID_KEY, failure(DeepLTranslationProvider(Service(HttpStatusCode.Forbidden).client, "k")))
@@ -246,6 +290,19 @@ class CloudTranslationTest {
         assertEquals(pieces.joinToString(" ") { "[${it.length}]" }, answers[1])
         assertEquals("[3]", answers[2])
         assertTrue(seen.all { it <= OfflineTranslationProvider.MAX_LINE_CHARACTERS })
+    }
+
+    @Test
+    fun azureIsChosenKeyedAndGivenItsRegionLikeTheOtherServices() = runBlocking<Unit> {
+        val device = Device(Service())
+        device.translation.setProvider(TranslationProviderKind.AZURE)
+        assertEquals(TranslationFailure.INVALID_KEY, assertFailsWith<TranslationException> { device.translation.translate(request("空が青い")) { _, _ -> } }.failure)
+        device.translation.setKey(TranslationProviderKind.AZURE, "k")
+        device.translation.setAzureRegion(" East Asia! ")
+        val preferences = device.translation.preferences()
+        assertTrue(preferences.azureKeySet)
+        assertEquals("eastasia", preferences.azureRegion)
+        assertEquals("k", device.secrets!!.getString("translation.azure.secret"))
     }
 
     @Test

@@ -336,6 +336,8 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
                                     strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "DeepL")
                                 TranslationProviderKind.GOOGLE ->
                                     strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "Google")
+                                TranslationProviderKind.AZURE ->
+                                    strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "Microsoft Azure")
                                 TranslationProviderKind.LLM ->
                                     strings.text("Translated by the AI model you set up. The text of this chapter is sent to that service.")
                             },

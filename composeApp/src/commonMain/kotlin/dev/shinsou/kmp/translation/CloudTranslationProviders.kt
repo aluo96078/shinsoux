@@ -10,7 +10,14 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 private val CloudJson = Json { ignoreUnknownKeys = true }
@@ -43,54 +50,83 @@ public abstract class CloudTranslationProvider(
         return listOf(TranslationHop(source, target, engine))
     }
 
+    /** Requests of one call that may be in flight together; 1 sends them one after another. */
+    protected open val parallelRequests: Int get() = 1
+
     final override suspend fun translate(hop: TranslationHop, segments: List<String>): List<String> {
         val from = sourceCode(hop.from) ?: throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "$id cannot translate from ${hop.from}")
         val to = targetCode(hop.to) ?: throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "$id cannot translate into ${hop.to}")
-        val out = ArrayList<String>(segments.size)
         // Bounded by the service's line count and by a request size well under its limit.
+        val batches = ArrayList<List<String>>()
         var batch = ArrayList<String>()
         var bytes = 0
-        suspend fun flush() {
-            if (batch.isEmpty()) return
-            // Counted request by request, before it is sent: with translation on, every chapter
-            // opened is sent, and that must not turn into an unexpected bill.
-            val characters = batch.sumOf { it.length }.toLong()
-            if (usage?.reserve(characters) == false) {
-                throw TranslationException(TranslationFailure.DAILY_LIMIT, "Today's translation limit is used up")
+        for (segment in segments) {
+            val size = segment.encodeToByteArray().size
+            if (batch.isNotEmpty() && (batch.size >= maximumLines || bytes + size > maximumRequestBytes)) {
+                batches += batch
+                batch = ArrayList()
+                bytes = 0
             }
-            val answers = try {
-                request(from, to, batch)
-            } catch (error: CancellationException) {
-                throw error // it may have been sent and charged: it stays counted
-            } catch (error: TranslationException) {
-                // Only a request the service turned away is known not to be charged. A model that
-                // read the text and declined, or answered with something unusable, did the work.
-                if (error.failure != TranslationFailure.ENGINE_FAILED && error.failure != TranslationFailure.REFUSED) {
-                    usage?.release(characters)
-                }
-                throw error
-            } catch (error: Exception) {
-                throw TranslationException(TranslationFailure.PROVIDER_UNAVAILABLE, "$id could not be reached: ${error.message}", error)
-            }
-            if (answers.size != batch.size) throw TranslationException(TranslationFailure.ENGINE_FAILED, "$id returned ${answers.size} lines for ${batch.size}")
-            out += answers
-            batch = ArrayList()
-            bytes = 0
+            batch += segment
+            bytes += size
         }
-        try {
-            for (segment in segments) {
-                val size = segment.encodeToByteArray().size
-                if (batch.size >= maximumLines || bytes + size > maximumRequestBytes) flush()
-                batch += segment
-                bytes += size
+        if (batch.isNotEmpty()) batches += batch
+
+        // Each request settles on its own, so one that fails does not throw away what the
+        // others returned (and were paid for).
+        val results: List<Result<List<String>>> = if (parallelRequests <= 1 || batches.size <= 1) {
+            val settled = ArrayList<Result<List<String>>>(batches.size)
+            for (lines in batches) {
+                val result = runBatch(from, to, lines)
+                settled += result
+                if (result.isFailure) break // in order: nothing after a failure is sent
             }
-            flush()
-        } catch (error: TranslationException) {
-            // What earlier requests of this call already returned was paid for: hand it back.
-            if (out.isEmpty()) throw error
-            throw TranslationException(error.failure, error.message ?: "$id failed", error, completed = out.toList())
+            settled
+        } else {
+            val gate = Semaphore(parallelRequests)
+            coroutineScope {
+                batches.map { lines -> async { gate.withPermit { runBatch(from, to, lines) } } }.awaitAll()
+            }
+        }
+        val out = ArrayList<String>(segments.size)
+        for (result in results) {
+            val answers = result.getOrElse { error ->
+                val failure = error as? TranslationException ?: throw error
+                // The lines before the first failure are handed back with it; a later request that
+                // succeeded is not, since answers are matched to lines by position from the start.
+                if (out.isEmpty()) throw failure
+                throw TranslationException(failure.failure, failure.message ?: "$id failed", failure, completed = out.toList())
+            }
+            out += answers
         }
         return out
+    }
+
+    private suspend fun runBatch(from: String, to: String, lines: List<String>): Result<List<String>> {
+        // Counted request by request, before it is sent: with translation on, every chapter
+        // opened is sent, and that must not turn into an unexpected bill.
+        val characters = lines.sumOf { it.length }.toLong()
+        if (usage?.reserve(characters) == false) {
+            return Result.failure(TranslationException(TranslationFailure.DAILY_LIMIT, "Today's translation limit is used up"))
+        }
+        val answers = try {
+            request(from, to, lines)
+        } catch (error: CancellationException) {
+            throw error // it may have been sent and charged: it stays counted
+        } catch (error: TranslationException) {
+            // Only a request the service turned away is known not to be charged. A model that
+            // read the text and declined, or answered with something unusable, did the work.
+            if (error.failure != TranslationFailure.ENGINE_FAILED && error.failure != TranslationFailure.REFUSED) {
+                usage?.release(characters)
+            }
+            return Result.failure(error)
+        } catch (error: Exception) {
+            return Result.failure(TranslationException(TranslationFailure.PROVIDER_UNAVAILABLE, "$id could not be reached: ${error.message}", error))
+        }
+        if (answers.size != lines.size) {
+            return Result.failure(TranslationException(TranslationFailure.ENGINE_FAILED, "$id returned ${answers.size} lines for ${lines.size}"))
+        }
+        return Result.success(answers)
     }
 
     /** Maps the service's refusal to what the reader can tell the user. */
@@ -211,6 +247,53 @@ public class GoogleTranslationProvider(
 
     public companion object {
         public const val ID: String = "google"
+    }
+}
+
+/**
+ * Azure AI Translator, Text Translation v3 (`/translate?api-version=3.0`), with a resource key.
+ * A regional or multi-service resource also needs its region; a global one does not.
+ */
+public class AzureTranslationProvider(
+    http: HttpClient,
+    private val apiKey: String,
+    private val region: String,
+    usage: TranslationUsage? = null,
+) : CloudTranslationProvider(http, usage) {
+    override val id: String get() = ID
+    override val engine: String get() = "azure:v3"
+    override val maximumLines: Int get() = 100 // the service takes at most 1,000 elements and 50,000 characters
+
+    // Azure names these languages as the reader does.
+    override fun sourceCode(language: String): String? = language.takeIf { it in LANGUAGES }
+    override fun targetCode(language: String): String? = language.takeIf { it in LANGUAGES }
+
+    override suspend fun request(from: String, to: String, lines: List<String>): List<String> {
+        val response = http.post("https://api.cognitive.microsofttranslator.com/translate") {
+            parameter("api-version", "3.0")
+            parameter("from", from)
+            parameter("to", to)
+            header("Ocp-Apim-Subscription-Key", apiKey.trim())
+            if (region.isNotBlank()) header("Ocp-Apim-Subscription-Region", region.trim())
+            setBody(TextContent(CloudJson.encodeToString(ListSerializer(Line.serializer()), lines.map(::Line)), ContentType.Application.Json))
+        }
+        if (response.status.value !in 200..299) fail(response)
+        return CloudJson.decodeFromString(ListSerializer(Answer.serializer()), response.bodyAsText())
+            .map { it.translations.firstOrNull()?.text.orEmpty() }
+    }
+
+    @Serializable
+    private data class Line(@SerialName("Text") val text: String)
+
+    @Serializable
+    private data class Answer(val translations: List<Translation> = emptyList())
+
+    @Serializable
+    private data class Translation(val text: String = "")
+
+    public companion object {
+        public const val ID: String = "azure"
+        private val LANGUAGES = setOf("zh-Hans", "zh-Hant", "ja", "ko", "en")
     }
 }
 

@@ -92,6 +92,11 @@ public class LlmTranslationProvider(
             TranslationText.hash(normalizedLlmBaseUrl(settings.baseUrl).orEmpty()).take(12)
     override val maximumLines: Int get() = 40
 
+    // Two requests of a chapter at a time: it finishes in about half the time, and a model
+    // server or a rate limit sized for one user is not flooded.
+    override val parallelRequests: Int get() = 2
+    override val linesPerCall: Int get() = maximumLines * parallelRequests
+
     // What comes back must fit the answer the request allows for.
     override val maximumRequestBytes: Int get() = 9 * 1024
 

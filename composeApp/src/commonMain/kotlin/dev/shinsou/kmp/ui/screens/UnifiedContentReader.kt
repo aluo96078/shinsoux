@@ -299,6 +299,32 @@ internal fun readerTranslationAvailable(session: TypedReaderContentSession, feat
     return runCatching { features.operations.offlineStore(access, text.length.toLong()) { true } }.getOrDefault(false)
 }
 
+/**
+ * The chapter in [session] as the translation queue needs it, under the same conditions the
+ * reader translates it: plain text whose grant allows keeping it, with the reader's own notion
+ * of which lines are not prose.
+ */
+internal suspend fun prefetchChapter(
+    session: TypedReaderContentSession,
+    features: ContentFeatureRuntime,
+    labels: dev.shinsou.kmp.translation.TranslationLabels?,
+): dev.shinsou.kmp.translation.PrefetchChapter {
+    if (!readerTranslationAvailable(session, features)) {
+        throw dev.shinsou.kmp.translation.PrefetchNotTranslatable("This chapter is not text that may be translated and kept")
+    }
+    val text = requireNotNull(session.canonicalText)
+    val access = session.access.withTextCharacters(text.length)
+    val scope = session.content.navigation.scope
+    return dev.shinsou.kmp.translation.PrefetchChapter(
+        workKey = scope.publicationId.value,
+        chapterKey = scope.unitId.value,
+        text = text,
+        exportable = runCatching { features.operations.export(access, text.length.toLong()) { true } }.getOrDefault(false),
+        labels = labels,
+        keep = { line -> parseNovelReaderSegments(line).any { it is NovelReaderSegment.Image } },
+    )
+}
+
 /** The small rich-text surface used by text chapters. Images stay in the source body as URLs. */
 internal sealed interface NovelReaderSegment {
     data class Text(

@@ -26,6 +26,9 @@ public enum class TranslationProviderKind(public val id: String, internal val se
     /** Google Cloud Translation with the user's API key. What is read is sent to Google. */
     GOOGLE(GoogleTranslationProvider.ID, "translation.google.secret"),
 
+    /** Azure AI Translator with the user's resource key. What is read is sent to Microsoft. */
+    AZURE(AzureTranslationProvider.ID, "translation.azure.secret"),
+
     /** A language model behind an address the user set up. What is read is sent there. */
     LLM(LlmTranslationProvider.ID, "translation.llm.secret"),
 }
@@ -40,6 +43,9 @@ public data class TranslationPreferences(
     /** The language-model service as the user set it up; its key is reported only as set or not. */
     val llm: LlmSettings = LlmSettings(),
     val llmKeySet: Boolean = false,
+    val azureKeySet: Boolean = false,
+    /** The Azure resource's region; empty for a global resource. */
+    val azureRegion: String = "",
     /** False where keys cannot be stored safely: only the offline engine is offered. */
     val cloudAvailable: Boolean,
 )
@@ -81,6 +87,8 @@ public class ReaderTranslation(
             googleKeySet = !key(TranslationProviderKind.GOOGLE).isNullOrBlank(),
             llm = llmSettings(),
             llmKeySet = !key(TranslationProviderKind.LLM).isNullOrBlank(),
+            azureKeySet = !key(TranslationProviderKind.AZURE).isNullOrBlank(),
+            azureRegion = memory.preference(PREF_AZURE_REGION).orEmpty(),
             cloudAvailable = secrets != null,
         )
     }
@@ -93,6 +101,11 @@ public class ReaderTranslation(
         val store = secrets ?: return
         val name = kind.secretName ?: return
         if (value.isBlank()) store.remove(name) else store.putString(name, value.trim())
+    }
+
+    /** The region of the Azure Translator resource (for example `eastasia`); empty for a global resource. */
+    public suspend fun setAzureRegion(region: String): Unit = withContext(Dispatchers.Default) {
+        memory.setPreference(PREF_AZURE_REGION, region.trim().lowercase().filter { it.isLetterOrDigit() || it == '-' }.take(40))
     }
 
     /** The language-model service: wire format, address and model. Refused when the address must not be used. */
@@ -154,6 +167,9 @@ public class ReaderTranslation(
         TranslationProviderKind.OFFLINE -> offline
         TranslationProviderKind.DEEPL -> DeepLTranslationProvider(http, key(kind).orEmpty(), usage)
         TranslationProviderKind.GOOGLE -> GoogleTranslationProvider(http, key(kind).orEmpty(), usage)
+        TranslationProviderKind.AZURE -> AzureTranslationProvider(
+            http, key(kind).orEmpty(), withContext(Dispatchers.Default) { memory.preference(PREF_AZURE_REGION).orEmpty() }, usage,
+        )
         TranslationProviderKind.LLM ->
             LlmTranslationProvider(http, withContext(Dispatchers.Default) { llmSettings() }, key(kind).orEmpty(), usage)
     }
@@ -177,6 +193,20 @@ public class ReaderTranslation(
     /** Bytes of stored translations: free ones first, paid ones second. */
     public suspend fun storedTranslationBytes(): Pair<Long, Long> =
         withContext(Dispatchers.Default) { memory.freeBytes() to memory.paidBytes() }
+
+    /** Translating chapters ahead of reading; shared by every screen, for the app's run. */
+    public val prefetch: TranslationPrefetchQueue by lazy { TranslationPrefetchQueue(this) }
+
+    /** Chapter keys of [workKey] that have a complete stored translation, whatever made it. */
+    public suspend fun translatedChapterKeys(workKey: String): Set<String> =
+        withContext(Dispatchers.Default) { memory.completeChapterKeys(workKey, to = null, provider = null) }
+
+    /** Those translated into [to] by the service in use now: the ones translating ahead can skip. */
+    public suspend fun translatedChapterKeys(workKey: String, to: String): Set<String> {
+        val provider = provider().id
+        val target = OfflineModelCatalog.language(to) ?: to
+        return withContext(Dispatchers.Default) { memory.completeChapterKeys(workKey, target, provider) + memory.completeChapterKeys(workKey, to, provider) }
+    }
 
     /** Chapters with a stored translation, most recent first, for the settings page. */
     public suspend fun storedChapters(): List<StoredChapterTranslation> =
@@ -233,7 +263,11 @@ public class ReaderTranslation(
             throw TranslationException(TranslationFailure.INVALID_KEY, "No API key is set for ${kind.id}")
         }
         val provider = provider()
-        return withContext(Dispatchers.Default) {
+        // One chapter at a time, whoever asks (the reader or the queue that translates ahead):
+        // two at once would each find the same lines missing and send them twice, and one's
+        // "done, release the model" would take the model from under the other. The second
+        // finds in the memory what the first stored.
+        return translating.withLock { withContext(Dispatchers.Default) {
             try {
                 service.translate(request, provider, onProgress)
             } finally {
@@ -243,8 +277,10 @@ public class ReaderTranslation(
                 // Free translations can be made again: keep the newest and let the oldest go.
                 runCatching { memory.evictFree(FREE_MEMORY_LIMIT_BYTES) }
             }
-        }
+        } }
     }
+
+    private val translating = kotlinx.coroutines.sync.Mutex()
 
     public suspend fun glossary(workKey: String, to: String): List<GlossaryEntry> = withContext(Dispatchers.Default) { memory.glossary(workKey, to) }
 
@@ -271,6 +307,7 @@ public class ReaderTranslation(
     public companion object {
         private const val STORED_CHAPTER_LIST_LIMIT = 2_000
         private const val PREF_PROVIDER = "provider"
+        private const val PREF_AZURE_REGION = "azure.region"
         private const val PREF_LLM_PROTOCOL = "llm.protocol"
         private const val PREF_LLM_BASE_URL = "llm.base"
         private const val PREF_LLM_MODEL = "llm.model"

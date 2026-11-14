@@ -82,6 +82,12 @@ public interface TranslationProvider {
      * @throws TranslationException when the hop cannot be run.
      */
     public suspend fun translate(hop: TranslationHop, segments: List<String>): List<String>
+
+    /**
+     * Lines to hand over in one [translate] call, for a provider that sends several requests
+     * of a call side by side; null leaves it to the caller.
+     */
+    public val linesPerCall: Int? get() = null
 }
 
 /** One line of a chapter with its translation, when there is one. */

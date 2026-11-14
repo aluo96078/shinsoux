@@ -281,6 +281,14 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         )
     }
 
+    /** Chapters of [workKey] with a complete translation; [to] and [provider] narrow it when given. */
+    public fun completeChapterKeys(workKey: String, to: String?, provider: String?): Set<String> = query(
+        "SELECT DISTINCT chapter_key FROM tm_chapter WHERE work_key = ? AND complete = 1 AND segment_count > 0 " +
+            "AND (? IS NULL OR to_lang = ?) AND (? IS NULL OR provider = ?)",
+        5,
+        { bindString(0, workKey); bindString(1, to); bindString(2, to); bindString(3, provider); bindString(4, provider) },
+    ) { it.getString(0)!! }.toHashSet()
+
     /** Forgets a work's chapter records and glossary. Segment translations stay: they may serve another source of the same text. */
     public fun forgetWork(workKey: String) {
         transaction {

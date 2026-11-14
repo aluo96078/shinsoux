@@ -239,6 +239,42 @@ class LlmTranslationTest {
         assertEquals(3, translation.preferences().charactersUsedToday)
     }
 
+    @Test
+    fun aChapterIsSentTwoRequestsAtATimeAndNeverMore() = runBlocking<Unit> {
+        val inFlight = java.util.concurrent.atomic.AtomicInteger()
+        val most = java.util.concurrent.atomic.AtomicInteger()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val client = HttpClient(
+            MockEngine { request ->
+                requests.incrementAndGet()
+                most.accumulateAndGet(inFlight.incrementAndGet(), ::maxOf)
+                kotlinx.coroutines.delay(150)
+                val user = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                    .getValue("messages").jsonArray.last().jsonObject.getValue("content").jsonPrimitive.content
+                val text = user.lines().joinToString("\n") { line -> line.replaceFirst("] ", "] 譯") }
+                inFlight.decrementAndGet()
+                respond(
+                    buildJsonObject {
+                        put("stop_reason", "end_turn")
+                        put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", text) }) })
+                    }.toString(),
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+        )
+        val provider = LlmTranslationProvider(client, LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "m"), "k")
+        // 200 lines are five requests of forty.
+        val lines = (1..200).map { "줄 $it" }
+        val store = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
+        val result = TranslationService(store, now = { 1L }).translate(ChapterTranslationRequest("work", "c1", lines.joinToString("\n"), "ko", "zh-Hant"), provider)
+        assertTrue(result.complete)
+        // In order, whatever order the answers came back in.
+        assertEquals(lines.map { "譯$it" }, result.segments.map { it.translation })
+        assertEquals(5, requests.get())
+        assertEquals(2, most.get(), "two at a time: faster than one, and never more")
+    }
+
     private object NoEngine : OfflineTranslationEngine {
         override suspend fun translate(model: OfflineModelPaths, lines: List<String>): List<String> = error("the offline engine must not run")
         override suspend fun unload() = Unit

@@ -188,7 +188,7 @@ public class TranslationService(
                 hashes.forEachIndexed { position, hash -> if (hash != null && checked[position]) mustKeepCodes += hash }
                 val occurrences = hashes.filterNotNull().groupingBy { it }.eachCount()
                 onLineHops(hashes.count { it != null && it in known })
-                for (chunk in missing.entries.chunked(batchSize)) {
+                for (chunk in missing.entries.chunked(provider.linesPerCall ?: batchSize)) {
                     currentCoroutineContext().ensureActive()
                     fun keep(answers: List<String>) {
                         val fresh = HashMap<MemoryKey, String>()

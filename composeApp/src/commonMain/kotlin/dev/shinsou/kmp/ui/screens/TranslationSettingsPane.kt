@@ -131,6 +131,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "DeepL")
                     TranslationProviderKind.GOOGLE ->
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "Google")
+                    TranslationProviderKind.AZURE ->
+                        strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "Microsoft Azure")
                     TranslationProviderKind.LLM ->
                         strings.text("A language model at the address you enter below. The text of the chapters you translate is sent there; its provider may charge for it.")
                 },
@@ -156,6 +158,37 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     stored = preferences.googleKeySet,
                     tag = "translation-key-google",
                 ) { key -> change { translation.setKey(TranslationProviderKind.GOOGLE, key) } }
+            }
+            item {
+                ApiKeySetting(
+                    title = strings.text("{0} API key", "Azure Translator"),
+                    help = strings.text("A key of a Translator resource in the Azure portal (Keys and Endpoint)."),
+                    stored = preferences.azureKeySet,
+                    tag = "translation-key-azure",
+                ) { key -> change { translation.setKey(TranslationProviderKind.AZURE, key) } }
+            }
+            item {
+                var region by remember(preferences.azureRegion) { mutableStateOf(preferences.azureRegion) }
+                Surface(
+                    shape = RoundedCornerShape(11.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = region,
+                            onValueChange = { region = it.take(40) },
+                            label = { Text(strings.text("Azure region")) },
+                            supportingText = { Text(strings.text("The resource's region, for example eastasia. Leave empty for a global resource.")) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f).testTag("translation-azure-region"),
+                        )
+                        Button(
+                            onClick = { change { translation.setAzureRegion(region) } },
+                            enabled = region.trim() != preferences.azureRegion,
+                        ) { Text(strings.text("Save")) }
+                    }
+                }
             }
             item {
                 LlmServiceSetting(
@@ -510,10 +543,11 @@ private fun ApiKeySetting(title: String, help: String, stored: Boolean, tag: Str
     }
 }
 
-private fun TranslationProviderKind.label(strings: ShinsouStrings): String = when (this) {
+internal fun TranslationProviderKind.label(strings: ShinsouStrings): String = when (this) {
     TranslationProviderKind.OFFLINE -> strings.text("Offline (free)")
     TranslationProviderKind.DEEPL -> "DeepL"
     TranslationProviderKind.GOOGLE -> strings.text("Google Translate")
+    TranslationProviderKind.AZURE -> "Azure Translator"
     TranslationProviderKind.LLM -> strings.text("AI model (your own API)")
 }
 
