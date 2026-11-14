@@ -38,6 +38,9 @@ if(WIN32)
     endif()
 endif()
 
+# The engine's documentation target needs a Doxyfile.in this checkout does not have; a machine
+# with Doxygen installed (GitHub's windows-2025 image) would otherwise fail to configure.
+set(USE_DOXYGEN OFF CACHE BOOL "" FORCE)
 add_subdirectory(${ENGINE_DIR} engine EXCLUDE_FROM_ALL)
 
 add_library(shinsou_translation_core STATIC src/stc.cpp)
