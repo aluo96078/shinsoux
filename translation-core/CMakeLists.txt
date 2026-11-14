@@ -76,7 +76,11 @@ if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             # Self-contained: no libstdc++ or winpthread DLLs to ship beside it.
             # The engine's worker thread takes the executable's stack size: 8 MB as on Linux
             # and macOS, not MinGW's 2 MB.
-            target_link_options(shinsou-translate PRIVATE -static -s -Wl,--stack,8388608)
+            target_link_options(shinsou-translate PRIVATE -static -Wl,--stack,8388608)
+            # Shipped stripped; a copy keeps the symbols, so a crash on CI can be traced.
+            add_custom_command(TARGET shinsou-translate POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:shinsou-translate> ${CMAKE_CURRENT_BINARY_DIR}/shinsou-translate.symbols.exe
+                COMMAND ${CMAKE_STRIP} $<TARGET_FILE:shinsou-translate>)
         endif()
     endif()
     set_target_properties(shinsou-translate PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

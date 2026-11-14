@@ -107,7 +107,7 @@ jobs:
           msystem: UCRT64
           update: false
           path-type: inherit
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-gdb
 
       - name: Put the UCRT64 toolchain on PATH
         shell: pwsh
@@ -167,6 +167,11 @@ jobs:
             helper_windows="$(cd "$(dirname "$helper")" && pwd -W)/$(basename "$helper")"
             input_windows="$(cd "$(dirname "$input")" && pwd -W)/$(basename "$input")"
             pwsh -NoProfile -Command "\$p = Start-Process -FilePath '$helper_windows' -RedirectStandardInput '$input_windows' -NoNewWindow -Wait -PassThru; 'Windows exit status: 0x{0:X8}' -f \$p.ExitCode" || true
+            # Where it crashed, from the copy that keeps its symbols.
+            symbols="composeApp/build/translation-core-windows/shinsou-translate.symbols.exe"
+            if [[ -f "$symbols" ]]; then
+              gdb -batch -ex "run < '$input_windows'" -ex "bt 40" -ex "info sharedlibrary" "$symbols" 2>&1 | tail -n 80 || true
+            fi
             echo "::error::the translation helper exited with $status"; exit 1
           fi
           [[ "$(sed -n 1p <<< "$answer" | tr -d '\r')" == "OK 2" ]] || { echo "::error::the translation helper did not translate"; exit 1; }
