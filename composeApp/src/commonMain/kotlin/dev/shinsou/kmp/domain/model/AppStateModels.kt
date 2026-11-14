@@ -226,6 +226,10 @@ data class BackupState(
     val lastRestoreAt: Long? = null,
     val lastFileName: String? = null,
     val errorMessage: String? = null,
+    /** Whether a backup carries stored translations that were paid for (ADR-0004 §4.2). */
+    val includePaidTranslations: Boolean = true,
+    /** Whether a backup carries stored translations the device can make again for free. */
+    val includeFreeTranslations: Boolean = false,
 )
 
 @Serializable

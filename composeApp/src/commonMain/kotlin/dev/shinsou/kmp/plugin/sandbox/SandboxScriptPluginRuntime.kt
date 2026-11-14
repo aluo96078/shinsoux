@@ -212,6 +212,7 @@ internal class SandboxScriptPluginRuntime(
         supportsFavoriteMutation = supportsFavorites && hasFunction("setFavorite")
         // Only a source that declares text content is asked: one call fewer for every manga source.
         supportsChapterText = "PLAIN_TEXT" in source.contentKinds && hasFunction("getChapterText")
+        supportsChapterPaging = hasFunction("getChapterListPage")
         var h = SandboxScriptJson.stringMap(metadata["headers"])
         if (h.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotBlank()) h = h + ("Referer" to baseUrl)
         headers = h
@@ -259,6 +260,21 @@ internal class SandboxScriptPluginRuntime(
 
     override suspend fun getChapterList(manga: SManga): List<SChapter> =
         SandboxScriptJson.chapters(call("getChapterList", JsonArray(listOf(SandboxScriptJson.mangaJson(manga)))))
+
+    private var supportsChapterPaging: Boolean = false
+
+    /** `getChapterListPage(manga, page)` → `{ chapters, hasNextPage }`; absent in most scripts. */
+    override suspend fun getChapterListPage(manga: SManga, page: Int): dev.shinsou.kmp.plugin.ChapterListPage? {
+        if (!supportsChapterPaging) return null
+        val result = call(
+            "getChapterListPage",
+            JsonArray(listOf(SandboxScriptJson.mangaJson(manga), JsonPrimitive(page))),
+        ) as? JsonObject ?: throw IllegalStateException("Plugin '$pluginId' returned no chapter page")
+        return dev.shinsou.kmp.plugin.ChapterListPage(
+            chapters = SandboxScriptJson.chapters(result["chapters"] ?: JsonArray(emptyList())),
+            hasNextPage = result["hasNextPage"].bool(),
+        )
+    }
 
     override var supportsChapterText: Boolean = false
         private set

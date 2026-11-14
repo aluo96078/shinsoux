@@ -476,6 +476,7 @@ public class PluginManager(
         internal val localStorageKeys: Set<String>,
         internal val requiredLocalStorageKeys: Set<String>,
         internal val allowedSubresourceOrigins: Set<String>,
+        internal val allowedNavigationOrigins: Set<String>,
         internal val storage: PluginStorage,
     )
 
@@ -1742,6 +1743,20 @@ public class PluginManager(
      * only while the user's grant includes BROWSER_CHALLENGE. Pages may load subresources from that
      * source's declared request origins too. Null when it may not open a challenge.
      */
+    /**
+     * The sign-in sites a source declared for its browser challenge: where the browser may go
+     * besides the source itself, and what those pages may load. Empty unless the challenge
+     * itself is granted for [sourceKey].
+     */
+    private suspend fun webChallengeLoginOrigins(stored: StoredPlugin, sourceKey: SourceKey): Pair<Set<String>, Set<String>> {
+        if (genericWebChallengeOrigins(stored, sourceKey) == null) return emptySet<String>() to emptySet()
+        val declared = stored.manifest.sources.orEmpty().singleOrNull { source ->
+            sourceKeyFor(stored.manifest.id, source.id, source.canonicalSourceId) == sourceKey
+        } ?: return emptySet<String>() to emptySet()
+        val visit = canonicalWebChallengeOrigins(normalizePluginOrigins(declared.browserLoginOrigins))
+        return visit to (visit + canonicalWebChallengeOrigins(normalizePluginOrigins(declared.browserLoginResourceOrigins)))
+    }
+
     private suspend fun genericWebChallengeOrigins(stored: StoredPlugin, sourceKey: SourceKey): Pair<Set<String>, Set<String>>? {
         val declared = stored.manifest.sources.orEmpty().singleOrNull { source ->
             sourceKeyFor(stored.manifest.id, source.id, source.canonicalSourceId) == sourceKey
@@ -1778,7 +1793,8 @@ public class PluginManager(
             require(origin in generic.first) {
                 "Web challenge URL is outside the granted browser-session origins"
             }
-            val subresourceOrigins = generic.second
+            val login = webChallengeLoginOrigins(stored, sourceKey)
+            val subresourceOrigins = generic.second + login.second
             require(origin in subresourceOrigins) {
                 "Web challenge document origin must remain an allowed subresource origin"
             }
@@ -1814,6 +1830,8 @@ public class PluginManager(
             WebChallengeAuthorization(
                 capability, sourceKey, storageId, origin, source, localKeys, requiredKeys,
                 allowedSubresourceOrigins = subresourceOrigins,
+                // The source itself, and the sign-in sites it declared and the user was shown.
+                allowedNavigationOrigins = setOf(origin) + login.first,
                 storage = storage,
             )
         }

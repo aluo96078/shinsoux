@@ -1,0 +1,7 @@
+# ADR-0004 §4.5: the offline translation engine (translation-core) with everything it links,
+# merged into one archive. Built per target by Gradle (buildIosTranslationCore*); its directory is
+# passed as -libraryPath.
+headers = stc.h
+package = dev.shinsou.interop.translation
+staticLibraries = libshinsou_translate.a
+linkerOpts = -lc++ -liconv -framework Accelerate

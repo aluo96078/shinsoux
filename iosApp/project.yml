@@ -5,8 +5,8 @@ options:
     iOS: "16.0"
 settings:
   base:
-    MARKETING_VERSION: "1.0.1"
-    CURRENT_PROJECT_VERSION: "25600199"
+    MARKETING_VERSION: "1.0.2"
+    CURRENT_PROJECT_VERSION: "25600201"
     SWIFT_VERSION: "5.10"
 targets:
   Shinsou:
@@ -96,6 +96,11 @@ targets:
           - "BackgroundTasks"
           - "-framework"
           - "ShinsouKit"
+          # The offline translation engine inside ShinsouKit (ADR-0004): C++, iconv and Accelerate.
+          - "-lc++"
+          - "-liconv"
+          - "-framework"
+          - "Accelerate"
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"

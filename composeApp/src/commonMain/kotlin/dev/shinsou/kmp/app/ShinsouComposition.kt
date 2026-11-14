@@ -1,5 +1,8 @@
 package dev.shinsou.kmp.app
 
+import dev.shinsou.kmp.translation.OfflineTranslationPlatform
+import dev.shinsou.kmp.translation.ReaderTranslation
+import dev.shinsou.kmp.translation.TranslationMemoryStore
 import dev.shinsou.kmp.acquisition.BoundedEpubArchiveExtractor
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupService
@@ -149,6 +152,8 @@ public class ShinsouComposition(
     private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
     private val syncDeviceInfo: SyncDeviceInfo = SyncDeviceInfo("This device", "desktop", ""),
+    /** The platform's offline translation engine and model directory (ADR-0004); null disables translation. */
+    private val offlineTranslation: OfflineTranslationPlatform? = null,
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -170,6 +175,17 @@ public class ShinsouComposition(
             nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
             onAnnotationMutationCommitted = ::scheduleContentOutboxDiscard,
             onRightsInvalidated = ::scheduleSearchIndexReconciliation,
+            translation = offlineTranslation?.let { platform ->
+                contentInfrastructure?.let { infrastructure ->
+                    ReaderTranslation(
+                        memory = TranslationMemoryStore(infrastructure.contentDriver()),
+                        platform = platform,
+                        http = httpClient,
+                        // The same protected storage as the proxy key and tracker tokens.
+                        secrets = pluginKeyValueStore,
+                    )
+                }
+            },
         )
     }
     /** Compatibility projection remains available in previews which intentionally omit SQLite. */
@@ -682,10 +698,12 @@ public class ShinsouComposition(
     )
 
     /** App-private, recoverable backups shared by foreground UI and platform schedulers. */
-    public val autoBackups: AutoBackupService = autoBackupService ?: AutoBackupService(
+    public val autoBackups: AutoBackupService = (autoBackupService ?: AutoBackupService(
         repository = repository,
         fileSystem = fileSystem,
-    )
+    )).also { service ->
+        contentFeatures?.translation?.let { service.translations = dev.shinsou.kmp.backup.ReaderTranslationBackups(it) }
+    }
 
     /**
      * Returns as soon as the first frame is allowed to render. Source discovery, secure proxy hydration, tracker auth and download queue restoration are

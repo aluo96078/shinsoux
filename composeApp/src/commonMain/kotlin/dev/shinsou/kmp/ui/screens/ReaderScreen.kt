@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.Button
@@ -155,6 +156,8 @@ data class UnifiedReaderRenderState(
     val navigationAction: ReaderTapAction?,
     val navigationRequestKey: Long,
     val controlsVisible: Boolean,
+    /** Bumped when the toolbar's translation button is pressed. */
+    val translationRequestSerial: Long = 0L,
 )
 
 @Composable
@@ -190,6 +193,8 @@ fun ReaderScreen(
     unifiedReaderContent: UnifiedReaderContent? = null,
     unifiedReaderInitialPageIndex: Int? = null,
     unifiedReaderInitialPageCount: Int? = null,
+    /** True when the unified reader can translate this chapter: the toolbar then offers it. */
+    unifiedReaderTranslationAvailable: Boolean = false,
     unifiedReaderRenderer: (@Composable (
         UnifiedReaderContent,
         Modifier,
@@ -225,6 +230,7 @@ fun ReaderScreen(
     var chapterListVisible by remember(readerSessionId) { mutableStateOf(false) }
     var boundaryTransition by remember(chapter.id, readerSessionId) { mutableStateOf<ReaderChapterBoundary?>(null) }
     val unifiedReaderEnabled = unifiedReaderContent != null && unifiedReaderRenderer != null
+    var translationRequest by remember { mutableStateOf(0L) }
     var unifiedReaderPageCount by remember(
         chapter.id,
         readerSessionId,
@@ -706,6 +712,7 @@ fun ReaderScreen(
                         navigationAction = unifiedReaderNavigationAction,
                         navigationRequestKey = unifiedReaderNavigationRequestKey,
                         controlsVisible = controlsVisible,
+                        translationRequestSerial = translationRequest,
                     ),
                     { pageIndex, pageCount ->
                         val safePageCount = pageCount.coerceAtLeast(1)
@@ -868,6 +875,11 @@ fun ReaderScreen(
             showPageControls = !unifiedReaderEnabled,
             minimal = unifiedProseReader,
             novelToolbar = unifiedTextReader,
+            onTranslation = if (unifiedReaderEnabled && unifiedReaderTranslationAvailable) {
+                { translationRequest++ }
+            } else {
+                null
+            },
             inLibrary = inLibrary,
             hasPreviousChapter = previousChapter != null,
             hasNextChapter = nextChapter != null,
@@ -1443,6 +1455,7 @@ private fun ReaderControls(
     onNextChapter: () -> Unit,
     onChapterList: () -> Unit,
     onSettings: () -> Unit,
+    onTranslation: (() -> Unit)? = null,
 ) {
     val strings = LocalShinsouStrings.current
     // The thumb follows the finger while dragging; the reader position catches up through
@@ -1492,6 +1505,11 @@ private fun ReaderControls(
                                 if (inLibrary) strings.unfavorite else strings.favorite,
                                 tint = if (inLibrary) MaterialTheme.colorScheme.primary else Color.White,
                             )
+                        }
+                    }
+                    onTranslation?.let { openTranslation ->
+                        IconButton(onClick = openTranslation) {
+                            Icon(Icons.Outlined.Translate, strings.text("Translation"), tint = Color.White)
                         }
                     }
                     IconButton(onClick = onChapterList) {

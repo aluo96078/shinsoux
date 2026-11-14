@@ -219,6 +219,14 @@ public data class SourceIndexEntry(
      * may load in an isolated browser, only while the user grants BROWSER_IMAGES.
      */
     val browserImageOrigins: Set<String> = emptySet(),
+    /**
+     * Exact HTTPS origins the browser challenge may also visit while the user signs in: the sign-in
+     * pages of identity providers the site offers ("Log in with ..."). Only with BROWSER_CHALLENGE
+     * and a browser-session origin; the session is still taken from the source's own origin alone.
+     */
+    val browserLoginOrigins: Set<String> = emptySet(),
+    /** Exact HTTPS origins those sign-in pages load scripts, styles and images from; never visited. */
+    val browserLoginResourceOrigins: Set<String> = emptySet(),
     /** Persisted marker distinguishing authoritative V2 empty allowlists from legacy omission. */
     val originPolicyVersion: Int? = null,
     /** Lossless V2 legacy identifier copied into the sidecar SourceKey when present. */
@@ -246,6 +254,16 @@ public data class SourceIndexEntry(
         val imageOrigins = normalizePluginOrigins(browserImageOrigins)
         require(imageOrigins.all { it in normalizePluginOrigins(contentOrigins) && browserImageOriginOf("$it/") == it }) {
             "Browser image origins must be content origins on port 443"
+        }
+        require(browserLoginOrigins.size <= MAX_BROWSER_LOGIN_ORIGINS) { "Too many browser login origins" }
+        require(browserLoginResourceOrigins.size <= MAX_BROWSER_LOGIN_RESOURCE_ORIGINS) { "Too many browser login resource origins" }
+        val loginOrigins = normalizePluginOrigins(browserLoginOrigins) + normalizePluginOrigins(browserLoginResourceOrigins)
+        if (loginOrigins.isNotEmpty()) {
+            require(browserSessionOrigins.isNotEmpty()) { "Browser login origins need a browser-session origin" }
+            require(browserLoginOrigins.isNotEmpty()) { "Browser login resource origins need a browser login origin" }
+            // Everything the challenge browser may load from must fit its bound.
+            val every = loginOrigins + normalizePluginBrowserSessionOrigins(browserSessionOrigins) + effectiveRequestOrigins
+            require(every.size <= MAX_BROWSER_CHALLENGE_ORIGINS) { "Too many origins for the browser challenge" }
         }
     }
 
@@ -395,6 +413,8 @@ private fun SourceIndexEntry.canonicalForAdmission(): SourceIndexEntry = copy(
     credentialOrigins = credentialOrigins.sortedStringSet(),
     contentOrigins = contentOrigins.sortedStringSet(),
     browserSessionOrigins = browserSessionOrigins.sortedStringSet(),
+    browserLoginOrigins = browserLoginOrigins.sortedStringSet(),
+    browserLoginResourceOrigins = browserLoginResourceOrigins.sortedStringSet(),
 )
 
 private fun Set<String>.sortedStringSet(): Set<String> = sorted().toCollection(linkedSetOf())
@@ -434,3 +454,12 @@ public data class StoredPlugin(
 
 /** Most `browserImageOrigins` one source may declare. */
 internal const val MAX_BROWSER_IMAGE_ORIGINS: Int = 4
+
+/** Most identity-provider origins the challenge browser may visit; with the source's own, its navigation bound. */
+internal const val MAX_BROWSER_LOGIN_ORIGINS: Int = 7
+
+/** Most origins those sign-in pages may load resources from. */
+internal const val MAX_BROWSER_LOGIN_RESOURCE_ORIGINS: Int = 20
+
+/** The challenge browser's bound on origins it may load anything from. */
+internal const val MAX_BROWSER_CHALLENGE_ORIGINS: Int = 32

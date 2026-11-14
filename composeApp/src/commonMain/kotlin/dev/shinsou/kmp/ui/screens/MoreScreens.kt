@@ -881,6 +881,9 @@ fun BackupScreen(
     onDeleteAutomatic: (AutoBackupEntry) -> Unit = {},
     onReset: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    translationOptionsVisible: Boolean = false,
+    onIncludePaidTranslationsChange: (Boolean) -> Unit = {},
+    onIncludeFreeTranslationsChange: (Boolean) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     var pendingRestore by remember { mutableStateOf<AutoBackupEntry?>(null) }
@@ -943,6 +946,45 @@ fun BackupScreen(
                         Icon(Icons.Outlined.Restore, null)
                         Spacer(Modifier.width(7.dp))
                         Text(strings.text("Restore / import"))
+                    }
+                }
+            }
+            if (translationOptionsVisible) item {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(strings.text("Translations in backups"), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            strings.text("Names and terms you entered and each work's translation settings are always backed up. Choose whether stored translations go with them."),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(strings.text("Translations you paid for"))
+                                Text(
+                                    strings.text("Made with your own AI or translation service key; getting them again costs money."),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Switch(state.includePaidTranslations, onIncludePaidTranslationsChange)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(strings.text("Free machine translations"))
+                                Text(
+                                    strings.text("Made on this device; another device can make them again. Makes backups larger."),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Switch(state.includeFreeTranslations, onIncludeFreeTranslationsChange)
+                        }
                     }
                 }
             }

@@ -147,6 +147,11 @@ internal object IosApplicationContainer {
         runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(iosSandboxRuntimeFactory(sandboxScope)),
         contentInfrastructure = contentInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
+        offlineTranslation = dev.shinsou.kmp.translation.OfflineTranslationPlatform(
+            engine = dev.shinsou.kmp.translation.IosOfflineTranslationEngine(),
+            modelDirectory = iosTranslationModelDirectory(),
+            memory = dev.shinsou.kmp.translation.IosTranslationMemoryGuard(),
+        ),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),

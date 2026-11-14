@@ -148,6 +148,14 @@ fun main(args: Array<String>) {
                 runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(desktopSandboxRuntimeFactory(sandboxScope)),
                 contentInfrastructure = contentInfrastructure,
                 platformTextToSpeechEngine = DesktopTextToSpeechEngine(),
+                offlineTranslation = dev.shinsou.kmp.translation.OfflineTranslationPlatform(
+                    // The helper is looked for on first use: a build without it reports
+                    // offline translation as unavailable instead of failing here.
+                    engine = dev.shinsou.kmp.translation.TranslationHelperLocator().let { locator ->
+                        dev.shinsou.kmp.translation.HelperOfflineTranslationEngine(locator::executable)
+                    },
+                    modelDirectory = DesktopAppDirectories.dataRoot.resolve("TranslationModels").toString(),
+                ),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
                 pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),

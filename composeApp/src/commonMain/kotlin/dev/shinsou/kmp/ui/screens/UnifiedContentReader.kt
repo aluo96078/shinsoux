@@ -23,6 +23,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -136,6 +141,10 @@ internal fun UnifiedContentReader(
     navigationAction: ReaderTapAction? = null,
     navigationRequestKey: Long = 0L,
     readerControlsVisible: Boolean = false,
+    /** Bumped by the reader's toolbar to open the translation panel. */
+    translationRequestSerial: Long = 0L,
+    /** What the reader's shell calls this work and chapter; kept with a stored translation. */
+    translationLabels: dev.shinsou.kmp.translation.TranslationLabels? = null,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit = { _, _ -> },
     onPageCountInvalidated: () -> Unit = {},
     onNavigationBoundary: (ReaderTapAction) -> Unit = {},
@@ -201,24 +210,93 @@ internal fun UnifiedContentReader(
     DisposableEffect(session, features) {
         onDispose { features.textToSpeech.stop() }
     }
-    NovelReaderSurface(
+    val scope = session.content.navigation.scope
+    // Translations are kept on the device: a grant that allows display but not offline storage
+    // gets no translation at all, rather than one that quietly stores the text.
+    val translationStorageAllowed = remember(session, features) { readerTranslationAvailable(session, features) }
+    val translationState = rememberNovelTranslation(
+        translation = features.translation.takeIf { translationStorageAllowed },
+        workKey = scope.publicationId.value,
+        chapterKey = scope.unitId.value,
         canonicalText = canonicalText,
-        navigation = session.content.navigation as PlainTextNavigation,
-        initialLocator = session.content.initialLocator,
-        settings = settings,
-        initialVisualPageIndex = session.initialVisualPageIndex ?: requestedPageIndex,
-        initialVisualPageCount = session.initialVisualPageCount,
-        requestedPageIndex = requestedPageIndex,
-        pageRequestSerial = pageRequestSerial,
-        navigationAction = navigationAction,
-        navigationRequestKey = navigationRequestKey,
-        onPageChanged = onPageIndexChanged,
-        onLocatorChanged = onLocatorChanged,
-        onNavigationBoundary = onNavigationBoundary,
-        onTapAction = onReaderTap,
-        remoteAssetScope = session.remoteAssetScope,
-        modifier = modifier,
+        exportable = { features.operations.export(access, canonicalText.length.toLong()) { true } },
+        labels = translationLabels,
     )
+    val display = remember(translationState?.result, translationState?.settings?.mode, canonicalText) {
+        val state = translationState ?: return@remember null
+        state.result?.let { dev.shinsou.kmp.translation.TranslationDisplayText.build(canonicalText, it, state.settings.mode) }
+    }
+    // Switching between the original and a translation re-paginates: carry the reader's position
+    // across instead of going back to where the chapter was opened.
+    val latestLocator = remember(session) { arrayOf<ReadingLocator>(session.content.initialLocator) }
+    val anchorLocator = remember(session, display?.text) { latestLocator[0] }
+    val reopened = anchorLocator === session.content.initialLocator && display == null
+    var translationSheetVisible by remember { mutableStateOf(false) }
+    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
+    LaunchedEffect(translationRequestSerial) {
+        // Only a press of the button opens the panel. The reader's shell starts its counter
+        // again for every chapter, and that reset must not be read as a press.
+        val pressed = translationRequestSerial > handledTranslationRequest
+        handledTranslationRequest = translationRequestSerial
+        if (pressed) translationSheetVisible = true
+    }
+
+    Box(modifier.fillMaxSize()) {
+        NovelReaderSurface(
+            canonicalText = canonicalText,
+            navigation = session.content.navigation as PlainTextNavigation,
+            initialLocator = anchorLocator,
+            settings = settings,
+            // Saved visual pages belong to the original text as it was first laid out.
+            initialVisualPageIndex = if (reopened) session.initialVisualPageIndex ?: requestedPageIndex else null,
+            initialVisualPageCount = if (reopened) session.initialVisualPageCount else null,
+            requestedPageIndex = requestedPageIndex,
+            pageRequestSerial = pageRequestSerial,
+            navigationAction = navigationAction,
+            navigationRequestKey = navigationRequestKey,
+            onPageChanged = onPageIndexChanged,
+            onLocatorChanged = { locator, pageIndex, pageCount ->
+                latestLocator[0] = locator
+                onLocatorChanged(locator, pageIndex, pageCount)
+            },
+            onNavigationBoundary = onNavigationBoundary,
+            onTapAction = onReaderTap,
+            remoteAssetScope = session.remoteAssetScope,
+            display = display,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (translationState != null) {
+            val progress = translationState.progress
+            if (progress != null) {
+                LinearProgressIndicator(
+                    progress = { (progress.first.toFloat() / progress.second.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                )
+            }
+            NovelTranslationNotice(
+                state = translationState,
+                onOpen = { translationSheetVisible = true },
+                // Under the reader's top bar when it is showing.
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (readerControlsVisible) 72.dp else 14.dp),
+            )
+            if (translationSheetVisible) {
+                NovelTranslationSheet(translationState) { translationSheetVisible = false }
+            }
+        }
+    }
+}
+
+/**
+ * Whether the chapter in [session] can be translated: plain text, on a build with translation,
+ * under a grant that allows keeping the text on the device. The reader's toolbar shows its
+ * translation button on the same condition the reader itself uses.
+ */
+internal fun readerTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatureRuntime?): Boolean {
+    if (features?.translation == null) return false
+    if (session.content.representation !is ContentRepresentation.PlainText) return false
+    val text = session.canonicalText ?: return false
+    val access = session.access.withTextCharacters(text.length)
+    return runCatching { features.operations.offlineStore(access, text.length.toLong()) { true } }.getOrDefault(false)
 }
 
 /** The small rich-text surface used by text chapters. Images stay in the source body as URLs. */

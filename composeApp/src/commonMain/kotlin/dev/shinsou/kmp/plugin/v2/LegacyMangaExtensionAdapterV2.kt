@@ -2,6 +2,7 @@
 
 package dev.shinsou.kmp.plugin.v2
 
+import kotlinx.coroutines.sync.withLock
 import dev.shinsou.kmp.content.ContentKind
 import dev.shinsou.kmp.content.ImageLayout
 import dev.shinsou.kmp.content.ImageProgression
@@ -180,7 +181,14 @@ public class LegacyMangaExtensionSourceV2(
         remotePublicationId: String,
         page: Int,
     ): PagedResultV2<RemoteUnitV2> {
-        val chapters = source.getChapterList(SManga(url = remotePublicationId, title = remotePublicationId))
+        val manga = SManga(url = remotePublicationId, title = remotePublicationId)
+        // A source that pages its own list answers one page at a time: the first chapters of a
+        // long serial show without waiting for all of them.
+        source.getChapterListPage(manga, page)?.let { paged ->
+            require(paged.chapters.size <= MAX_LEGACY_PAGED_UNITS_V2) { "Legacy source returned too large a chapter page" }
+            return PagedResultV2(paged.chapters.map { it.toRemoteUnitV2() }, paged.hasNextPage && paged.chapters.isNotEmpty())
+        }
+        val chapters = completeChapterList(manga, refresh = page == 0)
         require(chapters.size <= MAX_LEGACY_UNITS_V2) { "Legacy manga source returned too many units" }
         val fromLong = page.toLong() * LEGACY_PAGE_SIZE.toLong()
         if (fromLong >= chapters.size) return PagedResultV2(emptyList(), false)
@@ -191,6 +199,19 @@ public class LegacyMangaExtensionSourceV2(
             hasNextPage = to < chapters.size,
         )
     }
+
+    /**
+     * The whole list of a source that cannot page it. Page 0 always asks the source; the pages
+     * after it are cut from that answer rather than fetching the complete list once per page.
+     */
+    private suspend fun completeChapterList(manga: SManga, refresh: Boolean): List<SChapter> = completeListMutex.withLock {
+        val cached = completeList
+        if (!refresh && cached != null && cached.first == manga.url) return@withLock cached.second
+        source.getChapterList(manga).also { completeList = manga.url to it }
+    }
+
+    private val completeListMutex = kotlinx.coroutines.sync.Mutex()
+    private var completeList: Pair<String, List<SChapter>>? = null
 
     override suspend fun content(
         remotePublicationId: String,
@@ -400,6 +421,9 @@ private fun String.inferredImageMediaType(): String = when (substringBefore('?')
 
 private const val LEGACY_PAGE_SIZE: Int = 100
 private const val MAX_LEGACY_UNITS_V2: Int = 100_000
+
+/** A source-paged chapter page; the unit contract bounds a page separately. */
+private const val MAX_LEGACY_PAGED_UNITS_V2: Int = 100
 private val LEGACY_SAFE_HEADER_HINTS: Set<String> = setOf(
     "accept",
     "accept-language",

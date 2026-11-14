@@ -15,6 +15,8 @@ data class BackupEnvelope(
     val appVersion: String = "",
     val deviceId: String? = null,
     val snapshot: AppSnapshot,
+    /** Glossaries, per-work translation settings and, by choice, stored translations (ADR-0004). */
+    val translations: dev.shinsou.kmp.translation.TranslationBackup? = null,
 ) {
     fun validate(): BackupEnvelope {
         if (format != SHINSOU_BACKUP_FORMAT) {
@@ -25,6 +27,11 @@ data class BackupEnvelope(
         }
         if (createdAt < 0) throw BackupFormatException("Backup creation time cannot be negative")
         snapshot.validate()
+        try {
+            translations?.validate()
+        } catch (error: IllegalArgumentException) {
+            throw BackupFormatException(error.message ?: "Invalid translation data in the backup")
+        }
         return this
     }
 }

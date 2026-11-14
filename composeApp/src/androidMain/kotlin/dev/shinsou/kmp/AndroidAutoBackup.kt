@@ -33,6 +33,20 @@ internal class AndroidSharedState private constructor(context: Context) {
         appVersion = ANDROID_APP_VERSION,
     )
 
+    /** One content database for the Activity and the backup worker alike. */
+    val contentInfrastructure: AndroidContentInfrastructure by lazy { AndroidContentInfrastructure(applicationContext) }
+
+    /**
+     * A worker started in a fresh process has no app composition to bind translations to the
+     * backup: without this its backups would silently leave glossaries and translations out.
+     */
+    fun bindTranslationBackups() {
+        if (autoBackups.translations != null) return
+        autoBackups.translations = dev.shinsou.kmp.backup.TranslationMemoryBackups(
+            dev.shinsou.kmp.translation.TranslationMemoryStore(contentInfrastructure.contentDriver()),
+        )
+    }
+
     companion object {
         @Volatile
         private var instance: AndroidSharedState? = null
@@ -80,7 +94,9 @@ internal class AndroidAutoBackupWorker(
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
         return try {
-            when (AndroidSharedState.get(applicationContext).autoBackups.runIfDue()) {
+            val state = AndroidSharedState.get(applicationContext)
+            state.bindTranslationBackups()
+            when (state.autoBackups.runIfDue()) {
                 is AutoBackupRunResult.Failed -> Result.retry()
                 AutoBackupRunResult.Disabled,
                 is AutoBackupRunResult.NotDue,

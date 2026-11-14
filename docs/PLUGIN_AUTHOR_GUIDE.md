@@ -213,6 +213,7 @@ package.json             ← build/lint/test/dev/sign 的 npm scripts
 | `getSearchManga(page, query, filters)` | 同上 |
 | `getMangaDetails(manga)` | 補完作品資料，設 `manga.initialized = true` |
 | `getChapterList(manga)` | 回傳 `SChapter` 陣列 |
+| `getChapterListPage(manga, page)` | 選用：分頁提供章節列表（`page` 從 0 起算），回傳 `{ chapters, hasNextPage }`，每頁最多 100 話、依閱讀順序。網站本身分頁的長篇作品用它，瀏覽時就能先顯示第一批章節；仍須實作 `getChapterList`（書庫更新會用到完整列表） |
 | `getPageList(chapter)` | `IMAGE_SEQUENCE` 來源：回傳 `new Page(index, "", imageUrl)` 陣列 |
 | `getChapterText(chapter)` | `PLAIN_TEXT` 來源：回傳字串（或 `{ text }`），最多 4 MiB |
 | `resolveImageUrl(pageUrl)` | 選用：延遲解析圖片網址 |
@@ -311,6 +312,8 @@ crash-loop 自動停用等限制；這些是否已全部在程式中落實【未
 | `credentialOrigins` | App 代管 Cookie、帳密只送往這裡；必須也是 `requestOrigins` 的成員 |
 | `contentOrigins` | 讀圖／下載等「內容平面」的 exact origin；只允許 `GET`／`HEAD`，**不帶 Cookie、Authorization 或任何來源憑證** |
 | `browserSessionOrigins` | 可用瀏覽器傳輸的 API origin（最多 4 個），需要 `BROWSER_CHALLENGE` |
+| `browserLoginOrigins` | 選用：瀏覽器驗證視窗在登入時可以前往的第三方登入頁（「以 … 登入」的 identity provider），exact HTTPS origin，最多 7 個；需要 `BROWSER_CHALLENGE` 與至少一個 `browserSessionOrigins`。使用者在權限頁會看到這份清單 |
+| `browserLoginResourceOrigins` | 選用：上述登入頁載入腳本、樣式、圖片所需的 origin（最多 20 個），只能載入、不能前往 |
 | `contentHostSuffixes` | 動態 CDN 後綴，見下方 |
 
 - 一律是 exact HTTPS origin：不接受 HTTP、路徑、IP、`localhost`、私有網路主機。App 在連線時還會做 DNS 解析結果的
@@ -334,6 +337,18 @@ crash-loop 自動停用等限制；這些是否已全部在程式中落實【未
 第三方來源也可以使用 Web challenge：宣告 `browserSessionOrigins`、`runtimePermissions` 含 `BROWSER_CHALLENGE`，
 使用者在權限頁開啟後，請求 origin 命中 `browserSessionOrigins` 時才可使用。平台行為不同（Windows 只能開外部瀏覽器、
 無法自動帶回 Cookie），細節見[插件系統總覽](PLUGIN_SYSTEM.md)。
+
+### 7.4.0 第三方登入（`browserLoginOrigins`）
+
+網站提供「以 Naver／Kakao／Google… 登入」時，來源可以在 `browserLoginOrigins` 列出這些登入頁的 exact HTTPS origin，
+並在 `browserLoginResourceOrigins` 列出它們載入資源的 origin。驗證視窗預設只允許在來源自己的 origin 內導覽、
+只載入已宣告 origin 的資源；宣告後，視窗在登入過程中可以前往這些登入頁，再跳回來源網站。
+
+- Cookie 與 localStorage 仍只在頁面回到**來源自己的 origin** 時擷取，而且只匯入屬於該 origin 的 Cookie；
+  第三方登入頁的 Cookie 不會被匯入。已保存的帳密也只會在來源自己的頁面自動填入。
+- 連同 `requestOrigins` 與 `browserSessionOrigins`，驗證視窗可載入的 origin 合計最多 32 個。
+- 更新若新增了登入 origin，使用者必須重新確認權限。
+- 有些 identity provider 會拒絕內嵌瀏覽器（例如 Google 常見），宣告了也不保證能登入；此時請使用者改用 Cookie 匯入。
 
 ### 7.4.1 以瀏覽器載入圖片（`BROWSER_IMAGES`）
 

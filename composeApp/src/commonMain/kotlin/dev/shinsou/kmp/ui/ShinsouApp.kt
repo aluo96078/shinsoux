@@ -105,6 +105,7 @@ import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.SnapshotBackupService
 import dev.shinsou.kmp.backup.createBackupEnvelope
 import dev.shinsou.kmp.backup.restoreBackup
+import dev.shinsou.kmp.backup.withTranslations
 import dev.shinsou.kmp.domain.model.BackupStatus
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter
@@ -174,6 +175,7 @@ import dev.shinsou.kmp.ui.screens.StatisticsScreen
 import dev.shinsou.kmp.ui.screens.TrackingSheet
 import dev.shinsou.kmp.ui.screens.UpdatesScreen
 import dev.shinsou.kmp.ui.screens.UnifiedContentReader
+import dev.shinsou.kmp.ui.screens.readerTranslationAvailable
 import dev.shinsou.kmp.ui.theme.ShinsouTheme
 import dev.shinsou.kmp.ui.theme.ShinsouThemeMode
 import dev.aluo.shinsoux.generated.resources.Res
@@ -1547,6 +1549,9 @@ private fun ShinsouAppContent(
                     unifiedReaderContent = typedReaderSession?.content,
                     unifiedReaderInitialPageIndex = typedReaderSession?.initialVisualPageIndex,
                     unifiedReaderInitialPageCount = typedReaderSession?.initialVisualPageCount,
+                    unifiedReaderTranslationAvailable = typedReaderSession?.let { typed ->
+                        remember(typed, appServices.contentFeatures) { readerTranslationAvailable(typed, appServices.contentFeatures) }
+                    } ?: false,
                     unifiedReaderRenderer = typedReaderSession?.let { typed ->
                         { _, rendererModifier, renderState, onPageIndexChanged, onPageCountInvalidated,
                             onNavigationBoundary, onReaderTap ->
@@ -1566,6 +1571,14 @@ private fun ShinsouAppContent(
                                     navigationAction = renderState.navigationAction,
                                     navigationRequestKey = renderState.navigationRequestKey,
                                     readerControlsVisible = renderState.controlsVisible,
+                                    translationRequestSerial = renderState.translationRequestSerial,
+                                    translationLabels = remember(manga.title, chapter.name, manga.source) {
+                                        dev.shinsou.kmp.translation.TranslationLabels(
+                                            workTitle = manga.title,
+                                            chapterTitle = chapter.name,
+                                            sourceName = if (manga.source == LOCAL_SOURCE_ID) strings.text("Local") else null,
+                                        )
+                                    },
                                     onPageIndexChanged = onPageIndexChanged,
                                     onPageCountInvalidated = onPageCountInvalidated,
                                     onNavigationBoundary = onNavigationBoundary,
@@ -3026,7 +3039,11 @@ private fun MoreDestinationPane(
             },
             authenticate = appServices::authenticate,
         )
-        MoreDestination.Backup -> BackupScreen(
+        MoreDestination.Backup -> {
+            val backupTranslations = remember(appServices) {
+                appServices.contentFeatures?.translation?.let { dev.shinsou.kmp.backup.ReaderTranslationBackups(it) }
+            }
+            BackupScreen(
             state = snapshot.backupState,
             automaticBackups = automaticBackups,
             onBack = onBack,
@@ -3036,7 +3053,8 @@ private fun MoreDestinationPane(
                     val createdAt = Clock.System.now().toEpochMilliseconds()
                     val name = "shinsou_$createdAt.shinsoubackup"
                     val payload = SnapshotBackupService.encode(
-                        repository.createBackupEnvelope(createdAt, appVersion = dev.shinsou.kmp.app.SHINSOU_APP_VERSION),
+                        repository.createBackupEnvelope(createdAt, appVersion = dev.shinsou.kmp.app.SHINSOU_APP_VERSION)
+                            .withTranslations(backupTranslations, repository.currentSnapshot.backupState),
                     )
                     val saved = appServices.exportDocument(name, payload)
                     repository.setBackupState(
@@ -3065,6 +3083,7 @@ private fun MoreDestinationPane(
                             envelope = envelope,
                             restoredAt = Clock.System.now().toEpochMilliseconds(),
                         )
+                        envelope.translations?.let { backup -> backupTranslations?.restore(backup) }
                     } else {
                         repository.importSnapshot(encoded)
                     }
@@ -3082,6 +3101,13 @@ private fun MoreDestinationPane(
                     val current = repository.currentSnapshot.backupState
                     repository.setBackupState(current.copy(automaticEnabled = enabled))
                 }
+            },
+            translationOptionsVisible = backupTranslations != null,
+            onIncludePaidTranslationsChange = { include ->
+                mutate { repository.setBackupState(repository.currentSnapshot.backupState.copy(includePaidTranslations = include)) }
+            },
+            onIncludeFreeTranslationsChange = { include ->
+                mutate { repository.setBackupState(repository.currentSnapshot.backupState.copy(includeFreeTranslations = include)) }
             },
             onIntervalChange = { intervalHours ->
                 mutate {
@@ -3131,6 +3157,7 @@ private fun MoreDestinationPane(
                 }
             },
         )
+        }
         MoreDestination.ContentBackupV2 -> {
             val controller = appServices.portableContentBackupV2
             if (controller == null) {

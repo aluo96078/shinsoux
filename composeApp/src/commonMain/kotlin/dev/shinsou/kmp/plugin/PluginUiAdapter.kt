@@ -382,6 +382,13 @@ public class PluginBrowseAdapter(
     override suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt? {
         val security = packageSecurity ?: return null
         val input = normalizeRepositoryInput(url.trim())
+        // A development server that developer mode admits is unsigned by definition and may be
+        // plain HTTP: there is no key to show, and the strict inspection transport (HTTPS only,
+        // public addresses only) would refuse it before addRepository could take it. A URL already
+        // bound to a publisher is still inspected: that binding wins over developer mode.
+        if (developerMode?.admitsRepository(input) == true && security.publishers.publisherForRepository(input) == null) {
+            return null
+        }
         val presentation = operationMutex.withLock {
             // Anything the regular path can already take (pinned, trusted publisher)
             // or that is not a signed repository goes through addRepository as before.
@@ -1280,6 +1287,7 @@ public class PluginBrowseAdapter(
             credentialOrigins = policies.flatMap { it.credentialOrigins }.distinct().sorted(),
             browserSessionOrigins = policies.flatMap { it.browserSessionOrigins }.distinct().sorted(),
             browserImageOrigins = sources.flatMap { it.browserImageOrigins }.distinct().sorted(),
+            browserLoginOrigins = sources.flatMap { it.browserLoginOrigins }.distinct().sorted(),
             inDevelopment = stored.metadata.publisherId == null && PluginInstallKeys.isDeveloperKey(stored.manifest.id),
         )
     }
@@ -1460,6 +1468,10 @@ public class PluginBrowseAdapter(
         val cookies = secureStorageStage(SourceLoginFailureStage.READ_CREDENTIALS) {
             storageForSourceUi(sourceId).getCookies(storageId)
         }
+        // An account saved before sign-ins were marked: note it now that the secrets are open anyway.
+        if (credential != null && keyValueStore.getString(sourceSignedInKey(storageId)) == null) {
+            runCatching { markSourceSignedIn(storageId, true) }
+        }
         SourceSecretsResult(
             secrets = SourceSecrets(
                 credential = credential?.let { BrowseSourceCredential(it.username, it.password) },
@@ -1544,6 +1556,7 @@ public class PluginBrowseAdapter(
                 storageForSourceUi(sourceId).setCredential(storageId, PluginCredential(username, password))
             }
             if (dismissLegacy) loginRequestCoordinator.dismiss(sourceId)
+            runCatching { markSourceSignedIn(storageId, true) }
         }
         loginStage(SourceLoginFailureStage.REFRESH_SOURCE_STATE) {
             rebuildSnapshot(errorMessage = null)
@@ -1614,9 +1627,22 @@ public class PluginBrowseAdapter(
         }
         val storageId = v2Scope?.second ?: sourceId
         storageForSourceUi(sourceId).clearCredential(storageId)
+        markSourceSignedIn(storageId, false)
         rebuildSnapshot(errorMessage = null)
         result.getOrThrow()
     }
+
+    /**
+     * Whether the user signed in to a source, kept beside its settings and holding no secret: the
+     * sources list shows it without opening protected storage. Set by what the user does (a login,
+     * a browser sign-in, a cookie they add), never by cookies a site sets on its own.
+     */
+    private suspend fun markSourceSignedIn(storageId: Long, signedIn: Boolean) {
+        if (signedIn) keyValueStore.putString(sourceSignedInKey(storageId), "1")
+        else keyValueStore.remove(sourceSignedInKey(storageId))
+    }
+
+    private fun sourceSignedInKey(storageId: Long): String = "source.$storageId.signed-in"
 
     override suspend fun setSourceCookie(sourceId: Long, cookie: BrowseSourceCookie): Unit =
         operationMutex.withLock {
@@ -1639,6 +1665,7 @@ public class PluginBrowseAdapter(
                     hostOnly = cookie.hostOnly,
                 ),
             )
+            markSourceSignedIn(storageId, true)
             rebuildSnapshot(errorMessage = null)
         }
 
@@ -1653,6 +1680,10 @@ public class PluginBrowseAdapter(
             "Generic sources cannot import an embedded browser session"
         }
         manager.importWebChallengeSession(sourceKey, capability, cookies, userAgent, localStorage)
+        // A browser session with cookies is a sign-in; one that only passed a check brings none worth the name.
+        (requireV2SourceScope(sourceId)?.second ?: sourceId).let { storageId ->
+            if (cookies.isNotEmpty()) markSourceSignedIn(storageId, true)
+        }
         rebuildSnapshot(errorMessage = null)
     }
 
@@ -1678,6 +1709,10 @@ public class PluginBrowseAdapter(
             sourceId
         }
         storageForSourceUi(sourceId).clearCookies(storageId)
+        // A saved account can still sign in again; without one, nothing of the sign-in is left.
+        if (runCatching { storageForSourceUi(sourceId).getCredential(storageId) }.getOrNull() == null) {
+            markSourceSignedIn(storageId, false)
+        }
         rebuildSnapshot(errorMessage = null)
     }
 
@@ -1774,7 +1809,7 @@ public class PluginBrowseAdapter(
                 username = credential?.username,
                 password = credential?.password,
                 embeddedPolicy = dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
-                allowedNavigationOrigins = setOf(authorization.canonicalOrigin),
+                allowedNavigationOrigins = authorization.allowedNavigationOrigins,
                 allowedSubresourceOrigins = authorization.allowedSubresourceOrigins,
             ).also { requestBuilt = true }
         } finally {
@@ -2135,6 +2170,13 @@ public class PluginBrowseAdapter(
             .filterIsInstance<PluginBlockEntry.Package>()
             .associateBy { it.packageId }
         val extensionDescriptorsV2 = manager.extensionDescriptorsV2()
+        // A package that keeps cookies can hold a sign-in even when its script has no login hook:
+        // the user signs in through the browser challenge or by importing cookies.
+        val sessionPackages = manager.installedPlugins().filter {
+            PluginRuntimePermission.COOKIE_STORAGE in it.manifest.runtimePermissions.orEmpty()
+        }
+        val sessionPackageIds = sessionPackages.mapTo(hashSetOf()) { it.manifest.id }
+        val sessionSourceIds = sessionPackages.flatMapTo(hashSetOf()) { stored -> stored.manifest.sources.orEmpty().map { it.id } }
         val liveV2SourceKeys = extensionDescriptorsV2.flatMap { it.sources }
             .mapTo(linkedSetOf()) { it.sourceKey }
         pruneV2SourceMappings(liveV2SourceKeys)
@@ -2188,6 +2230,8 @@ public class PluginBrowseAdapter(
                 isNsfw = descriptor?.nsfw ?: false,
                 supportsLatest = source.supportsLatest,
                 supportsLogin = supportsLogin,
+                canSignIn = supportsLogin || source.id in sessionSourceIds,
+                signedIn = keyValueStore.getString(sourceSignedInKey(source.id)) != null,
                 requiresBrowserSessionLogin = source.requiredWebChallengeLocalStorageKeys.isNotEmpty(),
                 supportsFavorites = source.supportsFavorites,
                 // Credentials and cookies are intentionally not decrypted while rebuilding the
@@ -2261,6 +2305,8 @@ public class PluginBrowseAdapter(
                                 ?.toBooleanStrictOrNull() ?: true,
                             supportsLatest = ExtensionCapability.LATEST in descriptor.capabilities,
                             supportsLogin = supportsLogin,
+                            canSignIn = supportsLogin || sourceKey.packageId in sessionPackageIds,
+                            signedIn = storageId?.let { keyValueStore.getString(sourceSignedInKey(it)) } != null,
                             requiresBrowserSessionLogin = hostSource
                                 ?.requiredWebChallengeLocalStorageKeys()
                                 ?.isNotEmpty() == true,

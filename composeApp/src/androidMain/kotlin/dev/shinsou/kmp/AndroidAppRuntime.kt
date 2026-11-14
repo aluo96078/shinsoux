@@ -62,8 +62,14 @@ internal class AndroidAppRuntime private constructor(context: Context) {
                 ),
             ),
             autoBackupService = sharedState.autoBackups,
-            contentInfrastructure = AndroidContentInfrastructure(applicationContext),
+            contentInfrastructure = sharedState.contentInfrastructure,
             platformTextToSpeechEngine = AndroidTextToSpeechEngine(applicationContext),
+            offlineTranslation = dev.shinsou.kmp.translation.OfflineTranslationPlatform(
+                engine = dev.shinsou.kmp.translation.AndroidOfflineTranslationEngine(),
+                // Outside Android's backup: models are large and can be downloaded again.
+                modelDirectory = java.io.File(applicationContext.noBackupFilesDir, "translation-models").absolutePath,
+                memory = dev.shinsou.kmp.translation.AndroidTranslationMemoryGuard(applicationContext),
+            ),
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),

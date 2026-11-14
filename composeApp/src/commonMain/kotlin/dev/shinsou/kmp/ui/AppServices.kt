@@ -1397,6 +1397,10 @@ data class BrowseSource(
     val isNsfw: Boolean = false,
     val supportsLatest: Boolean = true,
     val supportsLogin: Boolean = false,
+    /** The source can hold a sign-in: a login hook, or cookies kept from a browser sign-in or an import. */
+    val canSignIn: Boolean = supportsLogin,
+    /** The user signed in here (a login, a browser sign-in or a cookie they added) and has not signed out. */
+    val signedIn: Boolean = false,
     /** Login must complete in the source's browser because credentials alone cannot mint a session. */
     val requiresBrowserSessionLogin: Boolean = false,
     /** The source exposes an account-owned remote collection (for example Wenku8 bookcase). */
@@ -1735,6 +1739,8 @@ data class PluginPermissionDetails(
     val browserSessionOrigins: List<String>,
     /** Where the isolated browser may load images from, with BROWSER_IMAGES. */
     val browserImageOrigins: List<String> = emptyList(),
+    /** Sign-in sites the browser challenge may visit besides the source itself, with BROWSER_CHALLENGE. */
+    val browserLoginOrigins: List<String> = emptyList(),
     /** ADR-0002 §8.1: unsigned, from a developer-mode repository; runs only while the mode is on. */
     val inDevelopment: Boolean = false,
 )

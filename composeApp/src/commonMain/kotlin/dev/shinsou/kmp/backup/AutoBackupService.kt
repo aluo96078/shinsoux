@@ -47,6 +47,13 @@ public class AutoBackupService(
     private val deviceId: String? = null,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
+    /**
+     * Translation data for backups (ADR-0004 §4.2), set once the app's translation feature
+     * exists. A background run that has none writes a backup without it.
+     */
+    @kotlin.concurrent.Volatile
+    public var translations: BackupTranslations? = null
+
     /** Creates a backup only when automatic backup is enabled and its interval has elapsed. */
     public suspend fun runIfDue(): AutoBackupRunResult = AUTO_BACKUP_OPERATION_MUTEX.withLock {
         val state = repository.currentSnapshot.backupState
@@ -106,6 +113,7 @@ public class AutoBackupService(
             }
             val restoredAt = now().coerceAtLeast(0)
             val result = repository.restoreBackup(envelope, selection, restoredAt)
+            envelope.translations?.let { backup -> translations?.restore(backup) }
             repository.setBackupState(
                 repository.currentSnapshot.backupState.copy(
                     status = BackupStatus.COMPLETED,
@@ -143,7 +151,7 @@ public class AutoBackupService(
                 createdAt = createdAt,
                 appVersion = appVersion,
                 deviceId = deviceId,
-            )
+            ).withTranslations(translations, repository.currentSnapshot.backupState)
             val fileName = autoBackupFileName(createdAt, envelope.snapshot.revision)
             val bytes = SnapshotBackupService.encode(envelope).encodeToByteArray()
             fileSystem.writeAtomically("$AUTO_BACKUP_DIRECTORY/$fileName", bytes)
@@ -261,3 +269,52 @@ public const val AUTO_BACKUP_EXTENSION: String = "shinsoubackup"
 private const val MILLIS_PER_HOUR = 60L * 60L * 1_000L
 private val AUTO_BACKUP_FILE_PATTERN = Regex("^auto-([0-9]{1,19})-r([0-9]{1,19})\\.$AUTO_BACKUP_EXTENSION$")
 private val AUTO_BACKUP_OPERATION_MUTEX = Mutex()
+
+
+/** What backups need from the translation feature. */
+public interface BackupTranslations {
+    /** Glossaries and per-work settings, plus the stored translations [state] asks for; null when there is nothing. */
+    public suspend fun export(state: dev.shinsou.kmp.domain.model.BackupState): dev.shinsou.kmp.translation.TranslationBackup?
+
+    public suspend fun restore(backup: dev.shinsou.kmp.translation.TranslationBackup)
+}
+
+/** [ReaderTranslation] as a backup source. */
+public class ReaderTranslationBackups(private val translation: dev.shinsou.kmp.translation.ReaderTranslation) : BackupTranslations {
+    override suspend fun export(state: dev.shinsou.kmp.domain.model.BackupState): dev.shinsou.kmp.translation.TranslationBackup? =
+        translation.exportBackup(state.includePaidTranslations, state.includeFreeTranslations).takeUnless { it.isEmpty }
+
+    override suspend fun restore(backup: dev.shinsou.kmp.translation.TranslationBackup): Unit = translation.importBackup(backup)
+}
+
+/** The translation memory as a backup source, for a scheduler that runs without the app's UI. */
+public class TranslationMemoryBackups(private val memory: dev.shinsou.kmp.translation.TranslationMemoryStore) : BackupTranslations {
+    override suspend fun export(state: dev.shinsou.kmp.domain.model.BackupState): dev.shinsou.kmp.translation.TranslationBackup? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            memory.exportBackup(
+                state.includePaidTranslations,
+                state.includeFreeTranslations,
+                dev.shinsou.kmp.translation.ReaderTranslation.BACKUP_SEGMENT_BUDGET_BYTES,
+            ).takeUnless { it.isEmpty }
+        }
+
+    override suspend fun restore(backup: dev.shinsou.kmp.translation.TranslationBackup): Unit =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            memory.importBackup(backup, kotlin.time.Clock.System.now().toEpochMilliseconds())
+        }
+}
+
+/** Adds translation data to an envelope; a failure to read it must not cost the user the backup. */
+public suspend fun BackupEnvelope.withTranslations(
+    translations: BackupTranslations?,
+    state: dev.shinsou.kmp.domain.model.BackupState,
+): BackupEnvelope {
+    val backup = try {
+        translations?.export(state)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+    return if (backup == null) this else copy(translations = backup)
+}

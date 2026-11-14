@@ -311,7 +311,13 @@ internal fun NovelReaderSurface(
     onTapAction: (ReaderTapAction) -> Unit,
     modifier: Modifier = Modifier,
     remoteAssetScope: TypedReaderRemoteAssetScope? = null,
+    /**
+     * Shows this text (a translation) instead of [canonicalText]. Positions reported to the
+     * callbacks and taken from [initialLocator] stay positions in [canonicalText].
+     */
+    display: dev.shinsou.kmp.translation.TranslationDisplayText? = null,
 ) {
+    val shownText = display?.text ?: canonicalText
     val textMeasurer = rememberTextMeasurer(cacheSize = 32)
     val density = LocalDensity.current
     val textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -322,8 +328,10 @@ internal fun NovelReaderSurface(
         letterSpacing = 0.12.sp,
         color = NOVEL_READER_TEXT,
     )
-    val currentSourcePosition = remember(canonicalText, initialLocator) {
-        NovelSourcePosition(initialLocator.resolveOffset(canonicalText) ?: 0)
+    // Offsets below are offsets in the text on screen.
+    val currentSourcePosition = remember(shownText, initialLocator) {
+        val sourceOffset = initialLocator.resolveOffset(canonicalText) ?: 0
+        NovelSourcePosition(display?.toDisplay(sourceOffset) ?: sourceOffset)
     }
 
     BoxWithConstraints(modifier.fillMaxSize().background(NOVEL_READER_BACKGROUND)) {
@@ -336,14 +344,14 @@ internal fun NovelReaderSurface(
         val widthPixels = with(density) { columnWidth.roundToPx() }.coerceAtLeast(1)
         val heightPixels = with(density) { pageTextHeight.roundToPx() }.coerceAtLeast(1)
         val pages = remember(
-            canonicalText,
+            shownText,
             widthPixels,
             heightPixels,
             textStyle,
             textMeasurer,
         ) {
             paginateNovelContent(
-                source = canonicalText,
+                source = shownText,
                 textMeasurer = textMeasurer,
                 textStyle = textStyle,
                 maxWidthPixels = widthPixels,
@@ -356,7 +364,7 @@ internal fun NovelReaderSurface(
             .coerceAtLeast(0)
         // Consume a saved visual page only for this first pagination. Reflows recreate the keyed
         // reader from currentSourcePosition and keep the stable source position instead.
-        var initialVisualPageConsumed by remember(canonicalText, initialLocator) {
+        var initialVisualPageConsumed by remember(shownText, initialLocator) {
             mutableStateOf(false)
         }
         val restoredVisualPage = initialVisualPageIndex
@@ -387,6 +395,9 @@ internal fun NovelReaderSurface(
             settings.novelLineHeightMultiplier,
             settings.readingMode,
             pages.size,
+            // Another text on screen (a translation switched on or off) is another document to
+            // the pager and list states, even when it happens to paginate into as many pages.
+            display,
         ) {
             if (isNovelContinuousMode(settings.readingMode)) {
                 ContinuousNovelReader(
@@ -407,7 +418,7 @@ internal fun NovelReaderSurface(
                     },
                     onViewportObserved = { viewport ->
                         currentSourcePosition.offsetUtf16 = novelViewportSourceOffset(
-                            source = canonicalText,
+                            source = shownText,
                             pages = pages,
                             viewport = viewport,
                         )
@@ -416,12 +427,12 @@ internal fun NovelReaderSurface(
                         val pageIndex = if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex
                         onPageChanged(pageIndex, pages.size)
                         val sourceOffset = novelViewportSourceOffset(
-                            source = canonicalText,
+                            source = shownText,
                             pages = pages,
                             viewport = viewport,
                         )
                         currentSourcePosition.offsetUtf16 = sourceOffset
-                        onLocatorChanged(navigation.locatorForOffset(sourceOffset), pageIndex, pages.size)
+                        onLocatorChanged(navigation.locatorForOffset(display?.toSource(sourceOffset) ?: sourceOffset), pageIndex, pages.size)
                     },
                     onNavigationBoundary = onNavigationBoundary,
                     onTapAction = onTapAction,
@@ -440,7 +451,7 @@ internal fun NovelReaderSurface(
                     remoteAssetScope = remoteAssetScope,
                     onPageChanged = { index ->
                         currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, index)
-                        reportNovelPage(index, pages, navigation, onPageChanged, onLocatorChanged)
+                        reportNovelPage(index, pages, navigation, display, onPageChanged, onLocatorChanged)
                     },
                     onNavigationBoundary = onNavigationBoundary,
                     onTapAction = onTapAction,
@@ -454,13 +465,14 @@ private fun reportNovelPage(
     index: Int,
     pages: List<NovelVisualPage>,
     navigation: PlainTextNavigation,
+    display: dev.shinsou.kmp.translation.TranslationDisplayText?,
     onPageChanged: (Int, Int) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
 ) {
     if (index !in pages.indices) return
     onPageChanged(index, pages.size)
-    val sourceOffset = novelPagedSourceOffset(pages, index)
-    onLocatorChanged(navigation.locatorForOffset(sourceOffset), index, pages.size)
+    val shownOffset = novelPagedSourceOffset(pages, index)
+    onLocatorChanged(navigation.locatorForOffset(display?.toSource(shownOffset) ?: shownOffset), index, pages.size)
 }
 
 internal fun novelPagedSourceOffset(pages: List<NovelVisualPage>, pageIndex: Int): Int {

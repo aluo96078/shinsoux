@@ -14,19 +14,19 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.1")
+val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.2")
 // Xcode runs Gradle from a build phase, where a -P argument cannot be passed: CI names the
 // version through the environment there.
 val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion")
     .orElse(providers.environmentVariable("SHINSOU_RELEASE_DISPLAY_VERSION").filter { it.isNotBlank() })
-    .orElse("1.0.1")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.199")
+    .orElse("1.0.2-beta.1")
+val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.201")
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
     .map { rawValue ->
         rawValue.toIntOrNull()?.takeIf { it > 0 }
             ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
     }
-    .orElse(25600199)
+    .orElse(25600201)
 
 val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
 val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
@@ -217,6 +217,48 @@ val buildMacOsSandboxHelper = if (isMacOsBuildHost) {
             "/bin/sh", "-c",
             "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
             "sign-helper", "$cmakeBuild/shinsou-sandbox", output,
+            *keychain.toTypedArray(), "--sign", identity, output,
+        )
+    }
+} else {
+    null
+}
+
+// ADR-0004 §4.5: the offline translation helper (translation-core's shinsou-translate), built for
+// the host architecture and shipped next to the other helpers. A build without the helper reports
+// offline translation as unavailable.
+val macOsTranslationHelper = macOsWebChallengeResourcesRoot.map { it.dir("macos").file("shinsou-translate") }
+val buildMacOsTranslationHelper = if (isMacOsBuildHost) {
+    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("translation-core-macos").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureMacOsTranslationHelper") {
+        dependsOn("fetchTranslationCoreDeps")
+        commandLine(
+            // The host architecture: the engine's architecture detection refuses an explicit
+            // CMAKE_OSX_ARCHITECTURES=arm64.
+            "cmake", "-S", translationCore, "-B", cmakeBuild,
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+        )
+    }
+    val compile = tasks.register<Exec>("compileMacOsTranslationHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-translate", "-j", "8")
+    }
+    tasks.register<Exec>("buildMacOsTranslationHelper") {
+        group = "build"
+        description = "Builds and signs the offline translation helper for the macOS app resources"
+        dependsOn(compile, "prepareMacOsWebChallengeHelperOutput")
+        val output = macOsTranslationHelper.get().asFile.absolutePath
+        outputs.file(output)
+        outputs.upToDateWhen { false }
+        // Hardened runtime, no entitlements, like the sandbox helper.
+        val identity = macOsSigningIdentity ?: "-"
+        val keychain = macOsSigningKeychain?.let { listOf("--keychain", it) }.orEmpty()
+        commandLine(
+            "/bin/sh", "-c",
+            "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
+            "sign-helper", "$cmakeBuild/shinsou-translate", output,
             *keychain.toTypedArray(), "--sign", identity, output,
         )
     }
@@ -417,6 +459,34 @@ val buildWindowsSandboxHelper = if (isWindowsBuildHost) {
     null
 }
 
+// ADR-0004 §4.5 (Windows): the offline translation helper, built with the same MinGW-w64 (UCRT64)
+// toolchain as the sandbox helper, as one static executable.
+val windowsTranslationHelper = macOsWebChallengeResourcesRoot.map { it.dir("windows").file("shinsou-translate.exe") }
+val buildWindowsTranslationHelper = if (isWindowsBuildHost) {
+    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
+    val cmakeBuild = layout.buildDirectory.dir("translation-core-windows").get().asFile.absolutePath
+    val configure = tasks.register<Exec>("configureWindowsTranslationHelper") {
+        dependsOn("fetchTranslationCoreDeps")
+        commandLine(
+            "cmake", "-S", translationCore, "-B", cmakeBuild, "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++",
+        )
+    }
+    val compile = tasks.register<Exec>("compileWindowsTranslationHelper") {
+        dependsOn(configure)
+        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-translate")
+    }
+    tasks.register<Copy>("buildWindowsTranslationHelper") {
+        group = "build"
+        description = "Builds the offline translation helper for the Windows app resources"
+        dependsOn(compile)
+        from(File(cmakeBuild, "shinsou-translate.exe"))
+        into(windowsTranslationHelper.map { it.asFile.parentFile })
+    }
+} else {
+    null
+}
+
 // ADR-0002 S4 (iOS): the sandbox-core WASM guest and, per Apple SDK, the WAMR host library the
 // iOS targets link through the `sandboxWasm` cinterop. Needs clang/lld with the wasm32 target,
 // wasi-libc and its builtins (Homebrew: llvm lld wasi-libc wasi-runtimes wabt), CMake and Xcode.
@@ -451,6 +521,44 @@ listOf("iphoneos", "iphonesimulator").forEach { sdk ->
         )
     }
 }
+// ADR-0004 §4.5 (iOS): translation-core and the engine it links, merged into one static archive
+// per Apple SDK for the `translationCore` cinterop.
+fun iosTranslationCoreDir(sdk: String): File = layout.buildDirectory.dir("translation-ios-$sdk").get().asFile
+listOf("iphoneos", "iphonesimulator").forEach { sdk ->
+    val dir = iosTranslationCoreDir(sdk).absolutePath
+    tasks.register<Exec>("buildIosTranslationCore${sdk.replaceFirstChar(Char::uppercase)}") {
+        group = "build"
+        description = "Builds the offline translation engine for $sdk"
+        dependsOn("fetchTranslationCoreDeps")
+        val core = rootProject.layout.projectDirectory.dir("translation-core")
+        inputs.dir(core.dir("src"))
+        inputs.dir(core.dir("ios"))
+        inputs.dir(core.dir("patches"))
+        inputs.file(core.file("CMakeLists.txt"))
+        outputs.file("$dir/libshinsou_translate.a")
+        commandLine(
+            "/bin/sh", "-c",
+            "export STC_IOS_SDK=$3 && cmake -S \"$1\" -B \"$2/cmake\" -DCMAKE_BUILD_TYPE=Release " +
+                "-DCMAKE_TOOLCHAIN_FILE=\"$1/ios/ios.toolchain.cmake\" -DSTC_IOS_SDK=$3 && " +
+                "cmake --build \"$2/cmake\" --target shinsou_translation_core -j 8 && " +
+                "find \"$2/cmake\" -name '*.a' -print0 | xargs -0 xcrun libtool -static -o \"$2/libshinsou_translate.a\"",
+            "build-ios-translation-core", core.asFile.absolutePath, dir, sdk,
+        )
+    }
+}
+tasks.configureEach {
+    when {
+        // The archive is embedded in the klib: a rebuilt engine must rerun the cinterop.
+        name.startsWith("cinteropTranslationCoreIosArm64") -> {
+            dependsOn("buildIosTranslationCoreIphoneos")
+            inputs.file(iosTranslationCoreDir("iphoneos").resolve("libshinsou_translate.a"))
+        }
+        name.startsWith("cinteropTranslationCoreIosSimulatorArm64") -> {
+            dependsOn("buildIosTranslationCoreIphonesimulator")
+            inputs.file(iosTranslationCoreDir("iphonesimulator").resolve("libshinsou_translate.a"))
+        }
+    }
+}
 tasks.configureEach {
     when {
         name.startsWith("cinteropSandboxWasmIosArm64") -> dependsOn("buildIosSandboxHostIphoneos")
@@ -469,6 +577,12 @@ tasks.configureEach {
     }
     if (buildMacOsSandboxHelper != null && name == "prepareAppResources") {
         dependsOn(buildMacOsSandboxHelper)
+    }
+    if (buildMacOsTranslationHelper != null && name == "prepareAppResources") {
+        dependsOn(buildMacOsTranslationHelper)
+    }
+    if (buildWindowsTranslationHelper != null && name == "prepareAppResources") {
+        dependsOn(buildWindowsTranslationHelper)
     }
     if (buildWindowsSandboxHelper != null && name == "prepareAppResources") {
         dependsOn(buildWindowsSandboxHelper)
@@ -503,6 +617,12 @@ kotlin {
             defFile(project.file("src/nativeInterop/cinterop/sandboxWasm.def"))
             includeDirs(rootProject.file("sandbox-core/ios"))
             extraOpts("-libraryPath", iosSandboxHostDir(iosSandboxSdk(konanTarget)).absolutePath)
+        }
+        // ADR-0004 §4.5: the offline translation engine.
+        compilations.getByName("main").cinterops.create("translationCore") {
+            defFile(project.file("src/nativeInterop/cinterop/translationCore.def"))
+            includeDirs(rootProject.file("translation-core/src"))
+            extraOpts("-libraryPath", iosTranslationCoreDir(iosSandboxSdk(konanTarget)).absolutePath)
         }
         binaries.all {
             linkerOpts("-lsqlite3")
@@ -629,6 +749,10 @@ kotlin {
 
         val desktopTest by getting {
             resources.srcDir(shinsouPluginSources)
+            dependencies {
+                // Compose UI tests of reader panels (the translation panel).
+                implementation(compose.desktop.uiTestJUnit4)
+            }
         }
     }
 }
@@ -656,7 +780,8 @@ android {
     }
 
     externalNativeBuild.cmake {
-        path = file("../sandbox-core/CMakeLists.txt")
+        // Builds sandbox-core and, for arm64-v8a, translation-core.
+        path = file("src/androidMain/cpp/CMakeLists.txt")
         version = "3.22.1"
     }
 
@@ -730,8 +855,13 @@ val fetchSandboxCoreDeps by tasks.registering(Exec::class) {
     workingDir = rootProject.file("sandbox-core")
     commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
 }
+val fetchTranslationCoreDeps by tasks.registering(Exec::class) {
+    description = "Fetches translation-core's pinned engine sources and applies its patches"
+    workingDir = rootProject.file("translation-core")
+    commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
+}
 tasks.configureEach {
-    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps)
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps, fetchTranslationCoreDeps)
 }
 val deviceTestUsesOwnApplicationId = sandboxDeviceTest.get()
 tasks.configureEach {

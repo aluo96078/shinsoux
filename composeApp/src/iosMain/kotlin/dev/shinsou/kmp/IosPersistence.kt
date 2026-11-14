@@ -513,3 +513,17 @@ private class IosKeychainException(
 ) : IllegalStateException("Keychain $operation failed with status $status")
 
 private const val ERR_SEC_MISSING_ENTITLEMENT: OSStatus = -34018
+
+/**
+ * Where offline translation models are kept (ADR-0004): beside the app's data, so the system does
+ * not purge them like a cache, but left out of device backups, since they are large and can be
+ * downloaded again.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal fun iosTranslationModelDirectory(): String {
+    val path = IosApplicationPaths.file("translation-models")
+    NSFileManager.defaultManager.createDirectoryAtPath(path, withIntermediateDirectories = true, attributes = null, error = null)
+    platform.Foundation.NSURL.fileURLWithPath(path, isDirectory = true)
+        .setResourceValue(true, forKey = platform.Foundation.NSURLIsExcludedFromBackupKey, error = null)
+    return path
+}

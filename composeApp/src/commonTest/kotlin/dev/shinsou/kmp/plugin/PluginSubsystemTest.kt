@@ -1158,6 +1158,8 @@ class PluginSubsystemTest {
         )
         assertTrue(browse.state.value.sources.single().cookies.isEmpty())
         assertEquals("session", browse.loadSourceSecrets(123).secrets.cookies.single().name)
+        // The sources list shows the sign-in without opening protected storage.
+        assertTrue(browse.state.value.sources.single().signedIn)
         val content = PluginContentAdapter(
             manager = manager,
             chapterResolver = PluginReaderChapterResolver { _, _ ->
@@ -1201,6 +1203,7 @@ class PluginSubsystemTest {
 
         browse.logoutSource(123)
         assertTrue(runtimeFactory.runtime?.loggedOut == true)
+        assertFalse(browse.state.value.sources.single().signedIn)
         assertEquals(null, storage.getCredential(123))
         assertEquals(null, browse.loadSourceSecrets(123).secrets.credential)
 

@@ -41,7 +41,11 @@ internal object UpdateGrantContinuation {
                 previous.declaredContentOrigins().containsAll(next.declaredContentOrigins()) &&
                 previous.networkPolicy().browserSessionOrigins.containsAll(next.networkPolicy().browserSessionOrigins) &&
                 // BROWSER_IMAGES is granted for the origins the user saw; a new one needs a new review.
-                normalizePluginOrigins(previous.browserImageOrigins).containsAll(normalizePluginOrigins(next.browserImageOrigins))
+                normalizePluginOrigins(previous.browserImageOrigins).containsAll(normalizePluginOrigins(next.browserImageOrigins)) &&
+                // BROWSER_CHALLENGE was granted for the sign-in sites the user saw.
+                normalizePluginOrigins(previous.browserLoginOrigins).containsAll(normalizePluginOrigins(next.browserLoginOrigins)) &&
+                normalizePluginOrigins(previous.browserLoginResourceOrigins)
+                    .containsAll(normalizePluginOrigins(next.browserLoginResourceOrigins))
         }
         if (!originsUnchanged) return null
         return PluginGrantSelection(

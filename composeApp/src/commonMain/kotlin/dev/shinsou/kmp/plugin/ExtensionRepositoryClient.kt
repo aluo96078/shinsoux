@@ -412,6 +412,8 @@ public class ExtensionRepositoryClient(
                         browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
                         contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
                         browserImageOrigins = source.optionalStringSet("browserImageOrigins"),
+                        browserLoginOrigins = source.optionalStringSet("browserLoginOrigins"),
+                        browserLoginResourceOrigins = source.optionalStringSet("browserLoginResourceOrigins"),
                         originPolicyVersion = 2,
                         legacyLongId = source.requiredNullableString("legacyLongId"),
                         canonicalSourceId = rawId,
@@ -537,6 +539,8 @@ public class ExtensionRepositoryClient(
                 require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
                 require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
                 require(match.optionalStringSet("browserImageOrigins") == expected.browserImageOrigins)
+                require(match.optionalStringSet("browserLoginOrigins") == expected.browserLoginOrigins)
+                require(match.optionalStringSet("browserLoginResourceOrigins") == expected.browserLoginResourceOrigins)
                 require(match.requiredStringSet("capabilities") == entry.capabilities)
                 val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
                 require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
@@ -1138,6 +1142,8 @@ public class ExtensionRepositoryClient(
             source.browserSessionOrigins,
             source.contentHostSuffixes,
             source.browserImageOrigins,
+            source.browserLoginOrigins,
+            source.browserLoginResourceOrigins,
         )
         require(declarations.all { it.size <= MAX_INDEX_SET_VALUES }) {
             "Repository source declaration contains too many values"
@@ -1182,6 +1188,8 @@ public class ExtensionRepositoryClient(
             source.optionalStringSet("browserSessionOrigins")
             source.optionalStringSet("contentHostSuffixes")
             source.optionalStringSet("browserImageOrigins")
+            source.optionalStringSet("browserLoginOrigins")
+            source.optionalStringSet("browserLoginResourceOrigins")
         }
     }
 

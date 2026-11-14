@@ -439,6 +439,32 @@ class PluginManagerExecutionTierTest {
             packageSecurity = PluginPackageSecurity(host.publishers, host.revocations, host.blocklist, client),
         )
         assertFailsWith<ExtensionRepositoryException.Http> { unreachable.inspectRepositoryTrust(other) }
+
+        // A development server has no key to show: with developer mode on it goes straight to
+        // addRepository. The inspection transport is HTTPS-only and would refuse it otherwise.
+        val devClient = ExtensionRepositoryClient(
+            HttpClient(MockEngine { respond("", io.ktor.http.HttpStatusCode.NotFound) }),
+            cacheToken = { 1L },
+            repositoryHostResolver = PluginHostResolver { listOf("93.184.216.34") },
+            repositoryTransport = object : PluginHttpTransport {
+                override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse = error("resolved transport only")
+                override suspend fun executeResolved(request: PluginHttpRequest, resolution: PluginHostResolution): PluginHttpResponse =
+                    error("a development server must not reach the pinned transport")
+            },
+            developerRepository = host.developer::admitsRepository,
+        )
+        val developing = PluginBrowseAdapter(
+            manager = host.manager,
+            repositoryClient = devClient,
+            repositoryStore = KeyValueExtensionRepositoryStore(host.keyValues),
+            pluginStorage = host.storage,
+            keyValueStore = host.keyValues,
+            trustStore = KeyValuePluginTrustStore(host.keyValues),
+            packageSecurity = PluginPackageSecurity(host.publishers, host.revocations, host.blocklist, devClient),
+            developerMode = host.developer,
+        )
+        host.developer.setEnabled(true)
+        assertNull(developing.inspectRepositoryTrust(DEV_REPOSITORY.baseUrl))
     }
 
     @Test
@@ -478,7 +504,11 @@ class PluginManagerExecutionTierTest {
 
     @Test
     fun aThirdPartySourceOpensItsWebChallengeOnlyWhenGranted() = runTest {
-        suspend fun hostGranting(challenge: Boolean): Pair<Host, dev.shinsou.kmp.domain.model.SourceKey> {
+        suspend fun hostGranting(
+            challenge: Boolean,
+            loginOrigins: Set<String> = emptySet(),
+            loginResourceOrigins: Set<String> = emptySet(),
+        ): Pair<Host, dev.shinsou.kmp.domain.model.SourceKey> {
             val host = Host()
             host.trustPublisher()
             host.manager.install(
@@ -489,6 +519,7 @@ class PluginManagerExecutionTierTest {
                         SourceIndexEntry(
                             name = "Tier fixture", lang = "all", id = SOURCE_ID, baseUrl = "https://source.example",
                             browserSessionOrigins = setOf("https://source.example"), originPolicyVersion = 2,
+                            browserLoginOrigins = loginOrigins, browserLoginResourceOrigins = loginResourceOrigins,
                         ),
                     ),
                 ),
@@ -510,6 +541,41 @@ class PluginManagerExecutionTierTest {
         // A stored key without its numeric projection still resolves (no crash on the storage id).
         assertNotNull(granted.manager.issueWebChallenge(grantedKey.copy(legacyLongId = null)))
         assertEquals(setOf("https://source.example"), authorization.allowedSubresourceOrigins)
+        assertEquals(setOf("https://source.example"), authorization.allowedNavigationOrigins)
+
+        // A source that offers "log in with ..." names where its browser may go to sign in and
+        // what those pages load: both reach the browser, and only the first can be visited.
+        val idp = setOf("https://id.provider.example")
+        val idpResources = setOf("https://static.provider.example")
+        val (signIn, signInKey) = hostGranting(challenge = true, loginOrigins = idp, loginResourceOrigins = idpResources)
+        val withLogin = assertNotNull(signIn.manager.issueWebChallenge(signInKey))
+        assertEquals(setOf("https://source.example") + idp, withLogin.allowedNavigationOrigins)
+        assertEquals(setOf("https://source.example") + idp + idpResources, withLogin.allowedSubresourceOrigins)
+        // The session is still the source's alone.
+        assertEquals("https://source.example", withLogin.canonicalOrigin)
+        // Declined: the declaration opens nothing by itself.
+        val (signInDeclined, signInDeclinedKey) = hostGranting(challenge = false, loginOrigins = idp)
+        assertFails { signInDeclined.manager.issueWebChallenge(signInDeclinedKey) }
+    }
+
+    @Test
+    fun signInSitesAreBoundedAndNeedABrowserSession() {
+        fun source(
+            session: Set<String> = setOf("https://source.example"),
+            login: Set<String> = emptySet(),
+            resources: Set<String> = emptySet(),
+        ) = SourceIndexEntry(
+            name = "s", lang = "all", id = 1, baseUrl = "https://source.example", originPolicyVersion = 2,
+            requestOrigins = setOf("https://source.example"),
+            browserSessionOrigins = session, browserLoginOrigins = login, browserLoginResourceOrigins = resources,
+        )
+        source(login = setOf("https://id.example"), resources = setOf("https://cdn.example"))
+        assertFails { source(session = emptySet(), login = setOf("https://id.example")) }
+        assertFails { source(resources = setOf("https://cdn.example")) } // resources without a place to sign in
+        assertFails { source(login = setOf("http://id.example")) }
+        assertFails { source(login = setOf("https://id.example/path")) }
+        assertFails { source(login = (1..8).mapTo(linkedSetOf()) { "https://id$it.example" }) }
+        assertFails { source(login = setOf("https://id.example"), resources = (1..21).mapTo(linkedSetOf()) { "https://cdn$it.example" }) }
     }
 
     @Test

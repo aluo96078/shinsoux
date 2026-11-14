@@ -838,7 +838,20 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
         return storage
     }
 
-    private func validatedCookies(_ cookies: [HTTPCookie]) -> [CookiePayload]? {
+    /// True for a cookie the source's own host would send: set for that host or a parent domain.
+    /// After a sign-in through another site the store also holds that site's cookies; they are
+    /// not the source's session and are never reported.
+    private func belongsToSource(_ cookie: HTTPCookie) -> Bool {
+        guard let host = origin.host?.lowercased(), !host.isEmpty else { return false }
+        var domain = cookie.domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while domain.hasPrefix(".") { domain.removeFirst() }
+        guard !domain.isEmpty else { return false }
+        return host == domain || host.hasSuffix("." + domain)
+    }
+
+    private func validatedCookies(_ allCookies: [HTTPCookie]) -> [CookiePayload]? {
+        // Only the source's cookies count against the limits; a cookie with no value carries no session.
+        let cookies = allCookies.filter { belongsToSource($0) && !$0.name.isEmpty && !$0.value.isEmpty }
         guard cookies.count <= captureCookieMaxCount else { return nil }
         var payloads: [CookiePayload] = []
         payloads.reserveCapacity(cookies.count)
@@ -941,8 +954,11 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
         }
     }
 
+    /// The source's own origin only. A sign-in site the browser may visit is a navigation origin
+    /// too, but the saved account is never typed into it and no session is taken from it.
     private func isSameOrigin(_ candidate: URL) -> Bool {
-        canonicalOrigin(candidate).map(allowedNavigationOrigins.contains) == true
+        guard let source = canonicalOrigin(origin) else { return false }
+        return canonicalOrigin(candidate) == source
     }
 
     private func effectivePort(_ url: URL) -> Int? {
@@ -1081,6 +1097,9 @@ private final class ChallengeController: NSObject, NSApplicationDelegate, WKNavi
     private func reportNavigationError(_ error: Error) {
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+        // A navigation this helper refused (or one that became a download) ends as "frame load
+        // interrupted": the page the user is on is still there, so it is not a failure to show.
+        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 { return }
         writer.send(.error("The verification page could not be loaded."))
     }
 

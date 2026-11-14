@@ -220,7 +220,14 @@ private fun PluginRuntimePermission.risk(strings: ShinsouStrings, details: Plugi
     PluginRuntimePermission.COOKIE_READ -> strings.text("Lets the plugin read those cookies, so it could copy your login.")
     PluginRuntimePermission.LOGIN_PROMPT -> strings.text("Lets the plugin ask you to log in.")
     PluginRuntimePermission.FAVORITE_MUTATION -> strings.text("Lets the plugin change your favorites on the site.")
-    PluginRuntimePermission.BROWSER_CHALLENGE -> strings.text("Lets the plugin open a browser page to pass the site's checks.")
+    PluginRuntimePermission.BROWSER_CHALLENGE -> if (details?.browserLoginOrigins.isNullOrEmpty()) {
+        strings.text("Lets the plugin open a browser page to pass the site's checks.")
+    } else {
+        strings.text(
+            "Lets the plugin open a browser page to pass the site's checks and to sign in. While signing in, that page may also go to: {0}",
+            details.browserLoginOrigins.joinToString(),
+        )
+    }
     PluginRuntimePermission.BROWSER_IMAGES -> strings.text(
         "Loads its images in a private browser without your cookies, from: {0}",
         details?.browserImageOrigins?.joinToString().orEmpty().ifEmpty { "—" },

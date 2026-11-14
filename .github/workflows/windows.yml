@@ -121,6 +121,42 @@ jobs:
         working-directory: shinsoux
         run: .\gradlew.bat :composeApp:createReleaseDistributable '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
 
+      # ADR-0004 §4.5: the packaged offline translation helper, with a real model. The model sits in
+      # a directory with a non-ASCII name: Windows profile directories often have one, and the engine
+      # opens files through the C runtime.
+      - name: Translate through the packaged helper
+        working-directory: shinsoux
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper="$(find composeApp/build/compose/binaries/main-release/app -name shinsou-translate.exe | head -n 1)"
+          [[ -n "$helper" ]] || { echo "::error::the app carries no shinsou-translate.exe"; exit 1; }
+          # Self-contained: system DLLs only.
+          if objdump -p "$helper" | grep "DLL Name" | grep -v -i "KERNEL32.dll\|SHELL32.dll\|SHLWAPI.dll\|ADVAPI32.dll\|api-ms-win-crt-"; then
+            echo "::error::the translation helper needs non-system DLLs"; exit 1
+          fi
+          [[ "$(printf 'UNLOAD\n' | "$helper")" == "OK 0" ]] || { echo "::error::the translation helper did not start"; exit 1; }
+
+          models="$RUNNER_TEMP/翻譯模型 ja-en"
+          mkdir -p "$models"
+          base=https://firefox-settings-attachments.cdn.mozilla.net/main-workspace/translations-models
+          fetch() { # name file sha256
+            curl --fail --silent --show-error --location --retry 3 --output "$models/$1" "$base/$2"
+            echo "$3  $models/$1" | sha256sum --check --quiet
+          }
+          fetch model.jaen.intgemm.alphas.bin 2b066368-11b5-4cee-92e8-e6156b334f80.bin 3a603e20bfe1be86071913f9e23ab5129075bc0a8490151020ac4821e4f17302
+          fetch vocab.jaen.spm 6f4898e3-ebaa-4a79-a1af-93a4f65b96fa.spm 5cb217758bae05877bb3f0c2f612e4e7c1e4cb03c10db11f4a47098d7ae62919
+          fetch lex.50.50.jaen.s2t.bin 4e6b3270-8a2f-491d-b717-f99749328622.bin 525f412f0d210536c2933c78ae395fa0bf2b5ee6cc5dda61ebc2e79410ebaee4
+          directory="$(cygpath -w "$models")"
+          answer="$(printf 'TRANSLATE 2\n%s\n%s\n%s\n%s\n葵は剣を抜いた。\n本当に行くの？\n' \
+            "$directory\\model.jaen.intgemm.alphas.bin" "$directory\\vocab.jaen.spm" "$directory\\vocab.jaen.spm" \
+            "$directory\\lex.50.50.jaen.s2t.bin" | "$helper")"
+          echo "$answer"
+          [[ "$(sed -n 1p <<< "$answer" | tr -d '\r')" == "OK 2" ]] || { echo "::error::the translation helper did not translate"; exit 1; }
+          [[ "$(sed -n 2p <<< "$answer")" =~ [A-Za-z]{3} && "$(sed -n 3p <<< "$answer")" =~ [A-Za-z]{3} ]] || {
+            echo "::error::the translation helper returned no English text"; exit 1
+          }
+
       - name: Verify packaged desktop runtime with Windows Access Bridge
         working-directory: shinsoux
         shell: pwsh

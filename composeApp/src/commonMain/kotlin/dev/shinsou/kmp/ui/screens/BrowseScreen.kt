@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -66,6 +68,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Sync
@@ -110,6 +113,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -368,6 +372,7 @@ fun BrowseScreen(
     var section by remember { mutableStateOf(initialSection) }
     var query by remember { mutableStateOf("") }
     var overlays by remember { mutableStateOf(BrowseOverlayState()) }
+    var catalogueLoginSourceIdentity by remember { mutableStateOf<String?>(null) }
     // A reader is owned by ExtensionV2PublicationPane. Keep a monotonically increasing
     // request so a system back gesture can ask that child to dispose its materialized session
     // before the parent changes the layout back to the publication detail pane.
@@ -975,6 +980,15 @@ fun BrowseScreen(
         }
 
         overlays.activeSource?.let { source ->
+            // The dialog reads the live source row: cookies and the saved account change while it is open.
+            if (catalogueLoginSourceIdentity == source.identityKey) {
+                SourceSettingsDialog(
+                    source = snapshot.sources.firstOrNull { it.identityKey == source.identityKey } ?: source,
+                    callbacks = callbacks,
+                    onImportDocument = onImportDocument,
+                    onDismiss = { catalogueLoginSourceIdentity = null },
+                )
+            }
             Surface(
                 color = MaterialTheme.colorScheme.background,
                 modifier = Modifier
@@ -994,6 +1008,12 @@ fun BrowseScreen(
                     challengePreparing = catalogueChallengePreparing,
                     onBack = ::closeActiveSource,
                     onWebChallenge = ::openCatalogueWebChallenge,
+                    signedIn = (snapshot.sources.firstOrNull { it.identityKey == source.identityKey } ?: source).signedIn,
+                    onLogin = if (source.canSignIn) {
+                        { catalogueLoginSourceIdentity = source.identityKey }
+                    } else {
+                        null
+                    },
                     onBrowse = { search, mode, filters ->
                         overlays.activeSource?.let {
                             loadCatalogue(it, search, mode, filters, requestedPage = 1, append = false)
@@ -1500,6 +1520,7 @@ internal fun extensionContinueUnitId(
 private fun ExtensionNovelReaderShell(
     title: String,
     currentUnitTitle: String,
+    sourceName: String?,
     units: List<ExtensionUnitSelectionV2>,
     activeUnitIndex: Int,
     busy: Boolean,
@@ -1529,6 +1550,9 @@ private fun ExtensionNovelReaderShell(
     var controlsVisible by remember(session) { mutableStateOf(false) }
     var settingsVisible by remember(session) { mutableStateOf(false) }
     var chapterListVisible by remember(session) { mutableStateOf(false) }
+    val translationAvailable = remember(session, features) { readerTranslationAvailable(session, features) }
+    // Not keyed by the chapter: a counter that starts again would look like a new press.
+    var translationRequest by remember { mutableStateOf(0L) }
     var progressTransitionInFlight by remember(session) { mutableStateOf(false) }
     var handledSystemBackRequest by remember(session) { mutableStateOf(systemBackRequest) }
     var currentPage by remember(session) { mutableStateOf(initialPage) }
@@ -1798,6 +1822,10 @@ private fun ExtensionNovelReaderShell(
             navigationAction = readerNavigationAction,
             navigationRequestKey = readerNavigationRequestKey,
             readerControlsVisible = controlsVisible,
+            translationRequestSerial = translationRequest,
+            translationLabels = remember(title, currentUnitTitle, sourceName) {
+                dev.shinsou.kmp.translation.TranslationLabels(title, currentUnitTitle, sourceName)
+            },
             onPageIndexChanged = { index, count ->
                 pageCountMeasured = true
                 currentPage = index
@@ -1851,6 +1879,11 @@ private fun ExtensionNovelReaderShell(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
+                    if (translationAvailable) {
+                        IconButton(onClick = { translationRequest++ }) {
+                            Icon(Icons.Outlined.Translate, strings.text("Translation"))
+                        }
                     }
                     IconButton(onClick = { chapterListVisible = true }, enabled = units.isNotEmpty()) {
                         Icon(Icons.Outlined.MenuBook, strings.chapters)
@@ -2128,9 +2161,12 @@ internal fun ExtensionV2PublicationPane(
             ?.unit
             ?.title
             ?: item.title
+        val openedReaderSourceName = callbacks.state.collectAsState().value.sources
+            .firstOrNull { it.sourceKey == sourceKey }?.name
         ExtensionNovelReaderShell(
             title = openedReaderTitle,
             currentUnitTitle = openedReaderUnitTitle,
+            sourceName = openedReaderSourceName,
             units = units,
             activeUnitIndex = activeUnitIndex,
             busy = busyUnitId != null,
@@ -3642,6 +3678,17 @@ internal fun sourceSettingsSections(source: BrowseSource): SourceSettingsSection
         browserSessionLogin = source.supportsLogin && source.requiresBrowserSessionLogin,
     )
 
+/** The account entry of a source: filled and tinted once the user is signed in there. */
+@Composable
+private fun SourceAccountIcon(signedIn: Boolean) {
+    val strings = LocalShinsouStrings.current
+    Icon(
+        if (signedIn) Icons.Filled.AccountCircle else Icons.Outlined.AccountCircle,
+        if (signedIn) strings.text("Signed in") else strings.text("Log in"),
+        tint = if (signedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
 @Composable
 private fun SourceListRow(
     source: BrowseSource,
@@ -3684,6 +3731,11 @@ private fun SourceListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (source.canSignIn) {
+                IconButton(onClick = onSettings, modifier = Modifier.testTag("source-row-login")) {
+                    SourceAccountIcon(source.signedIn)
+                }
             }
             Switch(checked = source.enabled, onCheckedChange = { onToggle(source, it) })
             Box {
@@ -5151,6 +5203,10 @@ private fun SourceCatalogueScreen(
     challengePreparing: Boolean,
     onBack: () -> Unit,
     onWebChallenge: () -> Unit,
+    /** Opens the source's account settings; null for a source that has no login. */
+    onLogin: (() -> Unit)?,
+    /** From the live source row: the row this screen was opened with does not see a later sign-in. */
+    signedIn: Boolean,
     onBrowse: (String, SourceCatalogueMode, List<BrowseFilter>?) -> Unit,
     onLoadMore: (String, SourceCatalogueMode, List<BrowseFilter>?) -> Unit,
     onOpenManga: (BrowseManga) -> Unit,
@@ -5227,6 +5283,13 @@ private fun SourceCatalogueScreen(
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) }
             },
             actions = {
+                // Where a source's content depends on an account, signing in is one tap from its
+                // catalogue rather than behind the sources list's menu.
+                onLogin?.let { openLogin ->
+                    IconButton(onClick = openLogin, modifier = Modifier.testTag("source-login")) {
+                        SourceAccountIcon(signedIn)
+                    }
+                }
                 if (source.filters.isNotEmpty()) {
                     IconButton(onClick = { filterDialogVisible = true }) {
                         Icon(

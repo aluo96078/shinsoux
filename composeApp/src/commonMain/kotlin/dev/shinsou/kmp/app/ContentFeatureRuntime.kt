@@ -68,6 +68,8 @@ public class ContentFeatureRuntime(
     private val nowEpochMillis: () -> Long,
     onAnnotationMutationCommitted: () -> Unit = {},
     onRightsInvalidated: () -> Unit = {},
+    /** Reader translation (ADR-0004); null where the platform has no offline engine. */
+    public val translation: dev.shinsou.kmp.translation.ReaderTranslation? = null,
 ) {
     /** Read-only format metadata used by library chrome; bodies remain lazy and unopened. */
     public fun publicationContentKinds(

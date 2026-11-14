@@ -1,0 +1,14 @@
+diff --git a/simd_utils.h b/simd_utils.h
+index 19698a3..0635572 100644
+--- a/simd_utils.h
++++ b/simd_utils.h
+@@ -19,7 +19,8 @@ extern "C" {
+ #include <omp.h>
+ #endif
+ 
+-#include <math.h>
++#include <math.h>
++#include <fenv.h>
+ #include <stdint.h>
+ #include <stdio.h>
+ 

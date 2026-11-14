@@ -16,6 +16,13 @@ public interface Source {
 
     public suspend fun getMangaDetails(manga: SManga): SManga
     public suspend fun getChapterList(manga: SManga): List<SChapter>
+
+    /**
+     * Optional: one page of the chapter list ([page] is 0-based), for a source whose site pages
+     * a long list. A title opened while browsing then shows its first chapters at once instead
+     * of waiting for the whole list. Null when the source only offers [getChapterList].
+     */
+    public suspend fun getChapterListPage(manga: SManga, page: Int): ChapterListPage? = null
     public suspend fun getPageList(chapter: SChapter): List<Page>
 
     /**
@@ -25,6 +32,9 @@ public interface Source {
      */
     public suspend fun resolveImageUrl(pageUrl: String): String? = null
 }
+
+/** One page of a source's chapter list, in reading order across pages. */
+public data class ChapterListPage(val chapters: List<SChapter>, val hasNextPage: Boolean)
 
 public interface CatalogueSource : Source {
     public val supportsLatest: Boolean
