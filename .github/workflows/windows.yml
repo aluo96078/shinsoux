@@ -128,7 +128,7 @@ jobs:
         working-directory: shinsoux
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           helper="$(find composeApp/build/compose/binaries/main-release/app -name shinsou-translate.exe | head -n 1)"
           [[ -n "$helper" ]] || { echo "::error::the app carries no shinsou-translate.exe"; exit 1; }
           # Self-contained: system DLLs only.
@@ -152,7 +152,9 @@ jobs:
           fetch model.jaen.intgemm.alphas.bin 2b066368-11b5-4cee-92e8-e6156b334f80.bin 3a603e20bfe1be86071913f9e23ab5129075bc0a8490151020ac4821e4f17302
           fetch vocab.jaen.spm 6f4898e3-ebaa-4a79-a1af-93a4f65b96fa.spm 5cb217758bae05877bb3f0c2f612e4e7c1e4cb03c10db11f4a47098d7ae62919
           fetch lex.50.50.jaen.s2t.bin 4e6b3270-8a2f-491d-b717-f99749328622.bin 525f412f0d210536c2933c78ae395fa0bf2b5ee6cc5dda61ebc2e79410ebaee4
-          directory="$(cygpath -w "$models")"
+          # Git Bash's own spelling of a Windows path; no separate tool to find.
+          directory="$(cd "$models" && pwd -W | tr '/' '\\')"
+          echo "models in: $directory"
           answer="$(printf 'TRANSLATE 2\n%s\n%s\n%s\n%s\n葵は剣を抜いた。\n本当に行くの？\n' \
             "$directory\\model.jaen.intgemm.alphas.bin" "$directory\\vocab.jaen.spm" "$directory\\vocab.jaen.spm" \
             "$directory\\lex.50.50.jaen.s2t.bin" | "$helper")"
