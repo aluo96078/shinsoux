@@ -309,6 +309,8 @@ private fun translationFailureText(
     TranslationFailure.DAILY_LIMIT -> strings.text("today's limit for paid translation is reached.")
     TranslationFailure.PROVIDER_UNAVAILABLE -> strings.text("the translation service could not be reached.")
     TranslationFailure.ENGINE_FAILED -> strings.text("the translation stopped. Tap to try again.")
+    TranslationFailure.NOT_CONFIGURED -> strings.text("the AI model service needs its address and model first.")
+    TranslationFailure.REFUSED -> strings.text("the model declined to translate this text.")
 }
 
 /** The panel's content, without the sheet around it. */
@@ -334,6 +336,8 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
                                     strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "DeepL")
                                 TranslationProviderKind.GOOGLE ->
                                     strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "Google")
+                                TranslationProviderKind.LLM ->
+                                    strings.text("Translated by the AI model you set up. The text of this chapter is sent to that service.")
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -445,6 +449,17 @@ private fun NovelTranslationStatus(state: NovelTranslationState) {
             }
             state.failure == TranslationFailure.QUOTA_EXCEEDED -> {
                 Text(strings.text("The translation service reports that the quota of this API key is used up."), color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = state::retry) { Text(strings.retry) }
+            }
+            state.failure == TranslationFailure.NOT_CONFIGURED -> Text(
+                strings.text("The AI model service is not set up yet. Enter its address and model in Settings → Translation."),
+                color = MaterialTheme.colorScheme.error,
+            )
+            state.failure == TranslationFailure.REFUSED -> {
+                Text(
+                    strings.text("The model declined to translate this chapter under its provider's content rules. Another service or model may translate it."),
+                    color = MaterialTheme.colorScheme.error,
+                )
                 TextButton(onClick = state::retry) { Text(strings.retry) }
             }
             state.failure == TranslationFailure.DAILY_LIMIT -> {

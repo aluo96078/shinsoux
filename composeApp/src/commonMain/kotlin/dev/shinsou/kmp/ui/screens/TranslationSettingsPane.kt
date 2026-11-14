@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +37,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.translation.LlmProtocol
+import dev.shinsou.kmp.translation.LlmSettings
 import dev.shinsou.kmp.translation.OfflineModel
+import dev.shinsou.kmp.translation.normalizedLlmBaseUrl
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.StoredChapterTranslation
 import dev.shinsou.kmp.translation.TranslationPreferences
@@ -127,6 +131,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "DeepL")
                     TranslationProviderKind.GOOGLE ->
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "Google")
+                    TranslationProviderKind.LLM ->
+                        strings.text("A language model at the address you enter below. The text of the chapters you translate is sent there; its provider may charge for it.")
                 },
                 selectedLabel = labels.getValue(preferences.provider),
                 choices = labels.values.toList(),
@@ -150,6 +156,20 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     stored = preferences.googleKeySet,
                     tag = "translation-key-google",
                 ) { key -> change { translation.setKey(TranslationProviderKind.GOOGLE, key) } }
+            }
+            item {
+                LlmServiceSetting(
+                    settings = preferences.llm,
+                    keyStored = preferences.llmKeySet,
+                    onSave = { settings, key ->
+                        change {
+                            translation.setLlmSettings(settings)
+                            // An empty field keeps the stored key; the Remove button clears it.
+                            if (key.isNotBlank()) translation.setKey(TranslationProviderKind.LLM, key)
+                        }
+                    },
+                    onRemoveKey = { change { translation.setKey(TranslationProviderKind.LLM, "") } },
+                )
             }
             item {
                 val labels = DAILY_LIMITS.associateWith { limit ->
@@ -327,6 +347,119 @@ private fun SettingRow(title: String, summary: String, trailing: (@Composable ()
     }
 }
 
+/**
+ * The user's own language-model service: which wire format it speaks, where it is, which model,
+ * and its key. The three formats cover the vendors themselves and the many gateways and local
+ * servers that copy one of them.
+ */
+@Composable
+private fun LlmServiceSetting(
+    settings: LlmSettings,
+    keyStored: Boolean,
+    onSave: (LlmSettings, key: String) -> Unit,
+    onRemoveKey: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    var protocol by remember(settings) { mutableStateOf(settings.protocol) }
+    var baseUrl by remember(settings) { mutableStateOf(settings.baseUrl) }
+    var model by remember(settings) { mutableStateOf(settings.model) }
+    var key by remember(settings) { mutableStateOf("") }
+    var keyVisible by remember { mutableStateOf(false) }
+    val addressUsable = normalizedLlmBaseUrl(baseUrl) != null
+    val changed = protocol != settings.protocol || baseUrl.trim() != settings.baseUrl || model.trim() != settings.model || key.isNotBlank()
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(strings.text("AI model (your own API)"), style = MaterialTheme.typography.titleMedium)
+            Text(
+                strings.text("Any service that speaks one of these three formats: the vendors' own APIs, gateways that resell them, or a model server on this device or your network."),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                LlmProtocol.entries.forEach { choice ->
+                    FilterChip(
+                        selected = protocol == choice,
+                        onClick = {
+                            // An address or model left at the old format's default follows the new one.
+                            if (baseUrl.trim() == protocol.defaultBaseUrl || baseUrl.isBlank()) baseUrl = choice.defaultBaseUrl
+                            if (model.trim() == protocol.suggestedModel) model = choice.suggestedModel
+                            protocol = choice
+                        },
+                        label = { Text(choice.label(strings)) },
+                        modifier = Modifier.testTag("llm-protocol-" + choice.id),
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it.take(500) },
+                label = { Text(strings.text("API address")) },
+                supportingText = {
+                    Text(
+                        if (addressUsable) {
+                            strings.text("The base address; the app adds the rest of the path for the chosen format.")
+                        } else {
+                            strings.text("Use https, or http only for this device or a private network address.")
+                        },
+                        color = if (addressUsable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                },
+                isError = !addressUsable,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("llm-base-url"),
+            )
+            OutlinedTextField(
+                value = model,
+                onValueChange = { model = it.take(200) },
+                label = { Text(strings.text("Model")) },
+                supportingText = { Text(strings.text("The model's identifier exactly as the service names it.")) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("llm-model"),
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it.take(512) },
+                label = { Text(if (keyStored) strings.text("Replace the key") else strings.text("API key")) },
+                supportingText = {
+                    Text(
+                        if (keyStored) strings.text("A key is saved in this device's secure storage.")
+                        else strings.text("Leave empty for a local server that needs no key."),
+                    )
+                },
+                singleLine = true,
+                visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { keyVisible = !keyVisible }) {
+                        Icon(
+                            if (keyVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                            if (keyVisible) strings.text("Hide token") else strings.text("Show token"),
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().testTag("llm-key"),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onSave(LlmSettings(protocol, baseUrl.trim(), model.trim()), key) },
+                    enabled = changed && addressUsable && model.isNotBlank(),
+                    modifier = Modifier.testTag("llm-save"),
+                ) { Text(strings.text("Save")) }
+                if (keyStored) TextButton(onClick = onRemoveKey) { Text(strings.text("Remove the key")) }
+            }
+        }
+    }
+}
+
+private fun LlmProtocol.label(strings: ShinsouStrings): String = when (this) {
+    LlmProtocol.OPENAI -> strings.text("OpenAI-compatible")
+    LlmProtocol.ANTHROPIC -> strings.text("Anthropic-compatible")
+    LlmProtocol.GOOGLE -> strings.text("Google Gemini-compatible")
+}
+
 /** A key is write-only here: once saved it is never shown again, only replaced or removed. */
 @Composable
 private fun ApiKeySetting(title: String, help: String, stored: Boolean, tag: String, onSave: (String) -> Unit) {
@@ -381,6 +514,7 @@ private fun TranslationProviderKind.label(strings: ShinsouStrings): String = whe
     TranslationProviderKind.OFFLINE -> strings.text("Offline (free)")
     TranslationProviderKind.DEEPL -> "DeepL"
     TranslationProviderKind.GOOGLE -> strings.text("Google Translate")
+    TranslationProviderKind.LLM -> strings.text("AI model (your own API)")
 }
 
 private fun providerLabel(id: String, strings: ShinsouStrings): String =

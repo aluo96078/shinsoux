@@ -25,6 +25,9 @@ public enum class TranslationProviderKind(public val id: String, internal val se
 
     /** Google Cloud Translation with the user's API key. What is read is sent to Google. */
     GOOGLE(GoogleTranslationProvider.ID, "translation.google.secret"),
+
+    /** A language model behind an address the user set up. What is read is sent there. */
+    LLM(LlmTranslationProvider.ID, "translation.llm.secret"),
 }
 
 public data class TranslationPreferences(
@@ -34,6 +37,9 @@ public data class TranslationPreferences(
     val charactersUsedToday: Long,
     val deepLKeySet: Boolean,
     val googleKeySet: Boolean,
+    /** The language-model service as the user set it up; its key is reported only as set or not. */
+    val llm: LlmSettings = LlmSettings(),
+    val llmKeySet: Boolean = false,
     /** False where keys cannot be stored safely: only the offline engine is offered. */
     val cloudAvailable: Boolean,
 )
@@ -73,6 +79,8 @@ public class ReaderTranslation(
             charactersUsedToday = usedToday(),
             deepLKeySet = !key(TranslationProviderKind.DEEPL).isNullOrBlank(),
             googleKeySet = !key(TranslationProviderKind.GOOGLE).isNullOrBlank(),
+            llm = llmSettings(),
+            llmKeySet = !key(TranslationProviderKind.LLM).isNullOrBlank(),
             cloudAvailable = secrets != null,
         )
     }
@@ -85,6 +93,27 @@ public class ReaderTranslation(
         val store = secrets ?: return
         val name = kind.secretName ?: return
         if (value.isBlank()) store.remove(name) else store.putString(name, value.trim())
+    }
+
+    /** The language-model service: wire format, address and model. Refused when the address must not be used. */
+    public suspend fun setLlmSettings(settings: LlmSettings): Unit = withContext(Dispatchers.Default) {
+        val base = requireNotNull(normalizedLlmBaseUrl(settings.baseUrl)) {
+            "The address must use https, or http for this device or a private network"
+        }
+        memory.transaction {
+            memory.setPreference(PREF_LLM_PROTOCOL, settings.protocol.id)
+            memory.setPreference(PREF_LLM_BASE_URL, base)
+            memory.setPreference(PREF_LLM_MODEL, settings.model.trim().take(MAX_LLM_MODEL_LENGTH))
+        }
+    }
+
+    private fun llmSettings(): LlmSettings {
+        val protocol = LlmProtocol.entries.firstOrNull { it.id == memory.preference(PREF_LLM_PROTOCOL) } ?: LlmProtocol.OPENAI
+        return LlmSettings(
+            protocol = protocol,
+            baseUrl = memory.preference(PREF_LLM_BASE_URL) ?: protocol.defaultBaseUrl,
+            model = memory.preference(PREF_LLM_MODEL) ?: protocol.suggestedModel,
+        )
     }
 
     /** Characters a day that may be sent to paid providers; 0 removes the limit. */
@@ -125,6 +154,8 @@ public class ReaderTranslation(
         TranslationProviderKind.OFFLINE -> offline
         TranslationProviderKind.DEEPL -> DeepLTranslationProvider(http, key(kind).orEmpty(), usage)
         TranslationProviderKind.GOOGLE -> GoogleTranslationProvider(http, key(kind).orEmpty(), usage)
+        TranslationProviderKind.LLM ->
+            LlmTranslationProvider(http, withContext(Dispatchers.Default) { llmSettings() }, key(kind).orEmpty(), usage)
     }
 
     /** The provider in use: the reader says where the text goes. */
@@ -193,7 +224,12 @@ public class ReaderTranslation(
         // Decided by the project owner (2026-11-14): a cloud provider the user chose and keyed
         // may translate content whose grant has no EXPORT right, as extension content does by
         // default. The reader says where the text goes; `exportable` only governs backups.
-        if (kind != TranslationProviderKind.OFFLINE && key(kind).isNullOrBlank()) {
+        if (kind == TranslationProviderKind.LLM) {
+            // A model server on this device or the home network may need no key at all.
+            if (!withContext(Dispatchers.Default) { llmSettings() }.configured) {
+                throw TranslationException(TranslationFailure.NOT_CONFIGURED, "The language-model service is not set up")
+            }
+        } else if (kind != TranslationProviderKind.OFFLINE && key(kind).isNullOrBlank()) {
             throw TranslationException(TranslationFailure.INVALID_KEY, "No API key is set for ${kind.id}")
         }
         val provider = provider()
@@ -235,6 +271,10 @@ public class ReaderTranslation(
     public companion object {
         private const val STORED_CHAPTER_LIST_LIMIT = 2_000
         private const val PREF_PROVIDER = "provider"
+        private const val PREF_LLM_PROTOCOL = "llm.protocol"
+        private const val PREF_LLM_BASE_URL = "llm.base"
+        private const val PREF_LLM_MODEL = "llm.model"
+        private const val MAX_LLM_MODEL_LENGTH = 200
         private const val PREF_DAILY_LIMIT = "daily.limit"
         private const val PREF_USAGE_DAY = "usage.day"
         private const val PREF_USAGE_CHARACTERS = "usage.characters"

@@ -31,6 +31,9 @@ public abstract class CloudTranslationProvider(
     protected abstract fun targetCode(language: String): String?
     protected abstract val engine: String
     protected abstract val maximumLines: Int
+
+    /** Bytes of text one request carries; a model that writes its answer out needs far less than a translation API. */
+    protected open val maximumRequestBytes: Int get() = MAX_REQUEST_TEXT_BYTES
     protected abstract suspend fun request(from: String, to: String, lines: List<String>): List<String>
 
     final override fun route(from: String, to: String): List<TranslationHop>? {
@@ -60,8 +63,11 @@ public abstract class CloudTranslationProvider(
             } catch (error: CancellationException) {
                 throw error // it may have been sent and charged: it stays counted
             } catch (error: TranslationException) {
-                // Only a refusal the service answered with is known not to be charged.
-                if (error.failure != TranslationFailure.ENGINE_FAILED) usage?.release(characters)
+                // Only a request the service turned away is known not to be charged. A model that
+                // read the text and declined, or answered with something unusable, did the work.
+                if (error.failure != TranslationFailure.ENGINE_FAILED && error.failure != TranslationFailure.REFUSED) {
+                    usage?.release(characters)
+                }
                 throw error
             } catch (error: Exception) {
                 throw TranslationException(TranslationFailure.PROVIDER_UNAVAILABLE, "$id could not be reached: ${error.message}", error)
@@ -74,7 +80,7 @@ public abstract class CloudTranslationProvider(
         try {
             for (segment in segments) {
                 val size = segment.encodeToByteArray().size
-                if (batch.size >= maximumLines || bytes + size > MAX_REQUEST_TEXT_BYTES) flush()
+                if (batch.size >= maximumLines || bytes + size > maximumRequestBytes) flush()
                 batch += segment
                 bytes += size
             }

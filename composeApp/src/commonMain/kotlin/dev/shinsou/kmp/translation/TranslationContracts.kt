@@ -40,6 +40,12 @@ public enum class TranslationFailure {
 
     /** The engine ran and failed. */
     ENGINE_FAILED,
+
+    /** The chosen service still needs its address or model set. */
+    NOT_CONFIGURED,
+
+    /** The model declined to translate this text under its provider's content rules. */
+    REFUSED,
 }
 
 public class TranslationException(
