@@ -127,7 +127,8 @@ class NovelTranslationPanelTest {
         rule.onNodeWithTag("translation-panel").performScrollToNode(hasText("Add"))
         rule.onNodeWithText("Add").performClick()
         rule.waitUntil(10_000) { "小葵" in body() }
-        assertTrue(body().lines().first().endsWith("(小葵は剣を抜いた。))"), body())
+        // One hop or two: the machine's language decides the target, so only the name is checked.
+        assertTrue(body().lines().first().let { it.startsWith("T(") && "(小葵は剣を抜いた。)" in it }, body())
 
         rule.onNodeWithTag("translation-panel").performScrollToNode(hasText("Original only"))
         rule.onNodeWithText("Original only").performClick()
