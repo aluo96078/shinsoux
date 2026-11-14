@@ -732,7 +732,8 @@ jobs:
           needs.metadata.outputs.tag == 'v1.0.1-beta.23' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.24' ||
           needs.metadata.outputs.tag == 'v1.0.1-beta.25' ||
-          needs.metadata.outputs.tag == 'v1.0.1'
+          needs.metadata.outputs.tag == 'v1.0.1' ||
+          needs.metadata.outputs.tag == 'v1.0.2-beta.1'
         shell: pwsh
         run: |
           if ($env:RELEASE_VERSION -in @("1.0.0-beta.4", "1.0.0-beta.5")) {
@@ -847,6 +848,10 @@ jobs:
             $baselineVersion = "1.0.1-beta.25"
             $expectedHash = "ee5c8c4b5ba0a615cba1994cef18e18f1303eb165026bc7343cb81e1ffcf4264"
             $baselineProductCode = "{2581A958-DC7E-3545-9924-E4324F428FB9}"
+          } elseif ($env:RELEASE_VERSION -eq "1.0.2-beta.1") {
+            $baselineVersion = "1.0.1"
+            $expectedHash = "eda22d84e07c8490c4afdfed06355d92207e8db8e48128cb672b5da2f6e54c80"
+            $baselineProductCode = "{77E27579-F161-30C3-80AE-E4E068FEFB2A}"
           } else {
             throw "No Windows upgrade baseline is configured for $env:RELEASE_VERSION."
           }
@@ -1234,6 +1239,18 @@ jobs:
             if [[ "$RELEASE_VERSION" == 1.0.1-beta.25 ]]; then
               printf '%s\n' \
                 "Extension note: a blocked extension now says so on its row and offers Unblock right there, even after it was uninstalled."
+            fi
+            if [[ "$RELEASE_VERSION" == 1.0.2-beta.1 ]]; then
+              printf '\n%s\n\n' "Changes since 1.0.1:"
+              printf '%s\n' \
+                "- Translation (new): novel chapters can be translated while reading, from the translation button in the reader's top bar. The built-in engine is free and runs on the device (Mozilla's Firefox translation engine; a language pair downloads about 50 MB of models once, and it needs a device with roughly 3 GB of memory or more). DeepL and Google Cloud Translation can be used instead with your own API key, with a daily character limit. Translated chapters are kept so nothing is translated twice; Settings > Translation lists them and can delete them. Names and terms can be fixed per work. Backups can include stored translations." \
+                "- Extensions: a source can offer its chapter list page by page, so a long serial opens at once; sources that keep a sign-in show an account button in the sources list and on their catalogue, tinted once you are signed in; the browser sign-in window can visit the identity providers a source declares (Log in with ...). Google refuses embedded browsers on Android, and passkeys are not available in that window." \
+                "- Extensions (fix): a developer-mode repository on this device or the local network can be added again." \
+                "- Sync (fix): a device whose clock was ahead no longer keeps its pending changes stamped in the future." \
+                "" \
+                "Notes for this beta:" \
+                "- The translation engine is new on every platform. On Windows it has only been checked by an automated run, not by hand." \
+                "- iOS and Android builds were exercised less than the desktop one. Back up before installing."
             fi
             if [[ "$RELEASE_VERSION" == 1.0.1 ]]; then
               printf '\n%s\n\n' "Changes since 1.0.0:"

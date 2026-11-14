@@ -35,12 +35,20 @@ third-party components below, each distributed under its own license.
 | OpenJFX（Desktop；含 WebKit 等元件，原始碼可於右列網址取得） | GPL-2.0 WITH Classpath-exception-2.0 | https://github.com/openjdk/jfx |
 | OpenJDK runtime（Desktop 安裝包內建的精簡 JRE） | GPL-2.0 WITH Classpath-exception-2.0 | https://github.com/adoptium/temurin-build |
 | libavif Android 綁定與其內含的 AV1 解碼器（Android） | BSD-2-Clause（libavif）及各解碼器的授權 | https://github.com/AOMediaCodec/libavif |
+| Mozilla Translations（bergamot-translator 推論引擎；離線翻譯，Android arm64／iOS／macOS／Windows；原始碼可於右列網址取得，本專案的修改在 `translation-core/patches/`） | MPL-2.0 | https://github.com/mozilla/translations |
+| Marian NMT（Mozilla fork，離線翻譯引擎的核心） | MIT | https://github.com/marian-nmt/marian-dev |
+| SentencePiece | Apache-2.0 | https://github.com/google/sentencepiece |
+| ssplit-cpp（斷句） | Apache-2.0 與 MPL-2.0（依其 LICENSE 檔） | https://github.com/browsermt/ssplit-cpp |
+| PCRE2 | BSD-3-Clause | https://github.com/PCRE2Project/pcre2 |
+| intgemm、ruy、simd_utils（矩陣運算） | MIT／Apache-2.0／BSD-2-Clause | https://github.com/kpu/intgemm 、https://github.com/google/ruy 、https://github.com/JishinMaster/simd_utils |
+| Marian 內含的其他元件（CLI11、yaml-cpp、spdlog、faiss、pathie-cpp、phf、zstr、mio、cnpy 等） | 各自的 BSD／MIT 授權，見原始碼中各目錄的授權檔 | https://github.com/mozilla/translations/tree/main/inference/marian-fork/src/3rd_party |
 
 ## 資料｜Data
 
 | 項目 | 授權 | 來源 |
 | --- | --- | --- |
 | Public Suffix List（`composeApp/psl/public_suffix_list.dat`，建置時編入） | MPL-2.0 | https://publicsuffix.org/ |
+| Firefox Translations 模型（不隨 App 發佈；使用離線翻譯時由 App 從 Mozilla 的伺服器下載並核對雜湊） | MPL-2.0 | https://github.com/mozilla/firefox-translations-models |
 
 各授權全文請見上列來源儲存庫。
 The full license texts are available in the repositories linked above.
