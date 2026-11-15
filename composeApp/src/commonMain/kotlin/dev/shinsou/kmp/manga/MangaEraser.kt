@@ -41,8 +41,9 @@ public class MangaEraser(private val ops: VisionOps, private val inpainter: Mang
     /**
      * Erases [box] (with its bubble, if any) in place. Null when the text should stay as drawn.
      * [overArt]: the detector saw this text outside any bubble, drawn over the artwork.
+     * [horizontal]: how the source runs, when [box] is not one region of it.
      */
-    public fun erase(img: RgbImage, box: Box, bubble: Box?, overArt: Boolean = false): Erased? {
+    public fun erase(img: RgbImage, box: Box, bubble: Box?, overArt: Boolean = false, horizontal: Boolean? = null): Erased? {
         val W = img.width; val H = img.height
         val x0 = box.x0.toInt().coerceIn(0, W - 1); val y0 = box.y0.toInt().coerceIn(0, H - 1)
         val x1 = box.x1.toInt().coerceIn(x0 + 1, W); val y1 = box.y1.toInt().coerceIn(y0 + 1, H)
@@ -80,7 +81,7 @@ public class MangaEraser(private val ops: VisionOps, private val inpainter: Mang
         }
         val uniform = dev / max(1, nb) < 30
         val std = (0 until 3).sumOf { c -> val m = mean[c] / max(1, nb); sqrt(max(0.0, sq[c] / max(1, nb) - m * m)) } / 3
-        if (!uniform) return if (overArt && inpainter != null) redrawArt(img, inpainter, x0, y0, x1, y1) else null
+        if (!uniform) return if (overArt && inpainter != null) redrawArt(img, inpainter, x0, y0, x1, y1, horizontal) else null
 
         // the true ink colour: the median of the pixels nearest the ink centre
         val pad = 6
@@ -102,7 +103,9 @@ public class MangaEraser(private val ops: VisionOps, private val inpainter: Mang
         if (interior != null) for (y in 0 until ph) for (x in 0 until pw) {
             boxMask[y * pw + x] = dBg[y * pw + x] > 45 && interior.at(x + px0, y + py0)
         }
-        val horizontalSource = wb > hb * 1.15
+        // [horizontal] when the box joins several regions: their joined shape says nothing of how
+        // the text runs (short columns side by side make a wide box)
+        val horizontalSource = horizontal ?: (wb > hb * 1.15)
         val sourceSize = sourceGlyphSize(boxMask, pw, x0 - px0, y0 - py0, wb, hb, horizontalSource)
 
         // In a bubble, erase every mark inside the whole interior, not just the detected box: glyphs
@@ -170,10 +173,12 @@ public class MangaEraser(private val ops: VisionOps, private val inpainter: Mang
      * Text over artwork: its glyphs and their outline are masked and LaMa redraws the art beneath.
      * The translation is then drawn in the source's own style, its ink outlined in its outline colour.
      */
-    private fun redrawArt(img: RgbImage, inpainter: MangaInpainter, x0: Int, y0: Int, x1: Int, y1: Int): Erased? {
+    private fun redrawArt(img: RgbImage, inpainter: MangaInpainter, x0: Int, y0: Int, x1: Int, y1: Int, horizontal: Boolean? = null): Erased? {
         val wb = x1 - x0; val hb = y1 - y0
         val art = artMask(img, x0, y0, x1, y1) ?: return null
-        val horizontalSource = wb > hb * 1.15
+        // [horizontal] when the box joins several regions: their joined shape says nothing of how
+        // the text runs (short columns side by side make a wide box)
+        val horizontalSource = horizontal ?: (wb > hb * 1.15)
         val sourceSize = sourceGlyphSize(BooleanArray(wb * hb) { art.mask[it] != 0.toByte() }, wb, 0, 0, wb, hb, horizontalSource)
         inpainter.inpaint(img, x0, y0, x1, y1, art.mask)
         return Erased(

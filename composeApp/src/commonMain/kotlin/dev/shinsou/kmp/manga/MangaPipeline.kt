@@ -140,10 +140,13 @@ public class MangaPipeline(
                     tidyTranslation(translations[i], region.text) ?: region.text.takeUnless { MangaScript.needsTranslation(it) }
                 }
                 if (texts.any { it == null } || texts.all { !MangaScript.needsTranslation(it!!) }) continue
-                val order = readingOrder(regions)
+                val (vertical, order) = bubbleReadingOrder(regions)
                 val text = order.map { texts[it]!! }.reduce(::joinTranslations)
                 val box = regions.map { it.box }.reduce { a, b -> Box(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1)) }
-                val erased = eraser.erase(img, box, bubble, overArt = regions.all { it.kind == RegionKind.FREE_TEXT }) ?: continue
+                val erased = eraser.erase(
+                    img, box, bubble, overArt = regions.all { it.kind == RegionKind.FREE_TEXT },
+                    horizontal = if (regions.size > 1) !vertical else null,
+                ) ?: continue
                 val laid = layout.layout(text, erased.area, box, erased.sourceSize, erased.inBubble, erased.horizontalSource, orientation)
                 if (laid != null) {
                     placed += PlacedText(laid, erased)
@@ -154,15 +157,6 @@ public class MangaPipeline(
             }
         }
         return renderer.draw(img, placed)
-    }
-
-    /** The order a bubble's regions are read in: columns right to left, or lines top to bottom. */
-    private fun readingOrder(regions: List<TextRegion>): List<Int> {
-        val vertical = regions.all { it.box.height >= it.box.width }
-        return regions.indices.sortedWith(
-            if (vertical) compareByDescending<Int> { regions[it].box.x1 }.thenBy { regions[it].box.y0 }
-            else compareBy<Int> { regions[it].box.y0 }.thenBy { regions[it].box.x0 },
-        )
     }
 
     /** Two translations of one bubble as one text: a space between words, none between CJK. */
@@ -201,4 +195,19 @@ internal fun tidyTranslation(translation: String?, source: String): String? {
     if (text.isEmpty()) return null
     if (text.length > max(source.length * 3, source.length + 16)) return null
     return text
+}
+
+/**
+ * How the regions of one bubble run (vertical or not), decided by those with words in them ("!?"
+ * is often wider than tall), and the order they are read in: columns right to left, or lines top
+ * to bottom, with punctuation on its own last.
+ */
+internal fun bubbleReadingOrder(regions: List<TextRegion>): Pair<Boolean, List<Int>> {
+    val worded = regions.filter { MangaScript.needsTranslation(it.text) }.ifEmpty { regions }
+    val vertical = worded.count { it.box.height >= it.box.width } * 2 >= worded.size
+    val byPlace = if (vertical) compareByDescending<Int> { regions[it].box.x1 }.thenBy { regions[it].box.y0 }
+    else compareBy<Int> { regions[it].box.y0 }.thenBy { regions[it].box.x0 }
+    // punctuation on its own ("!?", "……") closes what is said, wherever it sits in the bubble
+    val order = regions.indices.sortedWith(compareBy<Int> { !MangaScript.needsTranslation(regions[it].text) }.then(byPlace))
+    return vertical to order
 }

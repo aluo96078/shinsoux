@@ -397,6 +397,6 @@ public class MangaRenderCache(root: String, private val maxBytes: Long = 300L * 
 
     public companion object {
         /** Bumped when the eraser, layout or renderer change what a page looks like. */
-        public const val LAYOUT_VERSION: String = "3"
+        public const val LAYOUT_VERSION: String = "4"
     }
 }

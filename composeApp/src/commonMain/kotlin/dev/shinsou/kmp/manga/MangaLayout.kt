@@ -122,6 +122,8 @@ public class MangaLayout(
         val total = toks.sumOf { it.adv.toDouble() }.toFloat()
         val lines = mutableListOf<List<Token>>(); var i = 0
         for (r in caps.indices) {
+            // a word space where the line breaks is not drawn: no line starts with one
+            while (i < toks.size && toks[i].text == " ") i++
             if (i >= toks.size) break
             val restCap = caps.drop(r).sum()
             val restAdv = toks.drop(i).sumOf { it.adv.toDouble() }.toFloat()
@@ -133,7 +135,10 @@ public class MangaLayout(
             else if (j < toks.size && toks[j].text in NO_START && j - i > 1) j--
             if (j - i > 1 && toks[j - 1].text in NO_END) j--
             if (j - i > 1 && j < toks.size && toks[j].text == toks[j - 1].text && toks[j].text in PAIRED) j--   // keep …… together
-            lines += toks.subList(i, j); i = j
+            // nor ends with one (a blank cell, or a blank column on its own)
+            var end = j
+            while (end - i > 1 && toks[end - 1].text == " ") end--
+            lines += toks.subList(i, end); i = j
         }
         if (i < toks.size) return null
         if (lines.size > 1 && lines.last().sumOf { it.adv.toDouble() } < s * 1.05 && total > s * 3.5) return null   // lone last unit

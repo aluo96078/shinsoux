@@ -64,6 +64,31 @@ class MangaLayoutTest {
     }
 
     @Test
+    fun verticalLatinLeavesNoBlankColumnBetweenWords() {
+        val l = assertNotNull(layout.layout("Hello world", oval(180, 110), Box(0f, 0f, 180f, 110f), 30, true, false, MangaOrientation.VERTICAL))
+        assertTrue(columns(l).none { it.isBlank() }, "${columns(l)}")
+    }
+
+    @Test
+    fun aBubblesColumnsAreReadRightToLeftWhateverItsPunctuation() {
+        // two columns (the left starting a little higher) and a wide "!?" below them
+        val regions = listOf(
+            TextRegion(RegionKind.BUBBLE_TEXT, 100, 40, 140, 200, "まだ"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 150, 50, 190, 210, "本当に"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 110, 215, 180, 245, "!?"),
+        )
+        val (vertical, order) = bubbleReadingOrder(regions)
+        assertTrue(vertical)
+        assertEquals(listOf(1, 0, 2), order, "the right column first, the exclamation last")
+        // horizontal lines read top to bottom
+        val lines = listOf(
+            TextRegion(RegionKind.BUBBLE_TEXT, 20, 80, 200, 110, "second"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 20, 40, 200, 70, "first"),
+        )
+        assertEquals(false to listOf(1, 0), bubbleReadingOrder(lines))
+    }
+
+    @Test
     fun ellipsisIsNotSplitAcrossLines() {
         val s = 30
         val toks = layout.tokens("我一個人……也可以", s, vertical = true)
