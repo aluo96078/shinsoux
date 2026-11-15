@@ -46,6 +46,9 @@ public enum class TranslationFailure {
 
     /** The model declined to translate this text under its provider's content rules. */
     REFUSED,
+
+    /** The system's translation needs its languages downloaded (through the system's own prompt). */
+    SYSTEM_LANGUAGE_MISSING,
 }
 
 public class TranslationException(
@@ -88,6 +91,13 @@ public interface TranslationProvider {
      * of a call side by side; null leaves it to the caller.
      */
     public val linesPerCall: Int? get() = null
+
+    /**
+     * The engine every hop goes through, when it is one whatever the pair and may change under
+     * the same [id] (another model, another system strategy). A chapter recorded under [id] is
+     * then only done if its lines came from this engine. Null where the pair decides the engine.
+     */
+    public val currentEngine: String? get() = null
 }
 
 /** One line of a chapter with its translation, when there is one. */

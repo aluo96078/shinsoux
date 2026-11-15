@@ -269,6 +269,18 @@ val buildMacOsTranslationHelper = if (isMacOsBuildHost) {
 // JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
 // artifacts use the build host classifier; release CI already builds DMG and MSI on their native
 // hosts, so each installer receives only its own browser runtime.
+// ADR-0005: the OpenCV natives for this desktop host (bytedeco's per-platform jars).
+val bytedecoPlatform = run {
+    val osName = System.getProperty("os.name").lowercase()
+    val architecture = System.getProperty("os.arch").lowercase()
+    val arm = architecture.contains("aarch64") || architecture.contains("arm64")
+    when {
+        osName.contains("mac") -> if (arm) "macosx-arm64" else "macosx-x86_64"
+        osName.contains("win") -> "windows-x86_64"
+        osName.contains("linux") -> if (arm) "linux-arm64" else "linux-x86_64"
+        else -> error("Unsupported OpenCV host: $osName/$architecture")
+    }
+}
 val javafxPlatformClassifier = run {
     val osName = System.getProperty("os.name").lowercase()
     val architecture = System.getProperty("os.arch").lowercase()
@@ -546,12 +558,38 @@ listOf("iphoneos", "iphonesimulator").forEach { sdk ->
         )
     }
 }
+// ADR-0005: the manga pipeline test on the simulator reads its models and page from the host;
+// forward their paths (simctl passes SIMCTL_CHILD_* variables to the test process).
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
+    listOf("SHINSOU_MANGA_PACKS", "SHINSOU_MANGA_PAGE", "SHINSOU_MANGA_EXPECTED", "SHINSOU_MANGA_ART").forEach { name ->
+        System.getenv(name)?.let { environment("SIMCTL_CHILD_$name", it) }
+    }
+}
+// ADR-0005 §4 (iOS): ONNX Runtime and OpenCV for the manga translation, per Apple SDK.
+val iosVisionDir: File = layout.buildDirectory.dir("ios-vision").get().asFile
+tasks.register<Exec>("buildIosVision") {
+    group = "build"
+    description = "Fetches ONNX Runtime and builds OpenCV (core, imgproc, photo) for iOS"
+    val script = rootProject.file("ios-vision/scripts/build-ios-vision.sh")
+    inputs.file(script)
+    outputs.files(
+        iosVisionDir.resolve("iphoneos/libonnxruntime.a"), iosVisionDir.resolve("iphonesimulator/libonnxruntime.a"),
+        iosVisionDir.resolve("iphoneos/libopencv2.a"), iosVisionDir.resolve("iphonesimulator/libopencv2.a"),
+    )
+    commandLine("/bin/bash", script.absolutePath, iosVisionDir.absolutePath)
+}
 tasks.configureEach {
     when {
         // The archive is embedded in the klib: a rebuilt engine must rerun the cinterop.
         name.startsWith("cinteropTranslationCoreIosArm64") -> {
             dependsOn("buildIosTranslationCoreIphoneos")
             inputs.file(iosTranslationCoreDir("iphoneos").resolve("libshinsou_translate.a"))
+        }
+        name.startsWith("cinteropMangaOnnx") || name.startsWith("cinteropMangaOpenCv") -> {
+            dependsOn("buildIosVision")
+            val sdk = if (name.contains("Simulator")) "iphonesimulator" else "iphoneos"
+            inputs.file(iosVisionDir.resolve("$sdk/libonnxruntime.a"))
+            inputs.file(iosVisionDir.resolve("$sdk/libopencv2.a"))
         }
         name.startsWith("cinteropTranslationCoreIosSimulatorArm64") -> {
             dependsOn("buildIosTranslationCoreIphonesimulator")
@@ -624,6 +662,18 @@ kotlin {
             includeDirs(rootProject.file("translation-core/src"))
             extraOpts("-libraryPath", iosTranslationCoreDir(iosSandboxSdk(konanTarget)).absolutePath)
         }
+        // ADR-0005 §4: the manga translation's inference and image libraries.
+        val visionSdk = iosVisionDir.resolve(iosSandboxSdk(konanTarget))
+        compilations.getByName("main").cinterops.create("mangaOnnx") {
+            defFile(project.file("src/nativeInterop/cinterop/mangaOnnx.def"))
+            includeDirs(iosVisionDir.resolve("onnxruntime-headers"))
+            extraOpts("-libraryPath", visionSdk.absolutePath)
+        }
+        compilations.getByName("main").cinterops.create("mangaOpenCv") {
+            defFile(project.file("src/nativeInterop/cinterop/mangaOpenCv.def"))
+            compilerOpts("-F${visionSdk.absolutePath}")
+            extraOpts("-libraryPath", visionSdk.absolutePath)
+        }
         binaries.all {
             linkerOpts("-lsqlite3")
         }
@@ -684,6 +734,10 @@ kotlin {
                 implementation(libs.jsoup)
                 implementation(libs.rhino)
                 implementation(libs.ktor.client.okhttp)
+                // ADR-0005: Android and desktop share one implementation over the same Java APIs
+                // (ai.onnxruntime, org.opencv); each platform below supplies the binaries.
+                compileOnly(libs.onnxruntime.jvm)
+                compileOnly(libs.opencv.bytedeco)
             }
         }
 
@@ -699,6 +753,8 @@ kotlin {
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
                 implementation(libs.sqldelight.android.driver)
+                implementation(libs.onnxruntime.android)
+                implementation(libs.opencv.android)
             }
         }
 
@@ -744,6 +800,11 @@ kotlin {
                 implementation("org.openjfx:javafx-media:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
                 implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
                 implementation("org.openjfx:javafx-swing:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
+                implementation(libs.onnxruntime.jvm)
+                implementation("org.bytedeco:opencv:${libs.versions.opencv.bytedeco.get()}") { exclude(group = "org.bytedeco", module = "numpy") }
+                implementation("org.bytedeco:opencv:${libs.versions.opencv.bytedeco.get()}:$bytedecoPlatform")
+                implementation("org.bytedeco:openblas:${libs.versions.openblas.bytedeco.get()}:$bytedecoPlatform")
+                implementation("org.bytedeco:javacpp:${libs.versions.javacpp.get()}:$bytedecoPlatform")
             }
         }
 
@@ -835,6 +896,15 @@ android {
     // APK is downloaded from GitHub Releases, not split by a store, so keep it compressed.
     packaging.dex.useLegacyPackaging = true
     packaging.jniLibs.useLegacyPackaging = true
+    // ADR-0005: manga translation runs on arm64 devices only. Its inference and image libraries
+    // add about 60 MB per ABI (x86_64 alone would add over 100 MB), so the other ABIs are left out
+    // and the feature reports itself unavailable there (emulators included).
+    packaging.jniLibs.excludes += listOf("armeabi-v7a", "x86", "x86_64").flatMap { abi ->
+        listOf("lib/$abi/libonnxruntime.so", "lib/$abi/libonnxruntime4j_jni.so", "lib/$abi/libopencv_java4.so")
+    }
+    // The NPU's QNN libraries (about 60 MB) are not shipped: Snapdragon devices download them from
+    // Maven Central when the user picks the NPU (docs/research/manga-gpu-npu.md).
+    packaging.jniLibs.excludes += "**/libQnn*.so"
 }
 
 // sandbox-core's pinned third-party sources (quickjs-ng, lexbor) are fetched, not committed.

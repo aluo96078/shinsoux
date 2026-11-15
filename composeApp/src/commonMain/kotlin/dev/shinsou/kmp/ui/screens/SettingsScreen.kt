@@ -361,6 +361,44 @@ private fun GeneralSettingsPane(settings: AppSettings, onChange: (AppSettings) -
                 choices = listOf("system", "MM/dd/yyyy", "dd/MM/yyyy", "yyyy-MM-dd"),
             ) { onChange(settings.copy(general = settings.general.copy(dateFormat = it))) }
         }
+        appUpdateSettings(settings, onChange)
+    }
+}
+
+/** Checking GitHub for a newer version: the switches, and a check on demand. */
+private fun androidx.compose.foundation.lazy.LazyListScope.appUpdateSettings(settings: AppSettings, onChange: (AppSettings) -> Unit) {
+    item {
+        val strings = LocalShinsouStrings.current
+        val updates = dev.shinsou.kmp.ui.LocalAppUpdates.current ?: return@item
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        val values = settings.updates
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(strings.text("App updates"), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+            ToggleSetting(
+                strings.text("Check for updates"),
+                strings.text("Look for a newer version on GitHub each time the app starts. Only GitHub's public release list is read."),
+                values.checkForUpdates,
+            ) { onChange(settings.copy(updates = values.copy(checkForUpdates = it))) }
+            ToggleSetting(
+                strings.text("Include beta versions"),
+                strings.text("Offer the newest beta too, unless a release came after it."),
+                values.includeBeta,
+                enabled = values.checkForUpdates,
+            ) { onChange(settings.copy(updates = values.copy(includeBeta = it))) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                val status = if (updates.checking) strings.text("Checking…") else when (val result = updates.result) {
+                    is dev.shinsou.kmp.ui.UpdateCheckResult.Newer -> strings.text("Version {0} is available.", result.release.version.toString())
+                    dev.shinsou.kmp.ui.UpdateCheckResult.UpToDate -> strings.text("You have the newest version ({0}).", updates.currentVersion)
+                    dev.shinsou.kmp.ui.UpdateCheckResult.Failed -> strings.text("The check failed. Check the connection and try again.")
+                    null -> strings.text("You have {0}.", updates.currentVersion)
+                }
+                Text(status, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                androidx.compose.material3.TextButton(
+                    onClick = { scope.launch { updates.check(values, interactive = true) } },
+                    enabled = !updates.checking,
+                ) { Text(strings.text("Check now")) }
+            }
+        }
     }
 }
 

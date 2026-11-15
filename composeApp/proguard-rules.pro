@@ -127,3 +127,12 @@
 -dontwarn com.sun.webkit.**
 -dontwarn javafx.scene.web.**
 -dontwarn io.github.alexzhirkevich.qrose.**
+
+# ADR-0005 (manga translation): ONNX Runtime's JNI library constructs TensorInfo, OnnxTensor,
+# OnnxValue and its exceptions from native code, and reads their fields; none of that has a Java
+# caller the shrinker can see, and the jar ships no rules of its own.
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
+# JavaCPP (OpenCV, OpenBLAS) finds its presets and native bindings by reflection and JNI.
+-keep class org.bytedeco.** { *; }
+-dontwarn org.bytedeco.**

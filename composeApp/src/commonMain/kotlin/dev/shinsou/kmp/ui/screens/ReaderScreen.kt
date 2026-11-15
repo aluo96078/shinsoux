@@ -12,6 +12,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -160,6 +165,12 @@ data class UnifiedReaderRenderState(
     val translationRequestSerial: Long = 0L,
 )
 
+/**
+ * Gives the reader its keyboard focus back (arrow keys, Page Up/Down, Escape): for the sheets an
+ * embedded reader opens, which take focus with them on the desktop and iPadOS.
+ */
+internal val LocalReaderFocusReturn = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
+
 @Composable
 fun ReaderScreen(
     manga: Manga,
@@ -195,6 +206,10 @@ fun ReaderScreen(
     unifiedReaderInitialPageCount: Int? = null,
     /** True when the unified reader can translate this chapter: the toolbar then offers it. */
     unifiedReaderTranslationAvailable: Boolean = false,
+    /** Opens manga translation (ADR-0005) for the page reader; null hides it. */
+    onMangaTranslation: (() -> Unit)? = null,
+    /** A sheet the app shows over the reader (manga translation) is open: the reader takes its keys back when it closes. */
+    overlayOpen: Boolean = false,
     unifiedReaderRenderer: (@Composable (
         UnifiedReaderContent,
         Modifier,
@@ -516,10 +531,12 @@ fun ReaderScreen(
     }
     // Modal sheets own a separate focus tree on desktop and iPadOS. Reclaim focus when they close
     // so hardware paging and Escape/back keep working without requiring another pointer click.
-    LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled) {
+    // The toolbar's buttons take focus when clicked and go when it hides, and the app's own sheets
+    // (manga translation) take it with them: the reader takes it back each time.
+    LaunchedEffect(chapter.id, readerSessionId, settingsVisible, chapterListVisible, unifiedReaderEnabled, controlsVisible, overlayOpen) {
         heldNavigationKeys.clear()
-        if (!settingsVisible && !chapterListVisible) {
-            focusRequester.requestFocus()
+        if (!settingsVisible && !chapterListVisible && !overlayOpen) {
+            runCatching { focusRequester.requestFocus() }
         }
     }
     ReaderVolumeKeyRegistration(
@@ -702,6 +719,8 @@ fun ReaderScreen(
                 readerSessionId,
                 requireNotNull(unifiedReaderContent).representation.representationId,
             ) {
+                // the translation sheets give focus back here when they close, so the keys page again
+                androidx.compose.runtime.CompositionLocalProvider(LocalReaderFocusReturn provides { runCatching { focusRequester.requestFocus() } }) {
                 requireNotNull(unifiedReaderRenderer).invoke(
                     requireNotNull(unifiedReaderContent),
                     Modifier.fillMaxSize(),
@@ -742,6 +761,7 @@ fun ReaderScreen(
                     ::handleUnifiedNavigationBoundary,
                     ::handlePageAction,
                 )
+                }
             }
             else -> key(chapter.id, settings.readingMode) {
                 when (settings.readingMode) {
@@ -840,6 +860,8 @@ fun ReaderScreen(
                 shadowElevation = 6.dp,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
+                    // Below the controls, which keep clear of the iOS Dynamic Island.
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
                     .padding(top = 76.dp, start = 18.dp, end = 18.dp),
             ) {
                 Row(
@@ -876,7 +898,9 @@ fun ReaderScreen(
             minimal = unifiedProseReader,
             novelToolbar = unifiedTextReader,
             onTranslation = if (unifiedReaderEnabled && unifiedReaderTranslationAvailable) {
-                { translationRequest++ }
+                { translationRequest++; Unit }
+            } else if (!unifiedReaderEnabled) {
+                onMangaTranslation
             } else {
                 null
             },
@@ -1471,6 +1495,11 @@ private fun ReaderControls(
                     .background(
                         Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.9f), Color.Transparent)),
                     )
+                    // The page stays edge to edge, the controls do not: on iOS the host lays
+                    // Compose out over the whole screen, so the Dynamic Island (or a landscape
+                    // notch) would cover them. On Android the reader already reserved the status
+                    // bar, which this then leaves as it is.
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                     .padding(horizontal = 8.dp, vertical = 7.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

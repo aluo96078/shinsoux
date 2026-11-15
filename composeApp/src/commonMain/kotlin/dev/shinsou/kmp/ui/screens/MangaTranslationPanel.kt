@@ -1,0 +1,490 @@
+package dev.shinsou.kmp.ui.screens
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.manga.MangaChapterRequest
+import dev.shinsou.kmp.translation.TranslationFailure
+import dev.shinsou.kmp.translation.TranslationProviderKind
+import dev.shinsou.kmp.manga.MangaOrientation
+import dev.shinsou.kmp.manga.MangaProgress
+import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.translation.ReaderTranslation
+import dev.shinsou.kmp.translation.TranslationDisplayMode
+import dev.shinsou.kmp.translation.TranslationException
+import dev.shinsou.kmp.translation.TranslationLabels
+import dev.shinsou.kmp.translation.WorkTranslationSettings
+import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
+import dev.shinsou.kmp.ui.i18n.text
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okio.FileSystem
+import okio.Path.Companion.toPath
+
+/**
+ * Manga translation in the page reader (ADR-0005): the work's settings, the model download, the
+ * chapter's translated pages and where the translation stands. The reader shows [displayPages].
+ */
+@Stable
+public class MangaReaderTranslationState internal constructor(
+    private val manga: MangaTranslation,
+    private val translation: ReaderTranslation,
+    private val workKey: String,
+) {
+    public var settings: WorkTranslationSettings? by mutableStateOf(null)
+        internal set
+    public var orientation: MangaOrientation by mutableStateOf(MangaOrientation.VERTICAL)
+    public var progress: MangaProgress? by mutableStateOf(null)
+        internal set
+    public var failure: String? by mutableStateOf(null)
+        internal set
+    public var download: Pair<Long, Long>? by mutableStateOf(null)
+        internal set
+    public var modelsInstalled: Boolean by mutableStateOf(manga.modelsInstalled())
+        internal set
+    public var finished: Boolean by mutableStateOf(false)
+        internal set
+    /** The optional LaMa pack: text drawn over the artwork is translated too. */
+    public var inpaintInstalled: Boolean by mutableStateOf(manga.inpaintInstalled())
+        internal set
+    public var inpaintDownload: Pair<Long, Long>? by mutableStateOf(null)
+        internal set
+    /** The offline engine's models this language pair still needs, in bytes (0 when none). */
+    public var textModelBytes: Long by mutableStateOf(0L)
+        internal set
+    public var textModelDownload: Pair<Long, Long>? by mutableStateOf(null)
+        internal set
+    public var textModelDownloadFailed: Boolean by mutableStateOf(false)
+        internal set
+    /** The system translation (Apple's, on iOS) needs the pair's languages downloaded first. */
+    public var systemLanguagesMissing: Boolean by mutableStateOf(false)
+        internal set
+    public var systemLanguagesDownloading: Boolean by mutableStateOf(false)
+        internal set
+    internal var runSerial by mutableStateOf(0)
+    internal val translated = mutableStateMapOf<Int, ByteArray>()
+
+    public val deviceSupported: Boolean get() = manga.deviceSupported
+    public val missingModelBytes: Long get() = manga.missingModelBytes()
+    public val missingInpaintBytes: Long get() = manga.missingInpaintBytes()
+    /** How this device shares the models, and how the last chapter went (developer diagnostics). */
+    public val tuning: dev.shinsou.kmp.manga.MangaTuning? get() = manga.deviceTuning
+    public var lastRun: dev.shinsou.kmp.manga.MangaRunStats? by mutableStateOf(null)
+        internal set
+    public val languages: List<dev.shinsou.kmp.translation.TranslationLanguage> get() = translation.languages
+
+    /** True while the chapter's pages are being read, translated or drawn. */
+    public val working: Boolean get() = progress != null && !finished && failure == null
+
+    /** Page [key]'s translated image while the translation is on and shown; null shows the source. */
+    public fun translatedPage(key: Int): ByteArray? {
+        val s = settings ?: return null
+        if (!s.enabled || s.mode == TranslationDisplayMode.ORIGINAL) return null
+        return translated[key]
+    }
+
+    /** The pages to show: translated ones in place of the source while the translation is on. */
+    public fun displayPages(pages: List<ReaderPage>): List<ReaderPage> {
+        val s = settings ?: return pages
+        if (!s.enabled || s.mode == TranslationDisplayMode.ORIGINAL || translated.isEmpty()) return pages
+        return pages.map { page ->
+            translated[page.index]?.let { bytes ->
+                page.copy(imageBytes = bytes, imageUrl = "", local = false, imageTransform = null, imageNaturalHeight = null, imageResolver = null)
+            } ?: page
+        }
+    }
+
+    internal suspend fun load() {
+        settings = translation.settings(workKey) ?: WorkTranslationSettings(enabled = false, from = SOURCE_LANGUAGE, to = "zh-Hant")
+    }
+
+    public suspend fun update(next: WorkTranslationSettings) {
+        val restart = next.enabled != settings?.enabled || next.to != settings?.to
+        settings = next
+        translation.saveSettings(workKey, next)
+        if (restart) retry()
+    }
+
+    public fun retry() {
+        failure = null; finished = false; runSerial++
+    }
+
+    public suspend fun downloadModels() {
+        failure = null
+        download = 0L to manga.missingModelBytes()
+        try {
+            manga.downloadModels { received, total -> download = received to total }
+            modelsInstalled = manga.modelsInstalled()
+            if (modelsInstalled) retry()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failure = e.message ?: e.toString()
+        } finally {
+            download = null
+        }
+    }
+
+    /** Downloads the offline engine's models for the chosen pair, then translates the chapter. */
+    public suspend fun downloadTextModels() {
+        val s = settings ?: return
+        textModelDownloadFailed = false
+        textModelDownload = 0L to textModelBytes.coerceAtLeast(1L)
+        try {
+            translation.downloadModels(s.from, s.to) { received, total -> textModelDownload = received to total.coerceAtLeast(1L) }
+            textModelBytes = translation.missingModels(s.from, s.to).sumOf { it.downloadBytes }
+            if (textModelBytes == 0L) retry()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            textModelDownloadFailed = true
+        } finally {
+            textModelDownload = null
+        }
+    }
+
+    /** Asks the system to download the pair's languages (it shows its own prompt), then translates. */
+    public suspend fun downloadSystemLanguages() {
+        val s = settings ?: return
+        textModelDownloadFailed = false
+        systemLanguagesDownloading = true
+        try {
+            val installed = runCatching { translation.downloadSystemLanguages(s.from, s.to) }.getOrDefault(false)
+            if (installed && !translation.systemLanguagesMissing(s.from, s.to)) { systemLanguagesMissing = false; retry() } else textModelDownloadFailed = true
+        } finally {
+            systemLanguagesDownloading = false
+        }
+    }
+
+    /** Downloads the LaMa pack and draws the chapter again with it (its reading is cached). */
+    public suspend fun downloadInpaint() {
+        failure = null
+        inpaintDownload = 0L to manga.missingInpaintBytes()
+        try {
+            manga.downloadInpaint { received, total -> inpaintDownload = received to total }
+            inpaintInstalled = manga.inpaintInstalled()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failure = e.message ?: e.toString()
+        } finally {
+            inpaintDownload = null
+        }
+    }
+
+    public suspend fun removeInpaint() {
+        manga.removeInpaint()
+        inpaintInstalled = manga.inpaintInstalled()
+    }
+
+    internal companion object {
+        /** The OCR model reads Japanese (ADR-0005 §2). */
+        const val SOURCE_LANGUAGE = "ja"
+    }
+}
+
+/**
+ * Translates the chapter in the background while its settings ask for it, collecting each page
+ * as it is drawn. Pages behind a scrambling transform, or that cannot be loaded, stay as they are.
+ */
+@Composable
+public fun rememberMangaReaderTranslation(
+    manga: MangaTranslation,
+    translation: ReaderTranslation,
+    workKey: String,
+    chapterKey: String,
+    pages: List<ReaderPage>,
+    exportable: Boolean,
+    labels: TranslationLabels?,
+): MangaReaderTranslationState {
+    val snapshot = remember(pages) { pages.sortedBy { it.index } }
+    return rememberMangaReaderTranslation(
+        manga, translation, workKey, chapterKey,
+        pageCount = snapshot.size, pagesKey = pages,
+        loadPage = { i -> loadPageBytes(snapshot[i]) },
+        pageKey = { i -> snapshot[i].index },
+        exportable = exportable, labels = labels,
+    )
+}
+
+/**
+ * The same for any image chapter: [loadPage] gives page n's encoded image (null leaves it as it
+ * is), and translated pages are kept under [pageKey] of their position.
+ */
+@Composable
+public fun rememberMangaReaderTranslation(
+    manga: MangaTranslation,
+    translation: ReaderTranslation,
+    workKey: String,
+    chapterKey: String,
+    pageCount: Int,
+    /** Changes when the chapter's pages do; restarts the translation. */
+    pagesKey: Any?,
+    loadPage: suspend (Int) -> ByteArray?,
+    pageKey: (Int) -> Int = { it },
+    exportable: Boolean,
+    labels: TranslationLabels?,
+): MangaReaderTranslationState {
+    val state = remember(manga, translation, workKey) { MangaReaderTranslationState(manga, translation, workKey) }
+    LaunchedEffect(state) { state.load() }
+    val settings = state.settings
+    LaunchedEffect(state, chapterKey, pagesKey, pageCount, settings?.enabled, settings?.to, state.orientation, state.modelsInstalled, state.inpaintInstalled, state.runSerial) {
+        state.translated.clear(); state.progress = null; state.finished = false
+        if (settings == null || !settings.enabled || !state.deviceSupported || !state.modelsInstalled || pageCount == 0) return@LaunchedEffect
+        state.failure = null
+        try {
+            // The offline engine's own models come first: shown with their size, downloaded on a tap.
+            if (translation.activeProvider() == TranslationProviderKind.OFFLINE) {
+                if (!translation.deviceSupported) throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
+                state.textModelBytes = translation.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
+                if (state.textModelBytes > 0) return@LaunchedEffect
+            } else {
+                state.textModelBytes = 0
+            }
+            state.systemLanguagesMissing = translation.systemLanguagesMissing(settings.from, settings.to)
+            if (state.systemLanguagesMissing) return@LaunchedEffect
+            manga.translateChapter(
+                MangaChapterRequest(
+                    workKey = workKey, chapterKey = chapterKey, pageCount = pageCount,
+                    loadPage = loadPage,
+                    from = settings.from, to = settings.to, orientation = state.orientation,
+                    exportable = exportable, labels = labels,
+                ),
+                onProgress = { state.progress = it },
+            ) { i, jpeg -> if (jpeg != null) state.translated[pageKey(i)] = jpeg }
+            state.lastRun = manga.lastRun
+            state.finished = true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TranslationException) {
+            state.failure = e.message ?: e.failure.name
+        } catch (e: Exception) {
+            state.failure = e.message ?: e.toString()
+        }
+    }
+    return state
+}
+
+/** The page's encoded image: its bytes, its resolved bytes, or its local file. */
+internal suspend fun loadPageBytes(page: ReaderPage): ByteArray? {
+    if (page.imageTransform != null) return null   // scrambled pages: the transform is applied at display time
+    page.imageBytes?.let { return it }
+    page.imageResolver?.let { resolve ->
+        // A page resolved on demand (JM, online) carries its transform only once resolved: its
+        // bytes are scrambled then, and are left to the reader, which descrambles them as shown.
+        val resolved = runCatching { resolve() }.getOrNull() ?: return null
+        return if (resolved.imageTransform != null) null else resolved.imageBytes
+    }
+    if (page.local && page.imageUrl.startsWith("file://")) {
+        val path = page.imageUrl.removePrefix("file://").let { if (it.startsWith("/")) it else "/$it" }
+        return withContext(Dispatchers.Default) { runCatching { FileSystem.SYSTEM.read(path.toPath()) { readByteArray() } }.getOrNull() }
+    }
+    return null
+}
+
+/** The chip over the page: where the translation stands; tapping it opens the panel. */
+@Composable
+public fun MangaTranslationNotice(state: MangaReaderTranslationState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val strings = LocalShinsouStrings.current
+    val settings = state.settings ?: return
+    if (!settings.enabled) return
+    val text = when {
+        state.systemLanguagesMissing && state.failure == null -> strings.text("the system's languages must be downloaded first. Tap to download.")
+        state.textModelBytes > 0 && state.failure == null ->
+            strings.text("translation models must be downloaded first ({0} MB). Tap to download.", (state.textModelBytes + 999_999) / 1_000_000)
+        state.failure != null -> strings.text("Manga translation failed")
+        !state.modelsInstalled -> strings.text("Download the manga recognition models to translate")
+        state.finished -> return
+        else -> when (val p = state.progress) {
+            is MangaProgress.Reading -> strings.text("Reading page {0} of {1}…", p.page, p.pages)
+            is MangaProgress.Loading -> strings.text("Loading page {0} of {1}…", p.page, p.pages)
+            is MangaProgress.Translating -> strings.text("Translating… {0} of {1} lines", p.done, p.total)
+            is MangaProgress.Drawing -> strings.text("Drawing page {0} of {1}…", p.page, p.pages)
+            null -> strings.text("Translating…")
+        }
+    }
+    Box(modifier.statusBarsPadding().padding(top = 56.dp).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Surface(
+            shape = RoundedCornerShape(16.dp), tonalElevation = 3.dp, shadowElevation = 2.dp,
+            // a status that goes away when the translation is done: it must not hold the keyboard
+            // focus, or the reader's keys stop when it goes (desktop and iPadOS)
+            modifier = Modifier.focusProperties { canFocus = false }.clickable(onClick = onOpen),
+        ) {
+            Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+public fun MangaTranslationSheet(state: MangaReaderTranslationState, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        MangaTranslationPanel(state, Modifier.navigationBarsPadding())
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+public fun MangaTranslationPanel(state: MangaReaderTranslationState, modifier: Modifier = Modifier) {
+    val strings = LocalShinsouStrings.current
+    val scope = rememberCoroutineScope()
+    val settings = state.settings ?: return
+    fun update(next: WorkTranslationSettings) { scope.launch { state.update(next) } }
+    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(strings.text("Translate manga pages"), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    strings.text("Text on each page is recognised on this device, translated with your translation service, and drawn back in place. Pages never leave the device."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = settings.enabled, onCheckedChange = { update(settings.copy(enabled = it)) }, enabled = state.deviceSupported)
+        }
+        if (!state.deviceSupported) {
+            Text(strings.text("Manga translation is not available on this device."), color = MaterialTheme.colorScheme.error)
+            return@Column
+        }
+        if (!state.modelsInstalled) {
+            val download = state.download
+            Text(strings.text("Recognising manga text needs a one-time download of {0} MB.", (state.missingModelBytes + 999_999) / 1_000_000))
+            if (download != null) {
+                LinearProgressIndicator(progress = { if (download.second > 0) download.first.toFloat() / download.second else 0f }, modifier = Modifier.fillMaxWidth())
+            } else {
+                Button(onClick = { scope.launch { state.downloadModels() } }) { Text(strings.text("Download")) }
+            }
+        }
+        Text(strings.text("Original language"), style = MaterialTheme.typography.labelLarge)
+        Text(strings.text("Japanese (manga text recognition reads Japanese)"), style = MaterialTheme.typography.bodyMedium)
+        Text(strings.text("Translate into"), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.languages.filter { it.tag != MangaReaderTranslationState.SOURCE_LANGUAGE }.forEach { language ->
+                FilterChip(selected = settings.to == language.tag, onClick = { update(settings.copy(to = language.tag)) }, label = { Text(language.name) })
+            }
+        }
+        Text(strings.text("Text direction"), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                MangaOrientation.VERTICAL to "Vertical",
+                MangaOrientation.PREFER_HORIZONTAL to "Horizontal where it fits",
+                MangaOrientation.AUTO to "Follow the original",
+            ).forEach { (value, label) ->
+                FilterChip(selected = state.orientation == value, onClick = { state.orientation = value }, label = { Text(strings.text(label)) })
+            }
+        }
+        Text(strings.text("Show"), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(TranslationDisplayMode.TRANSLATION to "Translation", TranslationDisplayMode.ORIGINAL to "Original").forEach { (mode, label) ->
+                FilterChip(selected = settings.mode == mode || (mode == TranslationDisplayMode.TRANSLATION && settings.mode == TranslationDisplayMode.BILINGUAL),
+                    onClick = { update(settings.copy(mode = mode)) }, label = { Text(strings.text(label)) })
+            }
+        }
+        if (state.textModelBytes > 0) {
+            Text(strings.text("This language pair needs translation models ({0} MB). They are downloaded once and kept on this device.", (state.textModelBytes + 999_999) / 1_000_000))
+            if (state.textModelDownloadFailed) {
+                Text(strings.text("The download failed. Check the connection and try again."), color = MaterialTheme.colorScheme.error)
+            }
+            val textDownload = state.textModelDownload
+            if (textDownload != null) {
+                LinearProgressIndicator(progress = { textDownload.first.toFloat() / textDownload.second }, modifier = Modifier.fillMaxWidth())
+            } else {
+                Button(onClick = { scope.launch { state.downloadTextModels() } }) { Text(strings.text("Download models")) }
+            }
+        }
+        if (state.systemLanguagesMissing) {
+            Text(strings.text("The system translation needs these languages downloaded first. They are kept by the system and can be used by other apps too."))
+            if (state.textModelDownloadFailed) {
+                Text(strings.text("The languages were not downloaded. Try again, or download them in the system Settings."), color = MaterialTheme.colorScheme.error)
+            }
+            if (state.systemLanguagesDownloading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else {
+                Button(onClick = { scope.launch { state.downloadSystemLanguages() } }) { Text(strings.text("Download languages")) }
+            }
+        }
+        Text(strings.text("Text drawn over the artwork"), style = MaterialTheme.typography.labelLarge)
+        val inpaintDownload = state.inpaintDownload
+        when {
+            inpaintDownload != null -> LinearProgressIndicator(
+                progress = { if (inpaintDownload.second > 0) inpaintDownload.first.toFloat() / inpaintDownload.second else 0f },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            state.inpaintInstalled -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(strings.text("Translated too: the art beneath is redrawn on this device."), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = { scope.launch { state.removeInpaint() } }) { Text(strings.text("Remove")) }
+            }
+            else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    strings.text("Kept as drawn. An optional {0} MB download redraws the art beneath it so it can be translated too.", (state.missingInpaintBytes + 999_999) / 1_000_000),
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                )
+                TextButton(onClick = { scope.launch { state.downloadInpaint() } }, enabled = state.modelsInstalled) { Text(strings.text("Download")) }
+            }
+        }
+        state.failure?.let { message ->
+            Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { state.retry() }) { Text(strings.text("Retry")) }
+        }
+        // developer diagnostics: how this device is used, and where the last chapter's time went
+        val tuning = state.tuning
+        if (dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics.current.showLoadingElapsed && tuning != null) {
+            Text(
+                strings.text("Device tuning: detection {0} threads, OCR {1} × {2} threads, {3} pages loaded ahead", tuning.detectorThreads, tuning.ocrWorkers, tuning.ocrThreads, tuning.pageLoadsAhead),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            state.lastRun?.let { run ->
+                Text(
+                    if (run.fromCache) strings.text("Last chapter: {0} pages, shown as drawn", run.pages)
+                    else strings.text("Last chapter: {0} pages; loading and reading {1} s, translating {2} s, drawing {3} s", run.pages, seconds(run.readMs), seconds(run.translateMs), seconds(run.drawMs)) +
+                        " · " + run.detector,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Text(
+            strings.text("The translation service and its keys are set in Settings → Translation. Sound effects stay as they are.") + " " +
+                strings.text("Where text is detected (CPU, GPU or NPU) is chosen there too."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun seconds(ms: Long): String = "${ms / 1000}.${(ms % 1000) / 100}"
+

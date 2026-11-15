@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Refresh
@@ -115,6 +116,12 @@ fun MangaDetailScreen(
     onDeleteChapters: (Set<Long>) -> Unit,
     modifier: Modifier = Modifier,
     loadCoverBytes: (suspend () -> ByteArray?)? = null,
+    /** Queues the chapters for translation ahead of reading (ADR-0005); null hides it. */
+    onTranslateChapters: ((Set<Long>) -> Unit)? = null,
+    /** Where translating ahead stands for this title, shown above the chapters. */
+    translationStatus: String? = null,
+    /** Chapters with a stored translation, marked in the list. */
+    translatedChapterIds: Set<Long> = emptySet(),
 ) {
     val strings = LocalShinsouStrings.current
     val excludedScanlators = manga.excludedScanlators
@@ -182,6 +189,7 @@ fun MangaDetailScreen(
             chapters = visibleChapters,
             allChapterCount = chapters.size,
             downloadedChapterIds = downloadedChapterIds,
+            translatedChapterIds = translatedChapterIds,
             availableScanlators = availableScanlators,
             excludedScanlators = excludedScanlators,
             onExcludedScanlatorsChange = onExcludedScanlatorsChange,
@@ -215,6 +223,8 @@ fun MangaDetailScreen(
             onMarkChaptersRead = onMarkChaptersRead,
             onBookmarkChapters = onBookmarkChapters,
             onDownloadChapters = onDownloadChapters,
+            onTranslateChapters = onTranslateChapters,
+            translationStatus = translationStatus,
             onDeleteChapters = onDeleteChapters,
         )
     }
@@ -484,6 +494,7 @@ private fun ChapterPane(
     chapters: List<Chapter>,
     allChapterCount: Int,
     downloadedChapterIds: Set<Long>,
+    translatedChapterIds: Set<Long> = emptySet(),
     availableScanlators: List<String>,
     excludedScanlators: Set<String>,
     onExcludedScanlatorsChange: (Set<String>) -> Unit,
@@ -507,6 +518,8 @@ private fun ChapterPane(
     onBookmarkChapters: (Set<Long>, Boolean) -> Unit,
     onDownloadChapters: (Set<Long>) -> Unit,
     onDeleteChapters: (Set<Long>) -> Unit,
+    onTranslateChapters: ((Set<Long>) -> Unit)? = null,
+    translationStatus: String? = null,
 ) {
     val strings = LocalShinsouStrings.current
     var sortMenuVisible by remember { mutableStateOf(false) }
@@ -522,6 +535,14 @@ private fun ChapterPane(
         stickyHeader {
             Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)) {
                 Column(Modifier.fillMaxWidth()) {
+                    translationStatus?.let { status ->
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                    }
                     if (selectedChapterIds.isNotEmpty()) {
                         Row(
                             Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -552,6 +573,11 @@ private fun ChapterPane(
                             }
                             IconButton(onClick = { onDownloadChapters(selectedChapterIds) }) {
                                 Icon(Icons.Outlined.Download, strings.download)
+                            }
+                            onTranslateChapters?.let { translate ->
+                                IconButton(onClick = { translate(selectedChapterIds) }) {
+                                    Icon(Icons.Outlined.Translate, strings.text("Translate ahead"))
+                                }
                             }
                             IconButton(onClick = { onDeleteChapters(selectedChapterIds) }) {
                                 Icon(Icons.Outlined.Delete, strings.delete, tint = MaterialTheme.colorScheme.error)
@@ -739,6 +765,9 @@ private fun ChapterPane(
                                     }
                                 }
                                 if (chapter.bookmark) Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(17.dp))
+                                if (chapter.id in translatedChapterIds) {
+                                    Icon(Icons.Outlined.Translate, strings.text("Translated"), Modifier.size(17.dp))
+                                }
                                 if (chapter.id in downloadedChapterIds) {
                                     Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))
                                 }

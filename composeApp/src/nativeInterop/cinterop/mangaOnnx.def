@@ -1,0 +1,6 @@
+# ADR-0005 §4 (iOS): ONNX Runtime's C API for the manga translation. The archive per SDK is built
+# by Gradle (buildIosVision) and passed as -libraryPath.
+headers = onnxruntime_c_api.h
+package = dev.shinsou.interop.onnx
+staticLibraries = libonnxruntime.a
+linkerOpts = -lc++ -framework Foundation -framework CoreML -framework Accelerate -framework Network

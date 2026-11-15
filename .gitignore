@@ -33,3 +33,5 @@ Pods/
 
 # NDK/CMake intermediates (sandbox-core in composeApp)
 .cxx/
+hs_err_pid*.log
+__pycache__/

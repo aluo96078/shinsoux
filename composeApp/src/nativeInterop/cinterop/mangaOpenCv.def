@@ -1,0 +1,7 @@
+# ADR-0005 §4 (iOS): OpenCV's Objective-C API (core, imgproc, photo) for the manga translation.
+# Built from source per SDK by Gradle (buildIosVision); headers come from its framework (-F).
+language = Objective-C
+headers = opencv2/Mat.h opencv2/Core.h opencv2/Imgproc.h opencv2/Photo.h opencv2/Scalar.h opencv2/Point2i.h opencv2/Rect2i.h opencv2/Size2i.h opencv2/TermCriteria.h opencv2/CvType.h
+package = dev.shinsou.interop.opencv
+staticLibraries = libopencv2.a
+linkerOpts = -lc++ -framework Accelerate -framework Foundation -framework CoreGraphics

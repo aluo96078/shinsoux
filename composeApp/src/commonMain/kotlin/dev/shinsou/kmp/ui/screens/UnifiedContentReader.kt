@@ -49,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -145,6 +146,8 @@ internal fun UnifiedContentReader(
     translationRequestSerial: Long = 0L,
     /** What the reader's shell calls this work and chapter; kept with a stored translation. */
     translationLabels: dev.shinsou.kmp.translation.TranslationLabels? = null,
+    /** Manga translation for image chapters (ADR-0005); null leaves them untranslated. */
+    mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit = { _, _ -> },
     onPageCountInvalidated: () -> Unit = {},
     onNavigationBoundary: (ReaderTapAction) -> Unit = {},
@@ -157,6 +160,10 @@ internal fun UnifiedContentReader(
         ImageSequenceUnifiedContentReader(
             session = session,
             features = features,
+            mangaTranslation = mangaTranslation,
+            translationRequestSerial = translationRequestSerial,
+            translationLabels = translationLabels,
+            readerControlsVisible = readerControlsVisible,
             settings = settings,
             requestedPageIndex = requestedPageIndex,
             pageRequestSerial = pageRequestSerial,
@@ -232,6 +239,13 @@ internal fun UnifiedContentReader(
     val anchorLocator = remember(session, display?.text) { latestLocator[0] }
     val reopened = anchorLocator === session.content.initialLocator && display == null
     var translationSheetVisible by remember { mutableStateOf(false) }
+    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
+    val returnFocus = LocalReaderFocusReturn.current
+    var sheetWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(translationSheetVisible) {
+        if (translationSheetVisible) sheetWasOpen = true
+        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
+    }
     var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
     LaunchedEffect(translationRequestSerial) {
         // Only a press of the button opens the panel. The reader's shell starts its counter
@@ -308,7 +322,27 @@ internal suspend fun prefetchChapter(
     session: TypedReaderContentSession,
     features: ContentFeatureRuntime,
     labels: dev.shinsou.kmp.translation.TranslationLabels?,
+    /** Translates image chapters too, as manga pages (ADR-0005); without it only text is. */
+    manga: dev.shinsou.kmp.manga.MangaTranslation? = null,
 ): dev.shinsou.kmp.translation.PrefetchChapter {
+    val translation = features.translation
+    if (manga != null && translation != null && mangaTranslationAvailable(session, features)) {
+        val scope = session.content.navigation.scope
+        val navigation = session.content.navigation as ImageSequenceNavigation
+        return dev.shinsou.kmp.translation.PrefetchChapter(
+            workKey = scope.publicationId.value,
+            chapterKey = scope.unitId.value,
+            text = "",
+            exportable = false,
+            labels = labels,
+            pages = { to, progress ->
+                translateMangaChapterAhead(
+                    manga, translation, scope.publicationId.value, scope.unitId.value, to, navigation.itemCount,
+                    loadPage = { i -> imageSequencePageBytes(session, features, navigation, i) }, labels = labels, progress = progress,
+                )
+            },
+        )
+    }
     if (!readerTranslationAvailable(session, features)) {
         throw dev.shinsou.kmp.translation.PrefetchNotTranslatable("This chapter is not text that may be translated and kept")
     }
@@ -554,6 +588,10 @@ internal suspend fun forEachReaderSearchSegment(
 private fun ImageSequenceUnifiedContentReader(
     session: TypedReaderContentSession,
     features: ContentFeatureRuntime,
+    mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation?,
+    translationRequestSerial: Long,
+    translationLabels: dev.shinsou.kmp.translation.TranslationLabels?,
+    readerControlsVisible: Boolean,
     settings: ReaderSettings,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
@@ -578,6 +616,49 @@ private fun ImageSequenceUnifiedContentReader(
     val initialIndex = (requestedPageIndex ?: session.initialVisualPageIndex
         ?: navigation.indexOf(initial) ?: 0).coerceIn(0, navigation.itemCount - 1)
 
+    // ADR-0005: translated pages are kept on the device, so only a grant that allows storing the
+    // chapter offline gets them.
+    val textTranslation = features.translation
+    val mangaState = if (mangaTranslation != null && textTranslation != null &&
+        remember(session, features) { mangaTranslationAvailable(session, features) }
+    ) {
+        val scope = session.content.navigation.scope
+        rememberMangaReaderTranslation(
+            manga = mangaTranslation,
+            translation = textTranslation,
+            workKey = scope.publicationId.value,
+            chapterKey = scope.unitId.value,
+            pageCount = navigation.itemCount,
+            pagesKey = session,
+            loadPage = { i -> imageSequencePageBytes(session, features, navigation, i) },
+            exportable = false,
+            labels = translationLabels,
+        )
+    } else {
+        null
+    }
+    var translationSheetVisible by remember { mutableStateOf(false) }
+    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
+    val returnFocus = LocalReaderFocusReturn.current
+    var sheetWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(translationSheetVisible) {
+        if (translationSheetVisible) sheetWasOpen = true
+        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
+    }
+    // when a translation ends its notice goes; whatever held the focus then, the reader takes it
+    LaunchedEffect(mangaState?.finished, mangaState?.failure) {
+        if (mangaState?.finished == true && !translationSheetVisible) returnFocus()
+    }
+    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
+    LaunchedEffect(translationRequestSerial) {
+        // Only a press of the button opens the panel (the shell resets its counter per chapter).
+        val pressed = translationRequestSerial > handledTranslationRequest
+        handledTranslationRequest = translationRequestSerial
+        if (pressed && mangaState != null) translationSheetVisible = true
+    }
+
+    Box(modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalTranslatedImagePage provides { index -> mangaState?.translatedPage(index) }) {
     // Recreate pager state when direction/layout changes. requestedPageIndex is kept in the
     // reader shell and makes the new container start on the page that was actually visible.
     key(session.content.representation.representationId, settings.readingMode) {
@@ -596,7 +677,7 @@ private fun ImageSequenceUnifiedContentReader(
                 onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
-                modifier = modifier,
+                modifier = Modifier.fillMaxSize(),
             )
 
             ImageSequenceReaderLayout.VERTICAL_PAGER -> ImageSequenceVerticalPager(
@@ -613,7 +694,7 @@ private fun ImageSequenceUnifiedContentReader(
                 onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
-                modifier = modifier,
+                modifier = Modifier.fillMaxSize(),
             )
 
             ImageSequenceReaderLayout.CONTINUOUS -> ImageSequenceContinuousReader(
@@ -630,10 +711,49 @@ private fun ImageSequenceUnifiedContentReader(
                 onNavigationBoundary = onNavigationBoundary,
                 onReaderTap = onReaderTap,
                 onLocatorChanged = onLocatorChanged,
-                modifier = modifier,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
+    }
+        if (mangaState != null) {
+            MangaTranslationNotice(
+                state = mangaState,
+                onOpen = { translationSheetVisible = true },
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (readerControlsVisible) 16.dp else 0.dp),
+            )
+            if (translationSheetVisible) MangaTranslationSheet(mangaState) { translationSheetVisible = false }
+        }
+    }
+}
+
+/** Page n's translated image in the image reader, when there is one to show. */
+private val LocalTranslatedImagePage = androidx.compose.runtime.staticCompositionLocalOf<(Int) -> ByteArray?> { { null } }
+
+/**
+ * Whether the image chapter in [session] can be translated (ADR-0005): a build with translation,
+ * under a grant that allows keeping the chapter's pages on the device.
+ */
+/**
+ * The bytes of an image chapter's page as stored, for its translation: null where it cannot be
+ * shown or is shown through a reader transform (a scrambled page is not the picture itself).
+ */
+internal suspend fun imageSequencePageBytes(
+    session: TypedReaderContentSession,
+    features: ContentFeatureRuntime,
+    navigation: ImageSequenceNavigation,
+    index: Int,
+): ByteArray? = withContext(Dispatchers.Default) {
+    runCatching {
+        features.operations.display(session.access) { features.imageRenderPages.load(navigation, index) }
+    }.getOrNull()?.takeIf { it.readerTransform == null }?.bytes
+}
+
+internal fun mangaTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatureRuntime?): Boolean {
+    if (features?.translation == null) return false
+    val representation = session.content.representation as? ContentRepresentation.ImageSequence ?: return false
+    val bytes = representation.pages.sumOf { it.resource.blob.byteSize }
+    return runCatching { features.operations.offlineStore(session.access, bytes) { true } }.getOrDefault(false)
 }
 
 internal enum class ImageSequenceReaderLayout {
@@ -1026,18 +1146,24 @@ private fun ImageSequencePage(
                 } ?: strings.text("The image resource could not be opened.")
             }
     }
+    val translated = LocalTranslatedImagePage.current(index)
     Box(modifier, contentAlignment = Alignment.Center) {
         val loaded = page
         when {
             loaded != null -> {
-                val imageRequest = remember(loaded, platformContext) {
-                    ImageRequest.Builder(platformContext)
-                        .data(loaded.bytes)
-                        .readerImageTransform(
-                            loaded.readerTransform,
-                            loaded.readerTransform?.let { encodedImageHeight(loaded.bytes) },
-                        )
-                        .build()
+                val imageRequest = remember(loaded, translated, platformContext) {
+                    if (translated != null) {
+                        // the translated page is drawn from the plain image: no transform left to apply
+                        ImageRequest.Builder(platformContext).data(translated).build()
+                    } else {
+                        ImageRequest.Builder(platformContext)
+                            .data(loaded.bytes)
+                            .readerImageTransform(
+                                loaded.readerTransform,
+                                loaded.readerTransform?.let { encodedImageHeight(loaded.bytes) },
+                            )
+                            .build()
+                    }
                 }
                 AsyncImage(
                     model = imageRequest,

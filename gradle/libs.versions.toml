@@ -22,6 +22,15 @@ sqldelight = "2.1.0"
 libsodium = "0.9.5"
 android-avif = "1.1.1.14d8e3c4"
 javafx = "21.0.12"
+# ADR-0005: on-device manga translation (inference and image operations)
+onnxruntime = "1.32.0"
+# Android: the same runtime with Qualcomm's QNN execution provider (the NPU); its QNN libraries are
+# not shipped but downloaded from Maven Central on Snapdragon devices (docs/research/manga-gpu-npu.md)
+onnxruntime-android-qnn = "1.29.0"
+opencv-android = "4.14.0"
+opencv-bytedeco = "4.14.0-1.5.14"
+openblas-bytedeco = "0.3.34-1.5.14"
+javacpp = "1.5.14"
 androidx-test-runner = "1.6.2"
 androidx-test-ext-junit = "1.2.1"
 
@@ -57,6 +66,12 @@ sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", versi
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 libsodium-bindings = { module = "com.ionspin.kotlin:multiplatform-crypto-libsodium-bindings", version.ref = "libsodium" }
 android-avif = { module = "org.aomedia.avif.android:avif", version.ref = "android-avif" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android-qnn", version.ref = "onnxruntime-android-qnn" }
+onnxruntime-jvm = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+opencv-android = { module = "org.opencv:opencv", version.ref = "opencv-android" }
+opencv-bytedeco = { module = "org.bytedeco:opencv", version.ref = "opencv-bytedeco" }
+openblas-bytedeco = { module = "org.bytedeco:openblas", version.ref = "openblas-bytedeco" }
+javacpp = { module = "org.bytedeco:javacpp", version.ref = "javacpp" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 

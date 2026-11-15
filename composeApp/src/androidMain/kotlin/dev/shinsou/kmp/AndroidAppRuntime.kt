@@ -70,6 +70,7 @@ internal class AndroidAppRuntime private constructor(context: Context) {
                 modelDirectory = java.io.File(applicationContext.noBackupFilesDir, "translation-models").absolutePath,
                 memory = dev.shinsou.kmp.translation.AndroidTranslationMemoryGuard(applicationContext),
             ),
+            mangaPlatform = dev.shinsou.kmp.manga.AndroidMangaPlatform.create(applicationContext),
             shuYueMigrationSecretStore = AndroidShuYueMigrationSecretStore(applicationContext),
             pluginBrowserSessionTransport = AndroidPluginBrowserSessionTransport(applicationContext),
             platformBrowserUserAgentProvider = AndroidBrowserUserAgentProvider(applicationContext),

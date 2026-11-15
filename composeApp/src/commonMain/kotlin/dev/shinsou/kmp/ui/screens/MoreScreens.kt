@@ -1348,7 +1348,7 @@ private fun PrivacyPolicyScreen(
     Column(modifier.fillMaxSize()) {
         ScreenHeader(
             title = strings.text("Privacy policy"),
-            subtitle = strings.text("Last updated August 19, 2026"),
+            subtitle = strings.text("Last updated November 15, 2026"),
             leading = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, strings.text("Back")) } },
         )
         LazyColumn(
@@ -1371,6 +1371,12 @@ private fun PrivacyPolicyScreen(
                 PrivacySection(
                     strings.text("Network and extensions"),
                     strings.text("When you browse or read, Shinsou X contacts the source and extension repository you selected. Those third parties receive normal request information such as your IP address and user agent and are governed by their own policies."),
+                )
+            }
+            item {
+                PrivacySection(
+                    strings.text("App updates"),
+                    strings.text("Update checks are off unless you switch them on. When they are on, Shinsou X reads the public list of its releases on GitHub each time it starts. GitHub receives normal request information such as your IP address; nothing else is sent."),
                 )
             }
             item {

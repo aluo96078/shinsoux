@@ -16,6 +16,17 @@ data class AppSettings(
     val advanced: AdvancedSettings = AdvancedSettings(),
     /** Device-local diagnostics; intentionally absent from the portable sync settings. */
     val developer: DeveloperSettings = DeveloperSettings(),
+    val updates: UpdateSettings = UpdateSettings(),
+)
+
+/** Checking GitHub for a newer version of the app; off until the user switches it on. */
+@Serializable
+data class UpdateSettings(
+    val checkForUpdates: Boolean = false,
+    /** Betas too: the newest version, beta or release, is offered. */
+    val includeBeta: Boolean = false,
+    /** A version the user chose to skip: it is not offered again (a newer one is). */
+    val skippedVersion: String? = null,
 )
 
 @Serializable

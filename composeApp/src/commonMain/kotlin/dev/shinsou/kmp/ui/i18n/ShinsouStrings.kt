@@ -264,6 +264,14 @@ private val TraditionalAdditionalTranslations = mapOf(
     "Translation is not available in this version of the app." to "這個版本的 App 不提供翻譯。",
     "Translate novel chapters while reading: open a chapter and press the translation button in the reader's top bar. Translated chapters are kept, so nothing is translated twice." to "閱讀小說時即可翻譯：開啟章節後按閱讀器頂列的翻譯按鈕。翻過的章節會保留，不會重複翻譯。",
     "Translation service" to "翻譯服務",
+    "System translation (Apple)" to "系統翻譯（Apple）",
+    "The translation built into the system: free and on this device, usually better than the offline engine but slower. Its languages are downloaded and kept by the system." to "系統內建的翻譯：免費、在這台裝置上進行，品質通常比離線引擎好，但較慢。語言由系統下載與保存。",
+    "Translated by the system's own translation on this device. Nothing you read is sent anywhere." to "由系統內建的翻譯在這台裝置上翻譯，閱讀內容不會外送。",
+    "The system translation needs these languages downloaded first. They are kept by the system and can be used by other apps too." to "系統翻譯需要先下載這兩種語言。語言由系統保存，其他 App 也能使用。",
+    "The languages were not downloaded. Try again, or download them in the system Settings." to "語言沒有下載完成。請再試一次，或到系統「設定」中下載。",
+    "Download languages" to "下載語言",
+    "the system's languages must be downloaded first. Tap to download." to "需要先下載系統翻譯的語言，點此下載。",
+    "the system's languages are not downloaded. Open a chapter and turn translation on to download them." to "尚未下載系統翻譯的語言。請先開啟任一章並打開翻譯來下載。",
     "A key of a Translator resource in the Azure portal (Keys and Endpoint)." to "Azure 入口網站中「翻譯工具」資源的金鑰（位於「金鑰與端點」）。",
     "Azure region" to "Azure 區域",
     "The resource's region, for example eastasia. Leave empty for a global resource." to "資源所在的區域，例如 eastasia。全域資源請留空。",
@@ -3754,7 +3762,7 @@ private val TraditionalChineseStrings = EnglishStrings.copy(
     clearFilters = "清除篩選", noMatches = "沒有符合項目", libraryEmpty = "書庫是空的",
     noUpdates = "沒有最近更新", noHistory = "沒有閱讀歷史", createBackup = "建立備份", restoreBackup = "還原備份",
     translations = TraditionalLongTranslations + TraditionalSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-TW") + TraditionalReaderTranslations + TraditionalPortabilityTranslations +
-        TraditionalReviewedExtensionTranslations + SyncV3TraditionalTranslations,
+        TraditionalReviewedExtensionTranslations + SyncV3TraditionalTranslations + MangaTranslationTraditional + AppUpdateTraditional,
 )
 
 private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
@@ -3774,7 +3782,7 @@ private val SimplifiedChineseStrings = TraditionalChineseStrings.copy(
     noUpdates = "没有最近更新", noHistory = "没有阅读历史", createBackup = "创建备份", restoreBackup = "恢复备份",
     // Explicit Simplified wording wins over the character-converted Traditional fallback.
     translations = SimplifiedSyncTranslations + SimplifiedLongTranslations + SimplifiedSourceFailureTranslations + LibraryContentTypeTranslations.getValue("zh-CN") + SimplifiedReaderTranslations +
-        SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations + SyncV3SimplifiedTranslations,
+        SimplifiedPortabilityTranslations + SimplifiedReviewedExtensionTranslations + SyncV3SimplifiedTranslations + MangaTranslationSimplified + AppUpdateSimplified,
 )
 
 private val JapaneseSyncItemTranslations = mapOf(

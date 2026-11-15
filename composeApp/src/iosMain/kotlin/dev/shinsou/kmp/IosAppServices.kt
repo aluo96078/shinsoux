@@ -103,6 +103,8 @@ internal class IosAppServices(
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
     override val contentFeatures: ContentFeatureRuntime? = null,
+    override val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
+    override val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker? = null,
     override val tracking: TrackingCoordinator? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
     override val sync: SyncV3Service? = null,

@@ -90,6 +90,7 @@ public class LlmTranslationProvider(
     override val engine: String
         get() = "llm:${settings.protocol.id}:${settings.model.trim()}@" +
             TranslationText.hash(normalizedLlmBaseUrl(settings.baseUrl).orEmpty()).take(12)
+    override val currentEngine: String get() = engine
     override val maximumLines: Int get() = 40
 
     // Two requests of a chapter at a time: it finishes in about half the time, and a model

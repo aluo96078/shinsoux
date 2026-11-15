@@ -363,6 +363,14 @@ interface ShinsouAppServices {
     val contentFeatures: ContentFeatureRuntime?
         get() = null
 
+    /** Checks GitHub for a newer version of the app; null where the host offers no checks. */
+    val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker?
+        get() = null
+
+    /** On-device manga translation (ADR-0005); null where translation itself is unavailable. */
+    val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation?
+        get() = null
+
     /** Secure, platform-persisted tracker integration supplied by the application composition. */
     val tracking: TrackingCoordinator?
         get() = null

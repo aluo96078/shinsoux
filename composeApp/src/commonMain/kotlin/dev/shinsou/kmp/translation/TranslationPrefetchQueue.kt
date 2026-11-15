@@ -23,6 +23,11 @@ public class PrefetchChapter(
     public val exportable: Boolean,
     public val labels: TranslationLabels?,
     public val keep: (String) -> Boolean = { false },
+    /**
+     * Translates the chapter itself instead of [text], into the language given, reporting its
+     * progress: a chapter whose kind is known only once fetched, such as manga pages (ADR-0005).
+     */
+    public val pages: (suspend (to: String, progress: (done: Int, total: Int) -> Unit) -> Unit)? = null,
 )
 
 /** The languages the user chose when queueing. */
@@ -43,6 +48,12 @@ public class TranslationPrefetchJob(
     public val languages: PrefetchLanguages? = null,
     /** The chapter's own identity within [group], as the screen that queued it knows it. */
     public val unit: String = id,
+    /**
+     * Does the whole job instead of [load] and the text translation, reporting its progress: for
+     * chapters that are not text, such as manga pages (ADR-0005). Throws [TranslationException]
+     * like the text path, so the queue stops what the failure would stop.
+     */
+    public val run: (suspend (progress: (done: Int, total: Int) -> Unit) -> Unit)? = null,
     /**
      * Fetches the chapter (downloading it when it is not stored yet). Throws
      * [PrefetchNotTranslatable] for a chapter with nothing to translate.
@@ -183,10 +194,19 @@ public class TranslationPrefetchQueue(
     }
 
     private suspend fun translate(job: TranslationPrefetchJob) {
+        job.run?.let { run ->
+            run { done, total -> set(job.id) { it.copy(fetched = true, done = done, total = total) } }
+            return
+        }
         val chapter = job.load()
         set(job.id) { it.copy(fetched = true) }
         val settings = translation.settings(chapter.workKey)
         val chosen = job.languages
+        chapter.pages?.let { pages ->
+            val to = chosen?.to ?: settings?.to ?: ReaderTranslation.targetLanguage(defaultTargetLanguage())
+            pages(to) { done, total -> set(job.id) { it.copy(done = done, total = total) } }
+            return
+        }
         val request = ChapterTranslationRequest(
             workKey = chapter.workKey,
             chapterKey = chapter.chapterKey,
@@ -212,6 +232,10 @@ public class TranslationPrefetchQueue(
             throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "No translation from ${request.from} to ${request.to}")
         }
         if (translation.stored(request)?.complete == true) return
+        if (translation.systemLanguagesMissing(request.from, request.to)) {
+            // The system's prompt is shown from the reader, where the user asked for it.
+            throw TranslationException(TranslationFailure.SYSTEM_LANGUAGE_MISSING, "The system's languages are not downloaded")
+        }
         if (translation.activeProvider() == TranslationProviderKind.OFFLINE) {
             if (!translation.deviceSupported) {
                 throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
@@ -259,6 +283,10 @@ public class TranslationPrefetchQueue(
             TranslationFailure.DAILY_LIMIT,
             TranslationFailure.DEVICE_UNSUPPORTED,
         )
-        val STOPS_ITS_WORK = setOf(TranslationFailure.MODEL_MISSING, TranslationFailure.UNSUPPORTED_PAIR)
+        val STOPS_ITS_WORK = setOf(
+            TranslationFailure.MODEL_MISSING,
+            TranslationFailure.UNSUPPORTED_PAIR,
+            TranslationFailure.SYSTEM_LANGUAGE_MISSING,
+        )
     }
 }

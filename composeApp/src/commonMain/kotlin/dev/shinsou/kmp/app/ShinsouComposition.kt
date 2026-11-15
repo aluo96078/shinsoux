@@ -1,8 +1,10 @@
 package dev.shinsou.kmp.app
 
+import dev.shinsou.kmp.manga.asMangaTranslator
 import dev.shinsou.kmp.translation.OfflineTranslationPlatform
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationMemoryStore
+import okio.Path.Companion.toPath
 import dev.shinsou.kmp.acquisition.BoundedEpubArchiveExtractor
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupService
@@ -154,6 +156,10 @@ public class ShinsouComposition(
     private val syncDeviceInfo: SyncDeviceInfo = SyncDeviceInfo("This device", "desktop", ""),
     /** The platform's offline translation engine and model directory (ADR-0004); null disables translation. */
     private val offlineTranslation: OfflineTranslationPlatform? = null,
+    /** The operating system's own translation, where the platform has one. */
+    private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null,
+    /** On-device manga text detection, OCR and redrawing (ADR-0005); null where it is not shipped. */
+    private val mangaPlatform: dev.shinsou.kmp.manga.MangaPlatform? = null,
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -183,11 +189,36 @@ public class ShinsouComposition(
                         http = httpClient,
                         // The same protected storage as the proxy key and tracker tokens.
                         secrets = pluginKeyValueStore,
+                        system = systemTranslation,
                     )
                 }
             },
         )
     }
+    /**
+     * Manga translation (ADR-0005): its models and rendered pages sit beside the offline text
+     * models (storage kept out of device backups); OCR results share the translation database.
+     * Present wherever translation is, so the reader can say when this device cannot run it.
+     */
+    /** Checks GitHub for a newer version of the app, when the user has switched checks on. */
+    public val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker by lazy {
+        dev.shinsou.kmp.update.AppUpdateChecker(httpClient, SHINSOU_APP_VERSION)
+    }
+
+    public val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? by lazy {
+        val translation = contentFeatures?.translation ?: return@lazy null
+        val directory = offlineTranslation?.modelDirectory ?: return@lazy null
+        val infrastructure = contentInfrastructure ?: return@lazy null
+        dev.shinsou.kmp.manga.MangaTranslation(
+            platform = mangaPlatform,
+            models = dev.shinsou.kmp.manga.MangaModelStore("$directory/manga", httpClient),
+            pages = dev.shinsou.kmp.manga.MangaPageStore(infrastructure.contentDriver(), now = { Clock.System.now().toEpochMilliseconds() }),
+            renders = dev.shinsou.kmp.manga.MangaRenderCache("$directory/manga-pages"),
+            translator = translation.asMangaTranslator(),
+            readVocab = { path -> okio.FileSystem.SYSTEM.read(path.toPath()) { readUtf8() }.split("\n") },
+        )
+    }
+
     /** Compatibility projection remains available in previews which intentionally omit SQLite. */
     public val legacyPublicationProjection: LegacyPublicationProjection =
         contentFoundation?.legacyProjection ?: LegacyPublicationProjection(InMemoryPortableAliasLedger())

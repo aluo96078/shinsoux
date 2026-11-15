@@ -1,0 +1,234 @@
+package dev.shinsou.kmp.ui.screens
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.isToggleable
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.asSkiaBitmap
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.shinsou.kmp.manga.DesktopMangaPlatform
+import dev.shinsou.kmp.manga.MangaModelStore
+import dev.shinsou.kmp.manga.MangaPageStore
+import dev.shinsou.kmp.manga.MangaRenderCache
+import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.manga.asMangaTranslator
+import dev.shinsou.kmp.translation.OfflineModelCatalog
+import dev.shinsou.kmp.translation.OfflineModelPaths
+import dev.shinsou.kmp.translation.OfflineTranslationEngine
+import dev.shinsou.kmp.translation.OfflineTranslationPlatform
+import dev.shinsou.kmp.translation.ReaderTranslation
+import dev.shinsou.kmp.translation.TranslationMemoryStore
+import dev.shinsou.kmp.ui.ReaderPage
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
+import org.junit.Rule
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.file.Files
+import kotlin.test.Test
+import kotlinx.coroutines.flow.first
+
+/**
+ * Manga translation in the page reader, driven through its panel with the real models and the
+ * offline provider (an engine that marks what it translated). Runs where SHINSOU_MANGA_PACKS and
+ * SHINSOU_MANGA_PAGE are set, like the pipeline tests.
+ */
+@OptIn(ExperimentalTestApi::class)
+class MangaReaderTranslationTest {
+    @get:Rule
+    val rule = createComposeRule()
+
+    private val packs = System.getenv("SHINSOU_MANGA_PACKS")?.let(::File)?.takeIf { it.resolve("vision-v1").isDirectory }
+    private val page = System.getenv("SHINSOU_MANGA_PAGE")?.let(::File)?.takeIf { it.isFile }
+
+    private object MarkingEngine : OfflineTranslationEngine {
+        override suspend fun translate(model: OfflineModelPaths, lines: List<String>): List<String> = lines.map { "譯$it" }
+        override suspend fun unload() {}
+    }
+
+    @Test
+    fun switchingTranslationOnReplacesThePagesAndOriginalShowsThemAgain() {
+        if (packs == null || page == null) return
+        val root = Files.createTempDirectory("manga-reader").toFile()
+        val textModels = File(root, "text").apply { mkdirs() }
+        for (model in OfflineModelCatalog.models) {
+            val directory = File(textModels, model.id).apply { mkdirs() }
+            model.files.forEach { file -> RandomAccessFile(File(directory, file.name), "rw").use { it.setLength(file.size) } }
+        }
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, textModels.absolutePath),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        packs.resolve("vision-v1").copyRecursively(root.resolve("manga/vision-v1"))
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path),
+            translation.asMangaTranslator(),
+            { File(it).readLines() },
+        )
+        val bytes = page.readBytes()
+        val pages = listOf(ReaderPage(index = 0, imageBytes = bytes), ReaderPage(index = 1, imageBytes = bytes))
+        rule.setContent {
+            val state = rememberMangaReaderTranslation(manga, translation, "work", "chapter", pages, exportable = false, labels = null)
+            Column {
+                MangaTranslationPanel(state)
+                val shown = state.displayPages(pages)
+                Text("${shown.count { it.imageBytes !== bytes }}", Modifier.testTag("translated-pages"))
+            }
+        }
+        rule.onNodeWithTag("translated-pages").assertTextEquals("0")
+        rule.onNode(isToggleable()).performClick()
+        rule.waitUntil(timeoutMillis = 120_000) {
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("translated-pages").and(androidx.compose.ui.test.hasText("2"))).fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onNodeWithText("Original").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("translated-pages").assertTextEquals("0")
+        rule.onNodeWithText("Translation").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("translated-pages").assertTextEquals("2")
+    }
+
+    /** A look at the panel in Traditional Chinese (written to build/manga-test for review). */
+    @Test
+    fun thePanelReadsInTraditionalChinese() {
+        val root = Files.createTempDirectory("manga-panel").toFile()
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, root.absolutePath),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { 0L }),
+            MangaRenderCache(root.resolve("pages").path), translation.asMangaTranslator(), { emptyList() },
+        )
+        rule.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(dev.shinsou.kmp.ui.i18n.LocalShinsouStrings provides dev.shinsou.kmp.ui.i18n.shinsouStringsFor("zh-TW")) {
+                androidx.compose.material3.MaterialTheme {
+                    androidx.compose.material3.Surface {
+                        val state = rememberMangaReaderTranslation(manga, translation, "work", "chapter", emptyList(), exportable = false, labels = null)
+                        MangaTranslationPanel(state, Modifier.testTag("panel"))
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText("翻譯漫畫頁面").assertExists()
+        rule.onNodeWithText("直書").assertExists()
+        val image = rule.onNodeWithTag("panel").captureToImage()
+        val out = File("build/manga-test").apply { mkdirs() }.resolve("manga-panel-zh-TW.png")
+        out.writeBytes(org.jetbrains.skia.Image.makeFromBitmap(image.asSkiaBitmap()).encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG)!!.bytes)
+    }
+
+    @Test
+    fun aChapterTranslatedAheadOpensTranslatedFromTheCaches() = kotlinx.coroutines.runBlocking {
+        if (packs == null || page == null) return@runBlocking
+        val root = Files.createTempDirectory("manga-prefetch").toFile()
+        val textModels = File(root, "text").apply { mkdirs() }
+        for (model in OfflineModelCatalog.models) {
+            val directory = File(textModels, model.id).apply { mkdirs() }
+            model.files.forEach { file -> RandomAccessFile(File(directory, file.name), "rw").use { it.setLength(file.size) } }
+        }
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, textModels.absolutePath),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        packs.resolve("vision-v1").copyRecursively(root.resolve("manga/vision-v1"))
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path),
+            translation.asMangaTranslator(),
+            { File(it).readLines() },
+        )
+        val bytes = page.readBytes()
+        val pages = listOf(ReaderPage(index = 0, imageBytes = bytes), ReaderPage(index = 1, imageBytes = bytes))
+        val work = dev.shinsou.kmp.domain.model.Manga(id = 1, source = 7, url = "/title")
+        val chapter = dev.shinsou.kmp.domain.model.Chapter(id = 11, mangaId = 1, url = "/title/1", name = "第1話")
+        val job = mangaPrefetchJob(manga, translation, work, chapter, labels = null, loadPages = { pages })
+        kotlin.test.assertEquals(1, translation.prefetch.enqueue(listOf(job)))
+        val t = System.nanoTime()
+        kotlinx.coroutines.withTimeout(120_000) {
+            translation.prefetch.entries.first { list -> list.any { it.id == job.id && it.state != dev.shinsou.kmp.translation.PrefetchState.QUEUED && it.state != dev.shinsou.kmp.translation.PrefetchState.RUNNING } }
+        }
+        val entry = translation.prefetch.entries.value.first { it.id == job.id }
+        kotlin.test.assertEquals(dev.shinsou.kmp.translation.PrefetchState.DONE, entry.state, "failure ${entry.failure}")
+        println("MANGA prefetch=${(System.nanoTime() - t) / 1_000_000}ms")
+        // the work now opens translated, into the default language
+        val settings = translation.settings(mangaWorkKey(work))!!
+        kotlin.test.assertTrue(settings.enabled); kotlin.test.assertEquals("zh-Hant", settings.to)
+        // and the chapter list marks it translated
+        kotlin.test.assertEquals(setOf(mangaChapterKey(chapter)), translation.translatedChapterKeys(mangaWorkKey(work)))
+
+        // the reader then finds every page drawn already
+        val opened = System.nanoTime(); var shown = 0
+        manga.translateChapter(
+            dev.shinsou.kmp.manga.MangaChapterRequest(mangaWorkKey(work), mangaChapterKey(chapter), 2, { bytes }, "ja", "zh-Hant"),
+        ) { _, jpeg -> if (jpeg != null) shown++ }
+        val openMs = (System.nanoTime() - opened) / 1_000_000
+        println("MANGA reader after prefetch=${openMs}ms")
+        kotlin.test.assertEquals(2, shown)
+        kotlin.test.assertTrue(openMs < 1_000, "took ${openMs}ms")
+    }
+
+    @Test
+    fun missingOfflineModelsAreOfferedForDownloadInsteadOfFailing() {
+        if (packs == null || page == null) return
+        val root = Files.createTempDirectory("manga-text-models").toFile()
+        val textModels = File(root, "text").apply { mkdirs() }
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, textModels.absolutePath),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        packs.resolve("vision-v1").copyRecursively(root.resolve("manga/vision-v1"))
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path), translation.asMangaTranslator(), { File(it).readLines() },
+        )
+        val pages = listOf(ReaderPage(index = 0, imageBytes = page.readBytes()))
+        lateinit var state: MangaReaderTranslationState
+        rule.setContent {
+            state = rememberMangaReaderTranslation(manga, translation, "work", "chapter", pages, exportable = false, labels = null)
+            Column {
+                MangaTranslationPanel(state)
+                Text("${state.displayPages(pages).count { it.imageBytes !== pages[0].imageBytes }}", Modifier.testTag("translated-pages"))
+            }
+        }
+        rule.onNode(isToggleable()).performClick()
+        rule.waitUntil(timeoutMillis = 30_000) { state.textModelBytes > 0 }
+        rule.onNodeWithText("Download models").assertExists()
+        kotlin.test.assertNull(state.failure, "a missing model is not a failure")
+        rule.onNodeWithTag("translated-pages").assertTextEquals("0")
+
+        // once the models are on the device, the chapter is translated
+        for (model in OfflineModelCatalog.models) {
+            val directory = File(textModels, model.id).apply { mkdirs() }
+            model.files.forEach { file -> RandomAccessFile(File(directory, file.name), "rw").use { it.setLength(file.size) } }
+        }
+        state.retry()
+        rule.waitUntil(timeoutMillis = 120_000) {
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("translated-pages").and(androidx.compose.ui.test.hasText("1"))).fetchSemanticsNodes().isNotEmpty()
+        }
+        kotlin.test.assertEquals(0L, state.textModelBytes)
+    }
+}

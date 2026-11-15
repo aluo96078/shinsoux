@@ -147,11 +147,14 @@ internal object IosApplicationContainer {
         runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(iosSandboxRuntimeFactory(sandboxScope)),
         contentInfrastructure = contentInfrastructure,
         platformTextToSpeechEngine = IosTextToSpeechEngine(),
+        // Apple's Translation framework, through the bridge Swift registers on iOS 26 and later.
+        systemTranslation = dev.shinsou.kmp.translation.IosSystemTranslationEngine,
         offlineTranslation = dev.shinsou.kmp.translation.OfflineTranslationPlatform(
             engine = dev.shinsou.kmp.translation.IosOfflineTranslationEngine(),
             modelDirectory = iosTranslationModelDirectory(),
             memory = dev.shinsou.kmp.translation.IosTranslationMemoryGuard(),
         ),
+        mangaPlatform = dev.shinsou.kmp.manga.IosMangaPlatform(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
         pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
@@ -186,11 +189,18 @@ internal object IosApplicationContainer {
         browse = composition.browse,
         content = composition.content,
         contentFeatures = composition.contentFeatures,
+        mangaTranslation = composition.mangaTranslation,
+        appUpdates = composition.appUpdates,
         tracking = composition.tracking,
         portableContentBackupV2 = composition.portableContentBackupV2,
         sync = composition.sync,
         shuYueMigration = composition.shuYueMigration,
     )
+
+    init {
+        // a measuring run, only when launched for one (SHINSOU_MANGA_BENCH_DIR)
+        dev.shinsou.kmp.manga.startMangaBenchmarkIfAsked(iosTranslationModelDirectory(), io.ktor.client.HttpClient(io.ktor.client.engine.darwin.Darwin))
+    }
 
     private val downloadKeeper = IosDownloadBackgroundKeeper(
         downloads = composition.backgroundDownloads,

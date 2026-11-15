@@ -20,6 +20,9 @@ public enum class TranslationProviderKind(public val id: String, internal val se
     /** The bundled engine: free, on the device, nothing is sent anywhere. */
     OFFLINE(OfflineTranslationProvider.ID, null),
 
+    /** The operating system's translation (Apple's on iOS): free, on the device, languages kept by the system. */
+    SYSTEM(SystemTranslationProvider.ID, null),
+
     /** DeepL with the user's API key. What is read is sent to DeepL. */
     DEEPL(DeepLTranslationProvider.ID, "translation.deepl.secret"),
 
@@ -48,6 +51,8 @@ public data class TranslationPreferences(
     val azureRegion: String = "",
     /** False where keys cannot be stored safely: only the offline engine is offered. */
     val cloudAvailable: Boolean,
+    /** The platform has its own translation to offer. */
+    val systemAvailable: Boolean = false,
 )
 
 /** A language the reader can offer, with its own name. */
@@ -65,6 +70,8 @@ public class ReaderTranslation(
     /** Where API keys are kept (the platform's protected storage); null leaves only the offline engine. */
     private val secrets: dev.shinsou.kmp.plugin.PluginKeyValueStore? = null,
     private val now: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
+    /** The operating system's own translation, where the platform has one (iOS). */
+    private val system: SystemTranslationEngine? = null,
 ) {
     private val engine = platform.engine
     private val files = OfflineModelStore(platform.modelDirectory, http)
@@ -90,6 +97,7 @@ public class ReaderTranslation(
             azureKeySet = !key(TranslationProviderKind.AZURE).isNullOrBlank(),
             azureRegion = memory.preference(PREF_AZURE_REGION).orEmpty(),
             cloudAvailable = secrets != null,
+            systemAvailable = system?.available == true,
         )
     }
 
@@ -135,7 +143,13 @@ public class ReaderTranslation(
 
     private fun providerKind(): TranslationProviderKind =
         TranslationProviderKind.entries.firstOrNull { it.id == memory.preference(PREF_PROVIDER) }
-            ?.takeIf { it == TranslationProviderKind.OFFLINE || secrets != null }
+            ?.takeIf {
+                when (it) {
+                    TranslationProviderKind.OFFLINE -> true
+                    TranslationProviderKind.SYSTEM -> system?.available == true
+                    else -> secrets != null
+                }
+            }
             ?: TranslationProviderKind.OFFLINE
 
     private suspend fun key(kind: TranslationProviderKind): String? = kind.secretName?.let { secrets?.getString(it) }
@@ -165,6 +179,7 @@ public class ReaderTranslation(
     /** The provider chapters go through right now. A cloud provider without a key refuses when asked to translate. */
     private suspend fun provider(): TranslationProvider = when (val kind = withContext(Dispatchers.Default) { providerKind() }) {
         TranslationProviderKind.OFFLINE -> offline
+        TranslationProviderKind.SYSTEM -> SystemTranslationProvider(requireNotNull(system))
         TranslationProviderKind.DEEPL -> DeepLTranslationProvider(http, key(kind).orEmpty(), usage)
         TranslationProviderKind.GOOGLE -> GoogleTranslationProvider(http, key(kind).orEmpty(), usage)
         TranslationProviderKind.AZURE -> AzureTranslationProvider(
@@ -177,11 +192,37 @@ public class ReaderTranslation(
     /** The provider in use: the reader says where the text goes. */
     public suspend fun activeProvider(): TranslationProviderKind = withContext(Dispatchers.Default) { providerKind() }
 
+    /**
+     * The active provider and, where it can change under the same provider (another LLM model,
+     * the system's other models), the engine: what drawn manga pages are keyed by.
+     */
+    public suspend fun engineIdentity(): String = withContext(Dispatchers.Default) {
+        val kind = providerKind().name.lowercase()
+        provider().currentEngine?.let { "$kind:" + TranslationText.hash(it).take(12) } ?: kind
+    }
+
     public suspend fun supports(from: String, to: String): Boolean = provider().route(from, to) != null
 
     /** Models the offline engine still needs for this pair; empty for a cloud provider. */
     public suspend fun missingModels(from: String, to: String): List<OfflineModel> =
         if (activeProvider() == TranslationProviderKind.OFFLINE) offline.missingModels(from, to) else emptyList()
+
+    /** True when the system's translation is chosen and still needs the pair's languages downloaded. */
+    public suspend fun systemLanguagesMissing(from: String, to: String): Boolean {
+        val engine = system?.takeIf { it.available } ?: return false
+        if (activeProvider() != TranslationProviderKind.SYSTEM) return false
+        val source = OfflineModelCatalog.language(from) ?: return false
+        val target = OfflineModelCatalog.language(to) ?: return false
+        return runCatching { engine.status(source, target) }.getOrNull() == SystemLanguageStatus.DOWNLOADABLE
+    }
+
+    /** Asks the system to download the pair's languages (its own prompt); true once installed. */
+    public suspend fun downloadSystemLanguages(from: String, to: String): Boolean {
+        val engine = system?.takeIf { it.available } ?: return false
+        val source = OfflineModelCatalog.language(from) ?: return false
+        val target = OfflineModelCatalog.language(to) ?: return false
+        return engine.download(source, target)
+    }
 
     // ---- offline models and stored translations, for the settings page ------------------------
 
@@ -203,9 +244,13 @@ public class ReaderTranslation(
 
     /** Those translated into [to] by the service in use now: the ones translating ahead can skip. */
     public suspend fun translatedChapterKeys(workKey: String, to: String): Set<String> {
-        val provider = provider().id
+        val current = provider()
+        val provider = current.id
+        val engine = current.currentEngine
         val target = OfflineModelCatalog.language(to) ?: to
-        return withContext(Dispatchers.Default) { memory.completeChapterKeys(workKey, target, provider) + memory.completeChapterKeys(workKey, to, provider) }
+        return withContext(Dispatchers.Default) {
+            memory.completeChapterKeys(workKey, target, provider, engine) + memory.completeChapterKeys(workKey, to, provider, engine)
+        }
     }
 
     /** Chapters with a stored translation, most recent first, for the settings page. */
@@ -259,7 +304,7 @@ public class ReaderTranslation(
             if (!withContext(Dispatchers.Default) { llmSettings() }.configured) {
                 throw TranslationException(TranslationFailure.NOT_CONFIGURED, "The language-model service is not set up")
             }
-        } else if (kind != TranslationProviderKind.OFFLINE && key(kind).isNullOrBlank()) {
+        } else if (kind != TranslationProviderKind.OFFLINE && kind != TranslationProviderKind.SYSTEM && key(kind).isNullOrBlank()) {
             throw TranslationException(TranslationFailure.INVALID_KEY, "No API key is set for ${kind.id}")
         }
         val provider = provider()

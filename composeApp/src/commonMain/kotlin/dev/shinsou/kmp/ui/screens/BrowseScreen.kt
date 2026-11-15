@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -2037,7 +2039,8 @@ private fun PrefetchSetupDialog(
                 Text(
                     when (provider) {
                         null -> "…"
-                        dev.shinsou.kmp.translation.TranslationProviderKind.OFFLINE ->
+                        dev.shinsou.kmp.translation.TranslationProviderKind.OFFLINE,
+                        dev.shinsou.kmp.translation.TranslationProviderKind.SYSTEM ->
                             strings.text("{0}: free and on this device; nothing is sent anywhere.", provider.label(strings))
                         else -> strings.text(
                             "{0}: the chapters' text is sent to this service, which may charge for it. Used today: {1} of {2} characters.",
@@ -2103,6 +2106,8 @@ private fun prefetchFailureText(strings: ShinsouStrings, failure: dev.shinsou.km
     dev.shinsou.kmp.translation.TranslationFailure.ENGINE_FAILED -> strings.text("the translation stopped before it finished.")
     dev.shinsou.kmp.translation.TranslationFailure.NOT_CONFIGURED -> strings.text("the AI model service needs its address and model first.")
     dev.shinsou.kmp.translation.TranslationFailure.REFUSED -> strings.text("the model declined to translate this text.")
+    dev.shinsou.kmp.translation.TranslationFailure.SYSTEM_LANGUAGE_MISSING ->
+        strings.text("the system's languages are not downloaded. Open a chapter and turn translation on to download them.")
 }
 
 /** The work's translation queue at a glance: how far it is, what stopped it, and a way out. */
@@ -2495,6 +2500,7 @@ internal fun ExtensionV2PublicationPane(
 
     // Translating ahead of reading: the same app-wide queue idea as downloads.
     val translation = contentFeatures?.translation
+    val mangaTranslation = LocalMangaTranslation.current
     val prefetchGroup = remember(sourceKey, remotePublicationId) { sourceKey.canonicalId + "|" + remotePublicationId }
     val prefetchEntries by (translation?.prefetch?.entries ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
     val publicationPrefetch = remember(prefetchEntries, prefetchGroup) { prefetchEntries.filter { it.group == prefetchGroup } }
@@ -2567,6 +2573,7 @@ internal fun ExtensionV2PublicationPane(
                             callbacks.openMaterializedExtensionContentV2(materialization),
                             features,
                             dev.shinsou.kmp.translation.TranslationLabels(workTitle, selection.unit.title, sourceName),
+                            manga = mangaTranslation,
                         )
                     },
                 )
@@ -2920,6 +2927,48 @@ internal fun ExtensionV2PublicationPane(
         }
     }
 
+    val chapterPane = ExtensionV2ChapterPaneModel(
+        units = units,
+        selectedUnitIds = selectedUnitIds,
+        readUnitIds = readUnitIds,
+        inProgressUnits = inProgressUnits,
+        bookmarkedUnitIds = bookmarkedUnitIds,
+        downloadedUnitIds = downloadedUnitIds,
+        chapterFilter = chapterFilter,
+        reverseWebsiteOrder = reverseWebsiteOrder,
+        loading = loading,
+        loadingMore = loadingMore,
+        loadError = loadError,
+        hasNextPage = hasNextPage,
+        operationMessage = operationMessage,
+        operationFailed = operationFailed,
+        busyUnitId = busyUnitId,
+        queuedUnitIds = queuedUnitIds,
+        openingReaderUnitId = openingReaderUnitId,
+        onRetry = ::retryInitialPage,
+        onLoadMore = ::loadMore,
+        onReadUnit = { materialize(it, openReader = true) },
+        onDownloadUnits = { downloadUnits(it) },
+        onTranslateUnits = if (translation != null) ({ translateUnits(it) }) else null,
+        translatedUnitIds = storedTranslatedUnitIds,
+        prefetchByUnit = prefetchByUnit,
+        onSelectionChange = { selectedUnitIds = it },
+        onReadStateChange = { ids, read ->
+            manualReadMarks = manualReadMarks + ids.associateWith { read }
+            readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
+        },
+        onBookmarkStateChange = { ids, bookmarked ->
+            bookmarkedUnitIds = if (bookmarked) bookmarkedUnitIds + ids else bookmarkedUnitIds - ids
+        },
+        onDeleteDownloads = { ids ->
+            downloadedUnitIds = downloadedUnitIds - ids
+            operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
+        },
+        onFilterChange = { chapterFilter = it },
+        onToggleWebsiteOrder = { reverseWebsiteOrder = !reverseWebsiteOrder },
+    )
+    val visibleChapterUnits = rememberVisibleChapterUnits(chapterPane)
+
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wideLayout = maxWidth >= 900.dp
@@ -2976,45 +3025,8 @@ internal fun ExtensionV2PublicationPane(
                     )
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
                     ExtensionV2ChapterPane(
-                        units = units,
-                        selectedUnitIds = selectedUnitIds,
-                        readUnitIds = readUnitIds,
-                        inProgressUnits = inProgressUnits,
-                        bookmarkedUnitIds = bookmarkedUnitIds,
-                        downloadedUnitIds = downloadedUnitIds,
-                        chapterFilter = chapterFilter,
-                        reverseWebsiteOrder = reverseWebsiteOrder,
-                        loading = loading,
-                        loadingMore = loadingMore,
-                        loadError = loadError,
-                        hasNextPage = hasNextPage,
-                        operationMessage = operationMessage,
-                        operationFailed = operationFailed,
-                        busyUnitId = busyUnitId,
-                        queuedUnitIds = queuedUnitIds,
-                        openingReaderUnitId = openingReaderUnitId,
-                        onRetry = ::retryInitialPage,
-                        onLoadMore = ::loadMore,
-                        onReadUnit = { materialize(it, openReader = true) },
-                        onDownloadUnits = { downloadUnits(it) },
-                        onTranslateUnits = if (translation != null) ({ translateUnits(it) }) else null,
-                        translatedUnitIds = storedTranslatedUnitIds,
-                        prefetchByUnit = prefetchByUnit,
-                        onSelectionChange = { selectedUnitIds = it },
-                        onReadStateChange = { ids, read ->
-                            manualReadMarks = manualReadMarks + ids.associateWith { read }
-                            readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
-                        },
-                        onBookmarkStateChange = { ids, bookmarked ->
-                            bookmarkedUnitIds = if (bookmarked) bookmarkedUnitIds + ids else bookmarkedUnitIds - ids
-                        },
-                        onDeleteDownloads = { ids ->
-                            downloadedUnitIds = downloadedUnitIds - ids
-                            operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
-                        },
-                        onFilterChange = { chapterFilter = it },
-                        onToggleWebsiteOrder = { reverseWebsiteOrder = !reverseWebsiteOrder },
-                        scrollable = true,
+                        model = chapterPane,
+                        visibleUnits = visibleChapterUnits,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -3074,50 +3086,9 @@ internal fun ExtensionV2PublicationPane(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    item("extension-chapters") {
-                        ExtensionV2ChapterPane(
-                            units = units,
-                            selectedUnitIds = selectedUnitIds,
-                            readUnitIds = readUnitIds,
-                        inProgressUnits = inProgressUnits,
-                            bookmarkedUnitIds = bookmarkedUnitIds,
-                            downloadedUnitIds = downloadedUnitIds,
-                            chapterFilter = chapterFilter,
-                            reverseWebsiteOrder = reverseWebsiteOrder,
-                            loading = loading,
-                            loadingMore = loadingMore,
-                            loadError = loadError,
-                            hasNextPage = hasNextPage,
-                            operationMessage = operationMessage,
-                            operationFailed = operationFailed,
-                            busyUnitId = busyUnitId,
-                            queuedUnitIds = queuedUnitIds,
-                            openingReaderUnitId = openingReaderUnitId,
-                            onRetry = ::retryInitialPage,
-                            onLoadMore = ::loadMore,
-                            onReadUnit = { materialize(it, openReader = true) },
-                            onDownloadUnits = { downloadUnits(it) },
-                            onTranslateUnits = if (translation != null) ({ translateUnits(it) }) else null,
-                            translatedUnitIds = storedTranslatedUnitIds,
-                            prefetchByUnit = prefetchByUnit,
-                            onSelectionChange = { selectedUnitIds = it },
-                            onReadStateChange = { ids, read ->
-                                manualReadMarks = manualReadMarks + ids.associateWith { read }
-                                readUnitIds = if (read) readUnitIds + ids else readUnitIds - ids
-                            },
-                            onBookmarkStateChange = { ids, bookmarked ->
-                                bookmarkedUnitIds = if (bookmarked) bookmarkedUnitIds + ids else bookmarkedUnitIds - ids
-                            },
-                            onDeleteDownloads = { ids ->
-                                downloadedUnitIds = downloadedUnitIds - ids
-                                operationMessage = strings.text("Offline markers cleared for {0} chapters.", ids.size)
-                            },
-                            onFilterChange = { chapterFilter = it },
-                            onToggleWebsiteOrder = { reverseWebsiteOrder = !reverseWebsiteOrder },
-                            scrollable = false,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
+                    // Each chapter is an item of its own: a work's hundreds of chapters are laid
+                    // out as they scroll into view, not all at once when the list first shows.
+                    extensionV2ChapterItems(chapterPane, visibleChapterUnits, horizontalPadding = 14.dp)
                 }
             }
         }
@@ -3462,304 +3433,495 @@ private fun ExtensionV2PublicationInfoPane(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/** What the chapter list shows and does; built once for either layout. */
+private class ExtensionV2ChapterPaneModel(
+    val units: List<ExtensionUnitSelectionV2>,
+    val selectedUnitIds: Set<String>,
+    val readUnitIds: Set<String>,
+    val inProgressUnits: Map<String, ExtensionUnitPageProgressV2>,
+    val bookmarkedUnitIds: Set<String>,
+    val downloadedUnitIds: Set<String>,
+    val chapterFilter: ExtensionChapterFilter,
+    val reverseWebsiteOrder: Boolean,
+    val loading: Boolean,
+    val loadingMore: Boolean,
+    val loadError: String?,
+    val hasNextPage: Boolean,
+    val operationMessage: String?,
+    val operationFailed: Boolean,
+    val busyUnitId: String?,
+    val openingReaderUnitId: String?,
+    val queuedUnitIds: Set<String>,
+    val onRetry: () -> Unit,
+    val onLoadMore: () -> Unit,
+    val onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
+    val onDownloadUnits: (List<ExtensionUnitSelectionV2>) -> Unit,
+    val onTranslateUnits: ((List<ExtensionUnitSelectionV2>) -> Unit)? = null,
+    val translatedUnitIds: Set<String> = emptySet(),
+    val prefetchByUnit: Map<String, dev.shinsou.kmp.translation.PrefetchEntry> = emptyMap(),
+    val onSelectionChange: (Set<String>) -> Unit,
+    val onReadStateChange: (Set<String>, Boolean) -> Unit,
+    val onBookmarkStateChange: (Set<String>, Boolean) -> Unit,
+    val onDeleteDownloads: (Set<String>) -> Unit,
+    val onFilterChange: (ExtensionChapterFilter) -> Unit,
+    val onToggleWebsiteOrder: () -> Unit,
+)
+
+/** The chapters [model] shows, filtered and in the order chosen. */
+@Composable
+private fun rememberVisibleChapterUnits(model: ExtensionV2ChapterPaneModel): List<ExtensionUnitSelectionV2> = remember(
+    model.units,
+    model.readUnitIds,
+    model.bookmarkedUnitIds,
+    model.downloadedUnitIds,
+    model.chapterFilter,
+    model.reverseWebsiteOrder,
+) {
+    val filtered = model.units.asSequence()
+        .filter { selection ->
+            when (model.chapterFilter) {
+                ExtensionChapterFilter.ALL -> true
+                ExtensionChapterFilter.UNREAD -> selection.unit.remoteId !in model.readUnitIds
+                ExtensionChapterFilter.READ -> selection.unit.remoteId in model.readUnitIds
+                ExtensionChapterFilter.BOOKMARKED -> selection.unit.remoteId in model.bookmarkedUnitIds
+                ExtensionChapterFilter.DOWNLOADED -> selection.unit.remoteId in model.downloadedUnitIds
+            }
+        }
+        .toList()
+    websiteOrderedItems(filtered, model.reverseWebsiteOrder)
+}
+
+/** The chapter list as its own scrolling column (the wide layout's right-hand side). */
 @Composable
 private fun ExtensionV2ChapterPane(
-    units: List<ExtensionUnitSelectionV2>,
-    selectedUnitIds: Set<String>,
-    readUnitIds: Set<String>,
-    inProgressUnits: Map<String, ExtensionUnitPageProgressV2>,
-    bookmarkedUnitIds: Set<String>,
-    downloadedUnitIds: Set<String>,
-    chapterFilter: ExtensionChapterFilter,
-    reverseWebsiteOrder: Boolean,
-    loading: Boolean,
-    loadingMore: Boolean,
-    loadError: String?,
-    hasNextPage: Boolean,
-    operationMessage: String?,
-    operationFailed: Boolean,
-    busyUnitId: String?,
-    openingReaderUnitId: String?,
-    queuedUnitIds: Set<String>,
-    onRetry: () -> Unit,
-    onLoadMore: () -> Unit,
-    onReadUnit: (ExtensionUnitSelectionV2) -> Unit,
-    onDownloadUnits: (List<ExtensionUnitSelectionV2>) -> Unit,
-    onTranslateUnits: ((List<ExtensionUnitSelectionV2>) -> Unit)? = null,
-    translatedUnitIds: Set<String> = emptySet(),
-    prefetchByUnit: Map<String, dev.shinsou.kmp.translation.PrefetchEntry> = emptyMap(),
-    onSelectionChange: (Set<String>) -> Unit,
-    onReadStateChange: (Set<String>, Boolean) -> Unit,
-    onBookmarkStateChange: (Set<String>, Boolean) -> Unit,
-    onDeleteDownloads: (Set<String>) -> Unit,
-    onFilterChange: (ExtensionChapterFilter) -> Unit,
-    onToggleWebsiteOrder: () -> Unit,
-    scrollable: Boolean,
+    model: ExtensionV2ChapterPaneModel,
+    visibleUnits: List<ExtensionUnitSelectionV2>,
     modifier: Modifier = Modifier,
 ) {
+    LazyColumn(modifier, contentPadding = PaddingValues(vertical = 12.dp)) {
+        extensionV2ChapterItems(model, visibleUnits, horizontalPadding = 14.dp)
+    }
+}
+
+/**
+ * The chapter list as items of a lazy list: the heading, then one item per chapter, then the
+ * "load more" footer. Only the chapters on screen are composed.
+ */
+private fun LazyListScope.extensionV2ChapterItems(
+    model: ExtensionV2ChapterPaneModel,
+    visibleUnits: List<ExtensionUnitSelectionV2>,
+    horizontalPadding: Dp,
+) {
+    item("extension-chapters-header") {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = horizontalPadding).padding(top = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ExtensionV2ChapterHeader(model, visibleUnits)
+        }
+    }
+    val units = model.units
+    val status = when {
+        model.loading && units.isEmpty() -> 0
+        model.loadError != null && units.isEmpty() -> 1
+        units.isEmpty() -> 2
+        visibleUnits.isEmpty() -> 3
+        else -> -1
+    }
+    if (status >= 0) {
+        item("extension-chapters-status") {
+            Column(Modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) {
+                ExtensionV2ChapterStatus(model, visibleUnits)
+            }
+        }
+    } else {
+        items(visibleUnits, key = { "chapter:" + it.unit.remoteId }) { selection ->
+            Box(Modifier.padding(horizontal = horizontalPadding, vertical = 2.dp)) {
+                ExtensionV2ChapterRow(model, selection)
+            }
+        }
+    }
+    if (model.hasNextPage || model.loadingMore || model.loadError != null) {
+        item("extension-chapters-footer") {
+            Column(Modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) {
+                ExtensionV2ChapterFooter(model)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionV2ChapterHeader(model: ExtensionV2ChapterPaneModel, visibleUnits: List<ExtensionUnitSelectionV2>) {
+    val units = model.units
+    val selectedUnitIds = model.selectedUnitIds
+    val readUnitIds = model.readUnitIds
+    val inProgressUnits = model.inProgressUnits
+    val bookmarkedUnitIds = model.bookmarkedUnitIds
+    val downloadedUnitIds = model.downloadedUnitIds
+    val chapterFilter = model.chapterFilter
+    val reverseWebsiteOrder = model.reverseWebsiteOrder
+    val loading = model.loading
+    val loadingMore = model.loadingMore
+    val loadError = model.loadError
+    val hasNextPage = model.hasNextPage
+    val operationMessage = model.operationMessage
+    val operationFailed = model.operationFailed
+    val busyUnitId = model.busyUnitId
+    val openingReaderUnitId = model.openingReaderUnitId
+    val queuedUnitIds = model.queuedUnitIds
+    val onRetry = model.onRetry
+    val onLoadMore = model.onLoadMore
+    val onReadUnit = model.onReadUnit
+    val onDownloadUnits = model.onDownloadUnits
+    val onTranslateUnits = model.onTranslateUnits
+    val translatedUnitIds = model.translatedUnitIds
+    val prefetchByUnit = model.prefetchByUnit
+    val onSelectionChange = model.onSelectionChange
+    val onReadStateChange = model.onReadStateChange
+    val onBookmarkStateChange = model.onBookmarkStateChange
+    val onDeleteDownloads = model.onDeleteDownloads
+    val onFilterChange = model.onFilterChange
+    val onToggleWebsiteOrder = model.onToggleWebsiteOrder
     val strings = LocalShinsouStrings.current
     var sortMenuVisible by remember { mutableStateOf(false) }
-    val visibleUnits = remember(
-        units,
-        readUnitIds,
-        bookmarkedUnitIds,
-        downloadedUnitIds,
-        chapterFilter,
-        reverseWebsiteOrder,
-    ) {
-        val filtered = units.asSequence()
-            .filter { selection ->
-                when (chapterFilter) {
-                    ExtensionChapterFilter.ALL -> true
-                    ExtensionChapterFilter.UNREAD -> selection.unit.remoteId !in readUnitIds
-                    ExtensionChapterFilter.READ -> selection.unit.remoteId in readUnitIds
-                    ExtensionChapterFilter.BOOKMARKED -> selection.unit.remoteId in bookmarkedUnitIds
-                    ExtensionChapterFilter.DOWNLOADED -> selection.unit.remoteId in downloadedUnitIds
-                }
-            }
-            .toList()
-        websiteOrderedItems(filtered, reverseWebsiteOrder)
-    }
     val selectedVisible = visibleUnits.filter { it.unit.remoteId in selectedUnitIds }
     val markSelectedRead = selectedVisible.isEmpty() || selectedVisible.any { it.unit.remoteId !in readUnitIds }
     val bookmarkSelected = selectedVisible.isEmpty() || selectedVisible.any { it.unit.remoteId !in bookmarkedUnitIds }
-    val contentModifier = modifier
-        .padding(horizontal = 14.dp, vertical = 12.dp)
-        .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-    Column(contentModifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (selectedUnitIds.isNotEmpty()) {
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = { onSelectionChange(emptySet()) }) {
-                    Icon(Icons.Filled.Check, strings.done)
-                }
-                Text(
-                    "${selectedUnitIds.size} ${strings.selected}",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f),
+    if (selectedUnitIds.isNotEmpty()) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = { onSelectionChange(emptySet()) }) {
+                Icon(Icons.Filled.Check, strings.done)
+            }
+            Text(
+                "${selectedUnitIds.size} ${strings.selected}",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { onSelectionChange(visibleUnits.mapTo(linkedSetOf()) { it.unit.remoteId }) }) {
+                Icon(Icons.Outlined.SelectAll, strings.text("Select all visible chapters"))
+            }
+            IconButton(onClick = { onReadStateChange(selectedUnitIds, markSelectedRead) }) {
+                Icon(
+                    Icons.Outlined.CheckCircle,
+                    if (markSelectedRead) strings.markRead else strings.markUnread,
                 )
-                IconButton(onClick = { onSelectionChange(visibleUnits.mapTo(linkedSetOf()) { it.unit.remoteId }) }) {
-                    Icon(Icons.Outlined.SelectAll, strings.text("Select all visible chapters"))
-                }
-                IconButton(onClick = { onReadStateChange(selectedUnitIds, markSelectedRead) }) {
-                    Icon(
-                        Icons.Outlined.CheckCircle,
-                        if (markSelectedRead) strings.markRead else strings.markUnread,
-                    )
-                }
-                IconButton(onClick = { onBookmarkStateChange(selectedUnitIds, bookmarkSelected) }) {
-                    Icon(
-                        if (bookmarkSelected) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                        if (bookmarkSelected) strings.text("Bookmark") else strings.text("Remove bookmarks"),
-                    )
-                }
-                IconButton(onClick = { onDownloadUnits(selectedVisible) }) {
-                    Icon(Icons.Outlined.Download, strings.download)
-                }
-                if (onTranslateUnits != null) {
-                    IconButton(onClick = { onTranslateUnits(selectedVisible) }, modifier = Modifier.testTag("translate-selected-chapters")) {
-                        Icon(Icons.Outlined.Translate, strings.text("Translate"))
-                    }
-                }
-                IconButton(onClick = { onDeleteDownloads(selectedUnitIds) }) {
-                    Icon(Icons.Outlined.Delete, strings.delete, tint = MaterialTheme.colorScheme.error)
+            }
+            IconButton(onClick = { onBookmarkStateChange(selectedUnitIds, bookmarkSelected) }) {
+                Icon(
+                    if (bookmarkSelected) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                    if (bookmarkSelected) strings.text("Bookmark") else strings.text("Remove bookmarks"),
+                )
+            }
+            IconButton(onClick = { onDownloadUnits(selectedVisible) }) {
+                Icon(Icons.Outlined.Download, strings.download)
+            }
+            if (onTranslateUnits != null) {
+                IconButton(onClick = { onTranslateUnits(selectedVisible) }, modifier = Modifier.testTag("translate-selected-chapters")) {
+                    Icon(Icons.Outlined.Translate, strings.text("Translate"))
                 }
             }
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.chapters, style = MaterialTheme.typography.headlineMedium)
+            IconButton(onClick = { onDeleteDownloads(selectedUnitIds) }) {
+                Icon(Icons.Outlined.Delete, strings.delete, tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(strings.chapters, style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    if (hasNextPage) strings.text("{0} loaded", units.size) else strings.text("{0} total", units.size),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box {
+                IconButton(onClick = { sortMenuVisible = true }) {
+                    Icon(Icons.Outlined.Sort, strings.text("Sort chapters"))
+                }
+                DropdownMenu(sortMenuVisible, onDismissRequest = { sortMenuVisible = false }) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (reverseWebsiteOrder) strings.text("Reverse website order")
+                                else strings.text("Website order"),
+                            )
+                        },
+                        onClick = {
+                            onToggleWebsiteOrder()
+                            sortMenuVisible = false
+                        },
+                    )
+                }
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            item {
+                FilterChip(
+                    selected = chapterFilter == ExtensionChapterFilter.UNREAD,
+                    onClick = {
+                        onFilterChange(
+                            if (chapterFilter == ExtensionChapterFilter.UNREAD) ExtensionChapterFilter.ALL
+                            else ExtensionChapterFilter.UNREAD,
+                        )
+                    },
+                    label = { Text(strings.text("Unread")) },
+                )
+            }
+            item {
+                FilterChip(
+                    selected = chapterFilter == ExtensionChapterFilter.BOOKMARKED,
+                    onClick = {
+                        onFilterChange(
+                            if (chapterFilter == ExtensionChapterFilter.BOOKMARKED) ExtensionChapterFilter.ALL
+                            else ExtensionChapterFilter.BOOKMARKED,
+                        )
+                    },
+                    label = { Text(strings.text("Bookmarked")) },
+                )
+            }
+            item {
+                FilterChip(
+                    selected = chapterFilter == ExtensionChapterFilter.DOWNLOADED,
+                    onClick = {
+                        onFilterChange(
+                            if (chapterFilter == ExtensionChapterFilter.DOWNLOADED) ExtensionChapterFilter.ALL
+                            else ExtensionChapterFilter.DOWNLOADED,
+                        )
+                    },
+                    label = { Text(strings.text("Downloaded")) },
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    operationMessage?.let { message ->
+        Text(
+            message,
+            color = if (operationFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun ExtensionV2ChapterStatus(model: ExtensionV2ChapterPaneModel, visibleUnits: List<ExtensionUnitSelectionV2>) {
+    val units = model.units
+    val selectedUnitIds = model.selectedUnitIds
+    val readUnitIds = model.readUnitIds
+    val inProgressUnits = model.inProgressUnits
+    val bookmarkedUnitIds = model.bookmarkedUnitIds
+    val downloadedUnitIds = model.downloadedUnitIds
+    val chapterFilter = model.chapterFilter
+    val reverseWebsiteOrder = model.reverseWebsiteOrder
+    val loading = model.loading
+    val loadingMore = model.loadingMore
+    val loadError = model.loadError
+    val hasNextPage = model.hasNextPage
+    val operationMessage = model.operationMessage
+    val operationFailed = model.operationFailed
+    val busyUnitId = model.busyUnitId
+    val openingReaderUnitId = model.openingReaderUnitId
+    val queuedUnitIds = model.queuedUnitIds
+    val onRetry = model.onRetry
+    val onLoadMore = model.onLoadMore
+    val onReadUnit = model.onReadUnit
+    val onDownloadUnits = model.onDownloadUnits
+    val onTranslateUnits = model.onTranslateUnits
+    val translatedUnitIds = model.translatedUnitIds
+    val prefetchByUnit = model.prefetchByUnit
+    val onSelectionChange = model.onSelectionChange
+    val onReadStateChange = model.onReadStateChange
+    val onBookmarkStateChange = model.onBookmarkStateChange
+    val onDeleteDownloads = model.onDeleteDownloads
+    val onFilterChange = model.onFilterChange
+    val onToggleWebsiteOrder = model.onToggleWebsiteOrder
+    val strings = LocalShinsouStrings.current
+    when {
+        loading && units.isEmpty() -> Box(
+            Modifier.fillMaxWidth().height(220.dp),
+            contentAlignment = Alignment.Center,
+        ) { ShinsouLoadingIndicator() }
+        loadError != null && units.isEmpty() -> EmptyState(
+            title = strings.text("Unable to load chapters"),
+            message = loadError,
+            icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+            action = { Button(onClick = onRetry) { Text(strings.retry) } },
+        )
+        units.isEmpty() -> EmptyState(
+            title = strings.text("No chapters"),
+            message = strings.text("This extension did not return any readable units."),
+            icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
+        )
+        visibleUnits.isEmpty() -> EmptyState(
+            title = strings.text("No matching chapters"),
+            message = strings.text("Change the chapter filter to see more."),
+            icon = { Icon(Icons.Outlined.FilterList, null, Modifier.size(30.dp)) },
+        )
+    }
+}
+
+@Composable
+private fun ExtensionV2ChapterRow(model: ExtensionV2ChapterPaneModel, selection: ExtensionUnitSelectionV2) {
+    val units = model.units
+    val selectedUnitIds = model.selectedUnitIds
+    val readUnitIds = model.readUnitIds
+    val inProgressUnits = model.inProgressUnits
+    val bookmarkedUnitIds = model.bookmarkedUnitIds
+    val downloadedUnitIds = model.downloadedUnitIds
+    val chapterFilter = model.chapterFilter
+    val reverseWebsiteOrder = model.reverseWebsiteOrder
+    val loading = model.loading
+    val loadingMore = model.loadingMore
+    val loadError = model.loadError
+    val hasNextPage = model.hasNextPage
+    val operationMessage = model.operationMessage
+    val operationFailed = model.operationFailed
+    val busyUnitId = model.busyUnitId
+    val openingReaderUnitId = model.openingReaderUnitId
+    val queuedUnitIds = model.queuedUnitIds
+    val onRetry = model.onRetry
+    val onLoadMore = model.onLoadMore
+    val onReadUnit = model.onReadUnit
+    val onDownloadUnits = model.onDownloadUnits
+    val onTranslateUnits = model.onTranslateUnits
+    val translatedUnitIds = model.translatedUnitIds
+    val prefetchByUnit = model.prefetchByUnit
+    val onSelectionChange = model.onSelectionChange
+    val onReadStateChange = model.onReadStateChange
+    val onBookmarkStateChange = model.onBookmarkStateChange
+    val onDeleteDownloads = model.onDeleteDownloads
+    val onFilterChange = model.onFilterChange
+    val onToggleWebsiteOrder = model.onToggleWebsiteOrder
+    val strings = LocalShinsouStrings.current
+    val unitId = selection.unit.remoteId
+    val selected = unitId in selectedUnitIds
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onLongClick = { onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId)) },
+            onClick = {
+                if (selectedUnitIds.isNotEmpty()) {
+                    onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId))
+                } else {
+                    onReadUnit(selection)
+                }
+            },
+        ),
+    ) {
+        Row(
+            Modifier.padding(start = 13.dp, top = 10.dp, bottom = 10.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (hasNextPage) strings.text("{0} loaded", units.size) else strings.text("{0} total", units.size),
-                        style = MaterialTheme.typography.bodyMedium,
+                        selection.unit.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (unitId in readUnitIds) FontWeight.Normal else FontWeight.SemiBold,
+                        color = if (unitId in readUnitIds) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (unitId in bookmarkedUnitIds) {
+                        Spacer(Modifier.width(5.dp))
+                        Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
+                    }
+                }
+                val unitProgress = inProgressUnits[unitId]?.takeIf { unitId !in readUnitIds }
+                when {
+                    unitProgress != null -> Text(
+                        readingProgressPageLabel(strings, unitProgress.pageIndex, unitProgress.pageCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    unitId in readUnitIds -> Text(
+                        strings.text("Read"),
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Box {
-                    IconButton(onClick = { sortMenuVisible = true }) {
-                        Icon(Icons.Outlined.Sort, strings.text("Sort chapters"))
-                    }
-                    DropdownMenu(sortMenuVisible, onDismissRequest = { sortMenuVisible = false }) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (reverseWebsiteOrder) strings.text("Reverse website order")
-                                    else strings.text("Website order"),
-                                )
-                            },
-                            onClick = {
-                                onToggleWebsiteOrder()
-                                sortMenuVisible = false
-                            },
-                        )
-                    }
-                }
+                prefetchByUnit[unitId]?.let { entry -> PrefetchChapterStatus(entry) }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                item {
-                    FilterChip(
-                        selected = chapterFilter == ExtensionChapterFilter.UNREAD,
-                        onClick = {
-                            onFilterChange(
-                                if (chapterFilter == ExtensionChapterFilter.UNREAD) ExtensionChapterFilter.ALL
-                                else ExtensionChapterFilter.UNREAD,
-                            )
-                        },
-                        label = { Text(strings.text("Unread")) },
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = chapterFilter == ExtensionChapterFilter.BOOKMARKED,
-                        onClick = {
-                            onFilterChange(
-                                if (chapterFilter == ExtensionChapterFilter.BOOKMARKED) ExtensionChapterFilter.ALL
-                                else ExtensionChapterFilter.BOOKMARKED,
-                            )
-                        },
-                        label = { Text(strings.text("Bookmarked")) },
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = chapterFilter == ExtensionChapterFilter.DOWNLOADED,
-                        onClick = {
-                            onFilterChange(
-                                if (chapterFilter == ExtensionChapterFilter.DOWNLOADED) ExtensionChapterFilter.ALL
-                                else ExtensionChapterFilter.DOWNLOADED,
-                            )
-                        },
-                        label = { Text(strings.text("Downloaded")) },
-                    )
-                }
+            if (unitId in translatedUnitIds || prefetchByUnit[unitId]?.state == dev.shinsou.kmp.translation.PrefetchState.DONE) {
+                Icon(Icons.Outlined.Translate, strings.text("Translated"), Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
             }
-            Spacer(Modifier.height(8.dp))
-        }
-        operationMessage?.let { message ->
-            Text(
-                message,
-                color = if (operationFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-            )
-        }
-        when {
-            loading && units.isEmpty() -> Box(
-                Modifier.fillMaxWidth().height(220.dp),
-                contentAlignment = Alignment.Center,
-            ) { ShinsouLoadingIndicator() }
-            loadError != null && units.isEmpty() -> EmptyState(
-                title = strings.text("Unable to load chapters"),
-                message = loadError,
-                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
-                action = { Button(onClick = onRetry) { Text(strings.retry) } },
-            )
-            units.isEmpty() -> EmptyState(
-                title = strings.text("No chapters"),
-                message = strings.text("This extension did not return any readable units."),
-                icon = { Icon(Icons.Outlined.Extension, null, Modifier.size(30.dp)) },
-            )
-            visibleUnits.isEmpty() -> EmptyState(
-                title = strings.text("No matching chapters"),
-                message = strings.text("Change the chapter filter to see more."),
-                icon = { Icon(Icons.Outlined.FilterList, null, Modifier.size(30.dp)) },
-            )
-            else -> visibleUnits.forEach { selection ->
-                val unitId = selection.unit.remoteId
-                val selected = unitId in selectedUnitIds
-                Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth().combinedClickable(
-                        onLongClick = { onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId)) },
-                        onClick = {
-                            if (selectedUnitIds.isNotEmpty()) {
-                                onSelectionChange(selectedUnitIds.toggleExtensionUnit(unitId))
-                            } else {
-                                onReadUnit(selection)
-                            }
-                        },
-                    ),
-                ) {
-                    Row(
-                        Modifier.padding(start = 13.dp, top = 10.dp, bottom = 10.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    selection.unit.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = if (unitId in readUnitIds) FontWeight.Normal else FontWeight.SemiBold,
-                                    color = if (unitId in readUnitIds) MaterialTheme.colorScheme.onSurfaceVariant
-                                    else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                                if (unitId in bookmarkedUnitIds) {
-                                    Spacer(Modifier.width(5.dp))
-                                    Icon(Icons.Filled.Favorite, strings.text("Bookmarked"), Modifier.size(15.dp))
-                                }
-                            }
-                            val unitProgress = inProgressUnits[unitId]?.takeIf { unitId !in readUnitIds }
-                            when {
-                                unitProgress != null -> Text(
-                                    readingProgressPageLabel(strings, unitProgress.pageIndex, unitProgress.pageCount),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                unitId in readUnitIds -> Text(
-                                    strings.text("Read"),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            prefetchByUnit[unitId]?.let { entry -> PrefetchChapterStatus(entry) }
-                        }
-                        if (unitId in translatedUnitIds || prefetchByUnit[unitId]?.state == dev.shinsou.kmp.translation.PrefetchState.DONE) {
-                            Icon(Icons.Outlined.Translate, strings.text("Translated"), Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        if (unitId in downloadedUnitIds) {
-                            Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))
-                        }
-                        IconButton(
-                            onClick = { onDownloadUnits(listOf(selection)) },
-                            enabled = busyUnitId == null && unitId !in queuedUnitIds,
-                        ) {
-                            if (unitId in queuedUnitIds || (busyUnitId == unitId && openingReaderUnitId == null)) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Outlined.Download, strings.download)
-                            }
-                        }
-                        IconButton(onClick = { onReadUnit(selection) }, enabled = busyUnitId == null) {
-                            if (openingReaderUnitId == unitId) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Filled.PlayArrow, strings.text("Start reading"))
-                            }
-                        }
-                    }
-                }
+            if (unitId in downloadedUnitIds) {
+                Icon(Icons.Outlined.Download, strings.text("Downloaded"), Modifier.size(17.dp))
             }
-        }
-        if (hasNextPage || loadingMore || loadError != null) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            IconButton(
+                onClick = { onDownloadUnits(listOf(selection)) },
+                enabled = busyUnitId == null && unitId !in queuedUnitIds,
             ) {
-                loadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (loadingMore) {
-                    ShinsouLoadingIndicator(indicatorModifier = Modifier.size(26.dp), strokeWidth = 3.dp)
-                } else if (hasNextPage) {
-                    OutlinedButton(onClick = onLoadMore) { Text(strings.text("Load more")) }
+                if (unitId in queuedUnitIds || (busyUnitId == unitId && openingReaderUnitId == null)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.Download, strings.download)
                 }
+            }
+            IconButton(onClick = { onReadUnit(selection) }, enabled = busyUnitId == null) {
+                if (openingReaderUnitId == unitId) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.PlayArrow, strings.text("Start reading"))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionV2ChapterFooter(model: ExtensionV2ChapterPaneModel) {
+    val units = model.units
+    val selectedUnitIds = model.selectedUnitIds
+    val readUnitIds = model.readUnitIds
+    val inProgressUnits = model.inProgressUnits
+    val bookmarkedUnitIds = model.bookmarkedUnitIds
+    val downloadedUnitIds = model.downloadedUnitIds
+    val chapterFilter = model.chapterFilter
+    val reverseWebsiteOrder = model.reverseWebsiteOrder
+    val loading = model.loading
+    val loadingMore = model.loadingMore
+    val loadError = model.loadError
+    val hasNextPage = model.hasNextPage
+    val operationMessage = model.operationMessage
+    val operationFailed = model.operationFailed
+    val busyUnitId = model.busyUnitId
+    val openingReaderUnitId = model.openingReaderUnitId
+    val queuedUnitIds = model.queuedUnitIds
+    val onRetry = model.onRetry
+    val onLoadMore = model.onLoadMore
+    val onReadUnit = model.onReadUnit
+    val onDownloadUnits = model.onDownloadUnits
+    val onTranslateUnits = model.onTranslateUnits
+    val translatedUnitIds = model.translatedUnitIds
+    val prefetchByUnit = model.prefetchByUnit
+    val onSelectionChange = model.onSelectionChange
+    val onReadStateChange = model.onReadStateChange
+    val onBookmarkStateChange = model.onBookmarkStateChange
+    val onDeleteDownloads = model.onDeleteDownloads
+    val onFilterChange = model.onFilterChange
+    val onToggleWebsiteOrder = model.onToggleWebsiteOrder
+    val strings = LocalShinsouStrings.current
+    if (hasNextPage || loadingMore || loadError != null) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            loadError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (loadingMore) {
+                ShinsouLoadingIndicator(indicatorModifier = Modifier.size(26.dp), strokeWidth = 3.dp)
+            } else if (hasNextPage) {
+                OutlinedButton(onClick = onLoadMore) { Text(strings.text("Load more")) }
             }
         }
     }

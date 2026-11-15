@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
@@ -103,6 +104,18 @@ internal class NovelTranslationState(
 
     fun retry() {
         revision++
+    }
+
+    /** Shows the system's own prompt to download the pair's languages, then tries again. */
+    fun downloadSystemLanguages() {
+        if (download != null) return
+        val from = settings.from
+        val to = settings.to
+        downloadFailed = false
+        scope.launch {
+            val installed = runCatching { translation.downloadSystemLanguages(from, to) }.getOrDefault(false)
+            if (installed) revision++ else downloadFailed = true
+        }
     }
 
     fun downloadModels() {
@@ -221,6 +234,10 @@ internal fun rememberNovelTranslation(
                 state.failure = TranslationFailure.MODEL_MISSING
                 return@LaunchedEffect
             }
+            if (translation.systemLanguagesMissing(settings.from, settings.to)) {
+                state.failure = TranslationFailure.SYSTEM_LANGUAGE_MISSING
+                return@LaunchedEffect
+            }
             state.progress = 0 to 1
             state.result = translation.translate(request) { done, total -> state.progress = done to total.coerceAtLeast(1) }
             state.progress = null
@@ -284,7 +301,10 @@ internal fun NovelTranslationNotice(state: NovelTranslationState, onOpen: () -> 
         color = if (problem) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.inverseSurface,
         contentColor = if (problem) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
         shadowElevation = 4.dp,
-        modifier = modifier.padding(horizontal = 16.dp).testTag("translation-notice"),
+        // a status that goes away when the translation is done: it must not hold the keyboard
+        // focus, or the reader's keys stop when it goes (desktop and iPadOS)
+        modifier = modifier.padding(horizontal = 16.dp).testTag("translation-notice")
+            .focusProperties { canFocus = false },
     ) {
         Text(
             text,
@@ -311,6 +331,7 @@ private fun translationFailureText(
     TranslationFailure.ENGINE_FAILED -> strings.text("the translation stopped. Tap to try again.")
     TranslationFailure.NOT_CONFIGURED -> strings.text("the AI model service needs its address and model first.")
     TranslationFailure.REFUSED -> strings.text("the model declined to translate this text.")
+    TranslationFailure.SYSTEM_LANGUAGE_MISSING -> strings.text("the system's languages must be downloaded first. Tap to download.")
 }
 
 /** The panel's content, without the sheet around it. */
@@ -332,6 +353,8 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
                             when (state.provider) {
                                 TranslationProviderKind.OFFLINE ->
                                     strings.text("Machine translation on this device. Nothing you read is sent anywhere; expect mistakes.")
+                                TranslationProviderKind.SYSTEM ->
+                                    strings.text("Translated by the system's own translation on this device. Nothing you read is sent anywhere.")
                                 TranslationProviderKind.DEEPL ->
                                     strings.text("Translated by {0} with your API key. The text of this chapter is sent to {0}.", "DeepL")
                                 TranslationProviderKind.GOOGLE ->
@@ -426,6 +449,13 @@ private fun NovelTranslationStatus(state: NovelTranslationState) {
                     progress = { (download.first.toFloat() / download.second.toFloat()).coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            state.failure == TranslationFailure.SYSTEM_LANGUAGE_MISSING -> {
+                Text(strings.text("The system translation needs these languages downloaded first. They are kept by the system and can be used by other apps too."))
+                if (state.downloadFailed) {
+                    Text(strings.text("The languages were not downloaded. Try again, or download them in the system Settings."), color = MaterialTheme.colorScheme.error)
+                }
+                Button(onClick = state::downloadSystemLanguages) { Text(strings.text("Download languages")) }
             }
             state.failure == TranslationFailure.MODEL_MISSING -> {
                 Text(strings.text("This language pair needs translation models ({0} MB). They are downloaded once and kept on this device.", megabytes(state.missingBytes)))

@@ -83,6 +83,8 @@ class MainActivity : FragmentActivity() {
             browse = composition.browse,
             content = composition.content,
             contentFeatures = composition.contentFeatures,
+            mangaTranslation = composition.mangaTranslation,
+            appUpdates = composition.appUpdates,
             tracking = composition.tracking,
             portableContentBackupV2 = composition.portableContentBackupV2,
             sync = composition.sync,

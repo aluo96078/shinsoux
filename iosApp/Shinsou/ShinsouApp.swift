@@ -12,6 +12,9 @@ struct ShinsouIOSApp: App {
         // unreliable when the app is relaunched by CoreDevice or hosted by LiveContainer.
         _ = ReaderVolumeKeyTrace.shared
 
+        // Before Compose builds the services, so the reader sees the system translation option.
+        AppleTranslation.register()
+
         // BGTaskScheduler registration must happen during launch, before Compose suspend startup.
         _ = MainViewControllerKt.registerAutomaticBackupBackgroundTask()
         MainViewControllerKt.registerBackgroundDownloadTasks()
@@ -127,6 +130,7 @@ private struct ShinsouRootView: View {
     @State private var isScreenCaptured = UIScreen.main.isCaptured
     @State private var securityStateRevision = 0
     @State private var readerFullscreen = false
+    @StateObject private var translationDownloads = AppleTranslationDownloads.shared
 
     private var needsPrivacyCover: Bool {
         MainViewControllerKt.isSecureScreenEnabled()
@@ -144,6 +148,7 @@ private struct ShinsouRootView: View {
                     .zIndex(10)
             }
         }
+        .modifier(AppleTranslationDownloadHost(downloads: translationDownloads))
         .statusBarHidden(readerFullscreen)
         .persistentSystemOverlays(readerFullscreen ? .hidden : .automatic)
         .onOpenURL { url in

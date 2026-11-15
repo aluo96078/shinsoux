@@ -130,11 +130,9 @@ fun CoverImage(
             return@LaunchedEffect
         }
         if (loaded != null) return@LaunchedEffect
-        val loader = currentProtectedLoader
-        loaded = if (loader == null) {
-            null
-        } else {
-            try {
+        suspend fun attempt(): LoadedCover? {
+            val loader = currentProtectedLoader ?: return null
+            return try {
                 if (loader is PluginImageRequest) {
                     loader.load()?.let { LoadedCover(loader, it) }
                 } else {
@@ -146,7 +144,19 @@ fun CoverImage(
                 null
             }
         }
-        imageError = loaded == null && loader != null
+        loaded = attempt()
+        imageError = loaded == null && currentProtectedLoader != null
+        // Nothing else asks again for a cover that could not be fetched (a source still starting,
+        // a dropped connection) until its URL or source changes: it would stay a placeholder
+        // until the app restarted. Ask again a few times while the cover is on screen.
+        if (loaded == null && currentProtectedLoader is PluginImageRequest) {
+            for (delayMillis in COVER_RETRY_DELAYS_MILLIS) {
+                kotlinx.coroutines.delay(delayMillis)
+                loaded = attempt() ?: continue
+                imageError = false
+                break
+            }
+        }
     }
     val loadedBytes = loaded?.bytes
     val imageBytes = bytes ?: loadedBytes
@@ -446,3 +456,6 @@ fun ExpandIcon(expanded: Boolean, size: Dp = 20.dp) {
         modifier = Modifier.size(size).rotate(rotation + 45f),
     )
 }
+
+/** How long a plugin cover that could not be fetched waits before each new attempt. */
+private val COVER_RETRY_DELAYS_MILLIS = longArrayOf(1_000, 3_000, 8_000)

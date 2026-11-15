@@ -15,6 +15,7 @@
 		8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */; };
 		90ED20903A2EF6BE0860F312 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 450FD0B4BD0875569E7DC8F8 /* libsqlite3.tbd */; };
 		A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */; };
+		A233CB9AE0202544C0F25521 /* AppleTranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */; };
 		AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E69591E6413F571C61BF418 /* LocalAuthentication.framework */; };
 		D6A39283A50BCFF28D52F213 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 79635F878DCD39F4CCB205A3 /* Assets.xcassets */; };
 		DD6464B1E0DFC3D650F0417A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4312D99006921159A0800C44 /* Security.framework */; };
@@ -63,6 +64,7 @@
 		87492B8AA4B8815744C9B3DB /* ShinsouWidgetExtension.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShinsouWidgetExtension.debug.entitlements; sourceTree = "<group>"; };
 		C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShinsouWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3C6DEFDB0930F70046971C4 /* Shinsou.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shinsou.debug.entitlements; sourceTree = "<group>"; };
+		C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTranslationBridge.swift; sourceTree = "<group>"; };
 		EF035F63C497108A4F0BB514 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouWidgets.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -122,6 +124,7 @@
 		B718FDDB533A78EF194517D3 /* Shinsou */ = {
 			isa = PBXGroup;
 			children = (
+				C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */,
 				79635F878DCD39F4CCB205A3 /* Assets.xcassets */,
 				1234B93552EDFD0F4E1BEFE4 /* Info.plist */,
 				2058CC8F352C6CEECA95B14E /* JSDomLib.swift */,
@@ -259,6 +262,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A233CB9AE0202544C0F25521 /* AppleTranslationBridge.swift in Sources */,
 				E6CF088DEAD639AF124DF5FC /* JSDomLib.swift in Sources */,
 				A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */,
 			);

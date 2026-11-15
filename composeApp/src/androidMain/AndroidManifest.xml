@@ -27,6 +27,9 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
         android:zygotePreloadName="dev.shinsou.kmp.plugin.sandbox.SandboxZygotePreload">
+        <!-- Snapdragon NPU: the QNN runtime (downloaded, not shipped) reaches the NPU through the
+             vendor's FastRPC library; optional, absent on other chips. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false"/>
         <!--
           ADR-0002 §4.3: third-party plugin sandbox. One isolated process per package, bound with
           Context.bindIsolatedService and a unique instance name. Isolated uid: no app permissions

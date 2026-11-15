@@ -282,11 +282,20 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
     }
 
     /** Chapters of [workKey] with a complete translation; [to] and [provider] narrow it when given. */
-    public fun completeChapterKeys(workKey: String, to: String?, provider: String?): Set<String> = query(
-        "SELECT DISTINCT chapter_key FROM tm_chapter WHERE work_key = ? AND complete = 1 AND segment_count > 0 " +
-            "AND (? IS NULL OR to_lang = ?) AND (? IS NULL OR provider = ?)",
-        5,
-        { bindString(0, workKey); bindString(1, to); bindString(2, to); bindString(3, provider); bindString(4, provider) },
+    /**
+     * With [engine], a chapter counts only if none of its recorded lines came from another
+     * engine (chapters recorded before lines were tracked count as they are).
+     */
+    public fun completeChapterKeys(workKey: String, to: String?, provider: String?, engine: String? = null): Set<String> = query(
+        "SELECT DISTINCT chapter_key FROM tm_chapter c WHERE work_key = ? AND complete = 1 AND segment_count > 0 " +
+            "AND (? IS NULL OR to_lang = ?) AND (? IS NULL OR provider = ?) " +
+            "AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM tm_chapter_segment s WHERE s.work_key = c.work_key " +
+            "AND s.chapter_key = c.chapter_key AND s.chapter_to = c.to_lang AND s.provider = c.provider AND s.engine <> ?))",
+        7,
+        {
+            bindString(0, workKey); bindString(1, to); bindString(2, to); bindString(3, provider); bindString(4, provider)
+            bindString(5, engine); bindString(6, engine)
+        },
     ) { it.getString(0)!! }.toHashSet()
 
     /** Forgets a work's chapter records and glossary. Segment translations stay: they may serve another source of the same text. */

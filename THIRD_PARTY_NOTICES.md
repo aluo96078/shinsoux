@@ -42,6 +42,8 @@ third-party components below, each distributed under its own license.
 | PCRE2 | BSD-3-Clause | https://github.com/PCRE2Project/pcre2 |
 | intgemm、ruy、simd_utils（矩陣運算） | MIT／Apache-2.0／BSD-2-Clause | https://github.com/kpu/intgemm 、https://github.com/google/ruy 、https://github.com/JishinMaster/simd_utils |
 | Marian 內含的其他元件（CLI11、yaml-cpp、spdlog、faiss、pathie-cpp、phf、zstr、mio、cnpy 等） | 各自的 BSD／MIT 授權，見原始碼中各目錄的授權檔 | https://github.com/mozilla/translations/tree/main/inference/marian-fork/src/3rd_party |
+| ONNX Runtime（漫畫翻譯的推論引擎） | MIT | https://github.com/microsoft/onnxruntime |
+| OpenCV（漫畫翻譯的影像處理；iOS 版只含 core、imgproc、photo） | Apache-2.0 | https://github.com/opencv/opencv |
 
 ## 資料｜Data
 
@@ -49,6 +51,10 @@ third-party components below, each distributed under its own license.
 | --- | --- | --- |
 | Public Suffix List（`composeApp/psl/public_suffix_list.dat`，建置時編入） | MPL-2.0 | https://publicsuffix.org/ |
 | Firefox Translations 模型（不隨 App 發佈；使用離線翻譯時由 App 從 Mozilla 的伺服器下載並核對雜湊） | MPL-2.0 | https://github.com/mozilla/firefox-translations-models |
+| 漫畫文字偵測模型 comic-text-and-bubble-detector（不隨 App 發佈；使用漫畫翻譯時下載並核對雜湊） | Apache-2.0 | https://huggingface.co/ogkalu/comic-text-and-bubble-detector |
+| 漫畫 OCR 模型 manga-ocr（manga-ocr-base-2025 與其 ONNX 匯出；不隨 App 發佈） | Apache-2.0 | https://huggingface.co/jzhang533/manga-ocr-base-2025 |
+| 漫畫修補模型 AnimeMangaInpainting（LaMa；選用下載） | MIT | https://huggingface.co/dreMaz/AnimeMangaInpainting |
+| Noto Sans TC 字型（隨漫畫翻譯模型包下載） | OFL-1.1 | https://github.com/notofonts/noto-cjk |
 
 各授權全文請見上列來源儲存庫。
 The full license texts are available in the repositories linked above.

@@ -199,6 +199,8 @@ fun ShinsouApp(
 ) {
     val snapshot by repository.snapshot.collectAsState()
     val pluginImages = remember(appServices.browse) { PluginImageLoader(appServices.browse) }
+    val appUpdates = remember(appServices.appUpdates) { appServices.appUpdates?.let(::AppUpdateState) }
+    val updateScope = rememberCoroutineScope()
     ProvideShinsouStrings(snapshot.settings.general.languagePreference) {
         ShinsouTheme(
             mode = snapshot.settings.appearance.theme.toUiTheme(),
@@ -212,6 +214,8 @@ fun ShinsouApp(
                         dev.shinsou.kmp.ui.components.LocalPluginImageLoader provides pluginImages,
                         dev.shinsou.kmp.ui.components.LocalImageSaver provides appServices::saveImage,
                         dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics provides snapshot.settings.developer.toDiagnostics(),
+                        dev.shinsou.kmp.ui.screens.LocalMangaTranslation provides appServices.mangaTranslation,
+                        LocalAppUpdates provides appUpdates,
                     ) {
                         ShinsouAppContent(
                             repository = repository,
@@ -219,6 +223,16 @@ fun ShinsouApp(
                             appServices = appServices,
                             autoBackupService = autoBackupService,
                         )
+                        appUpdates?.let { updates ->
+                            AppUpdateHost(
+                                state = updates,
+                                settings = snapshot.settings.updates,
+                                onSkip = { version ->
+                                    updateScope.launch { repository.updateSettings { it.copy(updates = it.updates.copy(skippedVersion = version)) } }
+                                },
+                                onOpenUrl = appServices::openExternalUrl,
+                            )
+                        }
                     }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1415,10 +1429,41 @@ private fun ShinsouAppContent(
                     // Reading progress is local only: the reader restores from the chapter itself.
                     if (readerPositionInitializedFor != session) readerPositionInitializedFor = session
                 }
+                // ADR-0005: manga translation for the page reader (not the typed reader, which has its own).
+                val mangaTranslation = appServices.mangaTranslation
+                val textTranslation = appServices.contentFeatures?.translation
+                var mangaTranslationOpen by remember(session) { mutableStateOf(false) }
+                val mangaTranslationState = if (typedReaderSession == null && mangaTranslation != null && textTranslation != null) {
+                    dev.shinsou.kmp.ui.screens.rememberMangaReaderTranslation(
+                        manga = mangaTranslation,
+                        translation = textTranslation,
+                        workKey = dev.shinsou.kmp.ui.screens.mangaWorkKey(manga),
+                        chapterKey = dev.shinsou.kmp.ui.screens.mangaChapterKey(chapter),
+                        pages = activeReaderChapter.pages,
+                        exportable = false,
+                        labels = remember(manga.title, chapter.name, manga.source) {
+                            dev.shinsou.kmp.translation.TranslationLabels(
+                                workTitle = manga.title,
+                                chapterTitle = chapter.name,
+                                sourceName = if (manga.source == LOCAL_SOURCE_ID) strings.text("Local") else null,
+                            )
+                        },
+                    )
+                } else {
+                    null
+                }
+                mangaTranslationState?.let { state ->
+                    dev.shinsou.kmp.ui.screens.MangaTranslationNotice(state, onOpen = { mangaTranslationOpen = true }, modifier = Modifier.zIndex(6f))
+                    if (mangaTranslationOpen) {
+                        dev.shinsou.kmp.ui.screens.MangaTranslationSheet(state, onDismiss = { mangaTranslationOpen = false })
+                    }
+                }
                 ReaderScreen(
                     manga = manga,
                     chapter = chapter,
-                    pages = activeReaderChapter.pages,
+                    pages = mangaTranslationState?.displayPages(activeReaderChapter.pages) ?: activeReaderChapter.pages,
+                    onMangaTranslation = mangaTranslationState?.let { { mangaTranslationOpen = true } },
+                    overlayOpen = mangaTranslationOpen,
                     settings = snapshot.settings.reader,
                     loading = readerTransitionInFlight ||
                         readerLoading ||
@@ -1550,7 +1595,11 @@ private fun ShinsouAppContent(
                     unifiedReaderInitialPageIndex = typedReaderSession?.initialVisualPageIndex,
                     unifiedReaderInitialPageCount = typedReaderSession?.initialVisualPageCount,
                     unifiedReaderTranslationAvailable = typedReaderSession?.let { typed ->
-                        remember(typed, appServices.contentFeatures) { readerTranslationAvailable(typed, appServices.contentFeatures) }
+                        remember(typed, appServices.contentFeatures, appServices.mangaTranslation) {
+                            readerTranslationAvailable(typed, appServices.contentFeatures) ||
+                                // ADR-0005: image chapters, through manga translation
+                                (appServices.mangaTranslation != null && dev.shinsou.kmp.ui.screens.mangaTranslationAvailable(typed, appServices.contentFeatures))
+                        }
                     } ?: false,
                     unifiedReaderRenderer = typedReaderSession?.let { typed ->
                         { _, rendererModifier, renderState, onPageIndexChanged, onPageCountInvalidated,
@@ -1572,6 +1621,7 @@ private fun ShinsouAppContent(
                                     navigationRequestKey = renderState.navigationRequestKey,
                                     readerControlsVisible = renderState.controlsVisible,
                                     translationRequestSerial = renderState.translationRequestSerial,
+                                    mangaTranslation = appServices.mangaTranslation,
                                     translationLabels = remember(manga.title, chapter.name, manga.source) {
                                         dev.shinsou.kmp.translation.TranslationLabels(
                                             workTitle = manga.title,
@@ -2732,10 +2782,55 @@ private fun DetailPane(
     val reviewsWorkHash = remember(manga, syncState?.signedIn, syncState?.reviewsEnabled) {
         if (sync != null && syncState?.signedIn == true && syncState.reviewsEnabled) sync.reviewableWork(manga) else null
     }
+    // ADR-0005: page-reader chapters translated ahead of reading, through the app-wide queue.
+    val mangaTranslation = appServices.mangaTranslation
+    val textTranslation = appServices.contentFeatures?.translation
+    val prefetchGroup = remember(manga.source, manga.url) { dev.shinsou.kmp.ui.screens.mangaPrefetchGroup(manga) }
+    val prefetchEntries by (textTranslation?.prefetch?.entries ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
+    val mangaPrefetch = remember(prefetchEntries, prefetchGroup) { prefetchEntries.filter { it.group == prefetchGroup } }
+    val translationStatus = if (mangaPrefetch.isEmpty()) null else {
+        val done = mangaPrefetch.count { it.state == dev.shinsou.kmp.translation.PrefetchState.DONE }
+        val failed = mangaPrefetch.count { it.state == dev.shinsou.kmp.translation.PrefetchState.FAILED }
+        val running = mangaPrefetch.firstOrNull { it.state == dev.shinsou.kmp.translation.PrefetchState.RUNNING }
+        buildString {
+            append(strings.text("Translating ahead: {0} of {1} chapters done", done, mangaPrefetch.size))
+            if (running != null) append(" · ").append(running.title)
+            if (failed > 0) append(" · ").append(strings.text("{0} failed", failed))
+        }
+    }
+    // Chapters with a stored translation (read translated, or translated ahead), as the list marks them.
+    val finishedMangaPrefetch = mangaPrefetch.count { it.state == dev.shinsou.kmp.translation.PrefetchState.DONE }
+    var translatedChapterIds by remember(manga.id) { mutableStateOf<Set<Long>>(emptySet()) }
+    LaunchedEffect(textTranslation, mangaTranslation, chapters, finishedMangaPrefetch) {
+        if (textTranslation == null || mangaTranslation == null || chapters.isEmpty()) return@LaunchedEffect
+        val keys = runCatching { textTranslation.translatedChapterKeys(dev.shinsou.kmp.ui.screens.mangaWorkKey(manga)) }.getOrDefault(emptySet())
+        translatedChapterIds = if (keys.isEmpty()) emptySet() else chapters.filter { dev.shinsou.kmp.ui.screens.mangaChapterKey(it) in keys }.mapTo(hashSetOf()) { it.id }
+    }
     MangaDetailScreen(
         manga = manga,
         chapters = chapters,
         downloads = downloads,
+        translationStatus = translationStatus,
+        translatedChapterIds = translatedChapterIds,
+        onTranslateChapters = if (mangaTranslation != null && textTranslation != null) {
+            { ids ->
+                val sourceName: String? = null
+                val jobs = chapters.filter { it.id in ids }.map { chapter ->
+                    dev.shinsou.kmp.ui.screens.mangaPrefetchJob(
+                        manga = mangaTranslation,
+                        translation = textTranslation,
+                        work = manga,
+                        chapter = chapter,
+                        labels = dev.shinsou.kmp.translation.TranslationLabels(manga.title, chapter.name, sourceName),
+                        loadPages = { appServices.content.loadReaderChapter(manga.id, chapter.id).pages },
+                    )
+                }
+                onSelectionChange(emptySet())
+                scope.launch { textTranslation.prefetch.enqueue(jobs) }
+            }
+        } else {
+            null
+        },
         refreshingFromSource = refreshingFromSource,
         wideLayout = wideLayout,
         selectedChapterIds = selectedChapterIds,

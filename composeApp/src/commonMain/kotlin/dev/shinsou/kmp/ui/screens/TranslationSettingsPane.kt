@@ -90,6 +90,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
         )
     }
     val current = view ?: return
+    val manga = LocalMangaTranslation.current
     val preferences = current.preferences
     fun change(action: suspend () -> Unit) {
         scope.launch {
@@ -120,13 +121,21 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
         }
         item {
             val labels = TranslationProviderKind.entries
-                .filter { it == TranslationProviderKind.OFFLINE || preferences.cloudAvailable }
+                .filter {
+                    when (it) {
+                        TranslationProviderKind.OFFLINE -> true
+                        TranslationProviderKind.SYSTEM -> preferences.systemAvailable
+                        else -> preferences.cloudAvailable
+                    }
+                }
                 .associateWith { it.label(strings) }
             ChoiceSetting(
                 title = strings.text("Translation service"),
                 summary = when (preferences.provider) {
                     TranslationProviderKind.OFFLINE ->
                         strings.text("Free and on this device. Nothing you read is sent anywhere. Quality is below the paid services.")
+                    TranslationProviderKind.SYSTEM ->
+                        strings.text("The translation built into the system: free and on this device, usually better than the offline engine but slower. Its languages are downloaded and kept by the system.")
                     TranslationProviderKind.DEEPL ->
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "DeepL")
                     TranslationProviderKind.GOOGLE ->
@@ -235,6 +244,10 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
             ) {
                 TextButton(onClick = { change { translation.removeModel(model) } }) { Text(strings.text("Remove")) }
             }
+        }
+        if (manga != null) {
+            item { SettingDescription(strings.text("Manga recognition")) }
+            item { MangaAcceleratorSettings(manga) }
         }
         item { SettingDescription(strings.text("Stored translations")) }
         item {
@@ -545,6 +558,7 @@ private fun ApiKeySetting(title: String, help: String, stored: Boolean, tag: Str
 
 internal fun TranslationProviderKind.label(strings: ShinsouStrings): String = when (this) {
     TranslationProviderKind.OFFLINE -> strings.text("Offline (free)")
+    TranslationProviderKind.SYSTEM -> strings.text("System translation (Apple)")
     TranslationProviderKind.DEEPL -> "DeepL"
     TranslationProviderKind.GOOGLE -> strings.text("Google Translate")
     TranslationProviderKind.AZURE -> "Azure Translator"
