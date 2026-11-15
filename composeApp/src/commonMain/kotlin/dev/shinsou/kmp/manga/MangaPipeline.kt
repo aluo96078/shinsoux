@@ -200,14 +200,18 @@ internal fun tidyTranslation(translation: String?, source: String): String? {
 /**
  * How the regions of one bubble run (vertical or not), decided by those with words in them ("!?"
  * is often wider than tall), and the order they are read in: columns right to left, or lines top
- * to bottom, with punctuation on its own last.
+ * to bottom, with an exclamation or question mark on its own last.
  */
 internal fun bubbleReadingOrder(regions: List<TextRegion>): Pair<Boolean, List<Int>> {
     val worded = regions.filter { MangaScript.needsTranslation(it.text) }.ifEmpty { regions }
-    val vertical = worded.count { it.box.height >= it.box.width } * 2 >= worded.size
+    // the text's own shape, all of it together: a short line is as wide as tall, a long one decides
+    val vertical = worded.sumOf { it.box.height.toDouble() } >= worded.sumOf { it.box.width.toDouble() }
     val byPlace = if (vertical) compareByDescending<Int> { regions[it].box.x1 }.thenBy { regions[it].box.y0 }
     else compareBy<Int> { regions[it].box.y0 }.thenBy { regions[it].box.x0 }
-    // punctuation on its own ("!?", "……") closes what is said, wherever it sits in the bubble
-    val order = regions.indices.sortedWith(compareBy<Int> { !MangaScript.needsTranslation(regions[it].text) }.then(byPlace))
+    // an exclamation or question mark on its own closes what is said, wherever it sits in the
+    // bubble; brackets and ellipses keep their place (「 opens, 」 closes)
+    val order = regions.indices.sortedWith(compareBy<Int> { regions[it].text.isClosingMark() }.then(byPlace))
     return vertical to order
 }
+
+private fun String.isClosingMark(): Boolean = isNotBlank() && all { it in "!?！？‼⁉⁈ " }

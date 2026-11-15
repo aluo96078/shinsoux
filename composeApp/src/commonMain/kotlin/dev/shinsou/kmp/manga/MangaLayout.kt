@@ -220,9 +220,12 @@ public class MangaLayout(
                 val cols = breakLines(toks, List(need) { cap }, s) ?: continue
                 val used = cols.maxOf { col -> col.sumOf { it.adv.toDouble() } }.toFloat()
                 val y0 = g.by0 + top + (cap - used) / 2f
+                // fewer columns than reserved (word spaces at breaks take none): centred on what is
+                // used, which lies within the columns just checked
+                val right = cx0 + cols.size * colW / 2 - colW / 2
                 val glyphs = cols.flatMapIndexed { c, col ->
                     var y = y0
-                    col.map { t -> val p = PlacedGlyph(rightX - c * colW, y + t.adv / 2, t.text, t.kind); y += t.adv; p }
+                    col.map { t -> val p = PlacedGlyph(right - c * colW, y + t.adv / 2, t.text, t.kind); y += t.adv; p }
                 }
                 return TextLayout(s, glyphs, cols.size, vertical = true)
             }

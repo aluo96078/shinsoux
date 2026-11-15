@@ -67,6 +67,9 @@ class MangaLayoutTest {
     fun verticalLatinLeavesNoBlankColumnBetweenWords() {
         val l = assertNotNull(layout.layout("Hello world", oval(180, 110), Box(0f, 0f, 180f, 110f), 30, true, false, MangaOrientation.VERTICAL))
         assertTrue(columns(l).none { it.isBlank() }, "${columns(l)}")
+        // and what is left is centred in the bubble
+        val xs = l.glyphs.map { it.x }.distinct()
+        assertTrue(kotlin.math.abs((xs.max() + xs.min()) / 2 - 90f) < 2f, "columns at $xs")
     }
 
     @Test
@@ -86,6 +89,19 @@ class MangaLayoutTest {
             TextRegion(RegionKind.BUBBLE_TEXT, 20, 40, 200, 70, "first"),
         )
         assertEquals(false to listOf(1, 0), bubbleReadingOrder(lines))
+        // a short first line (as wide as tall) does not make two lines a column
+        val shortFirst = listOf(
+            TextRegion(RegionKind.BUBBLE_TEXT, 20, 40, 50, 75, "ねえ"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 20, 80, 150, 110, "聞いてるの"),
+        )
+        assertEquals(false to listOf(0, 1), bubbleReadingOrder(shortFirst))
+        // an opening bracket read apart keeps its place
+        val quoted = listOf(
+            TextRegion(RegionKind.BUBBLE_TEXT, 170, 30, 190, 50, "「"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 150, 50, 190, 200, "待って"),
+            TextRegion(RegionKind.BUBBLE_TEXT, 150, 200, 170, 220, "」"),
+        )
+        assertEquals(listOf(0, 1, 2), bubbleReadingOrder(quoted).second)
     }
 
     @Test
