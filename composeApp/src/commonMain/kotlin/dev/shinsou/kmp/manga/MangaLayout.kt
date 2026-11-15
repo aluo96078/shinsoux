@@ -72,7 +72,7 @@ public class MangaLayout(
 
     /**
      * Splits text into layout units. Latin letters and digits stay together (a word, a number,
-     * "Wi-Fi"). In vertical text: numbers up to three digits and two capitals are set upright
+     * "Wi-Fi"); words are separate units, so Latin text wraps between them. In vertical text: numbers up to three digits and two capitals are set upright
      * across the column, three to five capitals one per cell, anything longer on its side.
      */
     internal fun tokens(text: String, s: Int, vertical: Boolean): List<Token> {
@@ -82,7 +82,14 @@ public class MangaLayout(
             val c = text[i]
             if (latin(c)) {
                 var j = i + 1
-                while (j < text.length && (latin(text[j]) || (text[j] in ".-:'/ ,%" && j + 1 < text.length && latin(text[j + 1])))) j++
+                // A word holds together through "Wi-Fi", "don't", "3.14" and "1,000", but a space
+                // (or a comma between words) ends it: a sentence is many words, and must wrap.
+                fun joins(k: Int): Boolean = k + 1 < text.length && when (text[k]) {
+                    ',' -> text[k - 1].isDigit() && text[k + 1].isDigit()
+                    '.', '-', ':', '\'', '/' -> latin(text[k + 1])
+                    else -> false
+                }
+                while (j < text.length && (latin(text[j]) || joins(j))) j++
                 if (j < text.length && text[j] == '%') j++
                 val run = text.substring(i, j).map { if (it in 'Ａ'..'ｚ' || it in '０'..'９') it - 0xFEE0 else it }.joinToString("")
                 val digits = run.all { it.isDigit() || it in ".,:%" }
@@ -268,6 +275,6 @@ public class MangaLayout(
         internal val PAIRED = setOf("…", "—", "︙", "︱")
         internal val NO_END = setOf("「", "『", "（", "﹁", "﹃", "︵")
         internal val NO_START = "，、。：；！？）」』…︐︑︒︓︔︙﹂﹄︶～".map { it.toString() }.toSet() +
-            setOf("!", "?", ",", ".", ")", "!?", "!!", "?!", "??")
+            setOf("!", "?", ",", ".", ")", "!?", "!!", "?!", "??", " ")
     }
 }

@@ -110,6 +110,20 @@ class SystemTranslationTest {
     }
 
     @Test
+    fun partOfAChapterIsKeptButTheChapterIsNotCountedTranslated() = runBlocking<Unit> {
+        val system = FakeSystem()
+        val translation = reader(system)
+        translation.setProvider(TranslationProviderKind.SYSTEM)
+        assertTrue(translation.translate(request().copy(partial = true)) { _, _ -> }.complete)
+        assertEquals(emptySet(), translation.translatedChapterKeys("work", "zh-Hant"), "a chapter missing pages is still to do")
+        assertEquals(1, system.calls.size)
+        // the whole chapter later: its lines already translated are not sent again
+        translation.translate(request()) { _, _ -> }
+        assertEquals(setOf("c1"), translation.translatedChapterKeys("work", "zh-Hant"))
+        assertEquals(1, system.calls.size)
+    }
+
+    @Test
     fun anUnsupportedPairIsSaidSo() = runBlocking<Unit> {
         val translation = reader(FakeSystem(SystemLanguageStatus.UNSUPPORTED))
         translation.setProvider(TranslationProviderKind.SYSTEM)

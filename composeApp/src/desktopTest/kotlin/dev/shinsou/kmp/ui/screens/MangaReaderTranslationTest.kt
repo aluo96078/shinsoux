@@ -99,7 +99,7 @@ class MangaReaderTranslationTest {
         rule.onNode(isToggleable()).performClick()
         rule.waitUntil(timeoutMillis = 120_000) { state.failure != null || state.finished }
         kotlin.test.assertFalse(state.finished, "a chapter with untranslated lines is not done")
-        rule.onNodeWithText("Some lines were left untranslated. Retry to translate them.").assertExists()
+        rule.onNodeWithText("Some lines or pages were left untranslated. Retry to translate them.").assertExists()
         rule.onNodeWithTag("translated-pages").assertTextEquals("1")
 
         // translated in full on retry

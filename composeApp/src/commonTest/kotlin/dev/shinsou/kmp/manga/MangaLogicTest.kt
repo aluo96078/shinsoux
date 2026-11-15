@@ -51,6 +51,19 @@ class MangaLayoutTest {
     }
 
     @Test
+    fun latinTextWrapsBetweenWords() {
+        val s = 30
+        val toks = layout.tokens("Wait, where are you going with 1,000 Wi-Fi codes?", s, vertical = false)
+        assertTrue(toks.filter { t -> t.text.any { it.isLetterOrDigit() } }.none { ' ' in it.text }, "a space ends a word: ${toks.map { it.text }}")
+        val words = toks.map { it.text }
+        assertTrue("1,000" in words && "Wi-Fi" in words && "Wait" in words, "$words")
+        // room for a few words a line: it wraps, and no line starts with a space
+        val lines = assertNotNull(layout.breakLines(toks, List(6) { s * 6f }, s))
+        assertTrue(lines.size > 1, "$lines")
+        assertTrue(lines.none { it.first().text == " " }, "${lines.map { l -> l.joinToString("") { it.text } }}")
+    }
+
+    @Test
     fun ellipsisIsNotSplitAcrossLines() {
         val s = 30
         val toks = layout.tokens("我一個人……也可以", s, vertical = true)

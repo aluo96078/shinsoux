@@ -135,6 +135,11 @@ public data class ChapterTranslationRequest(
     val exportable: Boolean = false,
     /** What the reader calls this work and chapter, so stored translations can be listed by name. */
     val labels: TranslationLabels? = null,
+    /**
+     * [text] is only part of the chapter (a manga page could not be loaded): its lines are kept,
+     * but the chapter is not recorded as translated, so translating ahead does not pass over it.
+     */
+    val partial: Boolean = false,
 )
 
 /** Names shown beside a stored translation; the keys themselves are opaque identities. */

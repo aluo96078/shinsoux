@@ -265,7 +265,7 @@ public fun rememberMangaReaderTranslation(
     val state = remember(manga, translation, workKey) { MangaReaderTranslationState(manga, translation, workKey) }
     LaunchedEffect(state) { state.load() }
     val settings = state.settings
-    val incomplete = dev.shinsou.kmp.ui.i18n.LocalShinsouStrings.current.text("Some lines were left untranslated. Retry to translate them.")
+    val incomplete = dev.shinsou.kmp.ui.i18n.LocalShinsouStrings.current.text("Some lines or pages were left untranslated. Retry to translate them.")
     LaunchedEffect(state, chapterKey, pagesKey, pageCount, settings?.enabled, settings?.to, state.orientation, state.modelsInstalled, state.inpaintInstalled, state.runSerial) {
         state.translated.clear(); state.progress = null; state.finished = false
         if (settings == null || !settings.enabled || !state.deviceSupported || !state.modelsInstalled || pageCount == 0) return@LaunchedEffect
@@ -305,19 +305,24 @@ public fun rememberMangaReaderTranslation(
     return state
 }
 
-/** The page's encoded image: its bytes, its resolved bytes, or its local file. */
+/**
+ * The page's encoded image: its bytes, its resolved bytes, or its local file. Null for a page left
+ * as it is on purpose (scrambled, or with nothing to read); throws when it should load and did not
+ * (the network, a missing file), so the chapter is not taken as translated in full.
+ */
 internal suspend fun loadPageBytes(page: ReaderPage): ByteArray? {
     if (page.imageTransform != null) return null   // scrambled pages: the transform is applied at display time
     page.imageBytes?.let { return it }
     page.imageResolver?.let { resolve ->
         // A page resolved on demand (JM, online) carries its transform only once resolved: its
         // bytes are scrambled then, and are left to the reader, which descrambles them as shown.
-        val resolved = runCatching { resolve() }.getOrNull() ?: return null
-        return if (resolved.imageTransform != null) null else resolved.imageBytes
+        val resolved = resolve()
+        return if (resolved.imageTransform != null) null
+        else resolved.imageBytes ?: throw IllegalStateException("Page ${page.index} could not be loaded")
     }
     if (page.local && page.imageUrl.startsWith("file://")) {
         val path = page.imageUrl.removePrefix("file://").let { if (it.startsWith("/")) it else "/$it" }
-        return withContext(Dispatchers.Default) { runCatching { FileSystem.SYSTEM.read(path.toPath()) { readByteArray() } }.getOrNull() }
+        return withContext(Dispatchers.Default) { FileSystem.SYSTEM.read(path.toPath()) { readByteArray() } }
     }
     return null
 }

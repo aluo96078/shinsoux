@@ -239,7 +239,7 @@ public class TranslationService(
                     provider = provider.id,
                     sourceHash = TranslationText.hash(request.text),
                     segmentCount = translatable,
-                    complete = finished == translatable,
+                    complete = finished == translatable && !request.partial,
                     paid = provider.paid,
                     updatedAt = now(),
                 ),

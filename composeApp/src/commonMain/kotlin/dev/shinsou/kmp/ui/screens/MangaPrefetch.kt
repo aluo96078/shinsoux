@@ -104,6 +104,6 @@ internal suspend fun translateMangaChapterAhead(
             }
         },
     ) { _, _ -> }
-    // Pages drawn from an incomplete translation are not kept: the chapter is tried again.
-    if (!complete) throw TranslationException(TranslationFailure.ENGINE_FAILED, "Some lines were left untranslated")
+    // A chapter with untranslated lines or unread pages is not kept as done: it is tried again.
+    if (!complete) throw TranslationException(TranslationFailure.ENGINE_FAILED, "Some lines or pages were left untranslated")
 }

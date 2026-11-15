@@ -359,8 +359,16 @@ public class MangaRenderCache(root: String, private val maxBytes: Long = 300L * 
     private fun path(key: String): Path = root / "$key.jpg"
 
     /** [detector]: the detector's id when it is not the default one (pages it read look different). */
-    public fun key(imageHash: String, to: String, provider: String, orientation: MangaOrientation, inpaint: Boolean = false, detector: String? = null): String =
-        listOf(imageHash, to, provider, orientation.name, LAYOUT_VERSION).plus(listOfNotNull(if (inpaint) MangaModelCatalog.INPAINT.id else null, detector))
+    /**
+     * A drawn page's key. [translation] is the text drawn on it: the same image translated with
+     * another work's names and terms is another page, not the first work's drawing.
+     */
+    public fun key(
+        imageHash: String, to: String, provider: String, orientation: MangaOrientation,
+        inpaint: Boolean = false, detector: String? = null, translation: String? = null,
+    ): String =
+        listOf(imageHash, to, provider, orientation.name, LAYOUT_VERSION)
+            .plus(listOfNotNull(if (inpaint) MangaModelCatalog.INPAINT.id else null, detector, translation?.let { "t" + pageHash(it.encodeToByteArray()) }))
             .joinToString("-").let { pageHash(it.encodeToByteArray()) }
 
     public fun get(key: String): ByteArray? = runCatching { fileSystem.read(path(key)) { readByteArray() } }.getOrNull()

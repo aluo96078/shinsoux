@@ -122,20 +122,53 @@ public class MangaPipeline(
         val img = page.copy()
         val bubbles = analysis.bubbles.map { Box(it[0].toFloat(), it[1].toFloat(), it[2].toFloat(), it[3].toFloat()) }
         val placed = mutableListOf<PlacedText>()
-        analysis.regions.forEachIndexed { i, region ->
-            val text = tidyTranslation(translations[i], region.text) ?: return@forEachIndexed
-            val box = region.box
-            val bubble = bubbles.maxByOrNull { it.overlap(box) }?.takeIf { it.overlap(box) >= 0.6f * box.area }
-            val erased = eraser.erase(img, box, bubble, overArt = region.kind == RegionKind.FREE_TEXT) ?: return@forEachIndexed
-            val laid = layout.layout(text, erased.area, box, erased.sourceSize, erased.inBubble, erased.horizontalSource, orientation)
-            if (laid != null) {
-                placed += PlacedText(laid, erased)
-            } else {
-                // it does not fit where it has to go: the source text stays, not an empty bubble
-                restore(img, page, erased.area, box)
+        // Erasing a region in a bubble clears the whole bubble, and its translation is laid out
+        // over the whole interior: the regions of one bubble are drawn together, as one text.
+        val inBubble = analysis.regions.indices.groupBy { i ->
+            val box = analysis.regions[i].box
+            bubbles.indices.maxByOrNull { bubbles[it].overlap(box) }?.takeIf { bubbles[it].overlap(box) >= 0.6f * box.area }
+        }
+        for ((bubbleIndex, members) in inBubble) {
+            val bubble = bubbleIndex?.let(bubbles::get)
+            val groups = if (bubble == null) members.map { listOf(it) } else listOf(members)
+            for (group in groups) {
+                val regions = group.map { analysis.regions[it] }
+                // a region of punctuation only ("!?") reads the same translated; any other without
+                // a translation keeps the bubble as it is, rather than erasing its source text
+                val texts = group.map { i ->
+                    val region = analysis.regions[i]
+                    tidyTranslation(translations[i], region.text) ?: region.text.takeUnless { MangaScript.needsTranslation(it) }
+                }
+                if (texts.any { it == null } || texts.all { !MangaScript.needsTranslation(it!!) }) continue
+                val order = readingOrder(regions)
+                val text = order.map { texts[it]!! }.reduce(::joinTranslations)
+                val box = regions.map { it.box }.reduce { a, b -> Box(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1)) }
+                val erased = eraser.erase(img, box, bubble, overArt = regions.all { it.kind == RegionKind.FREE_TEXT }) ?: continue
+                val laid = layout.layout(text, erased.area, box, erased.sourceSize, erased.inBubble, erased.horizontalSource, orientation)
+                if (laid != null) {
+                    placed += PlacedText(laid, erased)
+                } else {
+                    // it does not fit where it has to go: the source text stays, not an empty bubble
+                    restore(img, page, erased.area, box)
+                }
             }
         }
         return renderer.draw(img, placed)
+    }
+
+    /** The order a bubble's regions are read in: columns right to left, or lines top to bottom. */
+    private fun readingOrder(regions: List<TextRegion>): List<Int> {
+        val vertical = regions.all { it.box.height >= it.box.width }
+        return regions.indices.sortedWith(
+            if (vertical) compareByDescending<Int> { regions[it].box.x1 }.thenBy { regions[it].box.y0 }
+            else compareBy<Int> { regions[it].box.y0 }.thenBy { regions[it].box.x0 },
+        )
+    }
+
+    /** Two translations of one bubble as one text: a space between words, none between CJK. */
+    private fun joinTranslations(a: String, b: String): String {
+        fun latin(c: Char) = c.code < 0x2E80 && c.isLetterOrDigit()
+        return if (a.isNotEmpty() && b.isNotEmpty() && (latin(a.last()) || a.last() in ",.!?") && latin(b.first())) "$a $b" else a + b
     }
 
     private fun restore(img: RgbImage, page: RgbImage, area: Region, box: Box) {

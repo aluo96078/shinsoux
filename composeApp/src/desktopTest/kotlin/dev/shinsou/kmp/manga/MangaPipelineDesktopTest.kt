@@ -111,6 +111,94 @@ class MangaPipelineDesktopTest {
         manga.release()
     }
 
+    @Test
+    fun theSameImageTranslatedDifferentlyInTwoWorksKeepsEachDrawing() = runBlocking {
+        // each work names things its own way (its glossary): the same page reads differently
+        val translator = object : MangaTextTranslator {
+            override suspend fun providerId() = "fake"
+            override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation {
+                val lines = request.text.split("\n")
+                val word = if (request.workKey == "a") "小葵說今天好開心" else "葵葵覺得今天很棒"
+                return ChapterTranslation(lines.map { if (request.keep(it) || it.isBlank()) TranslatedSegment(it, null, kept = true) else TranslatedSegment(it, word) }, 0, lines.size)
+            }
+        }
+        val (manga, bytes) = chapterWith(translator) ?: return@runBlocking
+        suspend fun open(work: String): ByteArray? {
+            var shown: ByteArray? = null
+            manga.translateChapter(MangaChapterRequest(work, "c", 1, { bytes }, "ja", "zh-Hant")) { _, jpeg -> shown = jpeg }
+            return shown
+        }
+        val a = open("a")
+        val b = open("b")
+        assertTrue(!a.contentEquals(b))
+        assertTrue(open("a").contentEquals(a), "the first work still shows its own wording")
+        manga.release()
+    }
+
+    @Test
+    fun aPageThatFailsToLoadLeavesTheChapterPartlyTranslated() = runBlocking {
+        var partial: Boolean? = null
+        val translator = object : MangaTextTranslator {
+            override suspend fun providerId() = "fake"
+            override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation {
+                partial = request.partial
+                val lines = request.text.split("\n")
+                return ChapterTranslation(lines.map { if (request.keep(it) || it.isBlank()) TranslatedSegment(it, null, kept = true) else TranslatedSegment(it, SAMPLE.take(6)) }, 0, lines.size)
+            }
+        }
+        val (manga, bytes) = chapterWith(translator) ?: return@runBlocking
+        var offline = true
+        val request = MangaChapterRequest("w", "c", 2, { i -> if (i == 1 && offline) throw java.io.IOException("offline") else bytes }, "ja", "zh-Hant")
+        assertEquals(false, manga.translateChapter(request) { _, _ -> }, "a page that did not load leaves the chapter to do")
+        assertEquals(true, partial, "the translation is told it is only part of the chapter")
+        // a page left as it is on purpose (scrambled) is not a failure
+        assertEquals(true, manga.translateChapter(MangaChapterRequest("w", "s", 2, { i -> if (i == 1) null else bytes }, "ja", "zh-Hant")) { _, _ -> })
+        assertEquals(false, partial)
+        // back online: the whole chapter
+        offline = false
+        assertEquals(true, manga.translateChapter(request) { _, _ -> })
+        assertEquals(false, partial)
+        manga.release()
+    }
+
+    @Test
+    fun theRegionsOfOneBubbleAreDrawnTogether() {
+        if (packs == null || page == null) return
+        val platform = DesktopMangaPlatform.create()
+        val v = packs.resolve("vision-v1")
+        val paths = MangaModelPaths(
+            detector = v.resolve("detector.onnx").path, encoder = v.resolve("encoder.onnx").path,
+            decoder = v.resolve("decoder.onnx").path, vocab = v.resolve("vocab.txt").path, font = v.resolve("NotoSansTC-VF.ttf").path,
+        )
+        MangaPipeline(platform, paths) { File(it).readLines() }.use { pipeline ->
+            val image = platform.codec.decode(page.readBytes()) ?: error("cannot decode $page")
+            // the right-hand bubble of the generated page, read as two regions
+            val bubble = intArrayOf(778, 120, 1022, 450)
+            val analysis = PageAnalysis(
+                image.width, image.height,
+                listOf(
+                    TextRegion(RegionKind.BUBBLE_TEXT, 955, 150, 1012, 310, "今日は"),
+                    TextRegion(RegionKind.BUBBLE_TEXT, 835, 150, 952, 420, "本当に楽しかった"),
+                ),
+                listOf(bubble),
+            )
+            fun changedIn(rendered: RgbImage): Int {
+                var changed = 0
+                for (y in bubble[1] until bubble[3]) for (x in bubble[0] until bubble[2]) {
+                    val k = (y * image.width + x) * 3
+                    if ((0..2).any { rendered.pixels[k + it] != image.pixels[k + it] }) changed++
+                }
+                return changed
+            }
+            // one region untranslated: the bubble keeps its source text whole
+            val partly = pipeline.render(image, analysis, mapOf(0 to "今天"), MangaOrientation.VERTICAL)
+            assertEquals(0, changedIn(partly), "an untranslated region is not erased with its neighbour")
+            // both translated: one text over the bubble
+            val whole = pipeline.render(image, analysis, mapOf(0 to "今天", 1 to "真的好開心"), MangaOrientation.VERTICAL)
+            assertTrue(changedIn(whole) > 1_000)
+        }
+    }
+
     /** A chapter set up with [translator] over the real models; null where they are not here. */
     private fun chapterWith(translator: MangaTextTranslator): Pair<MangaTranslation, ByteArray>? {
         if (packs == null || page == null) return null

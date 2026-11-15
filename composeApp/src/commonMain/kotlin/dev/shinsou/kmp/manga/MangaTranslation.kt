@@ -270,9 +270,10 @@ public class MangaTranslation(
     /**
      * Translates [request]'s pages and hands each finished page to [onPage] as JPEG bytes (null
      * for a page that could not be read). Pages already drawn for this language, provider and
-     * layout come straight from the cache. Returns whether every line was translated: a chapter
-     * that was not is not kept as drawn, and is to be tried again. (Pages that could not be read,
-     * such as scrambled ones the reader descrambles itself, are only left as they are.)
+     * layout come straight from the cache. Returns whether every line was translated and every
+     * page read: a chapter that was not is neither kept as drawn nor recorded as translated, and
+     * is to be tried again. [MangaChapterRequest.loadPage] returns null for a page left as it is
+     * on purpose (a scrambled one the reader descrambles itself), and throws for one that failed.
      */
     public suspend fun translateChapter(
         request: MangaChapterRequest,
@@ -347,6 +348,8 @@ public class MangaTranslation(
         fun detectorOf(i: Int): String? = detectors[assignment[i]].id.takeIf { it != MangaDetector.ID }
         fun readVersion(i: Int): String = detectorOf(i)?.let { "${MangaPageStore.VERSION}+$it" } ?: MangaPageStore.VERSION
         val started = kotlin.time.TimeSource.Monotonic.markNow()
+        // pages that failed to load or decode: the chapter is then only partly translated
+        val unreadPages = kotlin.concurrent.atomics.AtomicInt(0)
         // encoded pages (about a megabyte each) rather than decoded ones (about ten): decoded again to draw
         val encoded = arrayOfNulls<ByteArray>(n)
         val hashes = arrayOfNulls<String>(n)
@@ -366,8 +369,16 @@ public class MangaTranslation(
             val loads = arrayOfNulls<kotlinx.coroutines.Deferred<Loaded?>>(n)
             fun startLoad(i: Int) {
                 if (i < n && loads[i] == null) loads[i] = async(work) {
-                    val bytes = runCatching { request.loadPage(i) }.getOrNull() ?: return@async null
-                    val image = codec.decode(bytes) ?: return@async null
+                    // null: a page left as it is on purpose (scrambled, not an image); thrown, or
+                    // undecodable: a page that should have been read and was not
+                    val bytes = try {
+                        request.loadPage(i)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        unreadPages.addAndFetch(1); null
+                    } ?: return@async null
+                    val image = codec.decode(bytes) ?: run { unreadPages.addAndFetch(1); return@async null }
                     Loaded(bytes, image, pageHash(bytes))
                 }
             }
@@ -414,6 +425,7 @@ public class MangaTranslation(
             ChapterTranslationRequest(
                 workKey = request.workKey, chapterKey = request.chapterKey, text = script.text,
                 from = request.from, to = request.to, keep = script::keep, exportable = request.exportable, labels = request.labels,
+                partial = unreadPages.load() > 0,
             ),
         ) { done, total -> onProgress(MangaProgress.Translating(done, total)) }
         val byPage = script.translations(translated.segments.map { it.translation })
@@ -431,7 +443,8 @@ public class MangaTranslation(
                     val position = nextPage.fetchAndAdd(1).takeIf { it < readable.size } ?: break
                     val i = readable[position]
                     onProgress(MangaProgress.Drawing(drawing.addAndFetch(1), readable.size))
-                    val key = renders.key(hashes[i]!!, request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i))
+                    val drawnText = byPage[position].orEmpty().entries.sortedBy { it.key }.joinToString("\u0001") { "${it.key}\u0002${it.value}" }
+                    val key = renders.key(hashes[i]!!, request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i), translation = drawnText)
                     val cached = if (reuseDrawn) withContext(Dispatchers.IO) { renders.get(key) } else null
                     val jpeg = cached ?: run {
                         val image = codec.decode(encoded[i]!!) ?: return@run null
@@ -459,7 +472,7 @@ public class MangaTranslation(
         if (n > 0 && drawnKeys.all { it != null } && translated.complete) {
             withContext(Dispatchers.IO) { pages.putChapterRenders(request.workKey, request.chapterKey, variant, drawnKeys.map { it!! }) }
         }
-        translated.complete
+        translated.complete && unreadPages.load() == 0
     }
 
     /** Frees the models' memory once no chapter is using them; they load again on the next chapter. */
