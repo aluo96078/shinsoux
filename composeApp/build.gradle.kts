@@ -986,6 +986,9 @@ compose.desktop {
             // NoClassDefFoundError on every packaged platform.
             modules(
                 "java.sql",
+                // Manga translation sizes its work by the machine's memory (com.sun.management).
+                "java.management",
+                "jdk.management",
                 "java.net.http",
                 "jdk.accessibility",
                 "jdk.jsobject",

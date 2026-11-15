@@ -265,6 +265,7 @@ public fun rememberMangaReaderTranslation(
     val state = remember(manga, translation, workKey) { MangaReaderTranslationState(manga, translation, workKey) }
     LaunchedEffect(state) { state.load() }
     val settings = state.settings
+    val incomplete = dev.shinsou.kmp.ui.i18n.LocalShinsouStrings.current.text("Some lines were left untranslated. Retry to translate them.")
     LaunchedEffect(state, chapterKey, pagesKey, pageCount, settings?.enabled, settings?.to, state.orientation, state.modelsInstalled, state.inpaintInstalled, state.runSerial) {
         state.translated.clear(); state.progress = null; state.finished = false
         if (settings == null || !settings.enabled || !state.deviceSupported || !state.modelsInstalled || pageCount == 0) return@LaunchedEffect
@@ -280,7 +281,7 @@ public fun rememberMangaReaderTranslation(
             }
             state.systemLanguagesMissing = translation.systemLanguagesMissing(settings.from, settings.to)
             if (state.systemLanguagesMissing) return@LaunchedEffect
-            manga.translateChapter(
+            val complete = manga.translateChapter(
                 MangaChapterRequest(
                     workKey = workKey, chapterKey = chapterKey, pageCount = pageCount,
                     loadPage = loadPage,
@@ -290,7 +291,9 @@ public fun rememberMangaReaderTranslation(
                 onProgress = { state.progress = it },
             ) { i, jpeg -> if (jpeg != null) state.translated[pageKey(i)] = jpeg }
             state.lastRun = manga.lastRun
-            state.finished = true
+            // The pages drawn so far stay shown; the chapter is not done until every line is
+            // translated (a provider can stop short, an LLM's answer be cut off), and says so.
+            if (complete) state.finished = true else state.failure = incomplete
         } catch (e: CancellationException) {
             throw e
         } catch (e: TranslationException) {

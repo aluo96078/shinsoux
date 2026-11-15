@@ -33,8 +33,13 @@ public class DesktopMangaPlatform private constructor() : MangaPlatform {
 
     private val desktopProfile: MangaDeviceProfile by lazy {
         val logical = Runtime.getRuntime().availableProcessors()
-        val memory = (java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean)
-            ?.totalMemorySize?.div(1_000_000) ?: 8_000L
+        // A runtime without the management modules (jlink) has no answer: assume a typical machine.
+        val memory = try {
+            (java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean)
+                ?.totalMemorySize?.div(1_000_000)
+        } catch (_: LinkageError) {
+            null
+        } ?: 8_000L
         // Apple silicon reports its performance and efficiency cores; elsewhere a core runs two threads
         val apple = if (System.getProperty("os.name").orEmpty().startsWith("Mac")) runCatching {
             val out = ProcessBuilder("sysctl", "-n", "hw.perflevel0.physicalcpu", "hw.perflevel1.physicalcpu")

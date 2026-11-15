@@ -56,6 +56,59 @@ class MangaReaderTranslationTest {
         override suspend fun unload() {}
     }
 
+    /** Leaves every other line without an answer until [whole] is set. */
+    private class GappyEngine : OfflineTranslationEngine {
+        @Volatile var whole = false
+        override suspend fun translate(model: OfflineModelPaths, lines: List<String>): List<String> =
+            lines.mapIndexed { i, line -> if (whole || i % 2 == 0) "譯$line" else "" }
+        override suspend fun unload() {}
+    }
+
+    @Test
+    fun aChapterLeftPartlyUntranslatedKeepsItsPagesAndOffersRetry() {
+        if (packs == null || page == null) return
+        val root = Files.createTempDirectory("manga-reader-partial").toFile()
+        val textModels = File(root, "text").apply { mkdirs() }
+        for (model in OfflineModelCatalog.models) {
+            val directory = File(textModels, model.id).apply { mkdirs() }
+            model.files.forEach { file -> RandomAccessFile(File(directory, file.name), "rw").use { it.setLength(file.size) } }
+        }
+        val engine = GappyEngine()
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(engine, textModels.absolutePath),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        packs.resolve("vision-v1").copyRecursively(root.resolve("manga/vision-v1"))
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path), translation.asMangaTranslator(), { File(it).readLines() },
+        )
+        val bytes = page.readBytes()
+        val pages = listOf(ReaderPage(index = 0, imageBytes = bytes))
+        lateinit var state: MangaReaderTranslationState
+        rule.setContent {
+            state = rememberMangaReaderTranslation(manga, translation, "work", "chapter", pages, exportable = false, labels = null)
+            Column {
+                MangaTranslationPanel(state)
+                Text("${state.displayPages(pages).count { it.imageBytes !== bytes }}", Modifier.testTag("translated-pages"))
+            }
+        }
+        rule.onNode(isToggleable()).performClick()
+        rule.waitUntil(timeoutMillis = 120_000) { state.failure != null || state.finished }
+        kotlin.test.assertFalse(state.finished, "a chapter with untranslated lines is not done")
+        rule.onNodeWithText("Some lines were left untranslated. Retry to translate them.").assertExists()
+        rule.onNodeWithTag("translated-pages").assertTextEquals("1")
+
+        // translated in full on retry
+        engine.whole = true
+        rule.onNodeWithText("Retry").performClick()
+        rule.waitUntil(timeoutMillis = 120_000) { state.finished }
+        kotlin.test.assertNull(state.failure)
+    }
+
     @Test
     fun switchingTranslationOnReplacesThePagesAndOriginalShowsThemAgain() {
         if (packs == null || page == null) return
