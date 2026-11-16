@@ -21,7 +21,8 @@ concurrency:
 jobs:
   build:
     name: Unsigned iOS IPA
-    runs-on: macos-15
+    # Apple Translation's low-latency models need the iOS 26.4 SDK (Xcode 26.4), newer than macos-15 has.
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - name: Resolve source ref

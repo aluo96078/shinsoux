@@ -26,8 +26,12 @@ private final class AppleTranslationBridgeImpl: NSObject, AppleTranslationBridge
     /// The low-latency models (iOS 26.4) translate several times faster than the default
     /// high-fidelity ones, which take minutes for a chapter. They are separate downloads, and
     /// their translations are stored apart from the high-fidelity ones.
+    /// Built with an SDK older than 26.4 (Swift 6.3), the strategy does not exist: the app then
+    /// uses the default models wherever it runs.
     static var lowLatency: Bool {
+        #if compiler(>=6.3)
         if #available(iOS 26.4, *) { return true }
+        #endif
         return false
     }
 
@@ -35,14 +39,18 @@ private final class AppleTranslationBridgeImpl: NSObject, AppleTranslationBridge
 
     static func session(from: String, to: String) -> TranslationSession {
         let source = Locale.Language(identifier: from), target = Locale.Language(identifier: to)
+        #if compiler(>=6.3)
         if #available(iOS 26.4, *) {
             return TranslationSession(installedSource: source, target: target, preferredStrategy: .lowLatency)
         }
+        #endif
         return TranslationSession(installedSource: source, target: target)
     }
 
     static func availability() -> LanguageAvailability {
+        #if compiler(>=6.3)
         if #available(iOS 26.4, *) { return LanguageAvailability(preferredStrategy: .lowLatency) }
+        #endif
         return LanguageAvailability()
     }
 
@@ -221,12 +229,13 @@ final class AppleTranslationDownloads: ObservableObject {
         return await withCheckedContinuation { continuation in
             waiting = continuation
             let source = Locale.Language(identifier: from), target = Locale.Language(identifier: to)
+            configuration = TranslationSession.Configuration(source: source, target: target)
+            #if compiler(>=6.3)
             if #available(iOS 26.4, *) {
                 // The same models the bridge translates with; see AppleTranslationBridgeImpl.lowLatency.
                 configuration = TranslationSession.Configuration(source: source, target: target, preferredStrategy: .lowLatency)
-            } else {
-                configuration = TranslationSession.Configuration(source: source, target: target)
             }
+            #endif
         }
         #else
         return false
