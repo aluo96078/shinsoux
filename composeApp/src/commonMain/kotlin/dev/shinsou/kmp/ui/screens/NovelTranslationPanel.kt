@@ -41,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.translation.ChapterTranslation
 import dev.shinsou.kmp.translation.ChapterTranslationRequest
@@ -49,6 +48,7 @@ import dev.shinsou.kmp.translation.GlossaryEntry
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationDisplayMode
 import dev.shinsou.kmp.translation.TranslationException
+import dev.shinsou.kmp.translation.ChineseScript
 import dev.shinsou.kmp.translation.TranslationFailure
 import dev.shinsou.kmp.translation.TranslationProviderKind
 import dev.shinsou.kmp.translation.WorkTranslationSettings
@@ -91,14 +91,45 @@ internal class NovelTranslationState(
     /** Where this chapter's text goes; shown in the panel. */
     var provider by mutableStateOf(TranslationProviderKind.OFFLINE)
 
+    /** The target saved for the work, kept when it starts by itself. */
+    private var storedTo: String? = null
+
+    /** Takes the work's own settings. */
     fun restore(stored: WorkTranslationSettings?) {
-        stored?.let { settings = it }
+        if (stored != null) settings = stored
+        storedTo = stored?.to
         loaded = true
     }
 
-    fun change(next: WorkTranslationSettings) {
+    /**
+     * A work that is off and was never switched off starts translating by itself when the chapter
+     * on screen is in [detected], a language translated automatically (see
+     * [ReaderTranslation.autoTranslation]); saved only once the reader changes something. Until the
+     * reader picks the work's language, it follows each chapter's, so a work opened on a page in
+     * the reader's own language still starts on the first chapter that is not.
+     */
+    suspend fun autoStart(detected: String, appLanguage: String) {
+        val now = settings
+        if (!loaded || !WorkTranslationSettings.startsByItself(now)) return
+        val from = if (now.fromPicked) now.from else detected
+        if (from != now.from) settings = now.copy(from = from)
+        val before = settings
+        val pair = translation.autoTranslation(from, appLanguage) ?: return
+        val to = translation.autoTarget(pair, storedTo)
+        val current = settings
+        // changed by the reader meanwhile: a language picked, the target, or switched on or off
+        if (current != before || current.enabled || current.turnedOff) return
+        settings = current.copy(enabled = true, from = pair.first, to = to)
+    }
+
+    fun change(change: WorkTranslationSettings) {
+        val switchedOff = if (settings.enabled && !change.enabled) change.copy(turnedOff = true) else change
+        // a language the reader picks is theirs from then on, not the one each chapter is detected in
+        val next = if (switchedOff.from != settings.from) switchedOff.copy(fromPicked = true) else switchedOff
         if (next == settings) return
         settings = next
+        // the target saved for the work from then on, kept when it starts by itself
+        storedTo = next.to
         scope.launch { translation.saveSettings(workKey, next) }
     }
 
@@ -172,17 +203,22 @@ internal fun rememberNovelTranslation(
 ): NovelTranslationState? {
     if (translation == null) return null
     val scope = rememberCoroutineScope()
-    val systemLanguage = Locale.current.toLanguageTag()
+    val appLanguage = dev.shinsou.kmp.ui.i18n.LocalAppLanguage.current
     val state = remember(translation, workKey) {
         NovelTranslationState(
             translation = translation,
             workKey = workKey,
             scope = scope,
             detectedLanguage = ReaderTranslation.detectLanguage(canonicalText),
-            targetLanguage = ReaderTranslation.targetLanguage(systemLanguage),
+            targetLanguage = ReaderTranslation.targetLanguage(appLanguage),
         )
     }
     LaunchedEffect(state) { state.restore(translation.settings(workKey)) }
+    // each chapter's language, until the reader picks the work's or it starts; a target picked
+    // for the work while it was off is kept; a language picked by hand may let it start
+    LaunchedEffect(state, state.loaded, chapterKey, canonicalText, state.settings.takeIf { it.fromPicked }?.from) {
+        state.autoStart(ReaderTranslation.detectLanguage(canonicalText), appLanguage)
+    }
     DisposableEffect(translation) { onDispose { translation.release() } }
 
     val settings = state.settings
@@ -226,7 +262,7 @@ internal fun rememberNovelTranslation(
             state.missingBytes = translation.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
             if (stored?.complete == true) return@LaunchedEffect
             // Only now: a chapter restored from a backup reads back on a device that cannot run the engine.
-            if (state.provider == TranslationProviderKind.OFFLINE && !translation.deviceSupported) {
+            if (state.provider == TranslationProviderKind.OFFLINE && !ChineseScript.converts(settings.from, settings.to) && !translation.deviceSupported) {
                 state.failure = TranslationFailure.DEVICE_UNSUPPORTED
                 return@LaunchedEffect
             }
@@ -350,7 +386,9 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
                     Column(Modifier.weight(1f)) {
                         Text(strings.text("Translation"), style = MaterialTheme.typography.headlineMedium)
                         Text(
-                            when (state.provider) {
+                            if (ChineseScript.converts(settings.from, settings.to)) {
+                                strings.text("Converted between Simplified and Traditional Chinese on this device, word by word. Nothing you read is sent anywhere.")
+                            } else when (state.provider) {
                                 TranslationProviderKind.OFFLINE ->
                                     strings.text("Machine translation on this device. Nothing you read is sent anywhere; expect mistakes.")
                                 TranslationProviderKind.SYSTEM ->
@@ -377,7 +415,7 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
                     items(state.languages, key = { it.tag }) { language ->
                         FilterChip(
                             selected = settings.from == language.tag,
-                            onClick = { state.change(settings.copy(from = language.tag)) },
+                            onClick = { state.change(settings.copy(from = language.tag, fromPicked = true)) },
                             label = { Text(language.name) },
                         )
                     }

@@ -273,3 +273,15 @@ class MangaCpuModeTest {
         }
     }
 }
+
+class MangaPageTextTest {
+    private fun page(vararg texts: String) = PageAnalysis(100, 100, texts.map { TextRegion(RegionKind.BUBBLE_TEXT, 0, 0, 10, 10, it) }, emptyList())
+
+    @Test
+    fun onlyAPageWithLettersHasTextToTranslate() {
+        assertTrue(!MangaScript.hasText(page()), "nothing found")
+        assertTrue(!MangaScript.hasText(page("12", "…!?")), "a page number and punctuation")
+        assertTrue(MangaScript.hasText(page("12", "えっ")))
+        assertTrue(MangaScript.hasText(page("本当")))
+    }
+}

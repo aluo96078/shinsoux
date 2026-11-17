@@ -1524,6 +1524,8 @@ private fun ExtensionNovelReaderShell(
     title: String,
     currentUnitTitle: String,
     sourceName: String?,
+    /** The work's language as its source gives it, blank when it does not say. */
+    workLanguage: String,
     units: List<ExtensionUnitSelectionV2>,
     activeUnitIndex: Int,
     busy: Boolean,
@@ -1556,6 +1558,8 @@ private fun ExtensionNovelReaderShell(
     val translationAvailable = remember(session, features) { readerTranslationAvailable(session, features) }
     // Not keyed by the chapter: a counter that starts again would look like a new press.
     var translationRequest by remember { mutableStateOf(0L) }
+    var translationToggle by remember { mutableStateOf(0L) }
+    var translationActive by remember(session) { mutableStateOf(false) }
     var progressTransitionInFlight by remember(session) { mutableStateOf(false) }
     var handledSystemBackRequest by remember(session) { mutableStateOf(systemBackRequest) }
     var currentPage by remember(session) { mutableStateOf(initialPage) }
@@ -1826,6 +1830,9 @@ private fun ExtensionNovelReaderShell(
             navigationRequestKey = readerNavigationRequestKey,
             readerControlsVisible = controlsVisible,
             translationRequestSerial = translationRequest,
+            translationToggleSerial = translationToggle,
+            onTranslationActiveChanged = { translationActive = it },
+            workLanguage = workLanguage,
             translationLabels = remember(title, currentUnitTitle, sourceName) {
                 dev.shinsou.kmp.translation.TranslationLabels(title, currentUnitTitle, sourceName)
             },
@@ -1884,9 +1891,12 @@ private fun ExtensionNovelReaderShell(
                         )
                     }
                     if (translationAvailable) {
-                        IconButton(onClick = { translationRequest++ }) {
-                            Icon(Icons.Outlined.Translate, strings.text("Translation"))
-                        }
+                        TranslationToggleButton(
+                            active = translationActive,
+                            onToggle = { translationToggle++ },
+                            onOpen = { translationRequest++ },
+                            tint = androidx.compose.material3.LocalContentColor.current,
+                        )
                     }
                     IconButton(onClick = { chapterListVisible = true }, enabled = units.isNotEmpty()) {
                         Icon(Icons.Outlined.MenuBook, strings.chapters)
@@ -2337,12 +2347,15 @@ internal fun ExtensionV2PublicationPane(
             ?.unit
             ?.title
             ?: item.title
-        val openedReaderSourceName = callbacks.state.collectAsState().value.sources
-            .firstOrNull { it.sourceKey == sourceKey }?.name
+        val openedReaderSource = callbacks.state.collectAsState().value.sources
+            .firstOrNull { it.sourceKey == sourceKey }
         ExtensionNovelReaderShell(
             title = openedReaderTitle,
             currentUnitTitle = openedReaderUnitTitle,
-            sourceName = openedReaderSourceName,
+            sourceName = openedReaderSource?.name,
+            // "all", "multi" and sources that say nothing leave it to the pages
+            workLanguage = openedReaderSource?.language
+                ?.takeIf { dev.shinsou.kmp.translation.OfflineModelCatalog.language(it) != null }.orEmpty(),
             units = units,
             activeUnitIndex = activeUnitIndex,
             busy = busyUnitId != null,
@@ -2501,6 +2514,7 @@ internal fun ExtensionV2PublicationPane(
     // Translating ahead of reading: the same app-wide queue idea as downloads.
     val translation = contentFeatures?.translation
     val mangaTranslation = LocalMangaTranslation.current
+    val prefetchAppLanguage = dev.shinsou.kmp.ui.i18n.LocalAppLanguage.current
     val prefetchGroup = remember(sourceKey, remotePublicationId) { sourceKey.canonicalId + "|" + remotePublicationId }
     val prefetchEntries by (translation?.prefetch?.entries ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
     val publicationPrefetch = remember(prefetchEntries, prefetchGroup) { prefetchEntries.filter { it.group == prefetchGroup } }
@@ -2551,7 +2565,9 @@ internal fun ExtensionV2PublicationPane(
     fun startPrefetch(selections: List<ExtensionUnitSelectionV2>, from: String?, to: String) {
         val features = contentFeatures ?: return
         val queue = translation?.prefetch ?: return
-        val sourceName = callbacks.state.value.sources.firstOrNull { it.sourceKey == sourceKey }?.name
+        val source = callbacks.state.value.sources.firstOrNull { it.sourceKey == sourceKey }
+        val sourceName = source?.name
+        val workLanguage = source?.language?.takeIf { dev.shinsou.kmp.translation.OfflineModelCatalog.language(it) != null }.orEmpty()
         val workTitle = publicationPage?.publication?.title ?: item.title
         val languages = dev.shinsou.kmp.translation.PrefetchLanguages(to = to, from = from)
         val jobs = selections
@@ -2574,6 +2590,7 @@ internal fun ExtensionV2PublicationPane(
                             features,
                             dev.shinsou.kmp.translation.TranslationLabels(workTitle, selection.unit.title, sourceName),
                             manga = mangaTranslation,
+                            workLanguage = workLanguage, appLanguage = prefetchAppLanguage,
                         )
                     },
                 )
@@ -2581,7 +2598,7 @@ internal fun ExtensionV2PublicationPane(
         scope.launch {
             // Chapters already whole in this language, from the service in use, need nothing.
             val workKey = dev.shinsou.kmp.plugin.v2.extensionPublicationKey(sourceKey, remotePublicationId).value
-            val done = runCatching { translation?.translatedChapterKeys(workKey, to) }.getOrNull().orEmpty()
+            val done = runCatching { translation?.translatedChapterKeys(workKey, to, from) }.getOrNull().orEmpty()
             val pending = if (done.isEmpty()) jobs else withContext(Dispatchers.Default) {
                 jobs.filterNot { dev.shinsou.kmp.plugin.v2.extensionUnitKey(sourceKey, remotePublicationId, it.unit).value in done }
             }

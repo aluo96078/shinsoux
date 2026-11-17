@@ -3,10 +3,14 @@
 
 Usage:
     python3 -m venv .venv && .venv/bin/pip install onnx onnxruntime==1.32.* numpy
-    .venv/bin/python -I tools/manga-models/build_packs.py OUT_DIR [--with-inpaint]
+    .venv/bin/python -I tools/manga-models/build_packs.py OUT_DIR [--with-inpaint] [--with-ocr]
 
 Writes OUT_DIR/vision-v1/* (and OUT_DIR/inpaint-v1/*) plus manifest.json with each file's size and
 SHA-256, which the app pins. Every step is deterministic for a given onnxruntime version.
+
+--with-ocr also builds the recognisers for Chinese and English pages (docs/research/manga-multilingual.md):
+PaddleOCR's PP-OCRv5 mobile models converted by paddle2onnx (pip install paddlepaddle==3.3.* paddle2onnx==2.1.* pyyaml),
+and the Simplified Chinese font.
 """
 import hashlib, json, os, re, shutil, sys, urllib.request
 
@@ -18,6 +22,14 @@ SOURCES = {
     "vocab": f"{HF}/artsaraiva/manga-ocr-2025-onnx-past/resolve/main/vocab.txt",
     "font": "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf",
     "lama": f"{HF}/ogkalu/lama-manga-onnx-dynamic/resolve/main/lama-manga-dynamic.onnx",
+    "font-sc": "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
+}
+
+# PaddleOCR models (Apache-2.0) on Hugging Face: pack -> (model, file in the pack)
+PADDLE = {
+    "ocr-lines-v1": ("PP-OCRv5_mobile_det", "lines.onnx"),
+    "ocr-zh-v1": ("PP-OCRv5_mobile_rec", "rec.onnx"),
+    "ocr-en-v1": ("en_PP-OCRv5_mobile_rec", "rec.onnx"),
 }
 
 
@@ -66,6 +78,30 @@ def build_inpaint(cache, out):
     quantize_dynamic(src, f"{out}/lama.onnx", weight_type=QuantType.QInt8, nodes_to_quantize=blocks, per_channel=True)
 
 
+def build_ocr(cache, out):
+    import subprocess, yaml
+    # the converter installed beside this interpreter (a venv run without activating it), else on PATH
+    local = os.path.join(os.path.dirname(sys.executable), "paddle2onnx" + (".exe" if os.name == "nt" else ""))
+    converter = local if os.path.isfile(local) else shutil.which("paddle2onnx")
+    if converter is None:
+        sys.exit("paddle2onnx not found: install it into this Python environment (pip install paddle2onnx)")
+    for pack, (model, name) in PADDLE.items():
+        src = os.path.join(cache, model); os.makedirs(src, exist_ok=True)
+        for f in ("inference.json", "inference.pdiparams", "inference.yml"):
+            fetch(f"{HF}/PaddlePaddle/{model}/resolve/main/{f}", os.path.join(src, f))
+        d = os.path.join(out, pack); os.makedirs(d, exist_ok=True)
+        subprocess.run([converter, "--model_dir", src, "--model_filename", "inference.json",
+                        "--params_filename", "inference.pdiparams", "--save_file", os.path.join(d, name),
+                        "--opset_version", "14"], check=True)
+        dictionary = yaml.safe_load(open(os.path.join(src, "inference.yml"))).get("PostProcess", {}).get("character_dict")
+        if dictionary:
+            # one character per line, in the model's order (the blank and the space are added by the app)
+            with open(os.path.join(d, "chars.txt"), "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(dictionary))
+    font = os.path.join(out, "font-sc-v1"); os.makedirs(font, exist_ok=True)
+    fetch(SOURCES["font-sc"], os.path.join(font, "NotoSansSC-VF.ttf"))
+
+
 def manifest(root):
     packs = {}
     for pack in sorted(os.listdir(root)):
@@ -83,7 +119,10 @@ def manifest(root):
 if __name__ == "__main__":
     out = sys.argv[1]
     cache = os.path.join(out, ".cache"); os.makedirs(cache, exist_ok=True)
-    build_vision(cache, os.path.join(out, "vision-v1"))
+    if "--ocr-only" not in sys.argv:
+        build_vision(cache, os.path.join(out, "vision-v1"))
+    if "--with-ocr" in sys.argv or "--ocr-only" in sys.argv:
+        build_ocr(cache, out)
     if "--with-inpaint" in sys.argv:
         build_inpaint(cache, os.path.join(out, "inpaint-v1"))
     manifest(out)

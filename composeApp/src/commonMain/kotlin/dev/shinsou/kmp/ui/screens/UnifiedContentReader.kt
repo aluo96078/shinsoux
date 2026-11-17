@@ -144,10 +144,16 @@ internal fun UnifiedContentReader(
     readerControlsVisible: Boolean = false,
     /** Bumped by the reader's toolbar to open the translation panel. */
     translationRequestSerial: Long = 0L,
+    /** Bumped by the reader's toolbar to turn the translation on or off. */
+    translationToggleSerial: Long = 0L,
+    /** Told whether the chapter is shown translated. */
+    onTranslationActiveChanged: (Boolean) -> Unit = {},
     /** What the reader's shell calls this work and chapter; kept with a stored translation. */
     translationLabels: dev.shinsou.kmp.translation.TranslationLabels? = null,
     /** Manga translation for image chapters (ADR-0005); null leaves them untranslated. */
     mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
+    /** The work's language as its source gives it, blank when it does not say (its first pages are read then). */
+    workLanguage: String = "",
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit = { _, _ -> },
     onPageCountInvalidated: () -> Unit = {},
     onNavigationBoundary: (ReaderTapAction) -> Unit = {},
@@ -161,7 +167,10 @@ internal fun UnifiedContentReader(
             session = session,
             features = features,
             mangaTranslation = mangaTranslation,
+            workLanguage = workLanguage,
             translationRequestSerial = translationRequestSerial,
+            translationToggleSerial = translationToggleSerial,
+            onTranslationActiveChanged = onTranslationActiveChanged,
             translationLabels = translationLabels,
             readerControlsVisible = readerControlsVisible,
             settings = settings,
@@ -254,6 +263,16 @@ internal fun UnifiedContentReader(
         handledTranslationRequest = translationRequestSerial
         if (pressed) translationSheetVisible = true
     }
+    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
+    LaunchedEffect(translationToggleSerial) {
+        val pressed = translationToggleSerial > handledTranslationToggle
+        handledTranslationToggle = translationToggleSerial
+        val state = translationState ?: return@LaunchedEffect
+        if (pressed && state.loaded) state.change(state.settings.toggled())
+    }
+    val translationActive = translationState?.let { it.settings.shown } == true
+    // the shell starts each chapter unlit, so a new chapter is told again
+    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
 
     Box(modifier.fillMaxSize()) {
         NovelReaderSurface(
@@ -324,6 +343,9 @@ internal suspend fun prefetchChapter(
     labels: dev.shinsou.kmp.translation.TranslationLabels?,
     /** Translates image chapters too, as manga pages (ADR-0005); without it only text is. */
     manga: dev.shinsou.kmp.manga.MangaTranslation? = null,
+    /** The work's language as its source gives it, and the app's: chosen from as the reader would. */
+    workLanguage: String? = null,
+    appLanguage: String? = null,
 ): dev.shinsou.kmp.translation.PrefetchChapter {
     val translation = features.translation
     if (manga != null && translation != null && mangaTranslationAvailable(session, features)) {
@@ -335,10 +357,11 @@ internal suspend fun prefetchChapter(
             text = "",
             exportable = false,
             labels = labels,
-            pages = { to, progress ->
+            pages = { from, to, progress ->
                 translateMangaChapterAhead(
                     manga, translation, scope.publicationId.value, scope.unitId.value, to, navigation.itemCount,
                     loadPage = { i -> imageSequencePageBytes(session, features, navigation, i) }, labels = labels, progress = progress,
+                    workLanguage = workLanguage, appLanguage = appLanguage, chosenFrom = from,
                 )
             },
         )
@@ -589,7 +612,10 @@ private fun ImageSequenceUnifiedContentReader(
     session: TypedReaderContentSession,
     features: ContentFeatureRuntime,
     mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation?,
+    workLanguage: String,
     translationRequestSerial: Long,
+    translationToggleSerial: Long,
+    onTranslationActiveChanged: (Boolean) -> Unit,
     translationLabels: dev.shinsou.kmp.translation.TranslationLabels?,
     readerControlsVisible: Boolean,
     settings: ReaderSettings,
@@ -633,6 +659,7 @@ private fun ImageSequenceUnifiedContentReader(
             loadPage = { i -> imageSequencePageBytes(session, features, navigation, i) },
             exportable = false,
             labels = translationLabels,
+            workLanguage = workLanguage,
         )
     } else {
         null
@@ -656,6 +683,17 @@ private fun ImageSequenceUnifiedContentReader(
         handledTranslationRequest = translationRequestSerial
         if (pressed && mangaState != null) translationSheetVisible = true
     }
+    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
+    LaunchedEffect(translationToggleSerial) {
+        val pressed = translationToggleSerial > handledTranslationToggle
+        handledTranslationToggle = translationToggleSerial
+        val state = mangaState ?: return@LaunchedEffect
+        val current = state.settings ?: return@LaunchedEffect
+        if (pressed) state.update(current.toggled())
+    }
+    val translationActive = mangaState?.settings?.shown == true
+    // the shell starts each chapter unlit, so a new chapter is told again
+    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
 
     Box(modifier.fillMaxSize()) {
     CompositionLocalProvider(LocalTranslatedImagePage provides { index -> mangaState?.translatedPage(index) }) {

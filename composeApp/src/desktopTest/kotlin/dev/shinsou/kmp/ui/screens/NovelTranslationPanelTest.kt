@@ -2,7 +2,9 @@ package dev.shinsou.kmp.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -56,6 +58,7 @@ class NovelTranslationPanelTest {
         root: File,
         engine: OfflineTranslationEngine,
         installed: Boolean,
+        auto: Boolean = false,
         memory: dev.shinsou.kmp.translation.TranslationMemoryGuard = dev.shinsou.kmp.translation.TranslationMemoryGuard.Unrestricted,
     ): ReaderTranslation {
         if (installed) {
@@ -69,7 +72,7 @@ class NovelTranslationPanelTest {
             memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
             platform = OfflineTranslationPlatform(engine, root.absolutePath, memory),
             http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
-        )
+        ).also { kotlinx.coroutines.runBlocking { it.setAutoTranslate(auto, paid = false) } }
     }
 
     private var noticeTaps = 0
@@ -194,5 +197,72 @@ class NovelTranslationPanelTest {
         rule.onNode(isToggleable()).performClick()
         rule.waitUntil(10_000) { notice()?.startsWith("Not translated: translation models must be downloaded first") == true }
         rule.onNodeWithTag("body").assertTextContains(chapter)
+    }
+
+    @Test
+    fun aWorkInAnotherLanguageTranslatesAsItOpensAndTurningItOffIsRemembered() {
+        val engine = MarkingEngine()
+        val translation = translation(Files.createTempDirectory("mt-panel").toFile(), engine, installed = true, auto = true)
+        show(translation)
+
+        // Japanese, read in English: nothing to press.
+        rule.waitUntil(10_000) { "T(" in body() }
+        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "starting by itself saves nothing")
+
+        rule.onNode(isToggleable()).performClick()
+        rule.waitUntil(5_000) { body() == chapter }
+        rule.waitUntil(5_000) { kotlinx.coroutines.runBlocking { translation.settings("work") }?.enabled == false }
+    }
+
+    @Test
+    fun aWorkOpenedOnAPageInTheReadersLanguageStartsOnTheFirstChapterThatIsNot() {
+        val translation = translation(Files.createTempDirectory("mt-panel").toFile(), MarkingEngine(), installed = true, auto = true)
+        val english = "Foreword. Thanks for reading."
+        var opened by androidx.compose.runtime.mutableStateOf("c0" to english)
+        rule.setContent {
+            val state = rememberNovelTranslation(translation, workKey = "work", chapterKey = opened.first, canonicalText = opened.second)!!
+            val display = remember(state.result, state.settings.mode) {
+                state.result?.let { TranslationDisplayText.build(opened.second, it, state.settings.mode) }
+            }
+            Text(display?.text ?: opened.second, Modifier.testTag("body"))
+        }
+        rule.waitForIdle()
+        assertTrue("T(" !in body(), "a page in the reader's own language is left as it is")
+
+        opened = "c1" to chapter
+        rule.waitUntil(10_000) { "T(" in body() }
+        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "starting by itself saves nothing")
+    }
+
+    @Test
+    fun aTargetPickedWhileItWasOffIsKeptWhenALaterChapterStartsByItself() {
+        val translation = translation(Files.createTempDirectory("mt-panel").toFile(), MarkingEngine(), installed = true, auto = true)
+        var opened by androidx.compose.runtime.mutableStateOf("c0" to "Foreword. Thanks for reading.")
+        var state: NovelTranslationState? = null
+        rule.setContent {
+            state = rememberNovelTranslation(translation, workKey = "work", chapterKey = opened.first, canonicalText = opened.second)!!
+        }
+        rule.waitUntil(5_000) { state?.loaded == true }
+        rule.runOnIdle { state!!.change(state!!.settings.copy(to = "zh-Hans")) }
+        opened = "c1" to chapter
+        rule.waitUntil(5_000) { state!!.settings.enabled }
+        assertTrue(state!!.settings.to == "zh-Hans", "the target picked while it was off, not the app's language: ${state!!.settings.to}")
+    }
+
+    @Test
+    fun theDetectedLanguagePickedByHandIsKeptOnALaterChapter() {
+        val translation = translation(Files.createTempDirectory("mt-panel").toFile(), MarkingEngine(), installed = true, auto = true)
+        var opened by androidx.compose.runtime.mutableStateOf("c0" to "Foreword. Thanks for reading.")
+        var state: NovelTranslationState? = null
+        rule.setContent {
+            state = rememberNovelTranslation(translation, workKey = "work", chapterKey = opened.first, canonicalText = opened.second)!!
+        }
+        rule.waitUntil(5_000) { state?.loaded == true && state!!.settings.from == "en" }
+        rule.runOnIdle { state!!.change(state!!.settings.copy(from = "en", fromPicked = true)) }
+        opened = "c1" to chapter
+        rule.waitForIdle()
+        Thread.sleep(500)
+        rule.waitForIdle()
+        assertTrue(state!!.settings.from == "en" && !state!!.settings.enabled, "English picked by hand stays: ${state!!.settings}")
     }
 }

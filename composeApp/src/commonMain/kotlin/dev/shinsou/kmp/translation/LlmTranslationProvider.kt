@@ -110,7 +110,15 @@ public class LlmTranslationProvider(
             throw TranslationException(TranslationFailure.NOT_CONFIGURED, "The language-model service has no usable address or model")
         }
         val system = systemPrompt(from, to)
-        val user = lines.mapIndexed { index, line -> "[${index + 1}] ${line.replace('\n', ' ')}" }.joinToString("\n")
+        val numbered = lines.mapIndexed { index, line -> "[${index + 1}] ${line.replace('\n', ' ')}" }.joinToString("\n")
+        // a chapter translated in parts: the lines before this part, already translated, keep
+        // names, speakers and tone consistent; they are only read, never answered
+        val earlier = earlier()
+        val user = if (earlier.isEmpty()) numbered else buildString {
+            append("Earlier lines of this chapter, already translated (context only: do not translate or repeat them):\n")
+            earlier.forEach { (source, translation) -> append("- ").append(source.replace('\n', ' ')).append(" => ").append(translation.replace('\n', ' ')).append('\n') }
+            append("\nTranslate these lines:\n").append(numbered)
+        }
         val answer = when (settings.protocol) {
             LlmProtocol.OPENAI -> openAi(base, system, user)
             LlmProtocol.ANTHROPIC -> anthropic(base, system, user)
@@ -125,6 +133,12 @@ public class LlmTranslationProvider(
         }
         return parsed
     }
+
+    /** The lines before this part of the chapter sent with it; billed as input like the lines themselves. */
+    private suspend fun earlier(): List<Pair<String, String>> =
+        kotlinx.coroutines.currentCoroutineContext()[TranslationContext]?.earlier.orEmpty().takeLast(MAX_CONTEXT_LINES)
+
+    override suspend fun contextCharacters(): Long = earlier().sumOf { (source, translation) -> source.length + translation.length }.toLong()
 
     private suspend fun send(url: String, body: JsonObject, headers: Map<String, String>): JsonObject {
         val response: HttpResponse = http.post(url) {
@@ -228,6 +242,8 @@ public class LlmTranslationProvider(
 
         /** Room for forty lines of prose and whatever the model reasons before them. */
         private const val MAX_OUTPUT_TOKENS = 16_000
+        /** Earlier lines sent as context with a part of a chapter. */
+        private const val MAX_CONTEXT_LINES = 30
         private const val REQUEST_TIMEOUT_MILLIS = 180_000L
         private val GOOGLE_REFUSALS = setOf("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "RECITATION", "SPII")
         private val LlmJson = Json { ignoreUnknownKeys = true }

@@ -39,7 +39,6 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Sync
-import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -99,7 +98,6 @@ private enum class SettingsSection(val icon: ImageVector) {
     Reader(Icons.Outlined.Brightness4),
     Downloads(Icons.Outlined.Download),
     Tracking(Icons.Outlined.Sync),
-    Translation(Icons.Outlined.Translate),
     Browse(Icons.Outlined.Extension),
     Security(Icons.Outlined.Security),
     Advanced(Icons.Outlined.Tune),
@@ -285,7 +283,6 @@ private fun SettingsDetail(
             SettingsSection.Reader -> ReaderSettingsPane(settings, onChange)
             SettingsSection.Downloads -> DownloadSettingsPane(settings, onChange)
             SettingsSection.Tracking -> TrackingSettingsPane(settings, onChange)
-            SettingsSection.Translation -> TranslationSettingsPane(appServices.contentFeatures?.translation)
             SettingsSection.Browse -> BrowseSettingsPane(settings, onChange)
             SettingsSection.Security -> SecuritySettingsPane(
                 settings = settings,
@@ -1109,7 +1106,6 @@ private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.Shinsou
     SettingsSection.Reader -> strings.text("Reader")
     SettingsSection.Downloads -> strings.downloads
     SettingsSection.Tracking -> strings.text("Tracking")
-    SettingsSection.Translation -> strings.text("Translation")
     SettingsSection.Browse -> strings.browse
     SettingsSection.Security -> strings.text("Security")
     SettingsSection.Advanced -> strings.text("Advanced")

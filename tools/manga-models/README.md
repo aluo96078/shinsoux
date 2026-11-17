@@ -10,6 +10,24 @@ python3 -m venv .venv && .venv/bin/pip install onnx "onnxruntime==1.32.*" numpy
 輸出 `vision-v1/`（偵測器、OCR encoder／decoder、詞表、字型）、`inpaint-v1/`（LaMa int8），以及列出每個檔案大小與
 SHA-256 的 `manifest.json`。App 內的模型目錄以這些雜湊釘住版本；換模型或換量化設定時，要一併更新目錄與 manifest。
 
+## 中文、英文辨識與簡體字型（`--with-ocr`）
+
+PaddleOCR PP-OCRv5 mobile 由 paddle2onnx（opset 14）轉成 ONNX，另需 `pip install "paddlepaddle==3.3.*" "paddle2onnx==2.1.*" pyyaml`：
+
+```bash
+.venv/bin/python -I tools/manga-models/build_packs.py /tmp/manga-packs --with-ocr   # 連同 vision-v1
+.venv/bin/python -I tools/manga-models/build_packs.py /tmp/manga-packs --ocr-only   # 只產生以下四包
+```
+
+| 包 | 檔案 | 來源 |
+|---|---|---|
+| `ocr-lines-v1` | `lines.onnx`（4.8 MB） | PP-OCRv5_mobile_det（區塊內的行偵測，中英共用） |
+| `ocr-zh-v1` | `rec.onnx`（16.5 MB）、`chars.txt` | PP-OCRv5_mobile_rec（簡繁中） |
+| `ocr-en-v1` | `rec.onnx`（7.9 MB）、`chars.txt` | en_PP-OCRv5_mobile_rec |
+| `font-sc-v1` | `NotoSansSC-VF.ttf`（17.8 MB） | Google Fonts（譯成簡體時使用） |
+
+`chars.txt` 取自模型 `inference.yml` 的 `PostProcess.character_dict`，一行一字、無結尾換行；空白類別與空格由 App 補上。
+
 ## 發佈
 
 App 從 GitHub Release `manga-models-v1`（`MangaModelCatalog.BASE_URL`）下載，附件檔名為 `<包名>-<檔名>`，例如

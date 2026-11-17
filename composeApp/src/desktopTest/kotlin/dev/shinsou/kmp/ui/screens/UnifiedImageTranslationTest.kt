@@ -55,13 +55,17 @@ import kotlin.test.assertTrue
 /**
  * Manga translation in the unified reader's image chapters (ADR-0005): a local image import,
  * read through the unified reader with the real models and a marking offline engine. Runs where
- * SHINSOU_MANGA_PACKS and SHINSOU_MANGA_PAGE are set.
+ * SHINSOU_MANGA_PACKS (with the font-sc pack) and SHINSOU_MANGA_PAGE are set.
  */
 class UnifiedImageTranslationTest {
     @get:Rule
     val rule = createComposeRule()
 
-    private val packs = System.getenv("SHINSOU_MANGA_PACKS")?.let(::File)?.takeIf { it.resolve("vision-v1").isDirectory }
+    // the chapters are translated into Simplified Chinese, drawn with its font: skipped (and said so) without it
+    private val packs = System.getenv("SHINSOU_MANGA_PACKS")?.let(::File)?.takeIf { it.resolve("vision-v1").isDirectory }?.takeIf {
+        val font = dev.shinsou.kmp.manga.MangaModelCatalog.FONT_SC.id
+        it.resolve(font).isDirectory.also { found -> if (!found) println("MANGA skipped: $font is not among the packs") }
+    }
     private val page = System.getenv("SHINSOU_MANGA_PAGE")?.let(::File)?.takeIf { it.isFile }
 
     private object MarkingEngine : OfflineTranslationEngine {
@@ -100,6 +104,8 @@ class UnifiedImageTranslationTest {
             http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
         )
         packs.resolve("vision-v1").copyRecursively(root.resolve("manga/vision-v1"))
+        // the Simplified Chinese drawn into needs its font
+        dev.shinsou.kmp.manga.MangaModelCatalog.FONT_SC.id.let { font -> packs.resolve(font).copyRecursively(root.resolve("manga/$font")) }
         val renders = root.resolve("pages")
         val manga = MangaTranslation(
             DesktopMangaPlatform.create(),

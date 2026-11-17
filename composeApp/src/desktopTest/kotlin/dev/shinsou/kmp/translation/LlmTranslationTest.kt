@@ -240,6 +240,28 @@ class LlmTranslationTest {
     }
 
     @Test
+    fun theEarlierLinesSentAsContextCountAgainstTheDailyLimit() = runBlocking<Unit> {
+        val counted = ArrayList<Long>()
+        val usage = object : TranslationUsage {
+            var limit = 100L
+            override fun reserve(characters: Long): Boolean = (characters <= limit).also { if (it) { limit -= characters; counted += characters } }
+            override fun release(characters: Long) { limit += characters; counted += -characters }
+        }
+        val model = Model()
+        val llm = LlmTranslationProvider(model.client, LlmSettings(LlmProtocol.OPENAI, LlmProtocol.OPENAI.defaultBaseUrl, "m-1"), "secret", usage)
+        kotlinx.coroutines.withContext(TranslationContext(listOf("하나" to "一", "둘" to "二"))) { llm.translate(hop, listOf("셋")) }
+        // the line, and the five characters of context read along with it
+        assertEquals(listOf(6L), counted)
+        // context that would run past the limit is not sent
+        val long = List(30) { "가".repeat(10) to "甲" }
+        val failure = assertFailsWith<TranslationException> {
+            kotlinx.coroutines.withContext(TranslationContext(long)) { llm.translate(hop, listOf("넷")) }
+        }
+        assertEquals(TranslationFailure.DAILY_LIMIT, failure.failure)
+        assertEquals(1, model.requests.size)
+    }
+
+    @Test
     fun aChapterIsSentTwoRequestsAtATimeAndNeverMore() = runBlocking<Unit> {
         val inFlight = java.util.concurrent.atomic.AtomicInteger()
         val most = java.util.concurrent.atomic.AtomicInteger()

@@ -140,7 +140,24 @@ public data class ChapterTranslationRequest(
      * but the chapter is not recorded as translated, so translating ahead does not pass over it.
      */
     val partial: Boolean = false,
+    /**
+     * [text] is one part of a chapter translated ahead of the rest, to show its pages sooner:
+     * its lines are added to the chapter's, which is recorded as incomplete when nothing is
+     * recorded yet; the request for the whole chapter records it as it is.
+     */
+    val segment: Boolean = false,
+    /**
+     * The lines before [text] in the chapter with their translations, for a provider that reads
+     * context (a language model keeps names, speakers and tone consistent with them). Not translated.
+     */
+    val context: List<Pair<String, String>> = emptyList(),
 )
+
+/** The [ChapterTranslationRequest.context] of the request being translated, for the provider. */
+public class TranslationContext(public val earlier: List<Pair<String, String>>) :
+    kotlin.coroutines.AbstractCoroutineContextElement(TranslationContext) {
+    public companion object Key : kotlin.coroutines.CoroutineContext.Key<TranslationContext>
+}
 
 /** Names shown beside a stored translation; the keys themselves are opaque identities. */
 public data class TranslationLabels(
@@ -184,4 +201,28 @@ public data class WorkTranslationSettings(
     val from: String,
     val to: String,
     val mode: TranslationDisplayMode = TranslationDisplayMode.TRANSLATION,
-)
+    /**
+     * The reader switched the translation off for this work: it no longer starts by itself. Settings
+     * saved while it was off for another reason (a language picked, the display changed) leave it
+     * free to start.
+     */
+    val turnedOff: Boolean = false,
+    /**
+     * The reader chose [from] for this work, rather than it being the default or the language its
+     * source or pages were taken to be in: it is kept over what the source says, Japanese included.
+     */
+    val fromPicked: Boolean = false,
+) {
+    /** The translation is on and shown, not only kept on behind the original. */
+    public val shown: Boolean get() = enabled && mode != TranslationDisplayMode.ORIGINAL
+
+    /** The reader's toolbar button: off when shown, else on and shown (the original-only display left). */
+    public fun toggled(): WorkTranslationSettings =
+        if (shown) copy(enabled = false)
+        else copy(enabled = true, mode = if (mode == TranslationDisplayMode.ORIGINAL) TranslationDisplayMode.TRANSLATION else mode)
+
+    /** A work with these settings (or none) may still start translating by itself. */
+    public companion object {
+        public fun startsByItself(stored: WorkTranslationSettings?): Boolean = stored == null || !stored.enabled && !stored.turnedOff
+    }
+}

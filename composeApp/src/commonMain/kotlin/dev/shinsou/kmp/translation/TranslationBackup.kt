@@ -17,7 +17,10 @@ public data class TranslationBackup(
     val segmentsTruncated: Boolean = false,
 ) {
     @Serializable
-    public data class Work(val workKey: String, val enabled: Boolean, val from: String, val to: String, val mode: String)
+    public data class Work(val workKey: String, val enabled: Boolean, val from: String, val to: String, val mode: String, val turnedOff: Boolean = false,
+        /** Null in backups made before it was kept: a source language other than Japanese was the reader's choice then. */
+        val fromPicked: Boolean? = null,
+    )
 
     /** One work's glossary for one target language, with what stored translations of its lines are keyed by. */
     @Serializable

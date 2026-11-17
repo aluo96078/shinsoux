@@ -24,10 +24,11 @@ public class PrefetchChapter(
     public val labels: TranslationLabels?,
     public val keep: (String) -> Boolean = { false },
     /**
-     * Translates the chapter itself instead of [text], into the language given, reporting its
-     * progress: a chapter whose kind is known only once fetched, such as manga pages (ADR-0005).
+     * Translates the chapter itself instead of [text], from the language chosen when it was queued
+     * (null when none was) into the one given, reporting its progress: a chapter whose kind is known
+     * only once fetched, such as manga pages (ADR-0005).
      */
-    public val pages: (suspend (to: String, progress: (done: Int, total: Int) -> Unit) -> Unit)? = null,
+    public val pages: (suspend (from: String?, to: String, progress: (done: Int, total: Int) -> Unit) -> Unit)? = null,
 )
 
 /** The languages the user chose when queueing. */
@@ -204,7 +205,7 @@ public class TranslationPrefetchQueue(
         val chosen = job.languages
         chapter.pages?.let { pages ->
             val to = chosen?.to ?: settings?.to ?: ReaderTranslation.targetLanguage(defaultTargetLanguage())
-            pages(to) { done, total -> set(job.id) { it.copy(done = done, total = total) } }
+            pages(chosen?.from, to) { done, total -> set(job.id) { it.copy(done = done, total = total) } }
             return
         }
         val request = ChapterTranslationRequest(
@@ -236,7 +237,8 @@ public class TranslationPrefetchQueue(
             // The system's prompt is shown from the reader, where the user asked for it.
             throw TranslationException(TranslationFailure.SYSTEM_LANGUAGE_MISSING, "The system's languages are not downloaded")
         }
-        if (translation.activeProvider() == TranslationProviderKind.OFFLINE) {
+        // the other script of Chinese is converted on the device, without the offline engine
+        if (translation.activeProvider() == TranslationProviderKind.OFFLINE && !ChineseScript.converts(request.from, request.to)) {
             if (!translation.deviceSupported) {
                 throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
             }

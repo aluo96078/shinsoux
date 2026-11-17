@@ -82,12 +82,49 @@ public object MangaModelCatalog {
         listOf(PackFile("detector.onnx", 86_153_146, "66f697d0d1b75d7534967be2691ee07e56b6c81f0689f3bfd6b1597a70424c5c")),
     )
 
+    /**
+     * PaddleOCR PP-OCRv5 mobile (Apache-2.0) for pages not in Japanese
+     * (docs/research/manga-multilingual.md): the line detector every language shares, and a
+     * recogniser per script. Built by tools/manga-models/build_packs.py --with-ocr.
+     */
+    public val OCR_LINES: ModelPack = ModelPack(
+        "ocr-lines-v1",
+        listOf(PackFile("lines.onnx", 4_766_440, "6bdf743af375b13fbbeeb47a91a40063af5bfb7a7f197f6df8cb990dc827e5d6")),
+    )
+
+    /** Chinese, simplified and traditional (and the English mixed in). */
+    public val OCR_ZH: ModelPack = ModelPack(
+        "ocr-zh-v1",
+        listOf(
+            PackFile("rec.onnx", 16_537_064, "1205c2e14cc3ecaf7a57fe14736521ded32489603c40d98e36fe4212a70d8be5"),
+            PackFile("chars.txt", 74_011, "17665d27ed39f0deb82007859992d626d3105d0ee4578c120b7c72138dc04d05"),
+        ),
+    )
+
+    /** English: reads comic lettering better than the Chinese recogniser does. */
+    public val OCR_EN: ModelPack = ModelPack(
+        "ocr-en-v1",
+        listOf(
+            PackFile("rec.onnx", 7_850_705, "a3a00067ddacc6e785d3282f0c858ddd284591d2d79bc5aa6cd514e8f6e491bc"),
+            PackFile("chars.txt", 1_415, "10216713ba5f7a7d0bad625079395b7e8ac96901f4fa44d762d1222af097d52c"),
+        ),
+    )
+
+    /** Noto Sans SC, for translations into simplified Chinese ([VISION]'s font lacks some of its characters). */
+    public val FONT_SC: ModelPack = ModelPack(
+        "font-sc-v1",
+        listOf(PackFile("NotoSansSC-VF.ttf", 17_772_300, "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da")),
+    )
+
     /** Qualcomm's QNN runtime, the version the app's ONNX Runtime (onnxruntime-android-qnn 1.29) was built with. */
     public const val QNN_RUNTIME_VERSION: String = "2.42.0"
     public const val QNN_RUNTIME_URL: String =
         "https://repo1.maven.org/maven2/com/qualcomm/qti/qnn-runtime/$QNN_RUNTIME_VERSION/qnn-runtime-$QNN_RUNTIME_VERSION.aar"
     public const val QNN_RUNTIME_SIZE: Long = 63_074_692
     public const val QNN_RUNTIME_SHA256: String = "ecb69bd6a7b1be4717ef10805199fb49ec6b60ca3f481d3068ed9605fba91d5b"
+
+    /** Every pack this build knows; a directory under the store not named here is left over from an older build. */
+    public val PACKS: List<ModelPack> get() = listOf(VISION, INPAINT, COREML_DETECTOR, QNN_DETECTOR, OCR_LINES, OCR_ZH, OCR_EN, FONT_SC)
 }
 
 /**
@@ -119,7 +156,17 @@ public class MangaModelStore(
             inpaint = installed(MangaModelCatalog.INPAINT)?.getValue("lama.onnx"),
             coreMlDetector = installed(MangaModelCatalog.COREML_DETECTOR)?.let { (directory(MangaModelCatalog.COREML_DETECTOR) / "detector.mlpackage").toString() },
             qnnDetector = installed(MangaModelCatalog.QNN_DETECTOR)?.getValue("detector.onnx"),
+            ocr = ocrPaths(),
+            fonts = listOfNotNull(installed(MangaModelCatalog.FONT_SC)?.let { "zh-Hans" to it.getValue("NotoSansSC-VF.ttf") }).toMap(),
         )
+    }
+
+    /** The recognisers whose packs (and the line detector) are here, by [MangaLanguages.recognizer]. */
+    private fun ocrPaths(): Map<String, OcrModelPaths> {
+        val lines = installed(MangaModelCatalog.OCR_LINES)?.getValue("lines.onnx") ?: return emptyMap()
+        return listOf("zh" to MangaModelCatalog.OCR_ZH, "en" to MangaModelCatalog.OCR_EN).mapNotNull { (key, pack) ->
+            installed(pack)?.let { key to OcrModelPaths(lines, it.getValue("rec.onnx"), it.getValue("chars.txt")) }
+        }.toMap()
     }
 
     public fun missingBytes(pack: ModelPack): Long = pack.files.filter { file ->
@@ -247,8 +294,64 @@ public class MangaModelStore(
         fileSystem.write(root / "cpu-mode.txt") { writeUtf8(mode.name) }
     }
 
+    /** How chapters are translated, chosen on this device; as a whole until chosen. */
+    public fun translationFlow(): MangaTranslationFlow =
+        runCatching { fileSystem.read(root / "translation-flow.txt") { readUtf8() } }.getOrNull()
+            ?.let { name -> MangaTranslationFlow.entries.firstOrNull { it.name == name.trim() } } ?: MangaTranslationFlow.CHAPTER
+
+    public fun setTranslationFlow(flow: MangaTranslationFlow) {
+        fileSystem.createDirectories(root)
+        fileSystem.write(root / "translation-flow.txt") { writeUtf8(flow.name) }
+    }
+
     public fun remove(pack: ModelPack) {
         fileSystem.deleteRecursively(directory(pack), mustExist = false)
+    }
+
+    /** Bytes [pack] takes on this device, finished files and partial downloads alike. */
+    public fun diskBytes(pack: ModelPack): Long = bytesUnder(directory(pack))
+
+    public fun runtimeBytes(runtime: NativeRuntime): Long = bytesUnder(runtimeDirectory(runtime))
+
+    /**
+     * Directories under the store that this build no longer reads (packs and runtimes of older
+     * builds), by their path in the store, with the bytes each takes. [known] names the packs and
+     * runtimes ("runtime/<id>") still in use besides [MangaModelCatalog.PACKS].
+     */
+    public fun leftovers(known: Set<String>): Map<String, Long> {
+        val packs = MangaModelCatalog.PACKS.map { it.id }.toSet() + known
+        val found = linkedMapOf<String, Long>()
+        for (path in children(root)) {
+            val name = path.name
+            if (!isDirectory(path) || name in packs || name.startsWith(".")) continue
+            if (name == "runtime") {
+                for (runtime in children(path)) {
+                    val id = "runtime/${runtime.name}"
+                    // an archive being downloaded (or left part way, resumed next time) is not a leftover
+                    if (id !in known && ".download" !in runtime.name) found[id] = bytesUnder(runtime)
+                }
+            } else {
+                found[name] = bytesUnder(path)
+            }
+        }
+        return found
+    }
+
+    /** Deletes a directory [leftovers] named; any other name is ignored. */
+    public fun removeLeftover(name: String, known: Set<String>) {
+        if (name in leftovers(known)) fileSystem.deleteRecursively(root / name, mustExist = false)
+    }
+
+    private fun children(directory: Path): List<Path> = fileSystem.listOrNull(directory).orEmpty().sortedBy { it.name }
+
+    private fun isDirectory(path: Path): Boolean = fileSystem.metadataOrNull(path)?.isDirectory == true
+
+    private fun bytesUnder(directory: Path): Long {
+        val metadata = fileSystem.metadataOrNull(directory) ?: return 0
+        if (metadata.isRegularFile) return metadata.size ?: 0L
+        return fileSystem.listRecursively(directory).sumOf { path ->
+            fileSystem.metadataOrNull(path)?.takeIf { it.isRegularFile }?.size ?: 0L
+        }
     }
 }
 
@@ -366,9 +469,11 @@ public class MangaRenderCache(root: String, private val maxBytes: Long = 300L * 
     public fun key(
         imageHash: String, to: String, provider: String, orientation: MangaOrientation,
         inpaint: Boolean = false, detector: String? = null, translation: String? = null,
+        /** The recogniser, when not manga-ocr, and the font, when not [MangaModelCatalog.VISION]'s. */
+        reader: String? = null, font: String? = null,
     ): String =
         listOf(imageHash, to, provider, orientation.name, LAYOUT_VERSION)
-            .plus(listOfNotNull(if (inpaint) MangaModelCatalog.INPAINT.id else null, detector, translation?.let { "t" + pageHash(it.encodeToByteArray()) }))
+            .plus(listOfNotNull(if (inpaint) MangaModelCatalog.INPAINT.id else null, detector, reader, font, translation?.let { "t" + pageHash(it.encodeToByteArray()) }))
             .joinToString("-").let { pageHash(it.encodeToByteArray()) }
 
     public fun get(key: String): ByteArray? = runCatching { fileSystem.read(path(key)) { readByteArray() } }.getOrNull()

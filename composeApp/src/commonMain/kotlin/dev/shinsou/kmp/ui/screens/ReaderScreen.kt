@@ -94,6 +94,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.layout.ContentScale
@@ -163,6 +166,10 @@ data class UnifiedReaderRenderState(
     val controlsVisible: Boolean,
     /** Bumped when the toolbar's translation button is pressed. */
     val translationRequestSerial: Long = 0L,
+    /** Bumped when the toolbar's translation button is tapped: the translation turns on or off. */
+    val translationToggleSerial: Long = 0L,
+    /** Told whether the chapter is shown translated, so the button can show it. */
+    val onTranslationActiveChanged: (Boolean) -> Unit = {},
 )
 
 /**
@@ -208,6 +215,9 @@ fun ReaderScreen(
     unifiedReaderTranslationAvailable: Boolean = false,
     /** Opens manga translation (ADR-0005) for the page reader; null hides it. */
     onMangaTranslation: (() -> Unit)? = null,
+    /** Turns manga translation on or off from the toolbar; [onMangaTranslation] then opens it on a long press. */
+    onMangaTranslationToggle: (() -> Unit)? = null,
+    mangaTranslationActive: Boolean = false,
     /** A sheet the app shows over the reader (manga translation) is open: the reader takes its keys back when it closes. */
     overlayOpen: Boolean = false,
     unifiedReaderRenderer: (@Composable (
@@ -246,6 +256,9 @@ fun ReaderScreen(
     var boundaryTransition by remember(chapter.id, readerSessionId) { mutableStateOf<ReaderChapterBoundary?>(null) }
     val unifiedReaderEnabled = unifiedReaderContent != null && unifiedReaderRenderer != null
     var translationRequest by remember { mutableStateOf(0L) }
+    var translationToggle by remember { mutableStateOf(0L) }
+    var unifiedTranslationActive by remember(readerSessionId) { mutableStateOf(false) }
+    val onUnifiedTranslationActive: (Boolean) -> Unit = remember(readerSessionId) { { unifiedTranslationActive = it } }
     var unifiedReaderPageCount by remember(
         chapter.id,
         readerSessionId,
@@ -732,6 +745,8 @@ fun ReaderScreen(
                         navigationRequestKey = unifiedReaderNavigationRequestKey,
                         controlsVisible = controlsVisible,
                         translationRequestSerial = translationRequest,
+                        translationToggleSerial = translationToggle,
+                        onTranslationActiveChanged = onUnifiedTranslationActive,
                     ),
                     { pageIndex, pageCount ->
                         val safePageCount = pageCount.coerceAtLeast(1)
@@ -905,6 +920,14 @@ fun ReaderScreen(
                 null
             },
             inLibrary = inLibrary,
+            onTranslationToggle = if (unifiedReaderEnabled && unifiedReaderTranslationAvailable) {
+                { translationToggle++; Unit }
+            } else if (!unifiedReaderEnabled) {
+                onMangaTranslationToggle
+            } else {
+                null
+            },
+            translationActive = if (unifiedReaderEnabled) unifiedTranslationActive else mangaTranslationActive,
             hasPreviousChapter = previousChapter != null,
             hasNextChapter = nextChapter != null,
             onClose = { handleReaderBack() },
@@ -1480,6 +1503,9 @@ private fun ReaderControls(
     onChapterList: () -> Unit,
     onSettings: () -> Unit,
     onTranslation: (() -> Unit)? = null,
+    /** Turns the chapter's translation on or off; [onTranslation] then opens the panel on a long press. */
+    onTranslationToggle: (() -> Unit)? = null,
+    translationActive: Boolean = false,
 ) {
     val strings = LocalShinsouStrings.current
     // The thumb follows the finger while dragging; the reader position catches up through
@@ -1537,8 +1563,12 @@ private fun ReaderControls(
                         }
                     }
                     onTranslation?.let { openTranslation ->
-                        IconButton(onClick = openTranslation) {
-                            Icon(Icons.Outlined.Translate, strings.text("Translation"), tint = Color.White)
+                        if (onTranslationToggle == null) {
+                            IconButton(onClick = openTranslation) {
+                                Icon(Icons.Outlined.Translate, strings.text("Translation"), tint = Color.White)
+                            }
+                        } else {
+                            TranslationToggleButton(translationActive, onTranslationToggle, openTranslation)
                         }
                     }
                     IconButton(onClick = onChapterList) {
@@ -2114,5 +2144,45 @@ private fun ReaderToggle(label: String, checked: Boolean, onCheckedChange: (Bool
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked, onCheckedChange)
+    }
+}
+
+/**
+ * The toolbar's translation button: a tap turns the translation on or off, a long press (or a
+ * right click) opens its panel. Lit while the translation is on.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun TranslationToggleButton(active: Boolean, onToggle: () -> Unit, onOpen: () -> Unit, tint: Color = Color.White) {
+    val strings = LocalShinsouStrings.current
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.28f) else Color.Transparent)
+            .pointerInput(onOpen) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                        event.changes.forEach { it.consume() }
+                        onOpen()
+                    }
+                }
+            }
+            .combinedClickable(
+                onClickLabel = strings.text(if (active) "Turn translation off" else "Turn translation on"),
+                onLongClickLabel = strings.text("Translation settings"),
+                onClick = onToggle,
+                onLongClick = onOpen,
+            )
+            .testTag("reader-translation-toggle"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Outlined.Translate,
+            strings.text("Translation"),
+            tint = if (active) MaterialTheme.colorScheme.primary else tint,
+        )
     }
 }

@@ -18,12 +18,17 @@ import kotlin.test.assertTrue
 /**
  * The whole page pipeline with the real models (ADR-0005). Runs only when the model packs and a
  * test page are on this machine:
- *   SHINSOU_MANGA_PACKS=/path/to/packs (built by tools/manga-models/build_packs.py)
+ *   SHINSOU_MANGA_PACKS=/path/to/packs (built by tools/manga-models/build_packs.py; the chapters
+ *   translated into Simplified Chinese need its font pack there too)
  *   SHINSOU_MANGA_PAGE=/path/to/page.jpg, with SHINSOU_MANGA_EXPECTED=/path/to/expected.txt (one OCR line per text region)
  */
 class MangaPipelineDesktopTest {
     private val packs = System.getenv("SHINSOU_MANGA_PACKS")?.let(::File)?.takeIf { it.resolve("vision-v1").isDirectory }
     private val page = System.getenv("SHINSOU_MANGA_PAGE")?.let(::File)?.takeIf { it.isFile }
+
+    /** The packs with the Simplified Chinese font too, for the chapters translated into it; skipped (and said so) without it. */
+    private val packsWithFont: File? get() = packs?.takeIf { it.resolve(MangaModelCatalog.FONT_SC.id).isDirectory }
+        ?: null.also { if (packs != null) println("MANGA skipped: ${MangaModelCatalog.FONT_SC.id} is not among the packs") }
 
     @Test
     fun readsAndRedrawsAPage() {
@@ -61,10 +66,13 @@ class MangaPipelineDesktopTest {
 
     @Test
     fun translatesAChapterAndServesItFromTheCacheTheSecondTime() = runBlocking {
+        val packs = packsWithFont
         if (packs == null || page == null) return@runBlocking
         val platform = DesktopMangaPlatform.create()
         val root = Files.createTempDirectory("manga-chapter").toFile()
         packs.resolve("vision-v1").copyRecursively(root.resolve("models/vision-v1"))
+        // the Simplified Chinese drawn into needs its font
+        MangaModelCatalog.FONT_SC.id.let { font -> packs.resolve(font).copyRecursively(root.resolve("models/$font")) }
         var calls = 0
         val translator = object : MangaTextTranslator {
             override suspend fun providerId() = "fake"
@@ -136,6 +144,76 @@ class MangaPipelineDesktopTest {
     }
 
     @Test
+    fun aPageWithNoTextIsShownAsItIsInEitherFlow() = runBlocking {
+        val texts = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val translator = object : MangaTextTranslator {
+            override suspend fun providerId() = "fake"
+            override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation {
+                texts += request.text
+                val lines = request.text.split("\n")
+                return ChapterTranslation(lines.map { if (request.keep(it) || it.isBlank()) TranslatedSegment(it, null, kept = true) else TranslatedSegment(it, SAMPLE.take(6)) }, 0, lines.size)
+            }
+        }
+        val (manga, bytes) = chapterWith(translator) ?: return@runBlocking
+        val codec = DesktopMangaPlatform.create().codec
+        val blank = codec.encodeJpeg(RgbImage(800, 1100, ByteArray(800 * 1100 * 3) { -1 }), 90)
+        val chapter = listOf(bytes, blank, bytes)
+        for (flow in MangaTranslationFlow.entries) {
+            manga.setTranslationFlow(flow)
+            texts.clear()
+            val shown = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+            val request = MangaChapterRequest("w", "blank-$flow", 3, { chapter[it] }, "ja", "zh-Hant")
+            assertTrue(manga.translateChapter(request) { i, jpeg -> shown[i] = jpeg != null })
+            assertEquals(mapOf(0 to true, 1 to false, 2 to true), shown.toMap(), "$flow: the blank page is handed over as it is")
+            val pagesSent = texts.maxOf { t -> t.split("\n").count { it.startsWith("\u2063p") } }
+            assertEquals(2, pagesSent, "$flow: the blank page is not translated")
+            // opened again: the drawn chapter, the blank page still as it is
+            shown.clear()
+            assertTrue(manga.translateChapter(request) { i, jpeg -> shown[i] = jpeg != null })
+            assertEquals(mapOf(0 to true, 1 to false, 2 to true), shown.toMap())
+            assertEquals(true, manga.lastRun?.fromCache, "$flow: served from the drawn chapter")
+        }
+        manga.release()
+    }
+
+    @Test
+    fun pageByPageTranslatesInGrowingPartsAndRecordsTheWholeChapter() = runBlocking {
+        val requests = java.util.Collections.synchronizedList(mutableListOf<ChapterTranslationRequest>())
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val translator = object : MangaTextTranslator {
+            override suspend fun providerId() = "fake"
+            override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation {
+                requests += request
+                events += if (request.segment) "part" else "whole"
+                val lines = request.text.split("\n")
+                return ChapterTranslation(lines.map { if (request.keep(it) || it.isBlank()) TranslatedSegment(it, null, kept = true) else TranslatedSegment(it, SAMPLE.take(6)) }, 0, lines.size)
+            }
+        }
+        val (manga, bytes) = chapterWith(translator) ?: return@runBlocking
+        manga.setTranslationFlow(MangaTranslationFlow.PROGRESSIVE)
+        val shown = java.util.Collections.synchronizedList(mutableListOf<Int>())
+        val done = manga.translateChapter(MangaChapterRequest("w", "c", 7, { bytes }, "ja", "zh-Hant")) { i, jpeg ->
+            kotlin.test.assertNotNull(jpeg); shown += i; events += "page $i"
+        }
+        assertTrue(done)
+        assertEquals((0 until 7).toSet(), shown.toSet())
+        val parts = requests.filter { it.segment }
+        assertEquals(listOf(1, 2, 4), parts.map { r -> r.text.split("\n").count { it.startsWith("\u2063p") } }, "parts of one page, then twice as many")
+        assertTrue(parts.first().context.isEmpty() && parts.drop(1).all { it.context.isNotEmpty() }, "each later part carries the lines before it")
+        val whole = requests.single { !it.segment }
+        assertEquals(7, whole.text.split("\n").count { it.startsWith("\u2063p") })
+        assertTrue(events.indexOf("page 0") < events.indexOf("whole"), "the first page is shown before the chapter is done")
+        assertEquals(MangaTranslationFlow.PROGRESSIVE, manga.lastRun?.flow)
+        assertTrue((manga.lastRun?.firstPageMs ?: 0) > 0)
+
+        // a chapter translated ahead is still one script
+        requests.clear()
+        manga.translateChapter(MangaChapterRequest("w", "ahead", 7, { bytes }, "ja", "zh-Hant", reading = false)) { _, _ -> }
+        assertEquals(listOf(false), requests.map { it.segment })
+        manga.release()
+    }
+
+    @Test
     fun aPageThatFailsToLoadLeavesTheChapterPartlyTranslated() = runBlocking {
         var partial: Boolean? = null
         val translator = object : MangaTextTranslator {
@@ -201,9 +279,12 @@ class MangaPipelineDesktopTest {
 
     /** A chapter set up with [translator] over the real models; null where they are not here. */
     private fun chapterWith(translator: MangaTextTranslator): Pair<MangaTranslation, ByteArray>? {
+        val packs = packsWithFont
         if (packs == null || page == null) return null
         val root = Files.createTempDirectory("manga-chapter").toFile()
         packs.resolve("vision-v1").copyRecursively(root.resolve("models/vision-v1"))
+        // the Simplified Chinese drawn into needs its font
+        MangaModelCatalog.FONT_SC.id.let { font -> packs.resolve(font).copyRecursively(root.resolve("models/$font")) }
         val manga = MangaTranslation(
             DesktopMangaPlatform.create(), MangaModelStore(root.resolve("models").path, HttpClient(MockEngine { respond("") })),
             MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
@@ -221,7 +302,7 @@ class MangaPipelineDesktopTest {
         val mostAtOnce = java.util.concurrent.atomic.AtomicInteger(0)
         val calls: Int get() = callCount.get()
         override suspend fun providerId() = "fake"
-        override suspend fun hasChapter(workKey: String, chapterKey: String, to: String) = stored
+        override suspend fun hasChapter(workKey: String, chapterKey: String, from: String, to: String) = stored
         override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation {
             callCount.incrementAndGet()
             mostAtOnce.accumulateAndGet(running.incrementAndGet(), ::maxOf)

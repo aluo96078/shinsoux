@@ -62,6 +62,40 @@ class MangaBenchmarkDesktopTest {
         }
     }
 
+    /** The first page and the whole chapter in each flow, with a cloud-like translation delay. */
+    @Test
+    fun firstPageInEachFlow() = kotlinx.coroutines.runBlocking {
+        if (System.getenv("SHINSOU_MANGA_BENCH") != "1" || packs == null || pages == null) return@runBlocking
+        val platform = DesktopMangaPlatform.create()
+        val files = pages.listFiles { f -> f.name.endsWith(".jpg") }!!.sorted().map { it.readBytes() }.let { it + it + it }
+        val root = java.nio.file.Files.createTempDirectory("manga-flows").toFile()
+        packs.resolve("vision-v1").copyRecursively(root.resolve("vision-v1"))
+        val seen = HashSet<String>()
+        val translator = object : MangaTextTranslator {
+            override suspend fun providerId() = "fake"
+            override suspend fun translate(request: dev.shinsou.kmp.translation.ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): dev.shinsou.kmp.translation.ChapterTranslation {
+                val lines = request.text.split("\n")
+                // one request's round trip; lines translated before come from the memory at once
+                val fresh = synchronized(seen) { lines.filter { seen.add(request.chapterKey + "\u0000" + it) } }
+                if (fresh.isNotEmpty()) kotlinx.coroutines.delay(800L + 20L * fresh.size)
+                return dev.shinsou.kmp.translation.ChapterTranslation(lines.map { dev.shinsou.kmp.translation.TranslatedSegment(it, if (request.keep(it) || it.isBlank()) null else "譯文", kept = request.keep(it) || it.isBlank()) }, 0, lines.size)
+            }
+        }
+        for (round in 1..2) for (flow in MangaTranslationFlow.entries) {
+            val store = MangaModelStore(root.path, io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { respond("") }))
+            store.setTranslationFlow(flow)
+            val manga = MangaTranslation(
+                platform, store,
+                MangaPageStore(app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver(app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+                MangaRenderCache(root.resolve("pages-$round-$flow").path), translator, { File(it).readLines() },
+            )
+            val ms = time { manga.translateChapter(MangaChapterRequest("w", "c-$round-$flow", files.size, { files[it] }, "ja", "zh-Hant")) { _, _ -> } }
+            println("BENCH flow round=$round $flow first page ${manga.lastRun?.firstPageMs}ms, chapter ${ms}ms for ${files.size} pages")
+            manga.release()
+        }
+        root.deleteRecursively()
+    }
+
     /** A whole chapter in each CPU mode, the CPU's detector alone. */
     @Test
     fun chapterInEachCpuMode() = kotlinx.coroutines.runBlocking {

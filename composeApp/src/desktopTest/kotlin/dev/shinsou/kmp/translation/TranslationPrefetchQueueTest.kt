@@ -180,6 +180,12 @@ class TranslationPrefetchQueueTest {
         assertEquals(1, device.requests, "one of the two found the other's work in the memory")
         assertEquals(setOf("c1"), device.translation.translatedChapterKeys("work", "zh-Hant"))
         assertTrue(device.translation.translatedChapterKeys("work", "en").isEmpty())
+        // the pair's own route: from Korean the service, from Simplified Chinese only the conversion
+        assertEquals(setOf("c1"), device.translation.translatedChapterKeys("work", "zh-Hant", from = "ko"))
+        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "zh-Hans").isEmpty())
+        // translated from Korean: not done for a source since corrected to another language
+        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "ja").isEmpty())
+        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "en").isEmpty())
     }
 
     @Test

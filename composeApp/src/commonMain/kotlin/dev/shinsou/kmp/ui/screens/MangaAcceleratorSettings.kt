@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.manga.MangaAccelerator
 import dev.shinsou.kmp.manga.MangaCpuMode
+import dev.shinsou.kmp.manga.MangaTranslationFlow
 import dev.shinsou.kmp.manga.MangaTranslation
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
@@ -51,7 +52,8 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslation) {
     val work = remember { mutableStateMapOf<MangaAccelerator, AcceleratorWork>() }
     var failure by remember { mutableStateOf<String?>(null) }
     var cpuMode by remember { mutableStateOf<MangaCpuMode?>(null) }
-    LaunchedEffect(manga, revision) { states = manga.acceleratorStates(); cpuMode = manga.cpuMode() }
+    var flow by remember { mutableStateOf<MangaTranslationFlow?>(null) }
+    LaunchedEffect(manga, revision) { states = manga.acceleratorStates(); cpuMode = manga.cpuMode(); flow = manga.translationFlow() }
     if (states.isEmpty()) return
     val chosen = states.filter { it.selected && it.installed }.map { it.support.accelerator }.toSet()
 
@@ -132,6 +134,28 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslation) {
         failure?.let {
             Text(strings.text("The download failed: {0}", it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
+        flow?.let { current ->
+            Surface(
+                shape = RoundedCornerShape(11.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth().testTag("manga-translation-flow"),
+            ) {
+                Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+                    Text(strings.text("While reading"), style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        for (option in MangaTranslationFlow.entries) {
+                            FilterChip(
+                                selected = option == current,
+                                onClick = { flow = option; scope.launch { manga.setTranslationFlow(option); revision++ } },
+                                label = { Text(strings.text(flowLabel(option))) },
+                                modifier = Modifier.testTag("manga-translation-flow-${option.name.lowercase()}"),
+                            )
+                        }
+                    }
+                    Text(strings.text(flowNote(current)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         cpuMode?.let { mode ->
             Surface(
                 shape = RoundedCornerShape(11.dp),
@@ -160,6 +184,18 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslation) {
             }
         }
     }
+}
+
+private fun flowLabel(flow: MangaTranslationFlow): String = when (flow) {
+    MangaTranslationFlow.CHAPTER -> "Whole chapter"
+    MangaTranslationFlow.PROGRESSIVE -> "Page by page"
+}
+
+private fun flowNote(flow: MangaTranslationFlow): String = when (flow) {
+    MangaTranslationFlow.CHAPTER ->
+        "Every page is read first, then the chapter is translated at once and drawn. The first page takes longest; a language model sees the whole chapter."
+    MangaTranslationFlow.PROGRESSIVE ->
+        "Pages are read, translated and drawn in small parts as you read, so the first page shows much sooner. A few more requests go to the translation service, and a language model sees the lines before each part. Chapters translated ahead are still done whole."
 }
 
 private fun cpuModeLabel(mode: MangaCpuMode): String = when (mode) {

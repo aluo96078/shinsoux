@@ -2,6 +2,7 @@ package dev.shinsou.kmp.translation
 
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 
 /**
@@ -44,7 +45,7 @@ public class TranslationService(
         val total = plan.translatable
         var translated = 0
         onProgress(plan.finished, total)
-        try {
+        try { withContext(TranslationContext(request.context)) {
             // A group goes through one hop completely before the next: the offline engine holds
             // one model at a time, and switching for every batch costs more than the batches.
             for (group in plan.pending().chunked(batchSize * GROUP_BATCHES)) {
@@ -57,7 +58,10 @@ public class TranslationService(
                 }
                 onProgress(plan.finished, total)
             }
-        } finally {
+        } } finally {
+            // A part of a chapter adds its lines to the chapter's and records it as incomplete when
+            // nothing is recorded yet, so a chapter left before its end can still be listed and
+            // deleted; the whole chapter's request records it as it is.
             plan.record()
         }
         return plan.result(translated)
@@ -87,7 +91,7 @@ public class TranslationService(
         private val usedLines = HashSet<MemoryKey>()
 
         fun recordLines() {
-            memory.saveChapterSegments(request.workKey, request.chapterKey, request.to, provider.id, usedLines)
+            memory.saveChapterSegments(request.workKey, request.chapterKey, request.to, provider.id, usedLines, adding = request.segment)
         }
 
         fun pending(): List<Int> = inputs.indices.filter { inputs[it].isNotEmpty() && outputs[it] == null }
@@ -239,10 +243,11 @@ public class TranslationService(
                     provider = provider.id,
                     sourceHash = TranslationText.hash(request.text),
                     segmentCount = translatable,
-                    complete = finished == translatable && !request.partial,
+                    complete = finished == translatable && !request.partial && !request.segment,
                     paid = provider.paid,
                     updatedAt = now(),
                 ),
+                ifAbsent = request.segment,
             )
         }
 

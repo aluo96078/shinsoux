@@ -172,6 +172,7 @@ import dev.shinsou.kmp.ui.screens.SettingsScreen
 import dev.shinsou.kmp.ui.screens.ShuYueMigrationScreen
 import dev.shinsou.kmp.ui.screens.SourceLoginDialog
 import dev.shinsou.kmp.ui.screens.StatisticsScreen
+import dev.shinsou.kmp.ui.screens.TranslationScreen
 import dev.shinsou.kmp.ui.screens.TrackingSheet
 import dev.shinsou.kmp.ui.screens.UpdatesScreen
 import dev.shinsou.kmp.ui.screens.UnifiedContentReader
@@ -1441,6 +1442,8 @@ private fun ShinsouAppContent(
                         chapterKey = dev.shinsou.kmp.ui.screens.mangaChapterKey(chapter),
                         pages = activeReaderChapter.pages,
                         exportable = false,
+                        // "all", "multi" and local imports say nothing: their first pages are read instead
+                        workLanguage = rememberSourceLanguage(appServices.browse, manga.source),
                         labels = remember(manga.title, chapter.name, manga.source) {
                             dev.shinsou.kmp.translation.TranslationLabels(
                                 workTitle = manga.title,
@@ -1463,6 +1466,13 @@ private fun ShinsouAppContent(
                     chapter = chapter,
                     pages = mangaTranslationState?.displayPages(activeReaderChapter.pages) ?: activeReaderChapter.pages,
                     onMangaTranslation = mangaTranslationState?.let { { mangaTranslationOpen = true } },
+                    onMangaTranslationToggle = mangaTranslationState?.let { state ->
+                        {
+                            state.settings?.let { current -> scope.launch { state.update(current.toggled()) } }
+                            Unit
+                        }
+                    },
+                    mangaTranslationActive = mangaTranslationState?.settings?.shown == true,
                     overlayOpen = mangaTranslationOpen,
                     settings = snapshot.settings.reader,
                     loading = readerTransitionInFlight ||
@@ -1621,7 +1631,11 @@ private fun ShinsouAppContent(
                                     navigationRequestKey = renderState.navigationRequestKey,
                                     readerControlsVisible = renderState.controlsVisible,
                                     translationRequestSerial = renderState.translationRequestSerial,
+                                    translationToggleSerial = renderState.translationToggleSerial,
+                                    onTranslationActiveChanged = renderState.onTranslationActiveChanged,
                                     mangaTranslation = appServices.mangaTranslation,
+                                    // "all", "multi" and local imports say nothing: their first pages are read instead
+                                    workLanguage = rememberSourceLanguage(appServices.browse, manga.source),
                                     translationLabels = remember(manga.title, chapter.name, manga.source) {
                                         dev.shinsou.kmp.translation.TranslationLabels(
                                             workTitle = manga.title,
@@ -2786,6 +2800,9 @@ private fun DetailPane(
     val mangaTranslation = appServices.mangaTranslation
     val textTranslation = appServices.contentFeatures?.translation
     val prefetchGroup = remember(manga.source, manga.url) { dev.shinsou.kmp.ui.screens.mangaPrefetchGroup(manga) }
+    // a work with no settings is translated ahead as it would start by itself in the reader
+    val prefetchAppLanguage = dev.shinsou.kmp.ui.i18n.LocalAppLanguage.current
+    val prefetchWorkLanguage = rememberSourceLanguage(appServices.browse, manga.source)
     val prefetchEntries by (textTranslation?.prefetch?.entries ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
     val mangaPrefetch = remember(prefetchEntries, prefetchGroup) { prefetchEntries.filter { it.group == prefetchGroup } }
     val translationStatus = if (mangaPrefetch.isEmpty()) null else {
@@ -2823,6 +2840,7 @@ private fun DetailPane(
                         chapter = chapter,
                         labels = dev.shinsou.kmp.translation.TranslationLabels(manga.title, chapter.name, sourceName),
                         loadPages = { appServices.content.loadReaderChapter(manga.id, chapter.id).pages },
+                        workLanguage = prefetchWorkLanguage, appLanguage = prefetchAppLanguage,
                     )
                 }
                 onSelectionChange(emptySet())
@@ -2992,6 +3010,9 @@ private suspend fun removeDownloadsForMangas(
         .forEach { appServices.content.removeDownload(it) }
 }
 
+/** Screens that keep their own inner page and take back presses for it first. */
+private val NESTED_MORE_DESTINATIONS = setOf(MoreDestination.Settings, MoreDestination.Translation)
+
 @Composable
 private fun MoreDestinationPane(
     destination: MoreDestination,
@@ -3017,7 +3038,7 @@ private fun MoreDestinationPane(
     var settingsNestedBackAvailable by remember(destination) { mutableStateOf(false) }
     var handledSystemBackRequest by remember(destination) { mutableStateOf(systemBackRequest) }
     var openedDownloadWork by remember(destination) { mutableStateOf<String?>(null) }
-    val nestedBackAvailable = (destination == MoreDestination.Settings && settingsNestedBackAvailable) ||
+    val nestedBackAvailable = (destination in NESTED_MORE_DESTINATIONS && settingsNestedBackAvailable) ||
         (destination == MoreDestination.Downloads && openedDownloadWork != null)
     val currentNestedBackCallback = rememberUpdatedState(onNestedBackAvailabilityChanged)
     LaunchedEffect(nestedBackAvailable) {
@@ -3039,7 +3060,7 @@ private fun MoreDestinationPane(
         // and pop the whole More destination in the same frame; that briefly reveals
         // the parent screen during a return gesture.
         when {
-            destination == MoreDestination.Settings -> Unit
+            destination in NESTED_MORE_DESTINATIONS -> Unit
             // Back from one title's chapters returns to the title list first.
             destination == MoreDestination.Downloads && openedDownloadWork != null -> openedDownloadWork = null
             else -> onBack()
@@ -3109,6 +3130,14 @@ private fun MoreDestinationPane(
             chapters = snapshot.chapters,
             tracks = snapshot.tracks,
             categories = snapshot.categories,
+            onBack = onBack,
+        )
+        MoreDestination.Translation -> TranslationScreen(
+            translation = appServices.contentFeatures?.translation,
+            wideLayout = wideLayout,
+            systemBackRequest = systemBackRequest,
+            backGestureProgress = if (settingsNestedBackAvailable) backGestureProgress else 0f,
+            onBackAvailabilityChanged = { settingsNestedBackAvailable = it },
             onBack = onBack,
         )
         MoreDestination.Settings -> SettingsScreen(
@@ -3733,3 +3762,16 @@ private class SourceReviewGate(
     val review: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
     val proceed: () -> Unit,
 )
+
+/**
+ * The language a work's [source] says it is in, when translation knows it; blank for "all", "multi"
+ * and local imports, and until the sources are loaded (it follows them, as they load after launch).
+ */
+@Composable
+private fun rememberSourceLanguage(browse: BrowseCallbacks, source: Long): String {
+    val sources = browse.state.collectAsState().value.sources
+    return remember(sources, source) {
+        sources.firstOrNull { it.id == source }?.language
+            ?.takeIf { dev.shinsou.kmp.translation.OfflineModelCatalog.language(it) != null }.orEmpty()
+    }
+}

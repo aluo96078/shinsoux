@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Delete
@@ -104,6 +105,7 @@ import org.jetbrains.compose.resources.painterResource
 enum class MoreDestination {
     Downloads,
     Statistics,
+    Translation,
     Settings,
     Sync,
     Backup,
@@ -129,6 +131,7 @@ fun MoreScreen(
     val rows = listOf(
         MoreRow(MoreDestination.Downloads, strings.downloads, strings.text("{0} queued or active", downloadCount), Icons.Outlined.Download),
         MoreRow(MoreDestination.Statistics, strings.statistics, strings.text("Library and reading insights"), Icons.Outlined.BarChart),
+        MoreRow(MoreDestination.Translation, strings.text("Translate"), strings.text("Service, offline models, manga and stored translations"), Icons.Outlined.Translate),
         MoreRow(MoreDestination.Settings, strings.settings, strings.text("Appearance, reader, sources and privacy"), Icons.Outlined.Settings),
         MoreRow(MoreDestination.Sync, strings.text("Sync"), syncLabel, Icons.Outlined.CloudSync),
         MoreRow(MoreDestination.Backup, strings.backup, lastBackupLabel ?: strings.text("No backup yet"), Icons.Outlined.Backup),

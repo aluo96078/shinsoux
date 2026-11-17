@@ -43,6 +43,9 @@ public abstract class CloudTranslationProvider(
     protected open val maximumRequestBytes: Int get() = MAX_REQUEST_TEXT_BYTES
     protected abstract suspend fun request(from: String, to: String, lines: List<String>): List<String>
 
+    /** Characters a request sends besides its lines (context read along with them), counted with them. */
+    protected open suspend fun contextCharacters(): Long = 0
+
     final override fun route(from: String, to: String): List<TranslationHop>? {
         val source = OfflineModelCatalog.language(from) ?: return null
         val target = OfflineModelCatalog.language(to) ?: return null
@@ -105,7 +108,7 @@ public abstract class CloudTranslationProvider(
     private suspend fun runBatch(from: String, to: String, lines: List<String>): Result<List<String>> {
         // Counted request by request, before it is sent: with translation on, every chapter
         // opened is sent, and that must not turn into an unexpected bill.
-        val characters = lines.sumOf { it.length }.toLong()
+        val characters = lines.sumOf { it.length }.toLong() + contextCharacters()
         if (usage?.reserve(characters) == false) {
             return Result.failure(TranslationException(TranslationFailure.DAILY_LIMIT, "Today's translation limit is used up"))
         }

@@ -155,6 +155,9 @@ private fun ShinsouStrings.coreTranslation(key: String): String? = when (key) {
     else -> null
 }
 
+/** The language the app is shown in (a BCP-47 tag): the one chosen in Settings, else the system's. */
+val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf { "en" }
+
 @Composable
 fun ProvideShinsouStrings(
     languagePreference: String?,
@@ -168,6 +171,7 @@ fun ProvideShinsouStrings(
         ?.takeUnless { it.equals("system", ignoreCase = true) }
         ?: systemLanguage
     CompositionLocalProvider(
+        LocalAppLanguage provides language,
         LocalShinsouStrings provides shinsouStringsFor(language),
         content = content,
     )

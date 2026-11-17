@@ -66,6 +66,9 @@ class TranslationDisplayTextTest {
         assertEquals("ja", ReaderTranslation.detectLanguage("葵は剣を抜き、健太の前に立ちはだかった。"))
         assertEquals("ko", ReaderTranslation.detectLanguage("정말 갈 거야? 그녀가 불안한 듯 물었다."))
         assertEquals("zh-Hans", ReaderTranslation.detectLanguage("你真的要去吗？她不安地问道。"))
+        assertEquals("zh-Hant", ReaderTranslation.detectLanguage("你真的要去嗎？她不安地問道。"))
+        // no character written only one way: Simplified, as before
+        assertEquals("zh-Hans", ReaderTranslation.detectLanguage("山中有人"))
         assertEquals("en", ReaderTranslation.detectLanguage("The old lighthouse keeper had not spoken to anyone."))
         assertEquals("zh-Hant", ReaderTranslation.targetLanguage("zh-TW"))
         assertEquals("zh-Hant", ReaderTranslation.targetLanguage("fr-FR"))

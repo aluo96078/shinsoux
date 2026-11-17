@@ -69,9 +69,12 @@ internal fun storedWorks(chapters: List<StoredChapterTranslation>): List<StoredW
 
 private val DAILY_LIMITS = listOf(20_000L, 50_000L, 100_000L, 500_000L, 1_000_000L, 0L)
 
-/** Settings → Translation: where translations come from, the API keys, and what is kept on the device. */
+/**
+ * One page of More → Translate ([TranslationScreen]): where translations come from and the chosen
+ * service's key, the offline models, manga translation, or what is kept on the device.
+ */
 @Composable
-internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
+internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: TranslationPage) {
     val strings = LocalShinsouStrings.current
     if (translation == null) {
         SettingsList { item { SettingDescription(strings.text("Translation is not available in this version of the app.")) } }
@@ -114,11 +117,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
     }
 
     SettingsList {
-        item {
-            SettingDescription(
-                strings.text("Translate novel chapters while reading: open a chapter and press the translation button in the reader's top bar. Translated chapters are kept, so nothing is translated twice."),
-            )
-        }
+      if (page == TranslationPage.Service) {
         item {
             val labels = TranslationProviderKind.entries
                 .filter {
@@ -144,14 +143,15 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                         strings.text("Uses your {0} API key. The text of the chapters you translate is sent to {0}, and {0} may charge for it.", "Microsoft Azure")
                     TranslationProviderKind.LLM ->
                         strings.text("A language model at the address you enter below. The text of the chapters you translate is sent there; its provider may charge for it.")
-                },
+                } + "\n" + strings.text("Simplified and Traditional Chinese are always converted on this device, word by word: free, and nothing is sent anywhere."),
                 selectedLabel = labels.getValue(preferences.provider),
                 choices = labels.values.toList(),
             ) { label ->
                 labels.entries.firstOrNull { it.value == label }?.let { choice -> change { translation.setProvider(choice.key) } }
             }
         }
-        if (preferences.cloudAvailable) {
+        // Only the chosen service's settings: the others are filled in after switching to them.
+        if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.DEEPL) {
             item {
                 ApiKeySetting(
                     title = strings.text("{0} API key", "DeepL"),
@@ -160,6 +160,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     tag = "translation-key-deepl",
                 ) { key -> change { translation.setKey(TranslationProviderKind.DEEPL, key) } }
             }
+        }
+        if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.GOOGLE) {
             item {
                 ApiKeySetting(
                     title = strings.text("{0} API key", "Google Cloud Translation"),
@@ -168,6 +170,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     tag = "translation-key-google",
                 ) { key -> change { translation.setKey(TranslationProviderKind.GOOGLE, key) } }
             }
+        }
+        if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.AZURE) {
             item {
                 ApiKeySetting(
                     title = strings.text("{0} API key", "Azure Translator"),
@@ -199,6 +203,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     }
                 }
             }
+        }
+        if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.LLM) {
             item {
                 LlmServiceSetting(
                     settings = preferences.llm,
@@ -213,6 +219,8 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                     onRemoveKey = { change { translation.setKey(TranslationProviderKind.LLM, "") } },
                 )
             }
+        }
+        if (preferences.cloudAvailable && preferences.provider in ReaderTranslation.PAID_PROVIDERS) {
             item {
                 val labels = DAILY_LIMITS.associateWith { limit ->
                     if (limit == 0L) strings.text("No limit") else strings.text("{0} characters", grouped(limit))
@@ -228,7 +236,12 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                 }
             }
         }
+      }
+      if (page == TranslationPage.Downloads) {
         item { SettingDescription(strings.text("Offline translation models")) }
+        if (current.preferences.systemAvailable) {
+            item { SettingDescription(strings.text("Apple's translation languages are managed in the system Settings app, under General → Language & Region → Translation Languages.")) }
+        }
         if (current.models.isEmpty()) {
             item {
                 SettingRow(
@@ -245,11 +258,12 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                 TextButton(onClick = { change { translation.removeModel(model) } }) { Text(strings.text("Remove")) }
             }
         }
-        if (manga != null) {
-            item { SettingDescription(strings.text("Manga recognition")) }
-            item { MangaAcceleratorSettings(manga) }
-        }
-        item { SettingDescription(strings.text("Stored translations")) }
+        if (manga != null) item { MangaResourceSettings(manga) }
+      }
+      if (page == TranslationPage.Manga && manga != null) {
+        item { MangaAcceleratorSettings(manga) }
+      }
+      if (page == TranslationPage.Stored) {
         item {
             SettingRow(
                 title = strings.text("Free machine translations"),
@@ -326,6 +340,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?) {
                 }
             }
         }
+      }
     }
 }
 

@@ -65,6 +65,150 @@ class MangaReaderTranslationTest {
     }
 
     @Test
+    fun aLanguagePickedForTheWorkWhileItWasOffIsKeptWhenItStartsByItself() {
+        val off = dev.shinsou.kmp.translation.WorkTranslationSettings(enabled = false, from = "en", to = "zh-Hant", fromPicked = true)
+        kotlin.test.assertEquals("en", MangaReaderTranslationState.pickedFrom(off))
+        // Japanese picked by the reader is a choice too
+        kotlin.test.assertEquals("ja", MangaReaderTranslationState.pickedFrom(off.copy(from = MangaReaderTranslationState.SOURCE_LANGUAGE)))
+        // the language the work was taken to be in is not a choice, nor one pages cannot be read in
+        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(off.copy(fromPicked = false)))
+        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(off.copy(from = "xx")))
+        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(null))
+    }
+
+    @Test
+    fun aWorkThatDoesNotStartByItselfStillReadsItsPagesInTheLanguageItsSourceSays() = kotlinx.coroutines.runBlocking {
+        val root = Files.createTempDirectory("manga-source-language").toFile()
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, root.resolve("text").path),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        translation.setAutoTranslate(on = false, paid = false)
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path), translation.asMangaTranslator(), { File(it).readLines() },
+        )
+        val state = MangaReaderTranslationState(manga, translation, "work")
+        state.load("zh-Hant")
+        state.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals("en", state.settings?.from, "turning it on reads English, not Japanese")
+        kotlin.test.assertEquals(false, state.settings?.enabled)
+        kotlin.test.assertNull(translation.settings("work"), "nothing is saved until the reader changes something")
+
+        // a language the reader picks is theirs, whatever the source says
+        state.update(state.settings!!.copy(from = "zh-Hans"))
+        state.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals("zh-Hans", state.settings?.from)
+        val reopened = MangaReaderTranslationState(manga, translation, "work")
+        reopened.load("zh-Hant")
+        reopened.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals("zh-Hans", reopened.settings?.from)
+
+        // Japanese picked by hand, then switched off, is kept over what the source says
+        reopened.update(reopened.settings!!.copy(from = "ja", enabled = true))
+        reopened.update(reopened.settings!!.copy(enabled = false))
+        val again = MangaReaderTranslationState(manga, translation, "work")
+        again.load("zh-Hant")
+        again.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals("ja", again.settings?.from)
+
+        // a Chinese source that does not name the script: taken to be the other one until its pages tell
+        val chinese = MangaReaderTranslationState(manga, translation, "chinese")
+        chinese.load("zh-Hant")
+        chinese.autoStart("zh", "zh-Hant", readsJapanese = { null }, readsChineseScript = { null })
+        kotlin.test.assertEquals("zh-Hans", chinese.settings?.from, "turning it on offers the Chinese recogniser, not Japanese")
+        chinese.update(chinese.settings!!.copy(enabled = true))
+        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(translation.settings("chinese")), "a script only taken is not a choice")
+        // once told, a script that is the reader's own leaves it off
+        chinese.autoStart("zh", "zh-Hant", readsJapanese = { null }, readsChineseScript = { "zh-Hant" })
+        kotlin.test.assertEquals("zh-Hant", translation.settings("chinese")?.from)
+        kotlin.test.assertEquals(false, translation.settings("chinese")?.enabled)
+        kotlin.test.assertEquals(false, translation.settings("chinese")?.turnedOff)
+
+        // for a reader of another language the script decides the model it is translated by
+        val english = MangaReaderTranslationState(manga, translation, "chinese-en")
+        english.load("en")
+        english.autoStart("zh", "en", readsJapanese = { null }, readsChineseScript = { "zh-Hant" })
+        kotlin.test.assertEquals("zh-Hant", english.settings?.from, "the Traditional model, not the Simplified one zh stands for")
+        kotlin.test.assertEquals("en", english.settings?.to)
+    }
+
+    @Test
+    fun aWorkStillStartsByItselfWhenItsSourceSaysItsLanguageLateAndAPickDuringTheProbeIsKept() = kotlinx.coroutines.runBlocking {
+        val root = Files.createTempDirectory("manga-late-language").toFile()
+        val translation = ReaderTranslation(
+            memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
+            platform = OfflineTranslationPlatform(MarkingEngine, root.resolve("text").path),
+            http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
+        )
+        translation.setAutoTranslate(on = true, paid = false)
+        val manga = MangaTranslation(
+            DesktopMangaPlatform.create(),
+            MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
+            MangaPageStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY), { System.currentTimeMillis() }),
+            MangaRenderCache(root.resolve("pages").path), translation.asMangaTranslator(), { File(it).readLines() },
+        )
+        // read in Japanese: a work whose language is not known yet is taken to be the reader's own
+        val late = MangaReaderTranslationState(manga, translation, "late")
+        late.load("ja")
+        late.autoStart("", "ja", readsJapanese = { true })
+        kotlin.test.assertEquals(false, late.settings?.enabled)
+        late.autoStart("zh-Hans", "ja", readsJapanese = { null })
+        kotlin.test.assertEquals(true, late.settings?.enabled, "the source saying Chinese once loaded still starts it")
+        kotlin.test.assertEquals("zh-Hans", late.settings?.from)
+        kotlin.test.assertEquals("en", MangaReaderTranslationState(manga, translation, "ja-app").apply { load("ja") }.settings?.to, "a Japanese reader's default is not Japanese to Japanese")
+        // that default is not taken for the reader's choice: a Chinese work starts into Japanese
+        val chineseForJapanese = MangaReaderTranslationState(manga, translation, "zh-for-ja")
+        chineseForJapanese.load("ja")
+        chineseForJapanese.autoStart("zh-Hans", "ja", readsJapanese = { null })
+        kotlin.test.assertEquals(true, chineseForJapanese.settings?.enabled)
+        kotlin.test.assertEquals("ja", chineseForJapanese.settings?.to)
+
+        // pages not read as Japanese before the source names the language: it still starts once it does
+        val unread = MangaReaderTranslationState(manga, translation, "unread")
+        unread.load("zh-Hant")
+        unread.autoStart("", "zh-Hant", readsJapanese = { false })
+        kotlin.test.assertEquals(false, unread.settings?.enabled)
+        unread.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals(true, unread.settings?.enabled)
+        kotlin.test.assertEquals("en", unread.settings?.from)
+
+        // or once the reader picks the language by hand, the source still saying nothing
+        val chosen = MangaReaderTranslationState(manga, translation, "chosen")
+        chosen.load("zh-Hant")
+        chosen.autoStart("", "zh-Hant", readsJapanese = { false })
+        chosen.update(chosen.settings!!.copy(from = "en", fromPicked = true))
+        chosen.autoStart("", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals(true, chosen.settings?.enabled)
+
+        // a source naming the reader's own language, corrected by hand while off, still starts
+        val own = MangaReaderTranslationState(manga, translation, "own")
+        own.load("zh-Hant")
+        own.autoStart("zh-Hant", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals(false, own.settings?.enabled)
+        own.update(own.settings!!.copy(from = "ja", fromPicked = true))
+        own.autoStart("zh-Hant", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals(true, own.settings?.enabled)
+
+        // a language picked while the first pages are read is not overwritten by what they tell
+        val probed = MangaReaderTranslationState(manga, translation, "probed")
+        probed.load("zh-Hant")
+        probed.autoStart("", "zh-Hant", readsJapanese = { probed.update(probed.settings!!.copy(from = "en")); true })
+        kotlin.test.assertEquals("en", probed.settings?.from)
+        kotlin.test.assertEquals(false, probed.settings?.enabled)
+
+        // Japanese, shown before the source says otherwise, picked by hand is kept too
+        val same = MangaReaderTranslationState(manga, translation, "same")
+        same.load("zh-Hant")
+        same.update(same.settings!!.copy(from = "ja", fromPicked = true))
+        same.autoStart("en", "zh-Hant", readsJapanese = { null })
+        kotlin.test.assertEquals("ja", same.settings?.from)
+    }
+
+    @Test
     fun aChapterLeftPartlyUntranslatedKeepsItsPagesAndOffersRetry() {
         if (packs == null || page == null) return
         val root = Files.createTempDirectory("manga-reader-partial").toFile()

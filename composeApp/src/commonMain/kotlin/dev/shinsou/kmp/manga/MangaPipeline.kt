@@ -18,7 +18,14 @@ public data class MangaModelPaths(
     val qnnDetector: String? = null,
     /** The directory of the QNN runtime's libraries, once downloaded. */
     val qnnRuntime: String? = null,
+    /** The recognisers for pages not in Japanese, by [MangaLanguages.recognizer], once downloaded. */
+    val ocr: Map<String, OcrModelPaths> = emptyMap(),
+    /** Fonts for target languages [font] does not cover well, by language, once downloaded. */
+    val fonts: Map<String, String> = emptyMap(),
 )
+
+/** A PaddleOCR recogniser's files: the shared line detector, its own model and characters. */
+public data class OcrModelPaths(val lineDetector: String, val recognizer: String, val characters: String)
 
 /**
  * The per-page steps of manga translation (ADR-0005 §4): [detect] and [read] analyse a page (they
@@ -74,32 +81,55 @@ public class MangaPipeline(
     /** What finds the regions, all together (a chapter read by another set is cached apart). */
     public val detectorId: String get() = detectors.joinToString("+") { it.id }
     private val vocab by lazy { readVocab(paths.vocab) }
-    // one reader per worker, each with its own sessions: workers read different pages at once
-    private val readers = List(tuning.ocrWorkers) {
-        lazy { MangaOcr(onnx, ops, open(paths.encoder, tuning.ocrThreads), open(paths.decoder, tuning.ocrThreads), vocab) }
+    // one set of readers per worker, each with its own sessions: workers read different pages at
+    // once; a worker's are only used by that worker, opened as the languages it reads need them
+    private val readers = List(tuning.ocrWorkers) { HashMap<String?, TextRecognizer>() }
+
+    private fun recognizer(worker: Int, language: String): TextRecognizer {
+        val key = MangaLanguages.recognizer(language)
+        return readers[worker % readers.size].getOrPut(key) {
+            if (key == null) {
+                MangaOcrRecognizer(MangaOcr(onnx, ops, open(paths.encoder, tuning.ocrThreads), open(paths.decoder, tuning.ocrThreads), vocab))
+            } else {
+                val files = paths.ocr[key] ?: throw MangaModelException("The text recognition models for $language are not installed")
+                PaddleOcr(
+                    onnx, ops, open(files.lineDetector, tuning.ocrThreads, variableShapes = true),
+                    open(files.recognizer, tuning.ocrThreads, variableShapes = true), readVocab(files.characters),
+                    if (key == "en") OcrScript.LATIN else OcrScript.CHINESE,
+                )
+            }
+        }
     }
+
+    /** What reads [language]'s pages, in what their readings are cached by (null: manga-ocr). */
+    public fun recognizerId(language: String): String? = MangaLanguages.recognizer(language)?.let { "ppocr5-$it" }
+
+    /** Whether [language]'s pages can be read here (their recogniser is installed). */
+    public fun reads(language: String): Boolean = MangaLanguages.recognizer(language).let { it == null || it in paths.ocr }
+
+    /** The font a translation into [to] is drawn in: its own where one is installed. */
+    private fun fontFor(to: String): String = paths.fonts[to] ?: paths.font
+
+    /** The font [to] is drawn in, in what drawn pages are cached by (null: [MangaModelPaths.font]). */
+    public fun fontId(to: String): String? = paths.fonts[to]?.let { "font-$to" }
     private val eraser by lazy { MangaEraser(ops, paths.inpaint?.let { MangaInpainter(onnx, open(it, tuning.inpaintThreads, variableShapes = true)) }) }
 
     /** Whether text over artwork is redrawn (pages drawn with and without it look different). */
     public val inpaints: Boolean get() = paths.inpaint != null
-    // one renderer and layout per worker: text measuring keeps a cache that is not shared
-    private val drawers = List(tuning.ocrWorkers) {
-        lazy { MangaRenderer(platform, paths.font).let { renderer -> renderer to MangaLayout(renderer.measure, ops::distanceTransform) } }
-    }
+    // one renderer and layout per worker and font: text measuring keeps a cache that is not shared
+    private val drawers = List(tuning.ocrWorkers) { HashMap<String, Pair<MangaRenderer, MangaLayout>>() }
 
     /** Detects with the [which]th detector; each is used by one worker at a time. */
     public fun detect(page: RgbImage, which: Int = 0): List<Detection> = detectorSet.value[which].first.detect(page)
 
     /**
-     * Reads the text regions of [detections] and returns the page analysis. Regions are read in
-     * fixed groups of [MangaOcr.BATCH] in detection order, so a page always reads the same.
+     * Reads the text regions of [detections], written in [language], and returns the page
+     * analysis. Regions are read the same way every time (manga-ocr in fixed groups of
+     * [MangaOcr.BATCH] in detection order), so a page always reads the same.
      */
-    public fun read(page: RgbImage, detections: List<Detection>, worker: Int = 0): PageAnalysis {
+    public fun read(page: RgbImage, detections: List<Detection>, worker: Int = 0, language: String = "ja"): PageAnalysis {
         val texts = detections.filter { it.kind != RegionKind.BUBBLE }
-        val ocr = readers[worker % readers.size].value
-        val read = texts.chunked(MangaOcr.BATCH).flatMap { group ->
-            ocr.read(group.map { page.crop(it.box.x0.toInt(), it.box.y0.toInt(), it.box.x1.toInt(), it.box.y1.toInt()) })
-        }
+        val read = recognizer(worker, language).read(page, texts.map { it.box })
         return PageAnalysis(
             width = page.width, height = page.height,
             regions = texts.mapIndexed { i, d ->
@@ -117,8 +147,13 @@ public class MangaPipeline(
      * Erases the regions that have a translation and draws it in their place. Regions that cannot
      * be erased cleanly (text over artwork, without the LaMa pack) keep their source text.
      */
-    public fun render(page: RgbImage, analysis: PageAnalysis, translations: Map<Int, String>, orientation: MangaOrientation, worker: Int = 0): RgbImage {
-        val (renderer, layout) = drawers[worker % drawers.size].value
+    public fun render(
+        page: RgbImage, analysis: PageAnalysis, translations: Map<Int, String>, orientation: MangaOrientation, worker: Int = 0, to: String? = null,
+    ): RgbImage {
+        val font = to?.let(::fontFor) ?: paths.font
+        val (renderer, layout) = drawers[worker % drawers.size].getOrPut(font) {
+            MangaRenderer(platform, font).let { renderer -> renderer to MangaLayout(renderer.measure, ops::distanceTransform) }
+        }
         val img = page.copy()
         val bubbles = analysis.bubbles.map { Box(it[0].toFloat(), it[1].toFloat(), it[2].toFloat(), it[3].toFloat()) }
         val placed = mutableListOf<PlacedText>()

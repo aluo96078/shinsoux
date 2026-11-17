@@ -60,6 +60,12 @@ public class MangaScript private constructor(
     public companion object {
         private const val PAGE_MARK = "⁣p"
 
+        /**
+         * Whether [page] has anything to translate: a region with letters (kana, kanji or any
+         * other). A page with none, or only page numbers and punctuation, is shown as it is.
+         */
+        public fun hasText(page: PageAnalysis): Boolean = page.regions.any { region -> region.text.any { it.isLetter() } }
+
         /** A region only of punctuation and symbols reads the same in any language. */
         public fun needsTranslation(text: String): Boolean = text.any { it.isLetterOrDigit() }
 

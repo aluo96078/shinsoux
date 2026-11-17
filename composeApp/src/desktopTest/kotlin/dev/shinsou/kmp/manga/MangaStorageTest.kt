@@ -98,6 +98,31 @@ class MangaStorageTest {
     }
 
     @Test
+    fun languagePacksAddTheirRecognisersAndFontsAndKeepJapanesePagesWhereTheyWere() {
+        val root = Files.createTempDirectory("manga").toFile()
+        fun install(pack: ModelPack) = pack.files.forEach { file ->
+            java.io.RandomAccessFile(root.resolve("${pack.id}/${file.name}").apply { parentFile.mkdirs() }, "rw").use { it.setLength(file.size) }
+        }
+        val store = MangaModelStore(root.absolutePath, HttpClient(MockEngine { respond("") }))
+        install(MangaModelCatalog.VISION)
+        install(MangaModelCatalog.OCR_ZH)
+        assertEquals(emptyMap(), assertNotNull(store.paths()).ocr, "a recogniser without the line detector is no use")
+        install(MangaModelCatalog.OCR_LINES)
+        val zh = assertNotNull(store.paths()).ocr.getValue("zh")
+        assertTrue(zh.lineDetector.endsWith("lines.onnx") && zh.recognizer.endsWith("rec.onnx") && zh.characters.endsWith("chars.txt"))
+        assertNull(assertNotNull(store.paths()).ocr["en"])
+        assertEquals(emptyMap(), assertNotNull(store.paths()).fonts)
+        install(MangaModelCatalog.FONT_SC)
+        assertTrue(assertNotNull(store.paths()).fonts.getValue("zh-Hans").endsWith("NotoSansSC-VF.ttf"))
+
+        val cache = MangaRenderCache(root.resolve("pages").path)
+        val japanese = cache.key("hash", "zh-Hant", "offline", MangaOrientation.VERTICAL)
+        assertEquals(japanese, cache.key("hash", "zh-Hant", "offline", MangaOrientation.VERTICAL, reader = null, font = null))
+        assertTrue(japanese != cache.key("hash", "zh-Hant", "offline", MangaOrientation.VERTICAL, reader = "ppocr5-zh"))
+        assertTrue(japanese != cache.key("hash", "zh-Hant", "offline", MangaOrientation.VERTICAL, font = "font-zh-Hans"))
+    }
+
+    @Test
     fun aPackWithDirectoriesDownloadsByAssetNameAndInstallsAsADirectory() = runBlocking<Unit> {
         val root = Files.createTempDirectory("manga").toFile()
         val bodies = mapOf("Manifest.json" to "{}".toByteArray(), "weight.bin" to ByteArray(4_000) { it.toByte() })
@@ -202,5 +227,44 @@ class MangaStorageTest {
         assertEquals(MangaCpuMode.BALANCED, store.cpuMode(), "balanced until chosen")
         store.setCpuMode(MangaCpuMode.SAVER)
         assertEquals(MangaCpuMode.SAVER, again.cpuMode())
+    }
+
+    @Test
+    fun everyDownloadIsListedWithItsSizeAndOldBuildsLeftoversCanBeRemoved() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("manga").toFile()
+        val runtime = NativeRuntime("rt-1", "https://maven.test/rt-1.aar", 1, "0", entries = listOf("jni/libA.so"), installedBytes = 300)
+        val npuPack = ModelPack("npu-v1", listOf(PackFile("detector.onnx", 1_000, sha(ByteArray(1_000) { 7 }))))
+        val store = MangaModelStore(root.absolutePath, HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }))
+        val manga = manga(NpuPlatform(DesktopMangaPlatform.create(), npuPack, runtime), store, root)
+        MangaModelCatalog.FONT_SC.files.forEach { root.resolve("font-sc-v1/${it.name}").apply { parentFile.mkdirs() }.writeBytes(ByteArray(10)) }
+        root.resolve("npu-v1").mkdirs(); root.resolve("npu-v1/detector.onnx.part").writeBytes(ByteArray(400))
+        root.resolve("runtime/rt-1").mkdirs(); root.resolve("runtime/rt-1/libA.so").writeBytes(ByteArray(300))
+        // what older builds left: a pack, a runtime, and the choices (files) which stay
+        root.resolve("vision-v0").mkdirs(); root.resolve("vision-v0/detector.onnx").writeBytes(ByteArray(2_000))
+        root.resolve("runtime/rt-0").mkdirs(); root.resolve("runtime/rt-0/libA.so").writeBytes(ByteArray(50))
+        store.selectAccelerators(setOf(MangaAccelerator.CPU))
+
+        val listed = manga.resources().associateBy { it.id }
+        val font = listed.getValue("font-sc-v1")
+        assertEquals(MangaResourceKind.FONT, font.kind); assertEquals(10, font.diskBytes); assertEquals("zh-Hans", font.language)
+        val vision = listed.getValue("vision-v1")
+        assertEquals(0, vision.diskBytes); assertEquals(MangaModelCatalog.VISION.downloadBytes, vision.missingBytes); assertFalse(vision.installed)
+        val npu = listed.getValue("npu-v1+rt-1")
+        assertEquals(listOf(MangaAccelerator.NPU), npu.accelerators)
+        assertEquals(700, npu.diskBytes, "a partial download counts"); assertEquals(1_000, npu.missingBytes)
+        assertEquals(mapOf("runtime/rt-0" to 50L, "vision-v0" to 2_000L),
+            listed.values.filter { it.kind == MangaResourceKind.LEFTOVER }.associate { it.id to it.diskBytes })
+
+        manga.removeResource(listed.getValue("vision-v0"))
+        manga.removeResource(listed.getValue("runtime/rt-0"))
+        manga.removeResource(font)
+        manga.removeResource(npu)
+        assertFalse(root.resolve("vision-v0").exists()); assertFalse(root.resolve("runtime/rt-0").exists())
+        assertFalse(root.resolve("font-sc-v1").exists()); assertFalse(root.resolve("npu-v1").exists()); assertFalse(root.resolve("runtime/rt-1").exists())
+        assertTrue(root.resolve("accelerators.txt").isFile, "settings are not resources")
+        assertTrue(manga.resources().none { it.kind == MangaResourceKind.LEFTOVER })
+        // only a name it listed is removed
+        store.removeLeftover("../outside", emptySet())
+        assertTrue(root.exists())
     }
 }
