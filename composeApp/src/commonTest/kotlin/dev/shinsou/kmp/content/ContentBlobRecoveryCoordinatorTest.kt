@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.content.BlobRef
 
 class ContentBlobRecoveryCoordinatorTest {
     @Test

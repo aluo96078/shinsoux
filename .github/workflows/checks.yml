@@ -1,0 +1,145 @@
+name: Checks
+
+# R2-3 (docs/architecture/0006): what every change has to pass before it is merged or released:
+# static analysis with its baselines, the layering check and the desktop tests (Linux, the
+# quickest runner), and the Android unit tests (macOS). release.yml calls this before it builds anything.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to check (the release source)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: detekt and its baselines
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: detekt
+        run: ./gradlew :composeApp:detektProduct -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+
+      # A baseline only shrinks: neither a pull request nor a push to master may add entries to it.
+      - name: Baselines do not grow (pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: scripts/ci/check_baselines_shrink.sh "origin/$BASE_REF"
+
+      - name: Baselines do not grow (push)
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # After a force push the commit that was there before is not in the clone any more.
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            scripts/ci/check_baselines_shrink.sh "$BEFORE"
+          else
+            echo "::warning::$BEFORE is not in this clone (force push?); the baselines were not compared"
+          fi
+
+  desktop:
+    name: Desktop tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: shinsoux
+          persist-credentials: false
+
+      - name: Check out official plugin fixtures
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: aluo96078/shinsou_plugin
+          ref: 0bbc4d7f2f571010ea2acec17de0ea90be144399
+          path: shinsou_plugin
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Desktop tests and coverage
+        working-directory: shinsoux
+        run: >-
+          ./gradlew :composeApp:desktopTest :composeApp:koverXmlReportDesktop
+          -PshinsouPluginRepository=../../shinsou_plugin
+          -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-test-reports
+          path: |
+            shinsoux/composeApp/build/reports/tests/desktopTest
+            shinsoux/composeApp/build/reports/kover
+          if-no-files-found: ignore
+
+  # macOS: the libsodium host library the crypto tests load does not load on the Linux runner
+  # (see sandbox-android.yml), which fails each of them before it starts.
+  android:
+    name: Android unit tests
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install required Android SDK packages
+        # NDK and CMake build sandbox-core's libshinsou_sandbox.so (ADR-0002 S2).
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Android unit tests
+        run: ./gradlew :composeApp:testDebugUnitTest -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace

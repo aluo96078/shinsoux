@@ -8,7 +8,7 @@ import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.content.ContentMigrationLookupStatus
 import dev.shinsou.kmp.content.ContentPublicationMutation
-import dev.shinsou.kmp.content.MAX_CONTENT_METADATA_JSON_CHARS
+import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
 import dev.shinsou.kmp.content.asContentAliasMutation
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Acquisition
@@ -27,6 +27,7 @@ import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.data.LegacyPublicationProjection
 
 public enum class LegacyPublicationMigrationStatus {
     UP_TO_DATE,

@@ -4,12 +4,12 @@ import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
-import dev.shinsou.kmp.content.TextBlock
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.content.TextBlock
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import dev.shinsou.kmp.reader.cfiWithTextOffset
-import dev.shinsou.kmp.reader.validate
+import dev.shinsou.kmp.domain.model.validate
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.RightsDecision
 import dev.shinsou.kmp.rights.RightsOperationContext

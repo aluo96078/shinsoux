@@ -3,6 +3,7 @@ package dev.shinsou.kmp.desktop
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.files.DesktopPlatform
 
 class DesktopKeepAwakeTest {
     @Test

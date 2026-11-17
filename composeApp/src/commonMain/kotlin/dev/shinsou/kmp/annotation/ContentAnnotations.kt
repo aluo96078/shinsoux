@@ -2,10 +2,10 @@ package dev.shinsou.kmp.annotation
 
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingRange
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.DerivedRightsCleanupTarget
 import dev.shinsou.kmp.rights.RightsDecision

@@ -7,8 +7,8 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import kotlin.test.Test
 import kotlin.test.assertEquals

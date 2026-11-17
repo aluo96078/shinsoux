@@ -6,6 +6,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.contract.ImportedDocumentLimits
+import dev.shinsou.kmp.contract.ImportedDocumentReadException
+import dev.shinsou.kmp.contract.readBoundedImportedBytes
 
 class ImportedDocumentReaderTest {
     @Test

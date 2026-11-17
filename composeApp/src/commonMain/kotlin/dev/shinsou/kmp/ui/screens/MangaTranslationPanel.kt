@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaChapterRequest
 import dev.shinsou.kmp.manga.MangaLanguages
 import dev.shinsou.kmp.translation.ChineseScript
@@ -51,11 +52,15 @@ import dev.shinsou.kmp.translation.TranslationDisplayMode
 import dev.shinsou.kmp.translation.TranslationException
 import dev.shinsou.kmp.translation.TranslationLabels
 import dev.shinsou.kmp.translation.WorkTranslationSettings
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.ReaderPage
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
+import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.FileSystem
@@ -219,7 +224,7 @@ public class MangaReaderTranslationState internal constructor(
             if (!now.enabled) settings = now.copy(from = named, to = if (now.to == named) targetFor(named, appLanguage) else now.to)
             else {
                 // on in a script it was only taken to be in: the one its pages are in, left off when it is the reader's own
-                val next = if (named == now.to) now.copy(enabled = false, from = named) else now.copy(from = named)
+                val next = if (named == now.to) now.copy(enabled = false, from = named, to = targetFor(named, appLanguage)) else now.copy(from = named)
                 settings = next
                 translation.saveSettings(workKey, next)
                 retry()
@@ -324,7 +329,7 @@ public class MangaReaderTranslationState internal constructor(
         textModelDownloadFailed = false
         systemLanguagesDownloading = true
         try {
-            val installed = runCatching { translation.downloadSystemLanguages(s.from, s.to) }.getOrDefault(false)
+            val installed = runCatchingCancellable { translation.downloadSystemLanguages(s.from, s.to) }.getOrDefault(false)
             if (installed && !translation.systemLanguagesMissing(s.from, s.to)) { systemLanguagesMissing = false; retry() } else textModelDownloadFailed = true
         } finally {
             systemLanguagesDownloading = false
@@ -452,6 +457,8 @@ public fun rememberMangaReaderTranslation(
         state.textModelBytes = 0; state.systemLanguagesMissing = false
         if (settings == null || !settings.enabled || !state.deviceSupported || !state.modelsInstalled || pageCount == 0) return@LaunchedEffect
         state.failure = null
+        val run = currentCoroutineContext().job
+        val shown = currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Main.immediate
         try {
             // The recogniser for the work's language (and the font for its translation) come first.
             state.languagePackBytes = manga.missingLanguageBytes(settings.from, settings.to)
@@ -475,7 +482,11 @@ public fun rememberMangaReaderTranslation(
                     exportable = exportable, labels = labels,
                 ),
                 onProgress = { state.progress = it },
-            ) { i, jpeg -> if (jpeg != null) state.translated[pageKey(i)] = jpeg }
+            ) { i, jpeg ->
+                // On the thread that clears the pages for the next chapter, and only while this is
+                // still the chapter shown: a page drawn after the reader moved on is the old chapter's.
+                if (jpeg != null) withContext(NonCancellable + shown) { if (run.isActive) state.translated[pageKey(i)] = jpeg }
+            }
             state.lastRun = manga.lastRun
             // The pages drawn so far stay shown; the chapter is not done until every line is
             // translated (a provider can stop short, an LLM's answer be cut off), and says so.

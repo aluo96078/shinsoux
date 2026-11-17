@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SourceLoginResult
-import dev.shinsou.kmp.ui.SourceLoginFailureStage
+import dev.shinsou.kmp.contract.SourceLoginResult
+import dev.shinsou.kmp.contract.SourceLoginFailureStage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

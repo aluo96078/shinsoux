@@ -21,6 +21,13 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 
 @Serializable
 private data class SqlDraft(val draftId: String, val requiresV2: Boolean = false)
@@ -57,7 +64,7 @@ class SqlDriverContentTransactionStoreTest {
                 migrations = listOf(migration),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -70,7 +77,7 @@ class SqlDriverContentTransactionStoreTest {
             // different one-use receipt object, but the durable migration ledger still permits a
             // semantic replay.
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -94,7 +101,7 @@ class SqlDriverContentTransactionStoreTest {
     @Test
     fun oversizedDurablePayloadsAreRejectedBeforeJsonAndOutboxDecode() {
         withDatabase("content-oversized-durable-payload") { database ->
-            val driver = JdbcSqliteDriver("jdbc:sqlite:$database")
+            val driver = contentDriver(database)
             val store = SqlDriverContentTransactionStore(
                 driver,
                 InMemoryContentBlobStore(),
@@ -165,14 +172,14 @@ class SqlDriverContentTransactionStoreTest {
                 migrations = listOf(migration),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
             ).also { it.commit(batch).also { result -> assertFalse(result.replayed) }; it.close() }
 
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -193,7 +200,7 @@ class SqlDriverContentTransactionStoreTest {
             val retained = migration("7")
             val imported = migration("8")
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -250,7 +257,7 @@ class SqlDriverContentTransactionStoreTest {
                 migrations = listOf(migration),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -265,7 +272,7 @@ class SqlDriverContentTransactionStoreTest {
             val republished = blobStore.put(first.reference, "hello".encodeToByteArray())
             assertEquals(1, blobStore.pendingReceiptCount)
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -315,7 +322,7 @@ class SqlDriverContentTransactionStoreTest {
                 migrations = listOf(migration),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -331,7 +338,7 @@ class SqlDriverContentTransactionStoreTest {
                 textManifest(newBlob.reference, manifestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef"),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -371,7 +378,7 @@ class SqlDriverContentTransactionStoreTest {
                 migrations = listOf(migration),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 originalStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -386,7 +393,7 @@ class SqlDriverContentTransactionStoreTest {
             val freshStore = InMemoryContentBlobStore(configuredStoreInstanceId = "fresh-participant")
             val republished = freshStore.put(first.reference, "hello".encodeToByteArray())
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 freshStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -425,7 +432,7 @@ class SqlDriverContentTransactionStoreTest {
                 attachments = listOf(attachment),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 originalStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -437,7 +444,7 @@ class SqlDriverContentTransactionStoreTest {
             val freshStore = InMemoryContentBlobStore(configuredStoreInstanceId = "normal-fresh")
             val republished = freshStore.put(first.reference, "hello".encodeToByteArray())
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 freshStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -491,7 +498,7 @@ class SqlDriverContentTransactionStoreTest {
                 outbox = listOf(SqlDraft("shared-draft")),
             )
             val store = SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -527,13 +534,13 @@ class SqlDriverContentTransactionStoreTest {
                 attachments = listOf(attachment),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
             ).also { store -> store.commit(batch); store.close() }
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
             ).also { reopened ->
@@ -568,7 +575,7 @@ class SqlDriverContentTransactionStoreTest {
                 attachments = listOf(attachment),
             )
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -583,7 +590,7 @@ class SqlDriverContentTransactionStoreTest {
 
             // The SQL row contains the admitted snapshot, not the caller's later mutation.
             SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(configuredStoreInstanceId = "immutable-sql-reopened"),
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -603,7 +610,7 @@ class SqlDriverContentTransactionStoreTest {
     @Test
     fun corruptAttachmentRefLedgerFailsClosedBeforeASecondCommit() {
         withDatabase("content-corrupt-refs") { database ->
-            val driver = JdbcSqliteDriver("jdbc:sqlite:$database")
+            val driver = contentDriver(database)
             val blobStore = InMemoryContentBlobStore()
             val receipt = blobStore.put("body".encodeToByteArray(), "text/plain")
             val attachment = ManifestAttachment(owner(5), textManifest(receipt.reference))
@@ -658,7 +665,7 @@ class SqlDriverContentTransactionStoreTest {
                 override fun decode(payload: String): SqlDraft = SqlDraftAdapter.decode(payload)
             }
             val store = SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 slowAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -715,7 +722,7 @@ class SqlDriverContentTransactionStoreTest {
             val receipt = blobStore.put("body".encodeToByteArray(), "text/plain")
             val attachment = ManifestAttachment(owner(2), textManifest(receipt.reference))
             val store = SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
                 syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -756,7 +763,7 @@ class SqlDriverContentTransactionStoreTest {
                 outbox = listOf(SqlDraft("v2", requiresV2 = true)),
             )
             val store = SqlDriverContentTransactionStore(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 blobStore,
                 SqlDraftAdapter,
             )
@@ -781,7 +788,7 @@ class SqlDriverContentTransactionStoreTest {
     fun defaultV1AuthorityRejectsMetadataAndAliasesAndCanDeferThem() {
         withDatabase("content-v1-metadata") { database ->
             val store = SqlDriverContentTransactionStore<SqlDraft>(
-                JdbcSqliteDriver("jdbc:sqlite:$database"),
+                contentDriver(database),
                 InMemoryContentBlobStore(),
                 SqlDraftAdapter,
             )
@@ -871,3 +878,7 @@ class SqlDriverContentTransactionStoreTest {
         }
     }
 }
+
+/** R3-4 (0006): configured as the app does (synchronous, WAL; foreign keys last only for a connection); the store no longer does it. */
+private fun contentDriver(database: Path): JdbcSqliteDriver =
+    JdbcSqliteDriver("jdbc:sqlite:$database").also(ContentConnection::configure)

@@ -1,13 +1,13 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackage
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ImagePage
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
@@ -15,6 +15,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 
 class UnifiedReaderNavigationTest {
     @Test

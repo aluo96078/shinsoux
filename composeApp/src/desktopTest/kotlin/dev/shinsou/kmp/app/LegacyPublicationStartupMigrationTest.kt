@@ -17,7 +17,7 @@ import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
 import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.ui.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocument
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals

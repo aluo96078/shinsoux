@@ -21,7 +21,7 @@ import dev.shinsou.kmp.domain.model.TrackerAccountState
 import dev.shinsou.kmp.domain.model.UpdateItem
 import dev.shinsou.kmp.domain.model.applying
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
-import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingLocator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

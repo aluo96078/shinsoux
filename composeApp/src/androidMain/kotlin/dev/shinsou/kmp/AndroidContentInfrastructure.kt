@@ -22,6 +22,8 @@ internal class AndroidContentInfrastructure(context: Context) : PlatformContentI
     override fun contentBlobDirectory(): String =
         storageDirectory.resolve("content-blobs").absolutePath
 
+    override fun databaseFile(): String = applicationContext.getDatabasePath(DATABASE_NAME).absolutePath
+
     override fun close() = synchronized(driverLock) {
         openDriver?.close()
         openDriver = null

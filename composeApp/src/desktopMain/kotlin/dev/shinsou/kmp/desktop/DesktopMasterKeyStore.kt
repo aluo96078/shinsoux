@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import java.nio.file.Path
+import dev.shinsou.kmp.files.DesktopPlatform
 
 /** Storage boundary for the AES key used by desktop plugin state. */
 internal interface DesktopMasterKeyStore {

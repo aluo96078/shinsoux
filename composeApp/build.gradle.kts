@@ -4,7 +4,9 @@ import org.gradle.api.attributes.LibraryElements
 import org.gradle.api.attributes.Usage
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
-import java.net.IDN
+import dev.shinsou.build.CopyAppIcon
+import dev.shinsou.build.GenerateBuildInfo
+import dev.shinsou.build.GeneratePublicSuffixData
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -12,6 +14,39 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.detekt)
+    alias(libs.plugins.kover)
+    id("shinsou.codegen")
+}
+
+// R2-1 (0006): existing findings live in the baseline; it may only shrink.
+detekt {
+    buildUponDefaultConfig = true
+    parallel = true
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    baseline = rootProject.file("config/detekt/baseline.xml")
+}
+
+// What CI runs: the desktop compilation with type resolution (common, JVM and desktop sources;
+// the serialization plugin and expect/actual are not seen there, so a few type-based rules are
+// approximate) and the Android and iOS sources without it.
+tasks.register("detektProduct") {
+    group = "verification"
+    description = "Runs detekt over every product source set against the committed baselines."
+    dependsOn("detektMainDesktop", "detektAndroidMainSourceSet", "detektIosMainSourceSet")
+}
+
+// R2-5 (0006): coverage is reported, not yet enforced; generated code is left out of it.
+kover {
+    reports {
+        filters {
+            excludes {
+                packages("dev.aluo.shinsoux.generated.resources")
+                classes("*ComposableSingletons*", "*.BuildInfoKt")
+                annotatedBy("androidx.compose.runtime.Composable")
+            }
+        }
+    }
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.2")
@@ -338,90 +373,20 @@ dependencies {
     )
 }
 
-/**
- * The vendored Public Suffix List (psl/public_suffix_list.dat, see psl/README.md) as Kotlin data:
- * rules only, internationalized ones converted to ASCII (punycode) with IDN so the app
- * compares plain lowercase ASCII host names on every platform. Built at compile time only; the app
- * never downloads the list.
- */
-abstract class GeneratePublicSuffixData : DefaultTask() {
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val listFile: RegularFileProperty
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @TaskAction
-    fun generate() {
-        val rules = listFile.get().asFile.readLines()
-            .map { it.substringBefore(' ').substringBefore('\t').trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("//") }
-            .map { rule ->
-                val prefix = when {
-                    rule.startsWith("!") -> "!"
-                    rule.startsWith("*.") -> "*."
-                    else -> ""
-                }
-                val ascii = IDN.toASCII(rule.removePrefix(prefix), IDN.ALLOW_UNASSIGNED).lowercase()
-                require(ascii.all { it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.' }) { "Unexpected rule '$rule'" }
-                prefix + ascii
-            }
-            .distinct()
-        require(rules.size > 5_000) { "Public Suffix List looks truncated (${rules.size} rules)" }
-        val chunks = rules.joinToString("\n").chunked(30_000)
-        val directory = outputDirectory.get().asFile.resolve("dev/shinsou/kmp/plugin/network")
-        directory.mkdirs()
-        directory.resolve("PublicSuffixData.kt").writeText(
-            buildString {
-                appendLine("// Generated from composeApp/psl/public_suffix_list.dat by generatePublicSuffixData. Do not edit.")
-                appendLine("package dev.shinsou.kmp.plugin.network")
-                appendLine()
-                appendLine("internal val PUBLIC_SUFFIX_RULE_CHUNKS: Array<String> = arrayOf(")
-                chunks.forEach { chunk ->
-                    append("    \"")
-                    chunk.forEach { c -> append(if (c == '\n') "\\n" else c.toString()) }
-                    appendLine("\",")
-                }
-                appendLine(")")
-            },
-        )
-    }
-}
-
-/**
- * The display version (`-PreleaseDisplayVersion`, else the default above) as a Kotlin constant, so
- * the About screen, backups and the sync device record always name the version that was built.
- */
-abstract class GenerateBuildInfo : DefaultTask() {
-    @get:Input
-    abstract val displayVersion: Property<String>
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @TaskAction
-    fun generate() {
-        val version = displayVersion.get()
-        require(Regex("""[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?""").matches(version)) {
-            "Unexpected release display version '$version'"
-        }
-        val directory = outputDirectory.get().asFile.resolve("dev/shinsou/kmp/app")
-        directory.mkdirs()
-        directory.resolve("ShinsouBuildInfo.kt").writeText(
-            buildString {
-                appendLine("// Generated by generateBuildInfo from the release display version. Do not edit.")
-                appendLine("package dev.shinsou.kmp.app")
-                appendLine()
-                appendLine("public const val SHINSOU_APP_VERSION: String = \"$version\"")
-            },
-        )
-    }
-}
-
 val generateBuildInfo by tasks.registering(GenerateBuildInfo::class) {
     displayVersion.set(releaseDisplayVersion)
     outputDirectory.set(layout.buildDirectory.dir("generated/buildInfo/commonMain/kotlin"))
+}
+
+val copyAndroidAppIcon by tasks.registering(CopyAppIcon::class) {
+    icon.set(layout.projectDirectory.file("src/commonMain/composeResources/drawable/shinsou_icon.png"))
+    // outputDirectory is set by addGeneratedSourceDirectory below (build/generated/res/copyAndroidAppIcon).
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(copyAndroidAppIcon, CopyAppIcon::outputDirectory)
+    }
 }
 
 val generatePublicSuffixData by tasks.registering(GeneratePublicSuffixData::class) {
@@ -712,6 +677,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.serialization.json.okio)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.encoding)
@@ -732,7 +698,6 @@ kotlin {
             dependencies {
                 implementation(libs.coil.network.ktor)
                 implementation(libs.jsoup)
-                implementation(libs.rhino)
                 implementation(libs.ktor.client.okhttp)
                 // ADR-0005: Android and desktop share one implementation over the same Java APIs
                 // (ai.onnxruntime, org.opencv); each platform below supplies the binaries.
@@ -808,7 +773,20 @@ kotlin {
             }
         }
 
+        // R4-5 (docs/architecture/0006): the in-process Rhino engine only serves tests and parity
+        // checks; packages always run sandboxed, so the product build cannot reach it.
+        val jvmCommonTest by creating {
+            dependsOn(commonTest.get())
+            dependencies {
+                implementation(libs.rhino)
+            }
+        }
+        val androidUnitTest by getting {
+            dependsOn(jvmCommonTest)
+        }
+
         val desktopTest by getting {
+            dependsOn(jvmCommonTest)
             resources.srcDir(shinsouPluginSources)
             dependencies {
                 // Compose UI tests of reader panels (the translation panel).

@@ -1,8 +1,9 @@
 package dev.shinsou.kmp.manga
 
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.translation.ChapterTranslation
-import dev.shinsou.kmp.translation.ChineseScript
 import dev.shinsou.kmp.translation.ChapterTranslationRequest
+import dev.shinsou.kmp.translation.ChineseScript
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationLabels
 import kotlinx.coroutines.CancellationException
@@ -10,12 +11,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -556,11 +557,13 @@ public class MangaTranslation(
                 if (i < n && loads[i] == null) loads[i] = async(work) {
                     // null: a page left as it is on purpose (scrambled, not an image); thrown, or
                     // undecodable: a page that should have been read and was not
+                    @Suppress("TooGenericExceptionCaught") // any failure leaves this page unread
                     val bytes = try {
                         request.loadPage(i)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
-                    } catch (_: Exception) {
+                    } catch (error: Exception) {
+                        Log.warn("MangaTranslation", error) { "page $i could not be loaded" }
                         unreadPages.addAndFetch(1); null
                     } ?: return@async null
                     val image = codec.decode(bytes) ?: run { unreadPages.addAndFetch(1); return@async null }
@@ -572,7 +575,7 @@ public class MangaTranslation(
             }
             for (i in 0 until n) {
                 for (ahead in i until i + tuning.pageLoadsAhead) startLoad(ahead)
-                val loaded = loads[i]!!.await(); loads[i] = null
+                val loaded = loads.filled(i, "load").await(); loads[i] = null
                 if (loaded == null) { detected.send(Triple(i, RgbImage(1, 1, ByteArray(3)), null)); continue }
                 val image = loaded.image; val hash = loaded.hash
                 hashes[i] = hash; encoded[i] = loaded.bytes
@@ -599,7 +602,7 @@ public class MangaTranslation(
                     onProgress(MangaProgress.Reading(count, n))
                     val analysis = pipeline.read(image, detections, worker, request.from)
                     analyses[i] = analysis
-                    store.withLock { withContext(Dispatchers.IO) { pages.put(hashes[i]!!, analysis, readVersion(i)) } }
+                    store.withLock { withContext(Dispatchers.IO) { pages.put(hashes.filled(i, "hash"), analysis, readVersion(i)) } }
                     pageReady.trySend(i)
                 }
             }
@@ -620,7 +623,7 @@ public class MangaTranslation(
         // a page with no text (none found, or only page numbers and punctuation) is neither
         // translated nor drawn: the reader shows it as it is
         val readable = (0 until n).filter { analyses[it]?.let(MangaScript::hasText) == true }
-        val script = MangaScript.build(readable.map { analyses[it]!! }, request.direction)
+        val script = MangaScript.build(readable.map { analyses.filled(it, "analysis") }, request.direction)
         val translated = translator.translate(
             ChapterTranslationRequest(
                 workKey = request.workKey, chapterKey = request.chapterKey, text = script.text,
@@ -646,11 +649,11 @@ public class MangaTranslation(
                     val i = readable[position]
                     onProgress(MangaProgress.Drawing(drawing.addAndFetch(1), readable.size))
                     val drawnText = byPage[position].orEmpty().entries.sortedBy { it.key }.joinToString("\u0001") { "${it.key}\u0002${it.value}" }
-                    val key = renders.key(hashes[i]!!, request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i), translation = drawnText, reader = reader, font = font)
+                    val key = renders.key(hashes.filled(i, "hash"), request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i), translation = drawnText, reader = reader, font = font)
                     val cached = if (reuseDrawn) withContext(Dispatchers.IO) { renders.get(key) } else null
                     val jpeg = cached ?: run {
-                        val image = codec.decode(encoded[i]!!) ?: return@run null
-                        codec.encodeJpeg(pipeline.render(image, analyses[i]!!, byPage[position].orEmpty(), request.orientation, worker, request.to), 90)
+                        val image = codec.decode(encoded.filled(i, "image")) ?: return@run null
+                        codec.encodeJpeg(pipeline.render(image, analyses.filled(i, "analysis"), byPage[position].orEmpty(), request.orientation, worker, request.to), 90)
                     }?.also {
                         // A page drawn from an incomplete translation is shown, never kept: kept,
                         // it would stand in for the page once the rest is translated.
@@ -673,7 +676,7 @@ public class MangaTranslation(
         )
         // Only a chapter whose every page was drawn: a page that failed to load is tried again.
         if (n > 0 && drawnKeys.all { it != null } && translated.complete) {
-            withContext(Dispatchers.IO) { pages.putChapterRenders(request.workKey, request.chapterKey, variant, drawnKeys.map { it!! }) }
+            withContext(Dispatchers.IO) { pages.putChapterRenders(request.workKey, request.chapterKey, variant, drawnKeys.filterNotNull()) }
         }
         translated.complete && unreadPages.load() == 0
     }
@@ -716,11 +719,11 @@ public class MangaTranslation(
         suspend fun draw(worker: Int, i: Int, translations: Map<Int, String>, complete: Boolean) {
             onProgress(MangaProgress.Drawing(drawing.addAndFetch(1).coerceAtMost(n), n))
             val drawnText = translations.entries.sortedBy { it.key }.joinToString("\u0001") { "${it.key}\u0002${it.value}" }
-            val key = renders.key(hashes[i]!!, request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i), translation = drawnText, reader = reader, font = font)
+            val key = renders.key(hashes.filled(i, "hash"), request.to, provider, request.orientation, inpaint = pipeline.inpaints, detector = detectorOf(i), translation = drawnText, reader = reader, font = font)
             val cached = if (reuseDrawn) withContext(Dispatchers.IO) { renders.get(key) } else null
             val jpeg = cached ?: run {
-                val image = codec.decode(encoded[i]!!) ?: return@run null
-                codec.encodeJpeg(pipeline.render(image, analyses[i]!!, translations, request.orientation, worker, request.to), 90)
+                val image = codec.decode(encoded.filled(i, "image")) ?: return@run null
+                codec.encodeJpeg(pipeline.render(image, analyses.filled(i, "analysis"), translations, request.orientation, worker, request.to), 90)
             }?.also {
                 // drawn from an incomplete translation: shown, never kept
                 if (it !== cached && complete) renders.put(key, it)
@@ -751,7 +754,7 @@ public class MangaTranslation(
                 handOver.withLock { onPage(i, null) }
             }
             if (part.isNotEmpty()) {
-                val script = MangaScript.build(part.map { analyses[it]!! }, request.direction)
+                val script = MangaScript.build(part.map { analyses.filled(it, "analysis") }, request.direction)
                 val began = kotlin.time.TimeSource.Monotonic.markNow()
                 val translated = translator.translate(
                     ChapterTranslationRequest(
@@ -787,7 +790,7 @@ public class MangaTranslation(
         // The chapter as a whole: every line is in the memory now, so this mostly records it; the
         // lines a part was left without are asked for again, and pages drawn without them redrawn.
         val readable = (0 until n).filter { analyses[it]?.let(MangaScript::hasText) == true }
-        val script = MangaScript.build(readable.map { analyses[it]!! }, request.direction)
+        val script = MangaScript.build(readable.map { analyses.filled(it, "analysis") }, request.direction)
         val began = kotlin.time.TimeSource.Monotonic.markNow()
         val whole = translator.translate(
             ChapterTranslationRequest(
@@ -814,12 +817,18 @@ public class MangaTranslation(
             detector = detectorStats, firstPageMs = firstPage?.inWholeMilliseconds ?: 0, flow = MangaTranslationFlow.PROGRESSIVE,
         )
         if (n > 0 && drawnKeys.all { it != null } && whole.complete && partsComplete) {
-            withContext(Dispatchers.IO) { pages.putChapterRenders(request.workKey, request.chapterKey, variant, drawnKeys.map { it!! }) }
+            withContext(Dispatchers.IO) { pages.putChapterRenders(request.workKey, request.chapterKey, variant, drawnKeys.filterNotNull()) }
         }
         // a retry draws them from the memory, where the whole chapter's request left its lines
         whole.complete && partsComplete && unreadPages.load() == 0
     }
 
+    /**
+     * The language and script guesses below, per work. The panel (in the UI's scope) and the
+     * prefetch (on [Dispatchers.Default]) ask at the same time, so the maps are only touched under
+     * [guessLock]; the probe itself runs outside it, and two that race just both write the same guess.
+     */
+    private val guessLock = Mutex()
     private val japaneseGuesses = mutableMapOf<String, Boolean>()
 
     /** A page for a language probe; null when it cannot be loaded. A probe cancelled stops, not guesses from fewer pages. */
@@ -860,7 +869,7 @@ public class MangaTranslation(
      * app runs, so reopening the work does not read the pages again.
      */
     public suspend fun readsJapanese(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): Boolean? {
-        japaneseGuesses[workKey]?.let { return it }
+        guessLock.withLock { japaneseGuesses[workKey] }?.let { return it }
         val codec = platform?.codec ?: return null
         if (!modelsInstalled() || pageCount == 0) return null
         var held: MangaPipeline? = null
@@ -876,7 +885,16 @@ public class MangaTranslation(
             held?.let { withContext(NonCancellable) { done(it) } }
         }
         currentCoroutineContext().ensureActive()
-        return looksJapanese(texts)?.also { japaneseGuesses[workKey] = it }
+        return guessedJapanese(workKey, texts)
+    }
+
+    /** [looksJapanese] for [texts], remembered for the work when it is the work's answer. */
+    private suspend fun guessedJapanese(workKey: String, texts: List<String>): Boolean? {
+        val guess = looksJapanese(texts) ?: return null
+        // "Not Japanese" from a little text (a cover, a colophon) is this chapter's answer, not the work's
+        val settled = guess || texts.sumOf { t -> t.count { it.isLetter() } } >= ENOUGH_LETTERS
+        if (settled) guessLock.withLock { japaneseGuesses[workKey] = guess }
+        return guess
     }
 
     private val scriptGuesses = mutableMapOf<String, String>()
@@ -888,7 +906,7 @@ public class MangaTranslation(
      * pages, too little text. Remembered for [workKey] while the app runs.
      */
     public suspend fun readsChineseScript(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): String? {
-        scriptGuesses[workKey]?.let { return it }
+        guessLock.withLock { scriptGuesses[workKey] }?.let { return it }
         val codec = platform?.codec ?: return null
         if (!modelsInstalled() || pageCount == 0) return null
         var held: MangaPipeline? = null
@@ -905,7 +923,7 @@ public class MangaTranslation(
             held?.let { withContext(NonCancellable) { done(it) } }
         }
         currentCoroutineContext().ensureActive()
-        return ChineseScript.detect(texts.joinToString("\n"), minimum = MIN_SCRIPT_CHARACTERS)?.also { scriptGuesses[workKey] = it }
+        return ChineseScript.detect(texts.joinToString("\n"), minimum = MIN_SCRIPT_CHARACTERS)?.also { guess -> guessLock.withLock { scriptGuesses[workKey] = guess } }
     }
 
     /**
@@ -950,3 +968,6 @@ internal fun looksJapanese(texts: List<String>): Boolean? {
     val kana = texts.sumOf { t -> t.count { it in 'ぁ'..'ヺ' && it != '・' } }
     return kana >= 4 && kana * 100 >= letters * 15
 }
+
+/** The value an earlier stage of the chapter put in page [page]'s slot; empty means the stages ran out of order. */
+private fun <T : Any> Array<T?>.filled(page: Int, what: String): T = checkNotNull(this[page]) { "The $what of page $page is not ready" }

@@ -18,6 +18,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.contract.BrowseExtension
+import dev.shinsou.kmp.contract.BrowseSnapshot
+import dev.shinsou.kmp.contract.BrowseSource
 
 private val emptyBrowseState = kotlinx.coroutines.flow.MutableStateFlow(BrowseSnapshot())
 

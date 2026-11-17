@@ -2,8 +2,8 @@ package dev.shinsou.kmp.local
 
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.ui.ContentCallbacks
-import dev.shinsou.kmp.ui.ImportedDocument
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.contract.ImportedDocument
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals

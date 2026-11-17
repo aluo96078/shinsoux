@@ -1,19 +1,19 @@
 package dev.shinsou.kmp
 
 import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.app.ContentFeatureRuntime
+import dev.shinsou.kmp.features.ContentFeatureRuntime
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
-import dev.shinsou.kmp.ui.BrowseCallbacks
+import dev.shinsou.kmp.contract.BrowseCallbacks
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
-import dev.shinsou.kmp.ui.ContentCallbacks
-import dev.shinsou.kmp.ui.ImportedDocument
-import dev.shinsou.kmp.ui.ImportedDocumentLimits
-import dev.shinsou.kmp.ui.ImportedDocumentReadException
-import dev.shinsou.kmp.ui.ImportedDocumentSource
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.contract.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocumentLimits
+import dev.shinsou.kmp.contract.ImportedDocumentReadException
+import dev.shinsou.kmp.contract.ImportedDocumentSource
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEventSink
@@ -23,8 +23,8 @@ import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.SystemBackGestureEvent
 import dev.shinsou.kmp.ui.mobileSecurityCapabilities
-import dev.shinsou.kmp.ui.readBoundedImportedBytes
-import dev.shinsou.kmp.ui.requireImportedDocumentSize
+import dev.shinsou.kmp.contract.readBoundedImportedBytes
+import dev.shinsou.kmp.contract.requireImportedDocumentSize
 import dev.shinsou.kmp.ui.writeCheckedTo
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController

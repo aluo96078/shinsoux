@@ -22,6 +22,9 @@ internal val AppUpdateTraditional: Map<String, String> = mapOf(
     "Last updated November 15, 2026" to "最後更新：2026 年 11 月 15 日",
     "Update checks are off unless you switch them on. When they are on, Shinsou X reads the public list of its releases on GitHub each time it starts. GitHub receives normal request information such as your IP address; nothing else is sent." to
         "檢查更新預設關閉，需由你自行開啟。開啟後，Shinsou X 每次啟動時會讀取 GitHub 上公開的版本清單。GitHub 會收到一般的請求資訊（例如 IP 位址），除此之外不傳送任何資料。",
+    "Update Shinsou X" to "請更新 Shinsou X",
+    "This library was last opened by a newer version of Shinsou X ({0} data, format {1}; this version reads up to {2}). Install the newest version to keep it intact; nothing has been changed." to
+        "這個書庫最近一次由較新版本的 Shinsou X 開啟（{0} 資料格式 {1}，此版本最高只能讀取 {2}）。請安裝最新版本以免資料受損；目前沒有任何資料被更動。",
 )
 
 internal val AppUpdateSimplified: Map<String, String> = mapOf(
@@ -45,4 +48,7 @@ internal val AppUpdateSimplified: Map<String, String> = mapOf(
     "Last updated November 15, 2026" to "最后更新：2026 年 11 月 15 日",
     "Update checks are off unless you switch them on. When they are on, Shinsou X reads the public list of its releases on GitHub each time it starts. GitHub receives normal request information such as your IP address; nothing else is sent." to
         "检查更新默认关闭，需由你自行开启。开启后，Shinsou X 每次启动时会读取 GitHub 上公开的版本列表。GitHub 会收到一般的请求信息（例如 IP 地址），除此之外不发送任何数据。",
+    "Update Shinsou X" to "请更新 Shinsou X",
+    "This library was last opened by a newer version of Shinsou X ({0} data, format {1}; this version reads up to {2}). Install the newest version to keep it intact; nothing has been changed." to
+        "这个书库最近一次由较新版本的 Shinsou X 打开（{0} 数据格式 {1}，此版本最高只能读取 {2}）。请安装最新版本以免数据受损；目前没有任何数据被更改。",
 )

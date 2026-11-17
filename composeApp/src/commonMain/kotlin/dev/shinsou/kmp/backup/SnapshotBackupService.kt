@@ -28,7 +28,19 @@ object SnapshotBackupService {
         )
     }
 
+    /** [encode] as UTF-8 bytes, without the whole library as a `String` in between (R3-5). */
+    fun encodeToBytes(envelope: BackupEnvelope): ByteArray {
+        val validated = envelope.validate()
+        return AppSnapshotJson.format.encodeToUtf8(
+            BackupEnvelope.serializer(),
+            validated.copy(snapshot = validated.snapshot.withoutPortableSecrets()),
+        )
+    }
+
     fun decode(encoded: String): BackupEnvelope = AppSnapshotJson.format.decodeFromString<BackupEnvelope>(encoded).validate()
+
+    fun decode(encoded: ByteArray): BackupEnvelope =
+        AppSnapshotJson.format.decodeFromUtf8(BackupEnvelope.serializer(), encoded).validate()
 
     /**
      * Applies selected backup domains with replace semantics while preserving unselected domains.

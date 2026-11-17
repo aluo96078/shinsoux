@@ -1,0 +1,35 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:AndroidAppServices.kt:internal fun imageMimeType: String</ID>
+    <ID>CyclomaticComplexMethod:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
+    <ID>LoopWithTooManyJumpStatements:AndroidSandboxTransport.kt:AndroidSandboxTransport$while</ID>
+    <ID>ReturnCount:AndroidAppServices.kt:AndroidAppServices$fun emitReaderVolumeKey: Boolean</ID>
+    <ID>ReturnCount:AndroidDownloadJobService.kt:AndroidDownloadJobService.Companion$fun schedule: Boolean</ID>
+    <ID>ReturnCount:AndroidMangaPlatform.kt:AndroidMangaPlatform$override fun acceleratedDetector: PageDetector?</ID>
+    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$override suspend fun getString: String?</ID>
+    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$private fun ensureSensitiveValuesMigrated</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$@Deprecated("Legacy WebView callback retained for old engines") override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun configure</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun documentLoadFailed: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun sampleViewport</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldInterceptRequest: WebResourceResponse?</ID>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:AndroidChallengeState$private fun openPendingUrlIfMeasured</ID>
+    <ID>SwallowedException:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: RemoteException</ID>
+    <ID>SwallowedException:PlatformWebChallengeView.android.kt:AndroidChallengeState$cancelled: CancellationException</ID>
+    <ID>ThrowsCount:AndroidOfflineTranslationEngine.kt:AndroidOfflineTranslationEngine$override suspend fun translate: List&lt;String&gt;</ID>
+    <ID>ThrowsCount:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$suspend fun open: AndroidSandboxTransport</ID>
+    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher$private fun readDocument: ImportedDocument</ID>
+    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$override fun read: ByteArray</ID>
+    <ID>TooGenericExceptionCaught:AndroidAppRuntime.kt:AndroidAppRuntime$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:AndroidDownloadJobService.kt:AndroidDownloadJobService$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PlatformWebChallengeView.android.kt:AndroidChallengeState$failure: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

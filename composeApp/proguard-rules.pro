@@ -44,18 +44,6 @@
 -keep interface dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$CoreGraphicsFramework { *; }
 -keep class dev.shinsou.kmp.network.JnaMacOsAvifImageDecoder$CoreGraphicsRect { *; }
 
-# Rhino selects its JVM bridge by class name at runtime.  ProGuard cannot see
-# the reflective lookup from VMBridge.makeInstance(), so a release image that
-# only keeps the entry point loses jdk18/VMBridge_jdk18 and every plugin fails
-# on its first Context.enter() with "Failed to create VMBridge instance".
--keep class org.mozilla.javascript.** { *; }
-
-# Rhino exposes this object to every extension through Context.javaToJS().
-# Its public methods are therefore called by JavaScript only; without this
-# rule ProGuard removes/renames them and scripts report e.g. "Cannot find
-# function httpGetWithHeaders" even though the JVM class still loads.
--keep class dev.shinsou.kmp.plugin.RhinoPluginBridge { *; }
-
 # Coil's desktop network fetcher is registered through
 # META-INF/services/coil3.util.FetcherServiceLoaderTarget.  Its implementation
 # is never referenced directly from Kotlin, so release shrinking otherwise

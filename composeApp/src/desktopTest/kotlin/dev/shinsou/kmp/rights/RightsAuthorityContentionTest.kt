@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 
 class RightsAuthorityContentionTest {
     @Test

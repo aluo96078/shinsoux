@@ -32,8 +32,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 

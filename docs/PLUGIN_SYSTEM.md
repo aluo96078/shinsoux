@@ -25,7 +25,7 @@ Shinsou X 將來源實作與 App 核心分開：Plugin 負責瀏覽、搜尋、�
 
 - **所有套件一律在沙箱中執行**（[ADR-0002 §22](architecture/0002-sandboxed-third-party-plugin-runtime.md)）：
   Android 為每個套件一個 isolated process，macOS／Windows 為 OS 隔離的 helper，iOS 為 WASM 沙箱。
-  平台沒有沙箱時一律拒絕執行，絕不退回 in-process 引擎。Rhino／JavaScriptCore 只留在測試與 parity 比對。
+  平台沒有沙箱時一律拒絕執行，絕不退回 in-process 引擎。Rhino／JavaScriptCore 只留在測試與 parity 比對（位於 `jvmCommonTest`／`iosTest`，產品建置不含這兩個引擎）。
 - **第三方簽章發佈**：作者用 Ed25519 金鑰簽署整個儲存庫（`shinsou-signed-envelope-v1`），使用者信任**發佈者金鑰**；
   發佈者自己簽署並定期續簽撤回清單，可輪替金鑰、可自我撤銷金鑰。見下方「發佈者信任、撤回與更新」。
 - **最小權限**：`EXECUTE_SCRIPT` 與 `NETWORK` 隨安裝授予；敏感權限與每個 `contentHostSuffixes` 家族是使用者在權限頁的個別開關，
@@ -509,7 +509,7 @@ Repository 清單、書庫 binding 與 Plugin package 是不同資料。重新�
 - 紳士漫畫 1.3.3 的單張內容上限為 16 MiB，腳本請求仍為 4 MiB。maxContentResponseBytes 為 host-only policy，不可由套件宣告提高；串流讀取保留總上限。較大圖片會增加暫存與解碼記憶體成本。
 - DownloadPage 標頭在進入內容平面前使用與封面相同的 sanitizer，避免 DM5 來源 Cookie 令下載全數遭拒，也不把來源憑證傳到圖片 CDN。
 - 包子漫畫 1.0.9 使用一次 bounded parseHtml 取得章節欄位，以精簡物件回傳，避免長篇作品超過 bridge call/result element 預算；4,000 章 fixture 與 Android 3,874 章實測通過。未提高通用腳本限制。
-- 手機抽樣與限制見 work/android-plugin-validation-20260911/status.md；不代表全部站點、帳號狀態或作品都可用。
+- 手機抽樣與限制的紀錄（原 work/android-plugin-validation-20260911/status.md）已隨 `work/` 目錄移除，可從 git 歷史取回；抽樣結果不代表全部站點、帳號狀態或作品都可用。
 - 接續修正：Komiic 的 GraphQL `QUOTA_EXCEEDED` 使用固定 `SHINSOU_SOURCE_QUOTA_EXCEEDED` 分類，閱讀與下載錯誤顯示額度重置提示；不顯示遠端訊息或票券，不自動反覆重試。
 - 漫畫櫃的公開 HTTP 操作使用結構化回應，網路失敗／空本文／403／5xx／驗證頁會回報固定失敗分類，僅成功本文可進入短期快取。有效 HTML 中的空結果仍保留原語意。
 - 本機倉庫更新需同時更新精確 profile 與 digest/byte-size 准入表；新增 Android LAN fixture 驗證修復套件的 index、sidecar、腳本可取得，且不符大小仍拒絕。

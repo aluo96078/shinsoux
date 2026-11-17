@@ -3,10 +3,10 @@ package dev.shinsou.kmp.annotation
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingRange
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals

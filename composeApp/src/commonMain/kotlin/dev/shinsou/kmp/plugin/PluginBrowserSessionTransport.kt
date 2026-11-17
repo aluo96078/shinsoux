@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import io.ktor.http.Url
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -419,7 +420,7 @@ internal suspend fun executePluginBrowserSessionFetch(
         // Cancellation makes ordinary suspend cleanup skip immediately. Use a separate short,
         // non-cancellable budget so the page cannot retain a pending Fetch/result indefinitely.
         withContext(NonCancellable) {
-            runCatching {
+            runCatchingCancellable {
                 withTimeout(PLUGIN_BROWSER_SESSION_CLEANUP_TIMEOUT_MILLIS) {
                     evaluate(pluginBrowserSessionFetchCleanupScript(requestId))
                 }

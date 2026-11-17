@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
 import dev.shinsou.kmp.reader.ReaderImageTransform
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.ReaderPage
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals

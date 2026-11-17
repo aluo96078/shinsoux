@@ -4,6 +4,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.files.DesktopPlatform
 
 class DesktopFileSelectionTest {
     @Test

@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.translation
 
+import dev.shinsou.kmp.logging.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -94,10 +96,14 @@ public data class PrefetchEntry(
  */
 public class TranslationPrefetchQueue(
     private val translation: ReaderTranslation,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     /** The language to translate into for a work the reader has not been set up for yet. */
     private val defaultTargetLanguage: () -> String = { "zh-Hant" },
 ) {
+    /** This queue's work only: [close] cancels it without touching a scope the caller passed in. */
+    private val queueJob = SupervisorJob(scope.coroutineContext[Job])
+    private val scope = scope + queueJob
+
     private val _entries = MutableStateFlow<List<PrefetchEntry>>(emptyList())
     public val entries: StateFlow<List<PrefetchEntry>> = _entries.asStateFlow()
 
@@ -132,6 +138,14 @@ public class TranslationPrefetchQueue(
         _entries.update { list -> list.filterNot { it.id in gone } }
     }
 
+    /**
+     * Stops the queue for good when the app shuts down (R4-8, docs/architecture/0006): the
+     * running chapter is cancelled and nothing more starts. What is already translated stays.
+     */
+    public fun close() {
+        queueJob.cancel()
+    }
+
     /** Forgets finished and failed chapters of [group], leaving what is still to do. */
     public suspend fun clearFinished(group: String): Unit = lock.withLock {
         _entries.update { list ->
@@ -163,6 +177,8 @@ public class TranslationPrefetchQueue(
                 }
                 set(job.id) { it.copy(state = PrefetchState.RUNNING, done = 0, total = 0, failure = null) }
                 val work = scope.launch(start = CoroutineStart.LAZY) {
+                    // the job's boundary: whatever it throws fails this job, not the queue
+                    @Suppress("TooGenericExceptionCaught")
                     try {
                         translate(job)
                     } catch (cancelled: CancellationException) {
@@ -170,7 +186,8 @@ public class TranslationPrefetchQueue(
                     } catch (error: TranslationException) {
                         outcome.failed = true
                         outcome.failure = error.failure
-                    } catch (_: Exception) {
+                    } catch (error: Exception) {
+                        Log.warn("TranslationPrefetch", error) { "prefetch job failed" }
                         outcome.failed = true
                     }
                 }
@@ -255,8 +272,8 @@ public class TranslationPrefetchQueue(
 
     /**
      * The reason that stopped one chapter would stop others: they are told so without being
-     * tried. A key, a limit or the device stops every work; a language pair or its models only
-     * the work that asked for them.
+     * tried. A key, a limit or the device stops every work; a language pair, its models or a
+     * service asking to slow down only the work that asked for them.
      */
     private fun failRestLocked(group: String, failure: TranslationFailure?) {
         val everyWork = failure in STOPS_EVERY_WORK
@@ -289,6 +306,7 @@ public class TranslationPrefetchQueue(
             TranslationFailure.MODEL_MISSING,
             TranslationFailure.UNSUPPORTED_PAIR,
             TranslationFailure.SYSTEM_LANGUAGE_MISSING,
+            TranslationFailure.RATE_LIMITED,
         )
     }
 }

@@ -6,20 +6,20 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.annotation.ContentAnnotationState
-import dev.shinsou.kmp.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentAliasMutation
 import dev.shinsou.kmp.content.ContentMetadataMutation
 import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentTransactionException
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.ContentOperationGate
@@ -38,15 +38,15 @@ import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.domain.model.UnitKey
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingRange
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsDecision
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsConstraint
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
@@ -766,7 +766,7 @@ class PortableContentBackupV2RestoreCoordinatorTest {
         val inspection: BackupV2Inspection,
         val encoded: ByteArray,
         val body: ByteArray,
-        val blobReference: dev.shinsou.kmp.content.BlobRef,
+        val blobReference: dev.shinsou.kmp.domain.content.BlobRef,
     ) {
         fun bodyScope(): RightsScope {
             val publication = state.publications.single()

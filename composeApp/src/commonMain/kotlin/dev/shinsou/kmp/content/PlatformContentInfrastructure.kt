@@ -4,6 +4,10 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import dev.shinsou.kmp.annotation.ContentAnnotationSchema
+import dev.shinsou.kmp.sync.v3.SyncV3Schema
+import dev.shinsou.kmp.translation.TranslationMemorySchema
+import dev.shinsou.kmp.domain.content.BlobRef
 
 /**
  * Platform-owned durable storage for the content foundation.
@@ -24,8 +28,37 @@ interface PlatformContentInfrastructure {
      */
     fun contentBlobDirectory(): String
 
+    /**
+     * The first table group a newer Shinsou X wrote in a format this one cannot read, checked
+     * before anything opens the stores so the app can ask to be updated instead (R3-1). Reads only.
+     */
+    fun schemaTooNew(): SchemaTooNewException? = SchemaMigrator.tooNew(contentDriver(), contentSchemaComponents())
+
+    /** The content database's file; null where there is none to copy. */
+    fun databaseFile(): String? = null
+
+    /**
+     * What the app checks before anything opens the stores: [schemaTooNew]; when the database can
+     * be opened and opening it upgrades a table group, the file is copied first (R3-1).
+     */
+    fun checkBeforeOpening(): SchemaTooNewException? = schemaTooNew().also { tooNew ->
+        if (tooNew == null) backUpBeforeUpgrade(contentDriver(), databaseFile(), contentSchemaComponents())
+    }
+
     fun close()
 }
+
+/**
+ * Every table group in the content database whose newer format this version must refuse; the
+ * search index is left out because it is rebuilt instead.
+ */
+internal fun contentSchemaComponents(): List<SchemaComponent> = listOf(
+    ContentTransactionSchema.component,
+    ContentBlobPersistenceSchema.component,
+    ContentAnnotationSchema.component,
+    SyncV3Schema.component,
+    TranslationMemorySchema.component,
+)
 
 /**
  * SQLDelight schema handed to the Android and Native drivers when they open the content database.

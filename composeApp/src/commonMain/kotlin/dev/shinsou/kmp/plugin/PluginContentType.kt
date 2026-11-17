@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 
 /**
  * The kind of catalogue a source is expected to expose.

@@ -419,7 +419,7 @@ private fun UnitProjection.toLegacyChapter(
     val pageIndex = progress?.let { imported ->
         val blockId = imported.locator.blockId
         unit.latestManifest?.representations.orEmpty().asSequence()
-            .filterIsInstance<dev.shinsou.kmp.content.ContentRepresentation.PlainText>()
+            .filterIsInstance<dev.shinsou.kmp.domain.content.ContentRepresentation.PlainText>()
             .flatMap { it.blocks.asSequence() }
             .indexOfFirst { it.blockId == blockId }
             .coerceAtLeast(0)

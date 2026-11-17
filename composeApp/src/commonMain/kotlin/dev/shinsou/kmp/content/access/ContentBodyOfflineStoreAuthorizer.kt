@@ -4,7 +4,7 @@ import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.InMemoryRightsAuthority
 import dev.shinsou.kmp.rights.ProtectionAuthorization
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.rights.RightsScope
 

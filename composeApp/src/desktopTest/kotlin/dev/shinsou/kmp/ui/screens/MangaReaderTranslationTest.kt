@@ -26,7 +26,7 @@ import dev.shinsou.kmp.translation.OfflineTranslationEngine
 import dev.shinsou.kmp.translation.OfflineTranslationPlatform
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationMemoryStore
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.ReaderPage
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond

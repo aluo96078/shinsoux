@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import dev.shinsou.kmp.data.LegacyPublicationProjection
 
 class LegacyPublicationProjectionTest {
     @Test

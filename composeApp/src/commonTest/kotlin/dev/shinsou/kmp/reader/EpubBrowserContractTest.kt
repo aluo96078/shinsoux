@@ -1,13 +1,13 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackage
-import dev.shinsou.kmp.content.EpubRendition
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ImageProgression
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubRendition
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ImageProgression
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
@@ -18,6 +18,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.model.ReadingScope
 
 class EpubBrowserContractTest {
     @Test

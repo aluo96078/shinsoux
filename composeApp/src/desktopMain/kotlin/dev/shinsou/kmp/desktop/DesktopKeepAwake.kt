@@ -4,8 +4,10 @@ import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.win32.StdCallLibrary
+import dev.shinsou.kmp.logging.Log
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import dev.shinsou.kmp.files.DesktopPlatform
 
 /**
  * Keeps the process running at full speed while background downloads are in progress: no App Nap
@@ -121,9 +123,9 @@ private class WindowsExecutionStateKeepAwake : DesktopKeepAwake {
         // Best effort: downloads go on regardless; a failure only means the PC may idle-sleep.
         runCatching { thread.submit<Int> { kernel32.SetThreadExecutionState(state) }.get(5, TimeUnit.SECONDS) }
             .onSuccess { previous ->
-                if (previous == 0) System.err.println("Shinsou X: SetThreadExecutionState(0x${Integer.toHexString(state)}) failed")
+                if (previous == 0) Log.warn("KeepAwake") { "SetThreadExecutionState(0x${Integer.toHexString(state)}) failed" }
             }
-            .onFailure { System.err.println("Shinsou X: could not change the sleep state: $it") }
+            .onFailure { Log.warn("KeepAwake", it) { "could not change the sleep state" } }
     }
 
     @Suppress("FunctionName")

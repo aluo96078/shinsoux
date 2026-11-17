@@ -1,0 +1,4 @@
+# R2-2 (docs/architecture/0006): references against the layering that existed when the check
+# was introduced. Format: <file under composeApp/src>|<package referred to>|<rule>.
+# Only delete lines (phase four removes them); never add any.
+# R4-1 emptied this list; any new entry is a regression.

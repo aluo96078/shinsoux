@@ -31,10 +31,10 @@ private class JvmPinnedPluginHttpTransport : PluginHttpTransport {
         .proxy(java.net.Proxy.NO_PROXY)
         .followRedirects(false)
         .followSslRedirects(false)
-        // The whole call, body included, like the Ktor clients' 45 s request timeout. OkHttp's
+        // The whole call, body included, [PluginNetworkLimits.REQUEST_TIMEOUT_MILLIS]. OkHttp's
         // default only bounds each read, so a server sending a byte every few seconds could hold
         // a blocked IO thread (which coroutine cancellation cannot interrupt) for hours.
-        .callTimeout(java.time.Duration.ofSeconds(45))
+        .callTimeout(java.time.Duration.ofMillis(PluginNetworkLimits.REQUEST_TIMEOUT_MILLIS))
         .build()
 
     override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse =
@@ -81,7 +81,7 @@ private class JvmPinnedPluginHttpTransport : PluginHttpTransport {
             }
             val headerDeclared = rawResponseHeaders.pluginDeclaredContentLength()
             val bodyDeclared = response.body?.contentLength()?.takeIf { it >= 0 }
-            require(headerDeclared == null || bodyDeclared == null || headerDeclared == bodyDeclared) {
+            requireWellFormedResponse(headerDeclared == null || bodyDeclared == null || headerDeclared == bodyDeclared) {
                 "Plugin response contains inconsistent content lengths"
             }
             val declared = headerDeclared ?: bodyDeclared

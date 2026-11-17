@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.download
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.plugin.Sha256
@@ -93,7 +94,7 @@ internal object DownloadCompletionManifests {
                 plaintextDigest = Sha256.hex(body),
             )
         }
-        return runCatching {
+        return runCatchingCancellable {
             publish(fileSystem, mangaId, chapterId, upgradedPages)
         }.getOrNull()
     }
@@ -153,7 +154,7 @@ internal object DownloadCompletionManifests {
         if (pages.size != expectedPageCount || transforms.size != pages.count { it.transformFileName != null }) {
             return null
         }
-        return runCatching { publish(fileSystem, mangaId, chapterId, pages) }.getOrNull()
+        return runCatchingCancellable { publish(fileSystem, mangaId, chapterId, pages) }.getOrNull()
     }
 
     private fun isStructurallyValid(manifest: DownloadCompletionManifest): Boolean {

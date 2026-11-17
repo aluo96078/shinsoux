@@ -1,8 +1,8 @@
 package dev.shinsou.kmp.ui.screens
 
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.BrowseSource
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.BrowseSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

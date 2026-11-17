@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin.v2
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.plugin.CatalogueSource
 import dev.shinsou.kmp.plugin.FilterList
 import dev.shinsou.kmp.plugin.MangasPage

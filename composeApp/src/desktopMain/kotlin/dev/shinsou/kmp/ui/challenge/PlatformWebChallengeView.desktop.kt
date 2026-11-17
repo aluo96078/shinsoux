@@ -8,23 +8,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
-import dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy
-import java.io.BufferedInputStream
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import java.io.BufferedWriter
-import java.io.ByteArrayOutputStream
-import java.io.EOFException
 import java.io.IOException
-import java.io.InputStream
 import java.io.OutputStreamWriter
 import java.net.URI
-import java.nio.ByteBuffer
-import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
@@ -32,6 +25,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.plugin.BoundedUtf8LineReader
+import dev.shinsou.kmp.plugin.MacOsWebChallengeHelperLocator
+import dev.shinsou.kmp.plugin.webChallengeProcessCommand
 
 internal actual val platformWebChallengeMode: PlatformWebChallengeMode =
     if (System.getProperty("os.name").orEmpty().lowercase().contains("mac")) {
@@ -125,7 +121,7 @@ private class MacOsWebChallengeState(
         } catch (error: Throwable) {
             if (!closed.get()) {
                 val diagnostic = webChallengeInitializationDiagnostic(error)
-                System.err.println("Native browser initialization failed: $diagnostic")
+                Log.error("WebChallenge") { "native browser initialization failed: $diagnostic" }
                 dispatchError("The native browser could not be initialized.")
             }
         } finally {
@@ -231,54 +227,6 @@ private class MacOsWebChallengeState(
 
     private fun dispatch(block: () -> Unit) {
         SwingUtilities.invokeLater(block)
-    }
-}
-
-internal class MacOsWebChallengeHelperLocator(
-    private val osName: String = System.getProperty("os.name").orEmpty(),
-    private val resourcesDirectory: String? = System.getProperty(WEB_CHALLENGE_RESOURCES_PROPERTY),
-    private val developmentCandidates: List<Path> = defaultDevelopmentHelperCandidates(),
-) {
-    fun resolve(): Path {
-        check(osName.lowercase().contains("mac")) {
-            "The native WKWebView helper is available only on macOS"
-        }
-        val candidates = buildList {
-            resourcesDirectory
-                ?.takeIf(String::isNotBlank)
-                ?.let { add(Path.of(it).resolve(WEB_CHALLENGE_HELPER_NAME)) }
-            addAll(developmentCandidates)
-        }
-        return candidates.firstOrNull { Files.isRegularFile(it) }
-            ?: throw IllegalStateException("The packaged WKWebView helper is missing")
-    }
-
-    fun prepareExecutableCopy(): Path {
-        val source = resolve()
-        val directory = Files.createTempDirectory("shinsou-wkwebview-")
-        val target = directory.resolve(WEB_CHALLENGE_HELPER_NAME)
-        try {
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
-            runCatching {
-                Files.setPosixFilePermissions(
-                    target,
-                    setOf(
-                        PosixFilePermission.OWNER_READ,
-                        PosixFilePermission.OWNER_WRITE,
-                        PosixFilePermission.OWNER_EXECUTE,
-                    ),
-                )
-            }.getOrElse {
-                check(target.toFile().setExecutable(true, true)) {
-                    "The WKWebView helper is not executable"
-                }
-            }
-            return target
-        } catch (error: Throwable) {
-            runCatching { Files.deleteIfExists(target) }
-            runCatching { Files.deleteIfExists(directory) }
-            throw error
-        }
     }
 }
 
@@ -431,10 +379,6 @@ internal fun webChallengeLaunchLine(request: SourceWebChallengeRequest): String 
     }
 }
 
-/** Keeps the launch command free of URLs, credentials, and cookies; those travel over stdin. */
-internal fun webChallengeProcessCommand(helper: Path): List<String> =
-    listOf(helper.toAbsolutePath().toString())
-
 internal fun webChallengeInitializationDiagnostic(error: Throwable): String {
     val chain = generateSequence(error) { it.cause }.take(12)
     val relevant = chain.lastOrNull { cause ->
@@ -456,66 +400,10 @@ private fun sanitizeDiagnosticLine(raw: String): String? {
     return line.take(160)
 }
 
-internal class BoundedUtf8LineReader(input: InputStream) {
-    private val input = BufferedInputStream(input, IPC_READ_CHUNK_BYTES)
-    private val chunk = ByteArray(IPC_READ_CHUNK_BYTES)
-    private var position = 0
-    private var limit = 0
-
-    /** Returns a newline-delimited UTF-8 frame. EOF with a partial frame fails closed. */
-    fun readLine(maxBytes: Int): String? {
-        require(maxBytes > 0)
-        val bytes = ByteArrayOutputStream(minOf(maxBytes, 8_192))
-        while (true) {
-            if (position == limit) {
-                limit = input.read(chunk)
-                position = 0
-                if (limit < 0) {
-                    if (bytes.size() == 0) return null
-                    throw EOFException("Truncated IPC frame")
-                }
-            }
-            var newline = position
-            while (newline < limit && chunk[newline] != '\n'.code.toByte()) newline++
-            val count = newline - position
-            if (bytes.size() > maxBytes - count) throw IOException("IPC frame exceeds safe limit")
-            bytes.write(chunk, position, count)
-            position = newline
-            if (position < limit) {
-                position++
-                val framed = bytes.toByteArray().let { raw ->
-                    if (raw.lastOrNull() == '\r'.code.toByte()) raw.copyOf(raw.size - 1) else raw
-                }
-                return try {
-                    Charsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(framed))
-                        .toString()
-                } catch (error: Exception) {
-                    throw IOException("Invalid UTF-8 IPC frame", error)
-                }
-            }
-        }
-    }
-
-    private companion object {
-        const val IPC_READ_CHUNK_BYTES: Int = 8 * 1_024
-    }
-}
-
 private fun writeLine(writer: BufferedWriter, value: String) = synchronized(writer) {
     writer.write(value)
     writer.newLine()
     writer.flush()
-}
-
-private fun defaultDevelopmentHelperCandidates(): List<Path> {
-    val workingDirectory = Path.of(System.getProperty("user.dir").orEmpty())
-    return listOf(
-        workingDirectory.resolve("composeApp/build/generated/desktopAppResources/macos/$WEB_CHALLENGE_HELPER_NAME"),
-        workingDirectory.resolve("build/generated/desktopAppResources/macos/$WEB_CHALLENGE_HELPER_NAME"),
-    )
 }
 
 private fun String.toHttpUri(): URI? = runCatching { URI.create(trim()) }
@@ -530,8 +418,6 @@ private val WEB_CHALLENGE_JSON = Json {
     encodeDefaults = true
     explicitNulls = false
 }
-private const val WEB_CHALLENGE_HELPER_NAME = "shinsou-web-challenge"
-private const val WEB_CHALLENGE_RESOURCES_PROPERTY = "compose.application.resources.dir"
 private const val WEB_CHALLENGE_STDERR_LINE_MAX_BYTES = 1_024
 private const val WEB_CHALLENGE_LAUNCH_MAX_BYTES = 2 * 1_024 * 1_024
 internal const val WEB_CHALLENGE_EVENT_MAX_BYTES = 26 * 1_024 * 1_024

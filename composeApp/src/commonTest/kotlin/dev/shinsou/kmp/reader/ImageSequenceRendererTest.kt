@@ -1,18 +1,19 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.ImagePage
-import dev.shinsou.kmp.content.ImageTransform
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.ImageTransform
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import dev.shinsou.kmp.domain.model.ReadingScope
 
 class ImageSequenceRendererTest {
     @Test

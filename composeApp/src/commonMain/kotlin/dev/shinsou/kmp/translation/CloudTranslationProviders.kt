@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.translation
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -8,17 +9,21 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.content.TextContent
+import io.ktor.http.fromHttpToGmtDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlin.time.Clock
 
 private val CloudJson = Json { ignoreUnknownKeys = true }
 
@@ -113,7 +118,7 @@ public abstract class CloudTranslationProvider(
             return Result.failure(TranslationException(TranslationFailure.DAILY_LIMIT, "Today's translation limit is used up"))
         }
         val answers = try {
-            request(from, to, lines)
+            requestPacingRateLimits(from, to, lines, characters)
         } catch (error: CancellationException) {
             throw error // it may have been sent and charged: it stays counted
         } catch (error: TranslationException) {
@@ -135,17 +140,65 @@ public abstract class CloudTranslationProvider(
     /** Maps the service's refusal to what the reader can tell the user. */
     protected suspend fun fail(response: HttpResponse): Nothing {
         val status = response.status.value
-        val detail = runCatching { response.bodyAsText().take(300) }.getOrDefault("")
+        // The reason is looked for in more of the answer than is shown: a gateway's longer message
+        // must not push "the quota is used up" out of sight and make it a "slow down".
+        val body = runCatchingCancellable { response.bodyAsText().take(FAILURE_BODY_CHARACTERS) }.getOrDefault("")
+        val detail = body.take(FAILURE_DETAIL_CHARACTERS)
         val failure = when (status) {
             401, 403 -> TranslationFailure.INVALID_KEY
-            429, 456, 529 -> TranslationFailure.QUOTA_EXCEEDED
+            456 -> TranslationFailure.QUOTA_EXCEEDED // DeepL: the plan's characters are used up
+            429, 529 -> if (USED_UP_QUOTA.any { body.contains(it, ignoreCase = true) }) {
+                TranslationFailure.QUOTA_EXCEEDED
+            } else {
+                TranslationFailure.RATE_LIMITED
+            }
             else -> TranslationFailure.PROVIDER_UNAVAILABLE
         }
-        throw TranslationException(failure, "$id answered HTTP $status ${detail.replace('\n', ' ')}".trim())
+        throw TranslationException(
+            failure,
+            "$id answered HTTP $status ${detail.replace('\n', ' ')}".trim(),
+            retryAfterMillis = retryAfterMillis(response.headers[HttpHeaders.RetryAfter]),
+        )
+    }
+
+    /**
+     * Sends [lines], waiting out a short "slow down" from the service a couple of times before
+     * giving up. A wait longer than the service would be worth holding the request for is not taken.
+     * [characters] is what was counted for the request.
+     */
+    private suspend fun requestPacingRateLimits(from: String, to: String, lines: List<String>, characters: Long): List<String> {
+        var attempt = 0
+        while (true) {
+            try {
+                return request(from, to, lines)
+            } catch (error: TranslationException) {
+                if (error.failure != TranslationFailure.RATE_LIMITED || attempt >= RATE_LIMIT_RETRIES) throw error
+                val wait = error.retryAfterMillis ?: (RATE_LIMIT_BACKOFF_MILLIS shl attempt)
+                if (wait > MAX_RATE_LIMIT_WAIT_MILLIS) throw error
+                attempt++
+                // Cancelled while waiting: the last request was turned away, so nothing of it was
+                // charged and what was counted for it is given back.
+                var waited = false
+                try {
+                    delay(wait)
+                    waited = true
+                } finally {
+                    if (!waited) usage?.release(characters)
+                }
+            }
+        }
     }
 
     protected companion object {
         const val MAX_REQUEST_TEXT_BYTES = 60 * 1024
+        private const val RATE_LIMIT_RETRIES = 2
+        private const val RATE_LIMIT_BACKOFF_MILLIS = 1_000L
+        private const val MAX_RATE_LIMIT_WAIT_MILLIS = 30_000L
+
+        /** What a 429 says when the account, not the pace, is the problem (OpenAI, Google). */
+        private const val FAILURE_BODY_CHARACTERS = 8_000
+        private const val FAILURE_DETAIL_CHARACTERS = 300
+        private val USED_UP_QUOTA = listOf("insufficient_quota", "dailyLimitExceeded")
     }
 }
 
@@ -228,7 +281,7 @@ public class GoogleTranslationProvider(
         }
         if (response.status.value !in 200..299) {
             // A missing or rejected API key comes back as 400 here, not 401 or 403.
-            if (response.status.value == 400 && "API key" in runCatching { response.bodyAsText() }.getOrDefault("")) {
+            if (response.status.value == 400 && "API key" in runCatchingCancellable { response.bodyAsText() }.getOrDefault("")) {
                 throw TranslationException(TranslationFailure.INVALID_KEY, "google answered HTTP 400: API key not valid")
             }
             fail(response)
@@ -305,4 +358,18 @@ public interface TranslationUsage {
     /** Counts [characters] when they fit in today's limit; false when they do not. */
     public fun reserve(characters: Long): Boolean
     public fun release(characters: Long)
+}
+
+/**
+ * How long a `Retry-After` header asks to wait, in milliseconds: either a number of seconds or an
+ * HTTP date (RFC 9110 §10.2.3). A date already past is no wait; a value that is neither is no hint.
+ */
+internal fun retryAfterMillis(header: String?, nowEpochMillis: Long = Clock.System.now().toEpochMilliseconds()): Long? {
+    val value = header?.trim().orEmpty()
+    val seconds = value.toLongOrNull()
+    return when {
+        seconds != null -> seconds.takeIf { it >= 0 }?.coerceAtMost(Long.MAX_VALUE / 1000)?.times(1000)
+        value.isEmpty() -> null
+        else -> runCatching { value.fromHttpToGmtDate().timestamp }.getOrNull()?.let { (it - nowEpochMillis).coerceAtLeast(0) }
+    }
 }

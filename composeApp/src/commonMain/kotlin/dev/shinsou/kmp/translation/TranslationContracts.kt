@@ -32,8 +32,11 @@ public enum class TranslationFailure {
     /** No key is set for the chosen service, or the service rejected it. */
     INVALID_KEY,
 
-    /** The service's own quota or rate limit. */
+    /** The service says the key's quota is used up: nothing sent with it will work until it resets. */
     QUOTA_EXCEEDED,
+
+    /** The service asked to slow down, and kept asking after a short wait: later requests may work. */
+    RATE_LIMITED,
 
     /** The user's own daily limit for paid translation. */
     DAILY_LIMIT,
@@ -60,6 +63,8 @@ public class TranslationException(
      * them: they are kept, so a retry does not send (and pay for) those lines again.
      */
     public val completed: List<String> = emptyList(),
+    /** How long the service asked to wait before trying again, when it said. */
+    public val retryAfterMillis: Long? = null,
 ) : Exception(message, cause)
 
 /**

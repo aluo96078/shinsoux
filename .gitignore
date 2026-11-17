@@ -2,6 +2,8 @@
 .kotlin/
 build/
 **/build/
+# build-logic's sources live in a package named "build"; only its output directory is ignored.
+!build-logic/src/**/build/
 local.properties
 .env*
 !.env.example
@@ -35,3 +37,8 @@ Pods/
 .cxx/
 hs_err_pid*.log
 __pycache__/
+
+# Local scratch: validation logs, spikes and agent worktrees (docs/architecture/0006 R2-6)
+work/
+spikes/
+.claude/worktrees/

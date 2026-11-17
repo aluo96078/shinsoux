@@ -222,6 +222,38 @@ rights、migration aliases 與 sync draft/outbox 必須能共享同一 SQLite tr
 正文容器。正文、EPUB archive、stylesheets、fonts、images、plugin package bytes 與全文索引
 不得新增為 `AppSnapshot` inline fields。
 
+### 資料權責表（R3-6，見 0006）
+
+兩套持久化在過渡期並存：`data/ShinsouRepository` 把整份 `AppSnapshot` 以 JSON 原子寫入；
+`content/` 以共用 SQLite driver 做細粒度交易。兩者以 `AppSnapshot.contentAuthorityProjectionMarkers`
+標記單次投影是否已落盤。下表記錄每類資料目前由哪一邊負責，以及過渡期結束後 `AppSnapshot`
+預計移除的欄位。是否把快照內容整體遷入 SQL 是另一個決策，不在此表範圍。
+
+| 資料 | 目前權威 | 位置 | 過渡期結束後 `AppSnapshot` |
+| --- | --- | --- | --- |
+| 出版品、取得來源、單元、作品連結 | SQL | `content_publications`、`content_acquisitions`、`content_units`、`content_work_links` | 不變（本來就不在快照） |
+| 內容清單（manifest）與 blob 參照 | SQL＋blob store | `content_transaction_attachments`／`_refs`、`content_blobs` | 不變 |
+| 權利授與 | SQL | `content_rights_grants`、`content_acquisition_rights` | 不變 |
+| 遷移帳本、別名、內容中繼資料 | SQL | `content_transaction_migrations`、`_aliases`、`_metadata` | 不變 |
+| 註記 | SQL | `content_annotations` | 不變 |
+| 同步日誌（v3） | SQL | `sync3_*` | 不變 |
+| 翻譯記憶 | SQL | `tm_segment`、`tm_work` | 不變 |
+| 全文索引 | SQL（衍生資料，可重建） | `content_search_v2_*` | 不變 |
+| 舊模型書目與章節 | 快照 | `mangas`、`chapters` | 由 legacy projection 從 SQL 產生後移除 |
+| 分類與書目分類 | 快照 | `categories`、`mangaCategories`、`shuyueCategoryProjectionBindings` | 待決：隨書目一起遷移時移除 |
+| 閱讀紀錄、更新紀錄 | 快照 | `histories`、`updates` | 閱讀進度改由 SQL 負責後移除 |
+| 下載佇列 | 快照 | `downloadQueue` | 待決 |
+| 追蹤、追蹤帳號、擴充套件倉庫 | 快照 | `tracks`、`trackerAccounts`、`extensionRepositories` | 保留（設定類資料） |
+| 設定與備份狀態 | 快照 | `settings`、`backupState` | 保留 |
+| 投影標記 | 快照 | `contentAuthorityProjectionMarkers` | 最後一個投影移除後一併移除 |
+
+規則：
+
+- 同一筆資料只有一個權威；另一邊只能是投影，且投影必須可由權威重建。
+- 新的資料類型一律放在 SQL；不得新增 `AppSnapshot` 欄位作為新資料的權威。
+- 各 SQL 元件的格式版本由 `SchemaMigrator` 記錄於 `shinsou_schema_versions`（R3-1）；
+  寫入新格式後，較舊的 app 會拒絕開啟而不是覆寫。
+
 ### Immutable ContentBlobStore
 
 概念 contract：

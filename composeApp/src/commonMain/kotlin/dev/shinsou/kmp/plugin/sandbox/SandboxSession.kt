@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin.sandbox
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -323,7 +324,7 @@ internal class SandboxSession(
                         if (!admitted) violation("more than ${limits.maxAsyncInflight} async ops in flight")
                         asyncOps[f.opId] = scope.launch {
                             val outcome = dispatcher.dispatchAsync(invocation, f.op, f.argsJson)
-                            runCatching { sendAsyncResult(invocation, SandboxFrame.AsyncBridgeResult(f.opId, outcome)) }
+                            runCatchingCancellable { sendAsyncResult(invocation, SandboxFrame.AsyncBridgeResult(f.opId, outcome)) }
                         }
                     }
                     is SandboxFrame.Result -> { requireOwn(f.callId); return f.valueJson }

@@ -1,34 +1,20 @@
 package dev.shinsou.kmp.ui.screens
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
 import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Translate
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,17 +23,11 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -56,13 +36,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -72,26 +50,19 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
-import dev.shinsou.kmp.annotation.ContentAnnotation
-import dev.shinsou.kmp.annotation.ContentAnnotationKind
-import dev.shinsou.kmp.app.ContentFeatureRuntime
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 import dev.shinsou.kmp.plugin.imageBodyForDecoderOrNull
 import dev.shinsou.kmp.reader.PlainTextNavigation
 import dev.shinsou.kmp.reader.ReaderTapAction
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingRange
-import dev.shinsou.kmp.reader.TextQuote
-import dev.shinsou.kmp.reader.EpubBrowserView
-import dev.shinsou.kmp.reader.EpubBrowserConfiguration
-import dev.shinsou.kmp.reader.EpubBrowserReadingMode
-import dev.shinsou.kmp.reader.EpubRenderRequest
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.TextQuote
 import dev.shinsou.kmp.reader.EpubResourceReadGate
-import dev.shinsou.kmp.reader.EpubSemanticDocument
 import dev.shinsou.kmp.reader.EpubSpineNavigation
 import dev.shinsou.kmp.reader.ImageRenderPage
 import dev.shinsou.kmp.reader.ImageSequenceNavigation
@@ -102,27 +73,16 @@ import dev.shinsou.kmp.reader.encodedImageHeight
 import dev.shinsou.kmp.reader.readerImageTransform
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.search.FullTextDocumentSegment
-import dev.shinsou.kmp.search.FullTextSearchHit
 import dev.shinsou.kmp.search.EpubSearchAnchor
 import dev.shinsou.kmp.search.SearchableTextDocument
 import dev.shinsou.kmp.search.fullTextDocumentSegmentsLazy
-import dev.shinsou.kmp.tts.SpeakableTextDocument
-import dev.shinsou.kmp.tts.EpubSpeakableTextDocument
-import dev.shinsou.kmp.tts.SpeechPlaybackStatus
-import dev.shinsou.kmp.ui.TypedReaderContentSession
+import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.readerNavigationBarsPadding
-import kotlin.random.Random
-import kotlin.time.Clock
-import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -376,7 +336,7 @@ internal suspend fun prefetchChapter(
         workKey = scope.publicationId.value,
         chapterKey = scope.unitId.value,
         text = text,
-        exportable = runCatching { features.operations.export(access, text.length.toLong()) { true } }.getOrDefault(false),
+        exportable = runCatchingCancellable { features.operations.export(access, text.length.toLong()) { true } }.getOrDefault(false),
         labels = labels,
         keep = { line -> parseNovelReaderSegments(line).any { it is NovelReaderSegment.Image } },
     )
@@ -402,6 +362,7 @@ private val NOVEL_MARKDOWN_IMAGE = Regex(
     """!\[([^]]*)]\((https?://[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\)""",
     setOf(RegexOption.IGNORE_CASE),
 )
+
 private val NOVEL_HTML_IMAGE = Regex(
     """<img\b[^>]*(?:src|data-src|data-original)\s*=\s*[\"']([^\"']+)[\"'][^>]*>""",
     setOf(RegexOption.IGNORE_CASE),
@@ -1146,7 +1107,7 @@ private fun ImageSequenceContinuousReader(
                 fitInsideViewport = false,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (page.layout != dev.shinsou.kmp.content.ImageLayout.WEBTOON) HorizontalDivider()
+            if (page.layout != dev.shinsou.kmp.domain.content.ImageLayout.WEBTOON) HorizontalDivider()
         }
     }
 }
@@ -1288,518 +1249,6 @@ internal fun imageSequenceNavigationTarget(
     }
 }
 
-/** Full-package EPUB surface. Publisher resources stay exact and are served only by the private scheme. */
-@Composable
-private fun EpubUnifiedContentReader(
-    session: TypedReaderContentSession,
-    features: ContentFeatureRuntime,
-    settings: ReaderSettings,
-    requestedPageIndex: Int?,
-    pageRequestSerial: Long,
-    navigationAction: ReaderTapAction?,
-    navigationRequestKey: Long,
-    readerControlsVisible: Boolean,
-    onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
-    onPageCountInvalidated: () -> Unit,
-    onNavigationBoundary: (ReaderTapAction) -> Unit,
-    onReaderTap: (ReaderTapAction) -> Unit,
-    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
-    modifier: Modifier,
-) {
-    val strings = LocalShinsouStrings.current
-    val navigation = session.content.navigation as? EpubSpineNavigation
-    if (navigation == null) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(strings.text("The EPUB navigation graph is unavailable."))
-        }
-        return
-    }
-    val contentInitialLocator = session.content.initialLocator as? ReadingLocator.Epub ?: navigation.locatorAt(0)
-    // A visual EPUB page is local to one spine document and must never be interpreted as the
-    // spine index itself. The locator chooses the document and restores progression within it.
-    val initialIndex = (navigation.indexOf(contentInitialLocator) ?: 0).coerceIn(0, navigation.itemCount - 1)
-    val initialLocator = contentInitialLocator.takeIf { navigation.indexOf(it) == initialIndex }
-        ?: navigation.locatorAt(initialIndex)
-    var currentIndex by remember(session) { mutableStateOf(initialIndex) }
-    var currentVisualPageIndex by remember(session) {
-        mutableStateOf(session.initialVisualPageIndex ?: 0)
-    }
-    var currentVisualPageCount by remember(session) {
-        mutableStateOf(
-            session.initialVisualPageCount
-                ?.takeIf { currentVisualPageIndex in 0 until it }
-                ?: (currentVisualPageIndex + 1),
-        )
-    }
-    var viewportPageCountMeasured by remember(session) { mutableStateOf(false) }
-    val restoredDocumentProgression = remember(session, initialLocator) {
-        when {
-            session.initialVisualPageIndex == null || session.initialVisualPageCount == null ->
-                initialLocator.progression
-            session.initialVisualPageCount <= 1 -> 0.0
-            else -> session.initialVisualPageIndex.toDouble()
-                .div((session.initialVisualPageCount - 1).toDouble())
-                .coerceIn(0.0, 1.0)
-        }
-    }
-    val restoredInitialLocator = remember(session, initialLocator, restoredDocumentProgression) {
-        initialLocator.copy(progression = restoredDocumentProgression)
-    }
-    var pendingLocator by remember(session) { mutableStateOf(restoredInitialLocator) }
-    var navigationRevision by remember(session) { mutableStateOf(0) }
-    var currentLocator by remember(session) { mutableStateOf(restoredInitialLocator) }
-    var request by remember(session) { mutableStateOf<EpubRenderRequest?>(null) }
-    var semanticDocument by remember(session) { mutableStateOf<EpubSemanticDocument?>(null) }
-    var selectionRequestKey by remember(session) { mutableStateOf(0L) }
-    var selectedRange by remember(session) { mutableStateOf<ReadingRange?>(null) }
-    var noteRange by remember(session) { mutableStateOf<ReadingRange?>(null) }
-    var noteBody by remember(session) { mutableStateOf("") }
-    var annotations by remember(session) { mutableStateOf<List<ContentAnnotation>>(emptyList()) }
-    var searchOpen by remember(session) { mutableStateOf(false) }
-    var query by remember(session) { mutableStateOf("") }
-    var searchHits by remember(session) { mutableStateOf<List<FullTextSearchHit>>(emptyList()) }
-    var searchIndexReady by remember(session) { mutableStateOf(false) }
-    var loading by remember(session) { mutableStateOf(true) }
-    var searchBusy by remember(session) { mutableStateOf(false) }
-    var speaking by remember(session) { mutableStateOf(false) }
-    var message by remember(session) { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val browserConfiguration = remember(
-        settings.readingMode,
-        settings.animatePageTransitions,
-        settings.novelFontSizeSp,
-        settings.novelLineHeightMultiplier,
-        settings.novelMaxWidthDp,
-    ) {
-        settings.toEpubBrowserConfiguration()
-    }
-
-    LaunchedEffect(session, features) {
-        annotations = withContext(Dispatchers.Default) {
-            features.cleanupRevokedDerivedData(navigation.scope, session.access)
-            try {
-                features.annotations.list(navigation.scope, session.access)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                emptyList()
-            }
-        }
-    }
-
-    // Render metadata is published before XHTML semantics are extracted. The browser can paint
-    // publisher CSS immediately; cancellable text/CFI derivation then fills search/TTS/notes.
-    LaunchedEffect(session, features, currentIndex, navigationRevision) {
-        loading = true
-        semanticDocument = null
-        selectedRange = null
-        message = null
-        val locator = pendingLocator.takeIf { navigation.indexOf(it) == currentIndex }
-            ?: navigation.locatorAt(currentIndex)
-        val loadedRequest = withContext(Dispatchers.Default) {
-            runCatching {
-                features.operations.display(session.access) {
-                    features.epubRenderRequests.create(
-                        navigation = navigation,
-                        documentIndex = currentIndex,
-                        initialLocator = locator,
-                        resourceReadGate = EpubResourceReadGate { read ->
-                            features.operations.display(session.access) { read() }
-                        },
-                    )
-                }
-            }
-        }.getOrElse {
-            request = null
-            loading = false
-            message = strings.text("The EPUB resources could not be opened.")
-            return@LaunchedEffect
-        }
-        request = loadedRequest
-        currentLocator = locator
-        loading = false
-        yield()
-        val semantic = try {
-            withContext(Dispatchers.Default) {
-                features.operations.displaySuspending(session.access) {
-                    features.epubSemanticDocuments.createCancellable(
-                        navigation = navigation,
-                        documentIndex = currentIndex,
-                        resourceReadGate = EpubResourceReadGate { read ->
-                            features.operations.display(session.access) { read() }
-                        },
-                    )
-                }
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            null
-        }
-        if (semantic != null && request === loadedRequest) {
-            loadedRequest.installSemanticDocument(semantic)
-            semanticDocument = semantic
-            val quoted = loadedRequest.locatorForDocumentProgression(
-                currentLocator.progression ?: loadedRequest.initialDocumentProgression,
-            )
-            currentLocator = quoted
-            onLocatorChanged(
-                quoted,
-                currentVisualPageIndex,
-                currentVisualPageCount.takeIf { viewportPageCountMeasured },
-            )
-        }
-    }
-
-    DisposableEffect(session, features) {
-        onDispose { features.textToSpeech.stop() }
-    }
-
-    fun openLocator(locator: ReadingLocator.Epub) {
-        val index = navigation.indexOf(locator) ?: return
-        val allowed = runCatching { features.operations.display(session.access) { true } }.getOrDefault(false)
-        if (!allowed) {
-            message = strings.text("This content is no longer available under the current rights grant.")
-            return
-        }
-        pendingLocator = locator
-        currentIndex = index
-        currentVisualPageIndex = 0
-        currentVisualPageCount = 1
-        // The new spine document has not published its viewport yet. Keeping this provisional
-        // state unmeasured prevents an immediate second hardware press from escaping the chapter
-        // merely because the placeholder visual page count is one.
-        viewportPageCountMeasured = false
-        onPageCountInvalidated()
-        navigationRevision++
-        onLocatorChanged(locator, 0, null)
-    }
-
-    fun handleBrowserAction(action: ReaderTapAction) {
-        when (action) {
-            ReaderTapAction.PREVIOUS_PAGE -> {
-                if (currentIndex > 0) openLocator(navigation.locatorAt(currentIndex - 1))
-                else onNavigationBoundary(action)
-            }
-            ReaderTapAction.NEXT_PAGE -> {
-                if (currentIndex + 1 < navigation.itemCount) {
-                    openLocator(navigation.locatorAt(currentIndex + 1))
-                } else {
-                    onNavigationBoundary(action)
-                }
-            }
-            ReaderTapAction.TOGGLE_CHROME -> onReaderTap(action)
-        }
-    }
-
-    fun startSpeech() {
-        val semantic = semanticDocument ?: return
-        scope.launch {
-            speaking = true
-            message = null
-            try {
-                val startBlock = semantic.blockFor(currentLocator) ?: semantic.blocks.first()
-                val startIndex = semantic.blocks.indexOf(startBlock).coerceAtLeast(0)
-                for (blockIndex in startIndex until semantic.blocks.size) {
-                    currentCoroutineContext().ensureActive()
-                    val block = semantic.blocks[blockIndex]
-                    currentLocator = semantic.locatorForOffset(navigation, block.startUtf16)
-                    onLocatorChanged(
-                        currentLocator,
-                        currentVisualPageIndex,
-                        currentVisualPageCount.takeIf { viewportPageCountMeasured },
-                    )
-                    val result = features.textToSpeech.speak(
-                        EpubSpeakableTextDocument(
-                            navigation = navigation,
-                            semanticDocument = semantic,
-                            block = block,
-                            access = session.access,
-                        ),
-                    )
-                    if (result.finalStatus != SpeechPlaybackStatus.COMPLETED) break
-                    yield()
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                message = strings.text("Speech stopped because it is unavailable or no longer permitted.")
-            } finally {
-                speaking = false
-            }
-        }
-    }
-
-    fun requestNote() {
-        val existing = selectedRange
-        if (existing != null) {
-            noteRange = existing
-            noteBody = ""
-        } else {
-            selectionRequestKey++
-        }
-    }
-
-    fun submitSearch() {
-        val submitted = query.takeIf(String::isNotBlank) ?: return
-        scope.launch {
-            searchBusy = true
-            message = null
-            searchHits = try {
-                val hits = withContext(Dispatchers.Default) {
-                    if (!searchIndexReady) {
-                        indexEpubForReader(
-                            features = features,
-                            navigation = navigation,
-                            access = session.access,
-                        )
-                    }
-                    features.searchIndex.searchForegroundInScope(
-                        query = submitted,
-                        scope = navigation.scope,
-                        limit = 100,
-                    )
-                }
-                searchIndexReady = true
-                hits
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                message = strings.text("Full-text search is unavailable for this content.")
-                emptyList()
-            } finally {
-                searchBusy = false
-            }
-        }
-    }
-
-    LaunchedEffect(session, currentVisualPageIndex, currentVisualPageCount, viewportPageCountMeasured) {
-        if (viewportPageCountMeasured) {
-            onPageIndexChanged(currentVisualPageIndex, currentVisualPageCount)
-        }
-    }
-
-    LaunchedEffect(readerControlsVisible) {
-        if (!readerControlsVisible) searchOpen = false
-    }
-
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        request?.let { activeRequest ->
-            EpubBrowserView(
-                request = activeRequest,
-                modifier = Modifier.fillMaxSize(),
-                configuration = browserConfiguration,
-                navigationAction = navigationAction,
-                navigationRequestKey = navigationRequestKey,
-                selectionRequestKey = selectionRequestKey,
-                onLocatorChanged = { locator ->
-                    currentLocator = locator
-                    selectedRange = null
-                    val observedIndex = navigation.indexOf(locator)
-                    observedIndex?.let { index ->
-                        if (index != currentIndex) {
-                            pendingLocator = locator
-                            currentIndex = index
-                            navigationRevision++
-                        }
-                    }
-                },
-                onViewportChanged = { locator, documentPageIndex, documentPageCount ->
-                    currentLocator = locator
-                    selectedRange = null
-                    val observedIndex = navigation.indexOf(locator)
-                    observedIndex?.let { index ->
-                        if (index != currentIndex) {
-                            pendingLocator = locator
-                            currentIndex = index
-                            navigationRevision++
-                        }
-                    }
-                    currentVisualPageIndex = documentPageIndex
-                    currentVisualPageCount = documentPageCount
-                    viewportPageCountMeasured = true
-                    // EPUB visual pages are local to one spine document. The semantic locator
-                    // determines the document; the page pair restores the viewport inside it.
-                    onPageIndexChanged(documentPageIndex, documentPageCount)
-                    onLocatorChanged(locator, documentPageIndex, documentPageCount)
-                },
-                onSelectionChanged = { range ->
-                    selectedRange = range
-                    if (range == null) {
-                        message = strings.text("The note could not be saved or is no longer permitted.")
-                    } else {
-                        noteRange = range
-                        noteBody = ""
-                    }
-                },
-                onReaderTap = ::handleBrowserAction,
-                onError = { message = strings.text("The EPUB resources could not be opened.") },
-            )
-        }
-        if (loading) ShinsouLoadingIndicator()
-
-        AnimatedVisibility(
-            visible = readerControlsVisible && !searchOpen,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                tonalElevation = 6.dp,
-                modifier = Modifier.readerNavigationBarsPadding(),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = { searchOpen = true }) {
-                        Text(strings.text("Search text"))
-                    }
-                    TextButton(
-                        enabled = semanticDocument != null && features.speechCapability.available,
-                        onClick = {
-                            if (speaking) features.textToSpeech.stop() else startSpeech()
-                        },
-                    ) {
-                        Text(strings.text(if (speaking) "Stop" else "Speak from paragraph"))
-                    }
-                    TextButton(enabled = semanticDocument != null, onClick = ::requestNote) {
-                        Text(strings.text("Add note"))
-                    }
-                }
-            }
-        }
-
-        if (readerControlsVisible && searchOpen) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-                tonalElevation = 8.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .heightIn(max = 420.dp)
-                    .padding(18.dp),
-            ) {
-                Column(
-                    Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            label = { Text(strings.text("Search this book")) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Button(
-                            enabled = query.isNotBlank() && !searchBusy,
-                            onClick = ::submitSearch,
-                        ) { Text(strings.text("Find")) }
-                        TextButton(onClick = { searchOpen = false }) {
-                            Text(strings.cancel)
-                        }
-                    }
-                    LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                        itemsIndexed(searchHits) { _, hit ->
-                            val locator = hit.locator as? ReadingLocator.Epub ?: return@itemsIndexed
-                            TextButton(
-                                onClick = {
-                                    openLocator(locator)
-                                    searchOpen = false
-                                },
-                            ) {
-                                Text(hit.snippet)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        message?.let { currentMessage ->
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.95f),
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.align(Alignment.TopCenter).padding(18.dp),
-            ) {
-                Text(currentMessage, Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
-            }
-        }
-    }
-
-    noteRange?.let { range ->
-        Surface(modifier = Modifier.fillMaxSize().padding(24.dp), tonalElevation = 8.dp) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(strings.text("Add paragraph note"), style = MaterialTheme.typography.titleLarge)
-                Text(range.quote?.exact.orEmpty().takeUtf16Safe(240))
-                OutlinedTextField(
-                    value = noteBody,
-                    onValueChange = { noteBody = it.take(16_384) },
-                    label = { Text(strings.text("Note")) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = noteBody.isNotBlank(),
-                        onClick = {
-                            val submitted = noteBody
-                            scope.launch {
-                                val created = try {
-                                    withContext(Dispatchers.Default) {
-                                        features.annotations.create(
-                                            annotationId = randomAnnotationUuid(),
-                                            kind = ContentAnnotationKind.NOTE,
-                                            range = range,
-                                            access = session.access,
-                                            nowEpochMillis = Clock.System.now().toEpochMilliseconds(),
-                                            body = submitted,
-                                        )
-                                    }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (_: Throwable) {
-                                    null
-                                }
-                                if (created == null) {
-                                    message = strings.text("The note could not be saved or is no longer permitted.")
-                                } else {
-                                    annotations = annotations + created
-                                    noteRange = null
-                                    selectedRange = null
-                                }
-                            }
-                        },
-                    ) { Text(strings.save) }
-                    TextButton(onClick = { noteRange = null }) { Text(strings.cancel) }
-                }
-            }
-        }
-    }
-}
-
-private fun ReaderSettings.toEpubBrowserConfiguration(): EpubBrowserConfiguration =
-    EpubBrowserConfiguration(
-        readingMode = when (readingMode) {
-            ReadingMode.PAGER_LTR -> EpubBrowserReadingMode.PAGED_LEFT_TO_RIGHT
-            ReadingMode.PAGER_RTL -> EpubBrowserReadingMode.PAGED_RIGHT_TO_LEFT
-            ReadingMode.PAGER_VERTICAL -> EpubBrowserReadingMode.PAGED_VERTICAL
-            ReadingMode.WEBTOON,
-            ReadingMode.CONTINUOUS_VERTICAL,
-            -> EpubBrowserReadingMode.CONTINUOUS_VERTICAL
-        },
-        animatePageTransitions = animatePageTransitions,
-        fontSizeSp = novelFontSizeSp.coerceIn(12f, 40f),
-        lineHeightMultiplier = novelLineHeightMultiplier.coerceIn(1.1f, 3f),
-        maxContentWidthDp = novelMaxWidthDp.coerceIn(420f, 1_200f),
-    )
-
 /** Explicit reader search work; never invoked while the EPUB surface is painting its first frame. */
 internal suspend fun indexEpubForReader(
     features: ContentFeatureRuntime,
@@ -1883,7 +1332,7 @@ private fun UnsupportedUnifiedContentReader(
 }
 
 private fun blockRange(
-    scope: dev.shinsou.kmp.reader.ReadingScope,
+    scope: dev.shinsou.kmp.domain.model.ReadingScope,
     representation: ContentRepresentation.PlainText,
     block: TextBlock,
     canonicalText: String,
@@ -1924,24 +1373,12 @@ private fun ContentAccessRequest.withTextCharacters(length: Int): ContentAccessR
     ),
 )
 
-private fun progression(offset: Int, length: Int): Double = if (length == 0) 0.0 else offset.toDouble() / length
+internal fun progression(offset: Int, length: Int): Double = if (length == 0) 0.0 else offset.toDouble() / length
 
-private fun safeBoundaryAtOrBefore(text: String, requested: Int): Int {
+internal fun safeBoundaryAtOrBefore(text: String, requested: Int): Int {
     var offset = requested.coerceIn(0, text.length)
     if (offset in 1 until text.length && text[offset - 1].isHighSurrogate() && text[offset].isLowSurrogate()) {
         offset--
     }
     return offset
-}
-
-private fun String.takeUtf16Safe(maxChars: Int): String =
-    substring(0, safeBoundaryAtOrBefore(this, minOf(length, maxChars)))
-
-private fun randomAnnotationUuid(): String {
-    val bytes = Random.nextBytes(16)
-    bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x40).toByte()
-    bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-    val hex = bytes.joinToString("") { value -> (value.toInt() and 0xff).toString(16).padStart(2, '0') }
-    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-" +
-        "${hex.substring(16, 20)}-${hex.substring(20)}"
 }

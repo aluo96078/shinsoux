@@ -7,16 +7,19 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
+import dev.shinsou.kmp.content.SchemaComponent
+import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.SchemaVersionStore
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.DerivedRightsCleanupTarget
 import dev.shinsou.kmp.rights.ProtectionAuthorization
 import dev.shinsou.kmp.rights.RightsDecision
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsHint
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.rights.RightsScope
@@ -67,18 +70,6 @@ public class DerivedLocalFullTextIndex(
 
     init {
         LocalFullTextIndexSchema.create(driver).value
-        val formatVersion = driver.executeQuery(
-            identifier = null,
-            sql = "SELECT format_version FROM $TABLE_SEARCH_SCHEMA WHERE singleton_id = 1",
-            mapper = { cursor ->
-                check(cursor.next().value) { "Local search schema marker is missing" }
-                QueryResult.Value(requireNotNull(cursor.getLong(0)))
-            },
-            parameters = 0,
-        ).value
-        require(formatVersion == LocalFullTextIndexSchema.version) {
-            "Unsupported local search schema version $formatVersion"
-        }
     }
 
     override val documentCount: Int
@@ -1296,7 +1287,8 @@ private data class PersistedSearchAccess(
 }
 
 /**
- * Independent schema marker because these tables are rebuildable and not part of wire state.
+ * Independent schema marker because these tables are rebuildable and not part of wire state: a
+ * marker of another format drops them and indexes again ([SchemaComponent.rebuildWhenNewer]).
  *
  * Format 2 uses new table names: format 1 stored about 170 bytes per indexed CJK character (a
  * row per occurrence keyed by a 64-character id, indexed twice, and a kilobyte of JSON per
@@ -1305,15 +1297,30 @@ private data class PersistedSearchAccess(
 public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = 2
 
+    internal val component: SchemaComponent = SchemaComponent(
+        name = "local_search",
+        version = version,
+        create = ::createTables,
+        // The marker was always written with the tables.
+        unrecordedVersion = { null },
+        versionStore = SchemaVersionStore.Singleton(TABLE_SEARCH_SCHEMA),
+        rebuildWhenNewer = true,
+        drop = ::dropTables,
+    )
+
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+        SchemaMigrator.migrate(driver, component)
+        return QueryResult.Unit
+    }
+
+    private fun dropTables(driver: SqlDriver) {
+        listOf(TABLE_SEARCH_POSTINGS, TABLE_SEARCH_DOCUMENTS, TABLE_SEARCH_CONTEXTS).forEach { table ->
+            driver.execute(null, "DROP TABLE IF EXISTS $table", 0).value
+        }
+    }
+
+    private fun createTables(driver: SqlDriver) {
         listOf(
-            """
-                CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_SCHEMA(
-                  singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 1),
-                  format_version INTEGER NOT NULL
-                )
-            """,
-            "INSERT OR IGNORE INTO $TABLE_SEARCH_SCHEMA(singleton_id, format_version) VALUES (1, $version)",
             """
                 CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_CONTEXTS(
                   context_key INTEGER PRIMARY KEY,
@@ -1359,7 +1366,6 @@ public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
                 ON $TABLE_SEARCH_POSTINGS(doc_key)
             """,
         ).forEach { sql -> driver.execute(null, sql.trimIndent(), 0).value }
-        return QueryResult.Unit
     }
 
     override fun migrate(
@@ -1369,7 +1375,7 @@ public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
         vararg callbacks: AfterVersion,
     ): QueryResult.Value<Unit> {
         require(oldVersion <= newVersion) { "Local search database cannot migrate backwards" }
-        if (oldVersion < version && newVersion >= version) create(driver)
+        create(driver)
         callbacks.sortedBy(AfterVersion::afterVersion).forEach { callback ->
             if (callback.afterVersion in oldVersion until newVersion) callback.block(driver)
         }

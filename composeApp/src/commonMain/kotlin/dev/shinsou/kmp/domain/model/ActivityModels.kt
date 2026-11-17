@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.domain.model
 
-import dev.shinsou.kmp.reader.ReadingLocator
 import kotlinx.serialization.Serializable
 
 @Serializable

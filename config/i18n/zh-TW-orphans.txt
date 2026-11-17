@@ -1,0 +1,209 @@
+# R4-6: zh-TW entries no source uses. May only shrink.
+ (this device)
+A single Shinsou X snapshot will be stored in the app's iCloud Drive container.
+Active
+Add device
+All
+All sources
+App lock is unavailable on Desktop because macOS authentication is not implemented.
+Approve
+Approve new device
+Available
+Bootstrap secret
+Chapter fetch date
+Check again
+Checking availability
+Checking availability…
+Checking iCloud Drive availability…
+Checking the iCloud ubiquity container…
+Checkpoint MiB
+Choose a format when this chapter provides more than one.
+Choose files
+Choose source
+Cloud synchronization
+Cloudflare Sync v2 is configured. Leave that workspace before using legacy snapshot sync.
+Cloudflare encrypted sync
+Comfortable grid
+Compact grid
+Complete the verification in the browser, then import its cookies.
+Complete verification and sign in to the website in this browser, then import its cookies.
+Confirm repository signing key
+Continuous vertical
+Cookie storage
+Copy
+Copy is unavailable or not permitted.
+Could not copy the bootstrap secret or open the deployment page.
+Could not copy the bootstrap secret. Copying is required before deployment.
+Could not open the deployment page. Tap Open deployment page to retry.
+Cover only grid
+Create sync service
+Creating
+Credential access
+Cursor {0}/{1} · {2} pending changes · {3} pending uploads
+Date added
+Deploying
+Device revoked
+Devices / user
+Downloads, Local source files, extension packages, cookies, passwords and API keys are not synchronized.
+Enable snapshot sync
+Encrypted TXT/EPUB body sync
+Encrypted event sync is unavailable in this runtime.
+Error: no usable cookies were found for this source. Complete the challenge and try again.
+Event KiB
+Export Recovery Kit
+Extension content
+Failed
+Free
+Host event and runtime permissions remain blocked until you approve this exact version and digest.
+Identity mapping collision
+Idle
+Images, CBZ, ZIP or EPUB · stored on this device
+Import Recovery Kit
+Import cookies
+Import local manga
+Import your Recovery Kit to verify the remote workspace, revoke old devices, rotate its keys and create a replacement kit.
+Instance usage and quota
+Invalid synchronized record
+Invite user
+Landscape
+Last result
+Last sync failed
+Last sync succeeded
+Last update
+Last updated August 19, 2026
+Latest chapter
+Leave
+Leave or clear pending workspace
+Leave synced workspace?
+Leave workspace
+Leave workspace and restore this device
+Legacy iCloud snapshot
+Linking
+List
+Load images in a browser
+Local data already matches iCloud Drive.
+Lost every device?
+Manga recognition
+Merge one versioned Shinsou X backup file through iCloud Drive
+Merged local and remote snapshots.
+Migrate
+Missing synchronized dependency
+Modify favorites
+Network access
+None on this device
+Official
+Open browser challenge
+Open deployment page
+Pager ltr
+Pager rtl
+Pager vertical
+Paste
+Portrait
+Preparing installation…
+Proposed: {0}
+Pulling, merging and uploading
+Random
+Read next chapter
+Read previous chapter
+Read session cookies
+Reader paragraph
+Reading cookies from the isolated browser session…
+Ready
+Refresh devices
+Refresh usage
+Reject
+Rejected on this device
+Repair local identity mapping
+Report diagnostics
+Request browser challenge
+Request login UI
+Request logout
+Request source refresh
+Required permissions
+Restore and sync to all devices
+Restoring
+Retry validation
+Return to chapter
+Review host permissions
+Revision {0} → {1} · {2} conflicts
+Revoke
+Revoke this device?
+Revoked
+Run extension script
+Runs only when sync is enabled; identical snapshots do not write again
+SHA-256: {0}
+Save credentials
+Save offline
+Save quota
+Scan QR
+Search
+Search is no longer permitted.
+Secure screen is unavailable on Desktop because macOS does not expose this protection here.
+Sensor landscape
+Sensor portrait
+Setup, invite, pairing or emergency handoff link / code
+Show login prompt
+Show user messages
+Snapshot sync failed.
+Source or request headers take priority when a plugin supplies its own User-Agent.
+Speaking…
+Speech unavailable
+Stored {0} · reserved {1}
+Sync QR code
+Sync operation failed.
+Sync status
+Sync when app enters foreground
+Synchronized data needs repair
+TXT and EPUB bodies stay on this device unless you explicitly add them to encrypted sync.
+The Shinsou X iCloud Drive container is unavailable. Check the app's iCloud Documents entitlement.
+The Shinsou X iCloud Drive container is unavailable. Check the iCloud Documents entitlement.
+The deployment page is required to create your private sync service. The bootstrap secret is kept on this device and can be reused if you reopen the page.
+The device must leave the workspace before its local state is replaced.
+The device will lose future access and the workspace key will rotate.
+The remote snapshot service is unavailable.
+The script remains blocked until you approve this exact version and digest.
+The source website or network request is currently unavailable. Try again later.
+The source's daily image quota has been reached. Try again after the quota resets.
+The sync workspace was left, but the device-local restore rolled back. Retry the same verified archive.
+The website denied access (HTTP 403). Retry later or check whether the site is accessible.
+The website rejected the connection and returned no content. Try again later or contact the site administrator.
+The website requires verification. If Web verification is available in source settings, complete it and retry; otherwise try again later.
+This device will stop receiving updates. Local data remains until you restore or reset it.
+This is a one-time secret. Do not post it publicly.
+This repository remains pinned to its previous key and cannot expand trust until you confirm the exact new fingerprint.
+This requires a Ready workspace and durable mutations, body uploads, and outbox records in the shared commit.
+This uses a coordinated single-file snapshot in iCloud Drive. It is not record-level CloudKit synchronization.
+This view contains usage metadata only. Encrypted library payloads are never exposed to instance administrators.
+Total chapters
+Tracker mean
+Translate novel chapters while reading: open a chapter and press the translation button in the reader's top bar. Translated chapters are kept, so nothing is translated twice.
+Trust exact fingerprint
+Trusted: {0}
+Unable to save credentials
+Unread count
+Uploaded the first Shinsou X snapshot to iCloud Drive.
+Uploads run only in the background and only when the current rights grant permits SYNC_BLOB.
+Users
+Uses a browser-compatible User-Agent and imports only cookies valid for the source domain and path.
+Uses the source's exact User-Agent and imports only cookies valid for its domain and path.
+Verification page loaded. Complete it, then choose Import cookies.
+Verification page loaded. Complete verification and website sign-in here, then choose Import cookies.
+Web challenge cancelled. No browser cookies were imported.
+Where should this archive be restored?
+Workspace MiB
+Workspaces / user
+iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive for Shinsou X.
+iCloud Drive snapshot
+iCloud Drive snapshot sync is unavailable on this platform.
+iCloud Drive synchronization is opt-in and available only on iOS. If enabled, a Shinsou X backup snapshot is stored in your private iCloud container and handled under your Apple account settings.
+iCloud snapshot writing is disabled while Cloudflare event sync is configured.
+title(s)
+total
+{0} active · {1} queued · {2} done
+{0} active · {1} total
+{0} models downloaded
+{0} note
+{0} notes
+{0} records could not be projected. They remain in the encrypted replica and were not silently discarded.
+{0} users · {1} devices · {2} workspaces
+{0}: {1} events ({2}), {3} checkpoints ({4})

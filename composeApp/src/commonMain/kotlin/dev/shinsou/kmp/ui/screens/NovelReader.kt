@@ -62,7 +62,7 @@ import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 import dev.shinsou.kmp.reader.PlainTextNavigation
 import dev.shinsou.kmp.reader.ReaderTapAction
-import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.reader.readerLogicalPageIndex
 import dev.shinsou.kmp.reader.readerPhysicalPageIndex
 import kotlinx.coroutines.delay

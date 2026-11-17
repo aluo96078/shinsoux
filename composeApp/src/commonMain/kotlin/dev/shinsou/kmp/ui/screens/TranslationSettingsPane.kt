@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.translation.LlmProtocol
 import dev.shinsou.kmp.translation.LlmSettings
 import dev.shinsou.kmp.translation.OfflineModel
@@ -97,7 +98,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
     val preferences = current.preferences
     fun change(action: suspend () -> Unit) {
         scope.launch {
-            runCatching { action() }
+            runCatchingCancellable { action() }
             revision++
         }
     }

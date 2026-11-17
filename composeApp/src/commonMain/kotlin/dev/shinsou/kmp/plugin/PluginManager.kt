@@ -2,7 +2,8 @@
 
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.v2.CloseableExtensionPackageRuntimeV2
 import dev.shinsou.kmp.plugin.v2.ExtensionHostFacadeV2
@@ -29,8 +30,8 @@ import dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget
 import dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation
 import dev.shinsou.kmp.plugin.events.stablePluginRuntimeInstanceId
 import dev.shinsou.kmp.plugin.v2.LegacyMangaPackageRuntimeV2
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeCapability
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeCapability
 import io.ktor.http.Url
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
@@ -189,10 +190,10 @@ public class KeyValuePluginPackageStore(
 
                 // The v2 record is the commit point. Fixed-name v1 values and an obsolete content blob
                 // cannot participate in reconstruction once that record exists, so cleanup is best effort.
-                runCatching { keyValueStore.remove(metadataKey(id)) }
-                runCatching { keyValueStore.remove(legacyScriptKey(id)) }
+                runCatchingCancellable { keyValueStore.remove(metadataKey(id)) }
+                runCatchingCancellable { keyValueStore.remove(legacyScriptKey(id)) }
                 previousDigest?.takeIf { it != digest }?.let { obsolete ->
-                    runCatching { keyValueStore.remove(contentScriptKey(id, obsolete)) }
+                    runCatchingCancellable { keyValueStore.remove(contentScriptKey(id, obsolete)) }
                 }
             }
         } catch (error: Throwable) {
@@ -210,11 +211,11 @@ public class KeyValuePluginPackageStore(
             withContext(NonCancellable) {
                 writeIds(plugins.keys - pluginId)
                 val removed = plugins.remove(pluginId)
-                runCatching { keyValueStore.remove(recordKey(pluginId)) }
-                runCatching { keyValueStore.remove(metadataKey(pluginId)) }
-                runCatching { keyValueStore.remove(legacyScriptKey(pluginId)) }
+                runCatchingCancellable { keyValueStore.remove(recordKey(pluginId)) }
+                runCatchingCancellable { keyValueStore.remove(metadataKey(pluginId)) }
+                runCatchingCancellable { keyValueStore.remove(legacyScriptKey(pluginId)) }
                 removed?.scriptBytes?.takeIf(ByteArray::isNotEmpty)?.let { bytes ->
-                    runCatching { keyValueStore.remove(contentScriptKey(pluginId, Sha256.hex(bytes))) }
+                    runCatchingCancellable { keyValueStore.remove(contentScriptKey(pluginId, Sha256.hex(bytes))) }
                 }
             }
         } catch (error: Throwable) {
@@ -845,7 +846,10 @@ public class PluginManager(
                 // update never destroys the still-installed version's approval. Cleanup failure
                 // is safe (the key is artifact-bound) and must not roll back a valid new commit.
                 if (previousReview != null && previousReview.artifact != grantReview.artifact) {
-                    runCatching { eventGrantAdmission?.revoke(previousReview.artifact) }
+                    // The new version is committed: a cancel arriving here must not unload it.
+                    withContext(NonCancellable) {
+                        runCatchingCancellable { eventGrantAdmission?.revoke(previousReview.artifact) }
+                    }
                 }
                 // Restore a matching in-memory authorizer or stage a new review only after the
                 // replacement is durable and the old runtime has closed. A failed update cannot
@@ -861,26 +865,26 @@ public class PluginManager(
                 if (!committed) {
                     withContext(NonCancellable) {
                         if (!liveStateReplaced) {
-                            runCatching { closeRuntimes(candidates) }
+                            runCatchingCancellable { closeRuntimes(candidates) }
                                 .exceptionOrNull()?.let(error::addSuppressed)
                         }
-                        runCatching {
+                        runCatchingCancellable {
                             if (previousStored == null) packageStore.remove(installKey)
                             else packageStore.put(previousStored)
                         }.exceptionOrNull()?.let(error::addSuppressed)
                         if (liveStateReplaced) {
-                            runCatching { restorePreviousRuntime(installKey, previousStored) }
+                            runCatchingCancellable { restorePreviousRuntime(installKey, previousStored) }
                                 .onFailure { restoreFailure ->
                                     error.addSuppressed(restoreFailure)
                                     // If restoration itself fails, do not leave the replacement
                                     // artifact live beside an uncertain durable package.
-                                    runCatching {
+                                    runCatchingCancellable {
                                         lifecycleMutex.withLock { unloadPlugin(installKey) }
                                     }.exceptionOrNull()?.let(error::addSuppressed)
                                 }
                         }
                         if ((!alreadyGranted || continuedGrant != null) && previousReview?.artifact != grantReview.artifact) {
-                            runCatching { eventGrantAdmission?.revoke(grantReview.artifact) }
+                            runCatchingCancellable { eventGrantAdmission?.revoke(grantReview.artifact) }
                                 .exceptionOrNull()?.let(error::addSuppressed)
                         }
                     }
@@ -890,13 +894,13 @@ public class PluginManager(
                     // making its executable state explicitly inert; returning a live runtime here
                     // would make a storage outage an execution-admission bypass.
                     withContext(NonCancellable) {
-                        runCatching {
+                        runCatchingCancellable {
                             lifecycleMutex.withLock { unloadPlugin(installKey) }
                         }.exceptionOrNull()?.let(error::addSuppressed)
                     }
                 }
                 withContext(NonCancellable) {
-                    runCatching { lifecycleMutex.withLock { rollbackReservation(reservation) } }
+                    runCatchingCancellable { lifecycleMutex.withLock { rollbackReservation(reservation) } }
                         .exceptionOrNull()?.let(error::addSuppressed)
                 }
                 throw error
@@ -958,7 +962,7 @@ public class PluginManager(
             // Trust-store failure happens after the package commit point. Restore the previous
             // durable package so the current live sources still describe what will load next time.
             withContext(NonCancellable) {
-                runCatching {
+                runCatchingCancellable {
                     if (previous == null) packageStore.remove(entry.pkg) else packageStore.put(previous)
                 }
             }
@@ -999,37 +1003,37 @@ public class PluginManager(
                 // Make all already-published entry points unreachable before consulting any
                 // potentially slow durable store. Legacy unload closes its event generations;
                 // native registry removal detaches the facade before awaiting runtime close.
-                runCatching { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
+                runCatchingCancellable { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
                     .exceptionOrNull()?.let(::captureCleanup)
                 nativeArtifactIdentities.remove(pluginId)
                 nativeLifecycleRuntimes.remove(pluginId)
                 disabledNativeSources.removeAll { it.packageId == pluginId }
-                runCatching { extensionRegistryV2.uninstall(pluginId) }
+                runCatchingCancellable { extensionRegistryV2.uninstall(pluginId) }
                     .exceptionOrNull()?.let(::captureCleanup)
                 artifacts.forEach { artifact ->
-                    runCatching { eventGrantAdmission?.revoke(artifact) }
+                    runCatchingCancellable { eventGrantAdmission?.revoke(artifact) }
                         .exceptionOrNull()?.let(::captureCleanup)
                 }
 
-                val stored = runCatching { packageStore.get(pluginId) }
+                val stored = runCatchingCancellable { packageStore.get(pluginId) }
                     .onFailure(::captureCleanup)
                     .getOrNull()
                 stored?.artifactIdentity()?.let {
                     if (artifacts.add(it)) {
                         locallyRevokedArtifacts += it
-                        runCatching { eventGrantAdmission?.revoke(it) }
+                        runCatchingCancellable { eventGrantAdmission?.revoke(it) }
                             .exceptionOrNull()?.let(::captureCleanup)
                     }
                 }
                 // Generic execution trust is a second durable authority. Revoke it even if the
                 // package bytes remain available for a later uninstall retry.
-                runCatching { verifier.revokeAll(pluginId) }
+                runCatchingCancellable { verifier.revokeAll(pluginId) }
                     .exceptionOrNull()?.let(::captureCleanup)
                 // Legacy trust-on-install is deliberately readable without the secure trust
                 // store. Clear that durable compatibility bit before deletion so a retained
                 // package cannot execute after restart merely because remove() failed.
                 stored?.takeIf { it.metadata.legacyTrustOnInstall }?.let { installed ->
-                    runCatching {
+                    runCatchingCancellable {
                         packageStore.put(
                             installed.copy(
                                 metadata = installed.metadata.copy(legacyTrustOnInstall = false),
@@ -1095,7 +1099,7 @@ public class PluginManager(
                     // Attempt every durable revocation even if an earlier store is unavailable;
                     // independent stores may still successfully remove their authority.
                     if (stored.metadata.legacyTrustOnInstall) {
-                        runCatching {
+                        runCatchingCancellable {
                             packageStore.put(
                                 stored.copy(
                                     metadata = stored.metadata.copy(legacyTrustOnInstall = false),
@@ -1103,15 +1107,15 @@ public class PluginManager(
                             )
                         }.exceptionOrNull()?.let(::capture)
                     }
-                    runCatching { verifier.revokeAll(pluginId) }
+                    runCatchingCancellable { verifier.revokeAll(pluginId) }
                         .exceptionOrNull()?.let(::capture)
-                    runCatching { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
+                    runCatchingCancellable { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
                         .exceptionOrNull()?.let(::capture)
 
                     // Revocation is fail-closed in memory. A durable-store failure must never
                     // leave attacker-controlled code running with the permissions it had before
                     // the user requested revocation.
-                    runCatching { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
+                    runCatchingCancellable { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
                         .exceptionOrNull()?.let(::capture)
                     failure?.let { throw it }
                 }
@@ -1454,7 +1458,7 @@ public class PluginManager(
             try {
                 admission.narrow(stored.artifactIdentity(), selection)
             } catch (error: Throwable) {
-                runCatching { lifecycleMutex.withLock { loadStored(stored) } }.exceptionOrNull()?.let(error::addSuppressed)
+                runCatchingCancellable { lifecycleMutex.withLock { loadStored(stored) } }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
             }
             lifecycleMutex.withLock { loadStored(stored) }
@@ -1468,12 +1472,12 @@ public class PluginManager(
         withContext(NonCancellable) {
             locallyRevokedArtifacts += review.artifact
             var failure: Throwable? = null
-            runCatching { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
+            runCatchingCancellable { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
                 .exceptionOrNull()?.let { failure = it }
             // Always tear down the runtime even when grant persistence fails. In particular, do
             // not call loadStored here: a partially removed durable grant could recreate the same
             // sensitive runtime during the failure path.
-            runCatching { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
+            runCatchingCancellable { lifecycleMutex.withLock { unloadPlugin(pluginId) } }
                 .exceptionOrNull()?.let { unloadFailure ->
                     if (failure == null) failure = unloadFailure else failure?.addSuppressed(unloadFailure)
                 }
@@ -1615,7 +1619,7 @@ public class PluginManager(
                 require(isLiveBrowserImageSource(sourceKey, identity, origin)) { "Browser image source is no longer authorized" }
                 val resolution = resolvePluginTransportHost(Url(imageRequest.url), environment.hostResolver, false)
                 validateReviewedBrowserImageRequest(imageRequest, resolution)
-                val result = kotlinx.coroutines.withTimeout(30_000) {
+                val result = kotlinx.coroutines.withTimeout(PluginNetworkLimits.UI_WAIT_MILLIS) {
                     environment.network.withContentRequestGate(resolution.host) {
                         transport.executeResolved(imageRequest, resolution)
                     }
@@ -1945,7 +1949,7 @@ public class PluginManager(
             localStorage.forEach { (key, value) -> grant.storage.setPreference(grant.storageId, key, value) }
             grant.storage.setWebChallengeUserAgent(grant.storageId, userAgent)
         } catch (writeFailure: Throwable) {
-            val rollbackFailure = runCatching {
+            val rollbackFailure = runCatchingCancellable {
                 grant.storage.clearCookies(grant.storageId)
                 previousCookies.forEach { grant.storage.setCookie(grant.storageId, it) }
                 previousStorage.forEach { (key, value) ->
@@ -1957,17 +1961,17 @@ public class PluginManager(
             }.exceptionOrNull()
             if (rollbackFailure != null) {
                 writeFailure.addSuppressed(rollbackFailure)
-                runCatching { grant.storage.clearCookies(grant.storageId) }
+                runCatchingCancellable { grant.storage.clearCookies(grant.storageId) }
                     .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 grant.requiredLocalStorageKeys.forEach { key ->
-                    runCatching { grant.storage.removePreference(grant.storageId, key) }
+                    runCatchingCancellable { grant.storage.removePreference(grant.storageId, key) }
                         .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 }
-                runCatching { grant.storage.clearWebChallengeUserAgent(grant.storageId) }
+                runCatchingCancellable { grant.storage.clearWebChallengeUserAgent(grant.storageId) }
                     .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 nativeArtifactIdentities.remove(grant.sourceKey.packageId)
                 nativeLifecycleRuntimes.remove(grant.sourceKey.packageId)
-                runCatching { extensionRegistryV2.uninstall(grant.sourceKey.packageId) }
+                runCatchingCancellable { extensionRegistryV2.uninstall(grant.sourceKey.packageId) }
                     .exceptionOrNull()?.let(writeFailure::addSuppressed)
                 invalidateWebChallengeGrants()
             }
@@ -2177,7 +2181,7 @@ public class PluginManager(
                 if (stored.manifest.sources.orEmpty().none { "PLAIN_TEXT" in it.contentKinds } &&
                     stored.manifest.contentKinds.orEmpty().none { it == "PLAIN_TEXT" }
                 ) return@mapNotNull null
-                val runtime = runCatching { legacyPackageRuntimeV2WhilePackageLocked(stored.manifest.id) }.getOrNull()
+                val runtime = runCatchingCancellable { legacyPackageRuntimeV2WhilePackageLocked(stored.manifest.id) }.getOrNull()
                     ?: return@mapNotNull null
                 val textSources = runtime.descriptor.sources.filter { ContentKind.PLAIN_TEXT in it.supportedContentKinds }
                 if (textSources.isEmpty()) return@mapNotNull null
@@ -2653,7 +2657,7 @@ public class PluginManager(
                 }
             }
         }
-        withContext(NonCancellable) { runCatching { runtime.close() } }
+        withContext(NonCancellable) { runCatchingCancellable { runtime.close() } }
     }
 
     private suspend fun closeRuntimes(values: Iterable<ScriptPluginRuntime>) {

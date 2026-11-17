@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.files
 
-import dev.shinsou.kmp.desktop.DesktopAppDirectories
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path

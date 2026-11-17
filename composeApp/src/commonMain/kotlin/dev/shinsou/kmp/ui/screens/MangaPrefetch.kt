@@ -16,7 +16,7 @@ import dev.shinsou.kmp.translation.TranslationLabels
 import dev.shinsou.kmp.translation.TranslationPrefetchJob
 import dev.shinsou.kmp.translation.TranslationProviderKind
 import dev.shinsou.kmp.translation.WorkTranslationSettings
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.ReaderPage
 import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.runtime.staticCompositionLocalOf
 

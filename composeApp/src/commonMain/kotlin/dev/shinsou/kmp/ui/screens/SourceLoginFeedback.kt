@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SourceLoginResult
-import dev.shinsou.kmp.ui.SourceLoginFailureStage
+import dev.shinsou.kmp.contract.SourceLoginResult
+import dev.shinsou.kmp.contract.SourceLoginFailureStage
 
 /** Converts a source login result into the two mutually exclusive messages rendered by settings. */
 internal data class SourceLoginFeedback(

@@ -9,6 +9,7 @@ import androidx.work.WorkerParameters
 import dev.shinsou.kmp.backup.AutoBackupRunResult
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.nextAutoBackupAt
+import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.files.AndroidAppFileSystem
@@ -35,6 +36,12 @@ internal class AndroidSharedState private constructor(context: Context) {
 
     /** One content database for the Activity and the backup worker alike. */
     val contentInfrastructure: AndroidContentInfrastructure by lazy { AndroidContentInfrastructure(applicationContext) }
+
+    /**
+     * Set when a newer Shinsou X wrote the content database (R3-1): the Activity asks for the
+     * update and no worker opens the stores, so the newer data is left as it was.
+     */
+    val schemaTooNew: SchemaTooNewException? by lazy { contentInfrastructure.checkBeforeOpening() }
 
     /**
      * A worker started in a fresh process has no app composition to bind translations to the
@@ -95,6 +102,7 @@ internal class AndroidAutoBackupWorker(
     override suspend fun doWork(): Result {
         return try {
             val state = AndroidSharedState.get(applicationContext)
+            if (state.schemaTooNew != null) return Result.failure()
             state.bindTranslationBackups()
             when (state.autoBackups.runIfDue()) {
                 is AutoBackupRunResult.Failed -> Result.retry()
@@ -111,4 +119,4 @@ internal class AndroidAutoBackupWorker(
     }
 }
 
-internal const val ANDROID_APP_VERSION = dev.shinsou.kmp.app.SHINSOU_APP_VERSION
+internal const val ANDROID_APP_VERSION = dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION

@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.download
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.files.AppFileSystem
@@ -194,8 +195,8 @@ public class BackgroundDownloadCoordinator(
         // in the mark, even if the process dies right after. If it cannot be saved, nothing is
         // paused; a frozen download simply restarts on launch.
         if (!savePausedBySystem(marked)) return
-        if (manga.isNotEmpty()) runCatching { pauseManga(manga) }.rethrowCancellation()
-        if (novel.isNotEmpty()) runCatching { pauseNovels(novel) }.rethrowCancellation()
+        if (manga.isNotEmpty()) runCatchingCancellable { pauseManga(manga) }.rethrowCancellation()
+        if (novel.isNotEmpty()) runCatchingCancellable { pauseNovels(novel) }.rethrowCancellation()
     }
 
     /**
@@ -210,16 +211,16 @@ public class BackgroundDownloadCoordinator(
         stopBeforeNovelsRestored = false
         var paused = loadPausedBySystem() ?: return@withLock
         if (paused.everything) {
-            val manga = runCatching { resumeManga(null) }.rethrowCancellation().isSuccess
-            val novel = runCatching { resumeNovels(null) }.rethrowCancellation().isSuccess
+            val manga = runCatchingCancellable { resumeManga(null) }.rethrowCancellation().isSuccess
+            val novel = runCatchingCancellable { resumeNovels(null) }.rethrowCancellation().isSuccess
             if (manga && novel) savePausedBySystem(SystemPausedQueues())
             return@withLock
         }
-        if (paused.manga.isNotEmpty() && runCatching { resumeManga(paused.manga) }.rethrowCancellation().isSuccess) {
+        if (paused.manga.isNotEmpty() && runCatchingCancellable { resumeManga(paused.manga) }.rethrowCancellation().isSuccess) {
             paused = paused.copy(manga = emptySet())
             savePausedBySystem(paused)
         }
-        if (paused.novels.isNotEmpty() && runCatching { resumeNovels(paused.novels) }.rethrowCancellation().isSuccess) {
+        if (paused.novels.isNotEmpty() && runCatchingCancellable { resumeNovels(paused.novels) }.rethrowCancellation().isSuccess) {
             paused = paused.copy(novels = emptySet())
             savePausedBySystem(paused)
         }
@@ -238,9 +239,9 @@ public class BackgroundDownloadCoordinator(
     private suspend fun loadPausedBySystem(): SystemPausedQueues? {
         pausedBySystem?.let { return it }
         val files = fileSystem ?: return SystemPausedQueues().also { pausedBySystem = it }
-        val bytes = runCatching { files.read(PATH) }.rethrowCancellation().getOrElse { return null }
+        val bytes = runCatchingCancellable { files.read(PATH) }.rethrowCancellation().getOrElse { return null }
         // Some platforms (iOS NSData) answer an unreadable file the same as a missing one.
-        if (bytes == null && runCatching { files.exists(PATH) }.rethrowCancellation().getOrDefault(true)) return null
+        if (bytes == null && runCatchingCancellable { files.exists(PATH) }.rethrowCancellation().getOrDefault(true)) return null
         val stored = when (bytes) {
             null -> SystemPausedQueues()
             // A damaged mark must not strand a queue paused for good; resuming both is the safe side.
@@ -254,7 +255,7 @@ public class BackgroundDownloadCoordinator(
     private suspend fun savePausedBySystem(value: SystemPausedQueues): Boolean {
         val files = fileSystem
         if (files != null) {
-            val written = runCatching {
+            val written = runCatchingCancellable {
                 files.write(PATH, json.encodeToString(SystemPausedQueues.serializer(), value).encodeToByteArray())
             }.rethrowCancellation()
             if (written.isFailure) return false

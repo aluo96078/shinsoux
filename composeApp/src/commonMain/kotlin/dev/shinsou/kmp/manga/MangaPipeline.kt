@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.manga
 
+import dev.shinsou.kmp.logging.Log
 import kotlin.math.max
 import kotlin.math.min
 
@@ -66,7 +67,9 @@ public class MangaPipeline(
         accelerators.mapNotNull { support ->
             when (support.accelerator) {
                 MangaAccelerator.CPU -> cpu.value to support.weight
-                else -> runCatching { platform.acceleratedDetector(paths, support.accelerator) }.getOrNull()?.let { it to support.weight }
+                else -> runCatching { platform.acceleratedDetector(paths, support.accelerator) }
+                    .onFailure { Log.warn("MangaPipeline", it) { "the ${support.accelerator} detector could not start; left out" } }
+                    .getOrNull()?.let { it to support.weight }
             }
         }.ifEmpty { listOf(cpu.value to 1) }
     }
@@ -174,9 +177,10 @@ public class MangaPipeline(
                     val region = analysis.regions[i]
                     tidyTranslation(translations[i], region.text) ?: region.text.takeUnless { MangaScript.needsTranslation(it) }
                 }
-                if (texts.any { it == null } || texts.all { !MangaScript.needsTranslation(it!!) }) continue
+                val known = texts.filterNotNull()
+                if (known.size < texts.size || known.none(MangaScript::needsTranslation)) continue
                 val (vertical, order) = bubbleReadingOrder(regions)
-                val text = order.map { texts[it]!! }.reduce(::joinTranslations)
+                val text = order.map { known[it] }.reduce(::joinTranslations)
                 val box = regions.map { it.box }.reduce { a, b -> Box(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1)) }
                 val erased = eraser.erase(
                     img, box, bubble, overArt = regions.all { it.kind == RegionKind.FREE_TEXT },

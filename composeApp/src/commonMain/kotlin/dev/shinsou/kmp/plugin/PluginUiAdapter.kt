@@ -1,8 +1,9 @@
 package dev.shinsou.kmp.plugin
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.ExtensionRepo
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
@@ -29,39 +30,39 @@ import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
 import kotlin.time.Clock
 import dev.shinsou.kmp.plugin.v2.UnitContentResultV2
 import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
-import dev.shinsou.kmp.ui.BrowseCallbacks
-import dev.shinsou.kmp.ui.PackageBlock
-import dev.shinsou.kmp.ui.PackagePublisher
-import dev.shinsou.kmp.ui.PackageSecuritySnapshot
-import dev.shinsou.kmp.ui.PublisherTrustState
-import dev.shinsou.kmp.ui.RepositoryTrustPrompt
-import dev.shinsou.kmp.ui.BrowseExtension
-import dev.shinsou.kmp.ui.BrowseFilter
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.BrowseRepositorySuggestion
-import dev.shinsou.kmp.ui.BrowsePage
-import dev.shinsou.kmp.ui.BrowseRepository
-import dev.shinsou.kmp.ui.BrowseSnapshot
-import dev.shinsou.kmp.ui.BrowseSource
-import dev.shinsou.kmp.ui.ContentCallbacks
-import dev.shinsou.kmp.ui.MigrationCandidate
-import dev.shinsou.kmp.ui.ReaderChapter
-import dev.shinsou.kmp.ui.ReaderPage
-import dev.shinsou.kmp.ui.SourceLoginRequest
-import dev.shinsou.kmp.ui.SourceLoginFailureStage
-import dev.shinsou.kmp.ui.SourceLoginResult
-import dev.shinsou.kmp.ui.SourceSecrets
-import dev.shinsou.kmp.ui.SourceSecretsResult
-import dev.shinsou.kmp.ui.SourceCookie as BrowseSourceCookie
-import dev.shinsou.kmp.ui.SourceCredential as BrowseSourceCredential
-import dev.shinsou.kmp.ui.SourcePreference as BrowseSourcePreference
-import dev.shinsou.kmp.ui.SourcePreferenceKind
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
-import dev.shinsou.kmp.ui.TypedReaderContentSession
+import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.contract.PackageBlock
+import dev.shinsou.kmp.contract.PackagePublisher
+import dev.shinsou.kmp.contract.PackageSecuritySnapshot
+import dev.shinsou.kmp.contract.PublisherTrustState
+import dev.shinsou.kmp.contract.RepositoryTrustPrompt
+import dev.shinsou.kmp.contract.BrowseExtension
+import dev.shinsou.kmp.contract.BrowseFilter
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.BrowseRepositorySuggestion
+import dev.shinsou.kmp.contract.BrowsePage
+import dev.shinsou.kmp.contract.BrowseRepository
+import dev.shinsou.kmp.contract.BrowseSnapshot
+import dev.shinsou.kmp.contract.BrowseSource
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.contract.MigrationCandidate
+import dev.shinsou.kmp.contract.ReaderChapter
+import dev.shinsou.kmp.contract.ReaderPage
+import dev.shinsou.kmp.contract.SourceLoginRequest
+import dev.shinsou.kmp.contract.SourceLoginFailureStage
+import dev.shinsou.kmp.contract.SourceLoginResult
+import dev.shinsou.kmp.contract.SourceSecrets
+import dev.shinsou.kmp.contract.SourceSecretsResult
+import dev.shinsou.kmp.contract.SourceCookie as BrowseSourceCookie
+import dev.shinsou.kmp.contract.SourceCredential as BrowseSourceCredential
+import dev.shinsou.kmp.contract.SourcePreference as BrowseSourcePreference
+import dev.shinsou.kmp.contract.SourcePreferenceKind
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import io.ktor.http.Url
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.ui.resolvedAgainst
+import dev.shinsou.kmp.contract.resolvedAgainst
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -208,8 +209,8 @@ public class PluginBrowseAdapter(
         if (exact == null && legacy == null) return@withContext false
         // Remote logout is bounded. Host policy is fail-closed: timeout/failure preserves the
         // local session namespace so the user can retry and no unrelated credentials are erased.
-        val remoteSucceeded = withTimeoutOrNull(10_000) {
-            runCatching {
+        val remoteSucceeded = withTimeoutOrNull(PluginNetworkLimits.LOGOUT_WAIT_MILLIS) {
+            runCatchingCancellable {
                 if (exact != null) exact.logout() else legacy?.logout()
             }.isSuccess
         } == true
@@ -459,7 +460,7 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun packageSecurity(): PackageSecuritySnapshot {
-        val developer = developerMode?.state?.value?.let { dev.shinsou.kmp.ui.PluginDeveloperModeSettings(it.enabled, it.lanHosts) }
+        val developer = developerMode?.state?.value?.let { dev.shinsou.kmp.contract.PluginDeveloperModeSettings(it.enabled, it.lanHosts) }
         val security = packageSecurity ?: return PackageSecuritySnapshot(developerMode = developer)
         val mode = security.publishers.globalMode()
         val blocks = security.blocklist.entries()
@@ -728,7 +729,7 @@ public class PluginBrowseAdapter(
         if (live == null) return publicationCacheV2?.readCover(sourceKey, url)
         // A library cover kept for offline use follows the source when its artwork changes.
         publicationCacheV2?.let { cache ->
-            if (cache.hasCover(sourceKey, url)) runCatching { cache.writeCover(sourceKey, url, live) }
+            if (cache.hasCover(sourceKey, url)) runCatchingCancellable { cache.writeCover(sourceKey, url, live) }
         }
         return live
     }
@@ -852,7 +853,7 @@ public class PluginBrowseAdapter(
             // Keep the cover too: offline the library would otherwise show a blank placeholder.
             val cover = publication.thumbnailUrl?.takeIf(String::isNotBlank) ?: return@withContext
             if (!cache.hasCover(sourceKey, cover)) {
-                runCatching { fetchExtensionThumbnailV2(sourceKey, cover, emptyMap()) }
+                runCatchingCancellable { fetchExtensionThumbnailV2(sourceKey, cover, emptyMap()) }
                     .getOrNull()
                     ?.let { cache.writeCover(sourceKey, cover, it) }
             }
@@ -976,7 +977,14 @@ public class PluginBrowseAdapter(
         }
     }
 
-    private val extensionDownloadQueueV2 by lazy {
+    private val extensionDownloadQueueV2 get() = extensionDownloadQueueV2Lazy.value
+
+    /** Saves and stops the extension download queue when the app shuts down (R4-8). */
+    public suspend fun close() {
+        if (extensionDownloadQueueV2Lazy.isInitialized()) extensionDownloadQueueV2Lazy.value.close()
+    }
+
+    private val extensionDownloadQueueV2Lazy = lazy {
         ExtensionDownloadQueueV2(
             materialize = { selection ->
                 try {
@@ -1124,18 +1132,18 @@ public class PluginBrowseAdapter(
         return (repository to entry).takeIf { entry.matchesDescriptor(descriptor) }
     }
 
-    override suspend fun updatePermissionPreview(extensionId: String): dev.shinsou.kmp.ui.UpdatePermissionPreview? =
+    override suspend fun updatePermissionPreview(extensionId: String): dev.shinsou.kmp.contract.UpdatePermissionPreview? =
         withContext(Dispatchers.Default) {
             operationMutex.withLock {
                 val (repository, entry) = indexEntryFor(extensionId) ?: return@withLock null
                 val preview = manager.updateReviewPreview(repository, entry) ?: return@withLock null
-                dev.shinsou.kmp.ui.UpdatePermissionPreview(preview.review, permissionDetails(preview.stored))
+                dev.shinsou.kmp.contract.UpdatePermissionPreview(preview.review, permissionDetails(preview.stored))
             }
         }
 
     override suspend fun installReviewedUpdate(
         extensionId: String,
-        preview: dev.shinsou.kmp.ui.UpdatePermissionPreview,
+        preview: dev.shinsou.kmp.contract.UpdatePermissionPreview,
         selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
     ): dev.shinsou.kmp.plugin.events.PluginEventGrantReview? = withContext(Dispatchers.Default) {
         installExtension(extensionId)
@@ -1241,18 +1249,18 @@ public class PluginBrowseAdapter(
     override suspend fun pluginPermissionDetails(
         extensionId: String,
         review: dev.shinsou.kmp.plugin.events.PluginEventGrantReview,
-    ): dev.shinsou.kmp.ui.PluginPermissionDetails? = withContext(Dispatchers.Default) {
+    ): dev.shinsou.kmp.contract.PluginPermissionDetails? = withContext(Dispatchers.Default) {
         val stored = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId } ?: return@withContext null
         if (stored.metadata.installedSha256 != review.artifact.sha256) return@withContext null
         permissionDetails(stored)
     }
 
-    override suspend fun installedPluginPermissions(extensionId: String): dev.shinsou.kmp.ui.InstalledPluginPermissions? =
+    override suspend fun installedPluginPermissions(extensionId: String): dev.shinsou.kmp.contract.InstalledPluginPermissions? =
         withContext(Dispatchers.Default) {
             val stored = manager.installedPlugins().firstOrNull { it.manifest.id == extensionId } ?: return@withContext null
             val granted = manager.grantedSelection(extensionId) ?: return@withContext null
             val review = manager.currentEventGrantReview(extensionId) ?: return@withContext null
-            dev.shinsou.kmp.ui.InstalledPluginPermissions(review, granted, permissionDetails(stored))
+            dev.shinsou.kmp.contract.InstalledPluginPermissions(review, granted, permissionDetails(stored))
         }
 
     override suspend fun narrowPluginPermissions(
@@ -1265,12 +1273,12 @@ public class PluginBrowseAdapter(
         }
     }
 
-    private suspend fun permissionDetails(stored: StoredPlugin): dev.shinsou.kmp.ui.PluginPermissionDetails {
+    private suspend fun permissionDetails(stored: StoredPlugin): dev.shinsou.kmp.contract.PluginPermissionDetails {
         val sources = stored.manifest.sources.orEmpty()
         val policies = sources.map { it.networkPolicy() }
         val publisher = stored.metadata.publisherId?.let { id -> packageSecurity?.publishers?.publisher(id) }
         val mode = packageSecurity?.publishers?.globalMode()
-        return dev.shinsou.kmp.ui.PluginPermissionDetails(
+        return dev.shinsou.kmp.contract.PluginPermissionDetails(
             packageName = stored.manifest.name,
             version = stored.manifest.version,
             publisherDisplayFingerprint = publisher?.let { PublisherFingerprint.display(it.currentFingerprint) },
@@ -1470,7 +1478,7 @@ public class PluginBrowseAdapter(
         }
         // An account saved before sign-ins were marked: note it now that the secrets are open anyway.
         if (credential != null && keyValueStore.getString(sourceSignedInKey(storageId)) == null) {
-            runCatching { markSourceSignedIn(storageId, true) }
+            runCatchingCancellable { markSourceSignedIn(storageId, true) }
         }
         SourceSecretsResult(
             secrets = SourceSecrets(
@@ -1556,7 +1564,7 @@ public class PluginBrowseAdapter(
                 storageForSourceUi(sourceId).setCredential(storageId, PluginCredential(username, password))
             }
             if (dismissLegacy) loginRequestCoordinator.dismiss(sourceId)
-            runCatching { markSourceSignedIn(storageId, true) }
+            runCatchingCancellable { markSourceSignedIn(storageId, true) }
         }
         loginStage(SourceLoginFailureStage.REFRESH_SOURCE_STATE) {
             rebuildSnapshot(errorMessage = null)
@@ -1614,7 +1622,7 @@ public class PluginBrowseAdapter(
 
     override suspend fun logoutSource(sourceId: Long): Unit = operationMutex.withLock {
         val v2Scope = requireV2SourceScope(sourceId)
-        val result = runCatching {
+        val result = runCatchingCancellable {
             if (v2Scope != null) {
                 val source = requireNotNull(manager.extensionSourceV2(v2Scope.first)) {
                     "Unknown extension v2 source: ${v2Scope.first.canonicalId}"
@@ -1671,7 +1679,7 @@ public class PluginBrowseAdapter(
 
     override suspend fun importSourceWebChallengeSession(
         sourceId: Long,
-        capability: dev.shinsou.kmp.ui.SourceWebChallengeCapability,
+        capability: dev.shinsou.kmp.contract.SourceWebChallengeCapability,
         cookies: List<BrowseSourceCookie>,
         userAgent: String,
         localStorage: Map<String, String>,
@@ -1688,7 +1696,7 @@ public class PluginBrowseAdapter(
     }
 
     override suspend fun cancelSourceWebChallenge(
-        capability: dev.shinsou.kmp.ui.SourceWebChallengeCapability,
+        capability: dev.shinsou.kmp.contract.SourceWebChallengeCapability,
     ) {
         manager.cancelWebChallenge(capability)
     }
@@ -1710,7 +1718,7 @@ public class PluginBrowseAdapter(
         }
         storageForSourceUi(sourceId).clearCookies(storageId)
         // A saved account can still sign in again; without one, nothing of the sign-in is left.
-        if (runCatching { storageForSourceUi(sourceId).getCredential(storageId) }.getOrNull() == null) {
+        if (runCatchingCancellable { storageForSourceUi(sourceId).getCredential(storageId) }.getOrNull() == null) {
             markSourceSignedIn(storageId, false)
         }
         rebuildSnapshot(errorMessage = null)
@@ -1808,7 +1816,7 @@ public class PluginBrowseAdapter(
                 requiredLocalStorageKeys = requiredLocalStorageKeys,
                 username = credential?.username,
                 password = credential?.password,
-                embeddedPolicy = dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
+                embeddedPolicy = dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy.ALLOW_REVIEWED_ORIGINS,
                 allowedNavigationOrigins = authorization.allowedNavigationOrigins,
                 allowedSubresourceOrigins = authorization.allowedSubresourceOrigins,
             ).also { requestBuilt = true }

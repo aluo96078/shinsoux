@@ -1,11 +1,19 @@
 package dev.shinsou.kmp.reader
 
+import dev.shinsou.kmp.domain.model.resolveTextOffset
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import dev.shinsou.kmp.domain.model.EpubLocator
+import dev.shinsou.kmp.domain.model.ImageLocator
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextLocator
+import dev.shinsou.kmp.domain.model.TextQuote
 
 class ReadingLocatorContractTest {
     @Test

@@ -41,14 +41,14 @@ internal class AndroidSyncWorker(
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
+        if (AndroidSharedState.get(applicationContext).schemaTooNew != null) return Result.failure()
         return try {
             val runtime = AndroidAppRuntime.get(applicationContext)
             // Installs the dirty tracker and restores the session when the process was started
             // by the system rather than by an Activity.
             runtime.start()
             runtime.composition.awaitStartup()
-            val sync = runtime.composition.sync ?: return Result.success()
-            when (sync.runBackgroundSync()) {
+            when (runtime.composition.sync?.runBackgroundSync() ?: SyncBackgroundResult.Completed) {
                 SyncBackgroundResult.Completed -> Result.success()
                 SyncBackgroundResult.RetryLater -> retryOrGiveUp()
                 // An expired session or a rejected request does not fix itself: retrying with

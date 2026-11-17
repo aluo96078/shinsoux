@@ -8,26 +8,23 @@ import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.compose.ui.text.platform.Font
+import dev.shinsou.kmp.logging.Log
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.convert
-import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.ULongVar
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
-import platform.Foundation.NSData
-import platform.Foundation.NSProcessInfo
-import platform.Foundation.dataWithContentsOfFile
-import platform.Foundation.create
 import platform.CoreGraphics.CGBitmapContextCreate
 import platform.CoreGraphics.CGBitmapContextCreateImage
 import platform.CoreGraphics.CGColorSpaceCreateDeviceRGB
@@ -39,13 +36,17 @@ import platform.CoreGraphics.CGImageGetHeight
 import platform.CoreGraphics.CGImageGetWidth
 import platform.CoreGraphics.CGImageRelease
 import platform.CoreGraphics.CGRectMake
+import platform.Foundation.NSData
+import platform.Foundation.NSProcessInfo
+import platform.Foundation.NSProcessInfoThermalState
+import platform.Foundation.create
+import platform.Foundation.dataWithContentsOfFile
+import platform.Foundation.lowPowerModeEnabled
+import platform.Foundation.thermalState
 import platform.UIKit.UIImage
 import platform.UIKit.UIImageJPEGRepresentation
 import platform.UIKit.UIImagePNGRepresentation
 import platform.posix.memcpy
-import platform.Foundation.thermalState
-import platform.Foundation.lowPowerModeEnabled
-import platform.Foundation.NSProcessInfoThermalState
 
 /** Manga translation on iOS: ONNX Runtime's C API, OpenCV's Objective-C API, Skia for pages and text. */
 public class IosMangaPlatform : MangaPlatform {
@@ -67,7 +68,9 @@ public class IosMangaPlatform : MangaPlatform {
             MangaAccelerator.NPU -> IosCoreMlDetector.Units.NEURAL_ENGINE
             MangaAccelerator.CPU -> return null
         }
-        return runCatching { IosCoreMlDetector(ops, path, units) }.getOrNull()
+        return runCatching { IosCoreMlDetector(ops, path, units) }
+            .onFailure { Log.warn("MangaPlatform", it) { "Core ML detector on $units could not start" } }
+            .getOrNull()
     }
 
     // background quality of service: the efficiency cores only. Set on every task, since the

@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SourceCookie
+import dev.shinsou.kmp.contract.SourceCookie
 import io.ktor.http.Url
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray

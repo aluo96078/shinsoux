@@ -1,12 +1,11 @@
 package dev.shinsou.kmp.plugin.v2
 
-import dev.shinsou.kmp.content.ContentKind
-import dev.shinsou.kmp.content.ImageLayout
-import dev.shinsou.kmp.content.ImageProgression
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.content.ImageLayout
+import dev.shinsou.kmp.domain.content.ImageProgression
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceBinding
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.domain.model.UnitKey
 import io.ktor.http.Url
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -617,6 +616,7 @@ public data class ExtensionPackageV2(
     level = RequiresOptIn.Level.ERROR,
     message = "Extension implementation SPI; application consumers must use ExtensionHostFacadeV2",
 )
+
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ExtensionImplementationApi
@@ -716,354 +716,15 @@ public interface ArtifactBoundExtensionPackageRuntimeV2 {
     public val artifactIdentity: dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
 }
 
-@OptIn(ExtensionImplementationApi::class)
-public class HostExtensionSourceV2 internal constructor(
-    public val descriptor: SourceDescriptorV2,
-    private val implementation: ExtensionSourceV2,
-) {
-    public suspend fun <T> withUserInteractionContext(block: suspend () -> T): T =
-        (implementation as? UserInteractionScopedExtensionSourceV2)?.withUserInteractionContext(block) ?: block()
-    public fun setHostUiAvailable(available: Boolean) {
-        (implementation as? UserInteractionScopedExtensionSourceV2)?.setHostUiAvailable(available)
-    }
-    public fun webChallengeUserAgent(): String? {
-        val userAgent = (implementation as? WebChallengeUserAgentSourceV2)
-            ?.webChallengeUserAgent
-            ?: return null
-        require(userAgent.isNotBlank()) { "Web challenge User-Agent must not be blank" }
-        requireHeaderHint("User-Agent", userAgent)
-        return userAgent
-    }
-    public fun webChallengeUrl(): String? {
-        val url = (implementation as? WebChallengeUserAgentSourceV2)
-            ?.webChallengeUrl
-            ?: return null
-        require(url.isNotBlank()) { "Web challenge URL must not be blank" }
-        requireRemoteUri(url, "Web challenge URL")
-        return url
-    }
-    public fun webChallengeLocalStorageKeys(): Set<String> =
-        (implementation as? WebChallengeUserAgentSourceV2)
-            ?.webChallengeLocalStorageKeys
-            .orEmpty()
-    public fun requiredWebChallengeLocalStorageKeys(): Set<String> =
-        (implementation as? WebChallengeUserAgentSourceV2)
-            ?.requiredWebChallengeLocalStorageKeys
-            .orEmpty()
-    public fun webChallengeBrowserSessionOrigins(): Set<String> =
-        (implementation as? WebChallengeUserAgentSourceV2)
-            ?.browserSessionOrigins
-            .orEmpty()
-
-    public suspend fun browseOptions(): BrowseOptionsSchemaV2 {
-        requireCapability(ExtensionCapability.BROWSE)
-        return implementation.browseOptions().also(::validateBrowseSchema)
-    }
-
-    public suspend fun getFilterList(): BrowseFilterListV2 {
-        requireCapability(ExtensionCapability.BROWSE)
-        return implementation.getFilterList().also { filters ->
-            validateBrowseFilters(filters)
-        }
-    }
-
-    public suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> {
-        requireCapability(ExtensionCapability.SEARCH)
-        requireQuery(query)
-        requirePage(page)
-        return implementation.search(query, page).also(::validatePublicationPage)
-    }
-
-    public suspend fun search(
-        query: String,
-        page: Int,
-        options: BrowseOptionsV2,
-    ): PagedResultV2<RemotePublicationV2> {
-        requireCapability(ExtensionCapability.SEARCH)
-        requireQuery(query)
-        validateBrowseOptions(options)
-        requirePage(page)
-        return implementation.search(query, page, options).also(::validatePublicationPage)
-    }
-
-    public suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> {
-        requireCapability(ExtensionCapability.LATEST)
-        requirePage(page)
-        return implementation.latest(page).also(::validatePublicationPage)
-    }
-
-    public suspend fun browse(options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2> {
-        requireCapability(ExtensionCapability.BROWSE)
-        validateBrowseOptions(options)
-        requirePage(page)
-        return implementation.browse(options, page).also(::validatePublicationPage)
-    }
-
-    public suspend fun details(remotePublicationId: String): RemotePublicationV2 {
-        requireCapability(ExtensionCapability.METADATA)
-        requireSafeIdentifier(remotePublicationId, "Remote publication id")
-        return implementation.details(remotePublicationId).also { result ->
-            validateRemotePublication(result)
-            require(result.remoteId == remotePublicationId) { "Extension details changed remote identity" }
-        }
-    }
-
-    public suspend fun units(remotePublicationId: String, page: Int): PagedResultV2<RemoteUnitV2> {
-        requireCapability(ExtensionCapability.UNITS)
-        requireSafeIdentifier(remotePublicationId, "Remote publication id")
-        requirePage(page)
-        return implementation.units(remotePublicationId, page).also(::validateUnitPage)
-    }
-
-    public suspend fun content(remotePublicationId: String, remoteUnitId: String): UnitContentResultV2 {
-        requireCapability(ExtensionCapability.CONTENT)
-        requireSafeIdentifier(remotePublicationId, "Remote publication id")
-        requireSafeIdentifier(remoteUnitId, "Remote unit id")
-        return implementation.content(remotePublicationId, remoteUnitId).also { result ->
-            result.validate()
-            require(result.sourceKey == descriptor.sourceKey &&
-                result.remotePublicationId == remotePublicationId && result.remoteUnitId == remoteUnitId) {
-                "Extension content result escaped the requested source/publication/unit scope"
-            }
-            result.representations.forEach { payload ->
-                require(payload.kind in descriptor.supportedContentKinds) {
-                    "Extension returned an undeclared content kind"
-                }
-            }
-        }
-    }
-
-    public suspend fun openTextStream(plan: TextPayloadSourceV2.ChunkedTextPayload): HostTextChunkStreamV2 {
-        requireCapability(ExtensionCapability.CONTENT)
-        plan.validateChunked()
-        val stream = implementation.openTextStream(plan.streamId)
-        return HostTextChunkStreamV2(plan, stream)
-    }
-
-    public suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
-        requireCapability(ExtensionCapability.LOGIN)
-        validateCredentials(credentials)
-        return implementation.login(credentials)
-    }
-
-    public suspend fun logout(): Unit {
-        requireCapability(ExtensionCapability.LOGIN)
-        implementation.logout()
-    }
-
-    public suspend fun preferences(): List<PreferenceV2> {
-        requireCapability(ExtensionCapability.PREFERENCES)
-        return implementation.preferences().also { preferences ->
-            require(preferences.size <= MAX_PREFERENCES) { "Extension returned too many preferences" }
-            require(preferences.map(PreferenceV2::key).distinct().size == preferences.size) {
-                "Extension returned duplicate preference keys"
-            }
-            preferences.forEach(::validatePreference)
-        }
-    }
-
-    public suspend fun favorite(remotePublicationId: String, favorite: Boolean): Unit {
-        requireCapability(ExtensionCapability.FAVORITE)
-        requireSafeIdentifier(remotePublicationId, "Remote publication id")
-        implementation.favorite(remotePublicationId, favorite)
-    }
-
-    private fun requireCapability(capability: ExtensionCapability) {
-        descriptor.requireCapability(capability)
-    }
-}
-
-/**
- * Cursor stream guard owned by the host. It prevents cursor cycles and enforces both per-chunk
- * and aggregate limits even when an extension implementation keeps returning valid small chunks.
- */
-@OptIn(ExtensionImplementationApi::class)
-public class HostTextChunkStreamV2 internal constructor(
-    public val plan: TextPayloadSourceV2.ChunkedTextPayload,
-    private val implementation: TextChunkStreamV2,
-) : TextChunkStreamV2 {
-    private val seenCursors = HashSet<String?>()
-    private var expectedCursor: String? = plan.firstCursor
-    private var chunkCount: Int = 0
-    private var totalBytes: Long = 0
-    private var terminal: Boolean = false
-    private var cancelled: Boolean = false
-
-    override val maxChunkBytes: Int
-
-    init {
-        try {
-            require(implementation.maxChunkBytes in 1..plan.maxChunkBytes) {
-                "Extension text stream declared an invalid chunk bound"
-            }
-            maxChunkBytes = implementation.maxChunkBytes
-        } catch (error: Throwable) {
-            runCatching { implementation.cancel() }
-            throw error
-        }
-    }
-
-    override suspend fun next(cursor: String?): TextChunkResultV2 {
-        check(!cancelled) { "Text stream is cancelled" }
-        check(!terminal) { "Text stream is complete" }
-        require(cursor == expectedCursor) { "Text stream cursor does not match the host continuation" }
-        if (!seenCursors.add(cursor)) return fail("Text stream cursor cycle detected")
-        return try {
-            val result = implementation.next(cursor)
-            result.validate(maxChunkBytes)
-            val bytes = result.utf8Text.encodeToByteArray().size.toLong()
-            if (bytes > Long.MAX_VALUE - totalBytes) return fail("Text stream byte count overflow")
-            totalBytes += bytes
-            chunkCount++
-            if (totalBytes > plan.maxTotalBytes) return fail("Text stream exceeded its aggregate byte limit")
-            if (chunkCount > plan.maxChunks || chunkCount == plan.maxChunks && !result.done) {
-                return fail("Text stream exceeded its chunk limit")
-            }
-            if (result.nextCursor != null && result.nextCursor in seenCursors) {
-                return fail("Text stream cursor cycle detected")
-            }
-            expectedCursor = result.nextCursor
-            terminal = result.done
-            result
-        } catch (error: Throwable) {
-            cancelSafely()
-            throw error
-        }
-    }
-
-    override fun cancel(): Unit {
-        if (cancelled) return
-        cancelled = true
-        implementation.cancel()
-    }
-
-    private fun fail(message: String): Nothing {
-        cancelSafely()
-        throw IllegalArgumentException(message)
-    }
-
-    private fun cancelSafely() {
-        runCatching { cancel() }
-    }
-}
-
-@Serializable
-public data class BrowseOptionsV2(
-    val values: Map<String, String> = emptyMap(),
-    /** Structured source filters projected from the legacy FilterList model. */
-    val filters: List<BrowseFilterV2> = emptyList(),
-) {
-    init { validate() }
-
-    public fun validate(): Unit {
-        require(values.size <= MAX_PARAMETERS)
-        values.forEach { (key, value) ->
-            requireSafeIdentifier(key, "Browse option key")
-            require(value.length <= MAX_PARAMETER_VALUE_LENGTH && value.none(Char::isISOControl))
-        }
-        validateBrowseFilters(filters)
-    }
-}
-
-@Serializable
-public data class BrowseOptionsSchemaV2(
-    val keys: List<String> = emptyList(),
-    /** Editable source filters, in the same order and shape as the legacy FilterList. */
-    val filters: List<BrowseFilterV2> = emptyList(),
-) {
-    init { validate() }
-
-    public fun validate(): Unit {
-        require(keys.size <= MAX_PARAMETERS && keys.distinct().size == keys.size)
-        keys.forEach { requireSafeIdentifier(it, "Browse option key") }
-        validateBrowseFilters(filters)
-    }
-}
-
-/**
- * Serializable v2 projection of the legacy source FilterList.
- *
- * Keeping this model in the contract (instead of leaking the host UI's BrowseFilter type) lets
- * native and legacy-backed v2 sources expose the same Select/Text/CheckBox/TriState/Group/Sort
- * controls.  The host converts it to its platform-neutral UI model before rendering.
- */
-@Serializable
-public sealed interface BrowseFilterV2 {
-    public val name: String
-
-    @Serializable
-    @SerialName("header")
-    public data class Header(override val name: String) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("separator")
-    public data object Separator : BrowseFilterV2 {
-        override val name: String = ""
-    }
-
-    @Serializable
-    @SerialName("select")
-    public data class Select(
-        override val name: String,
-        val values: List<String>,
-        val state: Int,
-    ) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("text")
-    public data class Text(
-        override val name: String,
-        val state: String,
-    ) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("checkBox")
-    public data class CheckBox(
-        override val name: String,
-        val state: Boolean,
-    ) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("triState")
-    public data class TriState(
-        override val name: String,
-        val state: BrowseTriStateV2,
-    ) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("group")
-    public data class Group(
-        override val name: String,
-        val filters: List<BrowseFilterV2>,
-    ) : BrowseFilterV2
-
-    @Serializable
-    @SerialName("sort")
-    public data class Sort(
-        override val name: String,
-        val values: List<String>,
-        val selection: BrowseSortSelectionV2?,
-    ) : BrowseFilterV2
-}
-
-@Serializable
-public enum class BrowseTriStateV2 {
-    IGNORE,
-    INCLUDE,
-    EXCLUDE,
-}
-
-@Serializable
-public data class BrowseSortSelectionV2(
-    val index: Int,
-    val ascending: Boolean,
-)
-
 /** Naming aliases for callers migrating from the v1 Filter/FilterList API. */
 public typealias BrowseFilterListV2 = List<BrowseFilterV2>
+
 public typealias FilterV2 = BrowseFilterV2
+
 public typealias FilterListV2 = BrowseFilterListV2
+
 public typealias TriStateValueV2 = BrowseTriStateV2
+
 public typealias SortSelectionV2 = BrowseSortSelectionV2
 
 /** Capability predicate used by the host-owned [HostExtensionSourceV2] boundary. */
@@ -1253,7 +914,7 @@ private fun TextPayloadSourceV2.HostFetchResource.validateHostFetch() {
     require(body.resource.mediaType.startsWith("text/", ignoreCase = true))
 }
 
-private fun TextPayloadSourceV2.ChunkedTextPayload.validateChunked() {
+internal fun TextPayloadSourceV2.ChunkedTextPayload.validateChunked() {
     require(charset == "UTF-8")
     requireMediaType(mediaType, "Chunked text media type")
     require(mediaType.startsWith("text/", ignoreCase = true))
@@ -1273,15 +934,7 @@ private fun validateBlocks(blocks: List<TextBlock>, textUtf16Length: Int? = null
     require(blocks.zipWithNext().all { (a, b) -> a.endUtf16 <= b.startUtf16 })
 }
 
-private fun validateBrowseSchema(schema: BrowseOptionsSchemaV2) {
-    schema.validate()
-}
-
-private fun validateBrowseOptions(options: BrowseOptionsV2) {
-    options.validate()
-}
-
-private fun validateBrowseFilters(filters: List<BrowseFilterV2>, depth: Int = 0) {
+internal fun validateBrowseFilters(filters: List<BrowseFilterV2>, depth: Int = 0) {
     require(depth <= MAX_FILTER_DEPTH) { "Browse filter nesting is too deep" }
     require(filters.size <= MAX_PARAMETERS) { "Browse filter list is too large" }
     filters.forEach { filter ->
@@ -1324,41 +977,7 @@ private fun validateFilterState(value: String, label: String) {
     }
 }
 
-private fun validatePublicationPage(page: PagedResultV2<RemotePublicationV2>) {
-    require(page.items.size <= MAX_PAGE_ITEMS) { "Extension publication page is too large" }
-    require(page.items.map(RemotePublicationV2::remoteId).distinct().size == page.items.size) {
-        "Extension publication page contains duplicate identities"
-    }
-    page.items.forEach(::validateRemotePublication)
-}
-
-private fun validateUnitPage(page: PagedResultV2<RemoteUnitV2>) {
-    require(page.items.size <= MAX_PAGE_ITEMS) { "Extension unit page is too large" }
-    require(page.items.map(RemoteUnitV2::remoteId).distinct().size == page.items.size) {
-        "Extension unit page contains duplicate identities"
-    }
-    page.items.forEach(RemoteUnitV2::validate)
-}
-
-private fun validateRemotePublication(publication: RemotePublicationV2) {
-    publication.validate()
-}
-
-private fun validateCredentials(credentials: LoginCredentialsV2) {
-    credentials.validate()
-}
-
-private fun validatePreference(preference: PreferenceV2) {
-    preference.validate()
-}
-
-private fun requireQuery(query: String) {
-    require(query.isNotBlank() && query.length <= MAX_QUERY_LENGTH && query.none(Char::isISOControl)) {
-        "Search query must be bounded and printable"
-    }
-}
-
-private fun requirePage(page: Int) {
+internal fun requirePage(page: Int) {
     require(page in 0..MAX_PAGE_NUMBER) { "Page index is outside the host bound" }
 }
 
@@ -1366,7 +985,7 @@ private fun requireCanonicalUuid(value: String, label: String) {
     require(UUID_PATTERN.matches(value) && value != NIL_UUID) { "$label must be lowercase non-NIL UUID" }
 }
 
-private fun requireSafeIdentifier(value: String, label: String) {
+internal fun requireSafeIdentifier(value: String, label: String) {
     require(value.isNotBlank() && value.length <= MAX_IDENTIFIER_LENGTH && value.none(Char::isISOControl)) {
         "$label must be bounded and printable"
     }
@@ -1421,6 +1040,7 @@ public fun RemotePublicationV2.withoutScriptObjectText(): RemotePublicationV2 = 
 )
 
 private val PLACEHOLDER_TITLE_ID = Regex("""#\s*([A-Za-z0-9_]+)\s*$""")
+
 private val ID_SEGMENT_SEPARATOR = Regex("""[^A-Za-z0-9_]+""")
 
 /**
@@ -1459,7 +1079,7 @@ private fun requireMediaType(value: String, label: String) {
     require(value.length <= 256 && MEDIA_TYPE_PATTERN.matches(value)) { "$label is invalid" }
 }
 
-private fun requireRemoteUri(value: String, label: String) {
+internal fun requireRemoteUri(value: String, label: String) {
     require(value.length <= MAX_URI_LENGTH && value.none { it.isISOControl() || it.isWhitespace() } && '\\' !in value) {
         "$label must be a bounded printable URI"
     }
@@ -1501,7 +1121,7 @@ private fun requireSafeRelativePath(value: String, label: String) {
     }
 }
 
-private fun requireHeaderHint(name: String, value: String) {
+internal fun requireHeaderHint(name: String, value: String) {
     require(name.length in 1..128 && value.length <= MAX_HEADER_VALUE_LENGTH && RFC_TOKEN.matches(name)) {
         "Request header hint is outside bounds"
     }
@@ -1587,38 +1207,66 @@ private fun String.substringBeforeAnyOf(vararg delimiters: Char): String {
 }
 
 private const val MAX_STRING_LENGTH = 512
+
 private const val MAX_IDENTIFIER_LENGTH = 512
+
 private const val MAX_URI_LENGTH = 4_096
+
 private const val MAX_HEADER_VALUE_LENGTH = 1_024
+
 private const val MAX_HEADERS = 32
-private const val MAX_PARAMETERS = 128
-private const val MAX_PARAMETER_VALUE_LENGTH = 4_096
+
+internal const val MAX_PARAMETERS = 128
+
+internal const val MAX_PARAMETER_VALUE_LENGTH = 4_096
+
 private const val MAX_FILTER_DEPTH = 8
+
 private const val MAX_REQUEST_BODY_BYTES = 8L * 1024L * 1024L
+
 private const val MAX_RESPONSE_BYTES = 128L * 1024L * 1024L
+
 private const val MAX_INLINE_TEXT_BYTES = 4L * 1024L * 1024L
+
 private const val MAX_TEXT_CHUNK_BYTES = 256 * 1024
+
 private const val DEFAULT_TEXT_CHUNK_BYTES = 64 * 1024
+
 private const val MAX_TEXT_STREAM_BYTES = 512L * 1024L * 1024L
+
 private const val DEFAULT_MAX_TEXT_STREAM_BYTES = 64L * 1024L * 1024L
+
 private const val MAX_TEXT_STREAM_CHUNKS = 65_536
+
 private const val DEFAULT_MAX_TEXT_STREAM_CHUNKS = 4_096
+
 private const val MAX_RESOURCES = 100_000
+
 private const val MAX_REPRESENTATIONS = 32
+
 private const val MAX_SOURCES_PER_PACKAGE = 256
-private const val MAX_PAGE_ITEMS = 100
+
+internal const val MAX_PAGE_ITEMS = 100
+
 private const val MAX_PAGE_NUMBER = 1_000_000
-private const val MAX_QUERY_LENGTH = 4_096
-private const val MAX_PREFERENCES = 256
+
 private const val MAX_LEGACY_ADAPTER_UNITS = 100_000
+
 private const val EPUB_ARCHIVE_MEDIA_TYPE = "application/epub+zip"
+
 private const val NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
 private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
 private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
+
 private val MEDIA_TYPE_PATTERN = Regex("[A-Za-z0-9!#${'$'}%&'*+.^_`|~-]+/[A-Za-z0-9!#${'$'}%&'*+.^_`|~-]+")
+
 private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
+
 private val SAFE_HEADER_HINTS = setOf(
     "accept", "accept-language", "content-type", "referer", "user-agent", "origin",
     "x-requested-with", "x-image-ticket",
 )
+
 private val RFC_TOKEN = Regex("[!#${'$'}%&'*+.^_`|~0-9A-Za-z-]+")

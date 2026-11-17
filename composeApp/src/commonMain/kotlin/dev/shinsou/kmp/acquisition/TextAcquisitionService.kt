@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.acquisition
 
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentManifest
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.Publication

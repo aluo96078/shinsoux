@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.ui.SourceLoginRequest
+import dev.shinsou.kmp.contract.SourceLoginRequest
 import dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget
 import dev.shinsou.kmp.plugin.events.PluginArtifactIdentity
 import kotlinx.coroutines.flow.MutableStateFlow

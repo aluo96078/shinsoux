@@ -7,10 +7,10 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.Rfc9562UuidV5
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
-import dev.shinsou.kmp.reader.TextOffsetUnit
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
+import dev.shinsou.kmp.domain.model.TextOffsetUnit
 
 /**
  * Creates an insertion-ordered map from lexicographically sorted entries. Unlike `toSortedMap`,

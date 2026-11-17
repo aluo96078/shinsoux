@@ -23,7 +23,7 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.plugin.Sha256
@@ -42,6 +42,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackageNavigationKind
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 
 @Serializable
 private data class RestartDraft(val id: String)
@@ -1114,7 +1120,9 @@ class SqlDriverContentFoundationRestartTest {
         )
     }
 
-    private fun driver(database: Path): JdbcSqliteDriver = JdbcSqliteDriver("jdbc:sqlite:$database")
+    /** Configured as the app does (synchronous, WAL; foreign keys last only for a connection, see 0006 §14 R3-4), also for stores built directly. */
+    private fun driver(database: Path): JdbcSqliteDriver =
+        JdbcSqliteDriver("jdbc:sqlite:$database").also(ContentConnection::configure)
 
     private fun scalarLong(driver: JdbcSqliteDriver, sql: String): Long = driver.executeQuery(
         null,

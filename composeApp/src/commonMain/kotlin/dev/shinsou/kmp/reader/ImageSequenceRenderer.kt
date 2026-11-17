@@ -1,8 +1,8 @@
 package dev.shinsou.kmp.reader
 
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ImageLayout
-import dev.shinsou.kmp.content.ImageTransform
+import dev.shinsou.kmp.domain.content.ImageLayout
+import dev.shinsou.kmp.domain.content.ImageTransform
 import dev.shinsou.kmp.plugin.Sha256
 
 /** One verified immutable image body loaded on demand for the unified reader. */

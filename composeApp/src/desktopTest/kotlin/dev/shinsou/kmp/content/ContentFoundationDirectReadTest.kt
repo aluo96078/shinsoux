@@ -8,7 +8,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import java.nio.file.Files

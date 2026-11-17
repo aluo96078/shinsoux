@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin.v2
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.plugin.sourceFailureMarker
 import kotlinx.coroutines.CancellationException
@@ -9,7 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,8 +22,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 
 /** One extension (novel) chapter waiting for, or done with, an offline download. */
@@ -67,13 +72,17 @@ public class ExtensionDownloadQueueV2(
      * so re-checking hundreds of finished chapters (after a restart) costs one read, not hundreds.
      */
     private val storedUnitIds: (ExtensionUnitSelectionV2) -> Set<String> = { emptySet() },
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val store: ExtensionDownloadQueueStoreV2? = null,
     /** False holds the worker until [open], e.g. while the app is still loading its sources. */
     startOpen: Boolean = true,
     /** Wait before retrying a unit after the database was locked; grows with each retry. */
     private val storageBusyRetryDelayMillis: Long = 2_000L,
 ) {
+    /** This queue's work only: [close] cancels it without touching a scope the caller passed in. */
+    private val queueJob = SupervisorJob(scope.coroutineContext[Job])
+    private val scope = scope + queueJob
+
     private val gate = CompletableDeferred<Unit>().apply { if (startOpen) complete(Unit) }
 
     /** Lets the worker start; queued work restored or enqueued before this waits for it. */
@@ -106,7 +115,7 @@ public class ExtensionDownloadQueueV2(
      * an empty queue at startup never overwrites the saved one.
      */
     public suspend fun restore(issue: (ExtensionDownloadRecordV2) -> ExtensionUnitSelectionV2?) {
-        val loaded = runCatching { store?.load().orEmpty() }
+        val loaded = runCatchingCancellable { store?.load().orEmpty() }
         val records = loaded.getOrDefault(emptyList())
         lock.withLock {
             records.forEach { record ->
@@ -156,7 +165,7 @@ public class ExtensionDownloadQueueV2(
     private suspend fun persist(store: ExtensionDownloadQueueStoreV2) {
         // Debounced: a chapter finishing every second must not rewrite the file every second.
         combine(_entries, saveRequests) { list, _ -> list }.debounce(PERSIST_DEBOUNCE_MS).collect {
-            runCatching { saveNow(store) }
+            runCatchingCancellable { saveNow(store) }
         }
     }
 
@@ -178,6 +187,19 @@ public class ExtensionDownloadQueueV2(
         // and reporting success would tell the caller a state is saved that is not.
         check(lock.withLock { persisting }) { "The download queue was not restored" }
         saveNow(target)
+    }
+
+    /**
+     * Saves the queue once more and stops it when the app shuts down (R4-8,
+     * docs/architecture/0006). The unit in flight is cancelled; it is queued again on restore.
+     */
+    public suspend fun close() {
+        val target = store
+        if (target != null && lock.withLock { persisting }) runCatchingCancellable { saveNow(target) }
+        queueJob.cancel()
+        // What closes after this (the stores) is not used by a download still winding down; a
+        // fetch that does not answer the cancel is not waited for beyond a moment.
+        withTimeoutOrNull(CLOSE_WAIT_MILLIS) { queueJob.join() }
     }
 
     private fun recordsLocked(list: List<ExtensionDownloadEntryV2>): List<ExtensionDownloadRecordV2> =
@@ -346,6 +368,10 @@ public class ExtensionDownloadQueueV2(
     private suspend fun drain() {
         gate.await()
         while (true) {
+            // The queue closing cancels the task in flight as well, which below reads as a pause:
+            // without this the unit would be queued again and the loop spin on a scope that
+            // starts nothing.
+            currentCoroutineContext().ensureActive()
             val next = lock.withLock {
                 // Retire under the lock so a concurrent enqueue/resume starts a fresh worker
                 // instead of seeing this one still active as it exits.
@@ -472,6 +498,7 @@ public class ExtensionDownloadQueueV2(
         private const val PERSIST_DEBOUNCE_MS = 500L
         private const val MAX_CONSECUTIVE_FAILURES = 3
         private const val MAX_STORAGE_BUSY_RETRIES = 5
+        private const val CLOSE_WAIT_MILLIS = 2_000L
 
         public fun entryId(selection: ExtensionUnitSelectionV2): String =
             "${selection.sourceKey.canonicalId}|${selection.remotePublicationId}|${selection.unit.remoteId}"

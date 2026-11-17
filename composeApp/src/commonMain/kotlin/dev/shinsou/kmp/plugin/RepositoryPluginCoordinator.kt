@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.ui.components.diagnosticUrl
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.contract.diagnosticUrl
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -16,11 +17,11 @@ import dev.shinsou.kmp.download.DownloadedPage
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.reader.ReaderImageTransform
 import dev.shinsou.kmp.reader.encodedImageHeight
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.ContentCallbacks
-import dev.shinsou.kmp.ui.MigrationCandidate
-import dev.shinsou.kmp.ui.ReaderChapter
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.contract.MigrationCandidate
+import dev.shinsou.kmp.contract.ReaderChapter
+import dev.shinsou.kmp.contract.ReaderPage
 import io.ktor.http.Url
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -85,7 +86,7 @@ public class RepositoryPluginCoordinator(
     override suspend fun refreshLibrary(mangaIds: Set<Long>) {
         val failures = mutableListOf<Throwable>()
         mangaIds.forEach { mangaId ->
-            runCatching { refreshManga(mangaId) }.exceptionOrNull()?.let(failures::add)
+            runCatchingCancellable { refreshManga(mangaId) }.exceptionOrNull()?.let(failures::add)
         }
         failures.firstOrNull()?.let { failure ->
             failures.drop(1).forEach(failure::addSuppressed)

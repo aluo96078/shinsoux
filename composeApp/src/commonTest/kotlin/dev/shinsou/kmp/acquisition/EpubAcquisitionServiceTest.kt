@@ -2,8 +2,8 @@ package dev.shinsou.kmp.acquisition
 
 import dev.shinsou.kmp.content.ContentBlobStage
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackageNavigationKind
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackageNavigationKind
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.reader.EpubBrowserRenderSession
@@ -14,8 +14,8 @@ import dev.shinsou.kmp.reader.EpubPublicationResourceResolver
 import dev.shinsou.kmp.reader.EpubResourceReadGate
 import dev.shinsou.kmp.reader.EpubSpineNavigation
 import dev.shinsou.kmp.reader.EpubUserStyleSheet
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals

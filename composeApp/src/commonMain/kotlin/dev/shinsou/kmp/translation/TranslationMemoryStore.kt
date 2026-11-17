@@ -5,6 +5,10 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
+import dev.shinsou.kmp.content.SchemaComponent
+import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.columnExists
+import dev.shinsou.kmp.content.tableExists
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -34,26 +38,15 @@ public data class ChapterRecord(
 /**
  * The translation memory (ADR-0004 §4.2) in the shared content database. Translations are keyed
  * by what was translated, never by chapter id: a chapter downloaded again, read from another
- * source or partly revised only costs its changed lines. Tables are created idempotently and do
- * not touch the content schema version.
+ * source or partly revised only costs its changed lines. Its tables have their own format version
+ * ([TranslationMemorySchema]).
  */
 @OptIn(ExperimentalUuidApi::class)
 public class TranslationMemoryStore(private val driver: SqlDriver) {
     private val transactions = object : TransacterImpl(driver) {}
 
     init {
-        SCHEMA.forEach { driver.execute(null, it, 0).value }
-        // Added after the table first shipped in test builds; what was stored before stays out of backups.
-        val columns = query("PRAGMA table_info(tm_segment)", 0, null) { it.getString(1) }
-        if ("exportable" !in columns) exec("ALTER TABLE tm_segment ADD COLUMN exportable INTEGER NOT NULL DEFAULT 0", 0, null)
-        // Before it, a work switched off could not be told from one saved while off: both may start again.
-        val workColumns = query("PRAGMA table_info(tm_work)", 0, null) { it.getString(1) }
-        if ("turned_off" !in workColumns) exec("ALTER TABLE tm_work ADD COLUMN turned_off INTEGER NOT NULL DEFAULT 0", 0, null)
-        // Before it, a source language other than the default Japanese was taken as the reader's choice.
-        if ("from_picked" !in workColumns) {
-            exec("ALTER TABLE tm_work ADD COLUMN from_picked INTEGER NOT NULL DEFAULT 0", 0, null)
-            exec("UPDATE tm_work SET from_picked = 1 WHERE from_lang != 'ja'", 0, null)
-        }
+        SchemaMigrator.migrate(driver, TranslationMemorySchema.component)
     }
 
     public fun <T> transaction(block: () -> T): T = transactions.transactionWithResult(noEnclosing = false) { block() }
@@ -601,53 +594,111 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
 
         /** The hash, field names, punctuation and indentation of one stored translation in a backup file. */
         const val BACKUP_ROW_OVERHEAD_BYTES = 400L
-        val SCHEMA = listOf(
-            "CREATE TABLE IF NOT EXISTS tm_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
-            """
-            CREATE TABLE IF NOT EXISTS tm_segment(
-              source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
-              text TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL, used_at INTEGER NOT NULL,
-              PRIMARY KEY(source_hash, from_lang, to_lang, engine)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            "CREATE INDEX IF NOT EXISTS tm_segment_free_age ON tm_segment(used_at) WHERE paid = 0",
-            """
-            CREATE TABLE IF NOT EXISTS tm_chapter(
-              work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, to_lang TEXT NOT NULL, provider TEXT NOT NULL,
-              source_hash TEXT NOT NULL, segment_count INTEGER NOT NULL, complete INTEGER NOT NULL,
-              paid INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
-              PRIMARY KEY(work_key, chapter_key, to_lang, provider)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            """
-            CREATE TABLE IF NOT EXISTS tm_glossary(
-              work_key TEXT NOT NULL, to_lang TEXT NOT NULL, id INTEGER NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL,
-              PRIMARY KEY(work_key, to_lang, id)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            "CREATE UNIQUE INDEX IF NOT EXISTS tm_glossary_source ON tm_glossary(work_key, to_lang, source)",
-            // Which stored lines each chapter's translation uses, so one chapter's can be removed.
-            """
-            CREATE TABLE IF NOT EXISTS tm_chapter_segment(
-              work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, chapter_to TEXT NOT NULL, provider TEXT NOT NULL,
-              source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
-              PRIMARY KEY(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            "CREATE INDEX IF NOT EXISTS tm_chapter_segment_line ON tm_chapter_segment(source_hash, from_lang, to_lang, engine)",
-            // Names for the settings page; chapter_key '' is the work itself.
-            """
-            CREATE TABLE IF NOT EXISTS tm_label(
-              work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, title TEXT NOT NULL, source TEXT,
-              PRIMARY KEY(work_key, chapter_key)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            """
-            CREATE TABLE IF NOT EXISTS tm_work(
-              work_key TEXT NOT NULL PRIMARY KEY, enabled INTEGER NOT NULL,
-              from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, mode TEXT NOT NULL
-            ) WITHOUT ROWID
-            """.trimIndent(),
-        )
     }
+}
+
+/**
+ * The translation memory tables (R3-1). Formats 2 to 4 each added a column; [create] makes the
+ * first tables and then adds them, so a new database and an upgraded one are the same.
+ */
+internal object TranslationMemorySchema {
+    const val VERSION: Long = 4
+
+    val component: SchemaComponent = SchemaComponent(
+        name = "translation_memory",
+        version = VERSION,
+        create = ::create,
+        steps = mapOf(2L to ::addExportable, 3L to ::addTurnedOff, 4L to ::addFromPicked),
+        unrecordedVersion = ::unrecordedVersion,
+    )
+
+    private fun create(driver: SqlDriver) {
+        TABLES.forEach { driver.execute(null, it, 0).value }
+        addExportable(driver)
+        addTurnedOff(driver)
+        addFromPicked(driver)
+    }
+
+    /** Added after the table first shipped in test builds; what was stored before stays out of backups. */
+    private fun addExportable(driver: SqlDriver) {
+        addColumn(driver, "tm_segment", "exportable")
+    }
+
+    /** Before it, a work switched off could not be told from one saved while off: both may start again. */
+    private fun addTurnedOff(driver: SqlDriver) {
+        addColumn(driver, "tm_work", "turned_off")
+    }
+
+    /** Before it, a source language other than the default Japanese was taken as the reader's choice. */
+    private fun addFromPicked(driver: SqlDriver) {
+        if (addColumn(driver, "tm_work", "from_picked")) {
+            driver.execute(null, "UPDATE tm_work SET from_picked = 1 WHERE from_lang != 'ja'", 0).value
+        }
+    }
+
+    /** Adds an `INTEGER NOT NULL DEFAULT 0` column unless it is there; the table is made first if missing. */
+    private fun addColumn(driver: SqlDriver, table: String, column: String): Boolean {
+        if (!tableExists(driver, table)) TABLES.forEach { driver.execute(null, it, 0).value }
+        if (columnExists(driver, table, column)) return false
+        driver.execute(null, "ALTER TABLE $table ADD COLUMN $column INTEGER NOT NULL DEFAULT 0", 0).value
+        return true
+    }
+
+    /** The format of a database from before the version record, told by its columns. */
+    private fun unrecordedVersion(driver: SqlDriver): Long? = when {
+        !tableExists(driver, "tm_segment") -> null
+        columnExists(driver, "tm_work", "from_picked") -> 4
+        columnExists(driver, "tm_work", "turned_off") -> 3
+        columnExists(driver, "tm_segment", "exportable") -> 2
+        else -> 1
+    }
+
+private val TABLES = listOf(
+        "CREATE TABLE IF NOT EXISTS tm_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
+        """
+        CREATE TABLE IF NOT EXISTS tm_segment(
+          source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
+          text TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL, used_at INTEGER NOT NULL,
+          PRIMARY KEY(source_hash, from_lang, to_lang, engine)
+        ) WITHOUT ROWID
+        """.trimIndent(),
+        "CREATE INDEX IF NOT EXISTS tm_segment_free_age ON tm_segment(used_at) WHERE paid = 0",
+        """
+        CREATE TABLE IF NOT EXISTS tm_chapter(
+          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, to_lang TEXT NOT NULL, provider TEXT NOT NULL,
+          source_hash TEXT NOT NULL, segment_count INTEGER NOT NULL, complete INTEGER NOT NULL,
+          paid INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
+          PRIMARY KEY(work_key, chapter_key, to_lang, provider)
+        ) WITHOUT ROWID
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS tm_glossary(
+          work_key TEXT NOT NULL, to_lang TEXT NOT NULL, id INTEGER NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL,
+          PRIMARY KEY(work_key, to_lang, id)
+        ) WITHOUT ROWID
+        """.trimIndent(),
+        "CREATE UNIQUE INDEX IF NOT EXISTS tm_glossary_source ON tm_glossary(work_key, to_lang, source)",
+        // Which stored lines each chapter's translation uses, so one chapter's can be removed.
+        """
+        CREATE TABLE IF NOT EXISTS tm_chapter_segment(
+          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, chapter_to TEXT NOT NULL, provider TEXT NOT NULL,
+          source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
+          PRIMARY KEY(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine)
+        ) WITHOUT ROWID
+        """.trimIndent(),
+        "CREATE INDEX IF NOT EXISTS tm_chapter_segment_line ON tm_chapter_segment(source_hash, from_lang, to_lang, engine)",
+        // Names for the settings page; chapter_key '' is the work itself.
+        """
+        CREATE TABLE IF NOT EXISTS tm_label(
+          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, title TEXT NOT NULL, source TEXT,
+          PRIMARY KEY(work_key, chapter_key)
+        ) WITHOUT ROWID
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS tm_work(
+          work_key TEXT NOT NULL PRIMARY KEY, enabled INTEGER NOT NULL,
+          from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, mode TEXT NOT NULL
+        ) WITHOUT ROWID
+        """.trimIndent(),
+    )
 }

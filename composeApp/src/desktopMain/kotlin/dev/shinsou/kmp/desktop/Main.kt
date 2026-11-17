@@ -21,9 +21,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Notification
 import androidx.compose.ui.window.Tray
-import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
 import dev.aluo.shinsoux.generated.resources.Res
 import dev.aluo.shinsoux.generated.resources.shinsou_icon
@@ -34,10 +34,12 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.DesktopAppFileSystem
-import dev.shinsou.kmp.network.createPlatformHttpClient
-import dev.shinsou.kmp.network.DesktopAvifDecoder
-import dev.shinsou.kmp.network.installConfiguredImageLoader
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.logging.LogLevel
 import dev.shinsou.kmp.navigation.DeepLinkParser
+import dev.shinsou.kmp.network.DesktopAvifDecoder
+import dev.shinsou.kmp.network.createPlatformHttpClient
+import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
@@ -46,6 +48,7 @@ import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
 import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.Frame
@@ -71,9 +74,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
+import dev.shinsou.kmp.files.DesktopAppDirectories
+import dev.shinsou.kmp.files.DesktopPlatform
 
 private const val VERIFY_DESKTOP_RUNTIME_ARGUMENT = "--verify-desktop-runtime"
 private const val VERIFY_DESKTOP_STARTUP_ARGUMENT = "--verify-desktop-startup"
@@ -83,6 +88,9 @@ private const val DESKTOP_PROBE_TOKEN_ENVIRONMENT = "SHINSOU_DESKTOP_PROBE_TOKEN
 fun main(args: Array<String>) {
     val desktopPlatform = DesktopPlatform.current
     configureDesktopSystemProperties(desktopPlatform)
+    // -Dshinsou.log=debug (or info) for more than warnings while chasing a problem
+    System.getProperty("shinsou.log")?.let { name -> LogLevel.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+        ?.let { Log.minimumLevel = it }
     if (VERIFY_DESKTOP_RUNTIME_ARGUMENT in args) verifyDesktopRuntimeAndExit()
     val verifyDesktopStartup = VERIFY_DESKTOP_STARTUP_ARGUMENT in args
     if (verifyDesktopStartup) startDesktopProbeWatchdog()
@@ -135,6 +143,12 @@ fun main(args: Array<String>) {
             ?: Locale.getDefault().toLanguageTag()
         val strings = remember(languageTag) { shinsouStringsFor(languageTag) }
         val contentInfrastructure = remember { DesktopContentInfrastructure() }
+        // A library written by a newer app is left untouched: ask for the update instead (R3-1).
+        val schemaTooNew = remember { contentInfrastructure.checkBeforeOpening() }
+        if (schemaTooNew != null) {
+            Window(onCloseRequest = ::exitApplication, title = "Shinsou X") { SchemaTooNewNotice(schemaTooNew) }
+            return@application
+        }
         val sandboxScope = rememberCoroutineScope()
         desktopProbeStage("before composition")
         val composition = remember {
@@ -168,7 +182,7 @@ fun main(args: Array<String>) {
                         DesktopPlatform.OTHER -> "Desktop"
                     },
                     platform = "desktop",
-                    appVersion = dev.shinsou.kmp.app.SHINSOU_APP_VERSION,
+                    appVersion = dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION,
                 ),
             )
         }

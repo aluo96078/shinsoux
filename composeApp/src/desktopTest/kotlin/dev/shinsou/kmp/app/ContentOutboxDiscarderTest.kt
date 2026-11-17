@@ -1,19 +1,19 @@
 package dev.shinsou.kmp.app
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentPublicationMutation
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
 import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.Publication
@@ -23,7 +23,7 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import java.nio.file.Files

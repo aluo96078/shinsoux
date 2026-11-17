@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.plugin.events
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.PluginRuntimePermission
@@ -225,7 +226,7 @@ public class KeyValuePluginEventGrantAdmission(
     private suspend fun stageLocked(review: PluginEventGrantReview) {
         locallyRevokedArtifacts += review.artifact
         val liveKeys = liveGrantKeys[review.artifact].orEmpty() + grantKeys(review)
-        val durableKeys = runCatching { durableGrantKeys(review.artifact) }.getOrDefault(emptySet())
+        val durableKeys = runCatchingCancellable { durableGrantKeys(review.artifact) }.getOrDefault(emptySet())
         var commitFailure: Throwable? = null
         try {
             writeRecord(pendingRecord(review))
@@ -287,7 +288,7 @@ public class KeyValuePluginEventGrantAdmission(
     private suspend fun revokeLocked(artifact: PluginArtifactIdentity) {
         locallyRevokedArtifacts += artifact
         val liveKeys = liveGrantKeys[artifact].orEmpty()
-        val durableKeys = runCatching { durableGrantKeys(artifact) }.getOrDefault(emptySet())
+        val durableKeys = runCatchingCancellable { durableGrantKeys(artifact) }.getOrDefault(emptySet())
         var commitFailure: Throwable? = null
         try {
             writeRecord(
@@ -455,9 +456,9 @@ public class KeyValuePluginEventGrantAdmission(
     private suspend fun cleanupLegacyKeys(artifact: PluginArtifactIdentity) {
         // Cleanup is not a security boundary after the authoritative record commit. A failure
         // must not roll back or hide that committed decision.
-        runCatching { store.remove(legacyPendingKey(artifact)) }
-        runCatching { store.remove(legacyGrantKey(artifact)) }
-        runCatching { store.remove(legacyRuntimeGrantKey(artifact)) }
+        runCatchingCancellable { store.remove(legacyPendingKey(artifact)) }
+        runCatchingCancellable { store.remove(legacyGrantKey(artifact)) }
+        runCatchingCancellable { store.remove(legacyRuntimeGrantKey(artifact)) }
     }
 
     private fun recordKey(identity: PluginArtifactIdentity): String =

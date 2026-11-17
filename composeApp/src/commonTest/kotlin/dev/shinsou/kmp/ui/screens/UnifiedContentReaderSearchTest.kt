@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.TextBlock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test

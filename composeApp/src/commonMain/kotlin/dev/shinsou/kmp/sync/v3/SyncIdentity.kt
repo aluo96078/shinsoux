@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.sync.v3
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.Manga
@@ -11,7 +11,7 @@ import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.local.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.local.typedLocalChapterUnitKey
 import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import kotlin.concurrent.Volatile
 
 /** The cross-device identity of a title. Local ids (Manga.id, Chapter.id) never appear in it. */

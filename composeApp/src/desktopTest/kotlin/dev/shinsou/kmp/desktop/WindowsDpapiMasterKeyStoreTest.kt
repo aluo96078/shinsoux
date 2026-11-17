@@ -10,6 +10,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.files.DesktopPlatform
 
 class WindowsDpapiMasterKeyStoreTest {
     @Test

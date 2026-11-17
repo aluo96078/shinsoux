@@ -3,12 +3,12 @@ package dev.shinsou.kmp.reader
 import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.annotation.InMemoryContentAnnotationStore
 import dev.shinsou.kmp.annotation.RightsEnforcedAnnotationService
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackage
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.HostContentOperationGate
@@ -18,7 +18,7 @@ import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.InMemoryRightsAuthority
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.search.EpubSearchAnchor
@@ -41,6 +41,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
 
 class EpubSemanticServicesTest {
     @Test

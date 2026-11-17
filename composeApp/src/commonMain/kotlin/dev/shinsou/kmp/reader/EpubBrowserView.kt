@@ -4,9 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
-import dev.shinsou.kmp.content.ImageProgression
+import dev.shinsou.kmp.domain.content.ImageProgression
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
 
 /** Secure, browser-grade EPUB surface embedded directly in the Compose reader. */
 @Composable

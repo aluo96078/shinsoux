@@ -6,6 +6,11 @@
         <exclude domain="database" path="shinsou-sync-v2.db" />
         <exclude domain="database" path="shinsou-sync-v2.db-wal" />
         <exclude domain="database" path="shinsou-sync-v2.db-shm" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade-wal" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.partial" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade-wal.partial" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.of" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
@@ -13,5 +18,10 @@
         <exclude domain="database" path="shinsou-sync-v2.db" />
         <exclude domain="database" path="shinsou-sync-v2.db-wal" />
         <exclude domain="database" path="shinsou-sync-v2.db-shm" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade-wal" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.partial" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade-wal.partial" />
+        <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.of" />
     </device-transfer>
 </data-extraction-rules>

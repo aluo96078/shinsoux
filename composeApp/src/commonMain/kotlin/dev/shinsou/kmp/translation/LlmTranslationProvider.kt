@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.translation
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.pluginOrNull
@@ -154,7 +155,7 @@ public class LlmTranslationProvider(
             setBody(TextContent(body.toString(), ContentType.Application.Json))
         }
         if (response.status.value !in 200..299) fail(response)
-        return runCatching { LlmJson.parseToJsonElement(response.bodyAsText()) as JsonObject }.getOrElse {
+        return runCatchingCancellable { LlmJson.parseToJsonElement(response.bodyAsText()) as JsonObject }.getOrElse {
             throw TranslationException(TranslationFailure.ENGINE_FAILED, "$id answered with something that is not JSON", it)
         }
     }

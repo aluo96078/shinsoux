@@ -4,7 +4,7 @@ import com.ionspin.kotlin.crypto.JnaLibsodiumInterface
 import com.ionspin.kotlin.crypto.LibsodiumInitializer
 import com.sun.jna.Native
 import com.sun.jna.Platform
-import dev.shinsou.kmp.desktop.DesktopAppDirectories
+import dev.shinsou.kmp.files.DesktopAppDirectories
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files

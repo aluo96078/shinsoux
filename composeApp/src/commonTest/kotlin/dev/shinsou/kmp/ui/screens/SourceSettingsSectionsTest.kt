@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.BrowseSource
-import dev.shinsou.kmp.ui.SourceCredential
+import dev.shinsou.kmp.contract.BrowseSource
+import dev.shinsou.kmp.contract.SourceCredential
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue

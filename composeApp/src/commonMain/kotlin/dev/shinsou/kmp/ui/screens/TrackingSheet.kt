@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.domain.model.TrackSearch
@@ -167,7 +168,7 @@ private fun TrackerProviderCard(
 
     LaunchedEffect(provider.descriptor.id, provider.configured) {
         if (provider.configured) {
-            authenticated = runCatching { coordinator.isAuthenticated(provider.descriptor.id) }.getOrDefault(false)
+            authenticated = runCatchingCancellable { coordinator.isAuthenticated(provider.descriptor.id) }.getOrDefault(false)
         } else {
             authenticated = false
         }

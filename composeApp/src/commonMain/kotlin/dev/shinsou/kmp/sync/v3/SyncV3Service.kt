@@ -2,6 +2,7 @@ package dev.shinsou.kmp.sync.v3
 
 import app.cash.sqldelight.db.SqlDriver
 import dev.shinsou.kmp.concurrent.SynchronousLock
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -58,6 +59,9 @@ public enum class SyncBackgroundResult {
 }
 
 private enum class CycleOutcome { Success, Transient, Permanent }
+
+/** What a "Sync now" press did (R4-7, docs/architecture/0006). */
+public enum class ManualSyncResult { Synced, Failed, InProgress }
 
 /** Everything the Settings page shows about sync. */
 public data class SyncUiState(
@@ -242,7 +246,7 @@ public class SyncV3Service internal constructor(
     // ---- account ----------------------------------------------------------------------------
 
     /** Validates [input], fetches `/.well-known/shinsou` and returns the address plus instance info. */
-    public suspend fun discover(input: String): Result<Pair<SyncServerAddress, WireInstance>> = runCatching {
+    public suspend fun discover(input: String): Result<Pair<SyncServerAddress, WireInstance>> = runCatchingCancellable {
         val address = SyncNetworkPolicy.parse(input)
         val instance = api.instance(address.baseUrl)
         if (instance.apiVersions.min > 1 || instance.apiVersions.max < 1) {
@@ -251,7 +255,7 @@ public class SyncV3Service internal constructor(
         address to instance
     }
 
-    public suspend fun login(address: SyncServerAddress, username: String, password: String): Result<Unit> = runCatching {
+    public suspend fun login(address: SyncServerAddress, username: String, password: String): Result<Unit> = runCatchingCancellable {
         val session = api.login(address.baseUrl, WireLoginRequest(username.trim(), password, deviceInfo()))
         completeSignIn(address, session)
     }
@@ -263,7 +267,7 @@ public class SyncV3Service internal constructor(
         email: String?,
         inviteCode: String?,
         setupCode: String?,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = runCatchingCancellable {
         val session = api.register(
             address.baseUrl,
             WireRegisterRequest(
@@ -308,8 +312,8 @@ public class SyncV3Service internal constructor(
     /** Signs this device out on the server (best effort) and forgets all sync state. */
     public suspend fun logout() {
         val url = store.meta(META_SERVER_URL)
-        val token = runCatching { accessTokenOrRefresh() }.getOrNull()
-        if (url != null && token != null) runCatching { api.logout(url, token) }
+        val token = runCatchingCancellable { accessTokenOrRefresh() }.getOrNull()
+        if (url != null && token != null) runCatchingCancellable { api.logout(url, token) }
         cycleMutex.withLock {
             stopBackgroundWork()
             keyValues.remove(KEY_ACCESS_TOKEN)
@@ -320,12 +324,12 @@ public class SyncV3Service internal constructor(
         publishState()
     }
 
-    public suspend fun listDevices(): Result<List<WireDevice>> = runCatching {
+    public suspend fun listDevices(): Result<List<WireDevice>> = runCatchingCancellable {
         val url = baseUrl
         authed { api.listDevices(url, it) }
     }
 
-    public suspend fun renameDevice(id: String, name: String): Result<WireDevice> = runCatching {
+    public suspend fun renameDevice(id: String, name: String): Result<WireDevice> = runCatchingCancellable {
         val url = baseUrl
         val renamed = authed { api.renameDevice(url, it, id, name.trim()) }
         if (renamed.current) {
@@ -335,7 +339,7 @@ public class SyncV3Service internal constructor(
         renamed
     }
 
-    public suspend fun signOutDevice(id: String, isCurrent: Boolean): Result<Unit> = runCatching {
+    public suspend fun signOutDevice(id: String, isCurrent: Boolean): Result<Unit> = runCatchingCancellable {
         if (isCurrent) {
             logout()
         } else {
@@ -347,7 +351,7 @@ public class SyncV3Service internal constructor(
     // ---- sharing ----------------------------------------------------------------------------
 
     /** Asks the server which optional features it offers and remembers the answer. */
-    public suspend fun refreshFeatures(): Result<WireFeatures> = runCatching {
+    public suspend fun refreshFeatures(): Result<WireFeatures> = runCatchingCancellable {
         val url = baseUrl
         val features = api.instance(url).features
         // The store is only written under the cycle lock, never beside a running sync cycle.
@@ -375,7 +379,7 @@ public class SyncV3Service internal constructor(
     }
 
     /** Shares [workHash] with another account. Uploads pending changes first so the server knows the work. */
-    public suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = runCatching {
+    public suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = runCatchingCancellable {
         val url = baseUrl
         // Ask the store, not the published state: a title just added to the library is marked
         // dirty before the state is republished. The store is only read under the cycle lock.
@@ -387,67 +391,67 @@ public class SyncV3Service internal constructor(
         authed { api.createShare(url, it, WireShareRequest(recipientId, workHash, text)) }
     }
 
-    public suspend fun listShares(sent: Boolean, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireSharePage> = runCatching {
+    public suspend fun listShares(sent: Boolean, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireSharePage> = runCatchingCancellable {
         val url = baseUrl
         authed { api.listShares(url, it, sent, offset, limit) }
     }
 
     /** Received shares still waiting for an answer. */
-    public suspend fun pendingShares(): Result<Int> = runCatching {
+    public suspend fun pendingShares(): Result<Int> = runCatchingCancellable {
         val url = baseUrl
         authed { api.pendingShares(url, it) }
     }
 
     /** Accepting adds the work to the library on the server; a sync brings it to this device. */
-    public suspend fun acceptShare(id: String): Result<WireShare> = runCatching {
+    public suspend fun acceptShare(id: String): Result<WireShare> = runCatchingCancellable {
         val url = baseUrl
         val share = authed { api.answerShare(url, it, id, "accept") }
         scope.launch { syncNow() }
         share
     }
 
-    public suspend fun dismissShare(id: String): Result<WireShare> = runCatching {
+    public suspend fun dismissShare(id: String): Result<WireShare> = runCatchingCancellable {
         val url = baseUrl
         authed { api.answerShare(url, it, id, "dismiss") }
     }
 
     /** Removes a received share from the inbox, or withdraws one that was sent. */
-    public suspend fun deleteShare(id: String): Result<Unit> = runCatching {
+    public suspend fun deleteShare(id: String): Result<Unit> = runCatchingCancellable {
         val url = baseUrl
         authed { api.deleteShare(url, it, id) }
     }
 
     /** Accounts whose username starts with [query]; a leading `@` is ignored. */
-    public suspend fun searchUsers(query: String, limit: Int = SOCIAL_PAGE_SIZE): Result<List<WireUserSummary>> = runCatching {
+    public suspend fun searchUsers(query: String, limit: Int = SOCIAL_PAGE_SIZE): Result<List<WireUserSummary>> = runCatchingCancellable {
         val q = query.trim().removePrefix("@")
-        if (q.isEmpty()) return@runCatching emptyList()
+        if (q.isEmpty()) return@runCatchingCancellable emptyList()
         val url = baseUrl
         authed { api.searchUsers(url, it, q, limit) }
     }
 
-    public suspend fun listRelation(relation: SyncRelation, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireUserPage> = runCatching {
+    public suspend fun listRelation(relation: SyncRelation, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireUserPage> = runCatchingCancellable {
         val url = baseUrl
         authed { api.listRelation(url, it, relation.path, offset, limit) }
     }
 
-    public suspend fun setFollowing(userId: String, following: Boolean): Result<Unit> = runCatching {
+    public suspend fun setFollowing(userId: String, following: Boolean): Result<Unit> = runCatchingCancellable {
         val url = baseUrl
         authed { api.setRelation(url, it, SyncRelation.Following.path, userId, following) }
     }
 
     /** Blocking also removes follows in both directions and dismisses that account's open shares. */
-    public suspend fun setBlocked(userId: String, blocked: Boolean): Result<Unit> = runCatching {
+    public suspend fun setBlocked(userId: String, blocked: Boolean): Result<Unit> = runCatchingCancellable {
         val url = baseUrl
         authed { api.setRelation(url, it, SyncRelation.Blocks.path, userId, blocked) }
     }
 
     /** Who may share with this account: `everyone`, `following` or `nobody`. */
-    public suspend fun receiveSharesFrom(): Result<String> = runCatching {
+    public suspend fun receiveSharesFrom(): Result<String> = runCatchingCancellable {
         val url = baseUrl
         authed { api.sharingPreferences(url, it) }.receiveFrom
     }
 
-    public suspend fun setReceiveSharesFrom(value: String): Result<String> = runCatching {
+    public suspend fun setReceiveSharesFrom(value: String): Result<String> = runCatchingCancellable {
         val url = baseUrl
         authed { api.setSharingPreferences(url, it, value) }.receiveFrom
     }
@@ -470,7 +474,7 @@ public class SyncV3Service internal constructor(
         identity.sourceWorkOf(sourceKey, remotePublicationId)?.recordKey
 
     /** The work page: average rating, review count and the caller's own review. 404 when the server does not know the work. */
-    public suspend fun workPage(workHash: String): Result<WireWorkPage> = runCatching {
+    public suspend fun workPage(workHash: String): Result<WireWorkPage> = runCatchingCancellable {
         val url = baseUrl
         authed { api.workPage(url, it, workHash) }
     }
@@ -481,7 +485,7 @@ public class SyncV3Service internal constructor(
         sort: String,
         offset: Int,
         limit: Int = REVIEW_PAGE_SIZE,
-    ): Result<WireReviewPage> = runCatching {
+    ): Result<WireReviewPage> = runCatchingCancellable {
         val url = baseUrl
         authed { api.listReviews(url, it, workHash, sort, offset, limit) }
     }
@@ -490,7 +494,7 @@ public class SyncV3Service internal constructor(
      * Writes or edits the caller's review. Pending library changes are uploaded first, so the
      * server knows the work and the title is in the account's library (422 unknown_work otherwise).
      */
-    public suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = runCatching {
+    public suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = runCatchingCancellable {
         val url = baseUrl
         val pending = cycleMutex.withLock { pendingLocalCount() }
         if (pending > 0) syncNow()
@@ -498,40 +502,40 @@ public class SyncV3Service internal constructor(
         authed { api.putReview(url, it, workHash, input) }
     }
 
-    public suspend fun deleteReview(workHash: String): Result<Unit> = runCatching {
+    public suspend fun deleteReview(workHash: String): Result<Unit> = runCatchingCancellable {
         val url = baseUrl
         authed { api.deleteReview(url, it, workHash) }
     }
 
     /** Idempotent: sets or clears the caller's "helpful" vote and returns the current count. */
-    public suspend fun setHelpful(reviewId: String, helpful: Boolean): Result<WireVote> = runCatching {
+    public suspend fun setHelpful(reviewId: String, helpful: Boolean): Result<WireVote> = runCatchingCancellable {
         val url = baseUrl
         authed { api.setHelpful(url, it, reviewId, helpful) }
     }
 
-    public suspend fun listReplies(reviewId: String, offset: Int, limit: Int = REVIEW_PAGE_SIZE): Result<WireReplyPage> = runCatching {
+    public suspend fun listReplies(reviewId: String, offset: Int, limit: Int = REVIEW_PAGE_SIZE): Result<WireReplyPage> = runCatchingCancellable {
         val url = baseUrl
         authed { api.listReplies(url, it, reviewId, offset, limit) }
     }
 
-    public suspend fun writeReply(reviewId: String, body: String): Result<WireReply> = runCatching {
+    public suspend fun writeReply(reviewId: String, body: String): Result<WireReply> = runCatchingCancellable {
         val url = baseUrl
         authed { api.createReply(url, it, reviewId, body.trim().take(MAX_REPLY_BODY)) }
     }
 
-    public suspend fun deleteReply(replyId: String): Result<Unit> = runCatching {
+    public suspend fun deleteReply(replyId: String): Result<Unit> = runCatchingCancellable {
         val url = baseUrl
         authed { api.deleteReply(url, it, replyId) }
     }
 
     /** [reason] is `spam`, `harassment`, `spoiler`, `illegal` or `other`. */
-    public suspend fun reportReview(reviewId: String, reason: String, note: String): Result<WireReport> = runCatching {
+    public suspend fun reportReview(reviewId: String, reason: String, note: String): Result<WireReport> = runCatchingCancellable {
         val url = baseUrl
         val text = note.trim().take(MAX_REPORT_NOTE).ifEmpty { null }
         authed { api.report(url, it, "reviews", reviewId, WireReportInput(reason, text)) }
     }
 
-    public suspend fun reportReply(replyId: String, reason: String, note: String): Result<WireReport> = runCatching {
+    public suspend fun reportReply(replyId: String, reason: String, note: String): Result<WireReport> = runCatchingCancellable {
         val url = baseUrl
         val text = note.trim().take(MAX_REPORT_NOTE).ifEmpty { null }
         authed { api.report(url, it, "replies", replyId, WireReportInput(reason, text)) }
@@ -639,6 +643,39 @@ public class SyncV3Service internal constructor(
     }
 
     public suspend fun syncNow(): Boolean = runCycle(manual = true)
+
+    /**
+     * The "Sync now" button. A background cycle may hold the lock for minutes; rather than wait
+     * behind it, the press gives up after a short wait and reports [ManualSyncResult.InProgress].
+     */
+    public suspend fun syncFromUser(): ManualSyncResult {
+        val owner = Any()
+        return when {
+            store.meta(META_SIGNED_IN) != "1" -> ManualSyncResult.Failed
+            !lockForUser(owner) -> ManualSyncResult.InProgress
+            else -> try {
+                if (lockedCycle(manual = true) == CycleOutcome.Success) ManualSyncResult.Synced else ManualSyncResult.Failed
+            } finally {
+                cycleMutex.unlock(owner)
+            }
+        }
+    }
+
+    /**
+     * Waits a short while for the cycle lock. The timeout (or the caller going away) can land after
+     * lock() has already taken it, so the owner token, not how the wait ended, says whether it is held.
+     */
+    private suspend fun lockForUser(owner: Any): Boolean {
+        var held = false
+        try {
+            withTimeoutOrNull(MANUAL_LOCK_WAIT_MILLIS) { cycleMutex.lock(owner) }
+            held = cycleMutex.holdsLock(owner)
+        } finally {
+            // Cancelled after the lock was taken: give it back rather than keep it forever.
+            if (!held && cycleMutex.holdsLock(owner)) cycleMutex.unlock(owner)
+        }
+        return held
+    }
 
     /**
      * What this device knows about packages changed (a repository list arrived, a package was
@@ -798,7 +835,7 @@ public class SyncV3Service internal constructor(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: SyncApiException) {
-                    if (error.isUnauthorized) runCatching { forceRefresh(accessToken.orEmpty()) }
+                    if (error.isUnauthorized) runCatchingCancellable { forceRefresh(accessToken.orEmpty()) }
                 } catch (_: Throwable) {
                     // Reconnect below.
                 }
@@ -941,29 +978,32 @@ public class SyncV3Service internal constructor(
 
     private suspend fun runCycleOutcome(manual: Boolean): CycleOutcome {
         if (store.meta(META_SIGNED_IN) != "1") return CycleOutcome.Permanent
-        return cycleMutex.withLock {
-            if (store.meta(META_SIGNED_IN) != "1") return@withLock CycleOutcome.Permanent
-            mutableState.update { it.copy(syncing = true) }
-            lastCycleStartedAt = nowMillis()
-            try {
-                if (clock == null) activateSession() // a foreground sync can beat start()
-                cycleBody(force = manual)
-                consecutiveFailures = 0
-                nextAutomaticAttemptAt = 0
-                store.setMeta(META_LAST_SYNC, nowMillis().toString())
-                store.setMeta(META_ERROR, null)
-                CycleOutcome.Success
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: SyncApiException) {
-                recordFailure(error.userMessage(), error.retryAfterSeconds)
-                if (error.isTransient) CycleOutcome.Transient else CycleOutcome.Permanent
-            } catch (error: Throwable) {
-                recordFailure(error.message ?: error::class.simpleName.orEmpty(), null)
-                CycleOutcome.Permanent
-            } finally {
-                publishState(syncing = false)
-            }
+        return cycleMutex.withLock { lockedCycle(manual) }
+    }
+
+    /** One cycle; the caller holds [cycleMutex]. */
+    private suspend fun lockedCycle(manual: Boolean): CycleOutcome {
+        if (store.meta(META_SIGNED_IN) != "1") return CycleOutcome.Permanent
+        mutableState.update { it.copy(syncing = true) }
+        lastCycleStartedAt = nowMillis()
+        return try {
+            if (clock == null) activateSession() // a foreground sync can beat start()
+            cycleBody(force = manual)
+            consecutiveFailures = 0
+            nextAutomaticAttemptAt = 0
+            store.setMeta(META_LAST_SYNC, nowMillis().toString())
+            store.setMeta(META_ERROR, null)
+            CycleOutcome.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: SyncApiException) {
+            recordFailure(error.userMessage(), error.retryAfterSeconds)
+            if (error.isTransient) CycleOutcome.Transient else CycleOutcome.Permanent
+        } catch (error: Throwable) {
+            recordFailure(error.message ?: error::class.simpleName.orEmpty(), null)
+            CycleOutcome.Permanent
+        } finally {
+            publishState(syncing = false)
         }
     }
 
@@ -1660,7 +1700,7 @@ public class SyncV3Service internal constructor(
             if (!record.state.isLive || record.key in index || record.key.startsWith("local:")) continue
             val work = record.workJson?.let { runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), it) }.getOrNull() } ?: continue
             val source = perSource.getOrPut(work.packageId to work.sourceId) {
-                runCatching { resolveCreatableSource(work.packageId, work.sourceId) }.getOrNull()
+                runCatchingCancellable { resolveCreatableSource(work.packageId, work.sourceId) }.getOrNull()
             } ?: continue
             out[record.key] = source
         }
@@ -1762,6 +1802,7 @@ public class SyncV3Service internal constructor(
     private fun SyncApiException.userMessage(): String = when (code) {
         "network" -> "Network error: $message"
         "rate_limited" -> "Rate limited, retrying later"
+        "unsupported_api_version" -> "The sync server needs a different app version; update Shinsou X or the server"
         else -> "$code: $message"
     }
 
@@ -1824,6 +1865,7 @@ public class SyncV3Service internal constructor(
         const val MAX_REPORT_NOTE = 500
         const val BACKGROUND_FLUSH_TIMEOUT_MILLIS = 15_000L
         const val BACKGROUND_SYNC_TIMEOUT_MILLIS = 8 * 60_000L
+        const val MANUAL_LOCK_WAIT_MILLIS = 2_000L
         const val STREAM_BACKOFF_MIN_MILLIS = 1_000L
         const val STREAM_BACKOFF_MAX_MILLIS = 60_000L
         const val STREAM_STABLE_MILLIS = 10_000L
@@ -1874,7 +1916,7 @@ internal class LegacySourceKeyCache {
         val next = HashMap<Long, SourceKey?>()
         for (id in sourceIds) {
             if (id == 0L) continue
-            next[id] = runCatching { resolve(id) }.getOrNull()
+            next[id] = runCatchingCancellable { resolve(id) }.getOrNull()
         }
         lock.withLock { keys = next }
     }

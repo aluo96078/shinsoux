@@ -11,6 +11,7 @@ import dev.shinsou.kmp.domain.model.MangaCategory
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import dev.shinsou.kmp.data.LegacyPublicationProjection
 
 class LegacyPublicationProjectionRestartTest {
     @Test

@@ -250,6 +250,36 @@ class NovelTranslationPanelTest {
     }
 
     @Test
+    fun aWorkThatStartedByItselfFollowsTheLanguageOfALaterChapter() {
+        val translation = translation(Files.createTempDirectory("mt-panel").toFile(), MarkingEngine(), installed = true, auto = true)
+        var opened by androidx.compose.runtime.mutableStateOf("c0" to chapter)
+        var state: NovelTranslationState? = null
+        rule.setContent {
+            state = rememberNovelTranslation(translation, workKey = "work", chapterKey = opened.first, canonicalText = opened.second)!!
+        }
+        rule.waitUntil(5_000) { state?.settings?.enabled == true && state!!.settings.from == "ja" }
+        // a title page of a few characters is not enough to say the work changed language
+        opened = "c1" to "第二章 再会之日 序幕与回忆"
+        rule.waitUntil(5_000) { state!!.decidedFor?.startsWith("zh") == true }
+        rule.waitForIdle()
+        assertTrue(state!!.settings.enabled && state!!.settings.from == "ja", "a short page changed it: ${state!!.settings}")
+        opened = "c2" to "他拔出了剑。然后健太睡着了，这个故事还没有结束。".repeat(4)
+        rule.waitUntil(5_000) { opened.first == "c2" && state!!.settings.from.startsWith("zh") }
+        rule.waitForIdle()
+        assertTrue(state!!.settings.from.startsWith("zh"), "not read as the language of the chapter it started on: ${state!!.settings}")
+        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "still nothing saved")
+    }
+
+    @Test
+    fun aPageOfPicturesIsNotReadAsALanguage() {
+        val pictures = "![](https://cdn.example/illustrations/volume-one/001.jpg)\n\n<img src=\"https://cdn.example/illustrations/002.png\" alt=\"\">"
+        assertTrue(ReaderTranslation.detectLanguageOrNull(pictures) == null, "markup and addresses are not writing")
+        assertTrue(ReaderTranslation.detectLanguageOrNull("") == null)
+        assertTrue(ReaderTranslation.detectLanguageOrNull(chapter) == "ja")
+        assertTrue(ReaderTranslation.detectLanguageOrNull("Foreword. Thanks for reading.") == "en")
+    }
+
+    @Test
     fun theDetectedLanguagePickedByHandIsKeptOnALaterChapter() {
         val translation = translation(Files.createTempDirectory("mt-panel").toFile(), MarkingEngine(), installed = true, auto = true)
         var opened by androidx.compose.runtime.mutableStateOf("c0" to "Foreword. Thanks for reading.")
@@ -260,8 +290,8 @@ class NovelTranslationPanelTest {
         rule.waitUntil(5_000) { state?.loaded == true && state!!.settings.from == "en" }
         rule.runOnIdle { state!!.change(state!!.settings.copy(from = "en", fromPicked = true)) }
         opened = "c1" to chapter
-        rule.waitForIdle()
-        Thread.sleep(500)
+        // decided for the later, Japanese chapter: only then does "kept" say anything
+        rule.waitUntil(5_000) { state!!.decidedFor == "ja" }
         rule.waitForIdle()
         assertTrue(state!!.settings.from == "en" && !state!!.settings.enabled, "English picked by hand stays: ${state!!.settings}")
     }

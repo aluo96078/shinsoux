@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.backup
 
 import dev.shinsou.kmp.annotation.ContentAnnotation
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobStoreException
 import dev.shinsou.kmp.content.ContentManifestOwner
@@ -19,8 +19,6 @@ import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.rights.RightsScope
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okio.Buffer
 import okio.HashingSink
@@ -415,22 +413,24 @@ public data class InspectedBackupV2Archive(
 
 public object BackupV2ManifestCodec {
     public fun encode(envelope: BackupV2ManifestEnvelope): ByteArray {
-        val bytes = BackupV2Json.encodeToString(envelope.validate()).encodeToByteArray()
-        require(bytes.size <= MAX_MANIFEST_BYTES) { "Backup manifest is too large" }
-        return bytes
+        return BackupV2Json.encodeToUtf8(
+            BackupV2ManifestEnvelope.serializer(),
+            envelope.validate(),
+            maximumBytes = MAX_MANIFEST_BYTES.toLong(),
+        ) { "Backup manifest is too large" }
     }
 
     public fun decode(bytes: ByteArray): BackupV2ManifestEnvelope {
         require(bytes.size <= MAX_MANIFEST_BYTES) { "Backup manifest is too large" }
         return try {
-            BackupV2Json.decodeFromString<BackupV2ManifestEnvelope>(bytes.decodeToString()).validate()
+            BackupV2Json.decodeFromUtf8(BackupV2ManifestEnvelope.serializer(), bytes).validate()
         } catch (error: IllegalArgumentException) {
             throw BackupFormatException(error.message ?: "Invalid content backup manifest")
         }
     }
 
     internal fun digest(manifest: BackupV2ArchiveManifest): String =
-        Sha256.hex(BackupV2Json.encodeToString(manifest).encodeToByteArray())
+        Sha256.hex(BackupV2Json.encodeToUtf8(BackupV2ArchiveManifest.serializer(), manifest))
 }
 
 public object PortableContentBackupV2Service {
@@ -465,11 +465,11 @@ public object PortableContentBackupV2Service {
                 }
             },
         ).validate()
-        val stateBytes = BackupV2Json.encodeToString(sanitizedState).encodeToByteArray()
-        require(stateBytes.size <= MAX_PORTABLE_STATE_BYTES &&
-            stateBytes.size.toLong() <= policy.maximumArchiveBytes) {
-            "Portable backup metadata exceeds the archive limit"
-        }
+        val stateBytes = BackupV2Json.encodeToUtf8(
+            BackupV2PortableState.serializer(),
+            sanitizedState,
+            maximumBytes = minOf(MAX_PORTABLE_STATE_BYTES.toLong(), policy.maximumArchiveBytes),
+        ) { "Portable backup metadata exceeds the archive limit" }
         val stateDescriptor = BackupV2EntryDescriptor(
             path = PORTABLE_STATE_PATH,
             kind = BackupV2EntryKind.PORTABLE_STATE,
@@ -608,13 +608,15 @@ public object PortableContentBackupV2Service {
         if (stateEntry.byteSize > MAX_PORTABLE_STATE_BYTES) {
             throw BackupFormatException("Portable backup metadata is too large")
         }
-        val stateBytes = stateEntry.readFully()
-        val state = try {
-            BackupV2Json.decodeFromString<BackupV2PortableState>(stateBytes.decodeToString()).validate()
+        return BackupV2Inspection(envelope, decodePortableState(stateEntry.readFully()))
+    }
+
+    private fun decodePortableState(bytes: ByteArray): BackupV2PortableState {
+        return try {
+            BackupV2Json.decodeFromUtf8(BackupV2PortableState.serializer(), bytes).validate()
         } catch (error: IllegalArgumentException) {
             throw BackupFormatException(error.message ?: "Invalid portable backup state")
         }
-        return BackupV2Inspection(envelope, state)
     }
 
     /** Publish verified body entries; callers retain receipts for one shared SQL transaction. */
@@ -1057,13 +1059,13 @@ private fun ContentAnnotation.exportTextCharacters(): Long {
         }
         listOf(range.start, range.end).forEach { locator ->
             when (locator) {
-                is dev.shinsou.kmp.reader.ReadingLocator.Image -> Unit
-                is dev.shinsou.kmp.reader.ReadingLocator.Text -> locator.quote?.let { quote ->
+                is dev.shinsou.kmp.domain.model.ReadingLocator.Image -> Unit
+                is dev.shinsou.kmp.domain.model.ReadingLocator.Text -> locator.quote?.let { quote ->
                     add(quote.exact)
                     add(quote.prefix)
                     add(quote.suffix)
                 }
-                is dev.shinsou.kmp.reader.ReadingLocator.Epub -> locator.quote?.let { quote ->
+                is dev.shinsou.kmp.domain.model.ReadingLocator.Epub -> locator.quote?.let { quote ->
                     add(quote.exact)
                     add(quote.prefix)
                     add(quote.suffix)

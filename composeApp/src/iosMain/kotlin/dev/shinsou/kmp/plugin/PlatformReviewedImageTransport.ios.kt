@@ -7,6 +7,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.concurrent.SynchronousLock
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.concurrent.withLock
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.addressOf
@@ -136,7 +137,7 @@ private suspend fun executeReviewedImageAtAddress(
                 error("Reviewed browser image did not complete")
             } finally {
                 withContext(NonCancellable) {
-                    runCatching {
+                    runCatchingCancellable {
                         withTimeout(500L) {
                             webView.evaluateJavaScriptAwait(reviewedBrowserImageCleanupScript())
                         }

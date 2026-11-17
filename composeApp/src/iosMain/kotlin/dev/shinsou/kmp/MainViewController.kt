@@ -4,6 +4,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.window.ComposeUIViewController
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
+import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
@@ -12,6 +13,7 @@ import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.iosSandboxRuntimeFactory
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,8 @@ import platform.UIKit.UIViewController
 /** Native entry point consumed by the SwiftUI application host. */
 @Suppress("FunctionName")
 public fun MainViewController(): UIViewController {
+    // A library written by a newer app is left untouched: ask for the update instead (R3-1).
+    IosContentDatabase.schemaTooNew?.let { tooNew -> return ComposeUIViewController { SchemaTooNewNotice(tooNew) } }
     val container = IosApplicationContainer
     return ComposeUIViewController {
         LaunchedEffect(container) { container.start() }
@@ -44,8 +48,8 @@ public fun MainViewController(): UIViewController {
 
 /** Queues custom-scheme URLs even when Swift receives them before Compose starts collecting. */
 public fun handleDeepLink(url: String): Boolean {
-    val link = DeepLinkParser.parse(url) ?: return false
-    return IosApplicationContainer.services.emitDeepLink(link)
+    val link = DeepLinkParser.parse(url)
+    return link != null && IosContentDatabase.usable && IosApplicationContainer.services.emitDeepLink(link)
 }
 
 /** Read by SwiftUI when producing app-switcher and screen-recording privacy covers. */
@@ -53,6 +57,7 @@ public fun isSecureScreenEnabled(): Boolean = IosSecurityState.enabled
 
 /** Receives SwiftUI scene transitions so common app-lock timeout logic is platform-neutral. */
 public fun setApplicationForeground(foreground: Boolean) {
+    if (!IosContentDatabase.usable) return
     IosApplicationContainer.setApplicationForeground(foreground)
 }
 
@@ -77,7 +82,7 @@ public fun isReaderVolumeKeyInfrastructureEnabled(): Boolean =
  * toggled the setting. The native host uses this value for startup and reader-entry decisions.
  */
 public fun isReaderVolumeKeyConfigured(): Boolean =
-    IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys
+    IosContentDatabase.usable && IosApplicationContainer.repository.currentSnapshot.settings.reader.volumeKeys
 
 /** Swift's AVAudioSession observer queries this after reader/settings change notifications. */
 public fun isReaderVolumeKeyMonitoringEnabled(): Boolean =
@@ -85,23 +90,24 @@ public fun isReaderVolumeKeyMonitoringEnabled(): Boolean =
 
 /** Delivers one physical button press into the common reader event stream. */
 public fun handleReaderVolumeKey(volumeUp: Boolean): Boolean =
-    IosApplicationContainer.services.emitReaderVolumeKey(
+    IosContentDatabase.usable && IosApplicationContainer.services.emitReaderVolumeKey(
         if (volumeUp) ReaderVolumeKeyEvent.VOLUME_UP else ReaderVolumeKeyEvent.VOLUME_DOWN,
     )
 
 /** Delivers a native iOS edge-back request to the common navigation layer. */
-public fun handleSystemBackGesture(): Boolean = IosApplicationContainer.services.emitSystemBack()
+public fun handleSystemBackGesture(): Boolean = IosContentDatabase.usable && IosApplicationContainer.services.emitSystemBack()
 
 /** Delivers the current iOS edge-back drag fraction to the common navigation layer. */
 public fun handleSystemBackGestureProgress(fraction: Float): Boolean =
-    IosApplicationContainer.services.emitSystemBackGestureProgress(fraction)
+    IosContentDatabase.usable && IosApplicationContainer.services.emitSystemBackGestureProgress(fraction)
 
 /** Completes or cancels the current iOS edge-back drag. */
 public fun handleSystemBackGestureSettled(committed: Boolean): Boolean =
-    IosApplicationContainer.services.emitSystemBackGestureSettled(committed)
+    IosContentDatabase.usable && IosApplicationContainer.services.emitSystemBackGestureSettled(committed)
 
 /** Called synchronously from the SwiftUI App initializer, before any suspend startup work. */
 public fun registerAutomaticBackupBackgroundTask(): Boolean {
+    if (!IosContentDatabase.usable) return false
     // The sync refresh task shares this launch-time hook so the Swift side stays unchanged.
     IosApplicationContainer.syncScheduler.register()
     return IosApplicationContainer.autoBackupScheduler.register()
@@ -109,6 +115,7 @@ public fun registerAutomaticBackupBackgroundTask(): Boolean {
 
 /** Called synchronously from the SwiftUI App initializer, like the backup task above. */
 public fun registerBackgroundDownloadTasks() {
+    if (!IosContentDatabase.usable) return
     IosApplicationContainer.registerBackgroundDownloadTasks()
 }
 
@@ -116,12 +123,24 @@ public fun registerBackgroundDownloadTasks() {
  * Swift's volume-key support shares the app's AVAudioSession and asks this before deactivating
  * it: deactivating would stop the silent audio keeping background downloads alive.
  */
-public fun isDownloadSilentAudioInUse(): Boolean = IosApplicationContainer.downloadSilentAudioInUse
+public fun isDownloadSilentAudioInUse(): Boolean = IosContentDatabase.usable && IosApplicationContainer.downloadSilentAudioInUse
 
 /** Re-submits the earliest-begin-date hint when the scene moves to the background. */
 public fun scheduleAutomaticBackupBackgroundTask(): Boolean {
+    if (!IosContentDatabase.usable) return false
     IosApplicationContainer.syncScheduler.schedule()
     return IosApplicationContainer.autoBackupScheduler.apply(IosApplicationContainer.repository.currentSnapshot.backupState)
+}
+
+/**
+ * The content database, opened before the app container so a library written by a newer Shinsou X
+ * is found before any store touches it (R3-1). While [schemaTooNew] is set the container is never
+ * created and the Swift hooks above do nothing.
+ */
+internal object IosContentDatabase {
+    val infrastructure: IosContentInfrastructure by lazy { IosContentInfrastructure() }
+    val schemaTooNew: SchemaTooNewException? by lazy { infrastructure.checkBeforeOpening() }
+    val usable: Boolean get() = schemaTooNew == null
 }
 
 internal object IosApplicationContainer {
@@ -130,7 +149,7 @@ internal object IosApplicationContainer {
         persist = IosSnapshotPersistence::save,
     )
 
-    private val contentInfrastructure = IosContentInfrastructure()
+    private val contentInfrastructure = IosContentDatabase.infrastructure
 
     private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)
 
@@ -161,7 +180,7 @@ internal object IosApplicationContainer {
         syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
             defaultName = platform.UIKit.UIDevice.currentDevice.name.ifBlank { "iPhone" },
             platform = "ios",
-            appVersion = dev.shinsou.kmp.app.SHINSOU_APP_VERSION,
+            appVersion = dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION,
         ),
     )
 
@@ -199,7 +218,7 @@ internal object IosApplicationContainer {
 
     init {
         // a measuring run, only when launched for one (SHINSOU_MANGA_BENCH_DIR)
-        dev.shinsou.kmp.manga.startMangaBenchmarkIfAsked(iosTranslationModelDirectory(), io.ktor.client.HttpClient(io.ktor.client.engine.darwin.Darwin))
+        dev.shinsou.kmp.manga.startMangaBenchmarkIfAsked(iosTranslationModelDirectory()) { io.ktor.client.HttpClient(io.ktor.client.engine.darwin.Darwin) }
     }
 
     private val downloadKeeper = IosDownloadBackgroundKeeper(

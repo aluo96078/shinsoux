@@ -19,6 +19,7 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.files.DesktopAppDirectories
 
 /** Atomic, owner-only desktop persistence with AES-GCM protection for credential/token values. */
 internal class DesktopPluginKeyValueStore(

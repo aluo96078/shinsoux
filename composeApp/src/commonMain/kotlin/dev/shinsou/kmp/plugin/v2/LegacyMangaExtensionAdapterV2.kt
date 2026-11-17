@@ -3,10 +3,10 @@
 package dev.shinsou.kmp.plugin.v2
 
 import kotlinx.coroutines.sync.withLock
-import dev.shinsou.kmp.content.ContentKind
-import dev.shinsou.kmp.content.ImageLayout
-import dev.shinsou.kmp.content.ImageProgression
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.content.ImageLayout
+import dev.shinsou.kmp.domain.content.ImageProgression
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.CatalogueSource
 import dev.shinsou.kmp.plugin.ConfigurableSource

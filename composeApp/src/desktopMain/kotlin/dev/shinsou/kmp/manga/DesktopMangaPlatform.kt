@@ -87,22 +87,7 @@ public class DesktopMangaPlatform private constructor() : MangaPlatform {
         (acceleratedDetector(paths, accelerator) as? AutoCloseable)?.close()
     }
 
-    private val saver by lazy {
-        val os = System.getProperty("os.name").orEmpty()
-        efficiencyThreadDispatcher {
-            when {
-                // background quality of service: the efficiency cores only, on Apple silicon
-                os.startsWith("Mac") -> com.sun.jna.NativeLibrary.getInstance("System")
-                    .getFunction("pthread_set_qos_class_self_np").invokeInt(arrayOf<Any>(QOS_CLASS_BACKGROUND, 0))
-                // background mode: Windows puts such threads on efficiency cores where it has them
-                os.startsWith("Windows") -> com.sun.jna.NativeLibrary.getInstance("kernel32").let { k ->
-                    val self = k.getFunction("GetCurrentThread").invokePointer(arrayOf())
-                    k.getFunction("SetThreadPriority").invokeInt(arrayOf<Any>(self, THREAD_MODE_BACKGROUND_BEGIN))
-                }
-                else -> Unit // the lowest priority is all
-            }
-        }
-    }
+    private val saver by lazy { efficiencyThreadDispatcher(setup = efficiencyCoreRequest(System.getProperty("os.name").orEmpty())) }
 
     override fun efficiencyDispatcher(): kotlinx.coroutines.CoroutineDispatcher = saver
 
@@ -113,10 +98,38 @@ public class DesktopMangaPlatform private constructor() : MangaPlatform {
     override fun fontResolver(): FontFamily.Resolver = createFontFamilyResolver()
 
     public companion object {
-        private const val QOS_CLASS_BACKGROUND = 0x09
-        private const val THREAD_MODE_BACKGROUND_BEGIN = 0x00010000
-
         public fun create(): DesktopMangaPlatform = DesktopMangaPlatform()
+    }
+}
+
+private const val QOS_CLASS_BACKGROUND = 0x09
+private const val THREAD_MODE_BACKGROUND_BEGIN = 0x00010000
+
+/**
+ * The call that asks [os] to keep the saver thread on efficiency cores. A native library that is
+ * missing, or a call it refuses, throws: [efficiencyThreadDispatcher] reports that and the thread
+ * keeps only its lowest priority. A refusal the call returns as a status is turned into a throw too.
+ */
+internal fun efficiencyCoreRequest(os: String): () -> Unit = when {
+    // background quality of service: the efficiency cores only, on Apple silicon
+    os.startsWith("Mac") -> {
+        {
+            val status = com.sun.jna.NativeLibrary.getInstance("System")
+                .getFunction("pthread_set_qos_class_self_np").invokeInt(arrayOf<Any>(QOS_CLASS_BACKGROUND, 0))
+            check(status == 0) { "pthread_set_qos_class_self_np returned $status" }
+        }
+    }
+    // background mode: Windows puts such threads on efficiency cores where it has them
+    os.startsWith("Windows") -> {
+        {
+            val kernel32 = com.sun.jna.NativeLibrary.getInstance("kernel32")
+            val self = kernel32.getFunction("GetCurrentThread").invokePointer(arrayOf())
+            val done = kernel32.getFunction("SetThreadPriority").invokeInt(arrayOf<Any>(self, THREAD_MODE_BACKGROUND_BEGIN))
+            check(done != 0) { "SetThreadPriority(THREAD_MODE_BACKGROUND_BEGIN) failed" }
+        }
+    }
+    else -> {
+        {} // the lowest priority is all
     }
 }
 

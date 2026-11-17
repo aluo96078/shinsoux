@@ -31,17 +31,18 @@ import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
-import dev.shinsou.kmp.ui.ImportedDocument
-import dev.shinsou.kmp.ui.ImportedDocumentLimits
-import dev.shinsou.kmp.ui.ImportedDocumentReadException
-import dev.shinsou.kmp.ui.ImportedDocumentSource
+import dev.shinsou.kmp.contract.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocumentLimits
+import dev.shinsou.kmp.contract.ImportedDocumentReadException
+import dev.shinsou.kmp.contract.ImportedDocumentSource
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.ReaderVolumeKeyPressTracker
-import dev.shinsou.kmp.ui.readBoundedImportedBytes
-import dev.shinsou.kmp.ui.requireImportedDocumentSize
+import dev.shinsou.kmp.contract.readBoundedImportedBytes
+import dev.shinsou.kmp.contract.requireImportedDocumentSize
+import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
 import dev.shinsou.kmp.ui.writeBinaryDocumentWithFailureCleanup
 import dev.shinsou.kmp.ui.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
@@ -74,6 +75,10 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        AndroidSharedState.get(applicationContext).schemaTooNew?.let { tooNew ->
+            setContent { SchemaTooNewNotice(tooNew) }
+            return
+        }
         val runtime = AndroidAppRuntime.get(applicationContext)
         val repository = runtime.repository
         composition = runtime.composition
@@ -215,6 +220,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (!::appServices.isInitialized) return
         intent?.dataString?.let(DeepLinkParser::parse)?.let(appServices::emitDeepLink)
     }
 

@@ -55,10 +55,6 @@ fun elapsedDisplay(elapsedMillis: Long): ElapsedDisplay {
     return ElapsedDisplay((totalSeconds / 60L).toInt(), (totalSeconds % 60L).toString().padStart(2, '0'))
 }
 
-/** Display-only URL for diagnostics: drops the `#...` fragment, which can carry request headers. */
-fun diagnosticUrl(url: String?): String? =
-    url?.substringBefore('#')?.trim()?.takeIf(String::isNotEmpty)
-
 /**
  * The app's standalone loading spinner. Draws exactly a [CircularProgressIndicator] unless a
  * developer-mode diagnostic is on, in which case a caption with the elapsed time (and, for image

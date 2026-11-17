@@ -18,8 +18,8 @@ import dev.shinsou.kmp.domain.model.SourceBinding
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.domain.model.UnitKey
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

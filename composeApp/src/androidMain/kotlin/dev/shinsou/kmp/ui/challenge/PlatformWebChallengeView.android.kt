@@ -26,8 +26,8 @@ import androidx.webkit.ProfileStore
 import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred

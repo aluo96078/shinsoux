@@ -22,7 +22,7 @@ import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentPublicationMutation
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
 import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.content.access.ContentAccessRequest
@@ -40,12 +40,12 @@ import dev.shinsou.kmp.reader.UnifiedReaderNavigationFactory
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsOperationContext
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.ui.ImportedDocument
-import dev.shinsou.kmp.ui.TypedReaderContentSession
+import dev.shinsou.kmp.contract.ImportedDocument
+import dev.shinsou.kmp.contract.TypedReaderContentSession
 import okio.Buffer
 import okio.HashingSink
 import okio.blackholeSink
@@ -407,8 +407,8 @@ internal class LocalTypedContentController(
             ?: throw LocalContentUnavailableException("The typed local content has no readable manifest.")
         val representation = manifest.representations.singleOrNull()
             ?: throw LocalContentUnavailableException("The typed local content representation is ambiguous.")
-        val scope = dev.shinsou.kmp.reader.ReadingScope(
-            schemaVersion = dev.shinsou.kmp.reader.ReadingScope.CURRENT_SCHEMA_VERSION,
+        val scope = dev.shinsou.kmp.domain.model.ReadingScope(
+            schemaVersion = dev.shinsou.kmp.domain.model.ReadingScope.CURRENT_SCHEMA_VERSION,
             publicationId = publication.key,
             acquisitionId = acquisition.id,
             unitId = unit.key,

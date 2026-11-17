@@ -14,7 +14,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.PortableCategoryId
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.domain.model.TrackerAccountState
-import dev.shinsou.kmp.reader.validate
+import dev.shinsou.kmp.domain.model.validate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString

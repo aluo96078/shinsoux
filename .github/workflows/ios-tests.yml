@@ -1,0 +1,82 @@
+name: iOS tests
+
+# R2-3 (docs/architecture/0006): the whole iOS simulator test suite, for every change to the code
+# the iOS app is built from. sandbox-ios.yml keeps its own, narrower WASM sandbox checks.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "composeApp/src/commonMain/**"
+      - "composeApp/src/commonTest/**"
+      - "composeApp/src/iosMain/**"
+      - "composeApp/src/iosTest/**"
+      - "composeApp/src/iosArm64Main/**"
+      - "composeApp/src/iosSimulatorArm64Main/**"
+      - "composeApp/src/iosSimulatorArm64Test/**"
+      - "composeApp/src/nativeInterop/**"
+      - "composeApp/build.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/ios-tests.yml"
+  pull_request:
+    paths:
+      - "composeApp/src/commonMain/**"
+      - "composeApp/src/commonTest/**"
+      - "composeApp/src/iosMain/**"
+      - "composeApp/src/iosTest/**"
+      - "composeApp/src/iosArm64Main/**"
+      - "composeApp/src/iosSimulatorArm64Main/**"
+      - "composeApp/src/iosSimulatorArm64Test/**"
+      - "composeApp/src/nativeInterop/**"
+      - "composeApp/build.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/ios-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS simulator tests (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: shinsoux
+          persist-credentials: false
+
+      # Compose links iOS 26 APIs (UIViewLayoutRegion): use the newest Xcode on the runner.
+      - name: Newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The app embeds the WASM plugin sandbox (ADR-0002 S4); its guest is built from sandbox-core.
+      - name: WASM toolchain
+        run: brew install llvm lld wasi-libc wasi-runtimes wabt
+
+      - name: Sandbox guest
+        working-directory: shinsoux/sandbox-core
+        run: |
+          ./scripts/fetch-deps.sh
+          ./wasm/build-guest.sh build/wasm
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: iOS simulator tests
+        working-directory: shinsoux
+        run: ./gradlew :composeApp:iosSimulatorArm64Test -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace

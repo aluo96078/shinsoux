@@ -67,8 +67,7 @@ import platform.posix.getnameinfo
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-private const val IOS_PLUGIN_CONNECT_TIMEOUT_SECONDS: UInt = 15u
-private const val IOS_PLUGIN_REQUEST_TIMEOUT_MILLIS: Long = 30_000L
+private val IOS_PLUGIN_CONNECT_TIMEOUT_SECONDS: UInt = (PluginNetworkLimits.CONNECT_TIMEOUT_MILLIS / 1_000).toUInt()
 private const val IOS_PLUGIN_RECEIVE_CHUNK_BYTES: UInt = 65_536u
 private const val IOS_PLUGIN_HTTP_FRAMING_BYTES: Int = 128 * 1_024
 
@@ -88,7 +87,7 @@ private class IosPinnedPluginHttpTransport : PluginHttpTransport {
     override suspend fun executeResolved(
         request: PluginHttpRequest,
         resolution: PluginHostResolution,
-    ): PluginHttpResponse = withTimeout(IOS_PLUGIN_REQUEST_TIMEOUT_MILLIS) {
+    ): PluginHttpResponse = withTimeout(PluginNetworkLimits.REQUEST_TIMEOUT_MILLIS) {
         val url = Url(request.url)
         require(url.protocol.name.equals("https", ignoreCase = true)) {
             "Pinned plugin transport only permits HTTPS"
@@ -382,18 +381,18 @@ internal fun parseIosPinnedHttpResponse(
     val headerText = raw.copyOfRange(0, separator).decodeToString(throwOnInvalidSequence = true)
     val lines = headerText.split("\r\n")
     val statusParts = lines.first().split(' ')
-    require(statusParts.size >= 2 && statusParts[0] in setOf("HTTP/1.0", "HTTP/1.1")) {
+    requireWellFormedResponse(statusParts.size >= 2 && statusParts[0] in setOf("HTTP/1.0", "HTTP/1.1")) {
         "Invalid plugin HTTP status line"
     }
     val status = statusParts[1].toIntOrNull()
-    require(status != null && status in 200..599) { "Invalid plugin HTTP status" }
+    requireWellFormedResponse(status != null && status in 200..599) { "Invalid plugin HTTP status" }
     val builder = BoundedPluginResponseHeaders()
     lines.drop(1).forEach { line ->
-        require(line.isNotEmpty() && line.first() != ' ' && line.first() != '\t') {
+        requireWellFormedResponse(line.isNotEmpty() && line.first() != ' ' && line.first() != '\t') {
             "Invalid folded plugin response header"
         }
         val colon = line.indexOf(':')
-        require(colon > 0) { "Invalid plugin response header" }
+        requireWellFormedResponse(colon > 0) { "Invalid plugin response header" }
         builder.add(line.substring(0, colon), line.substring(colon + 1).trim())
     }
     val rawHeaders = builder.build()
@@ -408,7 +407,7 @@ internal fun parseIosPinnedHttpResponse(
     val bodyWire = raw.copyOfRange(separator + CRLF_CRLF.size, raw.size)
     val body = when {
         !expectBody || status == 204 || status == 304 -> {
-            require(bodyWire.isEmpty()) { "Body forbidden for plugin response status" }
+            requireWellFormedResponse(bodyWire.isEmpty()) { "Body forbidden for plugin response status" }
             ByteArray(0)
         }
         transferEncodings.isNotEmpty() -> {
@@ -419,7 +418,7 @@ internal fun parseIosPinnedHttpResponse(
         }
         else -> {
             val declared = rawHeaders.pluginDeclaredContentLength()
-            require(declared == null || declared == bodyWire.size.toLong()) {
+            requireWellFormedResponse(declared == null || declared == bodyWire.size.toLong()) {
                 "Plugin response content length is inconsistent"
             }
             require(bodyWire.size <= maxResponseBytes) { "Plugin response is too large" }
@@ -441,9 +440,9 @@ private fun decodeIosHttpChunkedBody(raw: ByteArray, maxResponseBytes: Int): Byt
     var offset = 0
     while (true) {
         val lineEnd = raw.indexOfSequence(CRLF, offset)
-        require(lineEnd >= offset && lineEnd - offset <= 1_024) { "Invalid plugin chunk framing" }
+        requireWellFormedResponse(lineEnd >= offset && lineEnd - offset <= 1_024) { "Invalid plugin chunk framing" }
         val sizeToken = raw.copyOfRange(offset, lineEnd).decodeToString().substringBefore(';').trim()
-        require(sizeToken.isNotEmpty() && sizeToken.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
+        requireWellFormedResponse(sizeToken.isNotEmpty() && sizeToken.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
             "Invalid plugin chunk size"
         }
         val size = sizeToken.toLongOrNull(16)
@@ -456,7 +455,7 @@ private fun decodeIosHttpChunkedBody(raw: ByteArray, maxResponseBytes: Int): Byt
             break
         }
         val end = offset + size.toInt()
-        require(end + CRLF.size <= raw.size && raw.matchesAt(end, CRLF)) {
+        requireWellFormedResponse(end + CRLF.size <= raw.size && raw.matchesAt(end, CRLF)) {
             "Truncated plugin chunk"
         }
         chunks += raw.copyOfRange(offset, end)

@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.backup.PortableContentBackupV2RestoreResult
 
 public enum class PortableContentBackupV2UiPhase {
     IDLE,
@@ -43,12 +44,6 @@ public data class PortableContentBackupV2Summary(
     val omittedByReason: Map<BackupV2OmissionReason, Int>,
     val publicationCount: Int,
     val annotationCount: Int,
-)
-
-public data class PortableContentBackupV2RestoreResult(
-    val publicationCount: Int,
-    val annotationCount: Int,
-    val contentBlobCount: Int,
 )
 
 public data class PortableContentBackupV2UiState(

@@ -1,8 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.ui.challenge.MacOsWebChallengeHelperLocator
-import dev.shinsou.kmp.ui.challenge.BoundedUtf8LineReader
-import dev.shinsou.kmp.ui.challenge.webChallengeProcessCommand
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import java.io.BufferedWriter
 import java.io.OutputStreamWriter
 import java.nio.file.Files
@@ -100,7 +98,7 @@ private class DesktopReviewedImageTransport(
                         if (raw != null && raw != "null" && raw != "undefined") break
                         delay(50)
                     }
-                    runCatching { evaluate("cleanup", reviewedBrowserImageCleanupScript()) }
+                    runCatchingCancellable { evaluate("cleanup", reviewedBrowserImageCleanupScript()) }
                     decodeReviewedBrowserImageResult(raw, request.maxResponseBytes)
                         ?: throw IllegalStateException("Reviewed image request timed out")
                 }

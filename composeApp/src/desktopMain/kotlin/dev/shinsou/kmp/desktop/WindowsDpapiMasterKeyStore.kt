@@ -11,6 +11,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import dev.shinsou.kmp.files.DesktopPlatform
 
 /**
  * Persists only a DPAPI-protected blob. DPAPI's default scope binds it to the current Windows user;

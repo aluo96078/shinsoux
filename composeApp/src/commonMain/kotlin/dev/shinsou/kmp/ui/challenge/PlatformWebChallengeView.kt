@@ -2,10 +2,10 @@ package dev.shinsou.kmp.ui.challenge
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
-import dev.shinsou.kmp.ui.SourceWebChallengeCapability
-import dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.SourceWebChallengeCapability
+import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import io.ktor.http.Url
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json

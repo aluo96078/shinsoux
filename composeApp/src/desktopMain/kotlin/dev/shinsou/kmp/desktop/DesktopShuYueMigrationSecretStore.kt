@@ -3,6 +3,7 @@ package dev.shinsou.kmp.desktop
 import dev.shinsou.kmp.migration.shuyue.KeyValueShuYueMigrationSecretStore
 import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
 import java.nio.file.Path
+import dev.shinsou.kmp.files.DesktopAppDirectories
 
 /**
  * ShuYue batches use AES-GCM with the master key held by macOS Keychain or current-user DPAPI.

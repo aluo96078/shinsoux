@@ -10,6 +10,10 @@ import dev.shinsou.kmp.plugin.Sha256
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.yield
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.TextDirection
+import dev.shinsou.kmp.domain.model.TextQuote
 
 /** One exact XHTML text-node run and its stable EPUB CFI identity. */
 public data class EpubSemanticTextBlock(
@@ -635,7 +639,7 @@ private fun isWellFormedSelection(value: String): Boolean {
 }
 
 private suspend fun ContentBlobStore.readSemanticBodyCancellable(
-    reference: dev.shinsou.kmp.content.BlobRef,
+    reference: dev.shinsou.kmp.domain.content.BlobRef,
 ): ByteArray {
     reference.validate()
     if (reference.byteSize > Int.MAX_VALUE.toLong() || reference.byteSize > maximumBlobSizeBytes) {

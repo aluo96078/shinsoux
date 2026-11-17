@@ -28,8 +28,8 @@ import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
-import dev.shinsou.kmp.ui.PluginPermissionDetails
-import dev.shinsou.kmp.ui.PublisherTrustState
+import dev.shinsou.kmp.contract.PluginPermissionDetails
+import dev.shinsou.kmp.contract.PublisherTrustState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.localizedLabel

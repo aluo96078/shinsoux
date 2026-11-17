@@ -1,16 +1,16 @@
 package dev.shinsou.kmp.search
 
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobStoreException
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.reader.EpubSemanticDocumentFactory
 import dev.shinsou.kmp.reader.EpubSpineNavigation
 import dev.shinsou.kmp.rights.ContentOperation

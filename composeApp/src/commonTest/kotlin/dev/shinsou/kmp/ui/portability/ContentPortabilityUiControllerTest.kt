@@ -32,6 +32,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.backup.PortableContentBackupV2RestoreResult
 
 class ContentPortabilityUiControllerTest {
     @Test

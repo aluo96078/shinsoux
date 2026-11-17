@@ -2,6 +2,7 @@
 
 package dev.shinsou.kmp.plugin.v2
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -120,7 +121,7 @@ public class ExtensionRuntimeRegistryV2 {
     }
 
     private suspend fun closeSafely(runtime: ExtensionPackageRuntimeV2?) {
-        if (runtime is CloseableExtensionPackageRuntimeV2) runCatching { runtime.close() }
+        if (runtime is CloseableExtensionPackageRuntimeV2) runCatchingCancellable { runtime.close() }
     }
 }
 

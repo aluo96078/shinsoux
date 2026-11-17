@@ -1,10 +1,14 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.ContentKind
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ImagePage
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.TextBlock
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextDirection
+import dev.shinsou.kmp.domain.model.TextQuote
 
 /** Shared ordered-resource navigation contract for every reader representation. */
 public interface UnifiedReaderNavigation {

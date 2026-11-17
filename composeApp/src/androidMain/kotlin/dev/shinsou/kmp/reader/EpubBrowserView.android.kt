@@ -25,6 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
 import org.json.JSONTokener
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
 
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Suppress("DEPRECATION")

@@ -1,8 +1,8 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.ui.BrowseFilter
-import dev.shinsou.kmp.ui.BrowseSortSelection
-import dev.shinsou.kmp.ui.BrowseTriState
+import dev.shinsou.kmp.contract.BrowseFilter
+import dev.shinsou.kmp.contract.BrowseSortSelection
+import dev.shinsou.kmp.contract.BrowseTriState
 import dev.shinsou.kmp.plugin.v2.BrowseFilterV2
 import dev.shinsou.kmp.plugin.v2.BrowseSortSelectionV2
 import dev.shinsou.kmp.plugin.v2.BrowseTriStateV2

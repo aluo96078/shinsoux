@@ -8,6 +8,21 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubPackageCssDependency
+import dev.shinsou.kmp.domain.content.EpubPackageCssReference
+import dev.shinsou.kmp.domain.content.EpubPackageManifestItem
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.ImageTransform
+import dev.shinsou.kmp.domain.content.MAX_EPUB_AUXILIARY_GRAPH_ENTRIES
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 
 class ContentManifestContractTest {
     @Test

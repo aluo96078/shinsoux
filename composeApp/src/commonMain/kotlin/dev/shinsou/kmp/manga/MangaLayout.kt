@@ -257,13 +257,14 @@ public class MangaLayout(
                         if (first < 0) null else first to last
                     }
                 }
-                if (spans.any { it == null }) continue
-                val caps = spans.map { (it!!.second - it.first).toFloat() }
+                val known = spans.filterNotNull()
+                if (known.size < spans.size) continue
+                val caps = known.map { (it.second - it.first).toFloat() }
                 if (caps.any { it < s } || caps.sum() < total) continue
                 val lines = breakLines(toks, caps, s) ?: continue
                 if (lines.size < nrows) continue
                 val glyphs = lines.flatMapIndexed { r, line ->
-                    val span = spans[r]!!
+                    val span = known[r]
                     val width = line.sumOf { it.adv.toDouble() }.toFloat()
                     var x = g.bx0 + (span.first + span.second) / 2f - width / 2
                     val y = g.by0 + top + r * lineH + lineH / 2

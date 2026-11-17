@@ -1,8 +1,5 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.ui.challenge.BoundedUtf8LineReader
-import dev.shinsou.kmp.ui.challenge.MacOsWebChallengeHelperLocator
-import dev.shinsou.kmp.ui.challenge.webChallengeProcessCommand
 import java.io.BufferedWriter
 import java.io.OutputStreamWriter
 import java.nio.file.Files

@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaAccelerator
 import dev.shinsou.kmp.manga.MangaCpuMode
 import dev.shinsou.kmp.manga.MangaTranslationFlow
@@ -67,7 +68,7 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslation) {
         failure = null
         work[accelerator] = AcceleratorWork(0f)
         scope.launch {
-            runCatching {
+            runCatchingCancellable {
                 manga.downloadAccelerator(
                     accelerator,
                     onProgress = { received, total -> work[accelerator] = AcceleratorWork(if (total > 0) received.toFloat() / total else 0f) },

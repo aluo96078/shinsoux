@@ -2,17 +2,18 @@ package dev.shinsou.kmp.local
 
 import dev.shinsou.kmp.acquisition.EpubArchiveExtractor
 import dev.shinsou.kmp.acquisition.LocalImagePageSource
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.LocalPackageKind
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.ui.ContentCallbacks
-import dev.shinsou.kmp.ui.ImportedDocument
-import dev.shinsou.kmp.ui.ImportedDocumentLimits
-import dev.shinsou.kmp.ui.ReaderChapter
-import dev.shinsou.kmp.ui.ReaderPage
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.contract.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocumentLimits
+import dev.shinsou.kmp.contract.ReaderChapter
+import dev.shinsou.kmp.contract.ReaderPage
 import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -187,7 +188,7 @@ public class LocalContentManager(
                 withContext(NonCancellable) {
                     imported.forEach { result ->
                         fileSystem.deleteTree(localDirectory(result.mangaId, result.chapterId))
-                        runCatching { repository.deleteManga(result.mangaId) }
+                        runCatchingCancellable { repository.deleteManga(result.mangaId) }
                     }
                 }
                 throw error
@@ -347,7 +348,7 @@ public class LocalContentManager(
         } catch (error: Throwable) {
             withContext(NonCancellable) {
                 fileSystem.deleteTree(directory)
-                runCatching { repository.deleteManga(seed.id) }
+                runCatchingCancellable { repository.deleteManga(seed.id) }
             }
             if (error is CancellationException) throw error
             if (error is LocalContentImportException) throw error

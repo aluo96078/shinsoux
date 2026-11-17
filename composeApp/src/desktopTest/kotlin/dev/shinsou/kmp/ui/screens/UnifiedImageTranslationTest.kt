@@ -17,7 +17,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.shinsou.kmp.app.ContentFeatureRuntime
+import dev.shinsou.kmp.features.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -35,7 +35,7 @@ import dev.shinsou.kmp.translation.OfflineTranslationEngine
 import dev.shinsou.kmp.translation.OfflineTranslationPlatform
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationMemoryStore
-import dev.shinsou.kmp.ui.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -88,7 +88,7 @@ class UnifiedImageTranslationTest {
         val manga: MangaTranslation,
         val renders: File,
         val features: ContentFeatureRuntime,
-        val session: dev.shinsou.kmp.ui.TypedReaderContentSession,
+        val session: dev.shinsou.kmp.contract.TypedReaderContentSession,
     )
 
     private fun fixture(packs: File, page: File): Fixture {

@@ -1,13 +1,15 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubResource
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.plugin.Sha256
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
 
 /** Host gate invoked for every browser read, including reads served from the local lazy cache. */
 public fun interface EpubResourceReadGate {

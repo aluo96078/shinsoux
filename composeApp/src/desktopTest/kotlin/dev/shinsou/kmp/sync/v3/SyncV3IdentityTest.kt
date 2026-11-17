@@ -11,9 +11,9 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.local.encodeTypedLocalChapterUrl
 import dev.shinsou.kmp.local.encodeTypedLocalPublicationUrl
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test

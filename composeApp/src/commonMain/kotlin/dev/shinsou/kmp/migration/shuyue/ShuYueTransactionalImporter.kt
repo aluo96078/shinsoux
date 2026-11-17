@@ -8,18 +8,18 @@ import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.ContentCommitResult
-import dev.shinsou.kmp.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentMetadataMutation
 import dev.shinsou.kmp.content.ContentMigrationLookupStatus
 import dev.shinsou.kmp.content.ContentPublicationMutation
 import dev.shinsou.kmp.content.ContentQuarantineMutation
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.content.SharedContentTransactionStore
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.UnrepresentableDraftPolicy
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.PendingContentBodyStoreRequest
@@ -36,11 +36,11 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.Sha256
 
-import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import kotlinx.serialization.Serializable
@@ -100,8 +100,8 @@ public data class ShuYuePortableImportPlan(
     val categoryMemberships: List<ShuYueImportedCategoryMembership> = emptyList(),
     val readingProgress: List<ShuYueImportedReadingProgress>,
     val readerSettings: ShuYueImportedReaderSettings?,
-    val blobReferences: List<dev.shinsou.kmp.content.BlobRef>,
-    val syncableBlobReferences: List<dev.shinsou.kmp.content.BlobRef>,
+    val blobReferences: List<dev.shinsou.kmp.domain.content.BlobRef>,
+    val syncableBlobReferences: List<dev.shinsou.kmp.domain.content.BlobRef>,
     /** Body-free host grants required to materialize the publication on another device. */
     val rightsGrants: List<RightsGrant>,
     val legacyFlattenedPublicationIds: Set<String>,

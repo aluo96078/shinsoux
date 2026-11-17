@@ -25,6 +25,8 @@ import javafx.scene.web.WebEngine
 import javafx.scene.web.WebView
 import javax.swing.SwingUtilities
 import kotlin.math.abs
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
 
 @Composable
 public actual fun EpubBrowserView(

@@ -5,16 +5,16 @@ import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobStage
 import dev.shinsou.kmp.content.ContentAliasMutation
-import dev.shinsou.kmp.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentMetadataMutation
 import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.ContentOperationGate
@@ -28,10 +28,10 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.RightsDecision
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingRange
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.TextQuote
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingRange
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.TextQuote
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -298,7 +298,7 @@ class PortableContentBackupV2Test {
         val fixture = fixture("x".repeat(128 * 1024))
         var bodyOpenCount = 0
         val trackingStore = object : ContentBlobStore by fixture.blobStore {
-            override fun openRead(reference: dev.shinsou.kmp.content.BlobRef): dev.shinsou.kmp.content.BlobReadLease? {
+            override fun openRead(reference: dev.shinsou.kmp.domain.content.BlobRef): dev.shinsou.kmp.content.BlobReadLease? {
                 bodyOpenCount++
                 return fixture.blobStore.openRead(reference)
             }

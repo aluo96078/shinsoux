@@ -1,0 +1,58 @@
+# R2-1 (docs/architecture/0006-code-quality-refactoring-plan.md)
+# Builds on detekt's default configuration; only the deviations are listed here.
+# Findings that existed when this was introduced are in baseline.xml, which may only shrink.
+
+complexity:
+  LongMethod:
+    active: true
+    allowedLines: 150
+  LargeClass:
+    active: true
+  LongParameterList:
+    active: true
+    # Composables take their state and callbacks as parameters; R4-3 brings these below ten.
+    ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    active: false
+
+coroutines:
+  InjectDispatcher:
+    active: true
+  # A runCatching around a suspend call swallows the coroutine's cancellation (R1-3):
+  # use dev.shinsou.kmp.concurrent.runCatchingCancellable instead.
+  SuspendFunSwallowedCancellation:
+    active: true
+
+exceptions:
+  SwallowedException:
+    active: true
+  TooGenericExceptionCaught:
+    active: true
+
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: true
+
+style:
+  ForbiddenMethodCall:
+    active: true
+    methods:
+      - value: 'kotlinx.coroutines.runBlocking'
+        reason: 'Blocks the calling thread; bridge with a suspend API instead.'
+      - value: 'kotlin.io.println'
+        reason: 'Use dev.shinsou.kmp.logging.Logger.'
+      - value: 'kotlin.io.print'
+        reason: 'Use dev.shinsou.kmp.logging.Logger.'
+  # Noise in this code base: numeric constants of image and model code, and long literal lines.
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    active: false
+  WildcardImport:
+    active: false
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+  TopLevelPropertyNaming:
+    active: false

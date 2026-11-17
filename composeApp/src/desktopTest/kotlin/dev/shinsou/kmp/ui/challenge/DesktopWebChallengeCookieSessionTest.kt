@@ -1,9 +1,9 @@
 package dev.shinsou.kmp.ui.challenge
 
-import dev.shinsou.kmp.ui.SourceCookie
-import dev.shinsou.kmp.ui.SourceWebChallengeCapability
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
-import dev.shinsou.kmp.ui.WebChallengeEmbeddedPolicy
+import dev.shinsou.kmp.contract.SourceCookie
+import dev.shinsou.kmp.contract.SourceWebChallengeCapability
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
+import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import java.io.ByteArrayInputStream
 import java.io.EOFException
 import java.io.IOException
@@ -20,6 +20,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assume.assumeTrue
+import dev.shinsou.kmp.plugin.BoundedUtf8LineReader
+import dev.shinsou.kmp.plugin.MacOsWebChallengeHelperLocator
+import dev.shinsou.kmp.plugin.webChallengeProcessCommand
 
 class DesktopWebChallengeCookieSessionTest {
     @Test

@@ -2,6 +2,7 @@ package dev.shinsou.kmp.manga
 
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import dev.shinsou.kmp.logging.Log
 import java.io.File
 
 /**
@@ -28,7 +29,11 @@ internal object AndroidQnnDetector {
             }
             addQnn(mapOf("backend_path" to File(runtime, "libQnnHtp.so").path, "htp_performance_mode" to "burst", "htp_graph_finalization_optimization_mode" to "3"))
         }
-        val session = compiled.takeIf { it.exists() }?.let { runCatching { env.createSession(it.path, options(compile = false)) }.getOrNull() }
+        val session = compiled.takeIf { it.exists() }?.let {
+            runCatching { env.createSession(it.path, options(compile = false)) }
+                .onFailure { error -> Log.warn("QnnDetector", error) { "compiled QNN context unusable; compiling again" } }
+                .getOrNull()
+        }
             ?: run {
                 cacheDirectory.listFiles { f -> f.name.startsWith("detector-") }?.forEach { it.delete() }
                 options(compile = true).use { env.createSession(model, it).close() }

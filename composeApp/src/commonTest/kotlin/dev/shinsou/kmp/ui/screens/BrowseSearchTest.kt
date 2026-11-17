@@ -1,16 +1,16 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.BrowseRepository
-import dev.shinsou.kmp.ui.BrowseExtension
-import dev.shinsou.kmp.ui.resolvedAgainst
-import dev.shinsou.kmp.ui.MigrationCandidate
+import dev.shinsou.kmp.contract.BrowseRepository
+import dev.shinsou.kmp.contract.BrowseExtension
+import dev.shinsou.kmp.contract.resolvedAgainst
+import dev.shinsou.kmp.contract.MigrationCandidate
 import dev.shinsou.kmp.plugin.PluginContentType
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.BrowseCallbacks
-import dev.shinsou.kmp.ui.BrowseFilter
-import dev.shinsou.kmp.ui.BrowsePage
-import dev.shinsou.kmp.ui.BrowseSnapshot
-import dev.shinsou.kmp.ui.BrowseSource
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.contract.BrowseFilter
+import dev.shinsou.kmp.contract.BrowsePage
+import dev.shinsou.kmp.contract.BrowseSnapshot
+import dev.shinsou.kmp.contract.BrowseSource
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CompletableDeferred

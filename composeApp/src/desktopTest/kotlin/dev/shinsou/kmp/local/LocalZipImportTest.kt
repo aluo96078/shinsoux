@@ -2,7 +2,7 @@ package dev.shinsou.kmp.local
 
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.DesktopAppFileSystem
-import dev.shinsou.kmp.ui.ImportedDocument
+import dev.shinsou.kmp.contract.ImportedDocument
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path

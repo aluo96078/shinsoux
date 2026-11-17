@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.domain.model.SyncKindSettings
+import dev.shinsou.kmp.sync.v3.ManualSyncResult
 import dev.shinsou.kmp.sync.v3.SyncApiException
 import dev.shinsou.kmp.sync.v3.SyncServerAddress
 import dev.shinsou.kmp.sync.v3.SyncServerAddressException
@@ -320,6 +321,7 @@ private fun SignedInSection(sync: SyncV3Service, state: SyncUiState, kinds: Sync
     var removing by remember { mutableStateOf<WireDevice?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
+    var syncBusy by remember { mutableStateOf(false) }
 
     // The operator can turn sharing on or off at any time; ask again whenever this page opens.
     LaunchedEffect(state.serverUrl) { sync.refreshFeatures() }
@@ -367,7 +369,13 @@ private fun SignedInSection(sync: SyncV3Service, state: SyncUiState, kinds: Sync
                 if (state.streamConnected) strings.text("Connected") else strings.text("Not connected"),
             )
             ErrorText(state.lastError?.let { strings.text("Last error") + ": " + it })
-            Button(enabled = !state.syncing, onClick = { scope.launch { sync.syncNow(); refreshTick++ } }) {
+            if (syncBusy) ErrorText(strings.text("A sync is already running; try again when it finishes."))
+            Button(enabled = !state.syncing, onClick = {
+                scope.launch {
+                    syncBusy = sync.syncFromUser() == ManualSyncResult.InProgress
+                    refreshTick++
+                }
+            }) {
                 if (state.syncing) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 } else {

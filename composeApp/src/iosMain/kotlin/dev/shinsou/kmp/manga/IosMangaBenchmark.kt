@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.manga
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import io.ktor.client.HttpClient
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
@@ -42,7 +43,7 @@ import kotlin.time.TimeSource
  * the manga models already downloaded. Results go to the console, as `MANGABENCH` lines.
  */
 @OptIn(ExperimentalForeignApi::class)
-internal fun startMangaBenchmarkIfAsked(modelDirectory: String, http: HttpClient) {
+internal fun startMangaBenchmarkIfAsked(modelDirectory: String, http: () -> HttpClient) {
     val pagesDir = getenv("SHINSOU_MANGA_BENCH_DIR")?.toKString()?.takeIf { it.isNotBlank() } ?: return
     val documents = (NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true).firstOrNull() as? String) ?: return
     fun read(path: String): ByteArray? = NSData.dataWithContentsOfFile(path)?.let { data ->
@@ -55,12 +56,12 @@ internal fun startMangaBenchmarkIfAsked(modelDirectory: String, http: HttpClient
             runCatching { coreMlDetector("$documents/$pkg", "$documents/$pagesDir", log) }.onFailure { log("coreml failed $it") }
             log("done"); return@launch
         }
-        runCatching {
+        runCatchingCancellable {
             val platform = IosMangaPlatform()
             val dir = "$documents/$pagesDir"
             val files = (NSFileManager.defaultManager.contentsOfDirectoryAtPath(dir, null) ?: emptyList<Any>()).map { it as String }
                 .filter { it.endsWith(".jpg") }.sorted().mapNotNull { read("$dir/$it") }
-            val models = MangaModelStore("$modelDirectory/manga", http)
+            val models = MangaModelStore("$modelDirectory/manga", http())
             val paths = models.paths() ?: error("manga models not downloaded")
             val vocab = { p: String -> read(p)!!.decodeToString().split("\n") }
             val after = MangaTuning.of(platform.profile())
@@ -104,7 +105,7 @@ internal fun startMangaBenchmarkIfAsked(modelDirectory: String, http: HttpClient
                 NSFileManager.defaultManager.removeItemAtPath("$documents/bench-renders-$name", null)
             }
             // each model on the CPU and on CoreML (SHINSOU_MANGA_BENCH_ACCEL=1; LaMa on CoreML may end the app)
-            if (getenv("SHINSOU_MANGA_BENCH_ACCEL")?.toKString() != "1") { log("done"); return@runCatching }
+            if (getenv("SHINSOU_MANGA_BENCH_ACCEL")?.toKString() != "1") { log("done"); return@runCatchingCancellable }
             val images = files.mapNotNull { platform.codec.decode(it) }
             val words = vocab(paths.vocab)
             for (accelerator in listOf(Accelerator.CPU, Accelerator.COREML)) {

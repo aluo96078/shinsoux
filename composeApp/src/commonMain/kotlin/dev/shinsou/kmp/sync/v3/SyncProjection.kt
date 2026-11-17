@@ -11,9 +11,9 @@ import dev.shinsou.kmp.domain.model.MangaCategory
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.local.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.reader.ReadingLocator
-import dev.shinsou.kmp.reader.ReadingScope
-import dev.shinsou.kmp.reader.validate
+import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingScope
+import dev.shinsou.kmp.domain.model.validate
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject

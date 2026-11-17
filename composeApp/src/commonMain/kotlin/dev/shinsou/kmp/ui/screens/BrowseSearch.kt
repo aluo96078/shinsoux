@@ -1,11 +1,11 @@
 package dev.shinsou.kmp.ui.screens
 
 import dev.shinsou.kmp.plugin.PluginContentType
-import dev.shinsou.kmp.ui.BrowseExtension
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.BrowseRepository
-import dev.shinsou.kmp.ui.MigrationCandidate
-import dev.shinsou.kmp.ui.BrowseSource
+import dev.shinsou.kmp.contract.BrowseExtension
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.BrowseRepository
+import dev.shinsou.kmp.contract.MigrationCandidate
+import dev.shinsou.kmp.contract.BrowseSource
 
 private val titleParentheticalPattern = Regex("\\([^)]*\\)")
 private val titleBracketPattern = Regex("\\[[^]]*]")

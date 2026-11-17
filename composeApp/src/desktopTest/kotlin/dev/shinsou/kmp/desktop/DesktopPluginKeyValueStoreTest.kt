@@ -20,6 +20,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.measureTime
+import dev.shinsou.kmp.files.DesktopPlatform
 
 class DesktopPluginKeyValueStoreTest {
     @Test

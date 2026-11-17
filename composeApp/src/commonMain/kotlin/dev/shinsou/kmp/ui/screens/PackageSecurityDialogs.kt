@@ -24,9 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.ui.PackageSecuritySnapshot
-import dev.shinsou.kmp.ui.PublisherTrustState
-import dev.shinsou.kmp.ui.RepositoryTrustPrompt
+import dev.shinsou.kmp.contract.PackageSecuritySnapshot
+import dev.shinsou.kmp.contract.PublisherTrustState
+import dev.shinsou.kmp.contract.RepositoryTrustPrompt
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 

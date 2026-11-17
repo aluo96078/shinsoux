@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.translation.ChapterTranslation
 import dev.shinsou.kmp.translation.ChapterTranslationRequest
 import dev.shinsou.kmp.translation.GlossaryEntry
@@ -106,20 +107,53 @@ internal class NovelTranslationState(
      * on screen is in [detected], a language translated automatically (see
      * [ReaderTranslation.autoTranslation]); saved only once the reader changes something. Until the
      * reader picks the work's language, it follows each chapter's, so a work opened on a page in
-     * the reader's own language still starts on the first chapter that is not.
+     * the reader's own language still starts on the first chapter that is not, and one that started
+     * on a page read as another language is corrected by the next. [detected] is null for a chapter
+     * with too little writing to tell (an illustration): nothing starts or changes on its account.
+     * Only a chapter with writing enough to be sure of ([settled]) changes the language of a work
+     * that is already translating.
      */
-    suspend fun autoStart(detected: String, appLanguage: String) {
+    suspend fun autoStart(detected: String?, appLanguage: String, settled: Boolean = true) {
+        try {
+            decideAutoStart(detected, appLanguage, settled)
+        } finally {
+            decidedFor = detected
+        }
+    }
+
+    /** The language of the chapter [autoStart] last decided for, whether or not it started. */
+    var decidedFor by mutableStateOf<String?>(null)
+        private set
+
+    /** Translating because [autoStart] began it, with nothing changed by the reader since. */
+    private var startedByItself = false
+
+    private suspend fun decideAutoStart(detected: String?, appLanguage: String, settled: Boolean) {
         val now = settings
-        if (!loaded || !WorkTranslationSettings.startsByItself(now)) return
-        val from = if (now.fromPicked) now.from else detected
-        if (from != now.from) settings = now.copy(from = from)
+        val from = languageToDecideFor(now, detected, settled) ?: return
+        // off while it is decided again for a chapter in another language than it started on
+        if (from != now.from) settings = now.copy(from = from, enabled = false)
         val before = settings
-        val pair = translation.autoTranslation(from, appLanguage) ?: return
-        val to = translation.autoTarget(pair, storedTo)
+        val pair = translation.autoTranslation(from, appLanguage)
+        val to = pair?.let { translation.autoTarget(it, storedTo) }
         val current = settings
-        // changed by the reader meanwhile: a language picked, the target, or switched on or off
-        if (current != before || current.enabled || current.turnedOff) return
-        settings = current.copy(enabled = true, from = pair.first, to = to)
+        // not when changed by the reader meanwhile: a language picked, the target, or switched on or off
+        val starts = pair != null && to != null && current == before && !current.enabled && !current.turnedOff
+        if (starts) settings = current.copy(enabled = true, from = pair.first, to = to)
+        startedByItself = starts
+    }
+
+    /**
+     * The language [autoStart] decides for now, null when there is nothing to decide: not loaded,
+     * switched on or off by the reader, no language to go by, already translating from it, or
+     * translating and this chapter too short to change that.
+     */
+    private fun languageToDecideFor(now: WorkTranslationSettings, detected: String?, settled: Boolean): String? {
+        val follows = startedByItself && now.enabled && !now.fromPicked
+        val open = loaded && (follows || WorkTranslationSettings.startsByItself(now))
+        val from = if (now.fromPicked) now.from else detected
+        val kept = follows && (from == now.from || !settled)
+        return from.takeIf { open && !kept }
     }
 
     fun change(change: WorkTranslationSettings) {
@@ -127,6 +161,7 @@ internal class NovelTranslationState(
         // a language the reader picks is theirs from then on, not the one each chapter is detected in
         val next = if (switchedOff.from != settings.from) switchedOff.copy(fromPicked = true) else switchedOff
         if (next == settings) return
+        startedByItself = false
         settings = next
         // the target saved for the work from then on, kept when it starts by itself
         storedTo = next.to
@@ -144,7 +179,7 @@ internal class NovelTranslationState(
         val to = settings.to
         downloadFailed = false
         scope.launch {
-            val installed = runCatching { translation.downloadSystemLanguages(from, to) }.getOrDefault(false)
+            val installed = runCatchingCancellable { translation.downloadSystemLanguages(from, to) }.getOrDefault(false)
             if (installed) revision++ else downloadFailed = true
         }
     }
@@ -171,7 +206,7 @@ internal class NovelTranslationState(
 
     fun putTerm(source: String, target: String) {
         scope.launch {
-            runCatching { translation.putGlossaryTerm(workKey, settings.to, source, target) }
+            runCatchingCancellable { translation.putGlossaryTerm(workKey, settings.to, source, target) }
             glossary = translation.glossary(workKey, settings.to)
             revision++
         }
@@ -217,7 +252,10 @@ internal fun rememberNovelTranslation(
     // each chapter's language, until the reader picks the work's or it starts; a target picked
     // for the work while it was off is kept; a language picked by hand may let it start
     LaunchedEffect(state, state.loaded, chapterKey, canonicalText, state.settings.takeIf { it.fromPicked }?.from) {
-        state.autoStart(ReaderTranslation.detectLanguage(canonicalText), appLanguage)
+        state.autoStart(
+            ReaderTranslation.detectLanguageOrNull(canonicalText), appLanguage,
+            settled = ReaderTranslation.detectLanguageOrNull(canonicalText, ReaderTranslation.SETTLED_LETTERS) != null,
+        )
     }
     DisposableEffect(translation) { onDispose { translation.release() } }
 
@@ -253,7 +291,7 @@ internal fun rememberNovelTranslation(
             to = settings.to,
             // Illustration markers are not prose.
             keep = { line -> parseNovelReaderSegments(line).any { it is NovelReaderSegment.Image } },
-            exportable = runCatching { exportable() }.getOrDefault(false),
+            exportable = runCatchingCancellable { exportable() }.getOrDefault(false),
             labels = latestLabels,
         )
         try {
@@ -283,7 +321,7 @@ internal fun rememberNovelTranslation(
             state.progress = null
             state.failure = error.failure
             // Whatever was finished before the failure is still worth showing.
-            runCatching { translation.stored(request) }.getOrNull()?.let { state.result = it }
+            runCatchingCancellable { translation.stored(request) }.getOrNull()?.let { state.result = it }
         } catch (_: Exception) {
             state.progress = null
             state.failure = TranslationFailure.ENGINE_FAILED
@@ -362,6 +400,7 @@ private fun translationFailureText(
     TranslationFailure.LOW_MEMORY -> strings.text("not enough free memory right now.")
     TranslationFailure.INVALID_KEY -> strings.text("the API key is missing or was refused.")
     TranslationFailure.QUOTA_EXCEEDED -> strings.text("the quota of the API key is used up.")
+    TranslationFailure.RATE_LIMITED -> strings.text("the translation service asked to slow down. Try again in a moment.")
     TranslationFailure.DAILY_LIMIT -> strings.text("today's limit for paid translation is reached.")
     TranslationFailure.PROVIDER_UNAVAILABLE -> strings.text("the translation service could not be reached.")
     TranslationFailure.ENGINE_FAILED -> strings.text("the translation stopped. Tap to try again.")
@@ -519,6 +558,13 @@ private fun NovelTranslationStatus(state: NovelTranslationState) {
             }
             state.failure == TranslationFailure.QUOTA_EXCEEDED -> {
                 Text(strings.text("The translation service reports that the quota of this API key is used up."), color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = state::retry) { Text(strings.retry) }
+            }
+            state.failure == TranslationFailure.RATE_LIMITED -> {
+                Text(
+                    strings.text("The translation service is receiving too many requests from this key. Wait a moment and try again."),
+                    color = MaterialTheme.colorScheme.error,
+                )
                 TextButton(onClick = state::retry) { Text(strings.retry) }
             }
             state.failure == TranslationFailure.NOT_CONFIGURED -> Text(

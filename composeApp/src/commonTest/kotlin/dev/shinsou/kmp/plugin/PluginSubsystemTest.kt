@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
@@ -27,9 +27,9 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import dev.shinsou.kmp.ui.BrowseManga
-import dev.shinsou.kmp.ui.BrowseFilter
-import dev.shinsou.kmp.ui.SourceLoginRequest
+import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.contract.BrowseFilter
+import dev.shinsou.kmp.contract.SourceLoginRequest
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -534,7 +534,7 @@ class PluginSubsystemTest {
         val rejected = browse.saveSourceCredentialsResult(source.id, "new-user", "new-password")
         assertFalse(rejected.succeeded)
         assertEquals(
-            dev.shinsou.kmp.ui.SourceLoginFailureStage.PREPARE_SOURCE,
+            dev.shinsou.kmp.contract.SourceLoginFailureStage.PREPARE_SOURCE,
             rejected.failureStage,
         )
         assertEquals(staleCredential, storage.getCredential(404L), "unsupported writes must be rejected")
@@ -841,9 +841,9 @@ class PluginSubsystemTest {
             assertFailsWith<IllegalArgumentException> {
                 fixture.browse.importSourceWebChallengeSession(
                     sourceId = GENERIC_BROWSER_SOURCE_ID,
-                    capability = dev.shinsou.kmp.ui.SourceWebChallengeCapability(),
+                    capability = dev.shinsou.kmp.contract.SourceWebChallengeCapability(),
                     cookies = listOf(
-                        dev.shinsou.kmp.ui.SourceCookie(
+                        dev.shinsou.kmp.contract.SourceCookie(
                             name = "session",
                             value = "blocked",
                             domain = "source.example",
@@ -1154,7 +1154,7 @@ class PluginSubsystemTest {
 
         browse.setSourceCookie(
             123,
-            dev.shinsou.kmp.ui.SourceCookie("session", "abc", ".images.example"),
+            dev.shinsou.kmp.contract.SourceCookie("session", "abc", ".images.example"),
         )
         assertTrue(browse.state.value.sources.single().cookies.isEmpty())
         assertEquals("session", browse.loadSourceSecrets(123).secrets.cookies.single().name)
@@ -1189,8 +1189,8 @@ class PluginSubsystemTest {
 
         browse.deleteSourceCookie(123, "session", ".images.example")
         assertTrue(browse.loadSourceSecrets(123).secrets.cookies.isEmpty())
-        browse.setSourceCookie(123, dev.shinsou.kmp.ui.SourceCookie("one", "1", ".source.example"))
-        browse.setSourceCookie(123, dev.shinsou.kmp.ui.SourceCookie("two", "2", ".source.example"))
+        browse.setSourceCookie(123, dev.shinsou.kmp.contract.SourceCookie("one", "1", ".source.example"))
+        browse.setSourceCookie(123, dev.shinsou.kmp.contract.SourceCookie("two", "2", ".source.example"))
         assertEquals(
             listOf("one", "two"),
             browse.loadSourceSecrets(123).secrets.cookies.map { it.name },

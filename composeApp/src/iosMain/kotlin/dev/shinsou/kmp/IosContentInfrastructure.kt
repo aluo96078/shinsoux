@@ -81,6 +81,8 @@ internal class IosContentInfrastructure(
 
     override fun contentBlobDirectory(): String = "$directory/content-blobs"
 
+    override fun databaseFile(): String = "$directory/$DATABASE_NAME"
+
     override fun close() = withDriverLock {
         openDriver?.close()
         openDriver = null

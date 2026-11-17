@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
+import dev.shinsou.kmp.files.DesktopPlatform
 
 /**
  * Uses Security.framework directly so key material never appears in process arguments, shell

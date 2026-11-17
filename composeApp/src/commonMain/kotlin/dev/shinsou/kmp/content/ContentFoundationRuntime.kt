@@ -5,13 +5,13 @@ package dev.shinsou.kmp.content
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.SuspendingTransacterImpl
 import dev.shinsou.kmp.annotation.SqlDriverContentAnnotationStore
-import dev.shinsou.kmp.app.LegacyPublicationProjection
+import dev.shinsou.kmp.data.LegacyPublicationProjection
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.rights.InMemoryRightsAuthority
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.search.DerivedLocalFullTextIndex
 
 /** Typed publication read side for acquisition/import consumers. */
@@ -67,6 +67,10 @@ public class ContentFoundationRuntime(
     syncModeProvider: () -> ContentSyncMode = { ContentSyncMode.V2_ACTIVE },
     private val ownsDriver: Boolean = false,
 ) {
+    init {
+        ContentConnection.configure(driver)
+    }
+
     private val sharedTransactions = object : SuspendingTransacterImpl(driver) {}
     public val blobStore: SqlDriverContentBlobStore = SqlDriverContentBlobStore(
         driver = driver,

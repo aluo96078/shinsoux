@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.tts
 
-import dev.shinsou.kmp.desktop.DesktopPlatform
+import dev.shinsou.kmp.files.DesktopPlatform
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers

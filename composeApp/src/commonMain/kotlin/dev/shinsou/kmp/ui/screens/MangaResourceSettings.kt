@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaModelCatalog
 import dev.shinsou.kmp.manga.MangaResource
 import dev.shinsou.kmp.manga.MangaResourceKind
@@ -58,13 +59,25 @@ internal fun MangaResourceSettings(manga: MangaTranslation, onChange: () -> Unit
         failure = null
         work[resource.id] = 0f
         scope.launch {
-            runCatching {
+            runCatchingCancellable {
                 manga.downloadResource(
                     resource,
                     onProgress = { received, total -> work[resource.id] = if (total > 0) received.toFloat() / total else 0f },
                     onPreparing = { work[resource.id] = null },
                 )
             }.onFailure { failure = it.message ?: it::class.simpleName }
+            work.remove(resource.id)
+            done()
+        }
+    }
+
+    /** Removing waits for a chapter being translated to end, and a file in use can refuse to go. */
+    fun remove(resource: MangaResource) {
+        failure = null
+        work[resource.id] = null
+        scope.launch {
+            runCatchingCancellable { manga.removeResource(resource) }
+                .onFailure { failure = it.message ?: it::class.simpleName }
             work.remove(resource.id)
             done()
         }
@@ -111,7 +124,7 @@ internal fun MangaResourceSettings(manga: MangaTranslation, onChange: () -> Unit
                             }
                             if (resource.diskBytes > 0) {
                                 TextButton(
-                                    onClick = { scope.launch { manga.removeResource(resource); done() } },
+                                    onClick = { remove(resource) },
                                     modifier = Modifier.testTag("manga-resource-remove-${resource.id}"),
                                 ) { Text(strings.text("Remove")) }
                             }

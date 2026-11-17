@@ -2,6 +2,7 @@ package dev.shinsou.kmp.manga
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.shinsou.kmp.logging.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.HttpTimeoutConfig
@@ -191,7 +192,7 @@ public class MangaModelStore(
 
     /** Downloads [url] into [target] only if it is [size] bytes with the SHA-256 [sha256]. */
     private suspend fun fetch(url: String, target: Path, name: String, size: Long, sha256: String, onProgress: (written: Long) -> Unit) {
-        val partial = target.parent!! / (target.name + ".part")
+        val partial = checkNotNull(target.parent) { "$target has no parent directory" } / (target.name + ".part")
         try {
             var written = 0L
             val hashing = HashingSink.sha256(fileSystem.sink(partial))
@@ -408,7 +409,9 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
         val found = driver.executeQuery(null, "SELECT page_keys FROM manga_chapter_render WHERE work_key = ? AND chapter_key = ? AND variant = ?", { cursor ->
             QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
         }, 3) { bindString(0, workKey); bindString(1, chapterKey); bindString(2, variant) }.value ?: return null
-        return runCatching { json.decodeFromString(PAGE_KEYS, found) }.getOrNull()
+        return runCatching { json.decodeFromString(PAGE_KEYS, found) }
+            .onFailure { Log.warn("MangaStorage", it) { "unreadable chapter renders; drawn again" } }
+            .getOrNull()
     }
 
     public fun putChapterRenders(workKey: String, chapterKey: String, variant: String, pageKeys: List<String>) {
@@ -426,7 +429,9 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
         driver.execute(null, "UPDATE manga_ocr_page SET used_at = ? WHERE image_hash = ? AND version = ?", 3) {
             bindLong(0, now()); bindString(1, imageHash); bindString(2, version)
         }.value
-        return runCatching { json.decodeFromString(PageAnalysis.serializer(), found) }.getOrNull()
+        return runCatching { json.decodeFromString(PageAnalysis.serializer(), found) }
+            .onFailure { Log.warn("MangaStorage", it) { "unreadable page analysis; read again" } }
+            .getOrNull()
     }
 
     public fun put(imageHash: String, analysis: PageAnalysis, version: String = VERSION) {

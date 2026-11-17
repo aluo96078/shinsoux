@@ -1,15 +1,15 @@
 package dev.shinsou.kmp.acquisition
 
 import dev.shinsou.kmp.content.BlobPublishReceipt
-import dev.shinsou.kmp.content.ContentManifest
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.domain.model.Rfc9562UuidV5
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 
 /** Stable caller-owned identity for a local import. File-system paths are deliberately excluded. */
 public data class LocalAcquisitionTarget(

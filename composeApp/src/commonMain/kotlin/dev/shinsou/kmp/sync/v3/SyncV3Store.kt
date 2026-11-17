@@ -7,6 +7,9 @@ import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
+import dev.shinsou.kmp.content.SchemaComponent
+import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.tableExists
 import kotlinx.serialization.json.Json
 
 /**
@@ -57,8 +60,8 @@ internal data class StoredRecord(
 )
 
 /**
- * Sync v3 state in the shared content database. It never touches the content schema version: all
- * tables are created idempotently by [SyncV3Schema].
+ * Sync v3 state in the shared content database. It never touches the content schema version: its
+ * tables have their own ([SyncV3Schema]).
  */
 internal class SyncV3Store(private val driver: SqlDriver) {
     private val transactions = object : TransacterImpl(driver) {}
@@ -549,11 +552,23 @@ internal class SyncV3Store(private val driver: SqlDriver) {
     }
 }
 
-/** Idempotent schema for the sync v3 tables; independent of the content database version. */
+/** Schema for the sync v3 tables, versioned on its own ([SchemaMigrator]). */
 internal object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = 1
 
+    val component: SchemaComponent = SchemaComponent(
+        name = "sync_v3",
+        version = version,
+        create = ::createTables,
+        unrecordedVersion = { driver -> if (tableExists(driver, "sync3_meta")) 1 else null },
+    )
+
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+        SchemaMigrator.migrate(driver, component)
+        return QueryResult.Unit
+    }
+
+    private fun createTables(driver: SqlDriver) {
         listOf(
             "CREATE TABLE IF NOT EXISTS sync3_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
             """
@@ -591,7 +606,6 @@ internal object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
             )
             """.trimIndent(),
         ).forEach { driver.execute(null, it, 0).value }
-        return QueryResult.Unit
     }
 
     override fun migrate(

@@ -6,6 +6,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.HttpRequestData
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
@@ -33,6 +34,8 @@ class LlmTranslationTest {
         private val status: HttpStatusCode = HttpStatusCode.OK,
         private val rewrite: (String) -> String = { it },
         private val wrap: ((String) -> JsonObject)? = null,
+        private val errorBody: String = "{}",
+        private val errorHeaders: Headers = Headers.Empty,
     ) {
         val requests = ArrayList<HttpRequestData>()
         val bodies = ArrayList<JsonObject>()
@@ -41,7 +44,7 @@ class LlmTranslationTest {
                 requests += request
                 val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                 bodies += body
-                if (status != HttpStatusCode.OK) return@MockEngine respond("{}", status)
+                if (status != HttpStatusCode.OK) return@MockEngine respond(errorBody, status, errorHeaders)
                 val path = request.url.encodedPath
                 val user = when {
                     path.endsWith("/chat/completions") -> body.getValue("messages").jsonArray.last().jsonObject.getValue("content").jsonPrimitive.content
@@ -183,7 +186,11 @@ class LlmTranslationTest {
         assertEquals(TranslationFailure.REFUSED, failure(google, LlmProtocol.GOOGLE))
 
         assertEquals(TranslationFailure.INVALID_KEY, failure(Model(HttpStatusCode.Unauthorized), LlmProtocol.OPENAI))
-        assertEquals(TranslationFailure.QUOTA_EXCEEDED, failure(Model(HttpStatusCode.TooManyRequests), LlmProtocol.ANTHROPIC))
+        // A 429 is a rate limit unless the body says the quota is used up; a wait of an hour is not waited out.
+        val slowDown = headersOf(HttpHeaders.RetryAfter, "3600")
+        assertEquals(TranslationFailure.RATE_LIMITED, failure(Model(HttpStatusCode.TooManyRequests, errorHeaders = slowDown), LlmProtocol.ANTHROPIC))
+        val usedUp = """{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}"""
+        assertEquals(TranslationFailure.QUOTA_EXCEEDED, failure(Model(HttpStatusCode.TooManyRequests, errorBody = usedUp), LlmProtocol.OPENAI))
         // An answer with no numbered line at all is a failure, not an empty translation.
         assertEquals(TranslationFailure.ENGINE_FAILED, failure(Model(rewrite = { "抱歉，我不確定你的意思。" }), LlmProtocol.GOOGLE))
     }

@@ -1,11 +1,11 @@
 package dev.shinsou.kmp.reader.protocol
 
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackage
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.reader.EpubPublicationResourceResolver
@@ -13,7 +13,7 @@ import dev.shinsou.kmp.reader.EpubRenderRequest
 import dev.shinsou.kmp.reader.EpubRenderResource
 import dev.shinsou.kmp.reader.EpubSpineNavigation
 import dev.shinsou.kmp.reader.EpubUserStyleSheet
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals

@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui
 
-import dev.shinsou.kmp.content.ContentKind
+import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey

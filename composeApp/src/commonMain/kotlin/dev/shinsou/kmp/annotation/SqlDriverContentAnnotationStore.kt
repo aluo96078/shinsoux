@@ -7,7 +7,10 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.content.SchemaComponent
+import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.tableExists
+import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.rights.DerivedRightsCleanupTarget
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -419,7 +422,19 @@ public class SqlDriverContentAnnotationStore(
 public object ContentAnnotationSchema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = 1
 
+    internal val component: SchemaComponent = SchemaComponent(
+        name = "content_annotations",
+        version = version,
+        create = ::createTables,
+        unrecordedVersion = { driver -> if (tableExists(driver, TABLE_ANNOTATIONS)) 1 else null },
+    )
+
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+        SchemaMigrator.migrate(driver, component)
+        return QueryResult.Unit
+    }
+
+    private fun createTables(driver: SqlDriver) {
         driver.execute(
             null,
             """
@@ -445,7 +460,6 @@ public object ContentAnnotationSchema : SqlSchema<QueryResult.Value<Unit>> {
             """.trimIndent(),
             0,
         ).value
-        return QueryResult.Unit
     }
 
     override fun migrate(
@@ -455,7 +469,7 @@ public object ContentAnnotationSchema : SqlSchema<QueryResult.Value<Unit>> {
         vararg callbacks: AfterVersion,
     ): QueryResult.Value<Unit> {
         require(oldVersion <= newVersion) { "Annotation database cannot migrate backwards" }
-        if (oldVersion < version && newVersion >= version) create(driver)
+        create(driver)
         callbacks.sortedBy(AfterVersion::afterVersion).forEach { callback ->
             if (callback.afterVersion in oldVersion until newVersion) callback.block(driver)
         }

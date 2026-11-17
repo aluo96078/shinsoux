@@ -109,7 +109,7 @@ import dev.shinsou.kmp.tracking.TrackerManagerAdapter
 import dev.shinsou.kmp.tracking.TrackerScoreFormat
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.tracking.TrackingProvider
-import dev.shinsou.kmp.ui.ContentCallbacks
+import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.content.PlatformContentInfrastructure
 import dev.shinsou.kmp.tts.PlatformTextToSpeechEngine
 import io.ktor.client.HttpClient
@@ -137,6 +137,9 @@ import dev.shinsou.kmp.ui.portability.ShuYueSecretImportAction
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
 import kotlin.time.Clock
+import dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION
+import dev.shinsou.kmp.data.LegacyPublicationProjection
+import dev.shinsou.kmp.features.ContentFeatureRuntime
 
 /** Shared dependency graph used unchanged by Android, iOS and Desktop. */
 public class ShinsouComposition(
@@ -1091,6 +1094,8 @@ public class ShinsouComposition(
         trackingJob.cancelAndJoin()
         stage("pluginEventUiJob.cancelAndJoin")
         pluginEventUiJob.cancelAndJoin()
+        stage("browse.close")
+        browse.close()
         stage("downloads.close")
         downloads.close()
         stage("pluginManager.close")

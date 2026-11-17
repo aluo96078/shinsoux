@@ -8,6 +8,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.files.DesktopAppDirectories
+import dev.shinsou.kmp.files.DesktopPlatform
 
 class DesktopPlatformTest {
     @Test

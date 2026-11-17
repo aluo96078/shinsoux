@@ -6,6 +6,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 
 /** Exact host operations used for all content capability decisions. */
 @Serializable
@@ -99,16 +100,6 @@ public data class RightsScope(
             (manifestId == null || manifestId == requested.manifestId) &&
             (contentRevision == null || contentRevision == requested.contentRevision)
     }
-}
-
-/** A host-owned opaque reference persisted by Acquisition. */
-@Serializable
-public data class RightsGrantRef(
-    val value: String,
-) {
-    init { requireUuid(value, "Rights grant reference") }
-
-    public fun validate(): Unit = requireUuid(value, "Rights grant reference")
 }
 
 /** Constraints are explicit and typed; no unknown string map can accidentally elevate access. */

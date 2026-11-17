@@ -4,7 +4,7 @@ import dev.shinsou.kmp.domain.model.AppSettings
 import dev.shinsou.kmp.domain.model.DeveloperSettings
 import dev.shinsou.kmp.ui.components.DeveloperDiagnostics
 import dev.shinsou.kmp.ui.components.ElapsedDisplay
-import dev.shinsou.kmp.ui.components.diagnosticUrl
+import dev.shinsou.kmp.contract.diagnosticUrl
 import dev.shinsou.kmp.ui.components.elapsedDisplay
 import dev.shinsou.kmp.ui.components.toDiagnostics
 import kotlinx.serialization.encodeToString

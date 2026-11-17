@@ -10,35 +10,29 @@ import dev.shinsou.kmp.acquisition.ImageSequenceAcquisitionRequest
 import dev.shinsou.kmp.acquisition.ImageSequenceAcquisitionService
 import dev.shinsou.kmp.acquisition.LocalAcquisitionIdentityDeriver
 import dev.shinsou.kmp.acquisition.LocalAcquisitionTarget
-import dev.shinsou.kmp.acquisition.LocalContentFormat
 import dev.shinsou.kmp.acquisition.LocalImagePageSource
 import dev.shinsou.kmp.acquisition.SUPPORTED_LOCAL_IMAGE_MEDIA_TYPES
 import dev.shinsou.kmp.acquisition.TextAcquisitionRequest
 import dev.shinsou.kmp.acquisition.TextAcquisitionService
 import dev.shinsou.kmp.content.BlobPublishReceipt
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStage
-import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentBlobStoreException
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentCommitResult
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentLocalBodyPurgeResult
-import dev.shinsou.kmp.content.ContentManifest
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentMetadataMutation
 import dev.shinsou.kmp.content.ContentPublicationMutation
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.ContentRightsGrantMutation
 import dev.shinsou.kmp.content.ContentTransactionException
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
-import dev.shinsou.kmp.content.ImagePage
-import dev.shinsou.kmp.content.ImageTransform
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ImagePage
+import dev.shinsou.kmp.domain.content.ImageTransform
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.PendingBlob
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.HostContentOperationGate
@@ -56,25 +50,19 @@ import dev.shinsou.kmp.domain.model.Rfc9562UuidV5
 import dev.shinsou.kmp.domain.model.SourceBinding
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.UnitKey
-import dev.shinsou.kmp.plugin.PluginHttpRequest
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PLUGIN_NETWORK_MAX_RESPONSE_BYTES
 import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.ProtectionScheme
 import dev.shinsou.kmp.rights.RightsGrant
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.reader.UnifiedReaderContent
 import dev.shinsou.kmp.reader.UnifiedReaderNavigationFactory
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okio.Buffer
-import okio.HashingSink
-import okio.blackholeSink
 
 /**
  * Host-owned page of exact v2 publication metadata.
@@ -190,11 +178,6 @@ public class ExtensionFetchedResourceV2(
     internal fun asEpubArchiveSource(): ByteArrayEpubArchiveSource = ByteArrayEpubArchiveSource(body)
 }
 
-/** Executes an already validated v2 request plan through a host-controlled network scope. */
-public fun interface ExtensionResourceFetcherV2 {
-    public suspend fun fetch(sourceKey: SourceKey, request: RemoteRequestPlanV2): ExtensionFetchedResourceV2
-}
-
 /** Maps an exact portable source identity to a process-local network/cookie isolation scope. */
 public fun interface ExtensionNetworkScopeResolverV2 {
     public fun resolve(sourceKey: SourceKey): Long?
@@ -206,61 +189,9 @@ public fun interface ExtensionNetworkScopeResolverV2 {
     }
 }
 
-/**
- * Production fetcher for legacy-backed v2 sources. Native packages must provide an explicit scope
- * resolver; an opaque SourceKey is never hashed or narrowed into a Long.
- */
-public class PluginNetworkExtensionResourceFetcherV2(
-    private val contentScope: suspend (SourceKey) -> dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
-) : ExtensionResourceFetcherV2 {
-    /** Compatibility constructor. Its unscoped client is no longer accepted for production. */
-    @Deprecated("Pass an exact SourceKey content-scope resolver")
-    public constructor(
-        network: PluginNetworkClient,
-        scopes: ExtensionNetworkScopeResolverV2 = ExtensionNetworkScopeResolverV2.LegacyOnly,
-    ) : this(contentScope = { null })
-
-    override suspend fun fetch(
-        sourceKey: SourceKey,
-        request: RemoteRequestPlanV2,
-    ): ExtensionFetchedResourceV2 {
-        request.validate()
-        require(request.body == null) { "Host request-body references need a dedicated resolver" }
-        require(request.method == HttpMethodV2.GET || request.method == HttpMethodV2.HEAD) {
-            "Only body-free GET/HEAD extension resources can be fetched here"
-        }
-        val scope = requireNotNull(contentScope(sourceKey)) {
-            "No exact content network policy is registered for ${sourceKey.canonicalId}"
-        }
-        require(scope.sourceKey == sourceKey) { "Content network scope identity mismatch" }
-        val response = scope.network.execute(
-            sourceId = scope.sourceId,
-            request = PluginHttpRequest(
-                method = request.method.name,
-                url = request.effectiveUri,
-                headers = request.headerHints,
-                // V2 historically permits a larger declarative maximum than this transport's
-                // global cap. Narrow it instead of rejecting an otherwise small compatible body.
-                maxResponseBytes = minOf(
-                    request.maxResponseBytes,
-                    PLUGIN_NETWORK_MAX_RESPONSE_BYTES.toLong(),
-                ).toInt(),
-            ),
-        )
-        check(response.status in 200..299) { "HTTP ${response.status} while fetching extension content" }
-        require(response.body.size.toLong() <= request.maxResponseBytes) {
-            "Extension resource exceeded its declared response bound"
-        }
-        return ExtensionFetchedResourceV2(
-            bytes = response.body,
-            mediaType = response.headers.entries
-                .firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }
-                ?.value
-                ?.firstOrNull()
-                ?.substringBefore(';')
-                ?.trim(),
-        )
-    }
+/** Executes an already validated v2 request plan through a host-controlled network scope. */
+public fun interface ExtensionResourceFetcherV2 {
+    public suspend fun fetch(sourceKey: SourceKey, request: RemoteRequestPlanV2): ExtensionFetchedResourceV2
 }
 
 /**
@@ -1315,116 +1246,6 @@ private data class PreparedExtensionRepresentation(
     val receipts: List<BlobPublishReceipt>,
 )
 
-/**
- * Gives one extension representation stable blob identities without changing the shared blob
- * store's allocation policy. Acquisition services publish resources in a deterministic order, so
- * the scoped ordinal keeps equal bytes at different logical paths distinct while making an exact
- * replay claim the already committed reference. That lets the transaction consume a fresh dedupe
- * receipt without manufacturing a new immutable manifest revision.
- */
-private class StableExtensionBlobStore(
-    private val delegate: ContentBlobStore,
-    private val scope: String,
-) : ContentBlobStore by delegate {
-    private var nextOrdinal: Long = 0
-
-    // Kotlin interface delegation forwards default methods to the delegate. Override both helpers
-    // so their stage lifecycle is dispatched through this scoped store.
-    override fun put(bytes: ByteArray, mediaType: String): BlobPublishReceipt {
-        val stage = beginStage(bytes.size.toLong(), mediaType)
-        return try {
-            stage.append(bytes)
-            publish(stage.seal())
-        } catch (error: Throwable) {
-            stage.abort()
-            throw error
-        }
-    }
-
-    override fun put(reference: BlobRef, bytes: ByteArray): BlobPublishReceipt {
-        val stage = beginStage(reference.byteSize, reference.mediaType)
-        return try {
-            stage.append(bytes)
-            publish(stage.seal(reference))
-        } catch (error: Throwable) {
-            stage.abort()
-            throw error
-        }
-    }
-
-    override fun beginStage(expectedSizeBytes: Long?, mediaType: String): ContentBlobStage {
-        require(nextOrdinal < Long.MAX_VALUE) { "Extension representation has too many blob resources" }
-        val ordinal = nextOrdinal++
-        return StableExtensionBlobStage(
-            delegate = delegate.beginStage(expectedSizeBytes, mediaType),
-            mediaType = mediaType,
-            stableBlobId = { digest ->
-                Rfc9562UuidV5.derive(
-                    EXTENSION_CONTENT_NAMESPACE,
-                    framedIdentity("blob", scope, ordinal.toString(), mediaType, digest),
-                )
-            },
-        )
-    }
-
-    override fun publish(candidate: PendingBlob): BlobPublishReceipt {
-        val stable = candidate as? StableExtensionPendingBlob
-            ?: throw ContentBlobStoreException.InvalidStage("Blob candidate belongs to another scoped store")
-        return try {
-            delegate.publish(stable.delegate)
-        } catch (error: ContentBlobStoreException.InvalidStage) {
-            // A concurrent exact materialization may already own the one live receipt. Reuse that
-            // authenticated object; otherwise preserve the original fail-closed store error.
-            delegate.claimExistingVerified(stable.reference)?.also { stable.stage.abort() } ?: throw error
-        }
-    }
-}
-
-internal class StableExtensionBlobStage(
-    private val delegate: ContentBlobStage,
-    private val mediaType: String,
-    private val stableBlobId: (digest: String) -> String,
-) : ContentBlobStage by delegate {
-    private val digestSink = HashingSink.sha256(blackholeSink())
-    private val digestBuffer = Buffer()
-
-    override fun append(chunk: ByteArray) {
-        delegate.append(chunk)
-        if (chunk.isNotEmpty()) {
-            digestBuffer.write(chunk)
-            digestSink.write(digestBuffer, chunk.size.toLong())
-        }
-    }
-
-    override fun seal(expected: BlobRef?): PendingBlob {
-        val digestHex = digestSink.hash.hex()
-        digestSink.close()
-        val reference = expected ?: run {
-            BlobRef(
-                blobId = stableBlobId(digestHex),
-                schemaVersion = BlobRef.CURRENT_SCHEMA_VERSION,
-                digestAlgorithm = BlobRef.SHA_256,
-                plaintextDigest = digestHex,
-                byteSize = bytesWritten,
-                mediaType = mediaType,
-            )
-        }
-        return StableExtensionPendingBlob(delegate.seal(reference), delegate)
-    }
-
-    override fun abort() {
-        runCatching { digestSink.close() }
-        delegate.abort()
-    }
-}
-
-private class StableExtensionPendingBlob(
-    val delegate: PendingBlob,
-    val stage: ContentBlobStage,
-) : PendingBlob {
-    override val reference: BlobRef get() = delegate.reference
-}
-
 private data class ExtensionGraphMerge(
     val publication: Publication,
     val acquisition: Acquisition,
@@ -1513,7 +1334,7 @@ internal fun extensionPublicationKey(
     )
 }
 
-private fun framedIdentity(vararg fields: String): String = buildString {
+internal fun framedIdentity(vararg fields: String): String = buildString {
     append("shinsou-extension-content-v2")
     fields.forEach { field ->
         append('|')
@@ -1523,17 +1344,24 @@ private fun framedIdentity(vararg fields: String): String = buildString {
     }
 }
 
-private val EXTENSION_CONTENT_NAMESPACE = MigrationNamespaceId("bcdcd2d9-9908-5e51-a976-f3b8c19af82a")
+internal val EXTENSION_CONTENT_NAMESPACE = MigrationNamespaceId("bcdcd2d9-9908-5e51-a976-f3b8c19af82a")
+
 private val EXTENSION_CONTENT_JSON = Json {
     encodeDefaults = true
     explicitNulls = true
     ignoreUnknownKeys = false
 }
+
 private const val FINGERPRINT_TEMPLATE_MANIFEST_ID: String = "00000000-0000-5000-8000-000000000001"
+
 private const val EXTENSION_HOST_POLICY_ID: String = "extension-v2-host-policy"
+
 private const val WILDCARD_IMAGE_MEDIA_TYPE: String = "image/*"
+
 private const val MAX_GRAPH_COMMIT_ATTEMPTS: Int = 4
+
 private const val MAX_EXTENSION_EPUB_TOTAL_BYTES: Long = 512L * 1024L * 1024L
+
 private val CONSERVATIVE_REMOTE_OPERATIONS: Set<ContentOperation> = setOf(
     ContentOperation.DISPLAY,
     ContentOperation.OFFLINE_STORE,

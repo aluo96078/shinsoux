@@ -40,6 +40,9 @@ internal class FakeSyncServer {
     var nowMillis: () -> Long = { System.currentTimeMillis() }
     var failNextPushWith: Int? = null
 
+    /** The next push is stored but answered with a 503, as if the response was lost on the way. */
+    var loseNextPushResponse = false
+
     /** Kinds this "older" server does not know: each record of one is refused individually. */
     var unknownKinds: Set<String> = emptySet()
     var pushCount = 0
@@ -245,6 +248,10 @@ internal class FakeSyncServer {
                     WirePushResult(record.kind, record.key, "applied", wire(account, id, stored))
                 }
             }
+        }
+        if (loseNextPushResponse) {
+            loseNextPushResponse = false
+            return error(HttpStatusCode.ServiceUnavailable, "internal")
         }
         return ok(WirePushResponse.serializer(), WirePushResponse(results, account.seq))
     }

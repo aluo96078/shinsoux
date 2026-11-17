@@ -27,6 +27,8 @@ internal class AndroidDownloadJobService : JobService() {
     private var scope: CoroutineScope? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
+        // A library written by a newer app is left alone (R3-1).
+        if (AndroidSharedState.get(applicationContext).schemaTooNew != null) return false
         running = true
         AndroidBackgroundDownloads.newRun()
         setNotification(

@@ -1,7 +1,9 @@
 package dev.shinsou.kmp.translation
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -318,7 +320,7 @@ public class ReaderTranslation(
         if (activeProvider() != TranslationProviderKind.SYSTEM || ChineseScript.converts(from, to)) return false
         val source = OfflineModelCatalog.language(from) ?: return false
         val target = OfflineModelCatalog.language(to) ?: return false
-        return runCatching { engine.status(source, target) }.getOrNull() == SystemLanguageStatus.DOWNLOADABLE
+        return runCatchingCancellable { engine.status(source, target) }.getOrNull() == SystemLanguageStatus.DOWNLOADABLE
     }
 
     /** Asks the system to download the pair's languages (its own prompt); true once installed. */
@@ -341,7 +343,14 @@ public class ReaderTranslation(
         withContext(Dispatchers.Default) { memory.freeBytes() to memory.paidBytes() }
 
     /** Translating chapters ahead of reading; shared by every screen, for the app's run. */
-    public val prefetch: TranslationPrefetchQueue by lazy { TranslationPrefetchQueue(this) }
+    public val prefetch: TranslationPrefetchQueue get() = prefetchQueue.value
+    private val prefetchQueue = lazy { TranslationPrefetchQueue(this) }
+
+    /** Stops the work that outlives screens; called when the app shuts down. */
+    public fun close() {
+        if (prefetchQueue.isInitialized()) prefetchQueue.value.close()
+        background.cancel()
+    }
 
     /** Chapter keys of [workKey] that have a complete stored translation, whatever made it. */
     public suspend fun translatedChapterKeys(workKey: String): Set<String> =
@@ -443,7 +452,7 @@ public class ReaderTranslation(
             } finally {
                 // A model is only held while a chapter is being translated: loading it again
                 // takes a tenth of a second, keeping it takes about 350 MB of the reader's memory.
-                withContext(kotlinx.coroutines.NonCancellable) { runCatching { offline.unload() } }
+                withContext(kotlinx.coroutines.NonCancellable) { runCatchingCancellable { offline.unload() } }
                 // Free translations can be made again: keep the newest and let the oldest go.
                 runCatching { memory.evictFree(FREE_MEMORY_LIMIT_BYTES) }
             }
@@ -471,7 +480,7 @@ public class ReaderTranslation(
 
     /** Releases the loaded model's memory once the reader that used it is gone. */
     public fun release() {
-        background.launch { runCatching { offline.unload() } }
+        background.launch { runCatchingCancellable { offline.unload() } }
     }
 
     public companion object {
@@ -529,6 +538,25 @@ public class ReaderTranslation(
                 else -> "en"
             }
         }
+
+        /**
+         * [detectLanguage], or null when [text] has too little writing to tell: an illustration
+         * page is all markup and addresses, which would read as English.
+         */
+        public fun detectLanguageOrNull(text: String, minimumLetters: Int = MIN_DETECTED_LETTERS): String? {
+            val written = text.take(DETECTED_CHARACTERS).replace(NOT_WRITING, " ")
+            return if (written.count { it.isLetter() } >= minimumLetters) detectLanguage(written) else null
+        }
+
+        /**
+         * Letters enough to take a chapter's language over the one a work is already being
+         * translated from: a title page of a few kanji reads as Chinese, a heading as English.
+         */
+        public const val SETTLED_LETTERS: Int = 60
+
+        private const val DETECTED_CHARACTERS = 4_000
+        private const val MIN_DETECTED_LETTERS = 8
+        private val NOT_WRITING = Regex("""!?\[[^\]]*]\([^)]*\)|<[^>]*>|https?://\S+""")
 
         /** The services that charge for what they translate. */
         public val PAID_PROVIDERS: Set<TranslationProviderKind> = setOf(

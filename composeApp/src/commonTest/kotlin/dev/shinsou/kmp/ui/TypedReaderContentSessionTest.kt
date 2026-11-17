@@ -1,19 +1,20 @@
 package dev.shinsou.kmp.ui
 
-import dev.shinsou.kmp.content.BlobRef
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.ResourceRef
-import dev.shinsou.kmp.content.TextBlock
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ResourceRef
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.ContentAccessRequest
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.reader.UnifiedReaderContent
 import dev.shinsou.kmp.reader.UnifiedReaderNavigationFactory
 import dev.shinsou.kmp.rights.RightsScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import dev.shinsou.kmp.contract.TypedReaderContentSession
 
 class TypedReaderContentSessionTest {
     @Test

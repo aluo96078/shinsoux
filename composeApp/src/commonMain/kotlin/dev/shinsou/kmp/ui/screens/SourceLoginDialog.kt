@@ -24,10 +24,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.ui.BrowseCallbacks
-import dev.shinsou.kmp.ui.BrowseSource
-import dev.shinsou.kmp.ui.SourceLoginRequest
-import dev.shinsou.kmp.ui.SourceWebChallengeRequest
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.contract.BrowseSource
+import dev.shinsou.kmp.contract.SourceLoginRequest
+import dev.shinsou.kmp.contract.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -53,7 +54,7 @@ internal fun SourceLoginDialog(
     LaunchedEffect(request) {
         secretsLoading = true
         errorMessage = null
-        runCatching { callbacks.loadSourceSecrets(request.sourceId) }
+        runCatchingCancellable { callbacks.loadSourceSecrets(request.sourceId) }
             .onSuccess { result ->
                 username = result.secrets.credential?.username.orEmpty()
                 password = result.secrets.credential?.password.orEmpty()
@@ -81,7 +82,7 @@ internal fun SourceLoginDialog(
             // Paint the modal and its progress state before the plugin performs synchronous work.
             withFrameNanos { }
             if (source?.requiresBrowserSessionLogin == true) {
-                runCatching {
+                runCatchingCancellable {
                     callbacks.sourceWebChallenge(
                         sourceId = request.sourceId,
                         username = username.takeIf(String::isNotBlank),
@@ -105,7 +106,7 @@ internal fun SourceLoginDialog(
                 busy = false
                 return@launch
             }
-            runCatching {
+            runCatchingCancellable {
                 request.eventId?.let { eventId ->
                     callbacks.saveSourceEventCredentialsResult(eventId, request.sourceId, username, password)
                 } ?: callbacks.saveSourceCredentialsResult(request.sourceId, username, password)
@@ -137,7 +138,7 @@ internal fun SourceLoginDialog(
             onImport = { importedSession ->
                 busy = true
                 scope.launch {
-                    runCatching {
+                    runCatchingCancellable {
                         callbacks.importSourceWebChallengeSession(
                             sourceId = request.sourceId,
                             capability = importedSession.capability,

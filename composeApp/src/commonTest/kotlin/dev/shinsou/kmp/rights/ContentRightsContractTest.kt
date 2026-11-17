@@ -10,6 +10,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFails
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 
 class ContentRightsContractTest {
     @Test

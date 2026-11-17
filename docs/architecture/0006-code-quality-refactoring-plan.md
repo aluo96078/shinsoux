@@ -1,6 +1,6 @@
 # 0006 — 程式碼品質與架構重構計畫
 
-- 狀態：提案（尚未實施）
+- 狀態：實施中（進度見第 14 節）
 - 日期：2026-11-17
 - 範圍：只處理程式碼品質、架構與可用性；不改變任何功能行為
 - 依據：2026-11-17 對工作樹現況的唯讀審查（當時有 54 個未提交的變更檔）
@@ -425,3 +425,37 @@ app（組裝、平台入口）
 - `SynchronousLock` 的重入問題：JVM 實作是 `ReentrantLock`，iOS 是 `NSRecursiveLock`，都可重入。
 - 下載佇列系統暫停標記的寫入順序：`BackgroundDownloadCoordinator.kt:187-199` 是先落盤再暫停，順序正確。
 - EPUB 整檔讀入記憶體：產品路徑使用 `BoundedEpubArchiveExtractor`，逐項讀取並驗證後釋放。
+
+## 14. 實施進度（2026-11-17）
+
+| 項目 | 狀態 | 說明 |
+| --- | --- | --- |
+| R1-1～R1-6 | 完成 | |
+| R2-1～R2-6 | 完成（有偏離） | detekt baseline 在 `config/detekt/`，R4-4 搬移後已重新產生。「只減不增」由 `scripts/ci/check_baselines_shrink.sh` 在 PR 與推送到 master 時檢查（force push 後找不到前一個 commit 時只警告）；detekt baseline 與依賴 allowlist 比條目數（搬移會改條目名稱），i18n 清單比條目內容。R2-4：`println` 還剩兩處刻意寫到 stdout 的輸出（桌面 `--verify-runtime` 的結果、iOS `MANGABENCH` 基準輸出）。R2-6：圖示只有 Android 改為建置時複製，iOS 仍是提交的副本，由 `AppIconCopiesTest` 把關。R2-3：`checks.yml` 的 Android 單元測試在 macOS runner 跑（libsodium host library 在 Linux 載不進來）；`release.yml` 只在推 tag 時跑 checks，重建既有 tag 時跳過（舊 tag 的原始碼沒有這些檢查） |
+| R3-1～R3-3、R3-6 | 完成 | 全文索引遇到較新格式時依 R3-1 第 3 點清空重建（`rebuildWhenNewer`），不回報 `SchemaTooNewException`；代價是降版後要重建一次索引，索引是衍生資料，不會遺失使用者資料。第 11 節「首次遷移前自動備份資料庫檔」已補上：開啟 store 前若有表群將升級，先把資料庫檔（含未併入的 WAL）複製為 `<檔名>.before-upgrade`（是開啟 store 前的狀態；Android/iOS 驅動開檔時已先跑過 `PlatformContentDatabaseSchema` 的舊建表步驟），Android 的雲端備份與裝置轉移規則已排除這些副本，每次升級覆寫為最近一次；複製失敗只記錄、不阻擋啟動，也不留下半成品；`<副本>.of` 記錄副本對應的各表群格式，以及複製後寫進資料庫 `shinsou_schema_versions` 的一個隨機標記（`before-upgrade-copy` 列）；同一個資料庫仍是那些格式時不重複複製（Android 背景 worker 只開一個 store 的情況），換成另一個資料庫（例如手動還原同格式的舊檔）則標記不符，會重新複製。複製目前在啟動執行緒同步進行，資料庫很大時會拖慢升級後的第一次啟動，移到背景與 R3-4 的 dispatcher 切換一起做。可重建元件遇到任何不同格式（較新或較舊）都清空重建 |
+| R3-4 | 部分 | 連線設定已集中；桌面端的 `foreign_keys = ON` 實際不生效（`DesktopSqliteDriver` 每條語句開新連線，連線層級設定不保留；WAL 記在檔案裡，`synchronous` 也是連線層級，但 sqlite-jdbc 的預設值本來就是 FULL），刪除路徑都明確刪子表、不靠 cascade，所以沒有資料遺失；啟用前要先對既有資料庫跑 `PRAGMA foreign_key_check`，另案處理；把 DB 呼叫移出主執行緒的 dispatcher 切換，待第 13 節第 1 項的主執行緒探測結果再做 |
+| R3-5 | 部分 | 匯出已串流；寫入端改為檔案 sink 串流列為後續 |
+| R4-1 | 完成（有偏離） | 共用型別放在 `contract`、`features`、`buildinfo`，而不是計畫中的 `domain/model` |
+| R4-2 | 部分 | `ShinsouAppServices` 拆成 9 個 host 介面、`BrowseCallbacks` 拆成 9 個子介面，每個至多 15 個成員（`ServiceInterfaceSizeTest` 把關）；畫面改為只接收所需的小介面尚未做 |
+| R4-3 | 未做 | XL，需要改動邏輯並補測試，另案進行 |
+| R4-4 | 部分 | 只做不改程式碼的檔案搬移；仍超過 1500 行：`ShinsouApp.kt`（`ShinsouAppContent`，依賴 R4-3）、`PluginManager.kt`、`PluginUiAdapter.kt`、`SqlDriverContentTransactionStore.kt`、`SyncV3Service.kt`，需要真正的類別拆分 |
+| R4-5 | 完成 | iOS 外掛請求逾時由 30 秒改為 45 秒，與 JVM 一致 |
+| R4-6 | 部分 | 語系檔已依語言拆檔；`I18nCoverageRatchetTest` 以 `config/i18n/` 的兩份清單（缺 zh-TW 10 項、未使用 208 項）作只減不增的護欄，只涵蓋以字面值呼叫 `text("…")` 的鍵（以變數傳入的約 77 處不受保護，清單中也混有少數非 i18n 的 `text(` 呼叫）；具型別的鍵尚未做 |
+| R4-7 | 完成 | 只有「立即同步」按鈕用 `tryLock` 式等待；`syncNow` 仍會等鎖 |
+| R4-8 | 完成 | Android 的 `AndroidChallengeState` 保留為行程範圍 |
+| R5-1 | 未做 | 已建立 `build-logic/` 作為之後 convention plugin 的基礎 |
+| R5-2 | 部分 | 三個 task 類別移到 `build-logic`（`shinsou.codegen`）；原生建置 plugin、fetch task 的輸入輸出、JavaFX/bytedeco 座標移入版本目錄、降到 300 行以下尚未做 |
+| R5-3 | 待決 | 發佈策略決策，見 R5-3 |
+
+搬移以外的行為變更（快照提交 `8680f35` 與其後），審閱時不應視為純搬移：
+
+- `ContentFeatureRuntime.kt` 關閉時多了 `translation?.close()`，修正翻譯資源未釋放。
+- `ExtensionNovelReaderShell.kt`、`ExtensionV2PublicationPane.kt` 的翻譯開關是 `8680f35` 帶入的新功能，不是從他處搬來的程式碼。
+- `MangaTranslation` 的語言與文字系統猜測快取改由 `Mutex` 保護：面板（UI scope）與預取（`Dispatchers.Default`）會同時呼叫。
+- 雲端翻譯的 `Retry-After` 除了秒數，也接受 HTTP 日期格式（RFC 9110 §10.2.3）。
+- 外掛退避（R4-5）計「連不到主機」與「主機回的不是格式正確的 HTTP 回應」（`PluginMalformedResponseException`：狀態列、標頭、分段或長度不符）；格式正確但被傳輸層以 `require` 拒絕的回應（過大、不支援的編碼）與不送出的請求不計；退避中的請求在排隊等速率許可前就拒絕；狀態表滿時先淘汰未在封鎖中的項目。
+- `ExtensionDownloadQueueV2.close()` 會等背景工作結束（最多 2 秒），工作不再把關閉當成暫停而空轉。
+- 小說自動翻譯：自己啟動且讀者尚未改動時，來源語言跟著每一章重新判斷；文字太少（插圖章只有標記與網址）的章節不判斷語言；已在翻譯中的作品只有遇到文字夠多（60 個字以上）的章節才換來源語言，標題頁之類的短章不會改動它。
+- 漫畫：譯圖只在仍是畫面上那一章時寫入；「不是日文」的猜測只有讀到足量文字才記住整部作品。
+- 雲端翻譯：429 等待中被取消時歸還已計的用量；「額度用盡」在回應前 8000 字內比對。
+- `DependencyDirectionTest` 也檢查對根套件（進入點）符號的引用；`IosSilentAudioKeepAlive` 因此移到 `download` 套件。

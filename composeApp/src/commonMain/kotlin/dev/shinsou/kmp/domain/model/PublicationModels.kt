@@ -1,7 +1,6 @@
 package dev.shinsou.kmp.domain.model
 
-import dev.shinsou.kmp.content.ContentManifest
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.domain.content.ContentManifest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 

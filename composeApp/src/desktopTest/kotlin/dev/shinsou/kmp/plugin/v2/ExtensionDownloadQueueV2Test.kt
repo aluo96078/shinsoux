@@ -4,9 +4,11 @@ import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -54,6 +56,37 @@ class ExtensionDownloadQueueV2Test {
         queue.enqueue(listOf(selection("a")))
         queue.awaitSettled()
         assertEquals(3, queue.entries.value.size)
+        scope.cancel()
+    }
+
+    @Test
+    fun closeStopsTheQueueButNotTheScopeItWasGiven() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val started = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Unit>()
+        val queue = ExtensionDownloadQueueV2(
+            materialize = {
+                started.complete(Unit)
+                try {
+                    CompletableDeferred<Unit>().await()
+                } finally {
+                    stopped.complete(Unit)
+                }
+            },
+            scope = scope,
+        )
+        queue.enqueue(listOf(selection("a"), selection("b")))
+        withTimeout(5_000) { started.await() }
+        queue.close()
+        // R4-8: the running unit is cancelled; the caller's scope still runs other work.
+        withTimeout(5_000) { stopped.await() }
+        // the worker ended with it, rather than taking the cancel for a pause and going round again
+        assertTrue(scope.coroutineContext[Job]!!.children.none(), "the queue left work running in the scope")
+        assertTrue(scope.isActive)
+        // a job launched into a cancelled scope completes too, but without running its body
+        var ran = false
+        scope.launch { ran = true }.join()
+        assertTrue(ran, "the caller's scope was cancelled with the queue")
         scope.cancel()
     }
 

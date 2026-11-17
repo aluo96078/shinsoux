@@ -2,6 +2,7 @@ package dev.shinsou.kmp
 
 import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
 import dev.shinsou.kmp.download.BackgroundDownloadStatus
+import dev.shinsou.kmp.download.IosSilentAudioKeepAlive
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.cinterop.ExperimentalForeignApi

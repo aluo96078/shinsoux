@@ -1,20 +1,24 @@
 package dev.shinsou.kmp.content
 
+import dev.shinsou.kmp.domain.content.deepImmutableSnapshot
 import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import dev.shinsou.kmp.concurrent.SynchronousLock
+import dev.shinsou.kmp.concurrent.isMainThread
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.PublicationUnit
 import dev.shinsou.kmp.domain.model.WorkLink
-import dev.shinsou.kmp.rights.RightsGrantRef
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.ContentOperation
+import kotlin.concurrent.Volatile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -26,6 +30,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import dev.shinsou.kmp.domain.content.BlobRef
+import dev.shinsou.kmp.domain.content.ContentManifest
+import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
+import dev.shinsou.kmp.domain.content.immutableListOf
 
 /**
  * The durable state exposed by [SqlDriverContentTransactionStore].  Attachments are included in
@@ -110,22 +118,6 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     init {
         ContentTransactionSchema.create(driver).value
-        // WAL is a database property on SQLite.  Do not require it here: Android/iOS may choose
-        // a platform-specific journal mode, while the transaction semantics remain identical.
-        // journal_mode is a value-returning PRAGMA. NativeSqliteDriver rejects it when it is
-        // sent through execute (which is reserved for non-query statements), while the JDBC
-        // driver happens to tolerate that misuse. Keep the shared initialization portable by
-        // consuming the single result row through executeQuery, as the sync store does.
-        driver.executeQuery(
-            identifier = null,
-            sql = "PRAGMA journal_mode = WAL",
-            mapper = { cursor ->
-                QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
-            },
-            parameters = 0,
-        ).value
-        driver.execute(null, "PRAGMA synchronous = FULL", 0).value
-        driver.execute(null, "PRAGMA foreign_keys = ON", 0).value
         if (blobParticipant.isRestartSafe) {
             // Decoding every stored chapter manifest here took about two seconds of the first
             // frame. The ledger is installed by the first caller of the blob lock instead (the
@@ -165,9 +157,10 @@ public class SqlDriverContentTransactionStore<D : Any>(
     public fun findPublicationOutlineDirect(key: PublicationKey): Publication? = withTransactionLock {
         queryRows(
             TABLE_PUBLICATIONS,
-            "publication_json WHERE publication_id = '${sqlLiteral(key.value)}'",
+            "publication_json WHERE publication_id = ?",
+            key.value,
         ).singleOrNull()?.let { row ->
-            decodeJson(Publication.serializer(), requireNotNull(row[0])).withoutManifestRevisions().also {
+            decodeJson(Publication.serializer(), row.string("publication_json")).withoutManifestRevisions().also {
                 check(it.key == key) { "Publication key/body mismatch" }
             }
         }
@@ -176,8 +169,8 @@ public class SqlDriverContentTransactionStore<D : Any>(
     /** Every publication's outline row, in stable portable-id order. */
     public fun allPublicationOutlinesDirect(): List<Publication> = withTransactionLock {
         queryRows(TABLE_PUBLICATIONS, "publication_id, publication_json ORDER BY publication_id").map { row ->
-            decodeJson(Publication.serializer(), requireNotNull(row[1])).withoutManifestRevisions().also {
-                check(it.key.value == requireNotNull(row[0])) { "Publication key/body mismatch" }
+            decodeJson(Publication.serializer(), row.string("publication_json")).withoutManifestRevisions().also {
+                check(it.key.value == row.string("publication_id")) { "Publication key/body mismatch" }
             }
         }
     }
@@ -228,8 +221,8 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     override fun pendingOutbox(): List<D> = withTransactionLock {
         queryRows(TABLE_OUTBOX, "draft_id, payload ORDER BY draft_id").map { row ->
-            val id = requireNotNull(row[0])
-            val draft = decodeOutbox(requireNotNull(row[1]))
+            val id = row.string("draft_id")
+            val draft = decodeOutbox(row.string("payload"))
             outboxAdapter.validate(draft)
             check(outboxAdapter.id(draft) == id) { "Outbox key/body mismatch" }
             draft
@@ -241,16 +234,21 @@ public class SqlDriverContentTransactionStore<D : Any>(
     }
 
     override fun pendingOutboxCount(): Int = withTransactionLock {
-        queryRows(TABLE_OUTBOX, "COUNT(*)").single()[0]?.toIntOrNull() ?: 0
+        queryRows(TABLE_OUTBOX, "COUNT(*) AS draft_count").single().stringOrNull("draft_count")?.toIntOrNull() ?: 0
     }
 
     override fun pendingOutboxPage(afterDraftId: String?, limit: Int): List<D> = withTransactionLock {
         require(limit in 1..MAX_OUTBOX_PAGE) { "Outbox page limit is out of range" }
         afterDraftId?.let { requireSafeSqlKey(it, "Outbox draft id") }
-        val after = afterDraftId?.let { " WHERE draft_id > '${sqlLiteral(it)}'" }.orEmpty()
-        queryRows(TABLE_OUTBOX, "draft_id, payload$after ORDER BY draft_id LIMIT $limit").map { row ->
-            val id = requireNotNull(row[0])
-            val draft = decodeOutbox(requireNotNull(row[1]))
+        val page = "ORDER BY draft_id LIMIT $limit"
+        val rows = if (afterDraftId == null) {
+            queryRows(TABLE_OUTBOX, "draft_id, payload $page")
+        } else {
+            queryRows(TABLE_OUTBOX, "draft_id, payload WHERE draft_id > ? $page", afterDraftId)
+        }
+        rows.map { row ->
+            val id = row.string("draft_id")
+            val draft = decodeOutbox(row.string("payload"))
             outboxAdapter.validate(draft)
             check(outboxAdapter.id(draft) == id) { "Outbox key/body mismatch" }
             draft
@@ -299,7 +297,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     override fun pendingBlobSyncJobs(): List<ContentBlobSyncJobMutation> = withTransactionLock {
         queryRows(TABLE_BLOB_SYNC_JOBS, "job_id ORDER BY job_id").map { row ->
-            requireNotNull(findBlobSyncJob(requireNotNull(row[0])))
+            requireNotNull(findBlobSyncJob(row.string("job_id")))
         }
     }
 
@@ -316,7 +314,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     override fun pendingBlobRemovalIntents(): List<ContentBlobRemovalIntent> = withTransactionLock {
         queryRows(TABLE_BLOB_REMOVAL_INTENTS, "intent_id ORDER BY intent_id").map { row ->
-            requireNotNull(findBlobRemovalIntent(requireNotNull(row[0])))
+            requireNotNull(findBlobRemovalIntent(row.string("intent_id")))
         }
     }
 
@@ -335,10 +333,12 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val mutation = transactions.transactionWithResult<ReplicaAuthorityDepartureMutation>(false) {
             val publicationKeys = queryRows(
                 TABLE_PUBLICATION_REPLICA_CURSORS,
-                "publication_id WHERE instance_id = '${sqlLiteral(authority.instanceId)}' " +
-                    "AND workspace_id = '${sqlLiteral(authority.workspaceId)}' ORDER BY publication_id",
+                "publication_id WHERE instance_id = ? " +
+                    "AND workspace_id = ? ORDER BY publication_id",
+                authority.instanceId,
+                authority.workspaceId,
             ).mapTo(linkedSetOf()) { row ->
-                PublicationKey(requireNotNull(row[0])).also { publicationKey ->
+                PublicationKey(row.string("publication_id")).also { publicationKey ->
                     val cursor = requireNotNull(findPublicationReplicaCursor(publicationKey))
                     check(cursor.instanceId == authority.instanceId &&
                         cursor.workspaceId == authority.workspaceId) {
@@ -348,7 +348,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
             }
             val commitIds = queryRows(TABLE_COMMITS, "commit_id ORDER BY commit_id")
                 .mapNotNullTo(linkedSetOf()) { row ->
-                    requireNotNull(row[0]).takeIf { commitId ->
+                    row.string("commit_id").takeIf { commitId ->
                         publicationKeys.any { publicationKey ->
                             commitId.startsWith(
                                 "$CONTENT_REPLICA_COMMIT_ID_PREFIX${publicationKey.value}:",
@@ -360,7 +360,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
                 TABLE_BLOB_REMOVAL_INTENTS,
                 "intent_id ORDER BY intent_id",
             ).mapNotNullTo(linkedSetOf()) { row ->
-                val intentId = requireNotNull(row[0])
+                val intentId = row.string("intent_id")
                 val cursor = requireNotNull(findBlobRemovalIntent(intentId)).sourceCursor
                 intentId.takeIf {
                     cursor.instanceId == authority.instanceId &&
@@ -815,7 +815,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
                 TABLE_BLOB_REMOVAL_INTENTS,
                 "intent_id ORDER BY intent_id",
             ).mapNotNull { row ->
-                findBlobRemovalIntent(requireNotNull(row[0]))
+                findBlobRemovalIntent(row.string("intent_id"))
             }.filter { it.sourceCursor == cursor }
                 .map(ContentBlobRemovalIntent::intentId)
         }.orEmpty(),
@@ -825,7 +825,20 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private val transactionMutex = SynchronousLock()
 
     private inline fun <T> withTransactionLock(block: () -> T): T {
+        reportMainThreadUse()
         return transactionMutex.withLock(block)
+    }
+
+    /**
+     * R3-4 (docs/architecture/0006): finds out whether content SQL runs on the UI thread before
+     * the stores are moved onto an I/O dispatcher. Reported once, with the calling stack.
+     */
+    private fun reportMainThreadUse() {
+        if (mainThreadUseReported || !isMainThread()) return
+        mainThreadUseReported = true
+        Log.warn(LOG_TAG, IllegalStateException("Content SQL on the main thread")) {
+            "Content database used on the main thread"
+        }
     }
 
     private fun validateDrafts(batch: ContentCommitBatch<D>) {
@@ -982,21 +995,22 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun findMigration(migrationKey: String): ContentMigrationLedgerMutation? {
         val row = queryRows(
             TABLE_MIGRATIONS,
-            "namespace, source_digest, result_fingerprint, commit_id, mutation_json WHERE migration_key = '${sqlLiteral(migrationKey)}'",
+            "namespace, source_digest, result_fingerprint, commit_id, mutation_json WHERE migration_key = ?",
+            migrationKey,
         ).singleOrNull() ?: return null
         val existing = decodeJson(
             ContentMigrationLedgerMutation.serializer(),
-            requireNotNull(row[4]),
+            row.string("mutation_json"),
         )
         check(existing.migrationKey == migrationKey) { "Migration key/body mismatch" }
-        check(existing.namespace == requireNotNull(row[0])) { "Migration namespace mismatch" }
-        check(existing.sourceDigestSha256 == requireNotNull(row[1])) {
+        check(existing.namespace == row.string("namespace")) { "Migration namespace mismatch" }
+        check(existing.sourceDigestSha256 == row.string("source_digest")) {
             "Migration source digest mismatch"
         }
-        check(existing.resultFingerprintSha256 == requireNotNull(row[2])) {
+        check(existing.resultFingerprintSha256 == row.string("result_fingerprint")) {
             "Migration result fingerprint mismatch"
         }
-        check(existing.commitId == requireNotNull(row[3])) { "Migration commit id mismatch" }
+        check(existing.commitId == row.string("commit_id")) { "Migration commit id mismatch" }
         return existing
     }
 
@@ -1004,21 +1018,23 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun findPublication(key: PublicationKey): Publication? {
         val row = queryRows(
             TABLE_PUBLICATIONS,
-            "publication_json WHERE publication_id = '${sqlLiteral(key.value)}'",
+            "publication_json WHERE publication_id = ?",
+            key.value,
         ).singleOrNull() ?: return null
         // Older rows may still carry every manifest; either way only the outline is authoritative here.
-        val publication = decodeJson(Publication.serializer(), requireNotNull(row[0])).withoutManifestRevisions()
+        val publication = decodeJson(Publication.serializer(), row.string("publication_json")).withoutManifestRevisions()
         check(publication.key == key) { "Publication key/body mismatch" }
 
         val expectedAcquisitions = publication.acquisitions.associateBy(Acquisition::id)
         val acquisitions = queryRows(
             TABLE_ACQUISITIONS,
             "acquisition_id, publication_id, acquisition_json " +
-                "WHERE publication_id = '${sqlLiteral(key.value)}' ORDER BY acquisition_id",
+                "WHERE publication_id = ? ORDER BY acquisition_id",
+            key.value,
         ).associate { acquisitionRow ->
-            val acquisitionId = requireNotNull(acquisitionRow[0])
-            check(requireNotNull(acquisitionRow[1]) == key.value) { "Acquisition publication scope mismatch" }
-            val encoded = requireNotNull(acquisitionRow[2])
+            val acquisitionId = acquisitionRow.string("acquisition_id")
+            check(acquisitionRow.string("publication_id") == key.value) { "Acquisition publication scope mismatch" }
+            val encoded = acquisitionRow.string("acquisition_json")
             val expected = expectedAcquisitions[acquisitionId]
             // The row is written by this codec from the same outline, so an identical encoding
             // proves equality without decoding every unit a second time. Older rows (still
@@ -1037,11 +1053,12 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val rights = queryRows(
             TABLE_ACQUISITION_RIGHTS,
             "acquisition_id, publication_id, grant_ref_json " +
-                "WHERE publication_id = '${sqlLiteral(key.value)}' ORDER BY acquisition_id",
+                "WHERE publication_id = ? ORDER BY acquisition_id",
+            key.value,
         ).associate { rightsRow ->
-            val acquisitionId = requireNotNull(rightsRow[0])
-            check(requireNotNull(rightsRow[1]) == key.value) { "Rights publication scope mismatch" }
-            acquisitionId to decodeJson(RightsGrantRef.serializer(), requireNotNull(rightsRow[2]))
+            val acquisitionId = rightsRow.string("acquisition_id")
+            check(rightsRow.string("publication_id") == key.value) { "Rights publication scope mismatch" }
+            acquisitionId to decodeJson(RightsGrantRef.serializer(), rightsRow.string("grant_ref_json"))
         }
         val expectedRights = publication.acquisitions.mapNotNull { acquisition ->
             acquisition.rightsGrantRef?.let { acquisition.id to it }
@@ -1056,12 +1073,13 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val units = queryRows(
             TABLE_UNITS,
             "unit_id, publication_id, acquisition_id, unit_json " +
-                "WHERE publication_id = '${sqlLiteral(key.value)}' ORDER BY unit_id",
+                "WHERE publication_id = ? ORDER BY unit_id",
+            key.value,
         ).associate { unitRow ->
-            val unitId = requireNotNull(unitRow[0])
-            check(requireNotNull(unitRow[1]) == key.value) { "Unit publication scope mismatch" }
-            val acquisitionId = requireNotNull(unitRow[2])
-            val unit = decodeJson(PublicationUnit.serializer(), requireNotNull(unitRow[3]))
+            val unitId = unitRow.string("unit_id")
+            check(unitRow.string("publication_id") == key.value) { "Unit publication scope mismatch" }
+            val acquisitionId = unitRow.string("acquisition_id")
+            val unit = decodeJson(PublicationUnit.serializer(), unitRow.string("unit_json"))
             check(unit.key.value == unitId && unit.key.publicationKey == key) { "Unit key/body mismatch" }
             val outline = unit.copy(manifestRevisions = emptyList())
             check(acquisitionUnitsByKey[acquisitionId]?.get(outline.key)?.any { it == outline } == true) {
@@ -1079,13 +1097,14 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val workLinks = queryRows(
             TABLE_WORK_LINKS,
             "ordinal, target_publication_id, link_json " +
-                "WHERE publication_id = '${sqlLiteral(key.value)}' ORDER BY ordinal",
+                "WHERE publication_id = ? ORDER BY ordinal",
+            key.value,
         ).mapIndexed { expectedOrdinal, linkRow ->
-            check(requireNotNull(linkRow[0]).toIntOrNull() == expectedOrdinal) {
+            check(linkRow.string("ordinal").toIntOrNull() == expectedOrdinal) {
                 "Publication work-link ordinal mismatch"
             }
-            val link = decodeJson(WorkLink.serializer(), requireNotNull(linkRow[2]))
-            check(link.target.value == requireNotNull(linkRow[1])) { "Publication work-link target mismatch" }
+            val link = decodeJson(WorkLink.serializer(), linkRow.string("link_json"))
+            check(link.target.value == linkRow.string("target_publication_id")) { "Publication work-link target mismatch" }
             link
         }
         check(workLinks == publication.workLinks) { "Publication work-link ledger mismatch" }
@@ -1104,22 +1123,23 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val row = queryRows(
             TABLE_PUBLICATION_REPLICA_CURSORS,
             "instance_id, workspace_id, through_workspace_seq, present, graph_fingerprint, " +
-                "cursor_json WHERE publication_id = '${sqlLiteral(publicationKey.value)}'",
+                "cursor_json WHERE publication_id = ?",
+            publicationKey.value,
         ).singleOrNull() ?: return null
         val cursor = decodeJson(
             ContentPublicationReplicaCursor.serializer(),
-            requireNotNull(row[5]),
+            row.string("cursor_json"),
         )
         check(cursor.publicationKey == publicationKey) { "Replica cursor publication key/body mismatch" }
-        check(cursor.instanceId == requireNotNull(row[0])) { "Replica cursor instance mismatch" }
-        check(cursor.workspaceId == requireNotNull(row[1])) { "Replica cursor workspace mismatch" }
-        check(cursor.throughWorkspaceSeq == requireNotNull(row[2]).toLongOrNull()) {
+        check(cursor.instanceId == row.string("instance_id")) { "Replica cursor instance mismatch" }
+        check(cursor.workspaceId == row.string("workspace_id")) { "Replica cursor workspace mismatch" }
+        check(cursor.throughWorkspaceSeq == row.string("through_workspace_seq").toLongOrNull()) {
             "Replica cursor sequence mismatch"
         }
-        check(cursor.present == (requireNotNull(row[3]).toLongOrNull() == 1L)) {
+        check(cursor.present == (row.string("present").toLongOrNull() == 1L)) {
             "Replica cursor presence mismatch"
         }
-        check(cursor.graphFingerprintSha256 == requireNotNull(row[4])) {
+        check(cursor.graphFingerprintSha256 == row.string("graph_fingerprint")) {
             "Replica cursor fingerprint mismatch"
         }
         return cursor
@@ -1129,27 +1149,30 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val row = queryRows(
             TABLE_BLOB_REMOVAL_INTENTS,
             "publication_id, through_workspace_seq, reason, intent_json " +
-                "WHERE intent_id = '${sqlLiteral(intentId)}'",
+                "WHERE intent_id = ?",
+            intentId,
         ).singleOrNull() ?: return null
-        val intent = decodeJson(ContentBlobRemovalIntent.serializer(), requireNotNull(row[3]))
+        val intent = decodeJson(ContentBlobRemovalIntent.serializer(), row.string("intent_json"))
         check(intent.intentId == intentId) { "Blob removal intent key/body mismatch" }
-        check(intent.publicationKey.value == requireNotNull(row[0])) {
+        check(intent.publicationKey.value == row.string("publication_id")) {
             "Blob removal intent publication mismatch"
         }
-        check(intent.sourceCursor.throughWorkspaceSeq == requireNotNull(row[1]).toLongOrNull()) {
+        check(intent.sourceCursor.throughWorkspaceSeq == row.string("through_workspace_seq").toLongOrNull()) {
             "Blob removal intent sequence mismatch"
         }
-        check(intent.reason.name == requireNotNull(row[2])) { "Blob removal intent reason mismatch" }
+        check(intent.reason.name == row.string("reason")) { "Blob removal intent reason mismatch" }
         return intent
     }
 
     private fun loadPublicationAttachments(publicationKey: PublicationKey): List<ManifestAttachment> {
         publicationKey.validate()
-        val ownerPrefix = "${sqlLiteral(publicationKey.value)}/%"
+        // `_` and `%` in the key are literal: `a_b` must not match the attachments of `axb`.
+        val ownerPrefix = escapeLike(publicationKey.value) + "/%"
         return queryRows(
             TABLE_ATTACHMENTS,
-            "attachment_key WHERE owner_scope LIKE '$ownerPrefix' ORDER BY attachment_key",
-        ).map { row -> loadAttachment(requireNotNull(row[0])) }
+            "attachment_key WHERE owner_scope LIKE ? ESCAPE '\\' ORDER BY attachment_key",
+            ownerPrefix,
+        ).map { row -> loadAttachment(row.string("attachment_key")) }
     }
 
     private fun validateReplicaReplay(batch: ContentCommitBatch<D>) {
@@ -1158,10 +1181,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val durableAttachments = loadPublicationAttachments(replacement.publicationKey)
         val durableRights = queryRows(
             TABLE_RIGHTS_GRANTS,
-            "grant_id WHERE publication_id = '${sqlLiteral(replacement.publicationKey.value)}' " +
+            "grant_id WHERE publication_id = ? " +
                 "ORDER BY grant_id",
+            replacement.publicationKey.value,
         ).associate { row ->
-            val grant = requireNotNull(findRightsGrant(RightsGrantRef(requireNotNull(row[0]))))
+            val grant = requireNotNull(findRightsGrant(RightsGrantRef(row.string("grant_id"))))
             grant.grantId to grant
         }
         if (replacement.present) {
@@ -1208,7 +1232,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
         if (batch.rightsGrants.isEmpty()) return
         val publicationByKey = queryRows(TABLE_PUBLICATIONS, "publication_id ORDER BY publication_id")
             .associateTo(linkedMapOf()) { row ->
-                val key = PublicationKey(requireNotNull(row[0]))
+                val key = PublicationKey(row.string("publication_id"))
                 key to requireNotNull(findPublication(key))
             }
         batch.publications.forEach { publicationByKey[it.publicationKey] = it.publication }
@@ -1344,10 +1368,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     /** Deletes exactly one publication's local projection; replica cursor/intent rows survive. */
     private fun deletePublicationReplicaRows(publicationKey: PublicationKey) {
-        val ownerPrefix = "${publicationKey.value}/%"
+        // escaped as where they are read (loadPublicationAttachments): what is deleted is what is listed
+        val ownerPrefix = escapeLike(publicationKey.value) + "/%"
         execute(
             "DELETE FROM $TABLE_BLOB_SYNC_JOBS WHERE attachment_key IN (" +
-                "SELECT attachment_key FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ?)",
+                "SELECT attachment_key FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ? ESCAPE '\\')",
             1,
         ) { bindString(0, ownerPrefix) }
         execute(
@@ -1376,11 +1401,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
         ) { bindString(0, publicationKey.value) }
         execute(
             "DELETE FROM $TABLE_ATTACHMENT_REFS WHERE attachment_key IN (" +
-                "SELECT attachment_key FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ?)",
+                "SELECT attachment_key FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ? ESCAPE '\\')",
             1,
         ) { bindString(0, ownerPrefix) }
         execute(
-            "DELETE FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ?",
+            "DELETE FROM $TABLE_ATTACHMENTS WHERE owner_scope LIKE ? ESCAPE '\\'",
             1,
         ) { bindString(0, ownerPrefix) }
     }
@@ -1764,38 +1789,38 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val attachments = immutableListOf(loadAllAttachments())
         val auxiliaryAttachments = immutableListOf(loadAllAuxiliaryAttachments())
         val outbox = queryRows(TABLE_OUTBOX, "draft_id, payload ORDER BY draft_id").map { row ->
-            val id = requireNotNull(row[0])
-            val draft = decodeOutbox(requireNotNull(row[1]))
+            val id = row.string("draft_id")
+            val draft = decodeOutbox(row.string("payload"))
             outboxAdapter.validate(draft)
             check(outboxAdapter.id(draft) == id) { "Outbox key/body mismatch" }
             draft
         }
         val committedIds = queryRows(TABLE_COMMITS, "commit_id ORDER BY commit_id")
-            .mapTo(linkedSetOf()) { requireNotNull(it[0]) }
+            .mapTo(linkedSetOf()) { it.string("commit_id") }
         val publications = loadAllPublications().associateBy(Publication::key)
         val quarantines = queryRows(TABLE_QUARANTINES, "quarantine_id ORDER BY quarantine_id")
             .associate { row ->
-                val id = requireNotNull(row[0])
+                val id = row.string("quarantine_id")
                 id to requireNotNull(findQuarantine(id))
             }
         val rightsGrants = loadAllRightsGrants().associateBy(RightsGrant::grantId)
         val blobSyncJobs = queryRows(TABLE_BLOB_SYNC_JOBS, "job_id ORDER BY job_id")
             .associate { row ->
-                val jobId = requireNotNull(row[0])
+                val jobId = row.string("job_id")
                 jobId to requireNotNull(findBlobSyncJob(jobId))
             }
         val publicationReplicaCursors = queryRows(
             TABLE_PUBLICATION_REPLICA_CURSORS,
             "publication_id ORDER BY publication_id",
         ).associate { row ->
-            val publicationKey = PublicationKey(requireNotNull(row[0]))
+            val publicationKey = PublicationKey(row.string("publication_id"))
             publicationKey to requireNotNull(findPublicationReplicaCursor(publicationKey))
         }
         val blobRemovalIntents = queryRows(
             TABLE_BLOB_REMOVAL_INTENTS,
             "intent_id ORDER BY intent_id",
         ).associate { row ->
-            val intentId = requireNotNull(row[0])
+            val intentId = row.string("intent_id")
             intentId to requireNotNull(findBlobRemovalIntent(intentId))
         }
         return SqlContentTransactionState(
@@ -1817,11 +1842,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     private fun loadAllAttachments(): List<ManifestAttachment> =
         queryRows(TABLE_ATTACHMENTS, "attachment_key ORDER BY attachment_key")
-            .map { row -> loadAttachment(requireNotNull(row[0])) }
+            .map { row -> loadAttachment(row.string("attachment_key")) }
 
     private fun loadAllPublications(): List<Publication> =
         queryRows(TABLE_PUBLICATIONS, "publication_id ORDER BY publication_id")
-            .map { row -> requireNotNull(findPublication(PublicationKey(requireNotNull(row[0])))) }
+            .map { row -> requireNotNull(findPublication(PublicationKey(row.string("publication_id")))) }
 
     private fun loadAllRightsGrants(): List<RightsGrant> = loadRightsGrantRows(
         rightsRows = queryRows(TABLE_RIGHTS_GRANTS, "$RIGHTS_GRANT_COLUMNS ORDER BY grant_id"),
@@ -1832,35 +1857,37 @@ public class SqlDriverContentTransactionStore<D : Any>(
     )
 
     private fun loadRightsGrantsForPublication(publicationKey: PublicationKey): List<RightsGrant> {
-        val publication = sqlLiteral(publicationKey.value)
+        val publication = publicationKey.value
         return loadRightsGrantRows(
             rightsRows = queryRows(
                 TABLE_RIGHTS_GRANTS,
-                "$RIGHTS_GRANT_COLUMNS WHERE publication_id = '$publication' ORDER BY grant_id",
+                "$RIGHTS_GRANT_COLUMNS WHERE publication_id = ? ORDER BY grant_id",
+                publication,
             ),
             acquisitionRightsRows = queryRows(
                 TABLE_ACQUISITION_RIGHTS,
                 "publication_id, acquisition_id, grant_ref_json " +
-                    "WHERE publication_id = '$publication' ORDER BY acquisition_id",
+                    "WHERE publication_id = ? ORDER BY acquisition_id",
+                publication,
             ),
         )
     }
 
     private fun loadRightsGrantRows(
-        rightsRows: List<List<String?>>,
-        acquisitionRightsRows: List<List<String?>>,
+        rightsRows: List<ContentRow>,
+        acquisitionRightsRows: List<ContentRow>,
     ): List<RightsGrant> {
         val acquisitionRights = acquisitionRightsRows.associate { row ->
             val key = AcquisitionRightsKey(
-                publicationId = requireNotNull(row[0]),
-                acquisitionId = requireNotNull(row[1]),
+                publicationId = row.string("publication_id"),
+                acquisitionId = row.string("acquisition_id"),
             )
-            key to decodeJson(RightsGrantRef.serializer(), requireNotNull(row[2]))
+            key to decodeJson(RightsGrantRef.serializer(), row.string("grant_ref_json"))
         }
         return rightsRows.map { row ->
             val key = AcquisitionRightsKey(
-                publicationId = requireNotNull(row[1]),
-                acquisitionId = requireNotNull(row[2]),
+                publicationId = row.string("publication_id"),
+                acquisitionId = row.string("acquisition_id"),
             )
             decodeRightsGrantRow(row, acquisitionRights[key])
         }
@@ -1873,7 +1900,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     private fun loadAllAuxiliaryAttachments(): List<AuxiliaryBlobAttachment> =
         queryRows(TABLE_AUXILIARY_ATTACHMENTS, "attachment_key ORDER BY attachment_key")
-            .map { row -> loadAuxiliaryAttachment(requireNotNull(row[0])) }
+            .map { row -> loadAuxiliaryAttachment(row.string("attachment_key")) }
 
     private data class PersistedCommit(
         val fingerprint: String,
@@ -1889,15 +1916,16 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun findCommit(commitId: String): PersistedCommit? {
         val row = queryRows(
             TABLE_COMMITS,
-            "fingerprint, result_json, receipt_descriptors_json WHERE commit_id = '${sqlLiteral(commitId)}'",
+            "fingerprint, result_json, receipt_descriptors_json WHERE commit_id = ?",
+            commitId,
         ).singleOrNull() ?: return null
         val result = PersistedCommitResult.toRuntime(
-            decodeJson(PersistedCommitResult.serializer(), requireNotNull(row[1])),
+            decodeJson(PersistedCommitResult.serializer(), row.string("result_json")),
         )
         check(result.commitId == commitId) { "Commit journal result/id mismatch" }
         val descriptors = decodeJson(
             PersistedReceiptDescriptorList.serializer(),
-            requireNotNull(row[2]),
+            row.string("receipt_descriptors_json"),
         ).receipts.onEach(::validateReceiptDescriptor)
         check(descriptors.map(PersistedReceiptDescriptor::commitToken).distinct().size == descriptors.size) {
             "Duplicate receipt descriptor token in commit journal"
@@ -1905,13 +1933,13 @@ public class SqlDriverContentTransactionStore<D : Any>(
         check(descriptors.map { it.reference.blobId }.distinct().size == descriptors.size) {
             "Duplicate receipt descriptor blob id in commit journal"
         }
-        val journalFingerprint = requireNotNull(row[0])
+        val journalFingerprint = row.string("fingerprint")
         check(SHA256_HEX.matches(journalFingerprint)) { "Commit journal fingerprint is invalid" }
         return PersistedCommit(journalFingerprint, result, descriptors)
     }
 
     private fun findAttachment(key: String): ManifestAttachment? {
-        if (queryRows(TABLE_ATTACHMENTS, "attachment_key WHERE attachment_key = '${sqlLiteral(key)}'").isEmpty()) {
+        if (queryRows(TABLE_ATTACHMENTS, "attachment_key WHERE attachment_key = ?", key).isEmpty()) {
             return null
         }
         return loadAttachment(key)
@@ -1920,7 +1948,8 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun findAuxiliaryAttachment(key: String): AuxiliaryBlobAttachment? {
         if (queryRows(
                 TABLE_AUXILIARY_ATTACHMENTS,
-                "attachment_key WHERE attachment_key = '${sqlLiteral(key)}'",
+                "attachment_key WHERE attachment_key = ?",
+                key,
             ).isEmpty()
         ) {
             return null
@@ -1932,13 +1961,14 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun loadAttachment(key: String): ManifestAttachment {
         val row = queryRows(
             TABLE_ATTACHMENTS,
-            "owner_scope, manifest_id, content_revision, manifest_json WHERE attachment_key = '${sqlLiteral(key)}'",
+            "owner_scope, manifest_id, content_revision, manifest_json WHERE attachment_key = ?",
+            key,
         ).singleOrNull() ?: error("Missing manifest attachment row $key")
-        val ownerScope = requireNotNull(row[0])
-        val manifestId = requireNotNull(row[1])
-        val revision = requireNotNull(row[2]).toLongOrNull()
+        val ownerScope = row.string("owner_scope")
+        val manifestId = row.string("manifest_id")
+        val revision = row.string("content_revision").toLongOrNull()
             ?: error("Invalid manifest content revision for $key")
-        val attachment = decodeJson(ManifestAttachment.serializer(), requireNotNull(row[3]))
+        val attachment = decodeJson(ManifestAttachment.serializer(), row.string("manifest_json"))
         check(attachment.attachmentKey == key) { "Attachment key/body mismatch" }
         check(attachment.owner.scopeKey == ownerScope) { "Attachment owner scope mismatch" }
         check(attachment.manifestId == manifestId) { "Attachment manifest id mismatch" }
@@ -1946,10 +1976,11 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
         val persistedRefs = queryRows(
             TABLE_ATTACHMENT_REFS,
-            "blob_id, reference_json WHERE attachment_key = '${sqlLiteral(key)}' ORDER BY blob_id",
+            "blob_id, reference_json WHERE attachment_key = ? ORDER BY blob_id",
+            key,
         ).map { refRow ->
-            val blobId = requireNotNull(refRow[0])
-            val reference = decodeJson(BlobRef.serializer(), requireNotNull(refRow[1]))
+            val blobId = refRow.string("blob_id")
+            val reference = decodeJson(BlobRef.serializer(), refRow.string("reference_json"))
             check(reference.blobId == blobId) { "Attachment blob-ref key/body mismatch" }
             blobId to reference
         }.toMap()
@@ -1964,19 +1995,21 @@ public class SqlDriverContentTransactionStore<D : Any>(
     private fun loadAuxiliaryAttachment(key: String): AuxiliaryBlobAttachment {
         val row = queryRows(
             TABLE_AUXILIARY_ATTACHMENTS,
-            "owner_id, purpose, attachment_json WHERE attachment_key = '${sqlLiteral(key)}'",
+            "owner_id, purpose, attachment_json WHERE attachment_key = ?",
+            key,
         ).singleOrNull() ?: error("Missing auxiliary attachment row $key")
-        val attachment = decodeJson(AuxiliaryBlobAttachment.serializer(), requireNotNull(row[2]))
+        val attachment = decodeJson(AuxiliaryBlobAttachment.serializer(), row.string("attachment_json"))
         check(attachment.attachmentKey == key) { "Auxiliary attachment key/body mismatch" }
-        check(attachment.ownerId == requireNotNull(row[0])) { "Auxiliary attachment owner mismatch" }
-        check(attachment.purpose.name == requireNotNull(row[1])) { "Auxiliary attachment purpose mismatch" }
+        check(attachment.ownerId == row.string("owner_id")) { "Auxiliary attachment owner mismatch" }
+        check(attachment.purpose.name == row.string("purpose")) { "Auxiliary attachment purpose mismatch" }
 
         val persistedRefs = queryRows(
             TABLE_AUXILIARY_ATTACHMENT_REFS,
-            "blob_id, reference_json WHERE attachment_key = '${sqlLiteral(key)}' ORDER BY blob_id",
+            "blob_id, reference_json WHERE attachment_key = ? ORDER BY blob_id",
+            key,
         ).map { refRow ->
-            val blobId = requireNotNull(refRow[0])
-            val reference = decodeJson(BlobRef.serializer(), requireNotNull(refRow[1]))
+            val blobId = refRow.string("blob_id")
+            val reference = decodeJson(BlobRef.serializer(), refRow.string("reference_json"))
             check(reference.blobId == blobId) { "Auxiliary blob-ref key/body mismatch" }
             blobId to reference
         }.toMap()
@@ -1991,16 +2024,17 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val row = queryRows(
             TABLE_QUARANTINES,
             "auxiliary_attachment_key, package_id, version, origin, ordinal, script_blob_id, " +
-                "mutation_json WHERE quarantine_id = '${sqlLiteral(quarantineId)}'",
+                "mutation_json WHERE quarantine_id = ?",
+            quarantineId,
         ).singleOrNull() ?: return null
-        val mutation = decodeJson(ContentQuarantineMutation.serializer(), requireNotNull(row[6]))
+        val mutation = decodeJson(ContentQuarantineMutation.serializer(), row.string("mutation_json"))
         check(mutation.quarantineId == quarantineId) { "Quarantine key/body mismatch" }
-        check(mutation.packageId == requireNotNull(row[1])) { "Quarantine package id mismatch" }
-        check(mutation.version == requireNotNull(row[2])) { "Quarantine version mismatch" }
-        check(mutation.origin == requireNotNull(row[3])) { "Quarantine origin mismatch" }
-        check(mutation.ordinal == requireNotNull(row[4]).toIntOrNull()) { "Quarantine ordinal mismatch" }
-        check(mutation.scriptBlob.blobId == requireNotNull(row[5])) { "Quarantine script blob mismatch" }
-        val attachmentKey = requireNotNull(row[0])
+        check(mutation.packageId == row.string("package_id")) { "Quarantine package id mismatch" }
+        check(mutation.version == row.string("version")) { "Quarantine version mismatch" }
+        check(mutation.origin == row.string("origin")) { "Quarantine origin mismatch" }
+        check(mutation.ordinal == row.string("ordinal").toIntOrNull()) { "Quarantine ordinal mismatch" }
+        check(mutation.scriptBlob.blobId == row.string("script_blob_id")) { "Quarantine script blob mismatch" }
+        val attachmentKey = row.string("auxiliary_attachment_key")
         val attachment = requireNotNull(findAuxiliaryAttachment(attachmentKey)) {
             "Quarantine auxiliary attachment is missing"
         }
@@ -2017,37 +2051,40 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val row = queryRows(
             TABLE_RIGHTS_GRANTS,
             "$RIGHTS_GRANT_COLUMNS " +
-                "WHERE grant_id = '${sqlLiteral(reference.value)}'",
+                "WHERE grant_id = ?",
+            reference.value,
         ).singleOrNull() ?: return null
-        check(requireNotNull(row[0]) == reference.value) { "Rights grant lookup key mismatch" }
-        val publicationId = requireNotNull(row[1])
-        val acquisitionId = requireNotNull(row[2])
+        check(row.string("grant_id") == reference.value) { "Rights grant lookup key mismatch" }
+        val publicationId = row.string("publication_id")
+        val acquisitionId = row.string("acquisition_id")
         val pairedReference = queryRows(
             TABLE_ACQUISITION_RIGHTS,
-            "grant_ref_json WHERE publication_id = '${sqlLiteral(publicationId)}' " +
-                "AND acquisition_id = '${sqlLiteral(acquisitionId)}'",
+            "grant_ref_json WHERE publication_id = ? " +
+                "AND acquisition_id = ?",
+            publicationId,
+            acquisitionId,
         ).singleOrNull()?.let { pairing ->
-            decodeJson(RightsGrantRef.serializer(), requireNotNull(pairing[0]))
+            decodeJson(RightsGrantRef.serializer(), pairing.string("grant_ref_json"))
         }
         return decodeRightsGrantRow(row, pairedReference)
     }
 
     private fun decodeRightsGrantRow(
-        row: List<String?>,
+        row: ContentRow,
         pairedReference: RightsGrantRef?,
     ): RightsGrant {
-        val reference = RightsGrantRef(requireNotNull(row[0]))
-        val grant = decodeJson(RightsGrant.serializer(), requireNotNull(row[6]))
+        val reference = RightsGrantRef(row.string("grant_id"))
+        val grant = decodeJson(RightsGrant.serializer(), row.string("grant_json"))
         check(grant.grantId == reference) { "Rights grant key/body mismatch" }
-        check(grant.scope.publicationId.value == requireNotNull(row[1])) {
+        check(grant.scope.publicationId.value == row.string("publication_id")) {
             "Rights grant publication scope mismatch"
         }
-        check(grant.scope.acquisitionId == requireNotNull(row[2])) {
+        check(grant.scope.acquisitionId == row.string("acquisition_id")) {
             "Rights grant acquisition scope mismatch"
         }
-        check(grant.scope.unitId?.value == row[3]) { "Rights grant unit scope mismatch" }
-        check(grant.scope.manifestId == row[4]) { "Rights grant manifest scope mismatch" }
-        check(grant.scope.contentRevision == row[5]?.toLongOrNull()) {
+        check(grant.scope.unitId?.value == row.stringOrNull("unit_id")) { "Rights grant unit scope mismatch" }
+        check(grant.scope.manifestId == row.stringOrNull("manifest_id")) { "Rights grant manifest scope mismatch" }
+        check(grant.scope.contentRevision == row.stringOrNull("content_revision")?.toLongOrNull()) {
             "Rights grant content revision mismatch"
         }
         check(pairedReference == reference) {
@@ -2060,16 +2097,17 @@ public class SqlDriverContentTransactionStore<D : Any>(
         val row = queryRows(
             TABLE_BLOB_SYNC_JOBS,
             "attachment_key, blob_id, owner_scope, manifest_id, content_revision, grant_id, " +
-                "mutation_json WHERE job_id = '${sqlLiteral(jobId)}'",
+                "mutation_json WHERE job_id = ?",
+            jobId,
         ).singleOrNull() ?: return null
-        val mutation = decodeJson(ContentBlobSyncJobMutation.serializer(), requireNotNull(row[6]))
+        val mutation = decodeJson(ContentBlobSyncJobMutation.serializer(), row.string("mutation_json"))
         check(mutation.jobId == jobId) { "Blob sync job key/body mismatch" }
-        check(mutation.blob.blobId == requireNotNull(row[1])) { "Blob sync job blob mismatch" }
-        check(mutation.owner.scopeKey == requireNotNull(row[2])) { "Blob sync job owner mismatch" }
-        check(mutation.manifestId == requireNotNull(row[3])) { "Blob sync job manifest mismatch" }
-        check(mutation.contentRevision == row[4]?.toLongOrNull()) { "Blob sync job revision mismatch" }
-        check(mutation.grantReference.value == requireNotNull(row[5])) { "Blob sync job grant mismatch" }
-        val attachment = requireNotNull(findAttachment(requireNotNull(row[0]))) {
+        check(mutation.blob.blobId == row.string("blob_id")) { "Blob sync job blob mismatch" }
+        check(mutation.owner.scopeKey == row.string("owner_scope")) { "Blob sync job owner mismatch" }
+        check(mutation.manifestId == row.string("manifest_id")) { "Blob sync job manifest mismatch" }
+        check(mutation.contentRevision == row.stringOrNull("content_revision")?.toLongOrNull()) { "Blob sync job revision mismatch" }
+        check(mutation.grantReference.value == row.string("grant_id")) { "Blob sync job grant mismatch" }
+        val attachment = requireNotNull(findAttachment(row.string("attachment_key"))) {
             "Blob sync job manifest attachment is missing"
         }
         check(
@@ -2100,7 +2138,7 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     private fun readPairs(table: String, keyColumn: String, valueColumn: String): Map<String, String> =
         queryRows(table, "$keyColumn, $valueColumn ORDER BY $keyColumn").associate { row ->
-            requireNotNull(row[0]) to requireNotNull(row[1])
+            row.string(keyColumn) to row.string(valueColumn)
         }
 
     private fun loadAllMigrations(): List<ContentMigrationLedgerMutation> {
@@ -2110,20 +2148,20 @@ public class SqlDriverContentTransactionStore<D : Any>(
             TABLE_MIGRATIONS,
             "migration_key, namespace, source_digest, result_fingerprint, commit_id, mutation_json ORDER BY migration_key",
         ).forEach { row ->
-            val key = requireNotNull(row[0])
+            val key = row.string("migration_key")
             val mutation = decodeJson(
                 ContentMigrationLedgerMutation.serializer(),
-                requireNotNull(row[5]),
+                row.string("mutation_json"),
             )
             check(mutation.migrationKey == key) { "Migration key/body mismatch" }
-            check(mutation.namespace == requireNotNull(row[1])) { "Migration namespace mismatch" }
-            check(mutation.sourceDigestSha256 == requireNotNull(row[2])) {
+            check(mutation.namespace == row.string("namespace")) { "Migration namespace mismatch" }
+            check(mutation.sourceDigestSha256 == row.string("source_digest")) {
                 "Migration source digest mismatch"
             }
-            check(mutation.resultFingerprintSha256 == requireNotNull(row[3])) {
+            check(mutation.resultFingerprintSha256 == row.string("result_fingerprint")) {
                 "Migration result fingerprint mismatch"
             }
-            check(mutation.commitId == requireNotNull(row[4])) { "Migration commit id mismatch" }
+            check(mutation.commitId == row.string("commit_id")) { "Migration commit id mismatch" }
             check(keys.add(key)) { "Duplicate migration key" }
             migrations += mutation
         }
@@ -2131,30 +2169,30 @@ public class SqlDriverContentTransactionStore<D : Any>(
     }
 
     private fun findString(table: String, keyColumn: String, key: String, valueColumn: String): String? =
-        queryRows(table, "$valueColumn WHERE $keyColumn = '${sqlLiteral(key)}'").singleOrNull()?.get(0)
+        queryRows(table, "$valueColumn WHERE $keyColumn = ?", key).singleOrNull()?.stringOrNull(valueColumn)
 
-    private fun queryRows(table: String, projectionAndClause: String): List<List<String?>> {
+    /** `SELECT <projection> FROM [table] <clause>`; each `?` in the clause is bound to the next of [arguments]. */
+    private fun queryRows(table: String, projectionAndClause: String, vararg arguments: String): List<ContentRow> {
         val projection = projectionAndClause
             .substringBefore(" WHERE ")
             .substringBefore(" ORDER BY ")
             .trim()
         val suffix = projectionAndClause.substring(projection.length)
-        val sql = "SELECT $projection FROM $table$suffix"
+        val columns = ContentRow.columns(projection)
         return driver.executeQuery(
             identifier = null,
-            sql = sql,
+            sql = "SELECT $projection FROM $table$suffix",
             mapper = { cursor ->
-                val rows = mutableListOf<List<String?>>()
-                val columnCount = projectionColumnCount(projectionAndClause)
+                val rows = mutableListOf<ContentRow>()
                 while (cursor.next().value) {
-                    val values = ArrayList<String?>(columnCount)
-                    repeat(columnCount) { index -> values += cursor.getString(index) }
-                    rows += values
+                    rows += ContentRow(columns, List(columns.size) { index -> cursor.getString(index) })
                 }
                 QueryResult.Value(rows)
             },
-            parameters = 0,
-        ).value
+            parameters = arguments.size,
+        ) {
+            arguments.forEachIndexed { index, argument -> bindString(index, argument) }
+        }.value
     }
 
     private fun execute(sql: String, parameters: Int, bind: app.cash.sqldelight.db.SqlPreparedStatement.() -> Unit = {}) {
@@ -2173,7 +2211,8 @@ public class SqlDriverContentTransactionStore<D : Any>(
             ids.sorted().count { id ->
                 val exists = queryRows(
                     table,
-                    "$keyColumn WHERE $keyColumn = '${sqlLiteral(id)}'",
+                    "$keyColumn WHERE $keyColumn = ?",
+                    id,
                 ).isNotEmpty()
                 if (exists) {
                     execute("DELETE FROM $table WHERE $keyColumn = ?", 1) { bindString(0, id) }
@@ -2285,17 +2324,16 @@ public class SqlDriverContentTransactionStore<D : Any>(
 
     private fun blobSyncAttachmentKey(job: ContentBlobSyncJobMutation): String =
         "${job.owner.scopeKey}/${job.manifestId}/${job.contentRevision}"
-
-    private fun sqlLiteral(value: String): String = value.replace("'", "''")
-
-    private fun projectionColumnCount(projectionAndClause: String): Int {
-        val projection = projectionAndClause
-            .substringBefore(" WHERE ")
-            .substringBefore(" ORDER BY ")
-            .trim()
-        return projection.split(',').size
-    }
 }
+
+@Volatile
+private var mainThreadUseReported = false
+
+private const val LOG_TAG = "ContentStore"
+
+/** [value] as literal text inside a `LIKE ? ESCAPE '\'` pattern. */
+internal fun escapeLike(value: String): String =
+    value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 /** Names retained for callers that use Sqlite/SQL naming rather than the driver name. */
 public typealias SqlContentTransactionStore<D> = SqlDriverContentTransactionStore<D>
@@ -2434,13 +2472,30 @@ private fun canonicalJsonBytes(element: JsonElement): ByteArray = SqlCanonicalWr
     write(element)
 }.toByteArray()
 
-/** SQLite schema shared by Desktop, Android and Native content transaction stores. */
+/**
+ * SQLite schema shared by Desktop, Android and Native content transaction stores. [create] brings
+ * an existing database up to [VERSION] as well ([SchemaMigrator]) and refuses one written by a
+ * newer app ([SchemaTooNewException]). The version stays in `content_transaction_schema`, where
+ * older versions of the app look for it.
+ */
 public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
     public const val VERSION: Long = 5
     override val version: Long = VERSION
 
+    internal val component: SchemaComponent = SchemaComponent(
+        name = "content",
+        version = VERSION,
+        create = ::createTables,
+        // Formats 2 to 5 only added tables, all of which createTables makes when they are missing.
+        steps = mapOf(VERSION to ::createTables),
+        // The marker was always written with the tables: none means an empty database.
+        unrecordedVersion = { null },
+        versionStore = SchemaVersionStore.Singleton(TABLE_SCHEMA),
+    )
+
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
-        createTables(driver)
+        ContentBlobPersistenceSchema.create(driver)
+        SchemaMigrator.migrate(driver, component)
         return QueryResult.Unit
     }
 
@@ -2451,7 +2506,7 @@ public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
         vararg callbacks: AfterVersion,
     ): QueryResult.Value<Unit> {
         require(oldVersion <= newVersion) { "Content transaction database cannot migrate backwards" }
-        if (oldVersion < VERSION && newVersion >= VERSION) createTables(driver)
+        create(driver)
         callbacks.sortedBy(AfterVersion::afterVersion).forEach { callback ->
             if (callback.afterVersion in oldVersion until newVersion) callback.block(driver)
         }
@@ -2459,7 +2514,6 @@ public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
     }
 
     private fun createTables(driver: SqlDriver) {
-        ContentBlobPersistenceSchema.create(driver)
         listOf(
             """
                 CREATE TABLE IF NOT EXISTS $TABLE_SCHEMA(
@@ -2646,9 +2700,6 @@ public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
                   receipt_descriptors_json TEXT NOT NULL
                 ) WITHOUT ROWID
             """.trimIndent(),
-            "INSERT OR IGNORE INTO $TABLE_SCHEMA(singleton_id, format_version) VALUES (1, $VERSION)",
-            "UPDATE $TABLE_SCHEMA SET format_version = $VERSION " +
-                "WHERE singleton_id = 1 AND format_version < $VERSION",
         ).forEach { sql -> driver.execute(null, sql, 0).value }
     }
 }

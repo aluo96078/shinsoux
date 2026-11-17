@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.backup
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.domain.model.BackupStatus
@@ -43,7 +44,7 @@ public class AutoBackupException(message: String, cause: Throwable? = null) : Ex
 public class AutoBackupService(
     private val repository: ShinsouRepository,
     private val fileSystem: AppFileSystem,
-    private val appVersion: String = dev.shinsou.kmp.app.SHINSOU_APP_VERSION,
+    private val appVersion: String = dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION,
     private val deviceId: String? = null,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
@@ -106,7 +107,7 @@ public class AutoBackupService(
             val bytes = fileSystem.read("$AUTO_BACKUP_DIRECTORY/$safeName")
                 ?: throw AutoBackupException("Automatic backup no longer exists: $safeName")
             val envelope = try {
-                SnapshotBackupService.decode(bytes.decodeToString())
+                SnapshotBackupService.decode(bytes)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 throw AutoBackupException("Automatic backup is damaged or unsupported: $safeName", error)
@@ -153,7 +154,7 @@ public class AutoBackupService(
                 deviceId = deviceId,
             ).withTranslations(translations, repository.currentSnapshot.backupState)
             val fileName = autoBackupFileName(createdAt, envelope.snapshot.revision)
-            val bytes = SnapshotBackupService.encode(envelope).encodeToByteArray()
+            val bytes = SnapshotBackupService.encodeToBytes(envelope)
             fileSystem.writeAtomically("$AUTO_BACKUP_DIRECTORY/$fileName", bytes)
 
             // Old snapshots may contain zero. Keep the newly-created backup recoverable while the
@@ -208,7 +209,7 @@ public class AutoBackupService(
                     errorMessage = "Backup file is unavailable.",
                 )
             try {
-                val envelope = SnapshotBackupService.decode(bytes.decodeToString())
+                val envelope = SnapshotBackupService.decode(bytes)
                 AutoBackupEntry(
                     fileName = fileName,
                     createdAt = envelope.createdAt,
@@ -229,7 +230,7 @@ public class AutoBackupService(
         .sortedWith(compareByDescending<AutoBackupEntry> { it.createdAt }.thenByDescending { it.fileName })
 
     private suspend fun markFailure(message: String) {
-        runCatching {
+        runCatchingCancellable {
             repository.setBackupState(
                 repository.currentSnapshot.backupState.copy(
                     status = BackupStatus.FAILED,

@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.domain.model.Chapter
-import dev.shinsou.kmp.reader.ReadingLocator
+import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.text
 

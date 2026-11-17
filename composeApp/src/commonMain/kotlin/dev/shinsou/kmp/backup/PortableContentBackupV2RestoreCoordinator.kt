@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.backup
 
 import dev.shinsou.kmp.annotation.ContentAnnotation
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.BlobPublishReceipt
 import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentCommitBatch
@@ -22,7 +22,6 @@ import dev.shinsou.kmp.plugin.Sha256
 import dev.shinsou.kmp.rights.ContentOperation
 import dev.shinsou.kmp.rights.RightsGrant
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.ui.portability.PortableContentBackupV2RestoreResult
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -352,3 +351,9 @@ private fun List<Publication>.withLocalBodyAvailability(
         },
     )
 }
+
+public data class PortableContentBackupV2RestoreResult(
+    val publicationCount: Int,
+    val annotationCount: Int,
+    val contentBlobCount: Int,
+)

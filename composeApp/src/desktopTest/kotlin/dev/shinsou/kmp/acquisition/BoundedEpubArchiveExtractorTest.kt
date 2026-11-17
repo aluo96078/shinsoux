@@ -1,13 +1,13 @@
 package dev.shinsou.kmp.acquisition
 
-import dev.shinsou.kmp.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.reader.EpubPublicationResourceResolver
 import dev.shinsou.kmp.reader.EpubRenderRequestFactory
 import dev.shinsou.kmp.reader.EpubSpineNavigation
 import dev.shinsou.kmp.reader.EpubUserStyleSheet
-import dev.shinsou.kmp.reader.ReadingScope
+import dev.shinsou.kmp.domain.model.ReadingScope
 import java.io.ByteArrayOutputStream
 import java.util.zip.CRC32
 import java.util.zip.Deflater

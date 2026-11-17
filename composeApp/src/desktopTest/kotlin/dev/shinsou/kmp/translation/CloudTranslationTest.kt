@@ -6,6 +6,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.HttpRequestData
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
@@ -33,6 +34,9 @@ class CloudTranslationTest {
         private val errorBody: String = "{}",
         /** Requests answered normally before [status] applies. */
         private val healthyRequests: Int = 0,
+        /** Requests answered with [status] before the service recovers. */
+        private val failingRequests: Int = Int.MAX_VALUE,
+        private val errorHeaders: Headers = headersOf(),
     ) {
         val requests = ArrayList<HttpRequestData>()
         val bodies = ArrayList<String>()
@@ -41,7 +45,9 @@ class CloudTranslationTest {
                 requests += request
                 val body = (request.body as TextContent).text
                 bodies += body
-                if (status != HttpStatusCode.OK && requests.size > healthyRequests) return@MockEngine respond(errorBody, status)
+                if (status != HttpStatusCode.OK && requests.size > healthyRequests && requests.size - healthyRequests <= failingRequests) {
+                    return@MockEngine respond(errorBody, status, errorHeaders)
+                }
                 val json = Json.parseToJsonElement(body).jsonObject
                 val answer = if (request.url.host.endsWith("deepl.com")) {
                     buildJsonObject {
@@ -148,7 +154,40 @@ class CloudTranslationTest {
         assertEquals(TranslationFailure.PROVIDER_UNAVAILABLE, failure(DeepLTranslationProvider(Service(HttpStatusCode.InternalServerError).client, "k")))
         val badKey = Service(HttpStatusCode.BadRequest, """{"error":{"message":"API key not valid. Please pass a valid API key."}}""")
         assertEquals(TranslationFailure.INVALID_KEY, failure(GoogleTranslationProvider(badKey.client, "k")))
-        assertEquals(TranslationFailure.QUOTA_EXCEEDED, failure(GoogleTranslationProvider(Service(HttpStatusCode.TooManyRequests).client, "k")))
+        val usedUp = Service(HttpStatusCode.TooManyRequests, """{"error":{"errors":[{"reason":"dailyLimitExceeded"}]}}""")
+        assertEquals(TranslationFailure.QUOTA_EXCEEDED, failure(GoogleTranslationProvider(usedUp.client, "k")))
+        assertEquals(1, usedUp.requests.size, "a used-up quota is not asked again")
+    }
+
+    @Test
+    fun aServiceAskingToSlowDownIsWaitedOutAndThenAnswers() = runBlocking<Unit> {
+        val service = Service(HttpStatusCode.TooManyRequests, failingRequests = 1, errorHeaders = headersOf(HttpHeaders.RetryAfter, "0"))
+        assertEquals(listOf("G(一)"), GoogleTranslationProvider(service.client, "k").translate(hop, listOf("一")))
+        assertEquals(2, service.requests.size)
+    }
+
+    @Test
+    fun aServiceThatKeepsAskingToSlowDownIsARateLimitNotAUsedUpQuota() = runBlocking<Unit> {
+        val service = Service(HttpStatusCode.TooManyRequests, errorHeaders = headersOf(HttpHeaders.RetryAfter, "0"))
+        val error = assertFailsWith<TranslationException> { DeepLTranslationProvider(service.client, "k").translate(hop, listOf("一")) }
+        assertEquals(TranslationFailure.RATE_LIMITED, error.failure)
+        assertEquals(3, service.requests.size, "the first request and two retries")
+        // A wait longer than a request is worth holding is not taken.
+        val slow = Service(HttpStatusCode.TooManyRequests, errorHeaders = headersOf(HttpHeaders.RetryAfter, "3600"))
+        assertEquals(TranslationFailure.RATE_LIMITED, assertFailsWith<TranslationException> { DeepLTranslationProvider(slow.client, "k").translate(hop, listOf("一")) }.failure)
+        assertEquals(1, slow.requests.size)
+    }
+
+    @Test
+    fun retryAfterIsReadAsSecondsOrAsADate() {
+        val now = 784_111_757_000L // Sun, 06 Nov 1994 08:49:17 GMT
+        assertEquals(120_000L, retryAfterMillis("120", now))
+        assertEquals(60_000L, retryAfterMillis("Sun, 06 Nov 1994 08:50:17 GMT", now))
+        assertEquals(0L, retryAfterMillis("Sun, 06 Nov 1994 08:48:17 GMT", now), "a date already past is no wait")
+        assertNull(retryAfterMillis("-5", now))
+        assertNull(retryAfterMillis("soon", now))
+        assertNull(retryAfterMillis(null, now))
+        assertTrue(retryAfterMillis(Long.MAX_VALUE.toString(), now)!! > 0, "a huge wait stays a huge wait, not a negative one")
     }
 
     private object NoEngine : OfflineTranslationEngine {

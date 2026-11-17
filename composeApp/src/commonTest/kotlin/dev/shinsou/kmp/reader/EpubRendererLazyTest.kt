@@ -1,14 +1,14 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.BlobRef
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.BlobReadLease
 import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentRepresentation
-import dev.shinsou.kmp.content.EpubPackage
-import dev.shinsou.kmp.content.EpubResource
-import dev.shinsou.kmp.content.EpubSpineDocument
+import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.EpubPackage
+import dev.shinsou.kmp.domain.content.EpubResource
+import dev.shinsou.kmp.domain.content.EpubSpineDocument
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
-import dev.shinsou.kmp.content.ResourceRef
+import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlin.test.Test
@@ -18,6 +18,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.domain.model.ReadingScope
 
 class EpubRendererLazyTest {
     @Test

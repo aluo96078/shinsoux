@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.translation
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -33,13 +32,19 @@ class TranslationPrefetchQueueTest {
     }
 
     /** A device set up for DeepL, answering every line with "D(line)". */
-    private class Device(dailyLimit: Long = 0) {
+    private class Device(dailyLimit: Long = 0, private val rateLimited: (String) -> Boolean = { false }) {
         var requests = 0
-        val memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
+        // A file, opened as the desktop app does: the reader and the queue are on two threads here,
+        // and an in-memory database is one connection, which cannot hold a transaction for each.
+        val memory = TranslationMemoryStore(
+            dev.shinsou.kmp.desktop.DesktopSqliteDriver("jdbc:sqlite:${java.nio.file.Files.createTempFile("translation-memory", ".db")}"),
+        )
         private val client = HttpClient(
             MockEngine { request ->
                 requests++
-                val json = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                val body = (request.body as TextContent).text
+                if (rateLimited(body)) return@MockEngine respond("{}", HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.RetryAfter, "0"))
+                val json = Json.parseToJsonElement(body).jsonObject
                 val answer = buildJsonObject {
                     put("translations", JsonArray(json.getValue("text").jsonArray.map { buildJsonObject { put("text", "D(${it.jsonPrimitive.content})") } }))
                 }
@@ -163,6 +168,24 @@ class TranslationPrefetchQueueTest {
         assertEquals(TranslationFailure.UNSUPPORTED_PAIR, entries.getValue("bad|x1").failure)
         assertEquals(TranslationFailure.UNSUPPORTED_PAIR, entries.getValue("bad|x2").failure)
         assertEquals(PrefetchState.DONE, entries.getValue("work|c1").state)
+    }
+
+    @Test
+    fun aServiceThatKeepsAskingToSlowDownStopsOnlyTheWorkItWasTranslating() = runBlocking<Unit> {
+        val device = Device(rateLimited = { "slow" in it })
+        device.translation.prefetch.enqueue(
+            listOf(
+                device.job("s1", text = "slow 한 줄", group = "busy"),
+                device.job("s2", text = "slow 두 줄", group = "busy"),
+                device.job("c1"),
+            ),
+        )
+        val entries = device.settled().associateBy { it.id }
+        assertEquals(TranslationFailure.RATE_LIMITED, entries.getValue("busy|s1").failure)
+        assertEquals(TranslationFailure.RATE_LIMITED, entries.getValue("busy|s2").failure)
+        assertEquals(PrefetchState.DONE, entries.getValue("work|c1").state)
+        // The second chapter of the limited work was stopped without being fetched or sent.
+        assertEquals(listOf("s1", "c1"), device.loaded)
     }
 
     @Test
