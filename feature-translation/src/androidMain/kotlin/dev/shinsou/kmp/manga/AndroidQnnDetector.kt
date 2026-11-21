@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.manga
 
-import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import dev.shinsou.kmp.logging.Log
 import java.io.File
@@ -15,7 +14,7 @@ import java.io.File
 internal object AndroidQnnDetector {
     /** Opens the detector, compiling it for this NPU the first time. */
     fun open(ops: VisionOps, model: String, runtime: String, cacheDirectory: File): OrtQueryDetector {
-        val env = OrtEnvironment.getEnvironment()
+        val env = ortEnvironment()
         loadRuntime(runtime)
         cacheDirectory.mkdirs()
         // the compiled graph belongs to this model and this QNN version

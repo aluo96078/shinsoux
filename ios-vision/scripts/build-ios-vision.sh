@@ -16,17 +16,29 @@ OPENCV_VERSION=4.14.0
 OPENCV_SHA256=ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e
 DEPLOYMENT_TARGET=16.0
 
-fetch() { # url sha256 file
-  if [ ! -f "$3" ] || [ "$(shasum -a 256 "$3" | cut -d' ' -f1)" != "$2" ]; then
-    curl -fsSL -o "$3.part" "$1"
-    [ "$(shasum -a 256 "$3.part" | cut -d' ' -f1)" = "$2" ] || { echo "checksum mismatch: $1" >&2; rm -f "$3.part"; exit 1; }
-    mv "$3.part" "$3"
-  fi
+fetch() { # url sha256 file [mirror-url...]
+  local url="$1" sha="$2" file="$3"; shift 3
+  if [ -f "$file" ] && [ "$(shasum -a 256 "$file" | cut -d' ' -f1)" = "$sha" ]; then return; fi
+  # The pinned SHA-256 decides: a mirror is tried only when a source fails, and must match too.
+  for source in "$url" "$@"; do
+    if curl -fsSL -o "$file.part" "$source"; then
+      [ "$(shasum -a 256 "$file.part" | cut -d' ' -f1)" = "$sha" ] || { echo "checksum mismatch: $source" >&2; rm -f "$file.part"; exit 1; }
+      mv "$file.part" "$file"
+      return
+    fi
+    echo "download failed: $source" >&2
+  done
+  rm -f "$file.part"; exit 1
 }
+
+# The same ONNX Runtime archive, kept on this repository's ios-vision-v1 release for when
+# download.onnxruntime.ai cannot be reached (its certificate did not match its name in Nov 2026).
+ORT_MIRROR="https://github.com/aluo96078/shinsoux/releases/download/ios-vision-v1"
 
 # ---- ONNX Runtime (the CocoaPods C API archive: a static xcframework) ----
 if [ ! -f "$OUT/iphonesimulator/libonnxruntime.a" ]; then
-  fetch "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-$ORT_VERSION.zip" "$ORT_SHA256" "$WORK/ort.zip"
+  fetch "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-$ORT_VERSION.zip" "$ORT_SHA256" "$WORK/ort.zip" \
+    "$ORT_MIRROR/pod-archive-onnxruntime-c-$ORT_VERSION.zip"
   rm -rf "$WORK/ort"; mkdir -p "$WORK/ort"; unzip -q "$WORK/ort.zip" -d "$WORK/ort"
   xc="$WORK/ort/onnxruntime.xcframework"
   mkdir -p "$OUT/iphoneos" "$OUT/iphonesimulator"

@@ -1,7 +1,6 @@
 package dev.shinsou.kmp.manga
 
 import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import dev.shinsou.kmp.logging.Log
 import java.nio.FloatBuffer
@@ -9,7 +8,7 @@ import java.nio.LongBuffer
 
 /** ONNX Runtime through its Java API, the same on Android (`onnxruntime-android`) and desktop. */
 public class JvmOnnxRuntime : OnnxRuntime {
-    private val env = OrtEnvironment.getEnvironment()
+    private val env = ortEnvironment()
 
     override fun open(path: String, threads: Int, variableShapes: Boolean, accelerator: Accelerator): OnnxSession {
         fun options(withAccelerator: Boolean) = OrtSession.SessionOptions().apply {

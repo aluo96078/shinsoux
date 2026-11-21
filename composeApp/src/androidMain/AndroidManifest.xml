@@ -59,5 +59,11 @@
                 <data android:scheme="shinsou" />
             </intent-filter>
         </activity>
+        <!-- ONNX Runtime's usage telemetry starts itself through this provider on every launch.
+             Manga pages are translated on the device; nothing about it is reported. -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
     </application>
 </manifest>

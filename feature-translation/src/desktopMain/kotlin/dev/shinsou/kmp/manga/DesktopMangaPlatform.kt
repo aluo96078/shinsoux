@@ -81,7 +81,7 @@ public class DesktopMangaPlatform private constructor() : MangaPlatform {
             setIntraOpNumThreads(2) // for the few nodes Core ML leaves to the CPU
             addCoreML(mapOf("ModelFormat" to "MLProgram", "MLComputeUnits" to units, "ModelCacheDirectory" to cache.path))
         }
-        val session = options.use { ai.onnxruntime.OrtEnvironment.getEnvironment().createSession(model, it) }
+        val session = options.use { ortEnvironment().createSession(model, it) }
         return OrtQueryDetector(ops, session, id)
     }
 

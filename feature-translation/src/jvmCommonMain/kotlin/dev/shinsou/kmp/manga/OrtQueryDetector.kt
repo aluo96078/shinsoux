@@ -1,7 +1,6 @@
 package dev.shinsou.kmp.manga
 
 import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import java.nio.FloatBuffer
 
@@ -15,7 +14,7 @@ internal class OrtQueryDetector(
     private val session: OrtSession,
     override val id: String,
 ) : PageDetector, AutoCloseable {
-    private val env = OrtEnvironment.getEnvironment()
+    private val env = ortEnvironment()
 
     override fun detect(page: RgbImage): List<Detection> {
         val small = ops.resize(page, SIZE, SIZE)
