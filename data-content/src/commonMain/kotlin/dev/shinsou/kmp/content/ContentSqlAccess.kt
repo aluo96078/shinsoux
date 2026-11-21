@@ -68,9 +68,10 @@ internal class ContentSqlAccess(
             .trim()
         val suffix = projectionAndClause.substring(projection.length)
         val columns = ContentRow.columns(projection)
+        val sql = "SELECT $projection FROM $table$suffix"
         return driver.executeQuery(
-            identifier = null,
-            sql = "SELECT $projection FROM $table$suffix",
+            identifier = statementIdentifier(sql),
+            sql = sql,
             mapper = { cursor ->
                 val rows = mutableListOf<ContentRow>()
                 while (cursor.next().value) {
@@ -85,7 +86,7 @@ internal class ContentSqlAccess(
     }
 
     override fun execute(sql: String, parameters: Int, bind: app.cash.sqldelight.db.SqlPreparedStatement.() -> Unit) {
-        driver.execute(null, sql, parameters, bind).value
+        driver.execute(statementIdentifier(sql), sql, parameters, bind).value
     }
 
     override fun acknowledgeRows(

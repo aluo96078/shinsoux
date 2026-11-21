@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.domain.model.JmImageDescrambler
 import dev.shinsou.kmp.domain.model.ReaderImageTransform
 
 public interface Source {

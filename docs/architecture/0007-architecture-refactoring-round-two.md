@@ -1,0 +1,62 @@
+# 0007 — 架構重構第二輪
+
+- 狀態：實施中（進度見第 5 節）
+- 日期：2026-11-22
+- 範圍：只處理架構、模組邊界與程式碼品質；不改變功能行為（資料搬移的階段例外，見 C3）
+- 依據：2026-11-21 Gemini 4 Neon 的唯讀架構評估，2026-11-22 逐項對照程式碼複查
+- 前一輪：[0006](0006-code-quality-refactoring-plan.md)
+- 驗收：每個階段跑 0006 的完整驗證（三平台編譯、桌面與 Android 測試、`detektProduct`、Kover 門檻、`check_baselines_shrink.sh`），通過後在本機 commit；全部完成後交給 Gemini 4 Neon 與 Grok 4.7 複查
+
+## 1. 複查結果
+
+評估裡的具體事實都對照過程式碼，以下成立：
+
+| 項目 | 證據 |
+|---|---|
+| 4 個沒用到的依賴 | `domain` → Ktor、`data-repository` → `:core`、`feature-translation` → `:data-repository`、`composeApp` → jsoup，對應目錄內 0 次引用 |
+| 記憶體版交易庫在產品碼 | `InMemorySharedContentTransactionStore`（`data-content/commonMain`）只被三個模組的測試使用 |
+| `:domain` 夾帶特定來源演算法 | `JmImageDescrambler` 寫死來源 id，只有 `:feature-plugin` 的 `SourceContracts` 使用 |
+| `:domain` 為一個鎖依賴整個 `:core` | 只有 `ContentRights.kt` 用到 `SynchronousLock` |
+| `:core` 以 `api` 暴露 Coil、Ktor | `core/build.gradle.kts` 第 17～20 行 |
+| SQL 沒有語句快取 | `ContentSqlAccess` 的 `executeQuery`／`execute` 一律傳 `identifier = null` |
+| 介面大小測試可被繞過 | `ServiceInterfaceSizeTest` 只數介面本體的成員，不算繼承 |
+| 組裝根過大 | `ShinsouComposition.kt` 1,249 行 |
+| 未啟用 `explicitApi()` | 全 repo 無設定 |
+| 原生建置 | `NativeLibrariesPlugin` 寫死 `-j 8`，fetch／CMake 的 `Exec` task 沒有輸入輸出 |
+
+## 2. A｜低風險整理
+
+- A1 移除 4 個沒用到的依賴。
+- A2 記憶體版交易庫移到測試專用模組，產品產物不再包含它。
+- A3 `JmImageDescrambler` 移到 `:feature-plugin`，`:domain` 只留通用的圖片轉換契約。
+- A4 介面大小測試連繼承的成員一起算；超過上限的介面再拆。
+- A5 `ContentSqlAccess` 為固定 SQL 帶穩定的語句識別，啟用 SQLDelight driver 的 prepared statement 快取。
+- A6 原生建置的平行數依處理器數；fetch 與 CMake task 宣告輸入輸出，可判斷 `UP-TO-DATE`。
+
+## 3. B｜中等重構
+
+- B1 `:core` 拆成 `:core`（併發、日誌、加密、檔案）與 `:core-network`（Ktor、Coil、AVIF），只需要基礎能力的模組不再編譯 Coil／Ktor；`PluginKeyValueStore` 正名為通用名稱。
+- B2 `:feature-plugin`、`:feature-library`、`:data-content` 各自提供組裝入口，`ShinsouComposition` 只串接子系統；跨模組不再需要的類別收回 `internal`。
+- B3 `:core`、`:domain`、`:feature-translation` 啟用 `explicitApi()`。
+- B4 `ShinsouAppServices` 不再直接帶具體實作類別，改以窄介面注入。
+
+## 4. C｜大型重構
+
+- C1 `:ui` 拆成設計系統、外殼與各功能的 UI 模組。
+- C2 導航由旗標與計數器改為明確的目的地堆疊。
+- C3 `AppSnapshot` 中頻繁變動的集合（閱讀歷史、章節進度、下載佇列）搬進 SQLite，消除雙重真相來源；需要一次性資料遷移與回退路徑。
+- C4 固定 schema 的資料表改由 SQLDelight `.sq` 在編譯期產生存取碼。
+- C5 拆開 `MangaTranslation`；消化 detekt baseline 的高複雜度方法，`LongMethod` 門檻逐步下修。
+- C6 Swift 層補測試與 lint；detekt 對 Android／iOS source set 啟用型別解析。
+
+## 5. 實施進度
+
+| 項目 | 狀態 | 說明 |
+| --- | --- | --- |
+| A1 | 完成 | |
+| A2 | 完成（有偏離） | 搬到獨立測試模組需要公開 `:data-content` 約 30 個 internal 成員，反而擴大 API；改為 `internal`，其他模組的測試只經 `DataContentTestAccess.inMemoryTransactionStore` 取得。它仍編進產品產物（Android 由 R8 移除） |
+| A3 | 完成 | 圖片轉換契約留在 `:domain`（`ReaderImageTransform.kt`）；繪製邊界的測試留在 `:feature-reader` |
+| A4 | 完成 | 只有 `ShinsouAppServices`、`BrowseCallbacks` 可超過上限；仍直接引用它們的 15 個檔案列在測試內，只減不增（B4 收斂） |
+| A5 | 完成（範圍有限） | `ContentSqlAccess` 與 `SqlDriverPortableAliasResolver` 的語句帶識別碼（每個行程最多 512 段 SQL）；DDL／PRAGMA 不快取；其餘約 60 處多行 SQL 未改 |
+| A6 | 完成 | `-j` 依處理器數；fetch task 以 `third_party/.fetched` 為輸出。CMake configure／build task 仍每次執行（cmake 本身是增量的） |
+| B1～B4 | 進行中 | |

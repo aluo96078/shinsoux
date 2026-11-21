@@ -26,9 +26,6 @@
     <ID>ReturnCount:ContentRights.kt:InMemoryRightsAuthority$public fun issueProtectionAuthorization: ProtectionAuthorization?</ID>
     <ID>ReturnCount:ContentRights.kt:VerifiedRightsGrant$public fun allows: Boolean</ID>
     <ID>ReturnCount:ExtensionLibraryBindingV2.kt:fun decodeExtensionLibraryPublicationUrl: ExtensionLibraryBindingV2?</ID>
-    <ID>ReturnCount:JmImageDescrambler.kt:JmImageDescrambler$public fun segmentationCount: Int</ID>
-    <ID>ReturnCount:JmImageDescrambler.kt:JmImageDescrambler$public fun transform: ReaderImageTransform?</ID>
-    <ID>ReturnCount:JmImageDescrambler.kt:ReaderImageTransform.Companion$public fun decodeSidecar: ReaderImageTransform?</ID>
     <ID>ReturnCount:LibraryModels.kt:LibraryItem$fun matches: Boolean</ID>
     <ID>ReturnCount:ReadingLocator.kt:TextQuote$public fun findIn: Int?</ID>
     <ID>ReturnCount:ReadingLocator.kt:TextQuote$public fun matchesAt: Boolean</ID>

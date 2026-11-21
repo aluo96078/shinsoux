@@ -1,3 +1,5 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.concurrent
 
 import app.cash.sqldelight.db.QueryResult
@@ -11,7 +13,7 @@ import dev.shinsou.kmp.content.ContentMetadataMutation
 import dev.shinsou.kmp.content.ContentOutboxAdapter
 import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
-import dev.shinsou.kmp.content.InMemorySharedContentTransactionStore
+import dev.shinsou.kmp.content.DataContentTestAccess
 import dev.shinsou.kmp.content.SqlDriverPortableAliasResolver
 import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
@@ -63,7 +65,7 @@ class SynchronousStoreContentionTest {
     fun inMemoryContentTransactionReadWaitsForCommitInsteadOfThrowingRetry() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val transactions = InMemorySharedContentTransactionStore(
+        val transactions = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = InMemoryContentBlobStore(),
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = {

@@ -1,43 +1,13 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.domain.model.JmImageDescrambler
 import dev.shinsou.kmp.domain.model.ReaderImageTransform
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class JmImageDescramblerTest {
-    @Test
-    fun segmentationMatchesOriginalThresholdAndMd5Rules() {
-        assertEquals(0, JmImageDescrambler.segmentationCount(300_001, 300_000, "abc"))
-        assertEquals(10, JmImageDescrambler.segmentationCount(220_980, 268_849, "abc"))
-        assertEquals(4, JmImageDescrambler.segmentationCount(220_980, 300_000, "abc"))
-        assertEquals(18, JmImageDescrambler.segmentationCount(220_980, 421_925, "sample"))
-        assertEquals(10, JmImageDescrambler.segmentationCount(220_980, 421_926, "sample"))
-        assertEquals(12, JmImageDescrambler.segmentationCount(220_980, 500_000, "001"))
-    }
-
-    @Test
-    fun requiresJinmanSourceAndAllMetadata() {
-        val metadata = mapOf(
-            JmImageDescrambler.SCRAMBLE_ID_KEY to "220980",
-            JmImageDescrambler.PHOTO_ID_KEY to "300000",
-            JmImageDescrambler.FILENAME_KEY to "abc",
-        )
-        assertNull(JmImageDescrambler.transform("77", metadata))
-        assertEquals(
-            ReaderImageTransform.ReverseVerticalSegments(4),
-            JmImageDescrambler.transform(JmImageDescrambler.SOURCE_ID.toString(), metadata),
-        )
-        assertNull(
-            JmImageDescrambler.transform(
-                JmImageDescrambler.SOURCE_ID.toString(),
-                metadata - JmImageDescrambler.FILENAME_KEY,
-            ),
-        )
-    }
-
+/** The reader side of a segment-reversing transform (0007 A3: the source rule is tested in :feature-plugin). */
+class ReaderImageTransformTest {
     @Test
     fun sidecarRoundTripsTransform() {
         val transform = ReaderImageTransform.ReverseVerticalSegments(18)

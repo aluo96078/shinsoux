@@ -1,30 +1,7 @@
-package dev.shinsou.kmp.domain.model
+// 0007 A3: one source's image scrambling, kept beside the plugin contracts that apply it rather than in :domain.
+package dev.shinsou.kmp.plugin
 
-/** A deterministic image operation that must survive online and downloaded reader paths. */
-public sealed interface ReaderImageTransform {
-    public data class ReverseVerticalSegments(val segmentCount: Int) : ReaderImageTransform {
-        init {
-            require(segmentCount > 1) { "A segmented image needs at least two segments" }
-        }
-    }
-
-    public fun encodeSidecar(): ByteArray = when (this) {
-        is ReverseVerticalSegments -> "$SIDECAR_PREFIX$segmentCount".encodeToByteArray()
-    }
-
-    public companion object {
-        private const val SIDECAR_PREFIX = "reverse-vertical-segments:"
-
-        public fun decodeSidecar(value: ByteArray?): ReaderImageTransform? {
-            val encoded = value?.decodeToString()?.trim() ?: return null
-            val count = encoded.removePrefix(SIDECAR_PREFIX)
-                .takeIf { encoded.startsWith(SIDECAR_PREFIX) }
-                ?.toIntOrNull()
-                ?: return null
-            return count.takeIf { it > 1 }?.let(::ReverseVerticalSegments)
-        }
-    }
-}
+import dev.shinsou.kmp.domain.model.ReaderImageTransform
 
 /**
  * Port of Shinsou's `JMImageDescrambler` contract.
@@ -48,21 +25,25 @@ public object JmImageDescrambler {
         metadata: Map<String, String>,
     ): ReaderImageTransform? {
         if (canonicalSourceId != SOURCE_ID.toString()) return null
-        val scrambleId = metadata[SCRAMBLE_ID_KEY]?.toIntOrNull() ?: return null
-        val photoId = metadata[PHOTO_ID_KEY]?.toIntOrNull() ?: return null
-        val filename = metadata[FILENAME_KEY]?.takeIf(String::isNotBlank) ?: return null
-        return segmentationCount(scrambleId, photoId, filename)
-            .takeIf { it > 1 }
+        val scrambleId = metadata[SCRAMBLE_ID_KEY]?.toIntOrNull()
+        val photoId = metadata[PHOTO_ID_KEY]?.toIntOrNull()
+        val filename = metadata[FILENAME_KEY]?.takeIf(String::isNotBlank)
+        val count = if (scrambleId != null && photoId != null && filename != null) {
+            segmentationCount(scrambleId, photoId, filename)
+        } else {
+            0
+        }
+        return count.takeIf { it > 1 }
             ?.let { ReaderImageTransform.ReverseVerticalSegments(it) }
     }
 
     public fun segmentationCount(scrambleId: Int, photoId: Int, filename: String): Int {
-        if (photoId < scrambleId) return 0
-        if (photoId < SCRAMBLE_THRESHOLD_268850) return 10
-
         val moduloBase = if (photoId < SCRAMBLE_THRESHOLD_421926) 10 else 8
-        val finalHashCharacter = md5Hex("$photoId$filename").lastOrNull() ?: return 0
-        return (finalHashCharacter.code % moduloBase) * 2 + 2
+        return when {
+            photoId < scrambleId -> 0
+            photoId < SCRAMBLE_THRESHOLD_268850 -> 10
+            else -> md5Hex("$photoId$filename").lastOrNull()?.let { (it.code % moduloBase) * 2 + 2 } ?: 0
+        }
     }
 }
 

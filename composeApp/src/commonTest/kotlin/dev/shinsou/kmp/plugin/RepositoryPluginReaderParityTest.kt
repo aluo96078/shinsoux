@@ -7,7 +7,7 @@ import dev.shinsou.kmp.download.DownloadManager
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.domain.model.JmImageDescrambler
+import dev.shinsou.kmp.plugin.JmImageDescrambler
 import dev.shinsou.kmp.domain.model.ReaderImageTransform
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine

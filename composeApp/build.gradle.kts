@@ -88,7 +88,6 @@ kotlin {
         val jvmCommonMain by getting {
             dependencies {
                 implementation(libs.coil.network.ktor)
-                implementation(libs.jsoup)
                 implementation(libs.ktor.client.okhttp)
             }
         }

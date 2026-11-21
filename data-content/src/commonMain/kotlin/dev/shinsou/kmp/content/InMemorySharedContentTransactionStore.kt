@@ -20,8 +20,12 @@ import dev.shinsou.kmp.domain.content.deepImmutableSnapshot
 
 // R4-4 (docs/architecture/0006): moved out of ContentTransactions.kt without changing it.
 
-/** Executable shared-transaction oracle with rollback at every physical write boundary. */
-public class InMemorySharedContentTransactionStore<D : Any>(
+/**
+ * Executable shared-transaction oracle with rollback at every physical write boundary. 0007 A2: test
+ * code only (the product stores are SQL); other modules' tests reach it through
+ * [DataContentTestAccess.inMemoryTransactionStore].
+ */
+internal class InMemorySharedContentTransactionStore<D : Any>(
     public val blobStore: InMemoryContentBlobStore,
     private val outboxAdapter: ContentOutboxAdapter<D>,
     /** Host-owned negotiated state; an individual batch cannot self-declare a future wire. */

@@ -55,8 +55,8 @@ public class SqlDriverPortableAliasResolver(
             }
             resolved.forEach { binding ->
                 driver.execute(
-                    identifier = null,
-                    sql = "INSERT OR IGNORE INTO content_transaction_aliases(alias, target) VALUES (?, ?)",
+                    identifier = statementIdentifier(INSERT_ALIAS_SQL),
+                    sql = INSERT_ALIAS_SQL,
                     parameters = 2,
                 ) {
                     bindString(0, aliasStorageKey(binding.namespace, binding.alias))
@@ -75,16 +75,16 @@ public class SqlDriverPortableAliasResolver(
     }
 
     private fun selectTarget(storageKey: String): String? = driver.executeQuery(
-        identifier = null,
-        sql = "SELECT target FROM content_transaction_aliases WHERE alias = ?",
+        identifier = statementIdentifier(SELECT_TARGET_SQL),
+        sql = SELECT_TARGET_SQL,
         mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
         parameters = 1,
         binders = { bindString(0, storageKey) },
     ).value
 
     private fun selectLegacyAliasForUuid(portableUuid: String): String? = driver.executeQuery(
-        identifier = null,
-        sql = "SELECT alias FROM content_transaction_aliases WHERE target = ? AND alias LIKE 'legacy-v1:%'",
+        identifier = statementIdentifier(SELECT_LEGACY_ALIAS_SQL),
+        sql = SELECT_LEGACY_ALIAS_SQL,
         mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
         parameters = 1,
         binders = { bindString(0, portableUuid) },
@@ -104,3 +104,10 @@ private fun aliasStorageKey(namespace: MigrationNamespaceId, alias: LegacyAliasK
     alias.validate()
     return "legacy-v1:${namespace.value}:${alias.kind.name.lowercase()}:${alias.canonicalId}"
 }
+
+private const val INSERT_ALIAS_SQL =
+    "INSERT OR IGNORE INTO content_transaction_aliases(alias, target) VALUES (?, ?)"
+private const val SELECT_TARGET_SQL =
+    "SELECT target FROM content_transaction_aliases WHERE alias = ?"
+private const val SELECT_LEGACY_ALIAS_SQL =
+    "SELECT alias FROM content_transaction_aliases WHERE target = ? AND alias LIKE 'legacy-v1:%'"

@@ -24,6 +24,26 @@ public object DataContentTestAccess {
     /** How many blob stages [store] has begun. */
     public fun beginStageCount(store: SqlDriverContentBlobStore): Int = store.beginStageCountForTesting
 
+    /** The in-memory transaction store that models the shared-transaction semantics (0007 A2). */
+    public fun <D : Any> inMemoryTransactionStore(
+        blobStore: InMemoryContentBlobStore,
+        outboxAdapter: ContentOutboxAdapter<D>,
+        syncModeProvider: () -> ContentSyncMode = { ContentSyncMode.V1_ACTIVE },
+    ): InMemoryTransactions<D> = InMemoryTransactions(InMemorySharedContentTransactionStore(blobStore, outboxAdapter, syncModeProvider))
+
+    /** [inMemoryTransactionStore]: the store, with the state and failure seam its tests inspect. */
+    public class InMemoryTransactions<D : Any> internal constructor(
+        private val store: InMemorySharedContentTransactionStore<D>,
+    ) : SharedContentTransactionStore<D> by store {
+        public val blobStore: InMemoryContentBlobStore get() = store.blobStore
+        public val state: InMemoryContentTransactionState<D> get() = store.state
+        public var failureInjection: ContentTransactionFailurePoint?
+            get() = store.failureInjection
+            set(value) {
+                store.failureInjection = value
+            }
+    }
+
     /** The deterministic in-memory full-text index of the common contract tests. */
     public fun inMemoryFullTextIndex(operationGate: ContentOperationGate): LocalFullTextIndex =
         InMemoryDerivedLocalFullTextIndex(operationGate)

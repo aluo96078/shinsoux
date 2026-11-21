@@ -1,10 +1,12 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.backup.shuyue
 
 import dev.shinsou.kmp.content.ContentOutboxAdapter
 import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.ContentTransactionFailurePoint
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
-import dev.shinsou.kmp.content.InMemorySharedContentTransactionStore
+import dev.shinsou.kmp.content.DataContentTestAccess
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
@@ -28,7 +30,7 @@ class ShuYueTransactionalImporterTest {
     fun offlineStoreDenialPreflightsAllWritesBeforeBodiesOrQuarantineArePublished() {
         val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
+        val store = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = blobStore,
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -50,7 +52,7 @@ class ShuYueTransactionalImporterTest {
     fun everyBodyPublishUsesItsExactManifestScopeAndByteCount() {
         val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
+        val store = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = blobStore,
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -83,7 +85,7 @@ class ShuYueTransactionalImporterTest {
     fun completeImportCommitsBodiesPublicationsRightsQuarantineAndLedgerAtomically() {
         val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
+        val store = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = blobStore,
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -138,7 +140,7 @@ class ShuYueTransactionalImporterTest {
     fun injectedTransactionFailureLeavesNoMetadataOrDanglingCommittedReference() {
         val prepared = assertNotNull(ShuYueImportPreparer.prepare(fixture()).preparedImport)
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
+        val store = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = blobStore,
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -181,7 +183,7 @@ class ShuYueTransactionalImporterTest {
             confirmedAtEpochMillis = 10,
         )
         val blobStore = InMemoryContentBlobStore(maximumBlobSizeBytes = 1024 * 1024)
-        val store = InMemorySharedContentTransactionStore(
+        val store = DataContentTestAccess.inMemoryTransactionStore(
             blobStore = blobStore,
             outboxAdapter = StringOutboxAdapter,
             syncModeProvider = { ContentSyncMode.INACTIVE },
@@ -209,7 +211,7 @@ class ShuYueTransactionalImporterTest {
 
     private fun importer(
         blobStore: InMemoryContentBlobStore,
-        store: InMemorySharedContentTransactionStore<String>,
+        store: DataContentTestAccess.InMemoryTransactions<String>,
         authorizer: ContentBodyOfflineStoreAuthorizer = offlineStoreAuthorizer(store),
     ): ShuYueTransactionalImporter<String> = ShuYueTransactionalImporter(
         blobStore = blobStore,
@@ -218,7 +220,7 @@ class ShuYueTransactionalImporterTest {
     )
 
     private fun <D : Any> offlineStoreAuthorizer(
-        store: InMemorySharedContentTransactionStore<D>,
+        store: DataContentTestAccess.InMemoryTransactions<D>,
         authority: InMemoryRightsAuthority = InMemoryRightsAuthority(),
     ) = HostContentBodyOfflineStoreAuthorizer(
         authority = authority,

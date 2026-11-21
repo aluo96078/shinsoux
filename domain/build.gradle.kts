@@ -10,7 +10,6 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":core"))
             api(libs.kotlinx.serialization.json)
-            implementation(libs.ktor.client.core)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

@@ -87,6 +87,7 @@ private fun Project.registerFetchTasks(settings: ShinsouBuildSettings) {
             description = "Fetches sandbox-core's pinned third-party sources and applies its patches"
             workingDir = rootProject.file("sandbox-core")
             commandLine(bash, "scripts/fetch-deps.sh")
+            stampedFetch(rootProject.file("sandbox-core"))
         }
     }
     if (ownsCinterop("translationCore")) {
@@ -94,8 +95,28 @@ private fun Project.registerFetchTasks(settings: ShinsouBuildSettings) {
             description = "Fetches translation-core's pinned engine sources and applies its patches"
             workingDir = rootProject.file("translation-core")
             commandLine(bash, "scripts/fetch-deps.sh")
+            stampedFetch(rootProject.file("translation-core"))
         }
     }
+}
+
+/**
+ * 0007 A6: the parallel jobs of a native build - this machine's processors rather than a fixed 8,
+ * which overloaded small CI runners and left larger machines idle.
+ */
+private val nativeBuildJobs: String = Runtime.getRuntime().availableProcessors().coerceAtLeast(1).toString()
+
+/**
+ * 0007 A6: a fetch reruns only when its script or patches change, or its sources went: the stamp
+ * lives inside `third_party/`, so deleting that directory fetches again. The stamp is written only
+ * after the script checked every source against its pinned commit and applied the patches.
+ */
+private fun Exec.stampedFetch(root: File) {
+    val stamp = File(root, "third_party/.fetched")
+    inputs.file(File(root, "scripts/fetch-deps.sh"))
+    File(root, "patches").takeIf { it.isDirectory }?.let { inputs.dir(it) }
+    outputs.file(stamp)
+    doLast { stamp.writeText("fetched\n") }
 }
 
 /** Copies a built helper into the app resources and signs it (hardened runtime, no entitlements). */
@@ -160,7 +181,7 @@ private fun Project.registerMacOsHelpers(
     }
     val compileSandbox = tasks.register("compileMacOsSandboxHelper", Exec::class.java) {
         dependsOn(configureSandbox)
-        commandLine("cmake", "--build", sandboxBuild, "--target", "shinsou-sandbox", "-j", "8")
+        commandLine("cmake", "--build", sandboxBuild, "--target", "shinsou-sandbox", "-j", nativeBuildJobs)
     }
     val buildSandbox = tasks.register("buildMacOsSandboxHelper", Exec::class.java) {
         group = "build"
@@ -189,7 +210,7 @@ private fun Project.registerMacOsHelpers(
     }
     val compileTranslation = tasks.register("compileMacOsTranslationHelper", Exec::class.java) {
         dependsOn(configureTranslation)
-        commandLine("cmake", "--build", translationBuild, "--target", "shinsou-translate", "-j", "8")
+        commandLine("cmake", "--build", translationBuild, "--target", "shinsou-translate", "-j", nativeBuildJobs)
     }
     val buildTranslation = tasks.register("buildMacOsTranslationHelper", Exec::class.java) {
         group = "build"
@@ -292,7 +313,7 @@ private fun Project.registerIosSandboxLibraries() {
                 "/bin/sh", "-c",
                 "cmake -S \"$1\" -B \"$2\" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS " +
                     "-DCMAKE_OSX_SYSROOT=$3 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 " +
-                    "-DSSC_WASM_MODULE=\"$4\" && cmake --build \"$2\" --target shinsou_wasm_host -j 8",
+                    "-DSSC_WASM_MODULE=\"$4\" && cmake --build \"$2\" --target shinsou_wasm_host -j $nativeBuildJobs",
                 "build-ios-sandbox-host", sandboxCore.dir("ios").asFile.absolutePath, dir, sdk,
                 guest.get().asFile.absolutePath,
             )
@@ -327,7 +348,7 @@ private fun Project.registerIosTranslationLibraries() {
                 "/bin/sh", "-c",
                 "export STC_IOS_SDK=$3 && cmake -S \"$1\" -B \"$2/cmake\" -DCMAKE_BUILD_TYPE=Release " +
                     "-DCMAKE_TOOLCHAIN_FILE=\"$1/ios/ios.toolchain.cmake\" -DSTC_IOS_SDK=$3 && " +
-                    "cmake --build \"$2/cmake\" --target shinsou_translation_core -j 8 && " +
+                    "cmake --build \"$2/cmake\" --target shinsou_translation_core -j $nativeBuildJobs && " +
                     "find \"$2/cmake\" -name '*.a' -print0 | xargs -0 xcrun libtool -static -o \"$2/libshinsou_translate.a\"",
                 "build-ios-translation-core", translationCore.asFile.absolutePath, dir, sdk,
             )

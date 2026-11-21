@@ -23,7 +23,6 @@ kotlin {
             implementation(project(":core"))
             implementation(project(":domain"))
             implementation(project(":data-content"))
-            implementation(project(":data-repository"))
             implementation(compose.runtime)
             implementation(compose.ui)
             implementation(compose.components.resources)
