@@ -1,0 +1,4 @@
+# R5-1 (docs/architecture/0006): references between the modules of §4.2 that go up or across
+# the layers, as they were when the check was introduced. Format:
+# <file under composeApp/src>|<package referred to>|<rule>.
+# Only delete lines; never add any. R5-1 can start on a module once no line names it.

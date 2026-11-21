@@ -480,20 +480,20 @@ Repository 清單、書庫 binding 與 Plugin package 是不同資料。重新�
 - [套件作者指南](PLUGIN_AUTHOR_GUIDE.md)：作者端完整流程。
 - [ADR-0002](architecture/0002-sandboxed-third-party-plugin-runtime.md)：沙箱、權限模型與發佈者信任的設計與決策。
 - [ADR-0001「套件身分」](architecture/0001-unified-publication-content-foundation.md)：install key 與 source id 投影。
-- [`ExtensionRepositoryClient.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/ExtensionRepositoryClient.kt)：索引 shape 偵測、V2 投影與 sidecar cross-check。
-- [`PluginManager.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginManager.kt)：安裝、更新、runtime、trust、撤銷與重啟恢復。
-- [`PublisherTrust.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PublisherTrust.kt)：發佈者信任、輪替、撤回清單與金鑰撤銷。
-- [`RepositoryTrust.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/RepositoryTrust.kt)：signed envelope 驗證與 replay／equivocation watermark。
-- [`PluginInstallKeys.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginInstallKeys.kt)：install key 與 source id 投影。
-- [`SandboxTierCeiling.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/SandboxTierCeiling.kt)：第三方套件永遠拿不到的上限。
-- [`UpdateGrantContinuation.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/UpdateGrantContinuation.kt)：更新時沿用授權（D4）。
-- [`PluginDeveloperMode.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginDeveloperMode.kt)：開發者模式。
-- [`PluginNamePolicy.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginNamePolicy.kt)：名稱政策。
-- [`sandbox/SandboxBridgeDispatcher.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxBridgeDispatcher.kt)：bridge 操作與權限檢查。
-- [`PluginVerifier.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginVerifier.kt)：SHA-256 與 execution grant。
-- [`FilePluginPackageStore.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/FilePluginPackageStore.kt)：獨立、content-addressed、原子 package 儲存。
-- [`ExtensionV2Contracts.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/v2/ExtensionV2Contracts.kt)：內容、capability 與 Host facade。
-- [`PluginSystemEventContracts.kt`](../composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/events/PluginSystemEventContracts.kt)：event wire、Host permission 與 limits。
+- [`ExtensionRepositoryClient.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/ExtensionRepositoryClient.kt)：索引 shape 偵測、V2 投影與 sidecar cross-check。
+- [`PluginManager.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginManager.kt)：安裝、更新、runtime、trust、撤銷與重啟恢復。
+- [`PublisherTrust.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PublisherTrust.kt)：發佈者信任、輪替、撤回清單與金鑰撤銷。
+- [`RepositoryTrust.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/RepositoryTrust.kt)：signed envelope 驗證與 replay／equivocation watermark。
+- [`PluginInstallKeys.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginInstallKeys.kt)：install key 與 source id 投影。
+- [`SandboxTierCeiling.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/SandboxTierCeiling.kt)：第三方套件永遠拿不到的上限。
+- [`UpdateGrantContinuation.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/UpdateGrantContinuation.kt)：更新時沿用授權（D4）。
+- [`PluginDeveloperMode.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginDeveloperMode.kt)：開發者模式。
+- [`PluginNamePolicy.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginNamePolicy.kt)：名稱政策。
+- [`sandbox/SandboxBridgeDispatcher.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxBridgeDispatcher.kt)：bridge 操作與權限檢查。
+- [`PluginVerifier.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginVerifier.kt)：SHA-256 與 execution grant。
+- [`FilePluginPackageStore.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/FilePluginPackageStore.kt)：獨立、content-addressed、原子 package 儲存。
+- [`ExtensionV2Contracts.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/v2/ExtensionV2Contracts.kt)：內容、capability 與 Host facade。
+- [`PluginSystemEventContracts.kt`](../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/events/PluginSystemEventContracts.kt)：event wire、Host permission 與 limits。
 - [`fixtures/plugin-contract/v1/`](../fixtures/plugin-contract/v1/README.md)：App 與作者 CLI 共用的位元組級契約測試向量。
 - [插件系統事件接口架構](PLUGIN_SYSTEM_EVENT_ARCHITECTURE.md)：完整 V1 event 威脅模型與 handler 設計。
 - [統一插件儲存庫契約](UNIFIED_PLUGIN_REPOSITORY.md)：repository 格式與本地 fixture。

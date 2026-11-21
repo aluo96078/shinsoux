@@ -1,13 +1,16 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.ui.ShellStateStore
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.ui.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
-import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.ImportedDocument
@@ -100,9 +103,11 @@ public const val IOS_READER_VOLUME_KEY_TRACE_NOTIFICATION =
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 internal class IosAppServices(
+    /** Owned by [IosApp], which fills it from launch. */
+    private val pendingDeepLinks: RetainedDeepLinkQueue,
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
-    override val contentFeatures: ContentFeatureRuntime? = null,
+    override val contentFeatures: ContentFeatures? = null,
     override val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
     override val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker? = null,
     override val tracking: TrackingCoordinator? = null,
@@ -110,7 +115,6 @@ internal class IosAppServices(
     override val sync: SyncV3Service? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
 ) : ShinsouAppServices {
-    private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val readerVolumeKeyChannel = Channel<ReaderVolumeKeyEvent>(capacity = Channel.BUFFERED)
     private var readerVolumeKeyEventSink: ReaderVolumeKeyEventSink? = null
     private var readerVolumeKeyTraceSequence: Long = 0L
@@ -128,10 +132,9 @@ internal class IosAppServices(
     override val systemBackEvents: Flow<Unit> = systemBackChannel.receiveAsFlow()
     override val systemBackGestureEvents: Flow<SystemBackGestureEvent> = systemBackGestureChannel.receiveAsFlow()
     override val appLifecycle: StateFlow<AppLifecycleState> = lifecycleState
+    override val shellStateStore: ShellStateStore = IosShellStateStore
     override val securityCapabilities: PlatformSecurityCapabilities
         get() = mobileSecurityCapabilities(deviceOwnerAuthenticationAvailable())
-
-    fun emitDeepLink(link: ShinsouDeepLink): Boolean = pendingDeepLinks.tryEnqueue(link)
 
     override fun deepLinkHandled(link: ShinsouDeepLink) {
         pendingDeepLinks.handled(link)
@@ -355,7 +358,7 @@ internal class IosAppServices(
         )
         val temporaryPath = temporaryUrl.path?.toPath() ?: return false
         val written = withContext(Dispatchers.Default) {
-            runCatching {
+            runCatchingCancellable {
                 val output = FileSystem.SYSTEM.sink(temporaryPath).buffer()
                 try {
                     source.writeCheckedTo(BinaryDocumentExportSink { chunk -> output.write(chunk) })
@@ -363,7 +366,7 @@ internal class IosAppServices(
                 } finally {
                     output.close()
                 }
-            }.isSuccess
+            }.onFailure { Log.warn("Platform", it) { "Writing a binary document for export failed" } }.isSuccess
         }
         if (!written) {
             NSFileManager.defaultManager.removeItemAtPath(temporaryUrl.path.orEmpty(), error = null)
@@ -609,7 +612,7 @@ private fun NSURL.readImportedDocument(
                 },
             )
         } finally {
-            runCatching { handle.closeFile() }
+            runCatching { handle.closeFile() } // closing a read-only handle; nothing to lose
         }
     } catch (error: ImportedDocumentReadException) {
         throw error
@@ -649,7 +652,7 @@ private class IosUrlImportedDocumentSource(
                     throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
                 }
             } finally {
-                runCatching { handle.closeFile() }
+                runCatching { handle.closeFile() } // closing a read-only handle; nothing to lose
             }
             return output
         } catch (error: ImportedDocumentReadException) {

@@ -6,10 +6,8 @@ import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
 import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
-import dev.shinsou.kmp.plugin.sandbox.AndroidSandboxTransportProvider
 import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.sandbox.SandboxRuntimeFactory
-import dev.shinsou.kmp.plugin.sandbox.androidSandboxLifecycle
+import dev.shinsou.kmp.plugin.sandbox.androidSandboxRuntimeFactory
 import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
@@ -56,10 +54,7 @@ internal class AndroidAppRuntime private constructor(context: Context) {
             // ADR-0002 §10.1: every package runs in an isolated process
             // of its own (S2).
             runtimeFactory = SandboxOnlyScriptPluginRuntimeFactory(
-                SandboxRuntimeFactory(
-                    transports = AndroidSandboxTransportProvider(applicationContext),
-                    lifecycle = androidSandboxLifecycle(applicationContext, sandboxScope),
-                ),
+                androidSandboxRuntimeFactory(applicationContext, sandboxScope),
             ),
             autoBackupService = sharedState.autoBackups,
             contentInfrastructure = sharedState.contentInfrastructure,

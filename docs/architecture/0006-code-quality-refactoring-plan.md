@@ -426,26 +426,26 @@ app（組裝、平台入口）
 - 下載佇列系統暫停標記的寫入順序：`BackgroundDownloadCoordinator.kt:187-199` 是先落盤再暫停，順序正確。
 - EPUB 整檔讀入記憶體：產品路徑使用 `BoundedEpubArchiveExtractor`，逐項讀取並驗證後釋放。
 
-## 14. 實施進度（2026-11-17）
+## 14. 實施進度（2026-11-18）
 
 | 項目 | 狀態 | 說明 |
 | --- | --- | --- |
 | R1-1～R1-6 | 完成 | |
 | R2-1～R2-6 | 完成（有偏離） | detekt baseline 在 `config/detekt/`，R4-4 搬移後已重新產生。「只減不增」由 `scripts/ci/check_baselines_shrink.sh` 在 PR 與推送到 master 時檢查（force push 後找不到前一個 commit 時只警告）；detekt baseline 與依賴 allowlist 比條目數（搬移會改條目名稱），i18n 清單比條目內容。R2-4：`println` 還剩兩處刻意寫到 stdout 的輸出（桌面 `--verify-runtime` 的結果、iOS `MANGABENCH` 基準輸出）。R2-6：圖示只有 Android 改為建置時複製，iOS 仍是提交的副本，由 `AppIconCopiesTest` 把關。R2-3：`checks.yml` 的 Android 單元測試在 macOS runner 跑（libsodium host library 在 Linux 載不進來）；`release.yml` 只在推 tag 時跑 checks，重建既有 tag 時跳過（舊 tag 的原始碼沒有這些檢查） |
 | R3-1～R3-3、R3-6 | 完成 | 全文索引遇到較新格式時依 R3-1 第 3 點清空重建（`rebuildWhenNewer`），不回報 `SchemaTooNewException`；代價是降版後要重建一次索引，索引是衍生資料，不會遺失使用者資料。第 11 節「首次遷移前自動備份資料庫檔」已補上：開啟 store 前若有表群將升級，先把資料庫檔（含未併入的 WAL）複製為 `<檔名>.before-upgrade`（是開啟 store 前的狀態；Android/iOS 驅動開檔時已先跑過 `PlatformContentDatabaseSchema` 的舊建表步驟），Android 的雲端備份與裝置轉移規則已排除這些副本，每次升級覆寫為最近一次；複製失敗只記錄、不阻擋啟動，也不留下半成品；`<副本>.of` 記錄副本對應的各表群格式，以及複製後寫進資料庫 `shinsou_schema_versions` 的一個隨機標記（`before-upgrade-copy` 列）；同一個資料庫仍是那些格式時不重複複製（Android 背景 worker 只開一個 store 的情況），換成另一個資料庫（例如手動還原同格式的舊檔）則標記不符，會重新複製。複製目前在啟動執行緒同步進行，資料庫很大時會拖慢升級後的第一次啟動，移到背景與 R3-4 的 dispatcher 切換一起做。可重建元件遇到任何不同格式（較新或較舊）都清空重建 |
-| R3-4 | 部分 | 連線設定已集中；桌面端的 `foreign_keys = ON` 實際不生效（`DesktopSqliteDriver` 每條語句開新連線，連線層級設定不保留；WAL 記在檔案裡，`synchronous` 也是連線層級，但 sqlite-jdbc 的預設值本來就是 FULL），刪除路徑都明確刪子表、不靠 cascade，所以沒有資料遺失；啟用前要先對既有資料庫跑 `PRAGMA foreign_key_check`，另案處理；把 DB 呼叫移出主執行緒的 dispatcher 切換，待第 13 節第 1 項的主執行緒探測結果再做 |
-| R3-5 | 部分 | 匯出已串流；寫入端改為檔案 sink 串流列為後續 |
-| R4-1 | 完成（有偏離） | 共用型別放在 `contract`、`features`、`buildinfo`，而不是計畫中的 `domain/model` |
-| R4-2 | 部分 | `ShinsouAppServices` 拆成 9 個 host 介面、`BrowseCallbacks` 拆成 9 個子介面，每個至多 15 個成員（`ServiceInterfaceSizeTest` 把關）；畫面改為只接收所需的小介面尚未做 |
-| R4-3 | 未做 | XL，需要改動邏輯並補測試，另案進行 |
-| R4-4 | 部分 | 只做不改程式碼的檔案搬移；仍超過 1500 行：`ShinsouApp.kt`（`ShinsouAppContent`，依賴 R4-3）、`PluginManager.kt`、`PluginUiAdapter.kt`、`SqlDriverContentTransactionStore.kt`、`SyncV3Service.kt`，需要真正的類別拆分 |
+| R3-4 | 完成（有未驗證項） | 桌面連線改用連線屬性帶入 `foreign_keys=true`、`synchronous=FULL`，每條語句的新連線都生效（有測試）；**尚未對既有資料庫跑 `PRAGMA foreign_key_check`**，舊庫若有違反外鍵的列，之後的寫入可能失敗。`ContentFoundationRuntime` 以注入的 `ioDispatcher` 執行；debug 建置在主執行緒執行內容 SQL 會丟 `MainThreadContentSqlException`（`ContentSqlThreadGuard`，桌面可用 `-Dshinsou.debug=false` 關閉）。三個平台的啟動（開庫、遷移、升級前副本）都已移出主執行緒，UI 寫入 store 的操作經 `UserActions` 在背景的序列 dispatcher 執行。仍在主執行緒的已知兩處：`ShinsouApp.kt`「略過此版本」的 `updateSettings`、備份頁 `LaunchedEffect` 的 `listBackups()`。App 尚未手動執行，主執行緒探測沒有實機觸發過 |
+| R3-5 | 部分 | 匯出已串流；`AppFileSystem.writeAtomically(path, writer: (BufferedSink) -> Unit)` 與 `SnapshotBackupService.encodeTo` 讓寫入端直接寫檔案 sink。`PortableContentBackupV2` 的 manifest 與 portable-state 仍在記憶體中編碼 |
+| R4-1 | 完成（有偏離） | 共用型別放在 `contract`、`domain/model`、`buildinfo`；`features` 套件已不存在（`ContentFeatureRuntime` 移到 `app`，`ui` 改用 `ui/ContentFeatures` 介面） |
+| R4-2 | 大致完成 | `ShinsouAppServices` 拆成 9 個 host 介面、`BrowseCallbacks` 拆成 9 個子介面（`ServiceInterfaceSizeTest` 把關）；畫面改為接收小介面或參數資料類（`ReaderScreen` 36→8 個參數、`BrowseScreen` 27→8、`ExtensionV2PublicationPane` 28→6）。`BrowseScreen` 仍接收整個 `BrowseCallbacks`（它確實用到全部 9 個子介面，再分給子畫面窄介面）；`ShinsouAppServices` host 介面的預設實作仍在 |
+| R4-3 | 完成（未實機驗證） | `navigation/Destination`、`AppNavigator`；狀態持有者 `ShinsouAppState`、`ReaderSessionController`、`PluginReviewCoordinator`、`LibrarySelectionState`、`TitleNavigationController`、`AppLockController`、`AppMessages`，以及畫面層的 `ReaderScreenState`、`SourceCatalogueState`、`ExtensionManagementState`、`BrowseScreenState`、`ExtensionPublicationState`，都有 commonTest。`ShinsouApp.kt` 2358→425 行，`ShinsouAppContent` 93 行，`ui/` 無 `!!`。process death：以 `rememberSaveable` 保存分頁、More 頁、詳情頁、閱讀器 session 與頁碼、選取；不保存 URL、headers、cookies、tokens，隱私模式不保存閱讀器狀態；還原時先對照快照驗證，再走與點擊相同的入口。Browse 內的 overlay（來源目錄、全域搜尋、擴充作品頁）不會跨 process death 還原。仍超過大小限制、未拆的畫面：`MoreScreens.kt`、`UnifiedContentReader.kt`、`ShinsouAppPanes.kt`、`LibraryScreen.kt`、`SettingsScreen.kt`、`NovelReader.kt`（1089～1432 行）。三個平台都沒有手動執行過，process death 還原沒有在裝置上實測 |
+| R4-4 | 完成 | `PluginManager.kt` 3044→535、`PluginUiAdapter.kt` 2777→218、`SqlDriverContentTransactionStore.kt` 2744→989、`SyncV3Service.kt` 1962→約 715、`ShinsouApp.kt` 2358→425，各自拆成職責單一的類別（檔名見各套件）。產品程式碼已無超過 1500 行的檔案 |
 | R4-5 | 完成 | iOS 外掛請求逾時由 30 秒改為 45 秒，與 JVM 一致 |
-| R4-6 | 部分 | 語系檔已依語言拆檔；`I18nCoverageRatchetTest` 以 `config/i18n/` 的兩份清單（缺 zh-TW 10 項、未使用 208 項）作只減不增的護欄，只涵蓋以字面值呼叫 `text("…")` 的鍵（以變數傳入的約 77 處不受保護，清單中也混有少數非 i18n 的 `text(` 呼叫）；具型別的鍵尚未做 |
+| R4-6 | 完成（有過渡項） | `enum class StringKey(val english: String)`（1291 個鍵），呼叫端用 `strings.text(StringKey.X, args)`；`I18nKeyTablesTest` 取代 ratchet，`config/i18n/` 已刪除。`AuthoredMessages.kt` 的 66 則訊息仍以英文字串為鍵，屬過渡 |
 | R4-7 | 完成 | 只有「立即同步」按鈕用 `tryLock` 式等待；`syncNow` 仍會等鎖 |
 | R4-8 | 完成 | Android 的 `AndroidChallengeState` 保留為行程範圍 |
-| R5-1 | 未做 | 已建立 `build-logic/` 作為之後 convention plugin 的基礎 |
-| R5-2 | 部分 | 三個 task 類別移到 `build-logic`（`shinsou.codegen`）；原生建置 plugin、fetch task 的輸入輸出、JavaFX/bytedeco 座標移入版本目錄、降到 300 行以下尚未做 |
-| R5-3 | 待決 | 發佈策略決策，見 R5-3 |
+| R5-1 | 完成 | 模組由下往上：`:core` → `:domain` → `:data-content`、`:data-repository` → `:feature-sync`、`:feature-library`、`:feature-reader`、`:feature-translation`、`:feature-plugin`（feature 之間互不依賴）→ `:ui` → `:composeApp`（只剩 `app`、`desktop`、平台入口與打包）。`acquisition` 併入 `content/acquisition`，`migration/shuyue` 移到 `backup/shuyue`。分層由編譯器、`moduleDependenciesPointDown`、`packagesLiveInTheirModule` 把關，兩份 allowlist 皆為空。detekt baseline 改為 `config/detekt/<模組>/baseline-<種類>.xml`，`check_baselines_shrink.sh` 跨模組加總並逐規則比較。cinterop 由擁有 `.def` 的模組負責；Android 沙箱原生建置與 isolated-process service 移到 `:feature-plugin`（device test 因此跑 library 的測試 APK）。`explicitApi()` 未啟用。未驗證：裝置上的 connected 測試、release 簽章、Windows 打包、CI workflow 實跑 |
+| R5-2 | 完成（有未做項） | `composeApp/build.gradle.kts` 1142→168 行；convention plugin：`shinsou.kmp`、`shinsou.kmp-library`、`shinsou.codegen`、`shinsou.native-libraries`、`shinsou.native-interop`、`shinsou.ios-framework`、`shinsou.desktop-app`、`shinsou.android-app`、`shinsou.quality`、`shinsou.testing`。刻意沒做（當時要求行為完全不變）：Exec shell 字串改具型別 task、fetch task 宣告輸入輸出、JavaFX/bytedeco 座標與 ndkVersion 移入版本目錄、`-j 8` 改依處理器數 |
+| R5-3 | 完成（未實機驗證） | 2026-11-18 決策：發佈 release 變體並啟用 R8（`isMinifyEnabled`、`isShrinkResources`）。keep 規則跟著模組走：`core/consumer-rules.pro`（JNA、libsodium）、`feature-plugin/consumer-rules.pro`（`SandboxNative`、`SandboxProcessService`、`SandboxZygotePreload`、`ISandboxProcess`）、`feature-translation/consumer-rules.pro`（`NativeTranslationCore`、ONNX Runtime、OpenCV）。以 mapping、dexdump 與 `.so` 的 `Java_` 符號比對做靜態驗證。CI 沒有 release key，release 變體沿用原本的公開測試 signer，可覆蓋升級；發佈檔名仍是 `…-android-debug.apk`。R8 mapping 附加在 GitHub Release 上（`…-android-r8-mapping.txt`）。AGP 8.11 內附的 R8 讀不了 Kotlin 2.4 metadata，約 600 行警告。尚未在實機上執行 |
 
 搬移以外的行為變更（快照提交 `8680f35` 與其後），審閱時不應視為純搬移：
 
@@ -459,3 +459,48 @@ app（組裝、平台入口）
 - 漫畫：譯圖只在仍是畫面上那一章時寫入；「不是日文」的猜測只有讀到足量文字才記住整部作品。
 - 雲端翻譯：429 等待中被取消時歸還已計的用量；「額度用盡」在回應前 8000 字內比對。
 - `DependencyDirectionTest` 也檢查對根套件（進入點）符號的引用；`IosSilentAudioKeepAlive` 因此移到 `download` 套件。
+
+
+2026-11-18 這一輪的行為變更：
+
+- `ShinsouComposition.close()` 在 `NonCancellable` 下逐步關閉，單一步驟失敗只記錄、不中斷其餘步驟。
+- 記錄：所有吞掉例外的 catch 都改為記錄（固定英文訊息，不含 URL、cookie、token、標題）；登入失敗只記錄例外類別名。iOS 的 `PlatformLogger` 原本把 Kotlin 字串當 `NSLog` 可變參數，任何一次記錄都可能崩潰，已改為單一格式字串。
+- 取消：`ExtensionRepositoryClient`（3 處）與 `PluginSystemEventDispatcher.process` 原本會吞掉 `CancellationException`，已改為往外傳。
+- 同步：`SyncV3Service.syncFromUser()` 是唯一公開的手動入口；同步進行中與伺服器要求升級（426）各有專屬訊息。
+- 內容資料庫：桌面啟用外鍵；debug 建置的主執行緒 SQL 探測；`namedQuery` 的欄位由 SQL 推得。
+- 啟動：三個平台先顯示讀取畫面，在背景開庫；桌面的讀取視窗與主視窗是兩個 Window；桌面關閉不再以 `runBlocking` 卡住 EDT；iOS 在 App 開好前 `isReaderVolumeKeyConfigured()` 回傳 false，背景任務在啟動時註冊、執行時才等 App 開好。
+- UI：類型化本地列的封面、內容類型、分享與評論按鈕要等一次背景讀取才出現；寫入 store 的操作改在背景序列執行。
+- Android 下載 job 在 schema 過新時會先短暫發出通知，再由 `jobFinished` 移除（原本直接 `return false`）。
+- 沒有接上下載功能時，`RepositoryPluginCoordinator` 不再讀離線章節（正式環境一定會接上）。
+- IP 位址封鎖（`network/NetworkAddressPolicy.kt`）改寫為 CIDR 表格；以約 30 萬筆 IPv4/IPv6 位址與舊實作比對一致；之後三方審查把 TEST-NET 附近的三段 `/16` 收窄為 RFC 保留的 `/24`（見本節最後），這部分刻意與舊實作不同。
+- 模組化後改為 public 的宣告約 120 項（跨模組所需）；`SourceWebChallengeCapability` 曾因鑄造點在 `:feature-plugin`、型別在 `:domain` 而改為 public，2026-11-18 決策後已搬到 `:feature-plugin`，建構子恢復 `internal`。因上層測試而公開：`ExtensionPublicationPageV2`、`ExtensionUnitSelectionV2` 的建構子、`projectedPluginSourceId`、`injectTransactionFailureForTesting`、`beginStageCountForTesting`、22 個 ShuYue v1 備份 model（之後依 2026-11-18 決策以 `@TestOnlyApi` 收回 `internal`）。
+
+判定為不成立、沒有做的審查項目：
+
+- 「測試用 DOM shim 與產品重複」：iOS 測試執行期用的就是產品的 bootstrap。
+- 「搬移 `IosJavaScriptBootstrap.kt`」：現行位置是 sandbox 建置腳本引用的來源。
+
+已知未解：
+
+- `IosDrawnPageDisplayTest.aDrawnPageDecodesInTheReadersImageLoader` 在 iOS 模擬器失敗（canary：iOS 的 Skia 現在讀得了 JPEG，`forDisplay` 可以直接放行），與本輪改動無關。
+- `PluginSystemEventGateway` 的 modal worker Job 取消設計；`lockedCycle` 讀時鐘未持 `clockLock`。
+- iOS 的內容庫主執行緒檢查目前只記錄、不拋例外：發佈的 IPA 以 Debug configuration 封存，`Platform.isDebugBinary` 分不出開發版與使用者安裝的版本。要恢復拋例外，需要只有開發建置才設的旗標。
+
+2026-11-18 決策：
+
+- Android 沙箱原生建置與 isolated-process service 維持在 `:feature-plugin`。
+- `SourceWebChallengeCapability`、`SourceWebChallengeRequest` 移到 `:feature-plugin` 的 `dev.shinsou.kmp.plugin` 套件，建構子恢復 `internal`。
+- 因上層測試而公開的 API 收回 `internal`。做法是 `@RequiresOptIn(level = ERROR)` 的 `@TestOnlyApi`（`core/.../testing/TestOnlyApi.kt`），每個模組一個 `<模組>TestAccess` 入口，測試以 `@file:OptIn` 開啟；`TestOnlyApiOptInTest` 禁止非測試 source set opt-in。能往下搬的測試搬回擁有模組。沒有另開 test-fixtures 模組（沒有跨模組共用的 builder，另開模組反而要讓其 commonMain opt-in）。
+- iOS 模擬器測試不擋發佈。
+- Kover：合併報告的 line coverage 下限 `MERGED_LINE_COVERAGE_FLOOR = 75`（`build-logic/.../QualityPlugin.kt`，只能往上調；本機實測 75.94%，估計 Linux CI 約 75.35%），`checks.yml` 跑 `koverVerifyDesktop`。
+
+2026-11-18 三方審查（grok-4.7、gpt-6.2-sol、Fable 5.2）後的修正：
+
+- `release.yml` 依來源是否有 `composeApp/proguard-android-rules.pro` 選 APK 變體：R5-3 之前的 tag 照原樣以 debug 變體重建，不附 R8 mapping；新版的 mapping 是 Release 資產（MIT 開源，不多揭露什麼），發佈說明依有無 mapping 描述 Android 檔案。
+- 已確認的內容備份還原一旦開始就跑完（`NonCancellable`），完成狀態在回到呼叫端前寫入。
+- `SyncV3Service`：所有公開入口（含社群、裝置、功能旗標）經 `offCaller` 離開呼叫端執行緒；背景 flush 結束時 App 已回前景就不關串流。
+- 非同步開啟作品改用 `AppNavigator.pageChanges` 判斷過期（離開再回來也算）；`TitleOpenOutcome` 讓狀態還原知道何時結束，`ShellStateKeeper` 在還原結束前保存的仍是待還原的狀態。
+- `Log`：遮蔽也檢查 suppressed、超過 16 個例外一律遮蔽、網路類例外依類別遮蔽、`QuotesExternalText`（`SyncApiException`）只記錄狀態碼與錯誤碼。
+- 桌面：關閉時先隱藏視窗；開庫途中關掉讀取視窗會等開完再正常關閉。
+- `TestOnlyApiOptInTest` 改為名稱檢查：產品碼除標記本身與 `*TestAccess.kt` 外不得出現 `TestOnlyApi` 或 `TestAccess`。
+- `NetworkAddressPolicy`：`192.0.0.0/24`、`192.0.2.0/24`、`198.51.100.0/24`、`203.0.113.0/24`，不再封鎖整段 `/16`。

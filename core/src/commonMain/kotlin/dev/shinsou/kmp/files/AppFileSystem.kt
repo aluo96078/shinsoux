@@ -1,0 +1,65 @@
+package dev.shinsou.kmp.files
+
+import okio.Buffer
+import okio.BufferedSink
+
+/** Sandboxed application files used for downloaded pages, local sources and backups. */
+interface AppFileSystem {
+    suspend fun write(relativePath: String, bytes: ByteArray)
+
+    /**
+     * Replaces [relativePath] without exposing a partially-written destination.
+     *
+     * Production file systems override this with their platform's atomic replace primitive. The
+     * default keeps in-memory/test implementations source-compatible.
+     */
+    suspend fun writeAtomically(relativePath: String, bytes: ByteArray) = write(relativePath, bytes)
+
+    /**
+     * [writeAtomically] for content produced by [writer] straight into the file (R3-5), so a large
+     * backup is never held in memory as one array. Returns the bytes written. A [writer] that
+     * fails leaves the destination as it was. The default buffers in memory and calls
+     * [writeAtomically], for in-memory/test implementations; production file systems stream.
+     */
+    suspend fun writeAtomically(relativePath: String, writer: (BufferedSink) -> Unit): Long {
+        val buffer = Buffer()
+        writer(buffer)
+        val size = buffer.size
+        writeAtomically(relativePath, buffer.readByteArray())
+        return size
+    }
+
+    suspend fun read(relativePath: String): ByteArray?
+    suspend fun exists(relativePath: String): Boolean
+    suspend fun delete(relativePath: String): Boolean
+    suspend fun deleteTree(relativeDirectory: String): Boolean
+    suspend fun list(relativeDirectory: String): List<String>
+
+    /**
+     * Lists at most [maximumEntries], failing instead of materializing an unbounded directory.
+     * Production file systems override this with an early-stopping traversal.
+     */
+    suspend fun list(relativeDirectory: String, maximumEntries: Int): List<String> {
+        require(maximumEntries >= 0) { "Maximum directory entry count cannot be negative" }
+        return list(relativeDirectory).also { entries ->
+            require(entries.size <= maximumEntries) { "Directory contains too many files" }
+        }
+    }
+
+    fun uri(relativePath: String): String
+
+    /** Returns a sandboxed native path when a platform API needs direct file-system access. */
+    fun absolutePath(relativePath: String): String? = null
+}
+
+fun validatedRelativePath(value: String): String {
+    val normalized = value.replace('\\', '/').trim('/')
+    require(normalized.isNotBlank()) { "Path cannot be empty" }
+    require(normalized.split('/').none { it.isBlank() || it == "." || it == ".." }) {
+        "Unsafe relative path: $value"
+    }
+    require(!normalized.contains('\u0000') && !normalized.contains("://")) {
+        "Unsafe relative path: $value"
+    }
+    return normalized
+}

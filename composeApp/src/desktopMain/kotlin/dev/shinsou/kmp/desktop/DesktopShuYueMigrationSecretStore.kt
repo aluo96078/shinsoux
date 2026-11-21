@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.desktop
 
-import dev.shinsou.kmp.migration.shuyue.KeyValueShuYueMigrationSecretStore
-import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
+import dev.shinsou.kmp.backup.shuyue.KeyValueShuYueMigrationSecretStore
+import dev.shinsou.kmp.backup.shuyue.ShuYueMigrationSecretStore
 import java.nio.file.Path
 import dev.shinsou.kmp.files.DesktopAppDirectories
 

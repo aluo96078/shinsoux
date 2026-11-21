@@ -3,7 +3,9 @@ package dev.shinsou.kmp
 import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
 import dev.shinsou.kmp.download.BackgroundDownloadStatus
 import dev.shinsou.kmp.download.IosSilentAudioKeepAlive
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCObjectVar
@@ -62,13 +64,16 @@ import platform.UIKit.UIBackgroundTaskInvalid
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class IosDownloadBackgroundKeeper(
-    private val downloads: BackgroundDownloadCoordinator,
+    /** The app's download queues once its stores are open; null before (tasks register at launch). */
+    private val downloads: () -> BackgroundDownloadCoordinator?,
     private val scope: CoroutineScope,
     /** Starts the app core (idempotent) and waits until both queues are restored. */
     private val startApp: suspend () -> Unit,
     private val strings: () -> ShinsouStrings,
     /** The user's opt-in to keep downloading with silent audio; read whenever background time is needed. */
     private val silentAudioEnabled: () -> Boolean = { false },
+    /** The stores can never open (a newer library): no catch-up run is asked for. */
+    private val cannotOpen: () -> Boolean = { false },
 ) {
     private val scheduler: BGTaskScheduler get() = BGTaskScheduler.sharedScheduler
     private val foreground = MutableStateFlow(true)
@@ -109,7 +114,9 @@ internal class IosDownloadBackgroundKeeper(
         }
     }
 
+    /** Called once the app's stores are open. */
     fun start() {
+        val downloads = downloads() ?: return
         scope.launch {
             combine(foreground, downloads.status, systemRuns) { visible, status, runs ->
                 !visible && status != null && runs == 0
@@ -187,7 +194,7 @@ internal class IosDownloadBackgroundKeeper(
         taskId = UIApplication.sharedApplication.beginBackgroundTaskWithName("shinsou-downloads") {
             // Called on the main thread just before suspension; skipped if the app came back first.
             scope.launch {
-                downloads.suspendForSystem(stillApplies = { !foreground.value })
+                downloads()?.suspendForSystem(stillApplies = { !foreground.value })
                 requestCatchUpIfNeeded()
                 withContext(Dispatchers.Main) { end() }
             }
@@ -204,11 +211,11 @@ internal class IosDownloadBackgroundKeeper(
 
     private fun submitContinued() {
         if (!continuedRegistered || continuedPending || continuedRunning) return
-        val status = downloads.currentStatus() ?: return
+        val status = downloads()?.currentStatus() ?: return
         val text = strings()
         val request = BGContinuedProcessingTaskRequest(
             identifier = CONTINUED_TASK_IDENTIFIER,
-            title = text.text("Downloading {0} / {1}", status.done, status.total),
+            title = text.text(StringKey.DOWNLOADING_X_X, status.done, status.total),
             subtitle = subtitle(status, text),
         ).apply {
             // Run now or not at all: queued for later it would start when the work may be over,
@@ -230,6 +237,11 @@ internal class IosDownloadBackgroundKeeper(
                 continuedRunning = true
             }
             // The queues themselves: a buffered copy could still hold an earlier "nothing to do".
+            val downloads = downloads()
+            if (downloads == null) {
+                run.finish(success = true)
+                return@launch
+            }
             downloads.liveStatus.collect { status ->
                 if (status == null) {
                     run.finish(success = true)
@@ -243,7 +255,7 @@ internal class IosDownloadBackgroundKeeper(
             scope.launch {
                 work.cancelAndJoin()
                 // Stopped from its progress UI while the app is on screen: the downloads go on.
-                downloads.suspendForSystem(stillApplies = { !foreground.value })
+                downloads()?.suspendForSystem(stillApplies = { !foreground.value })
                 requestCatchUpIfNeeded()
                 run.finish(success = false)
             }
@@ -257,7 +269,7 @@ internal class IosDownloadBackgroundKeeper(
             task.progress.totalUnitCount = status.total.toLong()
             task.progress.completedUnitCount = status.done.toLong()
             task.updateTitle(
-                text.text("Downloading {0} / {1}", status.done, status.total),
+                text.text(StringKey.DOWNLOADING_X_X, status.done, status.total),
                 subtitle = subtitle(status, text),
             )
         }
@@ -270,7 +282,7 @@ internal class IosDownloadBackgroundKeeper(
             works.size == 1 -> works.single().let { work ->
                 listOfNotNull("${work.title}  ${work.done} / ${work.total}", work.chapter).joinToString(" · ")
             }
-            works.size > 1 -> text.text("Downloading {0} titles", works.size)
+            works.size > 1 -> text.text(StringKey.DOWNLOADING_X_TITLES, works.size)
             else -> status.current ?: text.downloads
         }
     }
@@ -278,10 +290,13 @@ internal class IosDownloadBackgroundKeeper(
     // Catch-up processing task ---------------------------------------------------------------------
 
     private suspend fun requestCatchUpIfNeeded() {
-        if (!catchUpRegistered || foreground.value) return
+        val downloads = downloads()
+        if (!catchUpRegistered || foreground.value || cannotOpen()) return
         // Work still waiting unpaused (its pause mark could not be saved) restarts on any launch,
-        // a catch-up launch included, so it asks for one too.
-        if (downloads.currentStatus() == null && !downloads.hasSystemPausedWork()) return
+        // a catch-up launch included, so it asks for one too. Before the stores are open (a
+        // catch-up launch that expired while starting) what waits is unknown: a run is asked for
+        // all the same, and it checks.
+        if (downloads != null && downloads.currentStatus() == null && !downloads.hasSystemPausedWork()) return
         val request = BGProcessingTaskRequest(CATCH_UP_TASK_IDENTIFIER).apply {
             requiresNetworkConnectivity = true
             requiresExternalPower = false
@@ -303,11 +318,12 @@ internal class IosDownloadBackgroundKeeper(
             }
             val started = try {
                 startApp()
-                downloads.resumeAfterSystem()
+                downloads()?.resumeAfterSystem()
                 true
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Download", logged) { "Background catch-up run could not start the app; keeping resume marks for the next run" }
                 false
             }
             if (!started) {
@@ -317,14 +333,14 @@ internal class IosDownloadBackgroundKeeper(
                 return@launch
             }
             // Bounded by the task's own expiration, which pauses whatever is left.
-            downloads.liveStatus.first { it == null }
+            downloads()?.liveStatus?.first { it == null }
             run.finish(success = true)
         }
         run.onFinish = { work.cancel() }
         task.expirationHandler = {
             scope.launch {
                 work.cancelAndJoin()
-                downloads.suspendForSystem(stillApplies = { !foreground.value })
+                downloads()?.suspendForSystem(stillApplies = { !foreground.value })
                 // Asks for the next run with whatever is still left.
                 requestCatchUpIfNeeded()
                 run.finish(success = false)

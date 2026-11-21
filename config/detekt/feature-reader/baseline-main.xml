@@ -1,0 +1,94 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:ContentTextToSpeech.kt:previous == '\n' || previous == '\r' || previous == '.' || previous == '!' || previous == '?' || previous == '\u3002' || previous == '\uff01' || previous == '\uff1f' || previous == '\uff1b'</ID>
+    <ID>ComplexCondition:EpubRenderer.kt:bytes.size &gt;= 3 &amp;&amp; bytes[0] == 0xef.toByte() &amp;&amp; bytes[1] == 0xbb.toByte() &amp;&amp; bytes[2] == 0xbf.toByte()</ID>
+    <ID>ComplexCondition:EpubRenderer.kt:index &lt; source.length &amp;&amp; !source[index].isWhitespace() &amp;&amp; source[index] != '/' &amp;&amp; source[index] != '&gt;'</ID>
+    <ID>ComplexCondition:EpubRenderer.kt:opening + 1 &gt;= source.length || source[opening + 1] != '/' || nameStart + elementName.length &gt; source.length || !source.regionMatches(nameStart, elementName, 0, elementName.length, ignoreCase = true)</ID>
+    <ID>ComplexCondition:EpubRenderer.kt:openingHeadEnd != null &amp;&amp; tagName == "head" &amp;&amp; openingHeadDepth == openElements.size &amp;&amp; openElements.lastOrNull() == "head"</ID>
+    <ID>ComplexCondition:EpubRenderer.kt:url.length &gt; MAX_PRIVATE_PUBLICATION_URL_LENGTH || url.any { it.isISOControl() || it.isWhitespace() } || '\\' in url || !url.startsWith(publicationRootUrl)</ID>
+    <ID>ComplexCondition:EpubUrlStreamHandlerProvider.kt:index &lt; tag.length &amp;&amp; !tag[index].isWhitespace() &amp;&amp; tag[index] != '&gt;' &amp;&amp; !(tag[index] == '/' &amp;&amp; index + 1 &lt; tag.length &amp;&amp; tag[index + 1] == '&gt;')</ID>
+    <ID>ComplexCondition:EpubUrlStreamHandlerProvider.kt:index &gt;= tag.length || tag[index] == '/' || tag[index] == '!' || tag[index] == '?'</ID>
+    <ID>ComplexCondition:EpubUrlStreamHandlerProvider.kt:nameEnd &lt; html.length &amp;&amp; html.regionMatches(nameStart, elementName, 0, elementName.length, ignoreCase = true) &amp;&amp; (html[nameEnd].isWhitespace() || html[nameEnd] == '&gt;')</ID>
+    <ID>CyclomaticComplexMethod:ContentTextToSpeech.kt:private fun splitText: List&lt;IntRange&gt;</ID>
+    <ID>CyclomaticComplexMethod:DesktopTextToSpeechEngine.kt:DesktopTextToSpeechEngine$override suspend fun speak: PlatformSpeechResult</ID>
+    <ID>CyclomaticComplexMethod:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$fun createPanel: JFXPanel</ID>
+    <ID>CyclomaticComplexMethod:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun handlePagedScroll: Boolean</ID>
+    <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlHead: HtmlHeadScan</ID>
+    <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlTag: HtmlMarkupTag?</ID>
+    <ID>CyclomaticComplexMethod:EpubUrlStreamHandlerProvider.kt:internal fun scopeDesktopEpubHtml: String</ID>
+    <ID>CyclomaticComplexMethod:EpubUrlStreamHandlerProvider.kt:private fun parseHtmlStartTag: ParsedHtmlStartTag?</ID>
+    <ID>CyclomaticComplexMethod:LocalArchive.kt:private fun compareNaturalPaths: Int</ID>
+    <ID>CyclomaticComplexMethod:LocalContentManager.kt:LocalContentManager$override suspend fun importLocalDocuments: List&lt;LocalImportResult&gt;</ID>
+    <ID>CyclomaticComplexMethod:LocalContentManager.kt:LocalContentManager$private suspend fun extractArchivePages: List&lt;LocalPagePayload&gt;</ID>
+    <ID>DoubleMutabilityForCollection:EpubBrowserView.kt:EpubBrowserDocumentState$private var committedRequestsByDocument: MutableMap&lt;Int, EpubRenderRequest&gt; = linkedMapOf(initialRequest.documentIndex to initialRequest)</ID>
+    <ID>DoubleMutabilityForCollection:EpubBrowserView.kt:EpubBrowserDocumentState$private var pendingRequestsByDocument: MutableMap&lt;Int, EpubRenderRequest&gt;? = null</ID>
+    <ID>InstanceOfCheckForException:LocalContentManager.kt:LocalContentManager$error is LocalContentImportException</ID>
+    <ID>LongMethod:EpubBrowserView.kt:private inline fun epubBrowserScript: String</ID>
+    <ID>LongParameterList:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: ContentSpeechResult</ID>
+    <ID>LongParameterList:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: EpubContentSpeechResult</ID>
+    <ID>LongParameterList:EpubRenderer.kt:EpubRenderRequest</ID>
+    <ID>LongParameterList:EpubRenderer.kt:EpubRenderRequestFactory$public fun create: EpubRenderRequest</ID>
+    <ID>LongParameterList:EpubRenderer.kt:EpubRenderResource</ID>
+    <ID>LongParameterList:EpubSemanticDocument.kt:EpubSemanticExtractor$private fun collectElement</ID>
+    <ID>LongParameterList:LocalContentManager.kt:LocalContentManager</ID>
+    <ID>LoopWithTooManyJumpStatements:EpubRenderer.kt:while</ID>
+    <ID>LoopWithTooManyJumpStatements:EpubUrlStreamHandlerProvider.kt:while</ID>
+    <ID>NestedBlockDepth:EpubRenderer.kt:private fun scanHtmlHead: HtmlHeadScan</ID>
+    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: ContentSpeechResult</ID>
+    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: EpubContentSpeechResult</ID>
+    <ID>ReturnCount:ContentTextToSpeech.kt:private fun isWellFormedText: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun emitViewport</ID>
+    <ID>ReturnCount:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun handlePagedScroll: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun performReaderAction</ID>
+    <ID>ReturnCount:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun performReaderTap</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$fun documentLoaded: EpubBrowserDocumentLoad?</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$fun sameDocumentNavigationLoaded: EpubBrowserDocumentLoad?</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$private fun navigationTarget: EpubBrowserNavigationTarget?</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserUrlPolicy$fun allowsResource: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserUrlPolicy$fun browserUrl: String?</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserUrlPolicy$fun canonicalUrl: String?</ID>
+    <ID>ReturnCount:EpubBrowserView.kt:private fun String.isSafePublicationSuffix: Boolean</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun String.isWellFormedUtf16: Boolean</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun decodeBrowserDocument: String</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun privatePublicationUrl: String?</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun scanHtmlTag: HtmlMarkupTag?</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun scanRawTextClosingTag: Int?</ID>
+    <ID>ReturnCount:EpubRenderer.kt:private fun userStyleNamespaceSuffix: Int?</ID>
+    <ID>ReturnCount:EpubSemanticDocument.kt:EpubSemanticDocument$public fun blockFor: EpubSemanticTextBlock?</ID>
+    <ID>ReturnCount:EpubSemanticDocument.kt:EpubSemanticDocument$public fun rangeForSelection: ReadingRange?</ID>
+    <ID>ReturnCount:EpubSemanticDocument.kt:private fun isWellFormedSelection: Boolean</ID>
+    <ID>ReturnCount:EpubUrlStreamHandlerProvider.kt:EpubUrlConnection$override fun getHeaderField: String?</ID>
+    <ID>ReturnCount:EpubUrlStreamHandlerProvider.kt:internal fun scopeDesktopEpubHtml: String</ID>
+    <ID>ReturnCount:EpubUrlStreamHandlerProvider.kt:private fun findRawTextClosingTag: Int</ID>
+    <ID>ReturnCount:EpubUrlStreamHandlerProvider.kt:private fun parseHtmlStartTag: ParsedHtmlStartTag?</ID>
+    <ID>ReturnCount:JmBitmapTransform.desktop.kt:internal actual fun reverseVerticalSegments: Bitmap</ID>
+    <ID>ReturnCount:LocalArchive.kt:internal fun deriveLocalTitle: String</ID>
+    <ID>ReturnCount:LocalArchive.kt:internal fun isSafeArchiveEntryName: Boolean</ID>
+    <ID>ReturnCount:LocalArchive.kt:private fun compareNaturalPaths: Int</ID>
+    <ID>ReturnCount:LocalArchive.kt:private fun findEndOfCentralDirectory: Int</ID>
+    <ID>ReturnCount:LocalContentManager.kt:LocalContentManager$override suspend fun loadReaderChapter: ReaderChapter</ID>
+    <ID>ReturnCount:LocalContentManifest.kt:LocalContentManifests$private fun isStructurallyValid: Boolean</ID>
+    <ID>ReturnCount:LocalContentManifest.kt:LocalContentManifests$suspend fun readValid: LocalContentManifest?</ID>
+    <ID>ReturnCount:LocalTypedContentController.kt:LocalTypedContentController$fun extensionSourceKey: dev.shinsou.kmp.domain.model.SourceKey?</ID>
+    <ID>ReturnCount:LocalTypedContentController.kt:LocalTypedContentController.TypedLocalChapterReference.Companion$fun parse: TypedLocalChapterReference?</ID>
+    <ID>ReturnCount:ReaderNavigation.kt:fun Chapter.isCandidate: Boolean</ID>
+    <ID>ReturnCount:ReaderNavigation.kt:fun readerTapAction: ReaderTapAction</ID>
+    <ID>ReturnCount:ReaderPositionMapping.kt:fun readerPositionUpdateDecision: ReaderPositionUpdateDecision</ID>
+    <ID>ThrowsCount:EpubSemanticDocument.kt:private suspend fun ContentBlobStore.readSemanticBodyCancellable: ByteArray</ID>
+    <ID>ThrowsCount:LocalContentManager.kt:LocalContentManager$override suspend fun loadReaderChapter: ReaderChapter</ID>
+    <ID>ThrowsCount:LocalContentManager.kt:LocalContentManager$private suspend fun extractArchivePages: List&lt;LocalPagePayload&gt;</ID>
+    <ID>ThrowsCount:LocalContentManager.kt:LocalContentManager$private suspend fun persist: LocalImportResult</ID>
+    <ID>ThrowsCount:LocalTypedContentController.kt:LocalTypedContentController$fun load: TypedReaderContentSession?</ID>
+    <ID>ThrowsCount:LocalTypedContentController.kt:LocalTypedContentController$private fun Publication.toLocalTypedImport: LocalTypedImport</ID>
+    <ID>TooGenericExceptionCaught:LocalContentManager.kt:LocalContentManager$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:LocalTypedContentController.kt:LocalTypedContentController$failure: Throwable</ID>
+    <ID>UnnecessaryApply:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$apply { load(pendingDocumentUrl) }</ID>
+    <ID>UnsafeCallOnNullableType:EpubBrowserView.kt:EpubBrowserDocumentState$pendingRequestsByDocument!!</ID>
+    <ID>UnusedParameter:EpubSemanticDocument.kt:EpubSemanticExtractor$navigation: EpubSpineNavigation</ID>
+    <ID>UnusedParameter:LocalTypedContentController.kt:LocalTypedContentController$acquiredAt: Long</ID>
+    <ID>UseRequire:EpubRenderer.kt:EpubPublicationResourceResolver$throw IllegalArgumentException( "EPUB browser document has no bounded closing head element: ${resource.href}", )</ID>
+    <ID>UseRequire:EpubRenderer.kt:EpubPublicationResourceResolver$throw IllegalArgumentException("EPUB browser document has no bounded head element: ${resource.href}")</ID>
+  </CurrentIssues>
+</SmellBaseline>

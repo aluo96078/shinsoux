@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:EpubBrowserView.ios.kt:IosEpubScrollDelegate$closed || !documentReady || !canSampleViewport() || request !== sampledRequest</ID>
+    <ID>ReturnCount:EpubBrowserView.ios.kt:IosEpubBrowserState$private fun failPending</ID>
+    <ID>ReturnCount:EpubBrowserView.ios.kt:IosEpubBrowserState$private fun openPendingDocument</ID>
+    <ID>ReturnCount:EpubBrowserView.ios.kt:IosEpubNavigationDelegate$@ObjCSignatureOverride override fun webView</ID>
+    <ID>ReturnCount:EpubBrowserView.ios.kt:IosEpubNavigationDelegate$private fun takeGeneration: Long?</ID>
+    <ID>ReturnCount:EpubBrowserView.ios.kt:IosEpubScrollDelegate$private fun sampleViewport</ID>
+    <ID>ReturnCount:JmBitmapTransform.ios.kt:internal actual fun reverseVerticalSegments: Bitmap</ID>
+  </CurrentIssues>
+</SmellBaseline>

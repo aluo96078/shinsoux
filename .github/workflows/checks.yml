@@ -2,7 +2,8 @@ name: Checks
 
 # R2-3 (docs/architecture/0006): what every change has to pass before it is merged or released:
 # static analysis with its baselines, the layering check and the desktop tests (Linux, the
-# quickest runner), and the Android unit tests (macOS). release.yml calls this before it builds anything.
+# quickest runner) with the merged coverage bound, and the Android unit tests (macOS).
+# release.yml calls this before it builds anything.
 
 on:
   pull_request:
@@ -45,8 +46,9 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
+      # R5-1: every module has its own detektProduct; the unqualified name runs them all.
       - name: detekt
-        run: ./gradlew :composeApp:detektProduct -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: ./gradlew detektProduct -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
 
       # A baseline only shrinks: neither a pull request nor a push to master may add entries to it.
       - name: Baselines do not grow (pull request)
@@ -95,10 +97,13 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
+      # The merged line coverage may not fall below MERGED_LINE_COVERAGE_FLOOR (build-logic
+      # QualityPlugin.kt); --continue still writes the report when the bound fails.
       - name: Desktop tests and coverage
         working-directory: shinsoux
         run: >-
-          ./gradlew :composeApp:desktopTest :composeApp:koverXmlReportDesktop
+          ./gradlew desktopTest :composeApp:koverXmlReportDesktop :composeApp:koverVerifyDesktop
+          --continue
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
 
@@ -108,7 +113,7 @@ jobs:
         with:
           name: desktop-test-reports
           path: |
-            shinsoux/composeApp/build/reports/tests/desktopTest
+            shinsoux/*/build/reports/tests/desktopTest
             shinsoux/composeApp/build/reports/kover
           if-no-files-found: ignore
 
@@ -142,4 +147,4 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Android unit tests
-        run: ./gradlew :composeApp:testDebugUnitTest -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: ./gradlew testDebugUnitTest -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace

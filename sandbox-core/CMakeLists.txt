@@ -10,7 +10,7 @@ if(ANDROID)
     add_compile_options(-fvisibility=hidden -ffunction-sections -fdata-sections)
 endif()
 set(QJS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs)
-set(BOOTSTRAP_KT ${CMAKE_CURRENT_SOURCE_DIR}/../composeApp/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt)
+set(BOOTSTRAP_KT ${CMAKE_CURRENT_SOURCE_DIR}/../feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt)
 
 option(SSC_SANITIZE "Build with AddressSanitizer and UBSan" OFF)
 option(SSC_FUZZ "Build the libFuzzer targets (clang with libFuzzer; implies ASan+UBSan)" OFF)
@@ -70,7 +70,7 @@ target_link_libraries(ssc_driver PUBLIC ssc_core ssc_frames Threads::Threads)
 target_compile_options(ssc_driver PRIVATE -Wall -Wextra)
 
 if(ANDROID)
-    # S2: the isolated process loads this from the app (composeApp's externalNativeBuild). Only the
+    # S2: the isolated process loads this from the app (:feature-plugin's externalNativeBuild). Only the
     # JNI entry points are exported; tests and tools are host-only.
     add_library(shinsou_sandbox SHARED src/ssc_android_jni.c)
     target_link_libraries(shinsou_sandbox PRIVATE ssc_driver)

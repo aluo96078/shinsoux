@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.backup.BackupFormatException
 import dev.shinsou.kmp.backup.SnapshotBackupService
 import dev.shinsou.kmp.data.AppSnapshot
+import dev.shinsou.kmp.domain.model.TranslationBackup
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals

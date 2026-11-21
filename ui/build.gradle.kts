@@ -1,0 +1,63 @@
+// R5-1 (docs/architecture/0006 §4.2): ui (the Compose screens, the challenge dialog, i18n) and
+// navigation. Owns the Compose resources (the app icon, Res in dev.aluo.shinsoux.generated.resources);
+// the app module reaches the icon through shinsouIconPainter(). Depends on the feature modules and
+// the layers below; only the app module (composition, entry points, packaging) is above it.
+plugins {
+    id("shinsou.kmp-library")
+    id("shinsou.testing")
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinSerialization)
+}
+
+// Keep generated Compose resource classes in a valid Kotlin package even
+// though the product/project name intentionally contains a space.
+compose.resources {
+    packageOfResClass = "dev.aluo.shinsoux.generated.resources"
+}
+
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation(project(":core"))
+            implementation(project(":domain"))
+            implementation(project(":data-content"))
+            implementation(project(":data-repository"))
+            implementation(project(":feature-sync"))
+            implementation(project(":feature-library"))
+            implementation(project(":feature-reader"))
+            implementation(project(":feature-translation"))
+            implementation(project(":feature-plugin"))
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material3)
+            implementation(compose.materialIconsExtended)
+            implementation(compose.ui)
+            implementation(compose.components.resources)
+            implementation(libs.coil.compose)
+            implementation(libs.coil.network.ktor)
+            implementation(libs.okio)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.ktor.client.core)
+        }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.ktor.client.mock)
+        }
+        androidMain.dependencies {
+            // The challenge dialog's WebView runs in a dedicated profile (AndroidX WebKit).
+            implementation(libs.androidx.webkit)
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                // Compose UI tests of reader panels (the translation panel).
+                implementation(compose.desktop.uiTestJUnit4)
+                implementation(libs.sqldelight.sqlite.driver)
+            }
+        }
+    }
+}

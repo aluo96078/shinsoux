@@ -1,0 +1,232 @@
+package dev.shinsou.kmp.sync.v3
+
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.model.AcquisitionOrigin
+import dev.shinsou.kmp.domain.model.Chapter
+import dev.shinsou.kmp.domain.model.Manga
+import dev.shinsou.kmp.domain.model.Publication
+import dev.shinsou.kmp.domain.model.PublicationKey
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
+import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
+import dev.shinsou.kmp.domain.model.typedLocalChapterUnitKey
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.domain.model.ReadingScope
+import kotlin.concurrent.Volatile
+
+/** The cross-device identity of a title. Local ids (Manga.id, Chapter.id) never appear in it. */
+internal sealed interface SyncedWork {
+    /** Key of the `library` / `progress` / `history` record. */
+    val recordKey: String
+
+    /** A title that has a source: shared by every device through its [WorkKey]. */
+    data class Sourced(val key: WorkKey) : SyncedWork {
+        override val recordKey: String get() = key.hash
+    }
+
+    /** A local import: private to this account, identified by the local publication uuid. */
+    data class Local(val publicationUuid: String) : SyncedWork {
+        override val recordKey: String get() = "local:$publicationUuid"
+    }
+}
+
+/**
+ * Maps local titles and chapters to portable sync identities and back. Everything here is
+ * synchronous so the mutation observer can call it; the only async input is the legacy-source
+ * lookup, served from a cache refreshed by the sync service.
+ */
+internal class SyncIdentityResolver(
+    private val publications: (PublicationKey) -> Publication?,
+    private val legacySourceKey: (Long) -> SourceKey?,
+) {
+    private val publicationCache = HashMap<PublicationKey, Publication?>()
+
+    /** What the installed packages say about their sources, by (packageId, sourceId); see [describe]. */
+    @Volatile var sources: Map<Pair<String, String>, SyncSourceInfo> = emptyMap()
+
+    /** Publication lookups are cached for the duration of one batch; call between batches. */
+    fun resetCache() {
+        publicationCache.clear()
+    }
+
+    private fun publication(key: PublicationKey): Publication? =
+        if (publicationCache.containsKey(key)) {
+            publicationCache[key]
+        } else {
+            runCatching { publications(key) }
+                .onFailure { Log.warn("Sync", it) { "Looking up a stored publication for sync failed" } }
+                .getOrNull().also { publicationCache[key] = it }
+        }
+
+    /** The title's portable identity, or null when it cannot be synced (unresolved legacy source). */
+    fun workOf(manga: Manga): SyncedWork? {
+        decodeExtensionLibraryPublicationUrl(manga.url)?.let { binding ->
+            return sourced(binding.sourceKey.packageId, binding.sourceKey.sourceId, binding.remotePublicationId)
+        }
+        if (manga.source == LOCAL_SOURCE_ID) {
+            val publicationKey = decodeTypedLocalPublicationUrl(manga.url)
+                ?: typedLocalChapterUnitKeyOfAnyChapterUrl(manga.url)
+                ?: return null
+            val binding = publication(publicationKey)?.acquisitions
+                ?.firstNotNullOfOrNull { (it.origin as? AcquisitionOrigin.ExtensionSource)?.sourceBinding }
+            if (binding != null) {
+                return sourced(binding.sourceKey.packageId, binding.sourceKey.sourceId, binding.remoteEntityKey.canonicalId)
+            }
+            return SyncedWork.Local(publicationKey.value)
+        }
+        val sourceKey = legacySourceKey(manga.source) ?: return null
+        if (manga.url.isBlank()) return null
+        return sourced(sourceKey.packageId, sourceKey.sourceId, manga.url)
+    }
+
+    /** The identity of a source's title that is not (or not yet) a library entry; equals [workOf] once it is. */
+    fun sourceWorkOf(sourceKey: SourceKey, remotePublicationId: String): SyncedWork.Sourced? =
+        sourced(sourceKey.packageId, sourceKey.sourceId, remotePublicationId)
+
+    private fun typedLocalChapterUnitKeyOfAnyChapterUrl(url: String): PublicationKey? =
+        typedLocalChapterUnitKey(url)?.publicationKey
+
+    // A validation probe: identifiers that do not form a valid work key cannot be synced.
+    private fun sourced(packageId: String, sourceId: String, remoteId: String): SyncedWork.Sourced? =
+        runCatching { WorkKey(WorkKey.CURRENT_KEY_VERSION, packageId, sourceId, remoteId) }.getOrNull()
+            ?.let(SyncedWork::Sourced)
+
+    /** The chapter's id inside its work: the source's own id, or the unit uuid for local imports. */
+    fun unitRemoteId(manga: Manga, work: SyncedWork, chapter: Chapter): String? {
+        val typed = typedLocalChapterUnitKey(chapter.url)
+        return when (work) {
+            is SyncedWork.Local -> typed?.value
+            is SyncedWork.Sourced -> if (typed != null) {
+                publication(typed.publicationKey)?.acquisitions
+                    ?.firstNotNullOfOrNull { acquisition -> acquisition.units.firstOrNull { it.key == typed } }
+                    ?.sourceBinding?.remoteEntityKey?.canonicalId
+            } else if (manga.source != LOCAL_SOURCE_ID && decodeExtensionLibraryPublicationUrl(manga.url) == null) {
+                chapter.url.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        }?.takeIf { value -> runCatching { requireValidUnitId(value) }.isSuccess } // validation probe
+    }
+
+    private fun requireValidUnitId(value: String) {
+        // Reuses WorkKey's component rules through the unit hash computation.
+        WorkKey(1, "p", "s", "r").unitHash(value)
+    }
+
+    /** Rebuilds the local reading scope for a chapter; null for chapters without typed content. */
+    fun scopeFor(chapter: Chapter): ReadingScope? {
+        val unit = typedLocalChapterUnitKey(chapter.url) ?: return null
+        val publication = publication(unit.publicationKey) ?: return null
+        val acquisition = publication.acquisitions.firstOrNull { acq -> acq.units.any { it.key == unit } } ?: return null
+        val publicationUnit = acquisition.units.first { it.key == unit }
+        val revision = publicationUnit.latestManifest?.contentRevision ?: acquisition.contentRevision
+        // A validation probe: a scope that does not validate cannot be synced.
+        return runCatching {
+            ReadingScope(
+                schemaVersion = ReadingScope.CURRENT_SCHEMA_VERSION,
+                publicationId = unit.publicationKey,
+                acquisitionId = acquisition.id,
+                unitId = unit,
+                contentRevision = revision,
+            )
+        }.getOrNull()
+    }
+
+    /** `manga` or `novel`; defaults to manga when the content is not materialised yet. */
+    fun contentKindOf(manga: Manga, work: SyncedWork): String {
+        val publicationKey = when (work) {
+            is SyncedWork.Local -> PublicationKey(work.publicationUuid)
+            is SyncedWork.Sourced -> decodeExtensionLibraryPublicationUrl(manga.url)?.publicationKey
+                ?: decodeTypedLocalPublicationUrl(manga.url)
+        } ?: return "manga"
+        val kinds = publication(publicationKey)?.acquisitions.orEmpty()
+            .flatMap { acq -> acq.units.flatMap { unit -> unit.manifestRevisions.flatMap { it.kinds } } }
+            .toSet()
+        val novel = ContentKind.PLAIN_TEXT in kinds || ContentKind.EPUB_SPINE in kinds
+        return if (novel && ContentKind.IMAGE_SEQUENCE !in kinds) "novel" else "manga"
+    }
+
+    /** The work descriptor sent with every work-keyed record. */
+    fun describe(manga: Manga, work: SyncedWork.Sourced): WireWork {
+        val key = work.key
+        return WireWork(
+            keyVersion = key.keyVersion,
+            packageId = key.packageId,
+            sourceId = key.sourceId,
+            remoteId = key.remoteId,
+            hash = key.hash,
+            title = manga.title.trim().ifEmpty { "Untitled" }.truncated(MAX_TITLE_CHARS),
+            author = manga.author?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_TITLE_CHARS),
+            coverUrl = manga.thumbnailUrl?.takeIf { it.startsWith("https://") && it.length <= MAX_URL_CHARS },
+            contentKind = contentKindOf(manga, work),
+        ).let(::withSource)
+    }
+
+    /** Whether an installed source describes [work]'s source on this device. */
+    fun describes(work: WireWork): Boolean = sourceOf(work) != null
+
+    /** Whether [work]'s own source is installed here, rather than only its package being known. */
+    fun hasInstalled(work: WireWork): Boolean = (work.packageId to work.sourceId) in sources
+
+    private fun sourceOf(work: WireWork): SyncSourceInfo? =
+        sources[work.packageId to work.sourceId] ?: sources[work.packageId to SyncSourceInfo.WHOLE_PACKAGE]
+
+    /**
+     * [work] with what this device knows about its source; unchanged when it knows nothing.
+     *
+     * An installed source replaces what the descriptor said. A package known only from a repository
+     * index fills in what is missing and leaves the rest: a device that has the package installed
+     * names the source better than the index names the package.
+     */
+    fun withSource(work: WireWork): WireWork {
+        val exact = sources[work.packageId to work.sourceId]
+        val source = exact ?: sources[work.packageId to SyncSourceInfo.WHOLE_PACKAGE] ?: return work
+        val language = source.language?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_LANGUAGE_CHARS }
+        val name = source.name?.trim()?.takeIf { it.isNotEmpty() }?.truncated(MAX_SOURCE_NAME_CHARS)
+        val repository = source.repositoryUrl?.takeIf {
+            (it.startsWith("https://") || it.startsWith("http://")) && it.length <= MAX_URL_CHARS
+        }
+        return if (exact != null) {
+            work.copy(language = language, sourceName = name, repositoryUrl = repository)
+        } else {
+            work.copy(
+                language = work.language ?: language,
+                sourceName = work.sourceName ?: name,
+                repositoryUrl = work.repositoryUrl ?: repository,
+            )
+        }
+    }
+
+    companion object {
+        const val MAX_TITLE_CHARS: Int = 512
+        const val MAX_URL_CHARS: Int = 2048
+        const val MAX_LANGUAGE_CHARS: Int = 35
+        const val MAX_SOURCE_NAME_CHARS: Int = 128
+    }
+}
+
+/**
+ * Display data of a source, sent with the work descriptor so the web front end and
+ * other accounts can name the source without having the package installed.
+ */
+public data class SyncSourceInfo(
+    val name: String?,
+    val language: String?,
+    val repositoryUrl: String?,
+) {
+    public companion object {
+        /**
+         * The source id under which a package is described as a whole, for one known from a
+         * repository index but not installed. No real source id is empty.
+         */
+        public const val WHOLE_PACKAGE: String = ""
+    }
+}
+
+internal fun String.truncated(maxChars: Int): String {
+    if (length <= maxChars) return this
+    var end = maxChars
+    if (this[end - 1].isHighSurrogate()) end--
+    return substring(0, end)
+}

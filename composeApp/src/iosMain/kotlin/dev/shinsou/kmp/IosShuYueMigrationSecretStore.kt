@@ -1,8 +1,8 @@
 package dev.shinsou.kmp
 
-import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
-import dev.shinsou.kmp.migration.shuyue.ShuYueSecretWriteBatch
-import dev.shinsou.kmp.migration.shuyue.encodeShuYueSecretBatchBytes
+import dev.shinsou.kmp.backup.shuyue.ShuYueMigrationSecretStore
+import dev.shinsou.kmp.backup.shuyue.ShuYueSecretWriteBatch
+import dev.shinsou.kmp.backup.shuyue.encodeShuYueSecretBatchBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex

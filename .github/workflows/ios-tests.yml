@@ -1,35 +1,39 @@
 name: iOS tests
 
 # R2-3 (docs/architecture/0006): the whole iOS simulator test suite, for every change to the code
-# the iOS app is built from. sandbox-ios.yml keeps its own, narrower WASM sandbox checks.
+# the iOS app is built from (every Gradle module, R5-1). sandbox-ios.yml keeps its own, narrower WASM sandbox checks.
 
 on:
   workflow_dispatch:
   push:
     branches: [master]
     paths:
-      - "composeApp/src/commonMain/**"
-      - "composeApp/src/commonTest/**"
-      - "composeApp/src/iosMain/**"
-      - "composeApp/src/iosTest/**"
-      - "composeApp/src/iosArm64Main/**"
-      - "composeApp/src/iosSimulatorArm64Main/**"
-      - "composeApp/src/iosSimulatorArm64Test/**"
-      - "composeApp/src/nativeInterop/**"
-      - "composeApp/build.gradle.kts"
+      - "*/src/commonMain/**"
+      - "*/src/commonTest/**"
+      - "*/src/iosMain/**"
+      - "*/src/iosTest/**"
+      - "*/src/iosArm64Main/**"
+      - "*/src/iosSimulatorArm64Main/**"
+      - "*/src/iosSimulatorArm64Test/**"
+      - "*/src/nativeInterop/**"
+      - "*/build.gradle.kts"
+      - "settings.gradle.kts"
+      - "build-logic/**"
       - "gradle/**"
       - ".github/workflows/ios-tests.yml"
   pull_request:
     paths:
-      - "composeApp/src/commonMain/**"
-      - "composeApp/src/commonTest/**"
-      - "composeApp/src/iosMain/**"
-      - "composeApp/src/iosTest/**"
-      - "composeApp/src/iosArm64Main/**"
-      - "composeApp/src/iosSimulatorArm64Main/**"
-      - "composeApp/src/iosSimulatorArm64Test/**"
-      - "composeApp/src/nativeInterop/**"
-      - "composeApp/build.gradle.kts"
+      - "*/src/commonMain/**"
+      - "*/src/commonTest/**"
+      - "*/src/iosMain/**"
+      - "*/src/iosTest/**"
+      - "*/src/iosArm64Main/**"
+      - "*/src/iosSimulatorArm64Main/**"
+      - "*/src/iosSimulatorArm64Test/**"
+      - "*/src/nativeInterop/**"
+      - "*/build.gradle.kts"
+      - "settings.gradle.kts"
+      - "build-logic/**"
       - "gradle/**"
       - ".github/workflows/ios-tests.yml"
 
@@ -79,4 +83,4 @@ jobs:
 
       - name: iOS simulator tests
         working-directory: shinsoux
-        run: ./gradlew :composeApp:iosSimulatorArm64Test -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+        run: ./gradlew iosSimulatorArm64Test -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace

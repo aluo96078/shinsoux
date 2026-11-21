@@ -12,8 +12,8 @@ import kotlin.test.assertContentEquals
 class AppIconCopiesTest {
     @Test
     fun theIosIconIsTheSourceIcon() {
-        val source = File("src/commonMain/composeResources/drawable/shinsou_icon.png").readBytes()
+        val source = File("../ui/src/commonMain/composeResources/drawable/shinsou_icon.png").readBytes()
         val ios = File("../iosApp/Shinsou/Assets.xcassets/AppIcon.appiconset/AppIcon.png").readBytes()
-        assertContentEquals(source, ios, "Copy the icon again: cp composeApp/src/commonMain/composeResources/drawable/shinsou_icon.png iosApp/Shinsou/Assets.xcassets/AppIcon.appiconset/AppIcon.png")
+        assertContentEquals(source, ios, "Copy the icon again: cp ui/src/commonMain/composeResources/drawable/shinsou_icon.png iosApp/Shinsou/Assets.xcassets/AppIcon.appiconset/AppIcon.png")
     }
 }

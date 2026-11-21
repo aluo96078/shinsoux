@@ -1,7 +1,7 @@
 # GitHub Actions 發布
 
 推送格式為 `vMAJOR.MINOR.PATCH` 或 `vMAJOR.MINOR.PATCH-beta.N` 的 tag 會觸發
-`.github/workflows/release.yml`。流程在 Linux 建置 Android debug APK、在 macOS 建置 DMG 與
+`.github/workflows/release.yml`。流程在 Linux 建置 Android APK（release 變體）、在 macOS 建置 DMG 與
 未簽章的 iOS IPA、在 Windows 建置 MSI／EXE；所有必要產物與驗證通過後，才會發布同一個 GitHub
 Release（任一平台失敗，包括 iOS，都不會公開）。`ios-unsigned.yml` 只保留為手動重建既有 tag 的 IPA 之用。Beta 會建立 GitHub prerelease，且不會標記為
 Latest。
@@ -62,11 +62,11 @@ windows package version = MAJOR.MINOR.windows build
 
 ## 發布產物
 
-每個 tag workflow 都必須建立以下檔案，並附加涵蓋五個二進位產物的
-`SHA256SUMS.txt`：
+每個 tag workflow 都必須建立以下檔案，並附加涵蓋所有產物的 `SHA256SUMS.txt`：
 
 ```text
 Shinsou-X-<version>-android-debug.apk
+Shinsou-X-<version>-android-r8-mapping.txt
 Shinsou-X-<version>-ios-unsigned.ipa
 Shinsou-X-<version>-macos-<arch>.dmg
 Shinsou-X-<version>-windows-x64.msi
@@ -74,15 +74,32 @@ Shinsou-X-<version>-windows-x64.exe
 SHA256SUMS.txt
 ```
 
+`android-r8-mapping.txt` 只隨 R8 建置附上；重建 R5-3 之前的 tag 時是 debug 變體，沒有這個檔案。
 macOS 架構以 runner 的實際 `arm64` 或 `x64` 命名。各 producer job 也會保留 14 天的
 Actions artifact；GitHub Release assets 是長期下載來源。Android、macOS 或 Windows
 任一必要產物缺少、空白或驗證失敗，workflow 都不會公開 Release。
 
-### Android debug APK 的限制
+### Android APK 的簽章與限制
 
-公開的 Android 檔名刻意包含 `android-debug`。Workflow 會驗證 APK 簽章、application ID、
-tag 對應的 `versionName`／`versionCode`，以及 `android:debuggable=true`。它是方便測試的
-debug build，不是使用正式 keystore 簽章的 production release APK。
+自 R5-3（docs/architecture/0006）起，發布的是以 R8 壓縮、混淆的 release 變體
+（`:composeApp:assembleRelease`，`android:debuggable=false`）。沒有設定 `ANDROID_KEYSTORE_*`
+四個變數時，release 變體改用固定的公開測試 key 簽章，也就是先前 debug APK 使用的同一把 key，
+所以既有安裝可以直接覆蓋升級；公開檔名仍沿用 `android-debug`，「debug」指的是這把公開測試
+signer，它仍然不是使用正式 keystore 簽章的 production release APK。Workflow 會驗證 APK 簽章、
+application ID、tag 對應的 `versionName`／`versionCode`、`android:debuggable=false`、各 ABI 的
+原生函式庫與沙箱 service 的 manifest 項目，並以 `scripts/ci/check_apk_jni_bindings.py` 確認 R8
+保留的每個 native 方法在 arm64-v8a 函式庫裡仍有對應的 JNI 符號；`android-device` job 再把這個 APK 裝到 x86_64 模擬器
+（API 34）啟動，等 App 在 log 寫出 `ShinsouReady`（主畫面已畫出）再觀察 15 秒。接著以
+`adb shell am broadcast` 觸發 `SandboxSelfCheckReceiver`，在縮減後的 APK 裡實際啟動一次隔離沙箱程序：
+檢查隔離探測結果，並透過 SandboxProtocol 執行內建的測試腳本；這個 receiver 受 `DUMP` 權限保護，只有
+shell 與系統能觸發，不會讀取使用者資料。之後再等 10 秒讓沙箱程序結束，才讀取 log 做以下檢查，所以也涵蓋
+沙箱程序收尾時的當機：等不到 `ShinsouReady`、App 沒在執行、log 出現當機、找不到類別或原生繫結
+（`UnsatisfiedLinkError` 等），或沙箱自檢結果不是 `passed`，整個發布就停止
+（重建 R5-3 之前的 tag 時，舊版不會寫出 `ShinsouReady`，也沒有這個 receiver，只檢查它持續執行且沒有當機）。R8 的 `mapping.txt` 以
+`Shinsou-X-<version>-android-r8-mapping.txt` 附加在 Release 上長期保存，用 `retrace`
+還原該版混淆後的 stack trace；原始碼本身公開（MIT），附上 mapping 不會多揭露什麼。
+重建 R5-3 之前的 tag 時，workflow 依來源沒有 `composeApp/proguard-android-rules.pro`
+判定為舊版，照原樣建置 debug 變體（驗證 `android:debuggable=true`），也不附 mapping。
 
 自 `v1.0.0-beta.5` 起，官方 workflow 從 repository secret 還原專用的固定公開測試 key，
 並拒絕 signer SHA-256 不符合下列 fingerprint 的 APK：
@@ -94,7 +111,7 @@ debug build，不是使用正式 keystore 簽章的 production release APK。
 
 這把 key 只提供 beta 測試 APK 的連續覆蓋升級，不是 production identity。Beta.3 及更舊的
 APK 由 GitHub-hosted runner 臨時產生不同 signer；升到 beta.5 前必須先在 App 內備份、
-解除安裝舊版一次，再安裝 beta.5。beta.5 之後的官方 debug APK 可直接升級。正式商店／
+解除安裝舊版一次，再安裝 beta.5。beta.5 之後的官方 APK 可直接升級。正式商店／
 企業分發仍應自行建立並安全保存 release keystore，再於自己的受控環境執行：
 
 ```bash

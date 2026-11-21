@@ -19,6 +19,11 @@ import java.util.Properties
  *   it wait its turn instead.
  * - The busy timeout is [BUSY_TIMEOUT_MILLIS] instead of sqlite-jdbc's 3 seconds, so waiting
  *   behind a long sync or indexing transaction doesn't end in SQLITE_BUSY.
+ *
+ * `foreign_keys` and `synchronous` are settings of a connection, not of the file, so a `PRAGMA`
+ * sent once through this driver would only reach the connection that ran it (R3-4). They are
+ * passed as connection properties instead, which sqlite-jdbc applies to every connection it opens:
+ * foreign keys are enforced (and cascade) here as they are on Android and iOS.
  */
 internal class DesktopSqliteDriver(
     private val url: String,
@@ -27,6 +32,8 @@ internal class DesktopSqliteDriver(
     private val properties = Properties().apply {
         putAll(properties)
         putIfAbsent("busy_timeout", BUSY_TIMEOUT_MILLIS.toString())
+        putIfAbsent("foreign_keys", "true")
+        putIfAbsent("synchronous", "FULL")
     }
     private val connections = ThreadLocal<Connection>()
     private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()

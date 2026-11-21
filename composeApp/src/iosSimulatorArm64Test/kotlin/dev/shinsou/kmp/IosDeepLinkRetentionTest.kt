@@ -1,5 +1,6 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -11,10 +12,11 @@ import kotlin.test.assertSame
 class IosDeepLinkRetentionTest {
     @Test
     fun deepLinkEmittedBeforeCollectionIsRetainedUntilTheSameEventIsHandled() = runTest {
-        val services = IosAppServices()
+        val queue = RetainedDeepLinkQueue()
+        val services = IosAppServices(pendingDeepLinks = queue)
         val pending = ShinsouDeepLink.OpenManga(42)
 
-        services.emitDeepLink(pending)
+        queue.tryEnqueue(pending)
         assertSame(pending, services.deepLinks.first())
 
         // An acknowledgement for an older equivalent event must not clear the currently retained

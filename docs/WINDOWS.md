@@ -29,7 +29,7 @@ git clone https://github.com/aluo96078/shinsoux.git shinsou_kmp
 git clone https://github.com/aluo96078/shinsou_plugin.git shinsou_plugin
 cd shinsou_kmp
 
-.\gradlew.bat :composeApp:desktopTest
+.\gradlew.bat desktopTest
 .\gradlew.bat :composeApp:compileKotlinDesktop
 .\gradlew.bat :composeApp:run
 ```

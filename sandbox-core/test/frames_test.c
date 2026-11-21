@@ -1,6 +1,6 @@
 /*
  * SandboxProtocol v1 codec tests. The golden vectors and malformed inputs are the same bytes as
- * composeApp/src/commonTest/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocolTest.kt: both
+ * feature-plugin/src/commonTest/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocolTest.kt: both
  * implementations must accept and produce exactly these.
  */
 #include <stdio.h>

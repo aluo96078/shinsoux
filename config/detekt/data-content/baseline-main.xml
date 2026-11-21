@@ -1,0 +1,150 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$!metadata.isRegularFile || metadata.symlinkTarget != null || metadata.size != file.byteSize || metadata.lastModifiedAtMillis != file.modifiedAtEpochMillis</ID>
+    <ID>ComplexCondition:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$published == null || !published.isRegularFile || published.symlinkTarget != null || published.size != reference.byteSize</ID>
+    <ID>ComplexCondition:ContentTransactions.kt:(suppliedAttachment != null &amp;&amp; suppliedAttachment != expected) || (durableAttachment != null &amp;&amp; durableAttachment != expected)</ID>
+    <ID>ComplexCondition:ContentTransactions.kt:durable.id != candidate.id || durable.origin != candidate.origin || availabilityRank(candidate.availability) &lt; availabilityRank(durable.availability) || candidate.contentRevision &lt; durable.contentRevision || durable.acquiredAtEpochMillis != candidate.acquiredAtEpochMillis || durable.legacyCompatibilityFacet != candidate.legacyCompatibilityFacet || (durable.rightsGrantRef != null &amp;&amp; durable.rightsGrantRef != candidate.rightsGrantRef)</ID>
+    <ID>ComplexCondition:ContentTransactions.kt:durable.key != candidate.key || durable.title != candidate.title || durable.sourceBinding != candidate.sourceBinding || durable.ordinal != candidate.ordinal || durable.publishedAtEpochMillis != candidate.publishedAtEpochMillis || durable.legacyCompatibilityFacet != candidate.legacyCompatibilityFacet</ID>
+    <ID>ComplexCondition:ContentTransactions.kt:durable.key != candidate.key || durable.title != candidate.title || durable.workLinks != candidate.workLinks || durable.description != candidate.description || durable.authors != candidate.authors</ID>
+    <ID>ComplexCondition:EpubAcquisitionService.kt:EpubAcquisitionService$label.length &gt; MAX_METADATA_VALUE_LENGTH || label.any(Char::isISOControl) || declaredHref.length &gt; MAX_RESOLVED_HREF_LENGTH || declaredHref.any(Char::isISOControl)</ID>
+    <ID>ComplexCondition:EpubAcquisitionService.kt:value.isBlank() || value.length &gt; MAX_TOKEN_LENGTH || value.any(Char::isWhitespace) || value.any(Char::isISOControl)</ID>
+    <ID>ComplexCondition:EpubArchive.kt:compressedSize == ZIP64_U32_SENTINEL || expandedSize == ZIP64_U32_SENTINEL || localOffset == ZIP64_U32_SENTINEL || startingDisk == ZIP64_U16_SENTINEL</ID>
+    <ID>ComplexCondition:EpubArchive.kt:offset &lt; 0 || byteCount &lt; 0 || offset &gt; byteSize || byteCount.toLong() &gt; byteSize - offset</ID>
+    <ID>ComplexCondition:EpubArchive.kt:offset &lt; 0 || size &lt; 0 || offset &gt; archive.size || size &gt; archive.size - offset</ID>
+    <ID>ComplexCondition:EpubArchive.kt:start &lt; 0 || size &lt; 0 || start &gt; bound || size &gt; bound - start</ID>
+    <ID>ComplexCondition:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$existing.reference != reference || (candidateBytes != null &amp;&amp; !payloadBytesLocked(existing).contentEquals(candidateBytes)) || (durablePending != null &amp;&amp; !isIntact(existing))</ID>
+    <ID>ComplexCondition:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$stored.reference != receipt.reference || stored.incarnation != receipt.incarnation || stored.lifecycleState != BlobLifecycleState.AVAILABLE || !isIntact(stored)</ID>
+    <ID>ComplexCondition:LocalFullTextIndex.kt:end &lt; block.endUtf16 &amp;&amp; end &gt; start &amp;&amp; canonicalText[end - 1].isHighSurrogate() &amp;&amp; canonicalText[end].isLowSurrogate()</ID>
+    <ID>ComplexCondition:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore$previous.receiptDescriptors.isNotEmpty() &amp;&amp; (rememberedReceipts == null || rememberedReceipts.size != batch.receipts.size || rememberedReceipts.zip(batch.receipts).any { (expected, actual) -&gt; expected !== actual })</ID>
+    <ID>CyclomaticComplexMethod:BoundedXml.kt:BoundedXmlParser.NamespaceScope.Companion$fun child: NamespaceScope</ID>
+    <ID>CyclomaticComplexMethod:BoundedXml.kt:BoundedXmlParser.Parser$private fun consumeDoctype</ID>
+    <ID>CyclomaticComplexMethod:BoundedXml.kt:BoundedXmlParser.Parser$private fun parseTagBody: Pair&lt;String, Map&lt;String, String&gt;&gt;</ID>
+    <ID>CyclomaticComplexMethod:BoundedXml.kt:BoundedXmlParser.Parser$private fun validateDoctypeBody: String</ID>
+    <ID>CyclomaticComplexMethod:BoundedXml.kt:private fun decodeXmlEntities: String</ID>
+    <ID>CyclomaticComplexMethod:ContentAnnotations.kt:ContentAnnotation$public fun validate</ID>
+    <ID>CyclomaticComplexMethod:ContentAnnotations.kt:RightsEnforcedAnnotationService$public suspend fun purgeUnauthorizedDerivedDataInBackground: AnnotationDerivedDataCleanupResult</ID>
+    <ID>CyclomaticComplexMethod:ContentCommitValidator.kt:ContentCommitValidator$fun validateSqlRows</ID>
+    <ID>CyclomaticComplexMethod:ContentTransactions.kt:private fun isImmutableAcquisitionGraphExtension: Boolean</ID>
+    <ID>CyclomaticComplexMethod:EpubAcquisitionService.kt:BoundedCssReferenceTokenizer$private fun readUrlFunction: String</ID>
+    <ID>CyclomaticComplexMethod:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parsePackage: ParsedEpub</ID>
+    <ID>CyclomaticComplexMethod:EpubAcquisitionService.kt:EpubAcquisitionService$private fun requirePersistedGraphStringBudget</ID>
+    <ID>CyclomaticComplexMethod:EpubAcquisitionService.kt:private fun inferMediaType: String</ID>
+    <ID>CyclomaticComplexMethod:EpubArchive.kt:internal fun validateArchiveEntries: List&lt;EpubArchiveEntry&gt;</ID>
+    <ID>CyclomaticComplexMethod:EpubArchive.kt:private fun parseCentralDirectory: List&lt;ZipCentralRecord&gt;</ID>
+    <ID>CyclomaticComplexMethod:FoundationFullTextIndexReconciler.kt:FoundationFullTextIndexReconciler$public suspend fun reconcile: FullTextIndexReconcileResult</ID>
+    <ID>CyclomaticComplexMethod:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$internal fun hydrateAttachmentsLocked</ID>
+    <ID>CyclomaticComplexMethod:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$internal fun validateAtomicAttachmentsLocked</ID>
+    <ID>CyclomaticComplexMethod:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$override fun publish: BlobPublishReceipt</ID>
+    <ID>CyclomaticComplexMethod:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$override fun sweepRecovery: Int</ID>
+    <ID>CyclomaticComplexMethod:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$override fun commit: ContentCommitResult</ID>
+    <ID>CyclomaticComplexMethod:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$private fun validateBlobSyncJobs</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverContentAnnotationStore.kt:SqlDriverContentAnnotationStore$private fun queryPage: List&lt;Row&gt;</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun copyInlineMigrationSlice: ContentBlobStorageMaintenanceResult</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$internal suspend fun currentSegments: List&lt;Boolean&gt;</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend fun purgeUnauthorizedInBackground: DerivedSearchCleanupResult</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$private fun loadRightsCleanupPageLocked: List&lt;SearchAccessRow&gt;</ID>
+    <ID>CyclomaticComplexMethod:TextAcquisitionService.kt:StrictTextDecoder$public fun decode: DecodedText</ID>
+    <ID>CyclomaticComplexMethod:TextAcquisitionService.kt:private fun ByteArray.decodeUtf8Strict: String</ID>
+    <ID>LargeClass:EpubAcquisitionService.kt:EpubAcquisitionService</ID>
+    <ID>LargeClass:InMemoryContentBlobStore.kt:InMemoryContentBlobStore : ContentBlobStore</ID>
+    <ID>LargeClass:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore&lt;D : Any&gt; : SharedContentTransactionStore</ID>
+    <ID>LargeClass:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability : ContentBlobDurability</ID>
+    <ID>LargeClass:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore&lt;D : Any&gt; : SharedContentTransactionStore</ID>
+    <ID>LargeClass:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex : LocalFullTextIndex</ID>
+    <ID>LongMethod:ContentTransactionSchema.kt:ContentTransactionSchema$private fun createTables</ID>
+    <ID>LongMethod:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parsePackage: ParsedEpub</ID>
+    <ID>LongMethod:FoundationFullTextIndexReconciler.kt:FoundationFullTextIndexReconciler$public suspend fun reconcile: FullTextIndexReconcileResult</ID>
+    <ID>LongMethod:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$override fun commit: ContentCommitResult</ID>
+    <ID>LongParameterList:AcquisitionModels.kt:LocalAcquisitionIdentityDeriver$internal fun blobId: String</ID>
+    <ID>LongParameterList:ContentAnnotations.kt:RightsEnforcedAnnotationService$public fun create: ContentAnnotation</ID>
+    <ID>LongParameterList:ContentBlobRecoveryCoordinator.kt:ContentBlobRecoveryCoordinator</ID>
+    <ID>LongParameterList:ContentTransactions.kt:ContentCommitBatch</ID>
+    <ID>LongParameterList:ContentTransactions.kt:ContentCommitBatch$public fun copy: ContentCommitBatch&lt;D&gt;</ID>
+    <ID>LongParameterList:EpubAcquisitionService.kt:PreparedEpubAcquisition</ID>
+    <ID>LongParameterList:SqlDriverContentBlobStore.kt:SqlDriverContentBlobStore$constructor</ID>
+    <ID>LongParameterList:SqlDriverContentBlobStore.kt:private fun createPersistentDelegate: InMemoryContentBlobStore</ID>
+    <ID>LongParameterList:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend fun isCurrent: Boolean</ID>
+    <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$while</ID>
+    <ID>LoopWithTooManyJumpStatements:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$for</ID>
+    <ID>NestedBlockDepth:ContentTransactions.kt:internal fun validateTypedPublicationAttachments</ID>
+    <ID>NestedBlockDepth:FoundationFullTextIndexReconciler.kt:FoundationFullTextIndexReconciler$public suspend fun reconcile: FullTextIndexReconcileResult</ID>
+    <ID>NoNameShadowing:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore${ it.startsWith(CONTENT_REPLICA_COMMIT_ID_PREFIX) }</ID>
+    <ID>RedundantSuspendModifier:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend</ID>
+    <ID>ReturnCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$fun deleteCrashFile: Boolean</ID>
+    <ID>ReturnCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$private fun verify: Boolean</ID>
+    <ID>ReturnCount:ContentAnnotations.kt:RightsEnforcedAnnotationService$public fun reanchorText: AnnotationReanchorResult</ID>
+    <ID>ReturnCount:ContentAnnotations.kt:private fun isWellFormedText: Boolean</ID>
+    <ID>ReturnCount:ContentTransactions.kt:internal fun isImmutablePublicationGraphExtension: Boolean</ID>
+    <ID>ReturnCount:ContentTransactions.kt:private fun isImmutableAcquisitionGraphExtension: Boolean</ID>
+    <ID>ReturnCount:ContentTransactions.kt:private fun isImmutableUnitGraphExtension: Boolean</ID>
+    <ID>ReturnCount:EpubAcquisitionService.kt:BoundedCssReferenceTokenizer$private fun readEscape: String</ID>
+    <ID>ReturnCount:EpubArchive.kt:private fun String.isWellFormedUtf16Path: Boolean</ID>
+    <ID>ReturnCount:LocalFullTextIndex.kt:InMemoryDerivedLocalFullTextIndex$private fun IndexedDocument.toHit: FullTextSearchHit?</ID>
+    <ID>ReturnCount:LocalFullTextIndex.kt:private fun isWellFormedText: Boolean</ID>
+    <ID>ReturnCount:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun copyInlineMigrationSlice: ContentBlobStorageMaintenanceResult</ID>
+    <ID>ReturnCount:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun verifyInlinePayload: Boolean</ID>
+    <ID>ReturnCount:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore$private fun commitLocked: ContentCommitResult</ID>
+    <ID>ReturnCount:SqlDriverLocalFullTextIndex.kt:private fun isWellFormedSearchText: Boolean</ID>
+    <ID>ReturnCount:TextAcquisitionService.kt:private fun String.isWellFormedUtf16: Boolean</ID>
+    <ID>ReturnCount:TextAcquisitionService.kt:private fun recognizedChapterTitle: String?</ID>
+    <ID>SwallowedException:EpubAcquisitionService.kt:EpubAcquisitionService$error: IllegalArgumentException</ID>
+    <ID>SwallowedException:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$error: IllegalArgumentException</ID>
+    <ID>ThrowsCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$fun publish: String</ID>
+    <ID>ThrowsCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$fun publishMigrationStage: String</ID>
+    <ID>ThrowsCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles.FileStage$fun publish: String</ID>
+    <ID>ThrowsCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles.FileStage$override fun seal: DurableContentBlobPendingHandle</ID>
+    <ID>ThrowsCount:ContentAnnotations.kt:InMemoryContentAnnotationStore$private fun putInternal</ID>
+    <ID>ThrowsCount:ContentBlobStore.kt:ContentBlobStore$public fun read: ByteArray?</ID>
+    <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateBlobSyncJobs</ID>
+    <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateSqlRows</ID>
+    <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateUniqueBatchEntries</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$fun prepare: PreparedEpubAcquisition</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parseEncryption: List&lt;EpubEncryptionDescriptor&gt;</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parsePackage: ParsedEpub</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun preflightPersistedGraph: Publication</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun validatePreparedBodyGraph</ID>
+    <ID>ThrowsCount:EpubArchive.kt:internal fun validateArchiveEntries: List&lt;EpubArchiveEntry&gt;</ID>
+    <ID>ThrowsCount:EpubArchive.kt:private fun EpubArchiveSource.readExact: ByteArray</ID>
+    <ID>ThrowsCount:EpubArchive.kt:private fun parseCentralDirectory: List&lt;ZipCentralRecord&gt;</ID>
+    <ID>ThrowsCount:EpubArchive.kt:private fun readCompressedBody: ByteArray</ID>
+    <ID>ThrowsCount:EpubArchive.kt:private fun readVerifiedEntry: ByteArray</ID>
+    <ID>ThrowsCount:EpubArchive.kt:private fun validateDeclaredZipLimits</ID>
+    <ID>ThrowsCount:EpubArchiveInflater.jvm.kt:internal actual fun platformInflateRawDeflate: ByteArray</ID>
+    <ID>ThrowsCount:FoundationFullTextIndexReconciler.kt:private suspend fun ContentBlobStore.readCancellable: ByteArray</ID>
+    <ID>ThrowsCount:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$internal fun hydrateAttachmentsLocked</ID>
+    <ID>ThrowsCount:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$internal fun validateAtomicAttachmentsLocked</ID>
+    <ID>ThrowsCount:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$internal fun validateReceiptsOnlyLocked</ID>
+    <ID>ThrowsCount:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$private fun validateBlobSyncJobs</ID>
+    <ID>ThrowsCount:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$private fun validateQuarantines</ID>
+    <ID>ThrowsCount:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$private fun validateReplicaReplay</ID>
+    <ID>ThrowsCount:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$private fun validateUniqueBatchEntries</ID>
+    <ID>ThrowsCount:SqlDriverContentAnnotationStore.kt:SqlDriverContentAnnotationStore$private fun validateCas</ID>
+    <ID>ThrowsCount:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun copyInlineMigrationSlice: ContentBlobStorageMaintenanceResult</ID>
+    <ID>ThrowsCount:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun readCurrentRepresentationChunk: ByteArray?</ID>
+    <ID>ThrowsCount:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun verifyInlineMigrationSlice: ContentBlobStorageMaintenanceResult</ID>
+    <ID>ThrowsCount:SqlDriverContentBlobDurability.kt:SqliteInlineContentBlobReadHandle$override fun readChunk: ByteArray?</ID>
+    <ID>ThrowsCount:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore$private fun stageAttachments: StagedAttachments</ID>
+    <ID>TooGenericExceptionCaught:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ContentBlobStore.kt:ContentBlobStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ContentFoundationRuntime.kt:ContentFoundationRuntime$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:EpubAcquisitionService.kt:EpubAcquisitionService$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:EpubArchive.kt:error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:FoundationFullTextIndexReconciler.kt:failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ImageSequenceAcquisitionService.kt:ImageSequenceAcquisitionService$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:InMemoryContentBlobStore.kt:InMemoryContentBlobStore$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:TextAcquisitionService.kt:TextAcquisitionService$failure: Throwable</ID>
+    <ID>UnusedPrivateProperty:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore$private val blobStore: ContentBlobStore</ID>
+    <ID>UseCheckOrError:ContentSqlAccess.kt:ContentSqlAccess$throw IllegalStateException("Injected SQL content transaction failure at $point")</ID>
+    <ID>UseCheckOrError:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$throw IllegalStateException("Injected shared content transaction failure at $point")</ID>
+    <ID>UseCheckOrError:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$throw IllegalStateException("Persisted protected search row has no live authorization")</ID>
+    <ID>UseRequire:EpubAcquisitionService.kt:BoundedCssReferenceTokenizer$throw IllegalArgumentException("unterminated url()")</ID>
+    <ID>UseRequireNotNull:ContentBlobStore.kt:DurableContentBlob$require(discoveredAtEpochMillis != null) { "Discovered durable orphan must carry discovery time" }</ID>
+    <ID>UseRequireNotNull:ContentTransactions.kt:ContentMigrationLedgerLookup$require(existing != null) { "Resolved migration lookup must carry an existing ledger" }</ID>
+  </CurrentIssues>
+</SmellBaseline>

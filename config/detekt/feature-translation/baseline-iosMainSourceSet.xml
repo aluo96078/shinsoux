@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:IosMangaBenchmark.kt:@OptIn(ExperimentalForeignApi::class) fun startMangaBenchmarkIfAsked</ID>
+    <ID>CyclomaticComplexMethod:IosMangaBenchmark.kt:@OptIn(ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class) private fun coreMlDetector</ID>
+    <ID>EmptyElseBlock:IosCoreMlDetector.kt:IosCoreMlDetector$if (index[d] &lt; shape[d]) break</ID>
+    <ID>RethrowCaughtException:IosSystemTranslation.kt:IosSystemTranslationEngine$throw cancelled</ID>
+    <ID>ReturnCount:IosMangaPlatform.kt:IosMangaPlatform$override fun acceleratedDetector: PageDetector?</ID>
+    <ID>ReturnCount:IosMangaPlatform.kt:IosSkiaPageCodec$@OptIn(ExperimentalForeignApi::class) override fun decode: RgbImage?</ID>
+    <ID>ThrowsCount:IosCoreMlDetector.kt:IosCoreMlDetector$private fun scoresOf: Pair&lt;FloatArray, FloatArray&gt;</ID>
+    <ID>ThrowsCount:IosOfflineTranslationEngine.kt:IosOfflineTranslationEngine$override suspend fun translate: List&lt;String&gt;</ID>
+  </CurrentIssues>
+</SmellBaseline>

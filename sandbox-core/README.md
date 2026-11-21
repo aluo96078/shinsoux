@@ -2,7 +2,7 @@
 
 第三方套件沙箱的原生核心（ADR-0002 §4、§17）：在沙箱內以 QuickJS 執行套件腳本，所有對外能力都只透過
 SandboxProtocol v1 的 frame 向 Host 要求。Host 端的對應實作在
-`composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/`。
+`feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/`。
 
 ## 組成
 
@@ -39,7 +39,7 @@ python3 -I $G/scripts/compare_golden.py ../spikes/sandbox-s0/build/html-golden/e
 ```
 
 Kotlin↔C 端到端與官方套件 parity：建好 `build/release/shinsou-sandbox` 後執行
-`./gradlew :composeApp:desktopTest --tests 'dev.shinsou.kmp.plugin.sandbox.*'`（找不到 binary 或官方套件 repo 時
+`./gradlew :feature-plugin:desktopTest --tests 'dev.shinsou.kmp.plugin.sandbox.*'`（找不到 binary 或官方套件 repo 時
 相關測試會略過並印出原因；也可用 `SHINSOU_SANDBOX_BIN` 指定路徑）。加上
 `SHINSOU_SANDBOX_BENCH=../spikes/sandbox-s0/build/bench/fixtures` 會另外比對 S0 的錄製資料（只在本機）。
 

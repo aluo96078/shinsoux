@@ -1,8 +1,8 @@
 name: Sandbox Android
 
-# ADR-0002 S2: the isolated-process plugin sandbox. Builds sandbox-core with the NDK inside the app,
-# checks what the library exports and links against, and runs the device tests on emulators at the
-# oldest supported API (29) and a current one (§13 platform matrix). Real-hardware runs are local
+# ADR-0002 S2: the isolated-process plugin sandbox. Builds sandbox-core with the NDK (in :feature-plugin,
+# merged into the app's APK), checks what the library exports and links against, and runs the device
+# tests on emulators at the oldest supported API (29) and a current one (§13 platform matrix). Real-hardware runs are local
 # (see AndroidSandboxDeviceTest). It runs on pull requests that touch the sandbox, on master, by hand, and on `sandbox-android/**` pushes.
 
 on:
@@ -14,10 +14,18 @@ on:
     paths:
       - "sandbox-core/**"
       - "composeApp/build.gradle.kts"
-      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "build-logic/**"
+      - "feature-plugin/src/commonMain/**"
+      # The address policy plugins are held to (ADR-0002) lives in :core.
+      - "core/src/commonMain/kotlin/dev/shinsou/kmp/network/**"
       - "gradle/**"
       - "composeApp/src/androidMain/**"
+      # R5-1: the platform code of every module the app is built from
+      - "*/src/androidMain/**"
+      - "*/build.gradle.kts"
+      - "settings.gradle.kts"
       - "composeApp/src/androidInstrumentedTest/**"
+      - "feature-plugin/src/androidInstrumentedTest/**"
       - ".github/workflows/sandbox-android.yml"
 
 permissions:
@@ -115,9 +123,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # R5-1: the sandbox's device tests are :feature-plugin's (its test APK carries the sandbox
+      # library, service and zygote preload); the app's own device tests stay in :composeApp.
       - name: Build the test APKs
         run: >
           ./gradlew :composeApp:assembleDebug :composeApp:assembleDebugAndroidTest
+          :feature-plugin:assembleDebugAndroidTest
           -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: Run the device tests
@@ -129,21 +140,25 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: >
-            ./gradlew :composeApp:connectedDebugAndroidTest
+            ./gradlew :feature-plugin:connectedDebugAndroidTest :composeApp:connectedDebugAndroidTest
             -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
-            && (adb logcat -d -s SSC-S2 | tee composeApp/build/sandbox-device.log)
+            && (adb logcat -d -s SSC-S2 | tee feature-plugin/build/sandbox-device.log)
 
       - name: Summarize
         if: always()
         run: |
-          r=$(ls composeApp/build/outputs/androidTest-results/connected/debug/*.xml 2>/dev/null | head -1)
-          [ -n "$r" ] && grep -o 'tests="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$r" | sed "s/^/API ${{ matrix.api }}: /" | tee -a "$GITHUB_STEP_SUMMARY"
-          grep -h "device:" composeApp/build/sandbox-device.log 2>/dev/null | sed 's/^.*SSC-S2 *: //' | tee -a "$GITHUB_STEP_SUMMARY" || true
+          for module in feature-plugin composeApp; do
+            r=$(ls $module/build/outputs/androidTest-results/connected/debug/*.xml 2>/dev/null | head -1)
+            [ -n "$r" ] && grep -o 'tests="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$r" | sed "s/^/API ${{ matrix.api }} ($module): /" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          grep -h "device:" feature-plugin/build/sandbox-device.log 2>/dev/null | sed 's/^.*SSC-S2 *: //' | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: device-test-results-api${{ matrix.api }}
           path: |
+            feature-plugin/build/outputs/androidTest-results/
+            feature-plugin/build/reports/androidTests/
             composeApp/build/outputs/androidTest-results/
             composeApp/build/reports/androidTests/

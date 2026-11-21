@@ -1,7 +1,8 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.PluginJson
-import dev.shinsou.kmp.plugin.PluginKeyValueStore
+import dev.shinsou.kmp.files.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
@@ -15,6 +16,7 @@ import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +28,7 @@ internal class DesktopPluginKeyValueStore(
     private val directory: Path = DesktopAppDirectories.dataRoot,
     private val masterKeyStore: DesktopMasterKeyStore = DesktopMasterKeyStoreFactory.create(directory),
     private val secureRandom: SecureRandom = SecureRandom(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginKeyValueStore {
     private val lock = Any()
     private val stateFile = directory.resolve("plugin-state.json")
@@ -34,7 +37,7 @@ internal class DesktopPluginKeyValueStore(
     private val serializer = MapSerializer(String.serializer(), String.serializer())
     private var cachedMasterKey: ByteArray? = null
 
-    override suspend fun getString(key: String): String? = withContext(Dispatchers.IO) {
+    override suspend fun getString(key: String): String? = withContext(ioDispatcher) {
         synchronized(lock) {
             val values = readState()
             val value = values[key] ?: return@synchronized null
@@ -43,14 +46,14 @@ internal class DesktopPluginKeyValueStore(
                 val masterKey = masterKey(values)
                 return@synchronized runCatching {
                     decrypt(value.removePrefix(ENCRYPTED_PREFIX), masterKey)
-                }.getOrNull()
+                }.onFailure { Log.warn("Storage", it) { "Decrypting a stored extension value failed" } }.getOrNull()
             }
             writeState(values + (key to (ENCRYPTED_PREFIX + encrypt(value, masterKey(values)))))
             value
         }
     }
 
-    override suspend fun putString(key: String, value: String): Unit = withContext(Dispatchers.IO) {
+    override suspend fun putString(key: String, value: String): Unit = withContext(ioDispatcher) {
         synchronized(lock) {
             val values = readState().toMutableMap()
             values[key] = if (isSensitivePluginKey(key)) {
@@ -62,7 +65,7 @@ internal class DesktopPluginKeyValueStore(
         }
     }
 
-    override suspend fun remove(key: String): Unit = withContext(Dispatchers.IO) {
+    override suspend fun remove(key: String): Unit = withContext(ioDispatcher) {
         synchronized(lock) {
             val values = readState().toMutableMap()
             if (values.remove(key) != null) writeState(values)
@@ -185,6 +188,7 @@ internal class DesktopPluginKeyValueStore(
     }
 
     private fun decryptsAll(encryptedValues: List<String>, masterKey: ByteArray): Boolean =
+        // A probe: whether this key opens every value; a value it cannot open answers false.
         encryptedValues.all { value -> runCatching { decrypt(value, masterKey) }.isSuccess }
 
     private fun requireValidMasterKey(masterKey: ByteArray) {
@@ -200,11 +204,13 @@ internal class DesktopPluginKeyValueStore(
         try {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (_: AtomicMoveNotSupportedException) {
+            // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
     private fun setOwnerOnly(path: Path, directory: Boolean) {
+        // File systems without POSIX permissions (Windows) cannot do this; the file stays as created.
         runCatching {
             Files.setPosixFilePermissions(
                 path,

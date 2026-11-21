@@ -28,9 +28,14 @@ import platform.Foundation.dateByAddingTimeInterval
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class IosAutoBackupScheduler(
-    private val repository: ShinsouRepository,
-    private val service: AutoBackupService,
+    /** The app's repository once its stores are open; null before (or when they cannot be). */
+    private val repository: () -> ShinsouRepository?,
+    private val service: () -> AutoBackupService?,
     private val scope: CoroutineScope,
+    /** Opens the app's stores (idempotent): registration happens at launch, before they are. */
+    private val awaitApp: suspend () -> Unit = {},
+    /** The stores can never open (a newer library): nothing is scheduled any more. */
+    private val cannotOpen: () -> Boolean = { false },
 ) {
     private val scheduler: BGTaskScheduler get() = BGTaskScheduler.sharedScheduler
     private var registered = false
@@ -54,6 +59,11 @@ internal class IosAutoBackupScheduler(
         val now = Clock.System.now().toEpochMilliseconds()
         val next = nextAutoBackupAt(state)
         val delayMillis = if (next == null || next <= now) MINIMUM_IOS_SCHEDULE_DELAY_MILLIS else next - now
+        return submit(delayMillis)
+    }
+
+    /** Submits the next backup run, [delayMillis] from now at the earliest. */
+    private fun submit(delayMillis: Long): Boolean {
         val request = BGProcessingTaskRequest(IOS_AUTO_BACKUP_TASK_IDENTIFIER).apply {
             requiresExternalPower = false
             requiresNetworkConnectivity = false
@@ -73,11 +83,25 @@ internal class IosAutoBackupScheduler(
         operation = scope.launch {
             var succeeded = false
             try {
-                succeeded = service.runIfDue() !is AutoBackupRunResult.Failed
+                awaitApp()
+                val result = service()?.runIfDue()
+                succeeded = result != null && result !is AutoBackupRunResult.Failed
             } finally {
                 task.expirationHandler = null
-                task.setTaskCompletedWithSuccess(succeeded)
-                apply(repository.currentSnapshot.backupState)
+                try {
+                    // This run came from a request made while backups were on. When startup did not
+                    // finish (iOS expired the run first), the next one is still submitted, and
+                    // before this run reports completion: iOS may suspend the app as soon as it
+                    // does, before anything else would. That run decides anew.
+                    val opened = repository()
+                    when {
+                        opened != null -> apply(opened.currentSnapshot.backupState)
+                        // A run that could never do anything is not asked for again.
+                        !cannotOpen() -> submit(MINIMUM_IOS_SCHEDULE_DELAY_MILLIS)
+                    }
+                } finally {
+                    task.setTaskCompletedWithSuccess(succeeded)
+                }
             }
         }
     }

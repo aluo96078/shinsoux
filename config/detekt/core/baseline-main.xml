@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreFoundationFramework$fun CFDataCreate: Pointer?</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreFoundationFramework$fun CFRelease</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGBitmapContextCreate: Pointer?</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGColorSpaceCreateDeviceRGB: Pointer?</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGColorSpaceRelease</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGContextDrawImage</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGContextRelease</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGImageGetHeight: Long</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGImageGetWidth: Long</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGImageRelease</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.ImageIoFramework$fun CGImageSourceCreateImageAtIndex: Pointer?</ID>
+    <ID>FunctionNaming:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.ImageIoFramework$fun CGImageSourceCreateWithData: Pointer?</ID>
+    <ID>ImplicitDefaultLocale:PlatformLibsodium.desktop.kt:DesktopLibsodium$"%02x".format(it)</ID>
+    <ID>LongParameterList:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder.CoreGraphicsFramework$fun CGBitmapContextCreate: Pointer?</ID>
+    <ID>NestedBlockDepth:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder$override fun decode: DecodedMacOsAvifImage?</ID>
+    <ID>ReturnCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
+    <ID>ReturnCount:DesktopAvifDecoder.kt:DesktopAvifDecoder.Factory$override fun create: Decoder?</ID>
+    <ID>ReturnCount:DesktopAvifDecoder.kt:JnaMacOsAvifImageDecoder$override fun decode: DecodedMacOsAvifImage?</ID>
+    <ID>ReturnCount:DesktopAvifDecoder.kt:private fun SourceFetchResult.isAvif: Boolean</ID>
+    <ID>ThrowsCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
+    <ID>TooGenericExceptionCaught:RunCatchingCancellable.kt:error: Throwable</ID>
+    <ID>UnusedPrivateProperty:SynchronousLock.jvm.kt:SynchronousLock$private val delegate = ReentrantLock(true)</ID>
+  </CurrentIssues>
+</SmellBaseline>

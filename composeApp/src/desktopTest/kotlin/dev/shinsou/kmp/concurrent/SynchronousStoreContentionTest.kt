@@ -13,7 +13,7 @@ import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.InMemorySharedContentTransactionStore
 import dev.shinsou.kmp.content.SqlDriverPortableAliasResolver
-import dev.shinsou.kmp.content.access.ContentAccessRequest
+import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.domain.model.LegacyAliasKey
 import dev.shinsou.kmp.domain.model.MigrationNamespaceId

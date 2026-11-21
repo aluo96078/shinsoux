@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:AndroidAppServices.kt:internal fun imageMimeType: String</ID>
+    <ID>ReturnCount:AndroidAppServices.kt:AndroidAppServices$fun emitReaderVolumeKey: Boolean</ID>
+    <ID>ReturnCount:AndroidDownloadJobService.kt:AndroidDownloadJobService.Companion$fun schedule: Boolean</ID>
+    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$override suspend fun getString: String?</ID>
+    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$private fun ensureSensitiveValuesMigrated</ID>
+    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher$private fun readDocument: ImportedDocument</ID>
+    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$override fun read: ByteArray</ID>
+    <ID>TooGenericExceptionCaught:AndroidAppRuntime.kt:AndroidAppRuntime$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:AndroidDownloadJobService.kt:AndroidDownloadJobService$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$error: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

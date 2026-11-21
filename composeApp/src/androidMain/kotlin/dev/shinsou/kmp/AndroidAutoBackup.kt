@@ -6,11 +6,13 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import dev.shinsou.kmp.app.checkBeforeOpening
 import dev.shinsou.kmp.backup.AutoBackupRunResult
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.nextAutoBackupAt
 import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.files.AndroidAppFileSystem
 import java.util.concurrent.TimeUnit
@@ -49,7 +51,7 @@ internal class AndroidSharedState private constructor(context: Context) {
      */
     fun bindTranslationBackups() {
         if (autoBackups.translations != null) return
-        autoBackups.translations = dev.shinsou.kmp.backup.TranslationMemoryBackups(
+        autoBackups.translations = dev.shinsou.kmp.translation.TranslationMemoryBackups(
             dev.shinsou.kmp.translation.TranslationMemoryStore(contentInfrastructure.contentDriver()),
         )
     }
@@ -113,7 +115,8 @@ internal class AndroidAutoBackupWorker(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (logged: Throwable) {
+            Log.warn("Backup", logged) { "Automatic backup worker failed; scheduling a retry" }
             Result.retry()
         }
     }

@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$@Deprecated("Legacy WebView callback retained for old engines") override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun configure</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun documentLoadFailed: Boolean</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun sampleViewport</ID>
+    <ID>ReturnCount:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
+  </CurrentIssues>
+</SmellBaseline>

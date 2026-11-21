@@ -4,7 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import dev.shinsou.kmp.plugin.PluginKeyValueStore
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.files.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -27,7 +29,9 @@ internal class AndroidPluginKeyValueStore(context: Context) : PluginKeyValueStor
         val stored = preferences.getString(key, null) ?: return null
         if (!isSensitivePluginKey(key)) return stored
         if (stored.startsWith(ENCRYPTED_PREFIX)) {
-            return runCatching { decrypt(stored.removePrefix(ENCRYPTED_PREFIX)) }.getOrNull()
+            return runCatchingCancellable { decrypt(stored.removePrefix(ENCRYPTED_PREFIX)) }
+                .onFailure { Log.warn("Storage", it) { "Decrypting a stored extension value failed" } }
+                .getOrNull()
         }
         check(preferences.edit().putString(key, ENCRYPTED_PREFIX + encrypt(stored)).commit()) {
             "Unable to persist encrypted plugin value"

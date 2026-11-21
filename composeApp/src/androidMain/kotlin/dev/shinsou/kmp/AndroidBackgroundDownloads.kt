@@ -11,6 +11,8 @@ import android.util.Log
 import dev.shinsou.kmp.download.BackgroundDownloadStatus
 import dev.shinsou.kmp.download.BackgroundDownloadWork
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
+import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +29,7 @@ internal object AndroidBackgroundDownloads {
 
     /** Language of the activity that last published progress. */
     @Volatile
-    var strings: ShinsouStrings = ShinsouStrings()
+    var strings: ShinsouStrings = shinsouStringsFor("en")
         private set
 
     /** Set by the app core: pauses the queues because the system is ending the background work. */
@@ -85,7 +87,7 @@ internal object AndroidDownloadNotification {
         )
         return Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(strings.text("Downloading {0} / {1}", shown.done, shown.total))
+            .setContentTitle(strings.text(StringKey.DOWNLOADING_X_X, shown.done, shown.total))
             .setContentText(summary(shown, strings))
             .setProgress(shown.total, shown.done, shown.total == 0)
             .apply { titles(shown, strings)?.let(::setStyle) }
@@ -105,7 +107,7 @@ internal object AndroidDownloadNotification {
         val works = status.works
         return when {
             works.size == 1 -> works.single().line()
-            works.size > 1 -> strings.text("Downloading {0} titles", works.size)
+            works.size > 1 -> strings.text(StringKey.DOWNLOADING_X_TITLES, works.size)
             else -> status.current
         }
     }
@@ -118,7 +120,7 @@ internal object AndroidDownloadNotification {
         }
         return Notification.InboxStyle().apply {
             works.take(MAX_LINES).forEach { addLine(it.line()) }
-            if (works.size > MAX_LINES) setSummaryText(strings.text("{0} more titles", works.size - MAX_LINES))
+            if (works.size > MAX_LINES) setSummaryText(strings.text(StringKey.X_MORE_TITLES, works.size - MAX_LINES))
         }
     }
 

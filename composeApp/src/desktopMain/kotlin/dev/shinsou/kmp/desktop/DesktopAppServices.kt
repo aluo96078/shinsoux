@@ -1,11 +1,14 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.ShellStateStore
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.tracking.TrackingCoordinator
-import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
@@ -23,8 +26,10 @@ import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.contract.readBoundedImportedBytes
 import dev.shinsou.kmp.contract.requireImportedDocumentSize
+import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
@@ -46,6 +51,7 @@ import java.nio.file.StandardOpenOption
 import java.util.Locale
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,7 +63,7 @@ import dev.shinsou.kmp.files.DesktopPlatform
 internal class DesktopAppServices(
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
-    override val contentFeatures: ContentFeatureRuntime? = null,
+    override val contentFeatures: ContentFeatures? = null,
     override val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
     override val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker? = null,
     override val tracking: TrackingCoordinator? = null,
@@ -66,8 +72,10 @@ internal class DesktopAppServices(
     override val shuYueMigration: ShuYueMigrationUiController? = null,
     private val closeApplication: () -> Unit,
     private val frame: () -> Frame? = { null },
-    private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
+    private val stringsProvider: () -> ShinsouStrings = { shinsouStringsFor("en") },
     private val platform: DesktopPlatform = DesktopPlatform.current,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    override val shellStateStore: ShellStateStore? = null,
 ) : ShinsouAppServices {
     private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
@@ -110,6 +118,7 @@ internal class DesktopAppServices(
         tryOpenExternalUrl(url)
     }
 
+    // A desktop that cannot open the link is an expected outcome; the caller reports false.
     override fun tryOpenExternalUrl(url: String): Boolean = runCatching {
             if (!Desktop.isDesktopSupported()) return@runCatching false
             val desktop = Desktop.getDesktop()
@@ -131,24 +140,25 @@ internal class DesktopAppServices(
     override fun copyText(label: String, text: String): Boolean = runCatching {
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
         true
-    }.getOrDefault(false)
+    }.onFailure { Log.warn("Desktop", it) { "Copying text to the clipboard failed" } }.getOrDefault(false)
 
-    override suspend fun readClipboardText(): String? = runCatching {
+    // A clipboard holding no text (or busy elsewhere) reads as empty; that is not a failure.
+    override suspend fun readClipboardText(): String? = runCatchingCancellable {
         Toolkit.getDefaultToolkit().systemClipboard
             .getData(DataFlavor.stringFlavor) as? String
     }.getOrNull()
 
     override suspend fun exportDocument(suggestedName: String, contents: String): Boolean {
         val selected = chooseFile(
-            title = stringsProvider().text("Export {0}", suggestedName),
+            title = stringsProvider().text(StringKey.EXPORT_X, suggestedName),
             mode = FileDialog.SAVE,
             suggestedName = suggestedName,
         ) ?: return false
-        return runCatching {
+        return runCatchingCancellable {
             selected.parent?.let(Files::createDirectories)
             Files.writeString(selected, contents, StandardCharsets.UTF_8)
             true
-        }.getOrDefault(false)
+        }.onFailure { Log.warn("Desktop", it) { "Exporting a document failed" } }.getOrDefault(false)
     }
 
     override suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean {
@@ -163,11 +173,11 @@ internal class DesktopAppServices(
         source: BinaryDocumentExportSource,
     ): Boolean {
         val selected = chooseFile(
-            title = stringsProvider().text("Export {0}", suggestedName),
+            title = stringsProvider().text(StringKey.EXPORT_X, suggestedName),
             mode = FileDialog.SAVE,
             suggestedName = suggestedName,
         ) ?: return false
-        return withContext(Dispatchers.IO) {
+        return withContext(ioDispatcher) {
             writeBinaryDocument(selected, source)
         }
     }
@@ -177,19 +187,19 @@ internal class DesktopAppServices(
         limits: ImportedDocumentLimits,
     ): ImportedDocument? {
         val selected = chooseFile(
-            title = stringsProvider().text("Import Shinsou X data"),
+            title = stringsProvider().text(StringKey.IMPORT_SHINSOU_X_DATA),
             mode = FileDialog.LOAD,
             acceptedExtensions = acceptedExtensions,
         ) ?: return null
-        return withContext(Dispatchers.IO) { readImportedDocument(selected, limits) }
+        return withContext(ioDispatcher) { readImportedDocument(selected, limits) }
     }
 
     override suspend fun pickLocalFiles(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits,
     ): List<ImportedDocument> {
-        val selected = chooseFiles(stringsProvider().text("Choose local manga"), acceptedExtensions)
-        return withContext(Dispatchers.IO) {
+        val selected = chooseFiles(stringsProvider().text(StringKey.CHOOSE_LOCAL_MANGA), acceptedExtensions)
+        return withContext(ioDispatcher) {
             var acceptedBytes = 0L
             selected.map { path ->
                 readImportedDocument(path, limits, acceptedBytes).also { acceptedBytes += it.byteSize }
@@ -343,13 +353,14 @@ internal fun writeBinaryDocument(
                 StandardCopyOption.ATOMIC_MOVE,
             )
         } catch (_: AtomicMoveNotSupportedException) {
+            // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
         }
         true
     } finally {
         Files.deleteIfExists(temporary)
     }
-}.getOrDefault(false)
+}.onFailure { Log.warn("Desktop", it) { "Exporting a binary document failed" } }.getOrDefault(false)
 
 internal object DesktopPersistence {
     private val directory: Path by lazy { DesktopAppDirectories.dataRoot }
@@ -371,8 +382,9 @@ internal object DesktopPersistence {
         }
         return try {
             AppSnapshotJson.decode(payload)
-        } catch (_: Exception) {
+        } catch (logged: Exception) {
             // Not Throwable: an OutOfMemoryError says nothing about the file.
+            Log.warn("Desktop", logged) { "Saved app state could not be decoded; quarantining it and starting empty" }
             val quarantine = file.resolveSibling("shinsou-state.corrupt-${System.currentTimeMillis()}.json")
             Files.move(file, quarantine, StandardCopyOption.REPLACE_EXISTING)
             AppSnapshot()
@@ -402,6 +414,7 @@ internal object DesktopPersistence {
                 StandardCopyOption.ATOMIC_MOVE,
             )
         } catch (_: AtomicMoveNotSupportedException) {
+            // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(temporary, stateFile, StandardCopyOption.REPLACE_EXISTING)
         }
     }

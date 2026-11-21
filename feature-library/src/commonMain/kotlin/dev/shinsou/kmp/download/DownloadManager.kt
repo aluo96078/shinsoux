@@ -1,0 +1,426 @@
+package dev.shinsou.kmp.download
+
+import dev.shinsou.kmp.contract.ChapterPageProvider
+import dev.shinsou.kmp.contract.DownloadPageFetcher
+import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.domain.model.DownloadQueueItem
+import dev.shinsou.kmp.domain.model.DownloadState
+import dev.shinsou.kmp.files.AppFileSystem
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.crypto.Sha256
+import dev.shinsou.kmp.domain.model.sourceFailureMarker
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlin.time.Clock
+
+/** Persistent, resumable chapter queue shared by all targets. */
+class DownloadManager(
+    private val repository: ShinsouRepository,
+    private val fileSystem: AppFileSystem,
+    private val pageProvider: ChapterPageProvider,
+    private val pageFetcher: DownloadPageFetcher,
+    defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+) {
+    private val scopeJob = SupervisorJob()
+    private val scope = CoroutineScope(scopeJob + defaultDispatcher)
+    private val schedulerMutex = Mutex()
+    private val progressMutex = Mutex()
+    private val active = linkedMapOf<String, Job>()
+    /** Entries being removed; the scheduler must not start them while their files are deleted. */
+    private val removing = linkedMapOf<String, CompletableDeferred<Unit>>()
+    private var globallyPaused = false
+
+    suspend fun restoreQueue() {
+        try {
+            repository.currentSnapshot.downloadQueue.forEach { item ->
+                try {
+                    restoreItem(item)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (logged: Exception) {
+                    // A file that cannot be read right now says nothing about the download: leave
+                    // this entry as it is, and keep restoring the rest of the queue.
+                    Log.warn("Download", logged) { "Restoring a queued download failed; leaving the entry for a later attempt" }
+                }
+            }
+        } finally {
+            schedule()
+        }
+    }
+
+    private suspend fun restoreItem(item: DownloadQueueItem) {
+        val completed = DownloadCompletionManifests.readPresent(fileSystem, item.mangaId, item.chapterId)
+            ?: if (
+                item.state == DownloadState.DOWNLOADED &&
+                item.totalPages > 0 &&
+                item.downloadedPages == item.totalPages
+            ) {
+                DownloadCompletionManifests.readValidOrMigrateLegacy(
+                    fileSystem,
+                    item.mangaId,
+                    item.chapterId,
+                    item.totalPages,
+                )
+            } else {
+                DownloadCompletionManifests.readValid(fileSystem, item.mangaId, item.chapterId)
+            }
+        when {
+            completed != null && item.state != DownloadState.DOWNLOADED -> {
+                repository.setDownloadState(
+                    item.id,
+                    DownloadState.DOWNLOADED,
+                    progress = 1.0,
+                    downloadedPages = completed.pageCount,
+                    totalPages = completed.pageCount,
+                    updatedAt = now(),
+                )
+            }
+            completed == null && item.state == DownloadState.DOWNLOADED -> {
+                // A stale marker or a missing page must not leave the queue permanently
+                // claiming that unreadable bytes are available offline.
+                repository.setDownloadState(
+                    item.id,
+                    DownloadState.QUEUED,
+                    progress = 0.0,
+                    downloadedPages = 0,
+                    totalPages = 0,
+                    updatedAt = now(),
+                )
+            }
+            item.state == DownloadState.DOWNLOADING -> {
+                repository.setDownloadState(item.id, DownloadState.QUEUED, updatedAt = now())
+            }
+        }
+    }
+
+    suspend fun enqueue(mangaId: Long, chapterId: Long): DownloadQueueItem {
+        val item = repository.enqueueDownload(mangaId, chapterId, queuedAt = now())
+        if (item.state == DownloadState.ERROR || item.state == DownloadState.PAUSED) {
+            repository.setDownloadState(item.id, DownloadState.QUEUED, updatedAt = now())
+        }
+        schedule()
+        return repository.currentSnapshot.downloadQueue.first { it.id == item.id }
+    }
+
+    suspend fun retry(itemId: String) {
+        repository.setDownloadState(
+            itemId,
+            DownloadState.QUEUED,
+            progress = 0.0,
+            downloadedPages = 0,
+            totalPages = 0,
+            updatedAt = now(),
+        )
+        schedule()
+    }
+
+    suspend fun pause(itemId: String) {
+        // Workers stay in [active] until they have stopped (they remove themselves), so a
+        // concurrent removal always finds and waits for them.
+        schedulerMutex.withLock { active[itemId] }?.cancelAndJoin()
+        repository.setDownloadState(itemId, DownloadState.PAUSED, updatedAt = now())
+        schedule()
+    }
+
+    suspend fun resume(itemId: String) {
+        repository.setDownloadState(itemId, DownloadState.QUEUED, updatedAt = now())
+        schedule()
+    }
+
+    suspend fun pauseAll(paused: Boolean) {
+        val running = schedulerMutex.withLock {
+            globallyPaused = paused
+            if (paused) active.values.toList() else emptyList()
+        }
+        if (paused) {
+            running.forEach { it.cancelAndJoin() }
+            repository.currentSnapshot.downloadQueue
+                .filter { it.state == DownloadState.DOWNLOADING || it.state == DownloadState.QUEUED }
+                .forEach { item ->
+                    repository.setDownloadState(item.id, DownloadState.PAUSED, updatedAt = now())
+            }
+        } else {
+            repository.currentSnapshot.downloadQueue
+                .filter { it.state == DownloadState.PAUSED }
+                .forEach { repository.setDownloadState(it.id, DownloadState.QUEUED, updatedAt = now()) }
+            schedule()
+        }
+    }
+
+    /**
+     * A pause the system asked for: exactly [ids] (saved by the caller beforehand) stop. The
+     * global pause is left alone, so a pause the user chose is never lifted by recovery.
+     */
+    suspend fun pauseForSystem(ids: Set<String>) {
+        // Waiting entries are paused under the scheduler lock so none of them starts meanwhile.
+        val running = schedulerMutex.withLock {
+            repository.currentSnapshot.downloadQueue
+                .filter { it.id in ids && it.state == DownloadState.QUEUED && it.id !in active }
+                .forEach { repository.setDownloadState(it.id, DownloadState.PAUSED, updatedAt = now()) }
+            ids.mapNotNull { active[it] }
+        }
+        // Running ones are stopped first; otherwise a progress update could overwrite PAUSED.
+        running.forEach { it.cancelAndJoin() }
+        repository.currentSnapshot.downloadQueue
+            .filter { it.id in ids && (it.state == DownloadState.DOWNLOADING || it.state == DownloadState.QUEUED) }
+            .forEach { repository.setDownloadState(it.id, DownloadState.PAUSED, updatedAt = now()) }
+    }
+
+    /** Undoes [pauseForSystem] for [ids] (null: every paused entry); entries the user paused stay. */
+    suspend fun resumeAfterSystem(ids: Set<String>?) {
+        repository.currentSnapshot.downloadQueue
+            .filter { it.state == DownloadState.PAUSED && (ids == null || it.id in ids) }
+            .forEach { repository.setDownloadState(it.id, DownloadState.QUEUED, updatedAt = now()) }
+        schedule()
+    }
+
+    suspend fun remove(itemId: String) = removeEntry(itemId, keepIfDownloaded = false)
+
+    /**
+     * Bulk removal of waiting or failed chapters. The running download is stopped first, and its
+     * state is read only after it has fully stopped, so a chapter that finished in the meantime
+     * keeps its files and queue entry.
+     */
+    suspend fun removeUnfinished(itemId: String) = removeEntry(itemId, keepIfDownloaded = true)
+
+    private suspend fun removeEntry(itemId: String, keepIfDownloaded: Boolean) {
+        val done = CompletableDeferred<Unit>()
+        // A second removal of the same entry waits for the first (and shares its outcome)
+        // instead of racing it.
+        val (owner, running) = schedulerMutex.withLock {
+            removing[itemId]?.let { return@withLock it to null }
+            removing[itemId] = done
+            done to active[itemId]
+        }
+        if (owner !== done) {
+            owner.await()
+            return
+        }
+        var failure: Throwable? = null
+        // Rethrows unchanged; the catch only records the failure for the finally block.
+        @Suppress("SuspendFunSwallowedCancellation") try {
+            running?.cancelAndJoin()
+            val item = repository.currentSnapshot.downloadQueue.firstOrNull { it.id == itemId } ?: return
+            if (keepIfDownloaded && item.state == DownloadState.DOWNLOADED) return
+            fileSystem.deleteTree(directory(item.mangaId, item.chapterId))
+            repository.removeDownload(itemId)
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            // Must run even when this caller is cancelled, or the entry stays reserved for good.
+            withContext(NonCancellable) {
+                // A cancelled caller stops joining early; the worker must be gone before another
+                // removal or download may touch this chapter's files.
+                running?.join()
+                schedulerMutex.withLock { removing.remove(itemId) }
+                failure?.let(done::completeExceptionally) ?: done.complete(Unit)
+                schedule()
+            }
+        }
+    }
+
+    /**
+     * Start-up no longer reads every page, so a truncated or corrupted page is found when the
+     * chapter is opened. The entry must not keep claiming the chapter is available offline (it
+     * could then never be downloaded again without deleting it by hand): download it again.
+     */
+    suspend fun requeueBrokenDownload(mangaId: Long, chapterId: Long) {
+        val item = repository.currentSnapshot.downloadQueue.firstOrNull {
+            it.mangaId == mangaId && it.chapterId == chapterId && it.state == DownloadState.DOWNLOADED
+        } ?: return
+        // Back into the visible queue first ("Clear completed" hides finished entries): a hidden
+        // entry gets no background keep-alive, and its failure would not show up for a retry.
+        repository.enqueueDownload(mangaId, chapterId, queuedAt = now())
+        repository.setDownloadState(
+            item.id,
+            DownloadState.QUEUED,
+            progress = 0.0,
+            downloadedPages = 0,
+            totalPages = 0,
+            updatedAt = now(),
+        )
+        schedule()
+    }
+
+    suspend fun downloadedPages(mangaId: Long, chapterId: Long): List<String> =
+        DownloadCompletionManifests.readValid(fileSystem, mangaId, chapterId)
+            ?.pages
+            ?.sortedBy { it.index }
+            ?.map { fileSystem.uri("${directory(mangaId, chapterId)}/${it.fileName}") }
+            .orEmpty()
+
+    /**
+     * Suspends until every currently queued download has reached a terminal or paused state.
+     * This is also useful for platform shutdown and deterministic background-work tests.
+     */
+    suspend fun awaitIdle() {
+        while (true) {
+            val jobs = schedulerMutex.withLock { active.values.toList() }
+            if (jobs.isNotEmpty()) {
+                jobs.joinAll()
+                continue
+            }
+
+            // An entry being removed is never started, so it is not work to wait for.
+            val beingRemoved = schedulerMutex.withLock { removing.keys.toSet() }
+            val hasQueuedWork = repository.currentSnapshot.downloadQueue.any {
+                it.state == DownloadState.QUEUED && it.id !in beingRemoved
+            }
+            if (globallyPaused || !hasQueuedWork) return
+            schedule()
+        }
+    }
+
+    suspend fun close() = scopeJob.cancelAndJoin()
+
+    private suspend fun schedule(): Unit {
+        schedulerMutex.withLock {
+            if (globallyPaused) return
+            val limit = repository.currentSnapshot.settings.downloads.parallelDownloads.coerceIn(1, 10)
+            val available = limit - active.size
+            if (available <= 0) return
+            val candidates = repository.currentSnapshot.downloadQueue
+                .asSequence()
+                .filter { it.state == DownloadState.QUEUED && it.id !in active && it.id !in removing }
+                .sortedBy { it.position }
+                .take(available)
+                .toList()
+            candidates.forEach { item ->
+                // ATOMIC: the body (and its finally) always runs, even for a worker cancelled before
+                // it was dispatched; otherwise that worker would hold its [active] slot for good.
+                active[item.id] = scope.launch(start = CoroutineStart.ATOMIC) {
+                    try {
+                        download(item)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        repository.setDownloadState(
+                            item.id,
+                            DownloadState.ERROR,
+                            updatedAt = now(),
+                            errorMessage = error.sourceFailureMarker() ?: error.message ?: "Download failed",
+                        )
+                    } finally {
+                        // Also when cancelled: an entry left in [active] could never run again.
+                        withContext(NonCancellable) {
+                            schedulerMutex.withLock { active.remove(item.id) }
+                            schedule()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun download(item: DownloadQueueItem) {
+        repository.setDownloadState(item.id, DownloadState.DOWNLOADING, updatedAt = now())
+        val pages = pageProvider.pages(item.mangaId, item.chapterId).sortedBy { it.index }
+        require(pages.isNotEmpty()) { "Chapter returned no pages" }
+        require(pages.map { it.index }.toSet().size == pages.size) { "Chapter returned duplicate page indexes" }
+        require(pages.all { it.index >= 0 }) { "Chapter returned a negative page index" }
+        // Downloads restart from a clean directory. Otherwise a failed older attempt can leave
+        // enough page files for the reader to mistake a partial or changed chapter for complete.
+        fileSystem.deleteTree(directory(item.mangaId, item.chapterId))
+        repository.setDownloadState(
+            item.id,
+            DownloadState.DOWNLOADING,
+            totalPages = pages.size,
+            downloadedPages = 0,
+            progress = 0.0,
+            updatedAt = now(),
+        )
+
+        var completed = 0
+        val completedPages = mutableListOf<DownloadCompletionPage>()
+        val semaphore = Semaphore(
+            repository.currentSnapshot.settings.downloads.parallelPages.coerceIn(1, 15),
+        )
+        coroutineScope {
+            pages.map { page ->
+                async {
+                semaphore.withPermit {
+                    val downloaded = pageFetcher.fetch(page)
+                    require(downloaded.bytes.isNotEmpty()) { "Page ${page.index + 1} returned no data" }
+                    val pageStem = "${directory(item.mangaId, item.chapterId)}/page-${page.index}"
+                    val path = "$pageStem.${extension(downloaded.contentType, page.url)}"
+                    val sidecarPath = "$pageStem.transform"
+                    // Image decoding/encoding is platform-specific. Persist the deterministic
+                    // operation beside raw bytes so offline Coil applies exactly the online path.
+                    page.imageTransform?.let { fileSystem.write(sidecarPath, it.encodeSidecar()) }
+                        ?: fileSystem.delete(sidecarPath)
+                    fileSystem.write(path, downloaded.bytes)
+                    progressMutex.withLock {
+                        completedPages += DownloadCompletionPage(
+                            index = page.index,
+                            fileName = path.substringAfterLast('/'),
+                            transformFileName = page.imageTransform?.let { sidecarPath.substringAfterLast('/') },
+                            byteSize = downloaded.bytes.size.toLong(),
+                            plaintextDigest = Sha256.hex(downloaded.bytes),
+                        )
+                        completed += 1
+                        repository.setDownloadState(
+                            item.id,
+                            DownloadState.DOWNLOADING,
+                            progress = completed.toDouble() / pages.size,
+                            downloadedPages = completed,
+                            totalPages = pages.size,
+                            updatedAt = now(),
+                        )
+                    }
+                }
+                }
+            }.awaitAll()
+        }
+
+        DownloadCompletionManifests.publish(
+            fileSystem = fileSystem,
+            mangaId = item.mangaId,
+            chapterId = item.chapterId,
+            pages = completedPages,
+        )
+        repository.setDownloadState(
+            item.id,
+            DownloadState.DOWNLOADED,
+            progress = 1.0,
+            downloadedPages = pages.size,
+            totalPages = pages.size,
+            updatedAt = now(),
+        )
+    }
+
+    private fun directory(mangaId: Long, chapterId: Long): String =
+        DownloadCompletionManifests.directory(mangaId, chapterId)
+
+    private fun extension(contentType: String?, url: String): String {
+        val mime = contentType?.substringBefore(';')?.trim()?.lowercase()
+        return when (mime) {
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            "image/gif" -> "gif"
+            "image/avif" -> "avif"
+            "image/jpeg", "image/jpg" -> "jpg"
+            else -> url.substringBefore('?').substringAfterLast('.', "jpg")
+                .lowercase().takeIf { it in setOf("jpg", "jpeg", "png", "webp", "gif", "avif") } ?: "jpg"
+        }
+    }
+}

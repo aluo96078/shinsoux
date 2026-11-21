@@ -1,0 +1,439 @@
+@file:OptIn(ExtensionImplementationApi::class)
+
+package dev.shinsou.kmp.plugin.v2
+
+import kotlinx.coroutines.sync.withLock
+import dev.shinsou.kmp.domain.content.ContentKind
+import dev.shinsou.kmp.domain.content.ImageLayout
+import dev.shinsou.kmp.domain.content.ImageProgression
+import dev.shinsou.kmp.domain.content.TextBlock
+import dev.shinsou.kmp.domain.model.SourceKey
+import dev.shinsou.kmp.plugin.CatalogueSource
+import dev.shinsou.kmp.plugin.ConfigurableSource
+import dev.shinsou.kmp.plugin.FilterList
+import dev.shinsou.kmp.plugin.LoginSource
+import dev.shinsou.kmp.plugin.LoginAttemptResult
+import dev.shinsou.kmp.plugin.MangaStatus
+import dev.shinsou.kmp.plugin.PageRequestMetadata
+import dev.shinsou.kmp.plugin.SChapter
+import dev.shinsou.kmp.plugin.SManga
+import dev.shinsou.kmp.plugin.SourcePreference
+import dev.shinsou.kmp.plugin.TextChapterSource
+import dev.shinsou.kmp.plugin.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.toPluginFilter
+import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
+import dev.shinsou.kmp.domain.model.ReaderImageTransform
+
+/** Resolves host-owned secret references without exposing a secret store to a v1 plugin. */
+public fun interface LegacyLoginCredentialsResolverV2 {
+    public suspend fun resolve(credentials: LoginCredentialsV2): LegacyLoginCredentialsV2?
+}
+
+public data class LegacyLoginCredentialsV2(
+    val username: String,
+    val password: String,
+) {
+    init {
+        require(username.isNotBlank() && username.length <= 4_096 && username.none(Char::isISOControl))
+        require(password.length <= 16_384 && password.none(Char::isISOControl))
+    }
+}
+
+/**
+ * Executable v1 manga compatibility adapter. The numeric id is retained only as the lossless
+ * legacy projection; v2 lookup always uses the complete opaque [SourceKey].
+ */
+public class LegacyMangaExtensionSourceV2(
+    private val source: CatalogueSource,
+    packageId: String,
+    sourceKey: SourceKey = SourceKey.fromLegacy(packageId, source.id),
+    private val credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
+    additionalContentKinds: Set<ContentKind> = emptySet(),
+    additionalRepresentations: Iterable<UnitContentRepresentationProviderV2> = emptyList(),
+    private val imageProgression: ImageProgression = ImageProgression.RIGHT_TO_LEFT,
+    private val imageLayout: ImageLayout = ImageLayout.PAGE,
+    /**
+     * What the script's own hooks produce (A5): images through `getPageList`, text chapters
+     * through `getChapterText` (only for a [TextChapterSource] that implements it).
+     */
+    contentKinds: Set<ContentKind> = setOf(ContentKind.IMAGE_SEQUENCE),
+) : ExtensionSourceV2, WebChallengeUserAgentSourceV2 {
+    private val extraProviders = additionalRepresentations.toList()
+    private val ownKinds: Set<ContentKind> = contentKinds intersect supportedKindsOf(source)
+    private val contentResolver = MultiRepresentationContentResolverV2(
+        buildList {
+            if (ContentKind.IMAGE_SEQUENCE in ownKinds) add(LegacyImageRepresentationProvider())
+            if (ContentKind.PLAIN_TEXT in ownKinds) add(TextChapterRepresentationProvider())
+        } + extraProviders,
+    )
+
+    override val descriptor: SourceDescriptorV2 = SourceDescriptorV2(
+        sourceKey = sourceKey,
+        displayName = source.name,
+        languageTag = source.lang,
+        supportedContentKinds = ownKinds + additionalContentKinds,
+        capabilities = buildSet {
+            add(ExtensionCapability.CATALOGUE)
+            add(ExtensionCapability.BROWSE)
+            add(ExtensionCapability.SEARCH)
+            add(ExtensionCapability.METADATA)
+            add(ExtensionCapability.UNITS)
+            add(ExtensionCapability.CONTENT)
+            if (source.supportsLatest) add(ExtensionCapability.LATEST)
+            if (source is LoginSource && source.supportsLogin && credentialsResolver != null) {
+                add(ExtensionCapability.LOGIN)
+            }
+            if (source is ConfigurableSource) add(ExtensionCapability.PREFERENCES)
+            if (source.supportsFavorites) add(ExtensionCapability.FAVORITE)
+        },
+        baseUrl = source.baseUrl.takeIf(String::isNotBlank),
+    )
+
+    init {
+        require(ownKinds.isNotEmpty() || extraProviders.isNotEmpty()) { "Source produces no supported content kind" }
+        require(extraProviders.isEmpty() == additionalContentKinds.isEmpty()) {
+            "Additional representations and their declared content kinds must be supplied together"
+        }
+    }
+
+    override val webChallengeUserAgent: String?
+        get() = source.headers.entries
+            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+            ?.value
+
+    override val webChallengeUrl: String?
+        get() = source.webChallengeUrl
+
+    override val browserSessionOrigins: Set<String>
+        get() = source.browserSessionOrigins
+
+    override val webChallengeLocalStorageKeys: Set<String>
+        get() = source.webChallengeLocalStorageKeys
+
+    override val requiredWebChallengeLocalStorageKeys: Set<String>
+        get() = source.requiredWebChallengeLocalStorageKeys
+
+    override suspend fun getFilterList(): BrowseFilterListV2 =
+        source.getFilterList().map { it.toBrowseFilterV2() }
+
+    override suspend fun browseOptions(): BrowseOptionsSchemaV2 = BrowseOptionsSchemaV2(
+        keys = if (source.supportsFavorites) listOf(FAVORITE_BROWSE_OPTION_KEY) else emptyList(),
+        filters = getFilterList(),
+    )
+
+    override suspend fun search(query: String, page: Int): PagedResultV2<RemotePublicationV2> =
+        source.getSearchManga(page, query, emptyList()).toV2Page()
+
+    override suspend fun search(
+        query: String,
+        page: Int,
+        options: BrowseOptionsV2,
+    ): PagedResultV2<RemotePublicationV2> =
+        source.getSearchManga(
+            page,
+            query,
+            options.filters.map { it.toPluginFilter() }.ifEmpty { source.getFilterList() },
+        ).toV2Page()
+
+    override suspend fun latest(page: Int): PagedResultV2<RemotePublicationV2> =
+        source.getLatestUpdates(page).toV2Page()
+
+    override suspend fun browse(
+        options: BrowseOptionsV2,
+        page: Int,
+    ): PagedResultV2<RemotePublicationV2> {
+        // The one option key: the account collection (the UI's bookcase), when the source has one.
+        val option = options.values[FAVORITE_BROWSE_OPTION_KEY]
+        require(options.values.keys.all { it == FAVORITE_BROWSE_OPTION_KEY }) {
+            "Legacy manga browse accepts only the '$FAVORITE_BROWSE_OPTION_KEY' option"
+        }
+        if (option != null) {
+            require(source.supportsFavorites && option == FAVORITE_BROWSE_OPTION_VALUE) { "Unknown browse option '$option'" }
+            return source.getFavoriteManga(page).toV2Page()
+        }
+        return if (options.filters.isEmpty()) {
+            source.getPopularManga(page).toV2Page()
+        } else {
+            source.getSearchManga(
+                page,
+                "",
+                options.filters.map { it.toPluginFilter() },
+            ).toV2Page()
+        }
+    }
+
+    override suspend fun details(remotePublicationId: String): RemotePublicationV2 {
+        val details = source.getMangaDetails(SManga(url = remotePublicationId, title = remotePublicationId))
+        return RemotePublicationV2(
+            remoteId = remotePublicationId,
+            title = details.title.toBoundedRemoteMetadata().ifBlank { remotePublicationId.toBoundedRemoteMetadata() },
+            url = resolveSourceHttpUrl(source.baseUrl, details.url.ifBlank { remotePublicationId }),
+            thumbnailUrl = details.thumbnailUrl?.let { resolveSourceHttpUrl(source.baseUrl, it) },
+            author = details.author.toOptionalBoundedRemoteMetadata(),
+            artist = details.artist.toOptionalBoundedRemoteMetadata(),
+            description = details.description.toOptionalBoundedRemoteMetadata(),
+            genre = details.genre?.mapNotNull { it.toOptionalBoundedRemoteMetadata() }?.takeIf { it.isNotEmpty() },
+            status = details.status.takeIf { it != MangaStatus.UNKNOWN }?.name,
+        )
+    }
+
+    override suspend fun units(
+        remotePublicationId: String,
+        page: Int,
+    ): PagedResultV2<RemoteUnitV2> {
+        val manga = SManga(url = remotePublicationId, title = remotePublicationId)
+        // A source that pages its own list answers one page at a time: the first chapters of a
+        // long serial show without waiting for all of them.
+        source.getChapterListPage(manga, page)?.let { paged ->
+            require(paged.chapters.size <= MAX_LEGACY_PAGED_UNITS_V2) { "Legacy source returned too large a chapter page" }
+            return PagedResultV2(paged.chapters.map { it.toRemoteUnitV2() }, paged.hasNextPage && paged.chapters.isNotEmpty())
+        }
+        val chapters = completeChapterList(manga, refresh = page == 0)
+        require(chapters.size <= MAX_LEGACY_UNITS_V2) { "Legacy manga source returned too many units" }
+        val fromLong = page.toLong() * LEGACY_PAGE_SIZE.toLong()
+        if (fromLong >= chapters.size) return PagedResultV2(emptyList(), false)
+        val from = fromLong.toInt()
+        val to = minOf(chapters.size, from + LEGACY_PAGE_SIZE)
+        return PagedResultV2(
+            items = chapters.subList(from, to).map { it.toRemoteUnitV2() },
+            hasNextPage = to < chapters.size,
+        )
+    }
+
+    /**
+     * The whole list of a source that cannot page it. Page 0 always asks the source; the pages
+     * after it are cut from that answer rather than fetching the complete list once per page.
+     */
+    private suspend fun completeChapterList(manga: SManga, refresh: Boolean): List<SChapter> = completeListMutex.withLock {
+        val cached = completeList
+        if (!refresh && cached != null && cached.first == manga.url) return@withLock cached.second
+        source.getChapterList(manga).also { completeList = manga.url to it }
+    }
+
+    private val completeListMutex = kotlinx.coroutines.sync.Mutex()
+    private var completeList: Pair<String, List<SChapter>>? = null
+
+    override suspend fun content(
+        remotePublicationId: String,
+        remoteUnitId: String,
+    ): UnitContentResultV2 = contentResolver.resolve(
+        UnitContentRequestV2(descriptor.sourceKey, remotePublicationId, remoteUnitId),
+    ).also { result ->
+        require(result.representations.all { it.kind in descriptor.supportedContentKinds }) {
+            "Legacy adapter returned an undeclared content kind"
+        }
+    }
+
+    override suspend fun openTextStream(streamId: String): TextChunkStreamV2 =
+        throw UnsupportedOperationException("Legacy manga sources do not expose text streams")
+
+    override suspend fun login(credentials: LoginCredentialsV2): LoginResultV2 {
+        val loginSource = source as? LoginSource ?: return LoginResultV2(false)
+        val resolved = credentialsResolver?.resolve(credentials) ?: return LoginResultV2(false)
+        val result = loginSource.loginResult(resolved.username, resolved.password)
+        return LoginResultV2(result.loggedIn, result.errorMessage?.boundedLoginError())
+    }
+
+    override suspend fun logout() {
+        (source as? LoginSource)?.logout()
+    }
+
+    override suspend fun preferences(): List<PreferenceV2> =
+        (source as? ConfigurableSource)?.getPreferenceDefinitions().orEmpty().map(SourcePreference::toV2)
+
+    override suspend fun favorite(remotePublicationId: String, favorite: Boolean) {
+        if (!source.supportsFavoriteMutation) {
+            throw UnsupportedOperationException("This source cannot change its account collection")
+        }
+        check(source.setFavorite(SManga(url = remotePublicationId, title = remotePublicationId), favorite)) {
+            "The site did not accept the favorite change"
+        }
+    }
+
+    /** A5: plain-text chapters from `getChapterText`, inline (the sandbox caps a result at 4 MiB). */
+    private inner class TextChapterRepresentationProvider : UnitContentRepresentationProviderV2 {
+        override val representationId: String = "script-text"
+
+        override suspend fun load(request: UnitContentRequestV2): UnitContentPayload? {
+            val textSource = source as? TextChapterSource ?: return null
+            val text = textSource.getChapterText(SChapter(url = request.remoteUnitId, name = request.remoteUnitId)) ?: return null
+            return UnitContentPayload.InlineTextPayload(
+                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                representationId = representationId,
+                sourceKey = request.sourceKey,
+                remoteUnitId = request.remoteUnitId,
+                source = TextPayloadSourceV2.InlineTextPayload(text),
+                blocks = listOf(TextBlock("body", 0, text.length)),
+            )
+        }
+    }
+
+    private inner class LegacyImageRepresentationProvider : UnitContentRepresentationProviderV2 {
+        override val representationId: String = "legacy-image-sequence"
+
+        override suspend fun load(request: UnitContentRequestV2): UnitContentPayload? {
+            val pages = source.getPageList(SChapter(url = request.remoteUnitId, name = request.remoteUnitId))
+            if (pages.isEmpty()) return null
+            return UnitContentPayload.ImageSequence(
+                schemaVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+                representationId = representationId,
+                sourceKey = request.sourceKey,
+                remoteUnitId = request.remoteUnitId,
+                pages = pages.mapIndexed { ordinal, page ->
+                    // Viewer-backed sources intentionally leave imageUrl empty until content is
+                    // requested. Resolve through the source plane before emitting the host-owned,
+                    // credential-free image request plan.
+                    val remoteImage = page.imageUrl
+                        ?.takeIf(String::isNotBlank)
+                        ?: source.resolveImageUrl(page.url)?.takeIf(String::isNotBlank)
+                        ?: page.url
+                    val parsed = PageRequestMetadata.parse(remoteImage)
+                    val resolvedUrl = requireNotNull(resolveSourceHttpUrl(source.baseUrl, parsed.cleanUrl)) {
+                        "Legacy manga page URL is not a safe HTTP(S) resource"
+                    }
+                    ImagePageV2(
+                        resourceId = "page-${page.index}-$ordinal",
+                        request = RemoteRequestPlanV2(
+                            method = HttpMethodV2.GET,
+                            url = resolvedUrl,
+                            headerHints = (source.headers + parsed.headers).safeV2HeaderHints(),
+                        ),
+                        mediaType = resolvedUrl.inferredImageMediaType(),
+                        transform = parsed.imageTransform(source)?.toV2(),
+                        layout = imageLayout,
+                    )
+                },
+                progression = imageProgression,
+                layout = imageLayout,
+            )
+        }
+    }
+
+    private fun dev.shinsou.kmp.plugin.MangasPage.toV2Page(): PagedResultV2<RemotePublicationV2> {
+        val bounded = mangas.take(LEGACY_PAGE_SIZE)
+        return PagedResultV2(
+            items = bounded.map { it.toRemotePublicationV2() },
+            hasNextPage = hasNextPage || mangas.size > bounded.size,
+        )
+    }
+
+    private fun SManga.toRemotePublicationV2(): RemotePublicationV2 = RemotePublicationV2(
+        remoteId = url,
+        title = title.toBoundedRemoteMetadata().ifBlank { url.toBoundedRemoteMetadata() },
+        url = resolveSourceHttpUrl(source.baseUrl, url),
+        thumbnailUrl = thumbnailUrl?.let { resolveSourceHttpUrl(source.baseUrl, it) },
+        author = author.toOptionalBoundedRemoteMetadata(),
+        artist = artist.toOptionalBoundedRemoteMetadata(),
+        description = description.toOptionalBoundedRemoteMetadata(),
+        genre = genre?.mapNotNull { it.toOptionalBoundedRemoteMetadata() }?.takeIf { it.isNotEmpty() },
+        status = status.takeIf { it != MangaStatus.UNKNOWN }?.name,
+    )
+
+    private fun SChapter.toRemoteUnitV2(): RemoteUnitV2 = RemoteUnitV2(
+        remoteId = url,
+        title = name,
+        url = resolveSourceHttpUrl(source.baseUrl, url),
+    )
+}
+
+/** The content kinds a script source's hooks can produce. */
+internal fun supportedKindsOf(source: CatalogueSource): Set<ContentKind> = buildSet {
+    add(ContentKind.IMAGE_SEQUENCE)
+    if ((source as? TextChapterSource)?.supportsChapterText == true) add(ContentKind.PLAIN_TEXT)
+}
+
+private fun String.boundedLoginError(): String? =
+    filterNot(Char::isISOControl).trim().take(512).takeIf(String::isNotBlank)
+
+/** Builds one v2 package over every live source of an existing Shinsou v1 plugin. */
+public class LegacyMangaPackageRuntimeV2(
+    packageId: String,
+    version: String,
+    displayName: String,
+    sources: Iterable<CatalogueSource>,
+    sourceKeysByLegacyId: Map<Long, SourceKey> = emptyMap(),
+    /** Missing keys are pre-V2 image compatibility; present empty values deny V2 content. */
+    declaredContentKindsByLegacyId: Map<Long, Set<ContentKind>> = emptyMap(),
+    credentialsResolver: LegacyLoginCredentialsResolverV2? = null,
+) : ExtensionPackageRuntimeV2 {
+    private val delegate: ImmutableExtensionPackageRuntimeV2
+
+    init {
+        val adapters = sources.mapNotNull { source ->
+            val declaredKinds = declaredContentKindsByLegacyId[source.id]
+                ?: setOf(ContentKind.IMAGE_SEQUENCE)
+            // Each source exposes only kinds it declared *and* its hooks produce (A5): a source
+            // that omits images does not regain them, and declared text needs `getChapterText`.
+            val kinds = declaredKinds intersect supportedKindsOf(source)
+            if (kinds.isEmpty()) return@mapNotNull null
+            LegacyMangaExtensionSourceV2(
+                source = source,
+                packageId = packageId,
+                sourceKey = sourceKeysByLegacyId[source.id] ?: SourceKey.fromLegacy(packageId, source.id),
+                credentialsResolver = credentialsResolver,
+                contentKinds = kinds,
+            )
+        }
+        require(adapters.isNotEmpty()) { "Script package needs at least one source with supported content" }
+        val packageDescriptor = ExtensionPackageV2(
+            contractVersion = ExtensionPackageV2.CURRENT_CONTRACT_VERSION,
+            packageId = packageId,
+            version = version,
+            displayName = displayName,
+            sources = adapters.map(LegacyMangaExtensionSourceV2::descriptor),
+            supportedContentKinds = adapters.flatMapTo(linkedSetOf()) { it.descriptor.supportedContentKinds },
+        )
+        delegate = ImmutableExtensionPackageRuntimeV2(packageDescriptor, adapters)
+    }
+
+    override val descriptor: ExtensionPackageV2 get() = delegate.descriptor
+    override fun source(sourceKey: SourceKey): ExtensionSourceV2? = delegate.source(sourceKey)
+}
+
+private fun SourcePreference.toV2(): PreferenceV2 = when (this) {
+    is SourcePreference.TextField -> PreferenceV2(key, title, defaultValue)
+    is SourcePreference.Toggle -> PreferenceV2(key, title, defaultValue.toString())
+    is SourcePreference.Select -> PreferenceV2(key, title, defaultValue)
+    is SourcePreference.MultiSelect -> PreferenceV2(key, title, defaultValues.sorted().joinToString(","))
+}
+
+private fun Map<String, String>.safeV2HeaderHints(): Map<String, String> = entries.mapNotNull { (name, value) ->
+    val safeName = name.lowercase()
+    if (safeName !in LEGACY_SAFE_HEADER_HINTS || value.length > 1_024 || value.any(Char::isISOControl)) null
+    else name to value
+}.toMap()
+
+private fun ReaderImageTransform.toV2(): ImageTransformPlanV2 = when (this) {
+    is ReaderImageTransform.ReverseVerticalSegments -> ImageTransformPlanV2(
+        transformId = "reverse-vertical-segments",
+        parameters = mapOf("segmentCount" to segmentCount.toString()),
+    )
+}
+
+private fun String.inferredImageMediaType(): String = when (substringBefore('?').substringAfterLast('.').lowercase()) {
+    "jpg", "jpeg" -> "image/jpeg"
+    "png" -> "image/png"
+    "gif" -> "image/gif"
+    "webp" -> "image/webp"
+    "avif" -> "image/avif"
+    else -> "image/*"
+}
+
+private const val LEGACY_PAGE_SIZE: Int = 100
+private const val MAX_LEGACY_UNITS_V2: Int = 100_000
+
+/** A source-paged chapter page; the unit contract bounds a page separately. */
+private const val MAX_LEGACY_PAGED_UNITS_V2: Int = 100
+private val LEGACY_SAFE_HEADER_HINTS: Set<String> = setOf(
+    "accept",
+    "accept-language",
+    "content-type",
+    "referer",
+    "user-agent",
+    "origin",
+    "x-requested-with",
+    "x-image-ticket",
+)
+/** The browse option that opens a source's account collection; the UI sends this key and value. */
+private const val FAVORITE_BROWSE_OPTION_KEY: String = dev.shinsou.kmp.plugin.DEFAULT_FAVORITE_BROWSE_OPTION_KEY
+private const val FAVORITE_BROWSE_OPTION_VALUE: String = "bookcase"

@@ -16,10 +16,18 @@ on:
     paths:
       - "sandbox-core/**"
       - "composeApp/build.gradle.kts"
-      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "build-logic/**"
+      - "feature-plugin/src/commonMain/**"
+      # The address policy plugins are held to (ADR-0002) lives in :core.
+      - "core/src/commonMain/kotlin/dev/shinsou/kmp/network/**"
       - "gradle/**"
       - "composeApp/src/desktopMain/**"
+      # R5-1: the platform code of every module the app is built from
+      - "*/src/desktopMain/**"
+      - "*/build.gradle.kts"
+      - "settings.gradle.kts"
       - "composeApp/src/desktopTest/**"
+      - "feature-plugin/src/desktopTest/**"
       - ".github/workflows/sandbox-desktop.yml"
 
 permissions:
@@ -79,13 +87,13 @@ jobs:
       - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
         working-directory: shinsoux
         run: >
-          ./gradlew :composeApp:desktopTest --rerun
+          ./gradlew :feature-plugin:desktopTest --rerun
           --tests 'dev.shinsou.kmp.plugin.sandbox.*'
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: Fail if any sandbox test was skipped
-        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        working-directory: shinsoux/feature-plugin/build/test-results/desktopTest
         run: |
           # Only the S0 recordings are local-only (real site content); every other skip is a failure.
           if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
@@ -189,13 +197,13 @@ jobs:
       - name: Kotlin host and the confined helper (interop, parity, lifecycle, locator)
         working-directory: shinsoux
         run: >
-          ./gradlew :composeApp:desktopTest --rerun
+          ./gradlew :feature-plugin:desktopTest --rerun
           --tests 'dev.shinsou.kmp.plugin.sandbox.*'
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: Fail if any sandbox test was skipped
-        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        working-directory: shinsoux/feature-plugin/build/test-results/desktopTest
         run: |
           # Only the S0 recordings are local-only (real site content); every other skip is a failure.
           if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi

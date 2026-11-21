@@ -6,9 +6,10 @@ import kotlin.test.assertTrue
 
 /** R4-2 (docs/architecture/0006): the UI's service interfaces stay small enough to depend on one at a time. */
 class ServiceInterfaceSizeTest {
+    // R5-1: from the repository root (the tests run in composeApp/); the files are in their modules.
     private val files = listOf(
-        "src/commonMain/kotlin/dev/shinsou/kmp/ui/AppServices.kt",
-        "src/commonMain/kotlin/dev/shinsou/kmp/contract/BrowseContracts.kt",
+        "../ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/AppServices.kt",
+        "../feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/BrowseContracts.kt",
     )
     private val member = Regex("""^ {4}(?:suspend )?(?:fun|val|var) """)
 

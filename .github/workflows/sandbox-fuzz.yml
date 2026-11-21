@@ -90,13 +90,13 @@ jobs:
       - name: Kotlin host ↔ C sandbox (interop and official-plugin parity)
         working-directory: shinsoux
         run: >
-          ./gradlew :composeApp:desktopTest --rerun
+          ./gradlew :feature-plugin:desktopTest --rerun
           --tests 'dev.shinsou.kmp.plugin.sandbox.*'
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: Fail if any native or parity test was skipped
-        working-directory: shinsoux/composeApp/build/test-results/desktopTest
+        working-directory: shinsoux/feature-plugin/build/test-results/desktopTest
         run: |
           # Only the S0 recordings are local-only (real site content); every other skip is a failure.
           if grep -h "SKIPPED: " TEST-dev.shinsou.kmp.plugin.sandbox.*.xml; then echo "::error::sandbox tests skipped"; exit 1; fi
@@ -191,8 +191,8 @@ jobs:
           echo "seconds $SHINSOU_SANDBOX_FUZZ_SECONDS seed $SHINSOU_SANDBOX_FUZZ_SEED"
           # --rerun: the duration and seed are environment variables, which Gradle does not treat as
           # task inputs, so a cached or up-to-date result must never stand in for a real run.
-          ./gradlew :composeApp:desktopTest --rerun --tests '*SandboxProtocolLongFuzzTest*' \
+          ./gradlew :feature-plugin:desktopTest --rerun --tests '*SandboxProtocolLongFuzzTest*' \
             -Pkotlin.native.enableKlibsCrossCompilation=false
           # The test fails on zero rounds; it prints the inputs it ran for the full duration.
-          grep -ho "SandboxProtocol fuzz: [^<]*" composeApp/build/test-results/desktopTest/TEST-*LongFuzz*.xml \
+          grep -ho "SandboxProtocol fuzz: [^<]*" feature-plugin/build/test-results/desktopTest/TEST-*LongFuzz*.xml \
             | sed "s/^/Kotlin shard ${{ matrix.shard }}: /" | tee -a "$GITHUB_STEP_SUMMARY"

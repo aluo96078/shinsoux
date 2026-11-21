@@ -2,8 +2,9 @@ package dev.shinsou.kmp
 
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.PluginJson
-import dev.shinsou.kmp.plugin.PluginKeyValueStore
+import dev.shinsou.kmp.files.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.allowsIosKeychainPlaintextFallback
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import dev.shinsou.kmp.plugin.migrateLegacySensitivePluginValues
@@ -73,15 +74,17 @@ internal object IosSnapshotPersistence {
     fun load(): AppSnapshot {
         val encoded = try {
             readUtf8(IosApplicationPaths.file(FILE_NAME)) ?: return AppSnapshot()
-        } catch (_: InvalidPersistedUtf8Exception) {
+        } catch (error: InvalidPersistedUtf8Exception) {
+            Log.warnKindOnly("Storage", error) { "Saved app state was not valid UTF-8; quarantining it and starting empty" }
             quarantineCorruptSnapshot()
             return AppSnapshot()
         }
         return try {
             ShinsouRepository.decodeSnapshot(encoded)
-        } catch (_: Exception) {
+        } catch (logged: Exception) {
             // Validation and serialization failures indicate an unusable snapshot. Do not treat
             // VM/runtime failures (for example OOM) as corruption and move valid user data away.
+            Log.warn("Storage", logged) { "Saved app state could not be decoded; quarantining it and starting empty" }
             quarantineCorruptSnapshot()
             AppSnapshot()
         }
@@ -202,7 +205,8 @@ public class IosPluginKeyValueStore : PluginKeyValueStore {
         val loaded: Map<String, String> = onStorageDispatcher {
             val encoded = try {
                 readUtf8(IosPluginState.statePath)
-            } catch (_: InvalidPersistedUtf8Exception) {
+            } catch (error: InvalidPersistedUtf8Exception) {
+                Log.warnKindOnly("Storage", error) { "Saved plugin state was not valid UTF-8; quarantining it" }
                 quarantineCorruptFile(IosPluginState.statePath, "plugin-state")
                 null
             }
@@ -211,9 +215,10 @@ public class IosPluginKeyValueStore : PluginKeyValueStore {
             } else {
                 try {
                     PluginJson.decodeFromString(IosPluginState.serializer, encoded)
-                } catch (_: Exception) {
+                } catch (logged: Exception) {
                     // Keep the original bytes recoverable. Returning an empty map without moving
                     // them would let the next ordinary preference write erase the only copy.
+                    Log.warn("Storage", logged) { "Saved plugin state could not be decoded; quarantining it" }
                     quarantineCorruptFile(IosPluginState.statePath, "plugin-state")
                     emptyMap()
                 }

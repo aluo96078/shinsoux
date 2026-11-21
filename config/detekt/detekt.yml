@@ -1,6 +1,10 @@
 # R2-1 (docs/architecture/0006-code-quality-refactoring-plan.md)
 # Builds on detekt's default configuration; only the deviations are listed here.
-# Findings that existed when this was introduced are in baseline.xml, which may only shrink.
+# Findings that existed when this was introduced are in the baselines beside this file, which may
+# only shrink. detekt names them after the source set it analyses (baseline-main.xml,
+# baseline-androidMainSourceSet.xml, baseline-iosMainSourceSet.xml), from the `baseline.xml` the
+# build script gives it, under config/detekt/<module>/; run `./gradlew detektProduct`, which covers
+# every module and all three.
 
 complexity:
   LongMethod:
@@ -28,6 +32,9 @@ exceptions:
     active: true
   TooGenericExceptionCaught:
     active: true
+    # A catch-all that reports what it caught names it `logged`; one that drops it on purpose
+    # names it `_` or `expected…` and says why in a comment. Anything else must catch a specific type.
+    allowedExceptionNameRegex: '_|logged|(ignore|expected).*'
 
 potential-bugs:
   UnsafeCallOnNullableType:

@@ -20,8 +20,14 @@ internal interface DesktopKeepAwake {
 
     companion object {
         fun forPlatform(platform: DesktopPlatform): DesktopKeepAwake = when (platform) {
-            DesktopPlatform.MAC_OS -> runCatching { MacOsActivityKeepAwake() }.getOrElse { NoKeepAwake }
-            DesktopPlatform.WINDOWS -> runCatching { WindowsExecutionStateKeepAwake() }.getOrElse { NoKeepAwake }
+            DesktopPlatform.MAC_OS -> runCatching { MacOsActivityKeepAwake() }.getOrElse {
+                Log.warn("KeepAwake", it) { "The macOS keep-awake bridge is unavailable" }
+                NoKeepAwake
+            }
+            DesktopPlatform.WINDOWS -> runCatching { WindowsExecutionStateKeepAwake() }.getOrElse {
+                Log.warn("KeepAwake", it) { "The Windows keep-awake bridge is unavailable" }
+                NoKeepAwake
+            }
             else -> NoKeepAwake
         }
     }
@@ -71,11 +77,12 @@ private class MacOsActivityKeepAwake : DesktopKeepAwake {
 
     /** JVM threads have no Cocoa pool; autoreleased results are drained here instead of leaking. */
     private inline fun withAutoreleasePool(block: () -> Unit) {
+        // Without a pool the block still runs; its autoreleased results just drain later.
         val pool = runCatching { objc.objc_autoreleasePoolPush() }.getOrNull()
         try {
-            runCatching(block)
+            runCatching(block).onFailure { Log.warn("KeepAwake", it) { "A macOS keep-awake call failed" } }
         } finally {
-            if (pool != null) runCatching { objc.objc_autoreleasePoolPop(pool) }
+            if (pool != null) runCatching { objc.objc_autoreleasePoolPop(pool) } // nothing to recover if draining fails
         }
     }
 

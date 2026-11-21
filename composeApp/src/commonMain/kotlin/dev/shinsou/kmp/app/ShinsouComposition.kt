@@ -1,11 +1,13 @@
 package dev.shinsou.kmp.app
 
+import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
 import dev.shinsou.kmp.manga.asMangaTranslator
 import dev.shinsou.kmp.translation.OfflineTranslationPlatform
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationMemoryStore
+import kotlinx.coroutines.CoroutineDispatcher
 import okio.Path.Companion.toPath
-import dev.shinsou.kmp.acquisition.BoundedEpubArchiveExtractor
+import dev.shinsou.kmp.content.acquisition.BoundedEpubArchiveExtractor
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.BackupV2AttachmentCandidate
@@ -16,7 +18,7 @@ import dev.shinsou.kmp.backup.PortableContentBackupV2Service
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentBlobRecoveryCoordinator
 import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.content.access.ContentAccessRequest
+import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.download.DownloadManager
 import dev.shinsou.kmp.domain.model.TrackerIds
@@ -28,13 +30,14 @@ import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
-import dev.shinsou.kmp.local.typedLocalChapterUnitKey
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.domain.model.typedLocalChapterUnitKey
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.domain.model.InMemoryPortableAliasLedger
 import dev.shinsou.kmp.domain.model.LegacyPublicationBundle
-import dev.shinsou.kmp.migration.shuyue.ShuYueCompatibilityProjectionCoordinator
-import dev.shinsou.kmp.migration.shuyue.ShuYueMigrationSecretStore
-import dev.shinsou.kmp.migration.shuyue.ShuYueTransactionalImporter
+import dev.shinsou.kmp.backup.shuyue.ShuYueCompatibilityProjectionCoordinator
+import dev.shinsou.kmp.backup.shuyue.ShuYueMigrationSecretStore
+import dev.shinsou.kmp.backup.shuyue.ShuYueTransactionalImporter
 import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
 import dev.shinsou.kmp.plugin.BiliMangaStandaloneLibraryMigration
 import dev.shinsou.kmp.plugin.BILIMANGA_MANGA_SOURCE_ID
@@ -61,13 +64,13 @@ import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
 import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
 import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
 import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
-import dev.shinsou.kmp.plugin.AccountRepositoryDirectory
-import dev.shinsou.kmp.plugin.PluginInstallKeys
-import dev.shinsou.kmp.plugin.AccountPackageDirectory
-import dev.shinsou.kmp.plugin.AccountPackage
+import dev.shinsou.kmp.contract.AccountRepositoryDirectory
+import dev.shinsou.kmp.plugin.isDeveloperInstallKey
+import dev.shinsou.kmp.contract.AccountPackageDirectory
+import dev.shinsou.kmp.contract.AccountPackage
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
-import dev.shinsou.kmp.plugin.PluginKeyValueStore
+import dev.shinsou.kmp.files.PluginKeyValueStore
 import dev.shinsou.kmp.plugin.PluginLoginRequestCoordinator
 import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
 import dev.shinsou.kmp.plugin.PluginLogoutRequestCoordinator
@@ -100,6 +103,7 @@ import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
+import dev.shinsou.kmp.plugin.v2.ExtensionSyncedReadingV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
 import dev.shinsou.kmp.plugin.v2.extensionUnitPageProgress
 import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
@@ -124,7 +128,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import dev.shinsou.kmp.ui.portability.DefaultPortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.DefaultShuYueMigrationUiController
@@ -139,7 +145,6 @@ import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
 import kotlin.time.Clock
 import dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION
 import dev.shinsou.kmp.data.LegacyPublicationProjection
-import dev.shinsou.kmp.features.ContentFeatureRuntime
 
 /** Shared dependency graph used unchanged by Android, iOS and Desktop. */
 public class ShinsouComposition(
@@ -163,6 +168,7 @@ public class ShinsouComposition(
     private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null,
     /** On-device manga text detection, OCR and redrawing (ADR-0005); null where it is not shipped. */
     private val mangaPlatform: dev.shinsou.kmp.manga.MangaPlatform? = null,
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     /**
      * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
@@ -208,6 +214,13 @@ public class ShinsouComposition(
         dev.shinsou.kmp.update.AppUpdateChecker(httpClient, SHINSOU_APP_VERSION)
     }
 
+    /**
+     * Opens, on the calling thread, what the shell's first frames would otherwise open on the UI
+     * thread: the manga translation store, whose tables are created on first use. Called off the
+     * UI thread while the loading screen shows; true when manga translation is available.
+     */
+    public fun openBeforeShowing(): Boolean = mangaTranslation != null
+
     public val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? by lazy {
         val translation = contentFeatures?.translation ?: return@lazy null
         val directory = offlineTranslation?.modelDirectory ?: return@lazy null
@@ -224,7 +237,7 @@ public class ShinsouComposition(
 
     /** Compatibility projection remains available in previews which intentionally omit SQLite. */
     public val legacyPublicationProjection: LegacyPublicationProjection =
-        contentFoundation?.legacyProjection ?: LegacyPublicationProjection(InMemoryPortableAliasLedger())
+        LegacyPublicationProjection(contentFoundation?.aliases ?: InMemoryPortableAliasLedger())
     /** Versioned M1 migration runs after the first interactive frame on the background scope. */
     private val legacyPublicationStartupMigration: LegacyPublicationStartupMigration? =
         contentFoundation?.let(::LegacyPublicationStartupMigration)
@@ -297,7 +310,7 @@ public class ShinsouComposition(
     private val pluginLoginRequests = PluginLoginRequestCoordinator()
     private val pluginEventUiJob = SupervisorJob()
     private val pluginLogoutRequests = PluginLogoutRequestCoordinator(
-        CoroutineScope(pluginEventUiJob + Dispatchers.Default),
+        CoroutineScope(pluginEventUiJob + defaultDispatcher),
     )
     private val networkConfiguration = PluginNetworkConfigurationProvider {
         repository.currentSnapshot.settings.advanced.let { settings ->
@@ -334,7 +347,7 @@ public class ShinsouComposition(
     private val pluginLifecycleObserver = object : PluginEventObserver {
         override fun onCompleted(report: dev.shinsou.kmp.plugin.events.PluginEventExecutionReport) = Unit
         override fun onRuntimeClosed(scope: dev.shinsou.kmp.plugin.events.BoundPluginScope) {
-            val target = dev.shinsou.kmp.plugin.events.ExactPluginSourceTarget(
+            val target = dev.shinsou.kmp.domain.model.ExactPluginSourceTarget(
                 scope.artifactIdentity,
                 scope.sourceKey,
             )
@@ -342,7 +355,7 @@ public class ShinsouComposition(
             pluginLoginRequests.clearTarget(target)
             pluginLogoutRequests.clearSource(target)
         }
-        override fun onArtifactInvalidated(identity: dev.shinsou.kmp.plugin.events.PluginArtifactIdentity) {
+        override fun onArtifactInvalidated(identity: dev.shinsou.kmp.domain.model.PluginArtifactIdentity) {
             pluginLoginRequests.clearArtifact(identity)
             pluginLogoutRequests.clearArtifact(identity)
         }
@@ -432,10 +445,11 @@ public class ShinsouComposition(
     private val coordinator = RepositoryPluginCoordinator(
         repository = repository,
         manager = pluginManager,
-        fileSystem = fileSystem,
+        // [browse] is made below; this runs only when a chapter is loaded.
+        awaitInstalledSources = { browse.awaitInstalledSources() },
     )
     private val trackingJob = SupervisorJob()
-    private val trackingScope = CoroutineScope(trackingJob + Dispatchers.Default)
+    private val trackingScope = CoroutineScope(trackingJob + defaultDispatcher)
 
     /**
      * Sync v3 (ADR-0003): account, dirty tracking and push/pull against a user-chosen server.
@@ -608,7 +622,7 @@ public class ShinsouComposition(
         fileSystem = fileSystem,
         pageProvider = coordinator,
         pageFetcher = coordinator,
-    ).also(coordinator::attachDownloadManager)
+    ).also { manager -> coordinator.attachDownloads(DownloadManagerChapterDownloads(manager, repository, fileSystem)) }
 
     public val browse: PluginBrowseAdapter = PluginBrowseAdapter(
         manager = pluginManager,
@@ -672,12 +686,13 @@ public class ShinsouComposition(
                         val unitKey = typedLocalChapterUnitKey(chapter.url) ?: return@mapNotNull null
                         unitKey to extensionUnitPageProgress(chapter.lastPageRead, history.lastPageCount)
                     }.toMap()
-                    val latest = histories
+                    val latestHistory = histories
                         .asSequence()
                         .maxWithOrNull(
                             compareBy<History> { it.lastRead }
                                 .thenBy { it.id },
                         )
+                    val latest = latestHistory
                         ?.chapterId
                         ?.let(chapterById::get)
                         ?.url
@@ -686,7 +701,19 @@ public class ShinsouComposition(
                         completedUnitKeys = completed,
                         lastReadUnitKey = latest,
                         inProgressUnits = inProgress,
+                        lastReadAtMillis = latestHistory?.lastRead?.takeIf { latest != null },
                     )
+                },
+                syncedReading = { sourceKey, remotePublicationId ->
+                    sync?.pendingReading(sourceKey, remotePublicationId)?.let { pending ->
+                        ExtensionSyncedReadingV2(
+                            lastReadRemoteUnitId = pending.lastReadUnitId,
+                            lastReadAtMillis = pending.lastReadAtMillis,
+                            completedRemoteUnitIds = pending.readUnitIds,
+                            pageIndexByRemoteUnit = pending.lastPageIndexByUnit,
+                            locatorOf = pending::locator,
+                        )
+                    }
                 },
             )
         },
@@ -736,7 +763,7 @@ public class ShinsouComposition(
         repository = repository,
         fileSystem = fileSystem,
     )).also { service ->
-        contentFeatures?.translation?.let { service.translations = dev.shinsou.kmp.backup.ReaderTranslationBackups(it) }
+        contentFeatures?.translation?.let { service.translations = dev.shinsou.kmp.translation.ReaderTranslationBackups(it) }
     }
 
     /**
@@ -752,7 +779,8 @@ public class ShinsouComposition(
                 contentFoundation?.warmAttachmentLedger()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not load the attachment ledger at startup" }
                 // Stays pending; the next content operation loads it and reports the failure.
             }
             try {
@@ -760,8 +788,9 @@ public class ShinsouComposition(
                 sync?.start()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // The Sync settings page shows the error; startup continues.
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not start sync" }
+                // The Sync settings page shows the logged; startup continues.
             }
             // Before any refresh: repository trust and install keys read it synchronously, and
             // until it is loaded developer mode counts as off.
@@ -769,7 +798,8 @@ public class ShinsouComposition(
                 pluginDeveloperMode.load()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not read developer mode; it stays off" }
                 // Unreadable: developer mode stays off.
             }
             try {
@@ -777,8 +807,9 @@ public class ShinsouComposition(
                 browse.showInstalledSources()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // browse.refresh() below loads them again and reports the error.
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not show the installed sources" }
+                // browse.refresh() below loads them again and reports the logged.
             }
             val stopsAtStart = backgroundDownloads.stopCount()
             try {
@@ -787,7 +818,8 @@ public class ShinsouComposition(
                 browse.restoreExtensionDownloadsV2()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not restore the extension download queue; it starts empty" }
                 // Same as the manga queue: a damaged saved queue just starts empty.
             }
             // Its downloads are still held back here; a system stop that came while it loaded
@@ -797,7 +829,8 @@ public class ShinsouComposition(
                 legacyPublicationStartupMigration?.migrate(repository.currentSnapshot)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "The legacy publication migration failed; the next launch retries it" }
                 // The transaction is atomic and restart-safe. A later launch retries the exact
                 // deterministic projection without delaying this launch's interactive frame.
             }
@@ -805,7 +838,8 @@ public class ShinsouComposition(
                 localContent.repairTypedContentLegacyProjection()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not repair the typed content projection" }
                 // The typed Publication remains authoritative. Deterministic compatibility URLs
                 // make this crash-gap repair safe to retry at the next launch.
             }
@@ -813,7 +847,8 @@ public class ShinsouComposition(
                 shuYueCompatibilityProjection?.repair()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not repair the ShuYue compatibility projection" }
                 // ShuYue's typed transaction remains authoritative. The one-shot settings marker
                 // and all compatibility rows share one CAS, so a later launch retries safely.
             }
@@ -821,15 +856,17 @@ public class ShinsouComposition(
                 hydrateAndPersistProxySecret()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not load the proxy secret" }
                 // Secure proxy hydration can be retried from settings when keychain access returns.
             }
             try {
                 browse.refresh()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // PluginBrowseAdapter publishes its actionable error in BrowseSnapshot.
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not refresh the sources at startup" }
+                // PluginBrowseAdapter publishes its actionable logged in BrowseSnapshot.
             }
             // The repository lists say which repository publishes a synced title's package.
             sync?.sourcesChanged()
@@ -843,7 +880,8 @@ public class ShinsouComposition(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "The standalone library migration failed; the next launch retries it" }
                 // Migration is an idempotent source/url rewrite. A missing standalone package or
                 // incomplete typed chapter graph leaves the old row intact for a later launch.
             }
@@ -882,7 +920,8 @@ public class ShinsouComposition(
                                 browse.refresh()
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
-                            } catch (_: Throwable) {
+                            } catch (logged: Throwable) {
+                                Log.warn("Startup", logged) { "Could not refresh the sources after the repositories changed" }
                                 // BrowseSnapshot already exposes the repository refresh failure.
                             }
                             sync?.sourcesChanged()
@@ -893,7 +932,8 @@ public class ShinsouComposition(
                 downloads.restoreQueue()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "Could not restore the download queue" }
                 // A corrupt queue entry must not prevent the rest of the app from opening.
             }
             // Queues the system stopped before the process died pick up where they left off,
@@ -915,7 +955,7 @@ public class ShinsouComposition(
             .associate { it.baseUrl.trim().trimEnd('/') to it.signingKeyFingerprint }
         return pluginManager.installedPlugins().mapNotNull { stored ->
             val url = stored.metadata.repositoryBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            if (PluginInstallKeys.isDeveloperKey(stored.manifest.id)) return@mapNotNull null
+            if (isDeveloperInstallKey(stored.manifest.id)) return@mapNotNull null
             AccountPackage(
                 packageId = stored.manifest.id,
                 repositoryUrl = url,
@@ -953,7 +993,8 @@ public class ShinsouComposition(
             browse.resumeExtensionDownloadsAfterFailuresV2()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (logged: Throwable) {
+            Log.warn("Startup", logged) { "Could not resume the extension downloads" }
             // The Downloads screen still offers retry.
         }
         val previousRecovery = contentBlobRecoveryJob
@@ -971,7 +1012,8 @@ public class ShinsouComposition(
             sync?.onForeground()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (logged: Throwable) {
+            Log.warn("Startup", logged) { "Sync failed on coming to the foreground" }
             // Sync problems surface on the Sync settings page.
         }
     }
@@ -984,7 +1026,8 @@ public class ShinsouComposition(
             sync?.onBackground()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (logged: Throwable) {
+            Log.warn("Startup", logged) { "Sync failed on going to the background" }
             // Retried by the next foreground sync or the periodic background worker.
         }
         scheduleContentOutboxDiscard()
@@ -997,14 +1040,15 @@ public class ShinsouComposition(
     private fun startContentOutboxDiscarder() {
         val discarder = contentOutboxDiscarder ?: return
         if (contentOutboxDiscardJob?.isActive == true) return
-        contentOutboxDiscardJob = trackingScope.launch(Dispatchers.Default) {
+        contentOutboxDiscardJob = trackingScope.launch(defaultDispatcher) {
             for (ignored in contentOutboxDiscardSignals) {
                 try {
                     yield()
                     discarder.discardPending()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (_: Throwable) {
+                } catch (logged: Throwable) {
+                    Log.warn("Startup", logged) { "Could not discard the pending content drafts" }
                     // The drafts stay durable and harmless; the next commit or lifecycle edge
                     // retries the discard.
                 }
@@ -1031,7 +1075,8 @@ public class ShinsouComposition(
                 recovery.runLowPrioritySlice(safetyCutoffGeneration)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (logged: Throwable) {
+                Log.warn("Startup", logged) { "The content blob recovery pass failed" }
                 // Recovery is conservative and retryable. A failure retains bytes for a later
                 // background pass and never blocks foreground content access.
             }
@@ -1039,6 +1084,7 @@ public class ShinsouComposition(
     }
 
     /** Starts one background-only consumer; conflation gives bursts of imports one eventual rescan. */
+    @Suppress("SuspendFunSwallowedCancellation") // Cancellation is rethrown after keeping one pending reconciliation signal.
     private fun startSearchIndexReconciler() {
         val features = contentFeatures ?: return
         if (searchIndexReconciliationJob?.isActive == true) return
@@ -1058,7 +1104,8 @@ public class ShinsouComposition(
                     // retry for the next background edge before releasing foreground resources.
                     searchIndexReconciliationSignals.trySend(Unit)
                     throw cancelled
-                } catch (_: Throwable) {
+                } catch (logged: Throwable) {
+                    Log.warn("Startup", logged) { "The derived-data maintenance pass failed" }
                     // Derived rows remain rebuildable. A later background/import signal retries
                     // without making startup, restore, or reader interaction fail.
                 }
@@ -1073,49 +1120,68 @@ public class ShinsouComposition(
 
     /** [stage] names each shutdown step before it runs (the desktop startup probe records them). */
     public suspend fun close(stage: (String) -> Unit = {}) {
-        sync?.close()
-        startupHydrationJob?.cancel()
-        startupHydrationJob = null
-        contentOutboxDiscardJob?.cancel()
-        contentOutboxDiscardJob = null
-        contentOutboxDiscardSignals.close()
-        contentBlobRecoveryJob?.cancel()
-        contentBlobRecoveryJob = null
-        searchIndexReconciliationJob?.cancel()
-        searchIndexReconciliationJob = null
-        searchIndexReconciliationSignals.close()
-        proxySecretPersistenceJob?.cancel()
-        portableRepositoryReconciliationJob?.cancel()
-        installedSourcesSyncJob?.cancel()
-        syncKindsJob?.cancel()
-        stage("trackerManager.cancelAll")
-        trackerManager.cancelAll()
-        stage("trackingJob.cancelAndJoin")
-        trackingJob.cancelAndJoin()
-        stage("pluginEventUiJob.cancelAndJoin")
-        pluginEventUiJob.cancelAndJoin()
-        stage("browse.close")
-        browse.close()
-        stage("downloads.close")
-        downloads.close()
-        stage("pluginManager.close")
-        pluginManager.close()
-        stage("pluginBrowserSessionTransport.close")
-        pluginBrowserSessionTransport.close()
-        stage("pluginEventGateway.close")
-        pluginEventGateway.close()
-        stage("pluginDiagnosticLog.clear")
-        pluginDiagnosticLog.clear()
-        stage("contentFeatures.close")
-        if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
+        // Each step runs even when one before it failed: the snapshot's last flush and the HTTP
+        // clients must not depend on every component closing cleanly. The first failure is
+        // thrown at the end, with the later ones attached to it.
+        val closing = Closing(stage)
+        // A confirmed content restore runs to the end once started; the stores it commits to stay
+        // open until it has.
+        closing.step("portableContentBackupV2.awaitRestore") { portableContentBackupV2?.awaitRestore() }
+        closing.step("sync.close") { sync?.close() }
+        closing.step("backgroundJobs.cancel") {
+            startupHydrationJob?.cancel()
+            startupHydrationJob = null
+            contentOutboxDiscardJob?.cancel()
+            contentOutboxDiscardJob = null
+            contentOutboxDiscardSignals.close()
+            contentBlobRecoveryJob?.cancel()
+            contentBlobRecoveryJob = null
+            searchIndexReconciliationJob?.cancel()
+            searchIndexReconciliationJob = null
+            searchIndexReconciliationSignals.close()
+            proxySecretPersistenceJob?.cancel()
+            portableRepositoryReconciliationJob?.cancel()
+            installedSourcesSyncJob?.cancel()
+            syncKindsJob?.cancel()
+        }
+        closing.step("trackerManager.cancelAll") { trackerManager.cancelAll() }
+        closing.step("trackingJob.cancelAndJoin") { trackingJob.cancelAndJoin() }
+        closing.step("pluginEventUiJob.cancelAndJoin") { pluginEventUiJob.cancelAndJoin() }
+        closing.step("browse.close") { browse.close() }
+        closing.step("downloads.close") { downloads.close() }
+        closing.step("pluginManager.close") { pluginManager.close() }
+        closing.step("pluginBrowserSessionTransport.close") { pluginBrowserSessionTransport.close() }
+        closing.step("pluginEventGateway.close") { pluginEventGateway.close() }
+        closing.step("pluginDiagnosticLog.clear") { pluginDiagnosticLog.clear() }
+        closing.step("contentFeatures.close") {
+            if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
+        }
         // Every mutation producer is stopped; flush and terminate the coalesced writer.
-        try {
-            stage("repository.closePersistence")
-            repository.closePersistence()
-        } finally {
-            stage("pluginHttpClient.close")
-            pluginHttpClient.close()
-            httpClient.close()
+        closing.step("repository.closePersistence") { repository.closePersistence() }
+        closing.step("pluginHttpClient.close") { pluginHttpClient.close() }
+        closing.step("httpClient.close") { httpClient.close() }
+        closing.throwFirstFailure()
+    }
+
+    /** Runs the steps of [close] one after another, whatever the ones before did. */
+    private class Closing(private val stage: (String) -> Unit) {
+        private var failure: Throwable? = null
+
+        // A step that fails, cancellation included, is kept and thrown by throwFirstFailure once the rest ran.
+        @Suppress("SuspendFunSwallowedCancellation")
+        suspend fun step(name: String, block: suspend () -> Unit) {
+            try {
+                stage(name)
+                // The caller going away must not leave the rest open or the snapshot unflushed.
+                withContext(NonCancellable) { block() }
+            } catch (logged: Throwable) {
+                Log.warn("Shutdown", logged) { "Closing failed at $name" }
+                failure?.addSuppressed(logged) ?: run { failure = logged }
+            }
+        }
+
+        fun throwFirstFailure() {
+            failure?.let { throw it }
         }
     }
 

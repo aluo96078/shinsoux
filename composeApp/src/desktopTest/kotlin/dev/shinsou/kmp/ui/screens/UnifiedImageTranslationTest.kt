@@ -1,3 +1,5 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.ui.screens
 
 import androidx.compose.foundation.layout.Box
@@ -17,7 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.data.ShinsouRepository
@@ -129,13 +131,13 @@ class UnifiedImageTranslationTest {
         if (packs == null || page == null) return
         val f = fixture(packs, page)
         val manga = f.manga; val renders = f.renders; val features = f.features; val session = f.session
-        assertTrue(mangaTranslationAvailable(session, features), "a local import may be kept on the device")
+        assertTrue(UiTestAccess.mangaTranslationAvailable(session, features), "a local import may be kept on the device")
 
         var serial by androidx.compose.runtime.mutableLongStateOf(0L)
         rule.setContent {
             Box(Modifier.size(500.dp, 700.dp).testTag("reader")) {
-                UnifiedContentReader(
-                    session = session, features = features, copyText = { _, _ -> true }, settings = ReaderSettings(),
+                UiTestAccess.UnifiedContentReader(
+                    session = session, features = features, settings = ReaderSettings(),
                     translationRequestSerial = serial, mangaTranslation = manga, modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -178,7 +180,7 @@ class UnifiedImageTranslationTest {
         val job = dev.shinsou.kmp.translation.TranslationPrefetchJob(
             id = "image-chapter", group = "work", title = "第1話",
             languages = dev.shinsou.kmp.translation.PrefetchLanguages(to = "zh-Hans", from = null),
-            load = { prefetchChapter(f.session, f.features, labels = null, manga = f.manga) },
+            load = { UiTestAccess.prefetchChapter(f.session, f.features, labels = null, manga = f.manga) },
         )
         kotlin.test.assertEquals(1, f.translation.prefetch.enqueue(listOf(job)))
         kotlinx.coroutines.withTimeout(120_000) {
@@ -198,7 +200,7 @@ class UnifiedImageTranslationTest {
 
         // without manga translation an image chapter is still not something to queue
         kotlin.test.assertFailsWith<dev.shinsou.kmp.translation.PrefetchNotTranslatable> {
-            prefetchChapter(f.session, f.features, labels = null)
+            UiTestAccess.prefetchChapter(f.session, f.features, labels = null)
         }
     }
 }

@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.desktop
 
+import dev.shinsou.kmp.logging.Log
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -44,9 +45,11 @@ internal class DesktopSingleInstance private constructor(
                 val socket = try {
                     server.accept()
                 } catch (_: IOException) {
+                    // The server socket was closed, so the accept loop ends normally.
                     break
                 }
                 runCatching { socket.use(::receive) }
+                    .onFailure { Log.warn("Desktop", it) { "Receiving a hand-off from another launch failed" } }
             }
         }, "shinsou-single-instance").apply { isDaemon = true }.start()
     }
@@ -72,6 +75,7 @@ internal class DesktopSingleInstance private constructor(
 
     override fun close() {
         pending.close()
+        // Shutdown is best effort: each may already be closed, and the OS releases them on exit.
         runCatching { server.close() }
         runCatching { lock.release() }
         runCatching { channel.close() }
@@ -116,6 +120,7 @@ internal class DesktopSingleInstance private constructor(
             val lock = try {
                 channel.tryLock()
             } catch (_: OverlappingFileLockException) {
+                // This process already holds the lock; the later launch hands off instead.
                 null
             }
             if (lock == null) {
@@ -138,6 +143,7 @@ internal class DesktopSingleInstance private constructor(
             try {
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                // Atomic moves are optional on this file system; a plain replace is enough.
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
             }
         }
@@ -146,6 +152,7 @@ internal class DesktopSingleInstance private constructor(
         private fun signalRunningInstance(root: Path, arguments: List<String>): Boolean {
             val deadline = System.currentTimeMillis() + ENDPOINT_WAIT_MS
             while (System.currentTimeMillis() < deadline) {
+                // The first instance may still be starting its endpoint; failures are retried until the deadline.
                 if (runCatching { send(root, arguments) }.getOrDefault(false)) return true
                 Thread.sleep(250)
             }

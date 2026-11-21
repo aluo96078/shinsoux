@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotationSchema
+import dev.shinsou.kmp.app.contentSchemaComponents
 import dev.shinsou.kmp.search.LocalFullTextIndexSchema
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.translation.TranslationMemorySchema
@@ -60,22 +61,6 @@ class SchemaMigratorTest {
                 assertEquals(if (format < 4) "1" else "0", picked, "format $format")
             }
         }
-    }
-
-    @Test
-    fun blobsOfFormatOneGainTheOpaqueName() {
-        exec(
-            "CREATE TABLE content_blobs(blob_id TEXT NOT NULL PRIMARY KEY, reference_json TEXT NOT NULL, " +
-                "payload BLOB NOT NULL, incarnation INTEGER NOT NULL, generation INTEGER NOT NULL, " +
-                "published_at_epoch_millis INTEGER NOT NULL, lifecycle_state TEXT NOT NULL, " +
-                "discovered_at_epoch_millis INTEGER) WITHOUT ROWID",
-        )
-        exec("INSERT INTO content_blobs VALUES ('b', '{}', x'00', 1, 0, 1, 'PUBLISHED', NULL)")
-        assertEquals(1, ContentBlobPersistenceSchema.component.unrecordedVersion(driver))
-        ContentBlobPersistenceSchema.create(driver)
-        assertTrue(columnExists(driver, "content_blobs", "opaque_name"))
-        assertEquals(2, shared("content_blobs"))
-        assertEquals("{}", text("SELECT reference_json FROM content_blobs WHERE blob_id = 'b'"))
     }
 
     @Test

@@ -3,6 +3,7 @@ package dev.shinsou.kmp
 import android.content.Context
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
+import dev.shinsou.kmp.logging.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
@@ -25,10 +26,13 @@ internal class AndroidSnapshotPersistence(context: Context) {
         )
         val legacyPayload = legacyPreferences.getString(LEGACY_STATE_KEY, null)
             ?: return@synchronized AppSnapshot()
-        val migrated = runCatching { AppSnapshotJson.decode(legacyPayload) }.getOrNull()
+        val migrated = runCatching { AppSnapshotJson.decode(legacyPayload) }
+            .onFailure { Log.warn("Storage", it) { "Legacy app state could not be decoded; starting empty" } }
+            .getOrNull()
             ?: return@synchronized AppSnapshot()
 
         runCatching { saveLocked(legacyPayload) }
+            .onFailure { Log.warn("Storage", it) { "Migrating legacy app state to its file failed; keeping the legacy copy" } }
             .onSuccess {
                 legacyPreferences.edit().remove(LEGACY_STATE_KEY).commit()
             }
@@ -46,8 +50,9 @@ internal class AndroidSnapshotPersistence(context: Context) {
         val payload = stateFile.readText(StandardCharsets.UTF_8)
         return try {
             AppSnapshotJson.decode(payload)
-        } catch (_: Exception) {
+        } catch (logged: Exception) {
             // Not Throwable: an OutOfMemoryError says nothing about the file.
+            Log.warn("Storage", logged) { "Saved app state could not be decoded; quarantining it and starting empty" }
             quarantineCorruptState()
             null
         }
@@ -69,6 +74,7 @@ internal class AndroidSnapshotPersistence(context: Context) {
                 StandardCopyOption.ATOMIC_MOVE,
             )
         } catch (_: AtomicMoveNotSupportedException) {
+            // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(
                 temporary.toPath(),
                 stateFile.toPath(),
@@ -88,7 +94,7 @@ internal class AndroidSnapshotPersistence(context: Context) {
                 quarantine.toPath(),
                 StandardCopyOption.REPLACE_EXISTING,
             )
-        }
+        }.onFailure { Log.warn("Storage", it) { "Quarantining the corrupt app state file failed" } }
     }
 
     private companion object {

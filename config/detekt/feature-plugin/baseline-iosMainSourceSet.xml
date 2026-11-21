@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:PlatformReviewedImageTransport.ios.kt:this[index] == 13.toByte() &amp;&amp; this[index + 1] == 10.toByte() &amp;&amp; this[index + 2] == 13.toByte() &amp;&amp; this[index + 3] == 10.toByte()</ID>
+    <ID>CyclomaticComplexMethod:PlatformPluginNetwork.ios.kt:internal fun encodeIosPinnedHttpRequest: ByteArray</ID>
+    <ID>CyclomaticComplexMethod:PlatformPluginNetwork.ios.kt:private suspend fun executeAtAddress: PluginHttpResponse</ID>
+    <ID>ReturnCount:IosPluginNetworkFailureCode.kt:internal fun iosPluginNetworkFailureCode: String</ID>
+    <ID>ReturnCount:PlatformPluginNetwork.ios.kt:private fun ByteArray.indexOfSequence: Int</ID>
+  </CurrentIssues>
+</SmellBaseline>

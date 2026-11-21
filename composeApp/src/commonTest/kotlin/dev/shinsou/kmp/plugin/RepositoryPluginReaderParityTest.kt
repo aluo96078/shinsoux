@@ -1,12 +1,14 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.download.DownloadManager
 import dev.shinsou.kmp.domain.model.DownloadState
+import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.reader.JmImageDescrambler
-import dev.shinsou.kmp.reader.ReaderImageTransform
-import dev.shinsou.kmp.contract.BrowseManga
+import dev.shinsou.kmp.domain.model.JmImageDescrambler
+import dev.shinsou.kmp.domain.model.ReaderImageTransform
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -257,7 +259,7 @@ class RepositoryPluginReaderParityTest {
             "${JmImageDescrambler.SCRAMBLE_ID_KEY}=220980&" +
             "${JmImageDescrambler.PHOTO_ID_KEY}=300000&" +
             "${JmImageDescrambler.FILENAME_KEY}=abc"
-        val projectedId = PluginInstallKeys.projectedSourceId(
+        val projectedId = PluginTestAccess.projectedSourceId(
             "zh.jinmantiantang~0123456789abcdef",
             JmImageDescrambler.SOURCE_ID.toString(),
         )
@@ -539,6 +541,7 @@ private suspend fun createReaderParityFixture(
         runtimeFactory = ScriptPluginRuntimeFactory { _, _, _ -> source },
         environment = ScriptPluginEnvironment(network, storage),
         executionAdmissionMode = PluginExecutionAdmissionMode.UNSAFE_DEVELOPER_COMPATIBILITY,
+        executionTierGate = null,
     )
     manager.install(
         ExtensionRepository("https://plugins.example", "Reader fixtures"),
@@ -569,7 +572,6 @@ private suspend fun createReaderParityFixture(
     val coordinator = RepositoryPluginCoordinator(
         repository = repository,
         manager = manager,
-        fileSystem = files,
         now = { 100 },
     )
     val downloads = DownloadManager(
@@ -578,7 +580,7 @@ private suspend fun createReaderParityFixture(
         pageProvider = coordinator,
         pageFetcher = coordinator,
         now = { 100 },
-    ).also(coordinator::attachDownloadManager)
+    ).also { coordinator.attachDownloads(DownloadManagerChapterDownloads(it, repository, files)) }
     val mangaId = assertNotNull(coordinator.resolve(BrowseManga(source.id, "/title", "Reader fixture")))
     coordinator.refreshManga(mangaId)
     val chapterId = repository.currentSnapshot.chapters.single().id

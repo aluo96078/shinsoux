@@ -93,6 +93,7 @@ internal class WindowsDpapiMasterKeyStore(
         try {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (_: AtomicMoveNotSupportedException) {
+            // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
         }
     }

@@ -1,0 +1,8 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:EpubArchiveInflater.ios.kt:@OptIn(ExperimentalForeignApi::class) internal actual fun platformInflateRawDeflate: ByteArray</ID>
+    <ID>ThrowsCount:EpubArchiveInflater.ios.kt:@OptIn(ExperimentalForeignApi::class) internal actual fun platformInflateRawDeflate: ByteArray</ID>
+  </CurrentIssues>
+</SmellBaseline>

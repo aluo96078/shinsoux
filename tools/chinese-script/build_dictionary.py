@@ -5,9 +5,9 @@ Usage:
     python3 tools/chinese-script/build_dictionary.py
 
 Downloads OpenCC's dictionaries (Apache-2.0, https://github.com/BYVoid/OpenCC) at a pinned commit and writes
-  composeApp/src/commonMain/composeResources/files/chinese-script.txt   the conversion table
-  composeApp/src/commonMain/composeResources/files/opencc-LICENSE.txt   OpenCC's license, shipped with it
-  composeApp/src/commonMain/kotlin/dev/shinsou/kmp/translation/ChineseScriptCharacters.kt
+  feature-translation/src/commonMain/composeResources/files/chinese-script.txt   the conversion table
+  feature-translation/src/commonMain/composeResources/files/opencc-LICENSE.txt   OpenCC's license, shipped with it
+  feature-translation/src/commonMain/kotlin/dev/shinsou/kmp/translation/ChineseScriptCharacters.kt
                                                                         characters written only one way, for detection
 The table follows OpenCC's s2twp (Simplified -> Taiwan, with Taiwan phrases) and tw2sp (Taiwan -> Simplified, with
 mainland phrases). A phrase is left out when the rest of the table converts any text it
@@ -19,9 +19,9 @@ COMMIT = "fae2a0a911c30764e669a7d8b0591cd8e852934a"
 BASE = f"https://raw.githubusercontent.com/BYVoid/OpenCC/{COMMIT}/data/dictionary"
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CACHE = os.path.join(ROOT, "build", "opencc", COMMIT)
-TABLE = os.path.join(ROOT, "composeApp/src/commonMain/composeResources/files/chinese-script.txt")
-LICENSE = os.path.join(ROOT, "composeApp/src/commonMain/composeResources/files/opencc-LICENSE.txt")
-CHARACTERS = os.path.join(ROOT, "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/translation/ChineseScriptCharacters.kt")
+TABLE = os.path.join(ROOT, "feature-translation/src/commonMain/composeResources/files/chinese-script.txt")
+LICENSE = os.path.join(ROOT, "feature-translation/src/commonMain/composeResources/files/opencc-LICENSE.txt")
+CHARACTERS = os.path.join(ROOT, "feature-translation/src/commonMain/kotlin/dev/shinsou/kmp/translation/ChineseScriptCharacters.kt")
 
 
 def load(name):

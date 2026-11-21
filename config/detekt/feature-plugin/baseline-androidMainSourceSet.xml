@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LoopWithTooManyJumpStatements:AndroidSandboxTransport.kt:AndroidSandboxTransport$while</ID>
+    <ID>SwallowedException:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: RemoteException</ID>
+    <ID>ThrowsCount:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$suspend fun open: AndroidSandboxTransport</ID>
+    <ID>TooGenericExceptionCaught:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

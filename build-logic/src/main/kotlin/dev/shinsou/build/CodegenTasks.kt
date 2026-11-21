@@ -1,5 +1,6 @@
 package dev.shinsou.build
 
+import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -12,12 +13,60 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import java.io.File
 import java.net.IDN
+import javax.inject.Inject
 
-/** Puts the code-generation task types on the build script's classpath (R5-2, docs/architecture/0006). */
+/**
+ * The generated sources (R5-2, docs/architecture/0006). Each module registers the ones whose
+ * package it holds (R5-1) through the `shinsouCodegen` extension: the build info (`buildinfo`), the
+ * Public Suffix List (`plugin.network`), and Android's launcher icon copied from the Compose resource.
+ */
 public class CodegenPlugin : Plugin<Project> {
-    override fun apply(target: Project): Unit = Unit
+    override fun apply(target: Project) {
+        target.extensions.create("shinsouCodegen", CodegenExtension::class.java, target)
+    }
+}
+
+public abstract class CodegenExtension @Inject constructor(private val project: Project) {
+    /** `dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION` in commonMain (task `generateBuildInfo`). */
+    public fun buildInfo(): Unit = with(project) {
+        val generateBuildInfo = tasks.register("generateBuildInfo", GenerateBuildInfo::class.java) {
+            displayVersion.set(shinsouBuild().releaseDisplayVersion)
+            outputDirectory.set(layout.buildDirectory.dir("generated/buildInfo/commonMain/kotlin"))
+        }
+        commonMainSource(generateBuildInfo.map { it.outputDirectory })
+    }
+
+    /** The vendored `psl/public_suffix_list.dat` as commonMain data (task `generatePublicSuffixData`). */
+    public fun publicSuffixData(): Unit = with(project) {
+        val generatePublicSuffixData = tasks.register("generatePublicSuffixData", GeneratePublicSuffixData::class.java) {
+            listFile.set(layout.projectDirectory.file("psl/public_suffix_list.dat"))
+            outputDirectory.set(layout.buildDirectory.dir("generated/publicSuffix/commonMain/kotlin"))
+        }
+        commonMainSource(generatePublicSuffixData.map { it.outputDirectory })
+    }
+
+    /** The Android launcher icon, copied from [icon] (task `copyAndroidAppIcon`). */
+    public fun androidAppIcon(icon: String): Unit = with(project) {
+        val copyAndroidAppIcon = tasks.register("copyAndroidAppIcon", CopyAppIcon::class.java) {
+            this.icon.set(rootProject.layout.projectDirectory.file(icon))
+            // outputDirectory is set by addGeneratedSourceDirectory below (build/generated/res/copyAndroidAppIcon).
+        }
+        pluginManager.withPlugin("com.android.application") {
+            extensions.getByType(ApplicationAndroidComponentsExtension::class.java).onVariants { variant ->
+                variant.sources.res?.addGeneratedSourceDirectory(copyAndroidAppIcon, CopyAppIcon::outputDirectory)
+            }
+        }
+    }
+
+    private fun commonMainSource(directory: Any) {
+        project.pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
+            project.extensions.getByType(KotlinMultiplatformExtension::class.java).sourceSets
+                .getByName("commonMain").kotlin.srcDir(directory)
+        }
+    }
 }
 
 /**
@@ -66,7 +115,7 @@ public abstract class GeneratePublicSuffixData : DefaultTask() {
         directory.mkdirs()
         directory.resolve("PublicSuffixData.kt").writeText(
             buildString {
-                appendLine("// Generated from composeApp/psl/public_suffix_list.dat by generatePublicSuffixData. Do not edit.")
+                appendLine("// Generated from feature-plugin/psl/public_suffix_list.dat by generatePublicSuffixData. Do not edit.")
                 appendLine("package dev.shinsou.kmp.plugin.network")
                 appendLine()
                 appendLine("internal val PUBLIC_SUFFIX_RULE_CHUNKS: Array<String> = arrayOf(")

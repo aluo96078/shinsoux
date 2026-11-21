@@ -21,9 +21,9 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaCategory
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationUnit
-import dev.shinsou.kmp.local.isTypedLocalCompatibilityUrl
-import dev.shinsou.kmp.plugin.Sha256
-import dev.shinsou.kmp.plugin.v2.decodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.domain.model.isTypedLocalCompatibilityUrl
+import dev.shinsou.kmp.crypto.Sha256
+import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json

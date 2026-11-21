@@ -24,7 +24,7 @@
 
 Windows 可建置及執行 Android／Desktop target，但不能取代 Xcode；iOS App、Widget、簽章、Simulator 與真機部署仍必須在 macOS 完成。DMG 與 MSI／EXE 也必須各自在其目標作業系統建立，不能跨平台產生。
 
-建立正式或 beta tag 時，GitHub Actions 會產生 Android debug APK、macOS DMG 與 Windows
+建立正式或 beta tag 時，GitHub Actions 會產生 Android APK（R8 release 變體）、macOS DMG 與 Windows
 MSI／EXE，並附上未簽章的 iOS IPA（需自行重新簽章才能安裝）。完整 entitlements 的 iOS App 必須在 macOS／Xcode 自行建置。版本格式、
 公開產物與分發邊界請見 [GitHub Actions 發布](RELEASING.md)。本機或 CI 可使用
 `-PreleaseVersion=X.Y.Z -PreleaseVersionCode=N` 覆寫 package version 與正整數 build
@@ -51,7 +51,7 @@ project/
 └── shinsou_plugin/
 ```
 
-`composeApp/src/desktopTest` 預設把 `../../shinsou_plugin` 加入 test resources。若 checkout
+套用 `shinsou.testing` 的模組（`composeApp`、`feature-plugin` 等）的 `desktopTest` 預設把 `../../shinsou_plugin` 加入 test resources。若 checkout
 佈局不同，可用 `-PshinsouPluginRepository=/path/to/shinsou_plugin` 指定 fixture；Gradle 會把
 同一路徑提供給 classpath resources 與直接讀取工作區的 compatibility tests。若只複製
 `shinsou_kmp`，需另外提供相同 fixture；否則官方腳本 compatibility test 不具完整輸入。
@@ -61,7 +61,7 @@ project/
 ### 1. 共用與 Desktop deterministic tests
 
 ```bash
-./gradlew :composeApp:desktopTest --rerun-tasks
+./gradlew desktopTest --rerun-tasks
 ```
 
 這會執行 common／Desktop 測試，涵蓋 repository、分類、下載 completion manifest、統一 content transaction/blob recovery、TXT／完整 EPUB／圖片 reader、全文索引／TTS／註記 rights、Backup v2／[ShuYue](https://github.com/aluo96078/shuyue) transactional import、Reader navigation／來源特例、ZIP traversal 防護、extension v2／repository reconciliation、redirect／`Set-Cookie` 防護、Web challenge、tracking adapter 與 Rhino extension contract。Workspace fixture 也會確認相鄰專案中的官方 JavaScript 腳本可在 Rhino 初始化。在 macOS 上，此 task 會先編譯原生 WKWebView challenge helper；缺少 `xcrun`、macOS SDK 或 `swiftc` 時會在測試前失敗。
@@ -77,8 +77,10 @@ project/
 ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
 ```
 
-Debug APK 位於 `composeApp/build/outputs/apk/debug/`。Tag workflow 也只發布這類
-debug-signed、`android:debuggable=true` 的測試 APK，不是 production release build。
+Debug APK 位於 `composeApp/build/outputs/apk/debug/`。Tag workflow 發布的是
+`:composeApp:assembleRelease` 產生的 R8 release 變體（`composeApp/build/outputs/apk/release/`，
+`android:debuggable=false`）；沒有 `ANDROID_KEYSTORE_*` 時以公開測試 signer 簽章，不是
+production release build。
 自 beta.5 起，官方 CI 使用 GitHub Actions secret 中固定的公開測試 signer；fingerprint 與
 升級限制見 [發布文件](RELEASING.md)。beta.3 及更舊版本必須先備份並解除安裝一次，beta.5
 之後才可直接覆蓋升級。需要 production identity 時，請自行保存 keystore 並執行
@@ -90,7 +92,7 @@ Desktop 的 macOS Security.framework／Windows DPAPI JNA binding；不會啟動 
 ### 3. iOS Kotlin/Native tests
 
 ```bash
-./gradlew :composeApp:iosSimulatorArm64Test
+./gradlew iosSimulatorArm64Test
 ```
 
 iOS test 覆蓋 JavaScriptCore 同步 extension contract 與共用測試。Simulator test 不會驗證實體音量鍵、系統音量／HUD 與 entitlement，也不代表 workspace 中的官方腳本已逐一在 JavaScriptCore 執行。
@@ -173,7 +175,7 @@ Application 憑證並完成 notarization。
 
 ```powershell
 .\gradlew.bat :composeApp:compileKotlinDesktop
-.\gradlew.bat :composeApp:desktopTest --rerun-tasks
+.\gradlew.bat desktopTest --rerun-tasks
 .\gradlew.bat :composeApp:run
 ```
 

@@ -1,5 +1,8 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.app
 
+import dev.shinsou.kmp.content.DataContentTestAccess
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.content.ContentCommitBatch
@@ -16,7 +19,7 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager
-import dev.shinsou.kmp.plugin.v2.encodeExtensionLibraryPublicationUrl
+import dev.shinsou.kmp.domain.model.encodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.contract.ImportedDocument
 import java.nio.file.Files
 import kotlin.test.Test
@@ -34,7 +37,8 @@ class LegacyPublicationStartupMigrationTest {
             val driver = driver(path)
             val foundation = foundation(driver)
             val snapshot = legacySnapshot()
-            foundation.injectTransactionFailureForTesting(
+            DataContentTestAccess.injectTransactionFailure(
+                foundation,
                 ContentTransactionFailurePoint.AFTER_PUBLICATION_WRITE,
             )
 
@@ -47,7 +51,7 @@ class LegacyPublicationStartupMigrationTest {
                 ),
             )
 
-            foundation.injectTransactionFailureForTesting(null)
+            DataContentTestAccess.injectTransactionFailure(foundation, null)
             val migrated = LegacyPublicationStartupMigration(foundation).migrate(snapshot)
             assertEquals(LegacyPublicationMigrationStatus.MIGRATED, migrated.status)
             assertEquals(1, migrated.publicationCount)

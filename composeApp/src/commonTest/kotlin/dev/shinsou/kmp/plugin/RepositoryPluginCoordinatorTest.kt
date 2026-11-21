@@ -3,8 +3,8 @@ package dev.shinsou.kmp.plugin
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.MangaPatch
 import dev.shinsou.kmp.download.DownloadManager
+import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.contract.BrowseManga
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -70,14 +71,17 @@ class RepositoryPluginCoordinatorTest {
             },
             repositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
         )
-        val manager = PluginManager(
+        val packageStore = InMemoryPluginPackageStore()
+        fun pluginManager() = PluginManager(
             repositoryClient = repositoryClient,
-            packageStore = InMemoryPluginPackageStore(),
+            packageStore = packageStore,
             verifier = PluginVerifier(KeyValuePluginTrustStore(keyValues)),
             runtimeFactory = ScriptPluginRuntimeFactory { _, _, _ -> source },
             environment = ScriptPluginEnvironment(pluginNetwork, storage),
             executionAdmissionMode = PluginExecutionAdmissionMode.UNSAFE_DEVELOPER_COMPATIBILITY,
+            executionTierGate = null,
         )
+        val manager = pluginManager()
         manager.install(
             ExtensionRepository("https://plugins.example", "Fixtures"),
             PluginIndexEntry(
@@ -105,7 +109,6 @@ class RepositoryPluginCoordinatorTest {
         val coordinator = RepositoryPluginCoordinator(
             repository = repository,
             manager = manager,
-            fileSystem = files,
             now = { 100 },
         )
         val downloads = DownloadManager(
@@ -114,7 +117,7 @@ class RepositoryPluginCoordinatorTest {
             coordinator,
             coordinator,
             now = { 100 },
-        ).also(coordinator::attachDownloadManager)
+        ).also { coordinator.attachDownloads(DownloadManagerChapterDownloads(it, repository, files)) }
 
         val mangaId = assertNotNull(
             coordinator.resolve(BrowseManga(source.id, "/title", "Seed")),
@@ -159,6 +162,28 @@ class RepositoryPluginCoordinatorTest {
         assertEquals(byteArrayOf(1, 2, 3).toList(), assertNotNull(firstOnline.imageBytes).toList())
         assertTrue(firstOnline.imageUrl.isBlank())
 
+        // A launch that restores this chapter before startup has loaded the installed sources.
+        val relaunched = pluginManager()
+        assertFailsWith<IllegalStateException> {
+            RepositoryPluginCoordinator(repository, relaunched, now = { 100 }).loadReaderChapter(mangaId, chapterId)
+        }
+        val restored = RepositoryPluginCoordinator(
+            repository = repository,
+            manager = relaunched,
+            now = { 100 },
+            awaitInstalledSources = { relaunched.loadInstalled() },
+        ).loadReaderChapter(mangaId, chapterId)
+        assertEquals(online.pages.size, restored.pages.size)
+        // Its detail page, refreshed from the source at that point, waits for them too.
+        val relaunchedAgain = pluginManager()
+        RepositoryPluginCoordinator(
+            repository = repository,
+            manager = relaunchedAgain,
+            now = { 100 },
+            awaitInstalledSources = { relaunchedAgain.loadInstalled() },
+        ).refreshManga(mangaId)
+        relaunchedAgain.close()
+
         coordinator.enqueueDownload(mangaId, chapterId)
         downloads.awaitIdle()
         val completedTransportRequests = transportRequestsMutex.withLock { transportRequests.toList() }
@@ -176,37 +201,6 @@ class RepositoryPluginCoordinatorTest {
 
         downloads.close()
         manager.close()
-    }
-
-    @Test
-    fun externalWebUrlResolutionHandlesReferencesAndRejectsUnsafeSchemes() {
-        assertEquals(
-            "https://reader.example/catalog/chapter/1?token=a#page-2",
-            resolveSourceHttpUrl(
-                baseUrl = "https://reader.example/catalog",
-                value = "chapter/1?token=a#page-2",
-            ),
-        )
-        assertEquals(
-            "https://reader.example/chapter/2",
-            resolveSourceHttpUrl("https://reader.example/catalog", "/chapter/2"),
-        )
-        assertEquals(
-            "https://cdn.example/chapter/3",
-            resolveSourceHttpUrl("https://reader.example", "//cdn.example/chapter/3"),
-        )
-        assertEquals(
-            "http://absolute.example/chapter/4",
-            resolveSourceHttpUrl(null, "http://absolute.example/chapter/4"),
-        )
-
-        assertNull(resolveSourceHttpUrl("https://reader.example", "javascript:alert(1)"))
-        assertNull(resolveSourceHttpUrl("https://reader.example", "file:///private/chapter"))
-        assertNull(resolveSourceHttpUrl("https://reader.example", "local://chapter/1"))
-        assertNull(resolveSourceHttpUrl("ftp://reader.example", "/chapter/1"))
-        assertNull(resolveSourceHttpUrl("https://reader.example", "chapter\\redirect"))
-        assertNull(resolveSourceHttpUrl("https://reader.example", "chapter/1\nhttps://evil.example"))
-        assertNull(resolveSourceHttpUrl("https://reader.example", "   "))
     }
 }
 

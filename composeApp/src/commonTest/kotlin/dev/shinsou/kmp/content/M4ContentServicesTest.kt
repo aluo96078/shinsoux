@@ -1,3 +1,5 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.content
 
 import dev.shinsou.kmp.annotation.AnnotationReanchorStatus
@@ -5,7 +7,7 @@ import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.annotation.ContentAnnotationState
 import dev.shinsou.kmp.annotation.InMemoryContentAnnotationStore
 import dev.shinsou.kmp.annotation.RightsEnforcedAnnotationService
-import dev.shinsou.kmp.content.access.ContentAccessRequest
+import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.HostContentOperationGate
 import dev.shinsou.kmp.domain.model.PublicationKey
@@ -22,7 +24,6 @@ import dev.shinsou.kmp.domain.model.RightsGrantRef
 import dev.shinsou.kmp.rights.RightsProvenance
 import dev.shinsou.kmp.rights.RightsScope
 import dev.shinsou.kmp.search.CjkLatinFullTextTokenizer
-import dev.shinsou.kmp.search.InMemoryDerivedLocalFullTextIndex
 import dev.shinsou.kmp.search.SearchableTextDocument
 import dev.shinsou.kmp.tts.PlatformSpeechRequest
 import dev.shinsou.kmp.tts.PlatformSpeechResult
@@ -64,7 +65,7 @@ class M4ContentServicesTest {
     @Test
     fun derivedFtsTokenizesCjkAndLatinAndPurgesRevokedDocuments() {
         val fixture = fixture(setOf(ContentOperation.SEARCH_INDEX))
-        val index = InMemoryDerivedLocalFullTextIndex(fixture.gate)
+        val index = DataContentTestAccess.inMemoryFullTextIndex(fixture.gate)
         val text = "Shinsou 搜尋功能支援 CJK and LATIN."
         val tokens = CjkLatinFullTextTokenizer.tokenize(text)
         assertTrue(tokens.any { it.value == "shinsou" && it.startUtf16 == 0 })
@@ -95,7 +96,7 @@ class M4ContentServicesTest {
     @Test
     fun searchSnippetLimitNeverSplitsASurrogatePair() {
         val fixture = fixture(setOf(ContentOperation.SEARCH_INDEX))
-        val index = InMemoryDerivedLocalFullTextIndex(fixture.gate)
+        val index = DataContentTestAccess.inMemoryFullTextIndex(fixture.gate)
         val token = "a".repeat(255)
         index.upsert(
             SearchableTextDocument(
@@ -149,7 +150,7 @@ class M4ContentServicesTest {
         val blockStartUtf16 = "Lead 😀\n\n".length
         val canonicalLength = blockStartUtf16 + blockText.length + "\nTail".length
         val expectedMatchOffset = blockStartUtf16 + blockText.indexOf("target")
-        val index = InMemoryDerivedLocalFullTextIndex(fixture.gate)
+        val index = DataContentTestAccess.inMemoryFullTextIndex(fixture.gate)
 
         index.upsert(
             SearchableTextDocument(

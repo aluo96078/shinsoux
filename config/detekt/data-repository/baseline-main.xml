@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:ShinsouRepository.kt:ShinsouRepository$lastPageRead &lt; 0 || timeRead &lt; 0 || lastPageCount != null &amp;&amp; lastPageCount &lt;= lastPageRead</ID>
+    <ID>ComplexCondition:ShinsouRepository.kt:current &lt; 0L || proposed &lt; 0L || current &gt;= Long.MAX_VALUE - 1L || proposed &gt;= Long.MAX_VALUE - 1L</ID>
+    <ID>CyclomaticComplexMethod:AppSnapshot.kt:AppSnapshot$fun validate: AppSnapshot</ID>
+    <ID>CyclomaticComplexMethod:ShinsouRepository.kt:ShinsouRepository$suspend fun markChapterProgress: Chapter</ID>
+    <ID>CyclomaticComplexMethod:ShinsouRepository.kt:ShinsouRepository$suspend fun rebindLibraryTitle: Manga</ID>
+    <ID>CyclomaticComplexMethod:ShinsouRepository.kt:ShinsouRepository$suspend fun upsertCategory: Category</ID>
+    <ID>LargeClass:ShinsouRepository.kt:ShinsouRepository</ID>
+    <ID>LongParameterList:ShinsouRepository.kt:ShinsouRepository$suspend fun markChapterProgress: Chapter</ID>
+    <ID>LongParameterList:ShinsouRepository.kt:ShinsouRepository$suspend fun setDownloadState: DownloadQueueItem</ID>
+    <ID>MapGetWithNotNullAssertionOperator:AppSnapshot.kt:AppSnapshot$chapterById[history.chapterId]!!</ID>
+    <ID>ThrowsCount:ShinsouRepository.kt:private fun validateDownload</ID>
+    <ID>TooGenericExceptionCaught:ShinsouRepository.kt:ShinsouRepository$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ShinsouRepository.kt:ShinsouRepository$rollbackFailure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ShinsouRepository.kt:SnapshotPersistenceWorker$error: Throwable</ID>
+    <ID>UnsafeCallOnNullableType:AppSnapshot.kt:AppSnapshot$chapterById[history.chapterId]!!</ID>
+    <ID>UseCheckOrError:ShinsouRepository.kt:ShinsouRepository$throw IllegalStateException( "Cloudflare bulk mutation requires an installed sync mutation observer", )</ID>
+    <ID>UseCheckOrError:ShinsouRepository.kt:ShinsouRepository$throw IllegalStateException("Cloudflare bulk replacement requires an installed sync mutation observer")</ID>
+  </CurrentIssues>
+</SmellBaseline>

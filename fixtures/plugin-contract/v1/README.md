@@ -1,14 +1,14 @@
 # 套件發佈契約 v1 測試向量
 
 這個資料夾是 Shinsou X App 與套件作者工具（`@shinsou/plugin` CLI）共用的**位元組級契約**。
-檔案由 App 自己的程式碼產生（`composeApp/src/desktopTest/.../plugin/PluginContractVectorTest.kt`），
+檔案由 App 自己的程式碼產生（`feature-plugin/src/desktopTest/.../plugin/PluginContractVectorTest.kt`），
 App 測試每次都會重新產生並與這裡的檔案逐字比對；CLI 也必須對同一份檔案逐 byte 相符。
 任何一邊的差異都代表協定改變，不是可以隨手更新的快照。
 
 重新產生（會覆寫檔案，請檢查 diff）：
 
 ```bash
-./gradlew :composeApp:desktopTest -PwritePluginContractVectors=true --tests '*PluginContractVectorTest'
+./gradlew :feature-plugin:desktopTest -PwritePluginContractVectors=true --tests '*PluginContractVectorTest'
 ```
 
 > `keys.json` 的金鑰只供測試，種子是公開標籤的 SHA-256，**絕對不能**用來簽署真正的儲存庫。

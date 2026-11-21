@@ -1,5 +1,7 @@
 package dev.shinsou.kmp
 
+import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.sync.v3.SyncV3Service
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
@@ -23,12 +25,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
-import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.ui.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
-import dev.shinsou.kmp.contract.BrowseCallbacks
+import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits
@@ -39,6 +41,8 @@ import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
+import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.mobileSecurityCapabilities
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
@@ -64,18 +68,23 @@ internal interface AndroidDocumentLauncher {
 internal class AndroidAppServices(
     private val activity: FragmentActivity,
     private val documentLauncher: AndroidDocumentLauncher,
+    /** Owned by the activity, which fills it from the moment it is created. */
+    private val pendingDeepLinks: RetainedDeepLinkQueue,
+    /** Whether a queued link (by its tag) was received by this activity's window: only those are taken. */
+    private val ownsLink: (tag: Any?) -> Boolean = { true },
+    /** Told of each link the shell handled, by its tag (the activity forgets what it kept of it). */
+    private val onDeepLinkHandled: (tag: Any?) -> Unit = {},
     override val browse: BrowseCallbacks = BrowseCallbacks.None,
     override val content: ContentCallbacks = ContentCallbacks.None,
-    override val contentFeatures: ContentFeatureRuntime? = null,
+    override val contentFeatures: ContentFeatures? = null,
     override val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation? = null,
     override val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker? = null,
     override val tracking: TrackingCoordinator? = null,
     override val portableContentBackupV2: PortableContentBackupV2UiController? = null,
     override val sync: SyncV3Service? = null,
     override val shuYueMigration: ShuYueMigrationUiController? = null,
-    private val stringsProvider: () -> ShinsouStrings = { ShinsouStrings() },
+    private val stringsProvider: () -> ShinsouStrings = { shinsouStringsFor("en") },
 ) : ShinsouAppServices {
-    private val pendingDeepLinks = RetainedDeepLinkQueue()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
     private val mutableReaderVolumeKeyEvents = MutableSharedFlow<ReaderVolumeKeyEvent>(extraBufferCapacity = 2)
     private var previousRequestedOrientation: Int? = null
@@ -86,13 +95,11 @@ internal class AndroidAppServices(
     @Volatile
     private var systemBackHandler: (() -> Boolean)? = null
 
-    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
+    override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.eventsWhere(ownsLink)
     override val appLifecycle: StateFlow<AppLifecycleState> = lifecycleState
     override val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent> = mutableReaderVolumeKeyEvents.asSharedFlow()
     override val securityCapabilities: PlatformSecurityCapabilities
         get() = mobileSecurityCapabilities(deviceOwnerAuthenticationAvailable())
-
-    fun emitDeepLink(link: ShinsouDeepLink): Boolean = pendingDeepLinks.tryEnqueue(link)
 
     fun emitForeground() {
         lifecycleState.value = AppLifecycleState.FOREGROUND
@@ -102,14 +109,17 @@ internal class AndroidAppServices(
         lifecycleState.value = AppLifecycleState.BACKGROUND
     }
 
+    override fun isDeepLinkPending(link: ShinsouDeepLink): Boolean = pendingDeepLinks.pendingLinks.any { it === link }
+
     override fun deepLinkHandled(link: ShinsouDeepLink) {
-        pendingDeepLinks.handled(link)
+        pendingDeepLinks.handled(link, ownsLink)?.let(onDeepLinkHandled)
     }
 
     override fun openExternalUrl(url: String) {
         tryOpenExternalUrl(url)
     }
 
+    // No activity able to open the link is an expected outcome; the caller reports false.
     override fun tryOpenExternalUrl(url: String): Boolean = runCatching {
             activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             true
@@ -128,9 +138,10 @@ internal class AndroidAppServices(
         activity.getSystemService(ClipboardManager::class.java)
             .setPrimaryClip(ClipData.newPlainText(label, text))
         true
-    }.getOrDefault(false)
+    }.onFailure { Log.warn("Platform", it) { "Copying text to the clipboard failed" } }.getOrDefault(false)
 
-    override suspend fun readClipboardText(): String? = runCatching {
+    // The system denies clipboard reads while the app is not focused; that reads as empty.
+    override suspend fun readClipboardText(): String? = runCatchingCancellable {
         val clipboard = activity.getSystemService(ClipboardManager::class.java)
         clipboard.primaryClip?.getItemAt(0)?.coerceToText(activity)?.toString()
     }.getOrNull()
@@ -164,7 +175,7 @@ internal class AndroidAppServices(
                 values,
             ) ?: return@withContext false
             // Published only once the pending flag is cleared on exactly this row.
-            val written = runCatching {
+            val written = runCatchingCancellable {
                 requireNotNull(resolver.openOutputStream(uri)).use { it.write(contents) }
                 resolver.update(
                     uri,
@@ -172,9 +183,12 @@ internal class AndroidAppServices(
                     null,
                     null,
                 ) == 1
-            }.getOrDefault(false)
+            }.onFailure { Log.warn("Platform", it) { "Saving an image to the gallery failed" } }.getOrDefault(false)
             // A half-written entry would show up broken in the gallery.
-            if (!written) runCatching { resolver.delete(uri, null, null) }
+            if (!written) {
+                runCatchingCancellable { resolver.delete(uri, null, null) }
+                    .onFailure { Log.warn("Platform", it) { "Removing a half-written gallery entry failed" } }
+            }
             written
         }
 
@@ -276,6 +290,7 @@ internal class AndroidAppServices(
         )
         runCatching { activity.startActivity(direct) }
             .recoverCatching { activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            .onFailure { Log.warn("Platform", it) { "Opening the battery optimisation settings failed" } }
     }
 
     override fun requestNotificationPermission() {
@@ -304,7 +319,7 @@ internal class AndroidAppServices(
             },
         )
         val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(stringsProvider().text("Shinsou X"))
+            .setTitle(stringsProvider().text(StringKey.SHINSOU_X))
             .setSubtitle(reason)
             .apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -326,6 +341,7 @@ internal class AndroidAppServices(
         val deviceCredentialAvailable = activity
             .getSystemService(KeyguardManager::class.java)
             ?.isDeviceSecure == true
+        // Feature detection: a device without biometric support answers false.
         val biometricAvailable = runCatching {
             BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
                 BiometricManager.BIOMETRIC_SUCCESS

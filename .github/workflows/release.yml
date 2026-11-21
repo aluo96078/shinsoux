@@ -105,12 +105,18 @@ jobs:
       ref: ${{ needs.metadata.outputs.source_commit }}
 
   android:
-    name: Android debug APK
+    # R5-3 (docs/architecture/0006): the release variant, shrunk by R8 and signed with the fixed
+    # public test key (a tag from before R5-3 is rebuilt as the debug variant it shipped as). The
+    # asset keeps its old name (…-android-debug.apk): "debug" is that signer.
+    name: Android APK
     needs: [metadata, checks]
     # A job whose need was skipped is skipped too unless it says otherwise.
     if: ${{ !cancelled() && needs.metadata.result == 'success' && (needs.checks.result == 'success' || needs.checks.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      # release: R8 and the ShinsouReady startup line; debug: a tag rebuilt from before R5-3.
+      variant: ${{ steps.variant.outputs.variant }}
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_PACKAGE_VERSION: ${{ needs.metadata.outputs.package_version }}
@@ -158,22 +164,42 @@ jobs:
           chmod 600 "$keystore"
           echo "ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
 
-      - name: Build debug APK
+      # A rebuilt tag from before R5-3 (docs/architecture/0006) wires the public test key to the debug
+      # variant only and has no R8: it is rebuilt as it was released, the debug variant.
+      - name: Choose the APK variant of this source
+        id: variant
         shell: bash
         run: |
-          ./gradlew :composeApp:assembleDebug \
+          if [[ -f composeApp/proguard-android-rules.pro ]]; then
+            echo "variant=release" >> "$GITHUB_OUTPUT"
+            echo "ANDROID_VARIANT=release" >> "$GITHUB_ENV"
+            echo "ANDROID_TASK=assembleRelease" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPECTED_DEBUGGABLE=false" >> "$GITHUB_ENV"
+          else
+            echo "variant=debug" >> "$GITHUB_OUTPUT"
+            echo "ANDROID_VARIANT=debug" >> "$GITHUB_ENV"
+            echo "ANDROID_TASK=assembleDebug" >> "$GITHUB_ENV"
+            echo "ANDROID_EXPECTED_DEBUGGABLE=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        shell: bash
+        # Without the four ANDROID_KEYSTORE_* variables the release variant is signed with the public
+        # test key restored above (AndroidAppPlugin), the same signer the debug APK used to carry.
+        run: |
+          ./gradlew ":composeApp:$ANDROID_TASK" \
             -PreleaseVersion="$RELEASE_PACKAGE_VERSION" \
             -PreleaseDisplayVersion="$RELEASE_VERSION" \
             -PreleaseVersionCode="$RELEASE_VERSION_CODE" \
             --stacktrace
 
-      - name: Verify and stage debug APK
+      - name: Verify and stage APK
         shell: bash
         run: |
           shopt -s nullglob
-          apks=(composeApp/build/outputs/apk/debug/*.apk)
+          apks=(composeApp/build/outputs/apk/"$ANDROID_VARIANT"/*.apk)
           if (( ${#apks[@]} != 1 )); then
-            echo "::error title=Unexpected APK output::Expected exactly one debug APK, found ${#apks[@]}."
+            echo "::error title=Unexpected APK output::Expected exactly one $ANDROID_VARIANT APK, found ${#apks[@]}."
             exit 1
           fi
           [[ -s "${apks[0]}" ]] || {
@@ -209,8 +235,8 @@ jobs:
           actual_application_id="$(apkanalyzer manifest application-id "${apks[0]}")"
           actual_version_name="$(apkanalyzer manifest version-name "${apks[0]}")"
           actual_version_code="$(apkanalyzer manifest version-code "${apks[0]}")"
-          [[ "$actual_debuggable" == true ]] || {
-            echo "::error title=APK is not debuggable::Expected android:debuggable=true."
+          [[ "$actual_debuggable" == "$ANDROID_EXPECTED_DEBUGGABLE" ]] || {
+            echo "::error title=Unexpected debuggable flag::Found $actual_debuggable; expected $ANDROID_EXPECTED_DEBUGGABLE for the $ANDROID_VARIANT variant."
             exit 1
           }
           [[ "$actual_application_id" == dev.aluo.shinsoux ]] || {
@@ -225,25 +251,190 @@ jobs:
             echo "::error title=Unexpected version code::Found $actual_version_code; expected $RELEASE_VERSION_CODE."
             exit 1
           }
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            unzip -l "${apks[0]}" "lib/$abi/libshinsou_sandbox.so" > /dev/null || {
-              echo "::error title=Missing plugin sandbox::lib/$abi/libshinsou_sandbox.so is not in the APK."
-              exit 1
-            }
-          done
+          # A rebuilt tag is checked for what its own sources build: the isolated-process plugin
+          # sandbox exists from v1.0.1-beta.9, offline translation (and the libraries it brings)
+          # from v1.0.2-beta.1.
+          if grep -qs shinsou_sandbox sandbox-core/CMakeLists.txt; then
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              unzip -l "${apks[0]}" "lib/$abi/libshinsou_sandbox.so" > /dev/null || {
+                echo "::error title=Missing plugin sandbox::lib/$abi/libshinsou_sandbox.so is not in the APK."
+                exit 1
+              }
+            done
+            # The isolated-process sandbox and its zygote preload are named in the manifest only.
+            manifest="$(apkanalyzer manifest print "${apks[0]}")"
+            for expected in \
+              'android:zygotePreloadName="dev.shinsou.kmp.plugin.sandbox.SandboxZygotePreload"' \
+              'android:name="dev.shinsou.kmp.plugin.sandbox.SandboxProcessService"' \
+              'android:isolatedProcess="true"' \
+              'android:useAppZygote="true"'; do
+              grep -Fq -- "$expected" <<< "$manifest" || {
+                echo "::error title=Sandbox manifest entry missing::$expected"
+                exit 1
+              }
+            done
+          fi
+          if [[ -f feature-translation/build.gradle.kts ]] ||
+             grep -qs shinsou_translate composeApp/src/androidMain/cpp/CMakeLists.txt; then
+            for library in libshinsou_translate.so libonnxruntime.so libopencv_java4.so; do
+              unzip -l "${apks[0]}" "lib/arm64-v8a/$library" > /dev/null || {
+                echo "::error title=Missing native library::lib/arm64-v8a/$library is not in the APK."
+                exit 1
+              }
+            done
+          fi
 
           mkdir -p build/release/android
           output="build/release/android/Shinsou-X-$RELEASE_VERSION-android-debug.apk"
           cp "${apks[0]}" "$output"
           sha256sum "$output"
 
+          # R8's mapping, to read obfuscated stack traces of this release, ships with it as a
+          # release asset (the sources are public; it reveals nothing they do not).
+          if [[ "$ANDROID_VARIANT" == release ]]; then
+            mapping=composeApp/build/outputs/mapping/release/mapping.txt
+            [[ -s "$mapping" ]] || {
+              echo "::error title=Missing R8 mapping::$mapping is missing or empty."
+              exit 1
+            }
+            cp "$mapping" "build/release/android/Shinsou-X-$RELEASE_VERSION-android-r8-mapping.txt"
+          fi
+
+      # R5-3: the device check below runs on x86_64, which has none of the ARM-only libraries and
+      # does not load the lazy ones. Every native method R8 kept must still find its JNI symbol in
+      # the arm64-v8a libraries (a renamed class or method, or a dropped library, fails here).
+      - name: Check the JNI bindings of the shrunk APK
+        if: env.ANDROID_VARIANT == 'release'
+        shell: bash
+        run: |
+          dexdump="$(find "$ANDROID_HOME/build-tools" -type f -name dexdump | sort -V | tail -n 1)"
+          [[ -x "$dexdump" ]] || {
+            echo "::error title=Missing dexdump::Could not find dexdump in $ANDROID_HOME/build-tools."
+            exit 1
+          }
+          python3 scripts/ci/check_apk_jni_bindings.py \
+            "build/release/android/Shinsou-X-$RELEASE_VERSION-android-debug.apk" "$dexdump" arm64-v8a
+
       - name: Upload APK workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-android
-          path: build/release/android/*.apk
+          path: build/release/android/*
           if-no-files-found: error
           retention-days: 14
+
+  android-device:
+    # R5-3 (docs/architecture/0006): R8 can strip what only reflection or JNI reaches, which no
+    # static check sees. The APK this release publishes is installed and started on an emulator
+    # before anything is published, and one plugin sandbox round trip runs in it; a crash, a missing
+    # class or native binding, or a failed round trip fails the release.
+    name: Android APK on a device
+    needs: [metadata, android]
+    if: ${{ !cancelled() && needs.android.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # A tag rebuilt from before R5-3 never logs ShinsouReady: it must only start and keep running.
+      REQUIRE_READY_LINE: ${{ needs.android.outputs.variant == 'release' }}
+      # Nor does it have the sandbox self-check (SandboxSelfCheckReceiver), which came with the release variant.
+      REQUIRE_SANDBOX_SELF_CHECK: ${{ needs.android.outputs.variant == 'release' }}
+    steps:
+      - name: Download the Android release APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-android
+          path: release-android
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Write the start check
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/start-check.sh" <<'CHECK'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          package=dev.aluo.shinsoux
+          apks=(release-android/*.apk)
+          [[ ${#apks[@]} -eq 1 && -f "${apks[0]}" ]] || { echo "::error::Expected one APK, found: ${apks[*]}"; exit 1; }
+          adb install -r "${apks[0]}"
+          adb logcat -c
+          adb shell am start -W -n "$package/dev.shinsou.kmp.MainActivity"
+          # The loading screen comes first; the app logs "ShinsouReady" once the stores are open
+          # and the shell has drawn a frame (MainActivity). Up to 120 s on a software emulator.
+          ready=false
+          for _ in $(seq 1 60); do
+            if adb logcat -d -s ShinsouReady:I | grep -q "The app shell is shown"; then ready=true; break; fi
+            sleep 2
+          done
+          # Startup work that follows the first frame (plugins, migrations) gets time to fail too.
+          sleep 15
+          # A start with no plugin installed never binds the isolated sandbox process. One round
+          # trip through it (the AIDL binding, the app-zygote preload, the native library and
+          # SandboxProtocol) runs here, in the shrunk APK; only the shell may send this broadcast.
+          # It runs before the log is read, so the checks below also cover the sandbox it started.
+          self_check_failed=false
+          if [[ "$REQUIRE_SANDBOX_SELF_CHECK" == true && ( "$ready" == true || "$REQUIRE_READY_LINE" != true ) ]]; then
+            self_check=$(adb shell am broadcast -n "$package/dev.shinsou.kmp.plugin.sandbox.SandboxSelfCheckReceiver" 2>&1 || true)
+            echo "$self_check"
+            grep -Fq 'result=1, data="passed"' <<< "$self_check" || self_check_failed=true
+            # The sandbox gets time to wind down (and to crash on the way).
+            sleep 10
+          fi
+          adb logcat -d -v threadtime > "$RUNNER_TEMP/start-check.log"
+          [[ -s "$RUNNER_TEMP/start-check.log" ]] || { echo "::error title=Release APK::No log could be read from the emulator"; exit 1; }
+          if [[ "$ready" != true && "$REQUIRE_READY_LINE" == true ]]; then
+            echo "::error title=Release APK::The app never showed its shell (no ShinsouReady line in 120 s)"
+            tail -n 200 "$RUNNER_TEMP/start-check.log"
+            exit 1
+          fi
+          if ! adb shell pidof "$package" > /dev/null; then
+            echo "::error title=Release APK::The app stopped running after it showed its shell"
+            tail -n 200 "$RUNNER_TEMP/start-check.log"
+            exit 1
+          fi
+          # Only Shinsou's own processes count (the app and its sandbox processes): a system or
+          # Play services process crashing meanwhile says nothing about this APK.
+          pids=" $(adb shell ps -A -o PID,NAME | awk -v p="$package" 'index($2, p) == 1 { printf "%s ", $1 }')"
+          awk -v pids="$pids" 'index(pids, " " $3 " ") > 0' "$RUNNER_TEMP/start-check.log" > "$RUNNER_TEMP/app.log"
+          crashed=$(grep -A2 "FATAL EXCEPTION" "$RUNNER_TEMP/start-check.log" | grep -c "Process: $package" || true)
+          if [[ "$crashed" != 0 ]] || grep -E "FATAL EXCEPTION|UnsatisfiedLinkError|NoSuchMethodError|NoSuchFieldError|NoClassDefFoundError|ClassNotFoundException|AbstractMethodError" "$RUNNER_TEMP/app.log"; then
+            echo "::error title=Release APK::The started app logged a crash or a missing class or binding"
+            grep -B2 -A20 "Process: $package" "$RUNNER_TEMP/start-check.log" || true
+            exit 1
+          fi
+          # A native crash leaves its record in the log even when Android restarted the process
+          # (a new PID then passes the checks above): the app's and its sandbox processes'.
+          package_re="${package//./\\.}"
+          if grep -E "Fatal signal [0-9]+.*pid [0-9]+ \\(${package_re}([:)]|$)|>>> ${package_re}(:[^ ]+)? <<<" "$RUNNER_TEMP/start-check.log"; then
+            echo "::error title=Release APK::The app (or one of its sandbox processes) crashed natively"
+            exit 1
+          fi
+          if [[ "$self_check_failed" == true ]]; then
+            echo "::error title=Release APK::The plugin sandbox round trip failed"
+            tail -n 200 "$RUNNER_TEMP/start-check.log"
+            exit 1
+          fi
+          echo "The release APK started and kept running."
+          CHECK
+          chmod +x "$RUNNER_TEMP/start-check.sh"
+
+      - name: Start the APK on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: bash "$RUNNER_TEMP/start-check.sh"
 
   macos:
     name: macOS release DMG
@@ -1002,6 +1193,7 @@ jobs:
     needs:
       - metadata
       - android
+      - android-device
       - ios
       - macos
       - windows
@@ -1010,6 +1202,7 @@ jobs:
         always() &&
         needs.metadata.result == 'success' &&
         needs.android.result == 'success' &&
+        needs.android-device.result == 'success' &&
         needs.ios.result == 'success' &&
         needs.macos.result == 'success' &&
         needs.windows.result == 'success'
@@ -1042,8 +1235,9 @@ jobs:
           dmgs=(release-assets/*.dmg)
           msis=(release-assets/*.msi)
           exes=(release-assets/*.exe)
+          mappings=(release-assets/*-android-r8-mapping.txt)
 
-          [[ ${#apks[@]} -eq 1 ]] || { echo "Expected one Android debug APK, found ${#apks[@]}." >&2; exit 1; }
+          [[ ${#apks[@]} -eq 1 ]] || { echo "Expected one Android APK, found ${#apks[@]}." >&2; exit 1; }
           [[ "${apks[0]##*/}" == "Shinsou-X-$RELEASE_VERSION-android-debug.apk" ]] || {
             echo "Unexpected Android APK name: ${apks[0]##*/}." >&2
             exit 1
@@ -1056,8 +1250,16 @@ jobs:
           [[ ${#dmgs[@]} -eq 1 ]] || { echo "Expected one DMG, found ${#dmgs[@]}." >&2; exit 1; }
           [[ ${#msis[@]} -eq 1 ]] || { echo "Expected one MSI, found ${#msis[@]}." >&2; exit 1; }
           [[ ${#exes[@]} -eq 1 ]] || { echo "Expected one EXE, found ${#exes[@]}." >&2; exit 1; }
+          # The R8 mapping comes with an R8 build only (a tag from before R5-3 is rebuilt without).
+          [[ ${#mappings[@]} -le 1 ]] || { echo "Expected at most one R8 mapping, found ${#mappings[@]}." >&2; exit 1; }
+          if (( ${#mappings[@]} == 1 )); then
+            [[ "${mappings[0]##*/}" == "Shinsou-X-$RELEASE_VERSION-android-r8-mapping.txt" ]] || {
+              echo "Unexpected R8 mapping name: ${mappings[0]##*/}." >&2
+              exit 1
+            }
+          fi
 
-          assets=("${apks[@]}" "${ipas[@]}" "${dmgs[@]}" "${msis[@]}" "${exes[@]}")
+          assets=("${apks[@]}" "${ipas[@]}" "${dmgs[@]}" "${msis[@]}" "${exes[@]}" "${mappings[@]}")
           for asset in "${assets[@]}"; do
             [[ -s "$asset" ]] || { echo "Release asset is empty: $asset" >&2; exit 1; }
           done
@@ -1084,8 +1286,14 @@ jobs:
             printf '%s\n\n%s\n' \
               "Shinsou X $RELEASE_VERSION release." \
               "Included platforms:"
+            if [[ -f "release-assets/Shinsou-X-$RELEASE_VERSION-android-r8-mapping.txt" ]]; then
+              printf '%s\n' \
+                "- Android: R8-optimised release build signed with the public test key (the file keeps its -android-debug name); it is not signed with a production key. The -android-r8-mapping.txt file is for developers: it turns this build's obfuscated stack traces back into readable ones."
+            else
+              printf '%s\n' \
+                "- Android: debug build signed with the public test key; it is not signed with a production key."
+            fi
             printf '%s\n' \
-              "- Android: debug-signed APK for testing; it is not a production-signed release build." \
               "- iOS: unsigned IPA. It cannot be installed as it is: sign it with your own Apple ID or certificate first (for example with AltStore, Sideloadly or Xcode). The home screen widget needs an App Group, which most re-signing tools do not provide; build from source for a fully entitled app: https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/BUILDING.md" \
               "- macOS: DMG (not notarized; Gatekeeper may warn)." \
               "- Windows: MSI and EXE (not Authenticode-signed; SmartScreen may warn)."

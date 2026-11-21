@@ -8,6 +8,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.sync.v3.SyncBackgroundResult
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
@@ -57,8 +58,9 @@ internal class AndroidSyncWorker(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (logged: Throwable) {
             // Startup failed for an unknown reason; allow a few attempts, never an endless loop.
+            Log.warn("Sync", logged) { "Background sync startup failed; retrying or giving up" }
             retryOrGiveUp()
         }
     }

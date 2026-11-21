@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Refreshes composeApp/psl/public_suffix_list.dat from the Public Suffix List and prints the
-# commit and SHA-256 to record in composeApp/psl/README.md. Review the diff before committing.
+# Refreshes feature-plugin/psl/public_suffix_list.dat from the Public Suffix List and prints the
+# commit and SHA-256 to record in feature-plugin/psl/README.md. Review the diff before committing.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-target="$root/composeApp/psl/public_suffix_list.dat"
+target="$root/feature-plugin/psl/public_suffix_list.dat"
 commit="$(git ls-remote https://github.com/publicsuffix/list.git refs/heads/main | cut -f1)"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT

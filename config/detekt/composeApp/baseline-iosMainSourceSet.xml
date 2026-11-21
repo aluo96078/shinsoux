@@ -1,0 +1,19 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ReturnCount:IosAppServices.kt:@OptIn(ExperimentalForeignApi::class) private fun NSData.copyInto: Int</ID>
+    <ID>ReturnCount:IosAppServices.kt:IosAppServices$fun emitReaderVolumeKey: Boolean</ID>
+    <ID>ReturnCount:IosAppServices.kt:IosAppServices$override suspend fun exportBinaryDocument: Boolean</ID>
+    <ID>ReturnCount:IosAppServices.kt:IosAppServices$override suspend fun exportDocument: Boolean</ID>
+    <ID>ReturnCount:IosAppServices.kt:IosAppServices$override suspend fun saveImage: Boolean</ID>
+    <ID>ReturnCount:IosPersistence.kt:IosPluginKeyValueStore$@OptIn(ExperimentalNativeApi::class) private fun markKeychainUnavailable: Boolean</ID>
+    <ID>ReturnCount:IosPersistence.kt:IosSnapshotPersistence$fun load: AppSnapshot</ID>
+    <ID>ReturnCount:IosSyncScheduler.kt:IosSyncScheduler$fun register: Boolean</ID>
+    <ID>ThrowsCount:IosAppServices.kt:@OptIn(ExperimentalForeignApi::class) private fun NSURL.readImportedDocument: ImportedDocument</ID>
+    <ID>ThrowsCount:IosAppServices.kt:IosUrlImportedDocumentSource$override fun read: ByteArray</ID>
+    <ID>TooGenericExceptionCaught:IosAppServices.kt:IosUrlImportedDocumentSource$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:IosAppServices.kt:error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:IosPersistence.kt:IosPluginKeyValueStore$error: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

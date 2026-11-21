@@ -45,6 +45,7 @@ internal class DesktopContentInfrastructure(
 }
 
 private fun setOwnerOnlyDirectory(path: Path) {
+    // File systems without POSIX permissions (Windows) cannot do this; the directory stays as created.
     runCatching {
         Files.setPosixFilePermissions(
             path,

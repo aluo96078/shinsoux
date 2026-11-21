@@ -14,11 +14,18 @@ on:
     paths:
       - "sandbox-core/**"
       - "composeApp/build.gradle.kts"
-      - "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/**"
+      - "build-logic/**"
+      - "feature-plugin/src/commonMain/**"
+      # The address policy plugins are held to (ADR-0002) lives in :core.
+      - "core/src/commonMain/kotlin/dev/shinsou/kmp/network/**"
       - "gradle/**"
       - "composeApp/src/iosMain/**"
-      - "composeApp/src/iosTest/**"
-      - "composeApp/src/nativeInterop/**"
+      # R5-1: the platform code of every module the app is built from
+      - "*/src/iosMain/**"
+      - "*/build.gradle.kts"
+      - "settings.gradle.kts"
+      - "feature-plugin/src/iosTest/**"
+      - "feature-plugin/src/nativeInterop/**"
       - ".github/workflows/sandbox-ios.yml"
 
 permissions:
@@ -69,11 +76,11 @@ jobs:
 
       - name: Device library and Kotlin (iosArm64)
         working-directory: shinsoux
-        run: ./gradlew :composeApp:compileKotlinIosArm64 -Pkotlin.native.enableKlibsCrossCompilation=false
+        run: ./gradlew :composeApp:compileKotlinIosArm64 :feature-plugin:compileKotlinIosArm64 -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: The Kotlin host and the WASM sandbox on the simulator
         working-directory: shinsoux
         run: >
-          ./gradlew :composeApp:iosSimulatorArm64Test
+          ./gradlew :feature-plugin:iosSimulatorArm64Test
           --tests 'dev.shinsou.kmp.plugin.sandbox.IosSandboxInteropTest'
           -Pkotlin.native.enableKlibsCrossCompilation=false

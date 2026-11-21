@@ -25,23 +25,12 @@
         android:label="Shinsou X"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true"
-        android:zygotePreloadName="dev.shinsou.kmp.plugin.sandbox.SandboxZygotePreload">
+        android:usesCleartextTraffic="true">
         <!-- Snapdragon NPU: the QNN runtime (downloaded, not shipped) reaches the NPU through the
              vendor's FastRPC library; optional, absent on other chips. -->
         <uses-native-library android:name="libcdsprpc.so" android:required="false"/>
-        <!--
-          ADR-0002 §4.3: third-party plugin sandbox. One isolated process per package, bound with
-          Context.bindIsolatedService and a unique instance name. Isolated uid: no app permissions
-          (no INTERNET), no access to the app's files; seccomp forbids exec and fork on top.
-        -->
-        <service
-            android:name="dev.shinsou.kmp.plugin.sandbox.SandboxProcessService"
-            android:exported="false"
-            android:isolatedProcess="true"
-            android:process=":sandbox"
-            android:useAppZygote="true" />
-
+        <!-- ADR-0002 §4.3: the plugin sandbox's isolated-process service and the application's
+             zygote preload come from :feature-plugin's manifest (R5-1). -->
         <!-- Keeps downloads running in the background on Android 10–13 (and as a fallback). -->
         <service
             android:name="dev.shinsou.kmp.AndroidDownloadService"

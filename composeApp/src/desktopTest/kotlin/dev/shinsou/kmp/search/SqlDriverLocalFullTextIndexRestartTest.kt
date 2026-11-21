@@ -1,11 +1,14 @@
+@file:OptIn(dev.shinsou.kmp.testing.TestOnlyApi::class)
+
 package dev.shinsou.kmp.search
 
+import dev.shinsou.kmp.content.DataContentTestAccess
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.annotation.ContentAnnotationKind
 import dev.shinsou.kmp.annotation.ContentAnnotationState
-import dev.shinsou.kmp.features.ContentFeatureRuntime
+import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.LegacyOutboxDraft
 import dev.shinsou.kmp.content.ContentFoundationRuntime
@@ -18,7 +21,7 @@ import dev.shinsou.kmp.content.ContentSyncMode
 import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.content.TextBlock
-import dev.shinsou.kmp.content.access.ContentAccessRequest
+import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.Publication
@@ -494,36 +497,6 @@ class SqlDriverLocalFullTextIndexRestartTest {
         }
     }
 
-    @Test
-    fun oversizedSemanticBlockUsesSurrogateSafeBoundedSearchTransactions() {
-        val text = "a".repeat(MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH - 1) +
-            "\uD83D\uDE00" +
-            "b".repeat(MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH)
-        val block = TextBlock("semantic-block", 0, text.length)
-
-        val segments = fullTextDocumentSegments(FIRST_REPRESENTATION_ID, block, text)
-
-        assertTrue(segments.size >= 2)
-        assertEquals(MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH - 1, segments.first().endUtf16)
-        assertTrue(segments.all { it.blockId == block.blockId })
-        assertTrue(segments.all {
-            it.endUtf16 - it.startUtf16 <= MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH
-        })
-        assertEquals(segments.size, segments.map { it.documentId }.distinct().size)
-        assertTrue(segments.zipWithNext().all { (left, right) -> left.endUtf16 == right.startUtf16 })
-        assertTrue(segments.all { segment ->
-            val boundary = segment.endUtf16
-            boundary == text.length ||
-                !(text[boundary - 1].isHighSurrogate() && text[boundary].isLowSurrogate())
-        })
-        assertEquals(
-            text,
-            segments.joinToString("") { segment ->
-                text.substring(segment.startUtf16, segment.endUtf16)
-            },
-        )
-    }
-
     private fun importTwoTextUnits(
         foundation: ContentFoundationRuntime,
         validUntilEpochMillis: Long? = null,
@@ -538,7 +511,7 @@ class SqlDriverLocalFullTextIndexRestartTest {
                 // One semantic locator block intentionally exceeds the per-transaction search
                 // bound. Reconciliation must preserve its block id while indexing it in slices.
                 text = "Alpha global 搜尋入口 " +
-                    "界".repeat(MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH + 32),
+                    "界".repeat(DataContentTestAccess.MAX_FULL_TEXT_DOCUMENT_UTF16_LENGTH + 32),
             ),
             ImportedBody(
                 unitId = SECOND_UNIT_ID,

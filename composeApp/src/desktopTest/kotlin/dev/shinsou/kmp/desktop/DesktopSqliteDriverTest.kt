@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopSqliteDriverTest {
     @Test
@@ -93,4 +94,54 @@ class DesktopSqliteDriverTest {
             directory.toFile().deleteRecursively()
         }
     }
+
+    @Test
+    fun foreignKeysAreEnforcedOnEveryConnectionTheDriverOpens() {
+        val directory = Files.createTempDirectory("shinsou-sqlite-driver")
+        val driver = DesktopSqliteDriver("jdbc:sqlite:${directory.resolve("test.db")}")
+        try {
+            driver.execute(null, "CREATE TABLE parent (id INTEGER PRIMARY KEY)", 0)
+            driver.execute(
+                null,
+                "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id))",
+                0,
+            )
+            driver.execute(null, "INSERT INTO parent (id) VALUES (1)", 0)
+            driver.execute(null, "INSERT INTO child (id, parent_id) VALUES (1, 1)", 0)
+
+            // Each lone statement runs on a connection of its own, on this thread and on another.
+            assertEquals(1L, foreignKeys(driver))
+            val elsewhere = AtomicReference<Long?>()
+            thread { elsewhere.set(foreignKeys(driver)) }.join()
+            assertEquals(1L, elsewhere.get())
+
+            val orphan = assertFailsWith<java.sql.SQLException> {
+                driver.execute(null, "INSERT INTO child (id, parent_id) VALUES (2, 99)", 0)
+            }
+            assertTrue("FOREIGN KEY" in orphan.message.orEmpty())
+            val stillReferenced = assertFailsWith<java.sql.SQLException> {
+                driver.execute(null, "DELETE FROM parent WHERE id = 1", 0)
+            }
+            assertTrue("FOREIGN KEY" in stillReferenced.message.orEmpty())
+            assertEquals(
+                1L,
+                driver.executeQuery(
+                    null,
+                    "SELECT COUNT(*) FROM parent",
+                    { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)) },
+                    0,
+                ).value,
+            )
+        } finally {
+            driver.close()
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    private fun foreignKeys(driver: DesktopSqliteDriver): Long? = driver.executeQuery(
+        null,
+        "PRAGMA foreign_keys",
+        { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)) },
+        0,
+    ).value
 }

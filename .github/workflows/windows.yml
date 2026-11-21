@@ -64,14 +64,14 @@ jobs:
         id: desktop_tests
         continue-on-error: true
         working-directory: shinsoux
-        run: .\gradlew.bat :composeApp:desktopTest '-PshinsouPluginRepository=..\..\shinsou_plugin' '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
+        run: .\gradlew.bat desktopTest '-PshinsouPluginRepository=..\..\shinsou_plugin' '-Pkotlin.native.enableKlibsCrossCompilation=false' --stacktrace
 
       - name: Report desktop test failures
         if: steps.desktop_tests.outcome == 'failure'
         working-directory: shinsoux
         shell: pwsh
         run: |
-          $reports = @(Get-ChildItem "composeApp/build/test-results/desktopTest/TEST-*.xml" `
+          $reports = @(Get-ChildItem "*/build/test-results/desktopTest/TEST-*.xml" `
             -File -ErrorAction SilentlyContinue)
           $failedCases = @()
           foreach ($report in $reports) {

@@ -148,12 +148,11 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 ## 專案結構
 
-- `composeApp/src/commonMain`：跨平台資料模型、repository、網路／外掛 runtime、下載、備份與 Compose UI
-- `composeApp/src/androidMain`：Android Activity、文件選擇器、Biometric、WebView、WorkManager 與持久化接線
-- `composeApp/src/iosMain`：iOS framework entry、WASM 沙箱接線、Keychain、WKWebView、BGTask、文件選擇器與 Widget payload
-- `composeApp/src/jvmCommonMain`：Android／Desktop 共用的 Rhino runtime（隨 App 打包，但正式 App 不以它執行套件，僅供相容性測試比對）
+- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`domain`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui`，以及 App 本身 `composeApp`
+- `feature-plugin`：外掛 repository、信任、外掛網路、沙箱 runtime 與各平台 host（iOS WASM 沙箱 cinterop、Android 隔離程序與 `libshinsou_sandbox.so`）；`jvmCommonTest` 的 Rhino runtime 只供相容性測試比對
+- `ui`：Compose UI、navigation、i18n 與 App 圖示（Compose resource）
 - `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
-- `composeApp/src/desktopMain`：macOS／Windows Desktop host、Menu Bar、bounded 檔案選擇器、平台資料目錄與 Keychain／DPAPI 接線
+- `composeApp`：App 組裝（`app`）與各平台入口——Android Activity、WorkManager 與持久化接線；iOS framework entry、Keychain、BGTask 與 Widget payload；macOS／Windows Desktop host、Menu Bar、平台資料目錄、Keychain／DPAPI 接線，以及打包設定
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
 
 ## 開始使用與建置
@@ -165,8 +164,8 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 git clone https://github.com/aluo96078/shinsoux.git
 cd shinsoux
 
-# 共用／Desktop deterministic tests
-./gradlew :composeApp:desktopTest
+# 共用／Desktop deterministic tests（不加專案路徑：每個 Gradle 模組各有自己的測試）
+./gradlew desktopTest
 
 # Desktop 執行與 DMG
 ./gradlew :composeApp:run
@@ -192,9 +191,10 @@ xcodebuild -project Shinsou.xcodeproj \
 
 Android 產物位於 `composeApp/build/outputs/apk/debug/` 或
 `composeApp/build/outputs/apk/release/`。專案的 GitHub Release 固定發布
-`Shinsou-X-<version>-android-debug.apk`：它使用 debug key 簽章、保留
-`android:debuggable=true`，只供測試，不是 production release build。自 `v1.0.0-beta.5` 起，
-官方 CI 使用固定的公開測試 signer，因此後續官方 debug APK 可以覆蓋升級；beta.3 及更舊版本
+`Shinsou-X-<version>-android-debug.apk`：它是以 R8 壓縮、混淆的 release 變體
+（`android:debuggable=false`），以公開測試 signer 簽章（檔名中的「debug」指這把 signer），
+只供測試，不是 production release build。自 `v1.0.0-beta.5` 起，
+官方 CI 使用固定的公開測試 signer，因此後續官方 APK 可以覆蓋升級；beta.3 及更舊版本
 使用不同的臨時 signer，升級前必須先在 App 內建立備份、解除安裝舊版一次，再安裝 beta.5。
 正式分發仍必須自行安全保存 keystore 並建置 release APK。
 自行簽署 release APK 的環境變數與命令見 [GitHub Actions 發布](docs/RELEASING.md)。
@@ -205,7 +205,7 @@ GitHub Release 另附一份未簽章的 iOS IPA（`Shinsou-X-<version>-ios-unsig
 Store 分發所需的憑證、profiles、entitlements 與 Apple Developer 會籍均由自行建置者負責。
 
 只有已公開的 GitHub Release 才代表有可下載的安裝包；repository 內存在
-workflow 或產物設計，不等於目前已發布版本。每個 tag release 固定包含 Android debug APK、
+workflow 或產物設計，不等於目前已發布版本。每個 tag release 固定包含 Android APK、
 未簽章的 iOS IPA、macOS DMG 與 Windows MSI／EXE。若 Releases 頁面沒有項目，請依本節自行建置。
 
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
@@ -223,9 +223,9 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 ## 文件與相關專案
 
 - [Shinsou X 官網](https://shinsoux.com)：產品介紹與使用文件
-- [產品下載](https://github.com/aluo96078/shinsoux/releases)：Android debug APK、macOS DMG 與 Windows MSI／EXE
+- [產品下載](https://github.com/aluo96078/shinsoux/releases)：Android APK、macOS DMG 與 Windows MSI／EXE
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
-- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android debug APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
+- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
 - [套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)：從金鑰、CLI、權限到簽章發佈、更新與撤回的完整作者流程

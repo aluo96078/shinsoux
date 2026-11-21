@@ -1,13 +1,16 @@
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import org.gradle.api.attributes.Category
-import org.gradle.api.attributes.LibraryElements
-import org.gradle.api.attributes.Usage
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
-import dev.shinsou.build.CopyAppIcon
-import dev.shinsou.build.GenerateBuildInfo
-import dev.shinsou.build.GeneratePublicSuffixData
+import dev.shinsou.build.HostPlatform
 
+// R5-2 (docs/architecture/0006): the build logic is in build-logic's convention plugins:
+//   shinsou.kmp               targets, source-set hierarchy, the iOS cinterops of src/nativeInterop
+//   shinsou.ios-framework     the iOS framework ShinsouKit that iosApp/ links
+//   shinsou.codegen           generated sources (here the Android icon)
+//   shinsou.native-libraries  sandbox-core/translation-core fetches, desktop helpers, iOS libraries
+//   shinsou.desktop-app       the Compose desktop application, installers and macOS signing
+//   shinsou.android-app       the Android application, its signing and unit-test host resources
+//   shinsou.quality           detekt (detektProduct) and Kover
+//   shinsou.testing           test task inputs and system properties
+// This script keeps the plugin list and the dependencies of each source set. The library modules
+// (R5-1, docs/architecture/0006 §4.2) use shinsou.kmp-library; settings.gradle.kts lists them.
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)
@@ -16,654 +19,43 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.detekt)
     alias(libs.plugins.kover)
+    id("shinsou.quality")
+    id("shinsou.testing")
+    id("shinsou.native-libraries")
     id("shinsou.codegen")
+    id("shinsou.kmp")
+    id("shinsou.ios-framework")
+    id("shinsou.desktop-app")
+    id("shinsou.android-app")
 }
 
-// R2-1 (0006): existing findings live in the baseline; it may only shrink.
-detekt {
-    buildUponDefaultConfig = true
-    parallel = true
-    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
-    baseline = rootProject.file("config/detekt/baseline.xml")
+shinsouCodegen {
+    androidAppIcon("ui/src/commonMain/composeResources/drawable/shinsou_icon.png")
 }
 
-// What CI runs: the desktop compilation with type resolution (common, JVM and desktop sources;
-// the serialization plugin and expect/actual are not seen there, so a few type-based rules are
-// approximate) and the Android and iOS sources without it.
-tasks.register("detektProduct") {
-    group = "verification"
-    description = "Runs detekt over every product source set against the committed baselines."
-    dependsOn("detektMainDesktop", "detektAndroidMainSourceSet", "detektIosMainSourceSet")
-}
-
-// R2-5 (0006): coverage is reported, not yet enforced; generated code is left out of it.
-kover {
-    reports {
-        filters {
-            excludes {
-                packages("dev.aluo.shinsoux.generated.resources")
-                classes("*ComposableSingletons*", "*.BuildInfoKt")
-                annotatedBy("androidx.compose.runtime.Composable")
-            }
-        }
-    }
-}
-
-val releaseVersion = providers.gradleProperty("releaseVersion").orElse("1.0.2")
-// Xcode runs Gradle from a build phase, where a -P argument cannot be passed: CI names the
-// version through the environment there.
-val releaseDisplayVersion = providers.gradleProperty("releaseDisplayVersion")
-    .orElse(providers.environmentVariable("SHINSOU_RELEASE_DISPLAY_VERSION").filter { it.isNotBlank() })
-    .orElse("1.0.2-beta.1")
-val windowsPackageVersion = providers.gradleProperty("windowsPackageVersion").orElse("1.0.201")
-val releaseVersionCode = providers.gradleProperty("releaseVersionCode")
-    .map { rawValue ->
-        rawValue.toIntOrNull()?.takeIf { it > 0 }
-            ?: error("releaseVersionCode must be a positive integer, got: $rawValue")
-    }
-    .orElse(25600201)
-
-val androidReleaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
-val androidReleaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
-val androidReleaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
-val androidReleaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
-val androidReleaseSigningValues = listOf(
-    androidReleaseStoreFile,
-    androidReleaseStorePassword,
-    androidReleaseKeyAlias,
-    androidReleaseKeyPassword,
-)
-val androidReleaseSigningConfigured = androidReleaseSigningValues.all { !it.isNullOrBlank() }
-
-val androidPublicDebugStoreFile = providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH").orNull
-val androidPublicDebugStorePassword =
-    providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEYSTORE_PASSWORD").orNull
-val androidPublicDebugKeyAlias = providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEY_ALIAS").orNull
-val androidPublicDebugKeyPassword =
-    providers.environmentVariable("ANDROID_PUBLIC_DEBUG_KEY_PASSWORD").orNull
-val androidPublicDebugSigningValues = listOf(
-    androidPublicDebugStoreFile,
-    androidPublicDebugStorePassword,
-    androidPublicDebugKeyAlias,
-    androidPublicDebugKeyPassword,
-)
-val androidPublicDebugSigningConfigured = androidPublicDebugSigningValues.all { !it.isNullOrBlank() }
-
-val isMacOsBuildHost = System.getProperty("os.name").lowercase().contains("mac")
-val isWindowsBuildHost = System.getProperty("os.name").lowercase().startsWith("windows")
-fun iosSandboxSdk(target: org.jetbrains.kotlin.konan.target.KonanTarget): String =
-    if (target == org.jetbrains.kotlin.konan.target.KonanTarget.IOS_ARM64) "iphoneos" else "iphonesimulator"
-fun iosSandboxHostDir(sdk: String): File = layout.buildDirectory.dir("sandbox-ios-$sdk").get().asFile
-// Device tests install (and afterwards uninstall) the app: give that build its own application id
-// so a developer's or tester's real installation and its library are never touched.
-val sandboxDeviceTest = providers.gradleProperty("shinsouSandboxDeviceTest")
-    .map { it.toBooleanStrict() }
-    .orElse(false)
-// Blank values (e.g. a shell that mangles `-P...=` arguments) fall back instead of breaking file().
-val shinsouPluginRepository = providers.gradleProperty("shinsouPluginRepository")
-    .filter { it.isNotBlank() }
-    .orElse(providers.systemProperty("shinsou.pluginRepo").filter { it.isNotBlank() })
-    .orElse("../../shinsou_plugin")
-// The repository keeps its unsigned sources in src/ (the root serves signed copies); older
-// checkouts, such as the commit CI pins, keep them at the root.
-val shinsouPluginSources = shinsouPluginRepository.map { repository ->
-    val root = file(repository)
-    root.resolve("src").takeIf { it.resolve("index.json").isFile } ?: root
-}
-
-tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-    // The sandbox tests run this helper: a rebuilt helper must rerun them, not reuse old results.
-    inputs.files(
-        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox"),
-        rootProject.layout.projectDirectory.file("sandbox-core/build/release/shinsou-sandbox.exe"),
-    )
-        .withPropertyName("sandboxHelper")
-        .optional()
-    systemProperty(
-        "shinsou.pluginRepo",
-        shinsouPluginSources.map { it.absolutePath }.get(),
-    )
-    // Plugin publishing contract shared with the @shinsou/plugin CLI (PluginContractVectorTest).
-    systemProperty(
-        "shinsou.pluginContractFixtures",
-        rootProject.layout.projectDirectory.dir("fixtures/plugin-contract/v1").asFile.absolutePath,
-    )
-    systemProperty(
-        "shinsou.writePluginContractVectors",
-        providers.gradleProperty("writePluginContractVectors").orElse("false").get(),
-    )
-}
-val macOsSigningIdentity = providers.gradleProperty("shinsouMacOsSigningIdentity")
-    .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_IDENTITY"))
-    .orNull
-    ?.trim()
-    ?.takeIf(String::isNotEmpty)
-val macOsLocalDevelopmentSigningIdentity = macOsSigningIdentity?.takeIf {
-    it.startsWith("Apple Development:")
-}
-val macOsComposeSigningIdentity = macOsSigningIdentity?.takeUnless {
-    it.startsWith("Apple Development:")
-}
-val macOsSigningKeychain = providers.gradleProperty("shinsouMacOsSigningKeychain")
-    .orElse(providers.environmentVariable("SHINSOU_MACOS_SIGNING_KEYCHAIN"))
-    .orNull
-    ?.trim()
-    ?.takeIf(String::isNotEmpty)
-check(macOsSigningKeychain == null || macOsSigningIdentity != null) {
-    "A macOS signing keychain requires shinsouMacOsSigningIdentity or " +
-        "SHINSOU_MACOS_SIGNING_IDENTITY."
-}
-check(
-    macOsSigningIdentity == null ||
-        macOsSigningIdentity.startsWith("Apple Development:") ||
-        macOsSigningIdentity.startsWith("Developer ID Application:") ||
-        macOsSigningIdentity.startsWith("3rd Party Mac Developer Application:"),
-) {
-    "Unsupported macOS signing identity '$macOsSigningIdentity'. Use the full Apple Development, " +
-        "Developer ID Application, or 3rd Party Mac Developer Application certificate name."
-}
-val macOsBuildArchitecture = System.getProperty("os.arch").lowercase().let { architecture ->
-    if (architecture.contains("aarch64") || architecture.contains("arm64")) "arm64" else "x86_64"
-}
-val macOsWebChallengeResourcesRoot = layout.buildDirectory.dir("generated/desktopAppResources")
-val macOsWebChallengeHelper = macOsWebChallengeResourcesRoot.map {
-    it.dir("macos").file("shinsou-web-challenge")
-}
-val compileMacOsWebChallengeHelper = if (isMacOsBuildHost) {
-    // Keep task actions free of build-script closures so Gradle can serialize the configuration
-    // cache. swiftc creates an executable output; the packaged app still copies it to a private
-    // directory and restores owner-execute permission before launch.
-    val prepareOutputDirectory = tasks.register<Exec>("prepareMacOsWebChallengeHelperOutput") {
-        commandLine(
-            "/bin/mkdir",
-            "-p",
-            macOsWebChallengeHelper.get().asFile.parentFile.absolutePath,
-        )
-    }
-    tasks.register<Exec>("compileMacOsWebChallengeHelper") {
-        group = "build"
-        description = "Builds the native macOS WKWebView challenge helper"
-        dependsOn(prepareOutputDirectory)
-
-        val sourcePath = layout.projectDirectory
-            .file("src/desktopMain/swift/ShinsouWebChallenge/main.swift")
-            .asFile.absolutePath
-        val outputPath = macOsWebChallengeHelper.get().asFile.absolutePath
-        inputs.file(sourcePath)
-        outputs.file(macOsWebChallengeHelper)
-
-        commandLine(
-            "xcrun",
-            "--sdk",
-            "macosx",
-            "swiftc",
-            "-swift-version",
-            "5",
-            "-Osize",
-            "-target",
-            "$macOsBuildArchitecture-apple-macosx12.0",
-            "-framework",
-            "AppKit",
-            "-framework",
-            "WebKit",
-            "-framework",
-            "Network",
-            sourcePath,
-            "-o",
-            outputPath,
-        )
-    }
-} else {
-    null
-}
-
-// ADR-0002 S3: the plugin sandbox helper (sandbox-core's shinsou-sandbox), built for the host
-// architecture and shipped next to the WKWebView helper. It confines itself with sandbox_init at
-// startup; the signature carries no entitlements, so it gains nothing the deny-all profile removes.
-val macOsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("macos").file("shinsou-sandbox") }
-val buildMacOsSandboxHelper = if (isMacOsBuildHost) {
-    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
-    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-macos").get().asFile.absolutePath
-    val configure = tasks.register<Exec>("configureMacOsSandboxHelper") {
-        dependsOn("fetchSandboxCoreDeps")
-        commandLine(
-            "cmake", "-S", sandboxCore, "-B", cmakeBuild,
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_OSX_ARCHITECTURES=$macOsBuildArchitecture",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
-        )
-    }
-    val compile = tasks.register<Exec>("compileMacOsSandboxHelper") {
-        dependsOn(configure)
-        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox", "-j", "8")
-    }
-    tasks.register<Exec>("buildMacOsSandboxHelper") {
-        group = "build"
-        description = "Builds and signs the plugin sandbox helper for the macOS app resources"
-        dependsOn(compile, "prepareMacOsWebChallengeHelperOutput")
-        val output = macOsSandboxHelper.get().asFile.absolutePath
-        outputs.file(output)
-        outputs.upToDateWhen { false }
-        // Hardened runtime, no entitlements. The configured identity when there is one (so a
-        // Developer ID build can be notarized), ad-hoc otherwise.
-        val identity = macOsSigningIdentity ?: "-"
-        val keychain = macOsSigningKeychain?.let { listOf("--keychain", it) }.orEmpty()
-        commandLine(
-            "/bin/sh", "-c",
-            "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
-            "sign-helper", "$cmakeBuild/shinsou-sandbox", output,
-            *keychain.toTypedArray(), "--sign", identity, output,
-        )
-    }
-} else {
-    null
-}
-
-// ADR-0004 §4.5: the offline translation helper (translation-core's shinsou-translate), built for
-// the host architecture and shipped next to the other helpers. A build without the helper reports
-// offline translation as unavailable.
-val macOsTranslationHelper = macOsWebChallengeResourcesRoot.map { it.dir("macos").file("shinsou-translate") }
-val buildMacOsTranslationHelper = if (isMacOsBuildHost) {
-    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
-    val cmakeBuild = layout.buildDirectory.dir("translation-core-macos").get().asFile.absolutePath
-    val configure = tasks.register<Exec>("configureMacOsTranslationHelper") {
-        dependsOn("fetchTranslationCoreDeps")
-        commandLine(
-            // The host architecture: the engine's architecture detection refuses an explicit
-            // CMAKE_OSX_ARCHITECTURES=arm64.
-            "cmake", "-S", translationCore, "-B", cmakeBuild,
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
-        )
-    }
-    val compile = tasks.register<Exec>("compileMacOsTranslationHelper") {
-        dependsOn(configure)
-        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-translate", "-j", "8")
-    }
-    tasks.register<Exec>("buildMacOsTranslationHelper") {
-        group = "build"
-        description = "Builds and signs the offline translation helper for the macOS app resources"
-        dependsOn(compile, "prepareMacOsWebChallengeHelperOutput")
-        val output = macOsTranslationHelper.get().asFile.absolutePath
-        outputs.file(output)
-        outputs.upToDateWhen { false }
-        // Hardened runtime, no entitlements, like the sandbox helper.
-        val identity = macOsSigningIdentity ?: "-"
-        val keychain = macOsSigningKeychain?.let { listOf("--keychain", it) }.orEmpty()
-        commandLine(
-            "/bin/sh", "-c",
-            "cp \"$1\" \"$2\" && shift 2 && /usr/bin/codesign --force --options runtime --timestamp=none \"$@\"",
-            "sign-helper", "$cmakeBuild/shinsou-translate", output,
-            *keychain.toTypedArray(), "--sign", identity, output,
-        )
-    }
-} else {
-    null
-}
-
-// JavaFX WebView embeds a WebKit-grade EPUB surface in Desktop distributions.  Native OpenJFX
-// artifacts use the build host classifier; release CI already builds DMG and MSI on their native
-// hosts, so each installer receives only its own browser runtime.
-// ADR-0005: the OpenCV natives for this desktop host (bytedeco's per-platform jars).
-val bytedecoPlatform = run {
-    val osName = System.getProperty("os.name").lowercase()
-    val architecture = System.getProperty("os.arch").lowercase()
-    val arm = architecture.contains("aarch64") || architecture.contains("arm64")
-    when {
-        osName.contains("mac") -> if (arm) "macosx-arm64" else "macosx-x86_64"
-        osName.contains("win") -> "windows-x86_64"
-        osName.contains("linux") -> if (arm) "linux-arm64" else "linux-x86_64"
-        else -> error("Unsupported OpenCV host: $osName/$architecture")
-    }
-}
-val javafxPlatformClassifier = run {
-    val osName = System.getProperty("os.name").lowercase()
-    val architecture = System.getProperty("os.arch").lowercase()
-    when {
-        osName.contains("mac") && (architecture.contains("aarch64") || architecture.contains("arm64")) ->
-            "mac-aarch64"
-        osName.contains("mac") -> "mac"
-        osName.contains("win") -> "win"
-        osName.contains("linux") && (architecture.contains("aarch64") || architecture.contains("arm64")) ->
-            "linux-aarch64"
-        osName.contains("linux") -> "linux"
-        else -> error("Unsupported JavaFX EPUB renderer host: $osName/$architecture")
-    }
-}
-
-check(androidReleaseSigningValues.none { !it.isNullOrBlank() } || androidReleaseSigningConfigured) {
-    "Android release signing is only enabled when ANDROID_KEYSTORE_PATH, " +
-        "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD are all set."
-}
-check(
-    androidPublicDebugSigningValues.none { !it.isNullOrBlank() } || androidPublicDebugSigningConfigured,
-) {
-    "Android public debug signing is only enabled when ANDROID_PUBLIC_DEBUG_KEYSTORE_PATH, " +
-        "ANDROID_PUBLIC_DEBUG_KEYSTORE_PASSWORD, ANDROID_PUBLIC_DEBUG_KEY_ALIAS, and " +
-        "ANDROID_PUBLIC_DEBUG_KEY_PASSWORD are all set."
-}
-
-// Android local unit tests execute Android bytecode on the host JVM. The
-// libsodium and JNA Android AARs only carry device JNI libraries, while their
-// loaders correctly observe the host OS during those tests and request the
-// matching JVM native resources. Resolve the host artifacts in an isolated
-// configuration and expose only their native resources to Android unit tests;
-// no JVM classes or libraries are added to the application classpath.
-val androidHostNativeTestResources by configurations.creating {
-    isCanBeConsumed = false
-    isCanBeResolved = true
-    isTransitive = false
-    attributes {
-        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
-        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
-        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.JAR))
-    }
-}
-
-dependencies {
-    add(
-        androidHostNativeTestResources.name,
-        "com.ionspin.kotlin:multiplatform-crypto-libsodium-bindings-jvm:${libs.versions.libsodium.get()}",
-    )
-    // Must match the JNA version required by the configured libsodium Android
-    // AAR; JNA rejects a native dispatch library from a different release.
-    add(
-        androidHostNativeTestResources.name,
-        "net.java.dev.jna:jna:${libs.versions.jna.get()}@jar",
-    )
-}
-
-val generateBuildInfo by tasks.registering(GenerateBuildInfo::class) {
-    displayVersion.set(releaseDisplayVersion)
-    outputDirectory.set(layout.buildDirectory.dir("generated/buildInfo/commonMain/kotlin"))
-}
-
-val copyAndroidAppIcon by tasks.registering(CopyAppIcon::class) {
-    icon.set(layout.projectDirectory.file("src/commonMain/composeResources/drawable/shinsou_icon.png"))
-    // outputDirectory is set by addGeneratedSourceDirectory below (build/generated/res/copyAndroidAppIcon).
-}
-
-androidComponents {
-    onVariants { variant ->
-        variant.sources.res?.addGeneratedSourceDirectory(copyAndroidAppIcon, CopyAppIcon::outputDirectory)
-    }
-}
-
-val generatePublicSuffixData by tasks.registering(GeneratePublicSuffixData::class) {
-    listFile.set(layout.projectDirectory.file("psl/public_suffix_list.dat"))
-    outputDirectory.set(layout.buildDirectory.dir("generated/publicSuffix/commonMain/kotlin"))
-}
-
-val prepareAndroidUnitTestLibsodiumResources by tasks.registering(Sync::class) {
-    from(
-        androidHostNativeTestResources.incoming.files.elements.map { artifacts ->
-            artifacts.map { archive -> zipTree(archive.asFile) }
-        },
-    ) {
-        include("libdynamic-*")
-        include("com/sun/jna/**/libjnidispatch.*")
-        include("com/sun/jna/**/jnidispatch.*")
-    }
-    into(layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"))
-}
-
-// ADR-0002 S3 (Windows): the same helper, built with MinGW-w64 (UCRT64; sandbox-core needs
-// pthreads and POSIX I/O, so not MSVC) as one static executable. It relaunches itself in a Low
-// Privilege AppContainer and a Job object (sandbox-core/src/ssc_os_windows.c).
-val windowsSandboxHelper = macOsWebChallengeResourcesRoot.map { it.dir("windows").file("shinsou-sandbox.exe") }
-val buildWindowsSandboxHelper = if (isWindowsBuildHost) {
-    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
-    val cmakeBuild = layout.buildDirectory.dir("sandbox-core-windows").get().asFile.absolutePath
-    val configure = tasks.register<Exec>("configureWindowsSandboxHelper") {
-        dependsOn("fetchSandboxCoreDeps")
-        commandLine(
-            "cmake", "-S", sandboxCore, "-B", cmakeBuild, "-G", "Ninja",
-            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc",
-        )
-    }
-    val compile = tasks.register<Exec>("compileWindowsSandboxHelper") {
-        dependsOn(configure)
-        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-sandbox")
-    }
-    tasks.register<Copy>("buildWindowsSandboxHelper") {
-        group = "build"
-        description = "Builds the plugin sandbox helper for the Windows app resources"
-        dependsOn(compile)
-        from(File(cmakeBuild, "shinsou-sandbox.exe"))
-        into(windowsSandboxHelper.map { it.asFile.parentFile })
-    }
-} else {
-    null
-}
-
-// ADR-0004 §4.5 (Windows): the offline translation helper, built with the same MinGW-w64 (UCRT64)
-// toolchain as the sandbox helper, as one static executable.
-val windowsTranslationHelper = macOsWebChallengeResourcesRoot.map { it.dir("windows").file("shinsou-translate.exe") }
-val buildWindowsTranslationHelper = if (isWindowsBuildHost) {
-    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
-    val cmakeBuild = layout.buildDirectory.dir("translation-core-windows").get().asFile.absolutePath
-    val configure = tasks.register<Exec>("configureWindowsTranslationHelper") {
-        dependsOn("fetchTranslationCoreDeps")
-        commandLine(
-            "cmake", "-S", translationCore, "-B", cmakeBuild, "-G", "Ninja",
-            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++",
-        )
-    }
-    val compile = tasks.register<Exec>("compileWindowsTranslationHelper") {
-        dependsOn(configure)
-        commandLine("cmake", "--build", cmakeBuild, "--target", "shinsou-translate")
-    }
-    tasks.register<Copy>("buildWindowsTranslationHelper") {
-        group = "build"
-        description = "Builds the offline translation helper for the Windows app resources"
-        dependsOn(compile)
-        from(File(cmakeBuild, "shinsou-translate.exe"))
-        into(windowsTranslationHelper.map { it.asFile.parentFile })
-    }
-} else {
-    null
-}
-
-// ADR-0002 S4 (iOS): the sandbox-core WASM guest and, per Apple SDK, the WAMR host library the
-// iOS targets link through the `sandboxWasm` cinterop. Needs clang/lld with the wasm32 target,
-// wasi-libc and its builtins (Homebrew: llvm lld wasi-libc wasi-runtimes wabt), CMake and Xcode.
-val iosSandboxGuest = layout.buildDirectory.file("sandbox-wasm/shinsou_sandbox.wasm")
-val buildIosSandboxGuest = tasks.register<Exec>("buildIosSandboxGuest") {
-    group = "build"
-    description = "Builds the sandbox-core WASM guest for the iOS plugin sandbox"
-    dependsOn("fetchSandboxCoreDeps")
-    val core = rootProject.layout.projectDirectory.dir("sandbox-core")
-    inputs.dir(core.dir("src"))
-    inputs.dir(core.dir("wasm"))
-    inputs.file(layout.projectDirectory.file("src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt"))
-    outputs.file(iosSandboxGuest)
-    commandLine("sh", core.file("wasm/build-guest.sh").asFile.absolutePath, iosSandboxGuest.get().asFile.parentFile.absolutePath)
-}
-listOf("iphoneos", "iphonesimulator").forEach { sdk ->
-    val dir = iosSandboxHostDir(sdk).absolutePath
-    tasks.register<Exec>("buildIosSandboxHost${sdk.replaceFirstChar(Char::uppercase)}") {
-        group = "build"
-        description = "Builds the iOS plugin sandbox host library for $sdk"
-        dependsOn(buildIosSandboxGuest)
-        val core = rootProject.layout.projectDirectory.dir("sandbox-core")
-        inputs.dir(core.dir("ios"))
-        inputs.file(iosSandboxGuest)
-        outputs.file("$dir/libshinsou_wasm_host.a")
-        commandLine(
-            "/bin/sh", "-c",
-            "cmake -S \"$1\" -B \"$2\" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS " +
-                "-DCMAKE_OSX_SYSROOT=$3 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 " +
-                "-DSSC_WASM_MODULE=\"$4\" && cmake --build \"$2\" --target shinsou_wasm_host -j 8",
-            "build-ios-sandbox-host", core.dir("ios").asFile.absolutePath, dir, sdk, iosSandboxGuest.get().asFile.absolutePath,
-        )
-    }
-}
-// ADR-0004 §4.5 (iOS): translation-core and the engine it links, merged into one static archive
-// per Apple SDK for the `translationCore` cinterop.
-fun iosTranslationCoreDir(sdk: String): File = layout.buildDirectory.dir("translation-ios-$sdk").get().asFile
-listOf("iphoneos", "iphonesimulator").forEach { sdk ->
-    val dir = iosTranslationCoreDir(sdk).absolutePath
-    tasks.register<Exec>("buildIosTranslationCore${sdk.replaceFirstChar(Char::uppercase)}") {
-        group = "build"
-        description = "Builds the offline translation engine for $sdk"
-        dependsOn("fetchTranslationCoreDeps")
-        val core = rootProject.layout.projectDirectory.dir("translation-core")
-        inputs.dir(core.dir("src"))
-        inputs.dir(core.dir("ios"))
-        inputs.dir(core.dir("patches"))
-        inputs.file(core.file("CMakeLists.txt"))
-        outputs.file("$dir/libshinsou_translate.a")
-        commandLine(
-            "/bin/sh", "-c",
-            "export STC_IOS_SDK=$3 && cmake -S \"$1\" -B \"$2/cmake\" -DCMAKE_BUILD_TYPE=Release " +
-                "-DCMAKE_TOOLCHAIN_FILE=\"$1/ios/ios.toolchain.cmake\" -DSTC_IOS_SDK=$3 && " +
-                "cmake --build \"$2/cmake\" --target shinsou_translation_core -j 8 && " +
-                "find \"$2/cmake\" -name '*.a' -print0 | xargs -0 xcrun libtool -static -o \"$2/libshinsou_translate.a\"",
-            "build-ios-translation-core", core.asFile.absolutePath, dir, sdk,
-        )
-    }
-}
-// ADR-0005: the manga pipeline test on the simulator reads its models and page from the host;
-// forward their paths (simctl passes SIMCTL_CHILD_* variables to the test process).
-tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
-    listOf("SHINSOU_MANGA_PACKS", "SHINSOU_MANGA_PAGE", "SHINSOU_MANGA_EXPECTED", "SHINSOU_MANGA_ART").forEach { name ->
-        System.getenv(name)?.let { environment("SIMCTL_CHILD_$name", it) }
-    }
-}
-// ADR-0005 §4 (iOS): ONNX Runtime and OpenCV for the manga translation, per Apple SDK.
-val iosVisionDir: File = layout.buildDirectory.dir("ios-vision").get().asFile
-tasks.register<Exec>("buildIosVision") {
-    group = "build"
-    description = "Fetches ONNX Runtime and builds OpenCV (core, imgproc, photo) for iOS"
-    val script = rootProject.file("ios-vision/scripts/build-ios-vision.sh")
-    inputs.file(script)
-    outputs.files(
-        iosVisionDir.resolve("iphoneos/libonnxruntime.a"), iosVisionDir.resolve("iphonesimulator/libonnxruntime.a"),
-        iosVisionDir.resolve("iphoneos/libopencv2.a"), iosVisionDir.resolve("iphonesimulator/libopencv2.a"),
-    )
-    commandLine("/bin/bash", script.absolutePath, iosVisionDir.absolutePath)
-}
-tasks.configureEach {
-    when {
-        // The archive is embedded in the klib: a rebuilt engine must rerun the cinterop.
-        name.startsWith("cinteropTranslationCoreIosArm64") -> {
-            dependsOn("buildIosTranslationCoreIphoneos")
-            inputs.file(iosTranslationCoreDir("iphoneos").resolve("libshinsou_translate.a"))
-        }
-        name.startsWith("cinteropMangaOnnx") || name.startsWith("cinteropMangaOpenCv") -> {
-            dependsOn("buildIosVision")
-            val sdk = if (name.contains("Simulator")) "iphonesimulator" else "iphoneos"
-            inputs.file(iosVisionDir.resolve("$sdk/libonnxruntime.a"))
-            inputs.file(iosVisionDir.resolve("$sdk/libopencv2.a"))
-        }
-        name.startsWith("cinteropTranslationCoreIosSimulatorArm64") -> {
-            dependsOn("buildIosTranslationCoreIphonesimulator")
-            inputs.file(iosTranslationCoreDir("iphonesimulator").resolve("libshinsou_translate.a"))
-        }
-    }
-}
-tasks.configureEach {
-    when {
-        name.startsWith("cinteropSandboxWasmIosArm64") -> dependsOn("buildIosSandboxHostIphoneos")
-        name.startsWith("cinteropSandboxWasmIosSimulatorArm64") -> dependsOn("buildIosSandboxHostIphonesimulator")
-    }
-}
-
-tasks.configureEach {
-    if (name.startsWith("process") && name.endsWith("UnitTestJavaRes")) {
-        dependsOn(prepareAndroidUnitTestLibsodiumResources)
-    }
-    if (compileMacOsWebChallengeHelper != null &&
-        name in setOf("desktopTest", "prepareAppResources")
-    ) {
-        dependsOn(compileMacOsWebChallengeHelper)
-    }
-    if (buildMacOsSandboxHelper != null && name == "prepareAppResources") {
-        dependsOn(buildMacOsSandboxHelper)
-    }
-    if (buildMacOsTranslationHelper != null && name == "prepareAppResources") {
-        dependsOn(buildMacOsTranslationHelper)
-    }
-    if (buildWindowsTranslationHelper != null && name == "prepareAppResources") {
-        dependsOn(buildWindowsTranslationHelper)
-    }
-    if (buildWindowsSandboxHelper != null && name == "prepareAppResources") {
-        dependsOn(buildWindowsSandboxHelper)
-    }
-}
-
-// Keep generated Compose resource classes in a valid Kotlin package even
-// though the product/project name intentionally contains a space.
+// R5-1: the Compose resources (the app icon) are :ui's; this module has none.
 compose.resources {
-    packageOfResClass = "dev.aluo.shinsoux.generated.resources"
+    generateResClass = never
+}
+
+// The Swift app registers Apple's translation bridge (IosSystemTranslationKt, AppleTranslationBridge).
+shinsouIosFramework {
+    export(":feature-translation")
 }
 
 kotlin {
-    androidTarget {
-        compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
-    }
-
-    jvm("desktop") {
-        compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
-    }
-
-    iosArm64()
-    iosSimulatorArm64()
-
-    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
-        compilations.getByName("main").cinterops.create("networkReceive") {
-            defFile(project.file("src/nativeInterop/cinterop/networkReceive.def"))
-            includeDirs(project.file("src/nativeInterop/cinterop"))
-        }
-        // ADR-0002 §4.5: the plugin sandbox host (WAMR + the sandbox-core WASM guest).
-        compilations.getByName("main").cinterops.create("sandboxWasm") {
-            defFile(project.file("src/nativeInterop/cinterop/sandboxWasm.def"))
-            includeDirs(rootProject.file("sandbox-core/ios"))
-            extraOpts("-libraryPath", iosSandboxHostDir(iosSandboxSdk(konanTarget)).absolutePath)
-        }
-        // ADR-0004 §4.5: the offline translation engine.
-        compilations.getByName("main").cinterops.create("translationCore") {
-            defFile(project.file("src/nativeInterop/cinterop/translationCore.def"))
-            includeDirs(rootProject.file("translation-core/src"))
-            extraOpts("-libraryPath", iosTranslationCoreDir(iosSandboxSdk(konanTarget)).absolutePath)
-        }
-        // ADR-0005 §4: the manga translation's inference and image libraries.
-        val visionSdk = iosVisionDir.resolve(iosSandboxSdk(konanTarget))
-        compilations.getByName("main").cinterops.create("mangaOnnx") {
-            defFile(project.file("src/nativeInterop/cinterop/mangaOnnx.def"))
-            includeDirs(iosVisionDir.resolve("onnxruntime-headers"))
-            extraOpts("-libraryPath", visionSdk.absolutePath)
-        }
-        compilations.getByName("main").cinterops.create("mangaOpenCv") {
-            defFile(project.file("src/nativeInterop/cinterop/mangaOpenCv.def"))
-            compilerOpts("-F${visionSdk.absolutePath}")
-            extraOpts("-libraryPath", visionSdk.absolutePath)
-        }
-        binaries.all {
-            linkerOpts("-lsqlite3")
-        }
-        binaries.framework {
-            baseName = "ShinsouKit"
-            isStatic = true
-            binaryOption("bundleId", "dev.aluo.shinsoux.shared")
-
-            // Kotlin/Native 2.4.0's interprocedural static-initializer analysis can exhaust the
-            // compiler heap while linking this optimized iOS framework. This phase only removes
-            // redundant initializer checks, so skipping it preserves initialization semantics
-            // while avoiding the pathological memory spike during Archive/Ad Hoc builds.
-            if (buildType == NativeBuildType.RELEASE) {
-                freeCompilerArgs +=
-                    "-Xdisable-phases=RemoveRedundantCallsToStaticInitializersPhase"
-            }
-        }
-    }
-
     sourceSets {
-        commonMain {
-            kotlin.srcDir(generatePublicSuffixData.map { it.outputDirectory })
-            kotlin.srcDir(generateBuildInfo.map { it.outputDirectory })
-        }
         commonMain.dependencies {
+            implementation(project(":core"))
+            implementation(project(":domain"))
+            implementation(project(":data-content"))
+            implementation(project(":data-repository"))
+            implementation(project(":feature-sync"))
+            implementation(project(":feature-library"))
+            implementation(project(":feature-reader"))
+            implementation(project(":feature-translation"))
+            implementation(project(":feature-plugin"))
+            implementation(project(":ui"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
@@ -693,21 +85,15 @@ kotlin {
             implementation(libs.ktor.client.mock)
         }
 
-        val jvmCommonMain by creating {
-            dependsOn(commonMain.get())
+        val jvmCommonMain by getting {
             dependencies {
                 implementation(libs.coil.network.ktor)
                 implementation(libs.jsoup)
                 implementation(libs.ktor.client.okhttp)
-                // ADR-0005: Android and desktop share one implementation over the same Java APIs
-                // (ai.onnxruntime, org.opencv); each platform below supplies the binaries.
-                compileOnly(libs.onnxruntime.jvm)
-                compileOnly(libs.opencv.bytedeco)
             }
         }
 
         androidMain {
-            dependsOn(jvmCommonMain)
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.biometric)
@@ -718,8 +104,6 @@ kotlin {
                 // requests use the same no-proxy Ktor client as source requests.
                 implementation(libs.coil.network.ktor)
                 implementation(libs.sqldelight.android.driver)
-                implementation(libs.onnxruntime.android)
-                implementation(libs.opencv.android)
             }
         }
 
@@ -734,60 +118,33 @@ kotlin {
             }
         }
 
-        val iosMain by creating {
-            dependsOn(commonMain.get())
+        val iosMain by getting {
             dependencies {
                 implementation(libs.ktor.client.darwin)
                 implementation(libs.sqldelight.native.driver)
             }
         }
 
-        iosArm64Main.get().dependsOn(iosMain)
-        iosSimulatorArm64Main.get().dependsOn(iosMain)
-        // ADR-0002 S4: iOS-only tests (the WASM sandbox on the simulator).
-        val iosTest by creating {
-            dependsOn(commonTest.get())
-        }
-        iosArm64Test.get().dependsOn(iosTest)
-        iosSimulatorArm64Test.get().dependsOn(iosTest)
-
+        // The manga translation's inference and image libraries (ADR-0005) come with :feature-translation.
         val desktopMain by getting {
-            dependsOn(jvmCommonMain)
             dependencies {
+                val javafx = libs.versions.javafx.get()
+                val javafxClassifier = HostPlatform.javafx
                 implementation(compose.desktop.currentOs)
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.cio)
                 implementation(libs.jna)
                 implementation(libs.sqldelight.sqlite.driver)
-                implementation("org.openjfx:javafx-base:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation("org.openjfx:javafx-graphics:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation("org.openjfx:javafx-controls:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation("org.openjfx:javafx-media:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation("org.openjfx:javafx-swing:${libs.versions.javafx.get()}:$javafxPlatformClassifier")
-                implementation(libs.onnxruntime.jvm)
-                implementation("org.bytedeco:opencv:${libs.versions.opencv.bytedeco.get()}") { exclude(group = "org.bytedeco", module = "numpy") }
-                implementation("org.bytedeco:opencv:${libs.versions.opencv.bytedeco.get()}:$bytedecoPlatform")
-                implementation("org.bytedeco:openblas:${libs.versions.openblas.bytedeco.get()}:$bytedecoPlatform")
-                implementation("org.bytedeco:javacpp:${libs.versions.javacpp.get()}:$bytedecoPlatform")
+                implementation("org.openjfx:javafx-base:$javafx:$javafxClassifier")
+                implementation("org.openjfx:javafx-graphics:$javafx:$javafxClassifier")
+                implementation("org.openjfx:javafx-controls:$javafx:$javafxClassifier")
+                implementation("org.openjfx:javafx-media:$javafx:$javafxClassifier")
+                implementation("org.openjfx:javafx-web:$javafx:$javafxClassifier")
+                implementation("org.openjfx:javafx-swing:$javafx:$javafxClassifier")
             }
-        }
-
-        // R4-5 (docs/architecture/0006): the in-process Rhino engine only serves tests and parity
-        // checks; packages always run sandboxed, so the product build cannot reach it.
-        val jvmCommonTest by creating {
-            dependsOn(commonTest.get())
-            dependencies {
-                implementation(libs.rhino)
-            }
-        }
-        val androidUnitTest by getting {
-            dependsOn(jvmCommonTest)
         }
 
         val desktopTest by getting {
-            dependsOn(jvmCommonTest)
-            resources.srcDir(shinsouPluginSources)
             dependencies {
                 // Compose UI tests of reader panels (the translation panel).
                 implementation(compose.desktop.uiTestJUnit4)
@@ -796,347 +153,27 @@ kotlin {
     }
 }
 
-android {
-    namespace = "dev.aluo.shinsoux"
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-
-    // ADR-0002 S2: libshinsou_sandbox.so (sandbox-core) for the isolated-process sandbox.
-    ndkVersion = "27.0.12077973"
-
-    defaultConfig {
-        applicationId = "dev.aluo.shinsoux"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = releaseVersionCode.get()
-        versionName = releaseDisplayVersion.get()
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Only sandbox-core's ABIs are listed here: dependencies keep shipping all of theirs. On
-        // another ABI the library is missing and the sandbox fails closed.
-        externalNativeBuild.cmake.abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        // Optimized in every variant: the published APK is the debug variant, and an -O0 QuickJS
-        // is an order of magnitude slower.
-        externalNativeBuild.cmake.arguments += "-DCMAKE_BUILD_TYPE=Release"
-    }
-
-    externalNativeBuild.cmake {
-        // Builds sandbox-core and, for arm64-v8a, translation-core.
-        path = file("src/androidMain/cpp/CMakeLists.txt")
-        version = "3.22.1"
-    }
-
-    signingConfigs {
-        if (androidPublicDebugSigningConfigured) {
-            create("publicDebug") {
-                storeFile = file(requireNotNull(androidPublicDebugStoreFile))
-                storePassword = requireNotNull(androidPublicDebugStorePassword)
-                keyAlias = requireNotNull(androidPublicDebugKeyAlias)
-                keyPassword = requireNotNull(androidPublicDebugKeyPassword)
-            }
-        }
-        if (androidReleaseSigningConfigured) {
-            create("release") {
-                storeFile = file(requireNotNull(androidReleaseStoreFile))
-                storePassword = requireNotNull(androidReleaseStorePassword)
-                keyAlias = requireNotNull(androidReleaseKeyAlias)
-                keyPassword = requireNotNull(androidReleaseKeyPassword)
-            }
-        }
-    }
-
-    buildTypes {
-        getByName("debug") {
-            if (sandboxDeviceTest.get()) applicationIdSuffix = ".sandboxtest"
-            if (androidPublicDebugSigningConfigured) {
-                signingConfig = signingConfigs.getByName("publicDebug")
-            }
-        }
-        getByName("release") {
-            if (androidReleaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-        }
-    }
-
-    buildFeatures.compose = true
-    buildFeatures.aidl = true
-    // The AIDL stubs are Java; match Kotlin's JVM target.
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    sourceSets.getByName("test").resources.srcDir(
-        layout.buildDirectory.dir("generated/androidUnitTest/libsodiumResources"),
-    )
-
-    packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-    // minSdk 29 would store dex and native libraries uncompressed (about 2.5x the APK size). The
-    // APK is downloaded from GitHub Releases, not split by a store, so keep it compressed.
-    packaging.dex.useLegacyPackaging = true
-    packaging.jniLibs.useLegacyPackaging = true
-    // ADR-0005: manga translation runs on arm64 devices only. Its inference and image libraries
-    // add about 60 MB per ABI (x86_64 alone would add over 100 MB), so the other ABIs are left out
-    // and the feature reports itself unavailable there (emulators included).
-    packaging.jniLibs.excludes += listOf("armeabi-v7a", "x86", "x86_64").flatMap { abi ->
-        listOf("lib/$abi/libonnxruntime.so", "lib/$abi/libonnxruntime4j_jni.so", "lib/$abi/libopencv_java4.so")
-    }
-    // The NPU's QNN libraries (about 60 MB) are not shipped: Snapdragon devices download them from
-    // Maven Central when the user picks the NPU (docs/research/manga-gpu-npu.md).
-    packaging.jniLibs.excludes += "**/libQnn*.so"
+// One coverage report over the app and the modules it is built from (R2-5, R5-1).
+dependencies {
+    kover(project(":core"))
+    kover(project(":domain"))
+    kover(project(":data-content"))
+    kover(project(":data-repository"))
+    kover(project(":feature-sync"))
+    kover(project(":feature-library"))
+    kover(project(":feature-reader"))
+    kover(project(":feature-translation"))
+    kover(project(":feature-plugin"))
+    kover(project(":ui"))
 }
 
-// sandbox-core's pinned third-party sources (quickjs-ng, lexbor) are fetched, not committed.
-// On Windows `bash` on PATH is often System32's WSL launcher: use the bash of Git for Windows.
-val sandboxCoreBash = if (isWindowsBuildHost) {
-    System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .map { File(it, "git.exe") }
-        .firstOrNull { it.isFile }
-        ?.let { File(it.parentFile.parentFile, "bin/bash.exe") }
-        ?.takeIf { it.isFile }
-        ?.absolutePath
-        ?: "C:/Program Files/Git/bin/bash.exe"
-} else {
-    "bash"
-}
-val fetchSandboxCoreDeps by tasks.registering(Exec::class) {
-    description = "Fetches sandbox-core's pinned third-party sources and applies its patches"
-    workingDir = rootProject.file("sandbox-core")
-    commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
-}
-val fetchTranslationCoreDeps by tasks.registering(Exec::class) {
-    description = "Fetches translation-core's pinned engine sources and applies its patches"
-    workingDir = rootProject.file("translation-core")
-    commandLine(sandboxCoreBash, "scripts/fetch-deps.sh")
-}
-tasks.configureEach {
-    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(fetchSandboxCoreDeps, fetchTranslationCoreDeps)
-}
-val deviceTestUsesOwnApplicationId = sandboxDeviceTest.get()
-tasks.configureEach {
-    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
-        val ownApplicationId = deviceTestUsesOwnApplicationId // no script reference in the action
-        doFirst {
-            check(ownApplicationId) {
-                "Run device tests with -PshinsouSandboxDeviceTest=true: they uninstall the app afterwards"
-            }
-        }
-    }
-}
-
-compose.desktop {
-    application {
-        mainClass = "dev.shinsou.kmp.desktop.MainKt"
-
-        if (compileMacOsWebChallengeHelper != null) {
-            dependsOn("compileMacOsWebChallengeHelper")
-        }
-
-        // JNA's Native class is accessed by JNI and reflection.  Keep its
-        // methods intact in the release distribution so the macOS Keychain
-        // adapter can initialize before the Compose window is shown.
-        buildTypes {
-            release {
-                proguard {
-                    configurationFiles.from(project.file("proguard-rules.pro"))
-                }
-            }
-        }
-
-        nativeDistributions {
-            if (isMacOsBuildHost || isWindowsBuildHost) {
-                // Compose places OS-specific children of this directory in
-                // `compose.application.resources.dir`. The Kotlin host copies the helpers to a
-                // private executable temporary directory before launch because jpackage
-                // intentionally installs application resources without executable permissions.
-                appResourcesRootDir.set(macOsWebChallengeResourcesRoot)
-            }
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe)
-            // SQLDelight, JavaFX WebKit, and Windows Java Access Bridge use entry
-            // points that jlink cannot infer from the application bytecode. Keep
-            // their JDK modules explicitly. Without jdk.accessibility, Windows users
-            // with Access Bridge enabled only see jpackage's "Failed to launch JVM"
-            // dialog before the Compose window can open. On Windows, libsodium's
-            // resource-loader extracts its DLL through Paths.get(jar: URI), which needs
-            // the zip filesystem provider from jdk.zipfs; without it, verifying a
-            // repository signature fails with `Provider "jar" not installed`. JavaFX's
-            // Marlin rasterizer (WebView pages with arbitrary paths, SVG, borders) uses
-            // sun.misc.Unsafe from jdk.unsupported; without it rendering throws
-            // NoClassDefFoundError on every packaged platform.
-            modules(
-                "java.sql",
-                // Manga translation sizes its work by the machine's memory (com.sun.management).
-                "java.management",
-                "jdk.management",
-                "java.net.http",
-                "jdk.accessibility",
-                "jdk.jsobject",
-                "jdk.unsupported",
-                "jdk.unsupported.desktop",
-                "jdk.xml.dom",
-                "jdk.zipfs",
-            )
-            packageName = "Shinsou X"
-            packageVersion = releaseVersion.get()
-            description = "Shinsou X manga reader"
-            vendor = "Shinsou X"
-            macOS {
-                bundleID = "dev.aluo.shinsoux"
-                packageName = "Shinsou X"
-                dockName = "Shinsou X"
-                setDockNameSameAsPackageName = true
-                iconFile.set(project.file("src/desktopMain/resources/shinsou.icns"))
-                if (macOsComposeSigningIdentity != null) {
-                    // A stable signing identity gives Keychain a stable designated requirement.
-                    // Ad-hoc signatures are tied to each build's cdhash, so "Always Allow" is
-                    // forgotten after every update even when the bundle ID is unchanged. Compose
-                    // handles Developer ID certificates here. Its signer hard-codes that prefix,
-                    // so local Apple Development builds are signed by the tasks below instead.
-                    signing {
-                        sign.set(true)
-                        identity.set(macOsComposeSigningIdentity)
-                        macOsSigningKeychain?.let(keychain::set)
-                    }
-                }
-                infoPlist {
-                    extraKeysRawXml = """
-                        <key>CFBundleDisplayName</key>
-                        <string>Shinsou X</string>
-                        <key>CFBundleURLTypes</key>
-                        <array>
-                            <dict>
-                                <key>CFBundleURLName</key>
-                                <string>dev.aluo.shinsoux.sync</string>
-                                <key>CFBundleURLSchemes</key>
-                                <array>
-                                    <string>shinsou</string>
-                                </array>
-                            </dict>
-                        </array>
-                    """.trimIndent()
-                }
-            }
-            windows {
-                // Windows Installer accepts only MAJOR.MINOR.BUILD. Use the monotonic,
-                // prerelease-aware value derived from the release tag instead of dropping the
-                // beta suffix and accidentally reusing the previous ProductCode/ProductVersion.
-                msiPackageVersion = windowsPackageVersion.get()
-                exePackageVersion = windowsPackageVersion.get()
-                // Keep this UUID stable across releases so MSI/EXE upgrades replace
-                // an existing Shinsou X installation instead of installing side-by-side.
-                upgradeUuid = "1E4B4C87-A9D7-4C41-9270-401E627717A9"
-                // Use a machine-scoped MSI so jpackage's per-user RemoveFolderEx cleanup cannot
-                // run in a user's profile and remove application data outside the install tree.
-                // The app data root remains per-user and is protected by the user's DPAPI key.
-                perUserInstall = false
-                installationPath = "Shinsou X"
-                // Never let the jpackage UI replace the fixed install root with a user-selected
-                // existing directory: RemoveFolderEx recursively removes that root on uninstall.
-                dirChooser = false
-                shortcut = true
-                menu = true
-                menuGroup = "Shinsou X"
-                iconFile.set(project.file("src/desktopMain/resources/shinsou.ico"))
-            }
-        }
-    }
-}
-
-if (isMacOsBuildHost && macOsLocalDevelopmentSigningIdentity != null) {
-    val signingScript = rootProject.layout.projectDirectory.file("scripts/sign_macos_app.sh")
-    val defaultEntitlements = layout.buildDirectory.file(
-        "compose/default-resources/${libs.versions.compose.get()}/default-entitlements.plist",
-    )
-
-    fun registerLocalDevelopmentSigner(
-        taskName: String,
-        createTaskName: String,
-        appDirectory: String,
-    ) = tasks.register<Exec>(taskName) {
-        group = "compose desktop"
-        description = "Signs the macOS app image with the configured Apple Development identity"
-
-        // The create task also finalizes with this signer, while DMG/run tasks depend on it.
-        // This ordering keeps the app signed when create* is called directly and guarantees that
-        // jpackage receives the signed app image when it creates a DMG.
-        mustRunAfter(createTaskName)
-        outputs.upToDateWhen { false }
-
-        commandLine(
-            "/bin/bash",
-            signingScript.asFile.absolutePath,
-            layout.buildDirectory.dir(appDirectory).get().asFile.absolutePath,
-            macOsLocalDevelopmentSigningIdentity,
-            defaultEntitlements.get().asFile.absolutePath,
-            macOsSigningKeychain.orEmpty(),
-        )
-    }
-
-    val signMacOsDistributable = registerLocalDevelopmentSigner(
-        taskName = "signMacOsDistributable",
-        createTaskName = "createDistributable",
-        appDirectory = "compose/binaries/main/app/Shinsou X.app",
-    )
-    val signMacOsReleaseDistributable = registerLocalDevelopmentSigner(
-        taskName = "signMacOsReleaseDistributable",
-        createTaskName = "createReleaseDistributable",
-        appDirectory = "compose/binaries/main-release/app/Shinsou X.app",
-    )
-    val signingDmgScript = rootProject.layout.projectDirectory.file("scripts/sign_macos_dmg.sh")
-
-    fun registerLocalDevelopmentDmgSigner(
-        taskName: String,
-        packageTaskName: String,
-        dmgDirectory: String,
-    ) = tasks.register<Exec>(taskName) {
-        group = "compose desktop"
-        description = "Re-signs the packaged DMG app with the configured Apple Development identity"
-
-        // jpackage replaces the certificate signature on an app image with an ad-hoc signature
-        // while wrapping it in a DMG. Run once more against the app inside the final image.
-        mustRunAfter(packageTaskName)
-        outputs.upToDateWhen { false }
-
-        commandLine(
-            "/bin/bash",
-            signingDmgScript.asFile.absolutePath,
-            layout.buildDirectory.file(
-                "$dmgDirectory/Shinsou X-${releaseVersion.get()}.dmg",
-            ).get().asFile.absolutePath,
-            macOsLocalDevelopmentSigningIdentity,
-            defaultEntitlements.get().asFile.absolutePath,
-            macOsSigningKeychain.orEmpty(),
-        )
-    }
-
-    val signMacOsDmg = registerLocalDevelopmentDmgSigner(
-        taskName = "signMacOsDmg",
-        packageTaskName = "packageDmg",
-        dmgDirectory = "compose/binaries/main/dmg",
-    )
-    val signMacOsReleaseDmg = registerLocalDevelopmentDmgSigner(
-        taskName = "signMacOsReleaseDmg",
-        packageTaskName = "packageReleaseDmg",
-        dmgDirectory = "compose/binaries/main-release/dmg",
-    )
-
-    tasks.matching { it.name == "createDistributable" }.configureEach {
-        finalizedBy(signMacOsDistributable)
-    }
-    tasks.matching { it.name == "createReleaseDistributable" }.configureEach {
-        finalizedBy(signMacOsReleaseDistributable)
-    }
-    tasks.matching { it.name == "packageDmg" }.configureEach {
-        dependsOn(signMacOsDistributable)
-        finalizedBy(signMacOsDmg)
-    }
-    tasks.matching { it.name == "packageReleaseDmg" }.configureEach {
-        dependsOn(signMacOsReleaseDistributable)
-        finalizedBy(signMacOsReleaseDmg)
-    }
-    tasks.matching { it.name == "runDistributable" }.configureEach {
-        dependsOn(signMacOsDistributable)
-    }
-    tasks.matching { it.name == "runReleaseDistributable" }.configureEach {
-        dependsOn(signMacOsReleaseDistributable)
-    }
+// The architecture tests in desktopTest (the test-only API opt-in rule) read every module's sources and the
+// build scripts: they are inputs, so a change anywhere (an iOS-only source too) runs them again.
+tasks.named<Test>("desktopTest") {
+    inputs.files(
+        fileTree(rootDir) {
+            include("*/src/**/*.kt", "*.gradle.kts", "build-logic/*.gradle.kts", "build-logic/src/**/*.kt")
+            exclude("**/build/**")
+        },
+    ).withPropertyName("architectureScanSources").withPathSensitivity(PathSensitivity.RELATIVE)
 }

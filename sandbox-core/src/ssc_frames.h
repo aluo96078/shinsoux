@@ -1,6 +1,6 @@
 /*
  * SandboxProtocol v1 frames in C (ADR-0002 §4.2, §17.1): the same bytes as the host's
- * composeApp/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt.
+ * feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/sandbox/SandboxProtocol.kt.
  *
  * Envelope: u32 big-endian body length (1..SSC_MAX_FRAME_BYTES) + body. Body: one CBOR array
  * [type, fields...] in a strict subset (unsigned ints, byte/text strings, arrays, false/true/null;

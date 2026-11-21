@@ -9,6 +9,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,10 +28,9 @@ internal class AndroidDownloadJobService : JobService() {
     private var scope: CoroutineScope? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
-        // A library written by a newer app is left alone (R3-1).
-        if (AndroidSharedState.get(applicationContext).schemaTooNew != null) return false
         running = true
         AndroidBackgroundDownloads.newRun()
+        // A user-initiated job posts its notification at once; opening the stores comes after.
         setNotification(
             params,
             AndroidDownloadNotification.ID,
@@ -39,7 +39,16 @@ internal class AndroidDownloadJobService : JobService() {
         )
         val jobScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { scope = it }
         jobScope.launch {
-            val runtime = AndroidAppRuntime.get(applicationContext)
+            // The snapshot file, the content database's schema check and the app core are opened
+            // off the main thread: in a fresh process this job is the first to open them.
+            val runtime = openForDownloadJob(applicationContext)
+            if (runtime == null) {
+                // A library written by a newer app is left alone (R3-1).
+                running = false
+                jobFinished(params, false)
+                jobScope.cancel()
+                return@launch
+            }
             try {
                 withContext(Dispatchers.Default) {
                     runtime.start()
@@ -104,4 +113,15 @@ internal class AndroidDownloadJobService : JobService() {
                 .getOrDefault(false)
         }
     }
+}
+
+/**
+ * Opens the process-wide core for the download job on [ioDispatcher]; null when a newer Shinsou X
+ * wrote the content database, which is then left as it is (R3-1).
+ */
+private suspend fun openForDownloadJob(
+    context: Context,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+): AndroidAppRuntime? = withContext(ioDispatcher) {
+    if (AndroidSharedState.get(context).schemaTooNew != null) null else AndroidAppRuntime.get(context)
 }
