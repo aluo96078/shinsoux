@@ -21,7 +21,7 @@ public data class PluginDeveloperModeState(
  * address, and the package's own requests stay HTTPS-only with the usual network rules. Such
  * packages install under their own `packageId~dev` key, so they never replace a real install.
  */
-public class PluginDeveloperModeStore(private val store: KeyValueStore) {
+internal class PluginDeveloperModeStore(private val store: KeyValueStore) {
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(PluginDeveloperModeState())
 

@@ -8,16 +8,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-data class TrackingQueueKey(val mangaId: Long, val trackerId: Int)
+internal data class TrackingQueueKey(val mangaId: Long, val trackerId: Int)
 
-data class QueuedTrackingUpdate(
+internal data class QueuedTrackingUpdate(
     val key: TrackingQueueKey,
     val track: Track,
     val update: TrackUpdate,
 )
 
 /** Trailing-edge debounce queue; updates for the same manga/tracker are coalesced for 3 seconds. */
-class TrackingUpdateQueue(
+internal class TrackingUpdateQueue(
     private val scope: CoroutineScope,
     private val debounceMillis: Long = DEFAULT_DEBOUNCE_MILLIS,
     private val dispatch: suspend (QueuedTrackingUpdate) -> Unit,

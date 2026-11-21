@@ -10,7 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
 /** Host-only image transport. Unsupported platforms keep their existing pinned native path. */
-public expect fun createPlatformReviewedImageTransport(): PluginHttpTransport?
+internal expect fun createPlatformReviewedImageTransport(): PluginHttpTransport?
 
 internal const val REVIEWED_BROWSER_IMAGE_MAX_BYTES: Int = 4 * 1024 * 1024
 internal const val REVIEWED_BROWSER_IMAGE_MAX_PIXELS: Int = 8 * 1024 * 1024

@@ -104,7 +104,7 @@ public class InMemoryPluginPackageStore : PluginPackageStore {
 }
 
 /** Persistent package store requiring only the same KV primitive used by app settings. */
-public class KeyValuePluginPackageStore(
+internal class KeyValuePluginPackageStore(
     private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : PluginPackageStore {

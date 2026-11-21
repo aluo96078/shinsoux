@@ -53,7 +53,7 @@
     <ID>CyclomaticComplexMethod:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$private fun finish</ID>
     <ID>CyclomaticComplexMethod:PluginTrustCoordinator.kt:PluginTrustCoordinator$suspend fun setPluginTrusted: Unit</ID>
     <ID>CyclomaticComplexMethod:PublisherTrust.kt:ExecutionTierResolver$public suspend fun resolve: ExecutionTier</ID>
-    <ID>CyclomaticComplexMethod:RepositoryTrust.kt:public fun isLocalUnsignedDeveloperRepository: Boolean</ID>
+    <ID>CyclomaticComplexMethod:RepositoryTrust.kt:internal fun isLocalUnsignedDeveloperRepository: Boolean</ID>
     <ID>CyclomaticComplexMethod:ReviewedImageConnectPolicy.kt:internal fun isValidReviewedImageConnectHeader: Boolean</ID>
     <ID>CyclomaticComplexMethod:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun executeSync: JsonElement</ID>
     <ID>CyclomaticComplexMethod:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun guarded: BridgeOutcome</ID>
@@ -110,7 +110,7 @@
     <ID>RedundantSuspendModifier:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$suspend</ID>
     <ID>RedundantSuspendModifier:PluginManager.kt:PluginManager$suspend</ID>
     <ID>RedundantSuspendModifier:RepositoryTrust.kt:RepositorySignedDocumentVerifier.Companion$suspend</ID>
-    <ID>ReturnCount:DesktopReviewedImageTransport.kt:public actual fun createPlatformReviewedImageTransport: PluginHttpTransport?</ID>
+    <ID>ReturnCount:DesktopReviewedImageTransport.kt:internal actual fun createPlatformReviewedImageTransport: PluginHttpTransport?</ID>
     <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun extensionLibraryBinding: ExtensionLibraryBindingV2?</ID>
     <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun purgeStoredContent: Int</ID>
     <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun storedMaterialization: ExtensionContentMaterializationV2?</ID>
@@ -182,7 +182,7 @@
     <ID>ReturnCount:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$private suspend fun resolvePage: ResolvedPage</ID>
     <ID>ReturnCount:RepositoryPluginCoordinator.kt:internal fun resolveSourceHttpUrl: String?</ID>
     <ID>ReturnCount:RepositoryPluginCoordinator.kt:private fun canonicalHttpUrl: String?</ID>
-    <ID>ReturnCount:RepositoryTrust.kt:public fun isLocalUnsignedDeveloperRepository: Boolean</ID>
+    <ID>ReturnCount:RepositoryTrust.kt:internal fun isLocalUnsignedDeveloperRepository: Boolean</ID>
     <ID>ReturnCount:ReviewedImageConnectPolicy.kt:internal fun isValidReviewedImageConnectHeader: Boolean</ID>
     <ID>ReturnCount:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun guarded: BridgeOutcome</ID>
     <ID>ReturnCount:SandboxProtocol.kt:SandboxFrameReader$private fun onBody: SandboxFrame?</ID>

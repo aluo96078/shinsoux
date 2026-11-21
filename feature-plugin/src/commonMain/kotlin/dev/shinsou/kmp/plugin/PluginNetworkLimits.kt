@@ -4,7 +4,7 @@ package dev.shinsou.kmp.plugin
  * Time limits of a package's network traffic, in one place for every platform (R4-5,
  * docs/architecture/0006). Like [PluginExecutionLimits], packages cannot change them.
  */
-public object PluginNetworkLimits {
+internal object PluginNetworkLimits {
     /** Opening the connection, TLS included. */
     public const val CONNECT_TIMEOUT_MILLIS: Long = 15_000L
 

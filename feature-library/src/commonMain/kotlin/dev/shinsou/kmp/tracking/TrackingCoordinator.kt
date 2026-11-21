@@ -27,7 +27,7 @@ interface TrackingManagerGateway {
 }
 
 /** Adapts the existing queue-aware [TrackerManager] and repository to coordinator operations. */
-class TrackerManagerAdapter(
+internal class TrackerManagerAdapter(
     private val manager: TrackerManager,
     private val repository: ShinsouRepository,
 ) : TrackingManagerGateway {

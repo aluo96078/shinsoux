@@ -3,7 +3,7 @@ package dev.shinsou.kmp.plugin.v2
 import dev.shinsou.kmp.domain.model.SourceKey
 
 /** Exact source lookup boundary used by the production browse callbacks and focused tests. */
-public fun interface ExtensionSourceResolverV2 {
+internal fun interface ExtensionSourceResolverV2 {
     public suspend fun resolve(sourceKey: SourceKey): HostExtensionSourceV2?
 }
 
@@ -15,7 +15,7 @@ public fun interface ExtensionSourceResolverV2 {
  * run on the real application path. Content results are returned intact, including sibling
  * representations of the same unit.
  */
-public class ExtensionBrowseContentGatewayV2(
+internal class ExtensionBrowseContentGatewayV2(
     private val sources: ExtensionSourceResolverV2,
 ) {
     public suspend fun source(sourceKey: SourceKey): HostExtensionSourceV2? = sources.resolve(sourceKey)

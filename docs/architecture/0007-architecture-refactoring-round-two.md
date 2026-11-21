@@ -60,4 +60,5 @@
 | A5 | 完成（範圍有限） | `ContentSqlAccess` 與 `SqlDriverPortableAliasResolver` 的語句帶識別碼（每個行程最多 512 段 SQL）；DDL／PRAGMA 不快取；其餘約 60 處多行 SQL 未改 |
 | A6 | 完成 | `-j` 依處理器數；fetch task 以 `third_party/.fetched` 為輸出。CMake configure／build task 仍每次執行（cmake 本身是增量的） |
 | B1 | 完成 | `:core-network` 承接 `network` 套件（Ktor、Coil、AVIF）；`:domain`、`:data-content`、`:data-repository`、`:feature-translation` 不再編譯 Ktor／Coil。`PluginKeyValueStore` 改名 `KeyValueStore`（平台實作類別名稱未改） |
-| B2～B4 | 進行中 | |
+| B2 | 完成（範圍有限） | 組裝入口：`:feature-plugin` 的 `PluginSubsystem`（`create` 建外掛圖，`openBrowse` 在 sync 之後建 browse 外觀）、`:data-content` 的 `ContentBackgroundWork`（outbox 丟棄、blob 回收、衍生資料重整）、`:feature-library` 的 `TrackingSubsystem`。代理金鑰、帳號套件清單與同步來源描述移入 `PluginSubsystem`，備份附件候選移為 `BackupV2AttachmentCandidate.allOf`。`:feature-plugin` 頂層公開宣告 382 → 224；`:app` 的 `commonTest` 仍直接組裝外掛內部（`RepositoryPluginCoordinatorTest`、`RepositoryPluginReaderParityTest`），它們用到的類別與其簽名牽涉的型別仍為 public |
+| B3～B4 | 進行中 | |

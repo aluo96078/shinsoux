@@ -73,12 +73,12 @@ private const val IOS_PLUGIN_RECEIVE_CHUNK_BYTES: UInt = 65_536u
 private const val IOS_PLUGIN_HTTP_FRAMING_BYTES: Int = 128 * 1_024
 
 /** Resolves A/AAAA answers once; the resulting literals are later used as NWConnection endpoints. */
-public actual fun createPlatformPluginHostResolver(): PluginHostResolver = PluginHostResolver { host ->
+internal actual fun createPlatformPluginHostResolver(): PluginHostResolver = PluginHostResolver { host ->
     withContext(Dispatchers.Default) { resolveDarwinHost(host) }
 }
 
 /** Connects to an admitted literal IP while retaining URL hostname as TLS SNI and HTTP Host. */
-public actual fun createPlatformPinnedPluginHttpTransport(): PluginHttpTransport? =
+internal actual fun createPlatformPinnedPluginHttpTransport(): PluginHttpTransport? =
     IosPinnedPluginHttpTransport()
 
 private class IosPinnedPluginHttpTransport : PluginHttpTransport {

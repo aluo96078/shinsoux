@@ -85,7 +85,7 @@ public interface LoginSource {
  * A source whose units can be text chapters (light novels): ADR-0002 A5, for third-party novel
  * and mixed manga + novel packages. Plain UTF-8 text; the host lays it out.
  */
-public interface TextChapterSource {
+internal interface TextChapterSource {
     /** True when the script implements `getChapterText`. */
     public val supportsChapterText: Boolean
 
@@ -217,7 +217,7 @@ public sealed interface SourcePreference {
 }
 
 /** Parses Shinsou's URL-fragment convention used for image headers and JM metadata. */
-public data class PageRequestMetadata(
+internal data class PageRequestMetadata(
     val cleanUrl: String,
     val headers: Map<String, String>,
     val metadata: Map<String, String>,

@@ -63,7 +63,7 @@ public fun interface ContentRightsAdmissionLease {
  * here. Blob construction restores only bounded metadata; immutable payloads stay
  * outside the cold-start path until [ContentBlobStore.openRead].
  * The outbox only holds drafts written by earlier app versions; the composition discards them
- * in the background ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
+ * in the background ([ContentOutboxDiscarder], run by [ContentBackgroundWork]).
  */
 public class ContentFoundationRuntime(
     private val driver: SqlDriver,

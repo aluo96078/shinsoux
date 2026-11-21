@@ -24,7 +24,7 @@ import okio.blackholeSink
  * Production fetcher for legacy-backed v2 sources. Native packages must provide an explicit scope
  * resolver; an opaque SourceKey is never hashed or narrowed into a Long.
  */
-public class PluginNetworkExtensionResourceFetcherV2(
+internal class PluginNetworkExtensionResourceFetcherV2(
     private val contentScope: suspend (SourceKey) -> dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
 ) : ExtensionResourceFetcherV2 {
     /** Compatibility constructor. Its unscoped client is no longer accepted for production. */

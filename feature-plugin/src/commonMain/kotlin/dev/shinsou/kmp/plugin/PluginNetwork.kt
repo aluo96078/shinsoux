@@ -313,7 +313,7 @@ private val FORBIDDEN_PLUGIN_CONTROLLED_HEADERS: Set<String> = setOf(
  * as every other denied origin is. The host names a site the user browsed, so a log keeps only
  * [loggableSummary]; the permission prompt reads [hostSuffix].
  */
-public class PluginContentHostNotGrantedException(
+internal class PluginContentHostNotGrantedException(
     public val hostSuffix: String,
 ) : IllegalArgumentException("Content host family $hostSuffix is declared but not granted"), QuotesExternalText {
     override val loggableSummary: String get() = "PluginContentHostNotGranted"
@@ -486,7 +486,7 @@ private suspend fun resolvePluginHost(
 }
 
 /** Alias retained for callers that use the more explicit security terminology. */
-public typealias PluginEgressPolicy = PluginNetworkPolicy
+internal typealias PluginEgressPolicy = PluginNetworkPolicy
 
 internal fun pluginOrigin(url: Url): String = buildString {
     append(url.protocol.name.lowercase())
@@ -519,7 +519,7 @@ public data class PluginNetworkConfiguration(
     val customUserAgent: String = "",
 )
 
-public enum class SourceNetworkOverride {
+internal enum class SourceNetworkOverride {
     GLOBAL,
     ON,
     OFF;
@@ -595,7 +595,7 @@ public fun interface PluginNetworkConfigurationProvider {
 }
 
 /** Uses the configured UA when present and otherwise mirrors this platform's browser runtime. */
-public class ConfiguredPluginUserAgentProvider(
+internal class ConfiguredPluginUserAgentProvider(
     private val configuration: PluginNetworkConfigurationProvider,
     private val fallback: PluginUserAgentProvider = StickyPluginUserAgentProvider(),
 ) : PluginUserAgentProvider {
@@ -636,7 +636,7 @@ public class ConfiguredPluginProxyResolver(
 }
 
 /** Normalizes the user-entered Worker endpoint and encodes one target as its `url` query value. */
-public fun buildPluginProxyUrl(workerUrl: String, targetUrl: String): String? = runCatching {
+internal fun buildPluginProxyUrl(workerUrl: String, targetUrl: String): String? = runCatching {
     val entered = workerUrl.trim().trimEnd('/')
     if (entered.isEmpty()) return null
     // A workers.dev hostname is commonly copied without a scheme on mobile keyboards. Treat that
@@ -887,7 +887,7 @@ internal fun normalizePluginUserAgent(value: String?): String? = value
         candidate.isNotEmpty() && candidate.length <= 512 && candidate.none { it.code in 0..31 || it.code == 127 }
     }
 
-public class KtorPluginHttpTransport(private val client: HttpClient) : PluginHttpTransport {
+internal class KtorPluginHttpTransport(private val client: HttpClient) : PluginHttpTransport {
     @Suppress("SuspendFunSwallowedCancellation") // Rethrows unchanged after cancelling the response body channel.
     override suspend fun execute(request: PluginHttpRequest): PluginHttpResponse {
         val response: HttpResponse = client.request(request.url) {

@@ -31,7 +31,7 @@ internal object SandboxStartError {
  * host closes them, then the process exits. Nothing here trusts the script; the host trusts nothing
  * that comes out of the pipes.
  */
-class SandboxProcessService : Service() {
+internal class SandboxProcessService : Service() {
     private val started = AtomicBoolean(false)
 
     @Volatile

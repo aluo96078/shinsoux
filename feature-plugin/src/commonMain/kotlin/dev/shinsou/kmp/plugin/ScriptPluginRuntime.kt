@@ -147,7 +147,7 @@ public fun interface ScriptPluginRuntimeFactory {
     }
 }
 
-public open class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
+internal open class ScriptRuntimeUnavailableException(message: String) : IllegalStateException(message)
 
 /**
  * The user approved an exact artifact, but this device still cannot execute it (it is unsigned, or
@@ -157,7 +157,7 @@ public class ExtensionArtifactNotReviewedException(pluginId: String) :
     IllegalStateException("Extension '$pluginId' cannot run on this device")
 
 /** Safe fallback for iOS hosts that have not injected their JavaScriptCore factory yet. */
-public object NoopScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
+internal object NoopScriptPluginRuntimeFactory : ScriptPluginRuntimeFactory {
     override suspend fun create(
         script: String,
         manifest: PluginManifest,

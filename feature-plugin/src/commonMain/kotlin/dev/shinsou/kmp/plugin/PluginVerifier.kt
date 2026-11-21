@@ -2,14 +2,14 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.Sha256
 
-public sealed class PluginVerificationException(message: String) : IllegalArgumentException(message) {
-    public class HashMismatch(public val expected: String, public val actual: String) :
+internal sealed class PluginVerificationException(message: String) : IllegalArgumentException(message) {
+    class HashMismatch(public val expected: String, public val actual: String) :
         PluginVerificationException("Hash mismatch: expected $expected, got $actual")
 
-    public class Untrusted(public val pluginId: String, public val versionCode: Int, public val hash: String) :
+    class Untrusted(public val pluginId: String, public val versionCode: Int, public val hash: String) :
         PluginVerificationException("Plugin '$pluginId' v$versionCode is not trusted")
 
-    public class UnsafeIdentifier(public val value: String) :
+    class UnsafeIdentifier(public val value: String) :
         PluginVerificationException("Unsafe plugin identifier or script name: '$value'")
 }
 

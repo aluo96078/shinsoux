@@ -8,7 +8,7 @@ import android.content.pm.ApplicationInfo
  * loading sandbox-core here means every sandbox starts with it mapped. Nothing else happens here,
  * and the lockdown is still installed per sandbox process after the fork.
  */
-class SandboxZygotePreload : ZygotePreload {
+internal class SandboxZygotePreload : ZygotePreload {
     override fun doPreload(appInfo: ApplicationInfo) {
         try {
             System.loadLibrary("shinsou_sandbox")

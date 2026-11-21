@@ -132,7 +132,7 @@ internal fun interface SourceKeyPluginStorage {
  * only use the Long assigned by its host-owned [sourceKey]. The backing store receives the full
  * key and decides whether verified pre-V2 state may be migrated.
  */
-public class BoundPluginStorage(
+internal class BoundPluginStorage(
     delegate: PluginStorage,
     public val sourceKey: SourceKey,
     allowLegacyMigration: Boolean = false,
@@ -229,7 +229,7 @@ public class BoundPluginStorage(
 }
 
 /** Fail-closed view of sensitive storage ports for one admitted runtime artifact. */
-public class PermissionFilteredPluginStorage(
+internal class PermissionFilteredPluginStorage(
     private val delegate: PluginStorage,
     permissions: Set<PluginRuntimePermission>,
 ) : PluginStorage {
@@ -1009,7 +1009,7 @@ private data class PluginPreferenceSnapshot(
  * keychain prompt merely because the package identity changed. Empty new state is marked after an
  * explicit clear to prevent stale legacy values from being restored on a later request.
  */
-public class MigratingPluginStorage(
+internal class MigratingPluginStorage(
     private val delegate: PluginStorage,
     private val migrationState: KeyValueStore,
     private val legacySourceId: Long = LEGACY_BILIMANGA_MANGA_STORAGE_ID,
@@ -1167,8 +1167,8 @@ private fun String.hexMarkerComponent(): String = buildString(length * 2) {
 
 private const val HEX_MARKER_DIGITS: String = "0123456789abcdef"
 
-public const val LEGACY_BILIMANGA_MANGA_STORAGE_ID: Long = -9_110_000_000_000_005L
-public const val BILIMANGA_MANGA_SOURCE_ID: Long = 7_289_707_411_592_168_382L
+internal const val LEGACY_BILIMANGA_MANGA_STORAGE_ID: Long = -9_110_000_000_000_005L
+internal const val BILIMANGA_MANGA_SOURCE_ID: Long = 7_289_707_411_592_168_382L
 
 internal const val MAX_COOKIES_PER_SOURCE: Int = 500
 internal const val MAX_COOKIE_BYTES: Int = 4_096

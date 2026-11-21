@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Immutable production package runtime with an exact implementation for every descriptor. */
-public class ImmutableExtensionPackageRuntimeV2(
+internal class ImmutableExtensionPackageRuntimeV2(
     descriptor: ExtensionPackageV2,
     implementations: Iterable<ExtensionSourceV2>,
 ) : ExtensionPackageRuntimeV2 {
@@ -41,12 +41,12 @@ public class ImmutableExtensionPackageRuntimeV2(
 }
 
 /** Optional lifecycle implemented by executable package runtimes that own engines or workers. */
-public interface CloseableExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 {
+internal interface CloseableExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 {
     public suspend fun close()
 }
 
 /** Host-only lifecycle seam for native packages with an exact event scope per source. */
-public interface SourceLifecycleControlledExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 {
+internal interface SourceLifecycleControlledExtensionPackageRuntimeV2 : ExtensionPackageRuntimeV2 {
     /** Returns true when the requested state was applied by this runtime instance. */
     public suspend fun setSourceEnabled(sourceKey: SourceKey, enabled: Boolean): Boolean
 }
@@ -55,7 +55,7 @@ public interface SourceLifecycleControlledExtensionPackageRuntimeV2 : ExtensionP
  * Process-local production registry. Package replacement is explicit, source lookup uses complete
  * [SourceKey] equality, and a malformed package never partially enters the live registry.
  */
-public class ExtensionRuntimeRegistryV2 {
+internal class ExtensionRuntimeRegistryV2 {
     private data class LoadedPackage(
         val runtime: ExtensionPackageRuntimeV2,
         val facade: ExtensionHostFacadeV2,
@@ -126,7 +126,7 @@ public class ExtensionRuntimeRegistryV2 {
 }
 
 /** Exact request passed to independent representation providers for one source/unit scope. */
-public data class UnitContentRequestV2(
+internal data class UnitContentRequestV2(
     val sourceKey: SourceKey,
     val remotePublicationId: String,
     val remoteUnitId: String,
@@ -142,13 +142,13 @@ public data class UnitContentRequestV2(
  * One reviewed provider of a representation. Returning null means that representation is not
  * available for this unit; it does not suppress sibling text/image/EPUB forms.
  */
-public interface UnitContentRepresentationProviderV2 {
+internal interface UnitContentRepresentationProviderV2 {
     public val representationId: String
     public suspend fun load(request: UnitContentRequestV2): UnitContentPayload?
 }
 
 /** Builds one v2 result from multiple independently acquired representations of the same unit. */
-public class MultiRepresentationContentResolverV2(
+internal class MultiRepresentationContentResolverV2(
     providers: Iterable<UnitContentRepresentationProviderV2>,
 ) {
     private val providers: List<UnitContentRepresentationProviderV2> = providers.toList()
@@ -185,7 +185,7 @@ public class MultiRepresentationContentResolverV2(
 }
 
 /** Adds production multi-representation content resolution to any v2 source implementation. */
-public class MultiRepresentationExtensionSourceV2(
+internal class MultiRepresentationExtensionSourceV2(
     private val delegate: ExtensionSourceV2,
     private val contentResolver: MultiRepresentationContentResolverV2,
 ) : ExtensionSourceV2 by delegate {

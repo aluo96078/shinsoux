@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-public actual fun inspectPlatformPluginNetwork(): PlatformPluginNetworkCapability =
+internal actual fun inspectPlatformPluginNetwork(): PlatformPluginNetworkCapability =
     PlatformPluginNetworkCapability(
         hostResolverAvailable = true,
         pinnedTransportAvailable = true,

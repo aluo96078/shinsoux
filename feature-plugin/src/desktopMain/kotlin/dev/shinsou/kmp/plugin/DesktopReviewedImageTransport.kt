@@ -20,7 +20,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-public actual fun createPlatformReviewedImageTransport(): PluginHttpTransport? {
+internal actual fun createPlatformReviewedImageTransport(): PluginHttpTransport? {
     if (!System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true)) return null
     val major = System.getProperty("os.version").substringBefore('.').toIntOrNull() ?: return null
     return if (major >= 14) DesktopReviewedImageTransport() else null

@@ -32,7 +32,7 @@ import kotlinx.serialization.Serializable
 
 /** What survives a restart for one queued unit; the selection is reissued by the host on restore. */
 @Serializable
-public data class ExtensionDownloadRecordV2(
+internal data class ExtensionDownloadRecordV2(
     val sourceKey: SourceKey,
     val remotePublicationId: String,
     val publicationTitle: String,
@@ -44,7 +44,7 @@ public data class ExtensionDownloadRecordV2(
 )
 
 /** Durable storage of the queue, so closing or killing the app does not lose pending downloads. */
-public interface ExtensionDownloadQueueStoreV2 {
+internal interface ExtensionDownloadQueueStoreV2 {
     public suspend fun load(): List<ExtensionDownloadRecordV2>
     public suspend fun save(records: List<ExtensionDownloadRecordV2>)
 }
@@ -54,7 +54,7 @@ public interface ExtensionDownloadQueueStoreV2 {
  * screen's coroutine scope, so leaving the title cancelled them and nothing reached the
  * Downloads screen. Units run one at a time to stay gentle on the source.
  */
-public class ExtensionDownloadQueueV2(
+internal class ExtensionDownloadQueueV2(
     private val materialize: suspend (ExtensionUnitSelectionV2) -> Unit,
     /**
      * Remote unit ids whose content is already stored, for the selection's whole publication.
@@ -508,7 +508,7 @@ private fun Throwable.downloadFailureMessage(): String =
     sourceFailureMarker() ?: message ?: "Download failed"
 
 /** Keeps the novel download queue in one JSON file; a damaged file is set aside, not merged. */
-public class ExtensionDownloadQueueFileStoreV2(
+internal class ExtensionDownloadQueueFileStoreV2(
     private val fileSystem: dev.shinsou.kmp.files.AppFileSystem,
 ) : ExtensionDownloadQueueStoreV2 {
     override suspend fun load(): List<ExtensionDownloadRecordV2> {

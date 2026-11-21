@@ -9,12 +9,12 @@ public data class PluginReaderChapterReference(
     val chapter: SChapter,
 )
 
-public fun interface PluginReaderChapterResolver {
+internal fun interface PluginReaderChapterResolver {
     public suspend fun resolve(mangaId: Long, chapterId: Long): PluginReaderChapterReference?
 }
 
 /** Builds reader requests through the same request builder used by the JS bridge and downloader. */
-public class PluginContentAdapter(
+internal class PluginContentAdapter(
     private val manager: PluginManager,
     private val chapterResolver: PluginReaderChapterResolver,
     private val requestBuilder: PluginRequestBuilder,

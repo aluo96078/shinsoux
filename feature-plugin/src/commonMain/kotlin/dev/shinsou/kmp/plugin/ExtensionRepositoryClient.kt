@@ -55,13 +55,13 @@ internal class RepositoryIndexSnapshot internal constructor(
 
 public class RepositoryIndexAdmission internal constructor()
 
-public sealed class ExtensionRepositoryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    public class InvalidUrl(value: String) : ExtensionRepositoryException("Invalid repository URL or path: $value")
-    public class Http(public val status: Int, url: String) :
+internal sealed class ExtensionRepositoryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class InvalidUrl(value: String) : ExtensionRepositoryException("Invalid repository URL or path: $value")
+    class Http(public val status: Int, url: String) :
         ExtensionRepositoryException("HTTP $status while fetching $url")
-    public class InvalidDocument(url: String, cause: Throwable) :
+    class InvalidDocument(url: String, cause: Throwable) :
         ExtensionRepositoryException("Invalid repository document at $url", cause)
-    public class NetworkSecurity(url: String, cause: Throwable) :
+    class NetworkSecurity(url: String, cause: Throwable) :
         ExtensionRepositoryException("Repository network admission rejected $url", cause)
 }
 

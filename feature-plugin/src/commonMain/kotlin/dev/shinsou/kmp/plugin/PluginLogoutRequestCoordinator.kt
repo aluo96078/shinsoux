@@ -39,7 +39,7 @@ internal object ExactPluginSessionOwnership {
 }
 
 /** Bounded exact-event confirmation queue. Expired requests can never execute later. */
-public class PluginLogoutRequestCoordinator(
+internal class PluginLogoutRequestCoordinator(
     private val scope: CoroutineScope,
     private val timeoutMillis: Long = 30_000,
     private val capacity: Int = 4,

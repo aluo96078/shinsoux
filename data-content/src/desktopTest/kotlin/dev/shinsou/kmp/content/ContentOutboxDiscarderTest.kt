@@ -1,17 +1,9 @@
-package dev.shinsou.kmp.app
+package dev.shinsou.kmp.content
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
-import dev.shinsou.kmp.content.ContentCommitBatch
-import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.domain.content.ContentManifest
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.ContentPublicationMutation
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.ContentRightsGrantMutation
-import dev.shinsou.kmp.content.LegacyOutboxDraft
-import dev.shinsou.kmp.content.ManifestAttachment
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.Acquisition

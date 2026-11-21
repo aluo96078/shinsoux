@@ -75,7 +75,7 @@ import kotlin.coroutines.resumeWithException
 import kotlin.io.encoding.Base64
 
 // The app graph is made off the main thread: NSProcessInfo, not UIDevice (main-thread only).
-public actual fun createPlatformReviewedImageTransport(): PluginHttpTransport? =
+internal actual fun createPlatformReviewedImageTransport(): PluginHttpTransport? =
     if (NSProcessInfo.processInfo.operatingSystemVersion.useContents { majorVersion } >= 17) {
         IosReviewedImageTransport()
     } else null

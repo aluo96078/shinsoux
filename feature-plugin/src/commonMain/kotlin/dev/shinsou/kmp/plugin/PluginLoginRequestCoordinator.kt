@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.update
  * catalogue/search calls from stacking identical dialogs while preserving requests from other
  * sources.
  */
-public class PluginLoginRequestCoordinator : PluginLoginRequester {
+internal class PluginLoginRequestCoordinator : PluginLoginRequester {
     private val mutableLoginRequests = MutableStateFlow<List<SourceLoginRequest>>(emptyList())
 
     public val loginRequests: StateFlow<List<SourceLoginRequest>> = mutableLoginRequests.asStateFlow()

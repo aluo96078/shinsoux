@@ -619,7 +619,7 @@ public data class ExtensionPackageV2(
 
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
-public annotation class ExtensionImplementationApi
+internal annotation class ExtensionImplementationApi
 
 /** Capability-gated runtime facade; source resolution is exact SourceKey equality. */
 @ExtensionImplementationApi
@@ -677,7 +677,7 @@ public class ExtensionHostFacadeV2 internal constructor(
 
 /** Optional host-only dynamic policy hook; it is never visible to plugin code. */
 @OptIn(ExtensionImplementationApi::class)
-public interface UserInteractionScopedExtensionSourceV2 {
+internal interface UserInteractionScopedExtensionSourceV2 {
     public suspend fun <T> withUserInteractionContext(block: suspend () -> T): T
     public fun setHostUiAvailable(available: Boolean)
 }
@@ -690,7 +690,7 @@ public interface UserInteractionScopedExtensionSourceV2 {
  * providers challenge only protected member endpoints rather than their public home page.
  */
 @ExtensionImplementationApi
-public interface WebChallengeUserAgentSourceV2 {
+internal interface WebChallengeUserAgentSourceV2 {
     public val webChallengeUserAgent: String?
     public val webChallengeUrl: String? get() = null
     public val webChallengeLocalStorageKeys: Set<String> get() = emptySet()
@@ -712,23 +712,23 @@ private fun pluginOriginForWebChallenge(url: Url): String {
 }
 
 /** Host-only exact artifact authority for native/reviewed event-capable runtimes. */
-public interface ArtifactBoundExtensionPackageRuntimeV2 {
+internal interface ArtifactBoundExtensionPackageRuntimeV2 {
     public val artifactIdentity: dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 }
 
 /** Naming aliases for callers migrating from the v1 Filter/FilterList API. */
-public typealias BrowseFilterListV2 = List<BrowseFilterV2>
+internal typealias BrowseFilterListV2 = List<BrowseFilterV2>
 
-public typealias FilterV2 = BrowseFilterV2
+internal typealias FilterV2 = BrowseFilterV2
 
-public typealias FilterListV2 = BrowseFilterListV2
+internal typealias FilterListV2 = BrowseFilterListV2
 
-public typealias TriStateValueV2 = BrowseTriStateV2
+internal typealias TriStateValueV2 = BrowseTriStateV2
 
-public typealias SortSelectionV2 = BrowseSortSelectionV2
+internal typealias SortSelectionV2 = BrowseSortSelectionV2
 
 /** Capability predicate used by the host-owned [HostExtensionSourceV2] boundary. */
-public fun SourceDescriptorV2.requireCapability(capability: ExtensionCapability) {
+internal fun SourceDescriptorV2.requireCapability(capability: ExtensionCapability) {
     require(capability in capabilities) {
         "Source ${sourceKey.canonicalId} does not advertise $capability"
     }
@@ -823,7 +823,7 @@ public data class PreferenceV2(
 }
 
 /** Explicit v1 adapters keep legacy Manga/Chapter and ShuYue text source APIs out of v2 identity. */
-public interface LegacyMangaSourceAdapterV2 {
+internal interface LegacyMangaSourceAdapterV2 {
     public suspend fun mapManga(remotePublicationId: String): RemotePublicationV2
     public suspend fun mapChapters(remotePublicationId: String): List<RemoteUnitV2>
 
@@ -849,7 +849,7 @@ public interface LegacyMangaSourceAdapterV2 {
     }
 }
 
-public interface ShuYueTextSourceAdapterV2 {
+internal interface ShuYueTextSourceAdapterV2 {
     public suspend fun chapterText(remoteUnitId: String): TextPayloadSourceV2.InlineTextPayload
 
     /** Converts the real ShuYue chapterText seam into an exact, scoped v2 content result. */

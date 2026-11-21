@@ -431,7 +431,7 @@ public interface ContentOutboxPersistenceAdapter<D : Any> : ContentOutboxAdapter
 /**
  * An outbox row left behind by a version of the app that queued sync drafts next to its content
  * commits. Nothing produces one any more and nothing reads the payload: it is kept only so the
- * rows can be listed and removed ([dev.shinsou.kmp.app.ContentOutboxDiscarder]).
+ * rows can be listed and removed ([ContentOutboxDiscarder]).
  */
 public data class LegacyOutboxDraft(val draftId: String, val payload: String)
 

@@ -31,7 +31,6 @@
     <ID>LongParameterList:ShinsouComposition.kt:ShinsouComposition</ID>
     <ID>LongParameterList:WindowsDpapiMasterKeyStore.kt:JnaWindowsDpapiApi.Crypt32Library$fun CryptProtectData: Int</ID>
     <ID>LongParameterList:WindowsDpapiMasterKeyStore.kt:JnaWindowsDpapiApi.Crypt32Library$fun CryptUnprotectData: Int</ID>
-    <ID>LoopWithTooManyJumpStatements:ContentOutboxDiscarder.kt:ContentOutboxDiscarder$while</ID>
     <ID>ReturnCount:ContentFeatureRuntime.kt:ContentFeatureRuntime$private fun currentAnnotationAccess: ContentAccessRequest?</ID>
     <ID>ReturnCount:DesktopKeepAwake.kt:MacOsActivityKeepAwake$@Synchronized override fun hold</ID>
     <ID>ReturnCount:DesktopPlatform.kt:internal fun desktopShortcutAction: DesktopShortcutAction?</ID>
@@ -39,7 +38,6 @@
     <ID>ReturnCount:DesktopSingleInstance.kt:DesktopSingleInstance.Companion$private fun send: Boolean</ID>
     <ID>ReturnCount:LegacyPublicationStartupMigration.kt:LegacyPublicationStartupMigration$private fun candidateGraph: Publication?</ID>
     <ID>ReturnCount:MacOsKeychainMasterKeyStore.kt:JnaMacOsKeychainApi$private fun copyPassword: MacOsKeychainReadAttempt</ID>
-    <ID>ReturnCount:ShinsouComposition.kt:ShinsouComposition$private fun scheduleContentBlobRecovery</ID>
     <ID>ReturnFromFinally:DesktopAppServices.kt:finally { Files.deleteIfExists(temporary) }</ID>
     <ID>ThrowsCount:DesktopAppServices.kt:DesktopAppServices$private fun readImportedDocument: ImportedDocument</ID>
     <ID>ThrowsCount:MacOsKeychainMasterKeyStore.kt:MacOsKeychainMasterKeyStore$private fun &lt;T&gt; awaitKeychainCall: T</ID>
@@ -47,8 +45,6 @@
     <ID>TooGenericExceptionCaught:DesktopAppServices.kt:DesktopAppServices$error: Throwable</ID>
     <ID>TooGenericExceptionCaught:DesktopAppServices.kt:DesktopAppServices.DesktopPathImportedDocumentSource$error: Throwable</ID>
     <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$/** The operating system's own translation, where the platform has one. */ private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null</ID>
-    <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$private val platformBrowserUserAgentProvider: PluginUserAgentProvider = dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider()</ID>
     <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null</ID>
-    <ID>UnusedVariable:ShinsouComposition.kt:ShinsouComposition$val sourceKey = target.sourceKey</ID>
   </CurrentIssues>
 </SmellBaseline>

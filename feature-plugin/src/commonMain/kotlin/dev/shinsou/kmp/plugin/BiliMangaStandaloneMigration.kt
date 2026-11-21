@@ -12,7 +12,7 @@ import dev.shinsou.kmp.domain.model.shuyueCompatibilityProjectionHandoffMarker
 import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 
 /** Result of the restart-safe reviewed-to-standalone BiliManga library conversion. */
-public data class BiliMangaStandaloneLibraryMigrationResult(
+internal data class BiliMangaStandaloneLibraryMigrationResult(
     val mangaCount: Int,
     val chapterCount: Int,
 )
@@ -25,7 +25,7 @@ public data class BiliMangaStandaloneLibraryMigrationResult(
  * trackers and bookmarks retain their existing foreign keys. The typed graph stays intact as a
  * read-only migration source and can continue to preserve already materialized bodies.
  */
-public class BiliMangaStandaloneLibraryMigration(
+internal class BiliMangaStandaloneLibraryMigration(
     private val repository: ShinsouRepository,
     private val foundation: ContentFoundationRuntime,
 ) {
@@ -132,7 +132,7 @@ private data class BiliMangaLibraryCandidate(
     val remoteChapterUrlById: Map<Long, String>,
 )
 
-public val LEGACY_BILIMANGA_MANGA_SOURCE_KEY: SourceKey = SourceKey(
+internal val LEGACY_BILIMANGA_MANGA_SOURCE_KEY: SourceKey = SourceKey(
     contractVersion = 2,
     packageId = "zh.bilimanga",
     sourceId = "zh.bilimanga.manga",

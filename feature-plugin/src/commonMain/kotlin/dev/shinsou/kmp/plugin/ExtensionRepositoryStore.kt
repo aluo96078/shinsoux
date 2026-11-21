@@ -7,7 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
-public interface ExtensionRepositoryStore {
+internal interface ExtensionRepositoryStore {
     public suspend fun list(): List<ExtensionRepository>
     public suspend fun put(repository: ExtensionRepository)
     public suspend fun remove(baseUrl: String)
@@ -15,7 +15,7 @@ public interface ExtensionRepositoryStore {
     public suspend fun select(baseUrl: String?)
 }
 
-public class KeyValueExtensionRepositoryStore(
+internal class KeyValueExtensionRepositoryStore(
     private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : ExtensionRepositoryStore {

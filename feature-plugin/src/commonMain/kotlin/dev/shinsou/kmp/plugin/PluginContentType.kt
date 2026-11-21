@@ -50,7 +50,7 @@ public enum class PluginContentType {
 }
 
 /** The wire-level repository family detected from the fetched document, never from its URL. */
-public enum class PluginRepositoryFormat {
+internal enum class PluginRepositoryFormat {
     SHINSOU,
     SHUYUE,
     UNIFIED,

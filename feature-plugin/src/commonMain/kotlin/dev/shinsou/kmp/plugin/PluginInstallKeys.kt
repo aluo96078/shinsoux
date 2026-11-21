@@ -74,5 +74,5 @@ internal object PluginInstallKeys {
  * True for a package installed from a developer-mode repository ([PluginInstallKeys.isDeveloperKey]).
  * R5-1: the app's composition leaves these out of the account's package list.
  */
-public fun isDeveloperInstallKey(installKey: String): Boolean = PluginInstallKeys.isDeveloperKey(installKey)
+internal fun isDeveloperInstallKey(installKey: String): Boolean = PluginInstallKeys.isDeveloperKey(installKey)
 

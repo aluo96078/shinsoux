@@ -1,137 +1,51 @@
 package dev.shinsou.kmp.app
 
-import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
-import dev.shinsou.kmp.manga.asMangaTranslator
-import dev.shinsou.kmp.translation.OfflineTranslationPlatform
-import dev.shinsou.kmp.translation.ReaderTranslation
-import dev.shinsou.kmp.translation.TranslationMemoryStore
-import kotlinx.coroutines.CoroutineDispatcher
-import okio.Path.Companion.toPath
-import dev.shinsou.kmp.content.acquisition.BoundedEpubArchiveExtractor
-import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.BackupV2AttachmentCandidate
 import dev.shinsou.kmp.backup.BackupV2CreatePolicy
 import dev.shinsou.kmp.backup.BackupV2PortableState
 import dev.shinsou.kmp.backup.PortableContentBackupV2RestoreCoordinator
 import dev.shinsou.kmp.backup.PortableContentBackupV2Service
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.ContentBlobRecoveryCoordinator
-import dev.shinsou.kmp.content.ManifestAttachment
-import dev.shinsou.kmp.rights.ContentAccessRequest
-import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
-import dev.shinsou.kmp.download.DownloadManager
-import dev.shinsou.kmp.domain.model.TrackerIds
-import dev.shinsou.kmp.domain.model.Publication
-import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
-import dev.shinsou.kmp.sync.v3.SyncSourceInfo
-import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.domain.model.History
-import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.local.LocalContentManager
-import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.domain.model.typedLocalChapterUnitKey
-import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.domain.model.InMemoryPortableAliasLedger
-import dev.shinsou.kmp.domain.model.LegacyPublicationBundle
 import dev.shinsou.kmp.backup.shuyue.ShuYueCompatibilityProjectionCoordinator
 import dev.shinsou.kmp.backup.shuyue.ShuYueMigrationSecretStore
 import dev.shinsou.kmp.backup.shuyue.ShuYueTransactionalImporter
-import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
-import dev.shinsou.kmp.plugin.BiliMangaStandaloneLibraryMigration
-import dev.shinsou.kmp.plugin.BILIMANGA_MANGA_SOURCE_ID
-import dev.shinsou.kmp.plugin.FilePluginPackageStore
-import dev.shinsou.kmp.plugin.ConfiguredPluginProxyResolver
-import dev.shinsou.kmp.plugin.ConfiguredPluginUserAgentProvider
-import dev.shinsou.kmp.plugin.KeyValueExtensionRepositoryStore
-import dev.shinsou.kmp.plugin.KeyValuePluginPackageStore
-import dev.shinsou.kmp.plugin.KeyValuePluginStorage
-import dev.shinsou.kmp.plugin.MigratingPluginStorage
-import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
-import dev.shinsou.kmp.plugin.ExecutionTierResolver
-import dev.shinsou.kmp.plugin.KeyValueRepositorySecurityStateStore
-import dev.shinsou.kmp.plugin.LocalPluginBlocklist
-import dev.shinsou.kmp.plugin.PluginPackageSecurity
-import dev.shinsou.kmp.plugin.PublisherExecutionTierGate
-import dev.shinsou.kmp.plugin.PublisherRepositoryTrustPolicy
-import dev.shinsou.kmp.plugin.PublisherRevocationStore
-import dev.shinsou.kmp.plugin.PublisherTrustStore
-import dev.shinsou.kmp.plugin.KeyValueRepositoryTrustRootStore
-import dev.shinsou.kmp.plugin.ConfiguredRepositoryTrustPolicy
-import dev.shinsou.kmp.plugin.createPlatformPinnedPluginHttpTransport
-import dev.shinsou.kmp.plugin.createPlatformPluginHostResolver
-import dev.shinsou.kmp.plugin.inspectPlatformPluginNetwork
-import dev.shinsou.kmp.plugin.RepositoryTrustRootStore
-import dev.shinsou.kmp.plugin.KtorPluginHttpTransport
-import dev.shinsou.kmp.contract.AccountRepositoryDirectory
-import dev.shinsou.kmp.plugin.isDeveloperInstallKey
+import dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION
+import dev.shinsou.kmp.content.ContentBackgroundWork
+import dev.shinsou.kmp.content.ContentFoundationRuntime
+import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
+import dev.shinsou.kmp.content.acquisition.BoundedEpubArchiveExtractor
 import dev.shinsou.kmp.contract.AccountPackageDirectory
-import dev.shinsou.kmp.contract.AccountPackage
+import dev.shinsou.kmp.contract.AccountRepositoryDirectory
+import dev.shinsou.kmp.contract.ContentCallbacks
+import dev.shinsou.kmp.data.LegacyPublicationProjection
+import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.domain.model.InMemoryPortableAliasLedger
+import dev.shinsou.kmp.domain.model.LegacyPublicationBundle
+import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
+import dev.shinsou.kmp.download.DownloadManager
+import dev.shinsou.kmp.download.DownloadManagerChapterDownloads
+import dev.shinsou.kmp.files.AppFileSystem
+import dev.shinsou.kmp.files.KeyValueStore
+import dev.shinsou.kmp.local.LocalContentManager
+import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.manga.asMangaTranslator
+import dev.shinsou.kmp.plugin.PlatformPluginNetworkCapability
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
-import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.PluginLoginRequestCoordinator
-import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
-import dev.shinsou.kmp.plugin.PluginLogoutRequestCoordinator
-import dev.shinsou.kmp.plugin.PluginManager
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PluginNetworkConfiguration
-import dev.shinsou.kmp.plugin.PluginNetworkConfigurationProvider
-import dev.shinsou.kmp.plugin.PluginRequestBuilder
+import dev.shinsou.kmp.plugin.PluginSubsystem
 import dev.shinsou.kmp.plugin.PluginUserAgentProvider
-import dev.shinsou.kmp.plugin.PluginVerifier
-import dev.shinsou.kmp.plugin.RepositoryPluginCoordinator
-import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
 import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
-import dev.shinsou.kmp.plugin.events.PluginDiagnosticPort
-import dev.shinsou.kmp.plugin.events.PluginEventOutcome
-import dev.shinsou.kmp.plugin.events.PluginLoginIntentPort
-import dev.shinsou.kmp.plugin.events.PluginLogoutPort
-import dev.shinsou.kmp.plugin.events.PluginSourceRefreshPort
-import dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
-import dev.shinsou.kmp.plugin.events.PluginSystemEventHandlerRegistry
-import dev.shinsou.kmp.plugin.events.PluginSystemEventHostPorts
-import dev.shinsou.kmp.plugin.events.registerV1HostHandlers
-import dev.shinsou.kmp.plugin.events.BoundedPluginDiagnosticLog
-import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
-import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
-import dev.shinsou.kmp.plugin.events.PluginEventObserver
-import dev.shinsou.kmp.plugin.events.PluginEventObserverGroup
-import dev.shinsou.kmp.plugin.events.PluginEventContextRegistry
-import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
-import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
-import dev.shinsou.kmp.plugin.v2.ExtensionLocalUnitProgressV2
 import dev.shinsou.kmp.plugin.v2.ExtensionSyncedReadingV2
-import dev.shinsou.kmp.plugin.v2.ExtensionSourceResolverV2
-import dev.shinsou.kmp.plugin.v2.extensionUnitPageProgress
-import dev.shinsou.kmp.plugin.v2.PluginNetworkExtensionResourceFetcherV2
-import dev.shinsou.kmp.tracking.TrackerDescriptor
-import dev.shinsou.kmp.tracking.TrackerManager
-import dev.shinsou.kmp.tracking.TrackerManagerAdapter
-import dev.shinsou.kmp.tracking.TrackerScoreFormat
+import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
+import dev.shinsou.kmp.sync.v3.SyncSourceInfo
+import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.tracking.TrackingCoordinator
-import dev.shinsou.kmp.tracking.TrackingProvider
-import dev.shinsou.kmp.contract.ContentCallbacks
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.tracking.TrackingSubsystem
+import dev.shinsou.kmp.translation.OfflineTranslationPlatform
+import dev.shinsou.kmp.translation.ReaderTranslation
+import dev.shinsou.kmp.translation.TranslationMemoryStore
 import dev.shinsou.kmp.tts.PlatformTextToSpeechEngine
-import io.ktor.client.HttpClient
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.yield
 import dev.shinsou.kmp.ui.portability.DefaultPortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.DefaultShuYueMigrationUiController
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2CreateAction
@@ -140,13 +54,32 @@ import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueContentImportAction
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import dev.shinsou.kmp.ui.portability.ShuYueSecretImportAction
-import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.download.BackgroundDownloadCoordinator
+import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okio.Path.Companion.toPath
 import kotlin.time.Clock
-import dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION
-import dev.shinsou.kmp.data.LegacyPublicationProjection
 
-/** Shared dependency graph used unchanged by Android, iOS and Desktop. */
+/**
+ * Shared dependency graph used unchanged by Android, iOS and Desktop.
+ *
+ * It only wires subsystems together (docs/architecture/0007 B2): the plugin graph is built by
+ * [PluginSubsystem], tracking by [TrackingSubsystem], the content store's background maintenance
+ * by [ContentBackgroundWork]. What stays here is what spans them: the shared background scope,
+ * the startup order, the lifecycle edges and the close order.
+ */
 public class ShinsouComposition(
     public val repository: ShinsouRepository,
     private val httpClient: HttpClient,
@@ -157,9 +90,9 @@ public class ShinsouComposition(
     private val contentInfrastructure: PlatformContentInfrastructure? = null,
     private val platformTextToSpeechEngine: PlatformTextToSpeechEngine? = null,
     private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null,
-    private val pluginBrowserSessionTransport: PluginBrowserSessionTransport =
+    pluginBrowserSessionTransport: PluginBrowserSessionTransport =
         PluginBrowserSessionTransport.Unavailable,
-    private val platformBrowserUserAgentProvider: PluginUserAgentProvider =
+    platformBrowserUserAgentProvider: PluginUserAgentProvider =
         dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
     private val syncDeviceInfo: SyncDeviceInfo = SyncDeviceInfo("This device", "desktop", ""),
     /** The platform's offline translation engine and model directory (ADR-0004); null disables translation. */
@@ -170,11 +103,9 @@ public class ShinsouComposition(
     private val mangaPlatform: dev.shinsou.kmp.manga.MangaPlatform? = null,
     private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    /**
-     * Non-secret platform capability exposed for support/diagnostics. This does not weaken the
-     * network admission boundary: unavailable pinned transport still rejects public egress.
-     */
-    public val pluginNetworkCapability = inspectPlatformPluginNetwork()
+    /** The app's background scope: startup work, sync, tracking, suggestions and maintenance. */
+    private val trackingJob = SupervisorJob()
+    private val trackingScope = CoroutineScope(trackingJob + defaultDispatcher)
     /** Unified M1 storage graph. Platform infrastructure remains the single SQL driver owner. */
     public val contentFoundation: ContentFoundationRuntime? = contentInfrastructure?.let { infrastructure ->
         ContentFoundationRuntime(
@@ -201,6 +132,24 @@ public class ShinsouComposition(
                         system = systemTranslation,
                     )
                 }
+            },
+        )
+    }
+    /** Outbox discard, blob recovery and the derived-data pass; absent without the shared foundation. */
+    private val contentBackgroundWork: ContentBackgroundWork? = contentFoundation?.let { foundation ->
+        ContentBackgroundWork(
+            foundation = foundation,
+            scope = trackingScope,
+            dispatcher = defaultDispatcher,
+            derivedDataPass = {
+                val features = requireNotNull(contentFeatures)
+                // These complete-library scans are background-only, metadata-paged, and
+                // cancellation-safe. Targeted invalidations run first so a revoked grant does
+                // not wait behind unrelated library reconciliation.
+                features.reconcilePendingRightsInvalidations()
+                features.sweepExpiredRightsDerivedData()
+                features.sweepUnauthorizedDerivedData()
+                features.reconcileSearchIndexIfChanged()
             },
         )
     }
@@ -241,8 +190,6 @@ public class ShinsouComposition(
     /** Versioned M1 migration runs after the first interactive frame on the background scope. */
     private val legacyPublicationStartupMigration: LegacyPublicationStartupMigration? =
         contentFoundation?.let(::LegacyPublicationStartupMigration)
-    private val biliMangaStandaloneLibraryMigration: BiliMangaStandaloneLibraryMigration? =
-        contentFoundation?.let { BiliMangaStandaloneLibraryMigration(repository, it) }
     /** Derived ShuYue compatibility rows are restart-safe and never become content authority. */
     private val shuYueCompatibilityProjection: ShuYueCompatibilityProjectionCoordinator? =
         contentFoundation?.let { foundation ->
@@ -252,204 +199,24 @@ public class ShinsouComposition(
     /** On-demand only: this never installs a competing repository mutation observer. */
     public fun currentLegacyPublications(): List<LegacyPublicationBundle> =
         legacyPublicationProjection.project(repository.currentSnapshot)
-    private val pluginHttpClient = httpClient.config { followRedirects = false }
-    private val platformPluginHostResolver = createPlatformPluginHostResolver()
-    private val platformPinnedPluginTransport = createPlatformPinnedPluginHttpTransport()
-    private val pluginStorage = MigratingPluginStorage(
-        delegate = KeyValuePluginStorage(pluginKeyValueStore),
-        migrationState = pluginKeyValueStore,
-    )
-    private val trustStore = KeyValuePluginTrustStore(pluginKeyValueStore)
-    /** Out-of-band/admin configuration boundary; key replacement requires its explicit API. */
-    public val repositoryTrustRootStore: RepositoryTrustRootStore =
-        KeyValueRepositoryTrustRootStore(pluginKeyValueStore)
-    private val repositorySecurityState = KeyValueRepositorySecurityStateStore(pluginKeyValueStore)
-
-    /** ADR-0002 S5: trusted publisher keys, their trust mode, rotation and self-revocation. */
-    public val publisherTrustStore: PublisherTrustStore = PublisherTrustStore(pluginKeyValueStore, repositorySecurityState)
-
-    /** ADR-0002 S5: artifacts publishers withdrew, and when their signed documents expire. */
-    public val publisherRevocationStore: PublisherRevocationStore =
-        PublisherRevocationStore(pluginKeyValueStore, publisherTrustStore, repositorySecurityState)
-
-    /** ADR-0002 D5: the user's own block list, device-local. */
-    public val pluginBlocklist: LocalPluginBlocklist = LocalPluginBlocklist(pluginKeyValueStore)
-
-    /** ADR-0002 §8.1: device-local developer mode for loading unsigned packages from a dev server. */
-    public val pluginDeveloperMode: dev.shinsou.kmp.plugin.PluginDeveloperModeStore =
-        dev.shinsou.kmp.plugin.PluginDeveloperModeStore(pluginKeyValueStore)
-
-    /** ADR-0002 §10.1: the formal basis for where a package's code runs. */
-    public val executionTierResolver: ExecutionTierResolver = ExecutionTierResolver(
-        publishers = publisherTrustStore,
-        revocations = publisherRevocationStore,
-        blocklist = pluginBlocklist,
-        developerMode = { pluginDeveloperMode.state.value.enabled },
-        nowEpochSeconds = { kotlin.time.Clock.System.now().epochSeconds },
-    )
-    private val repositoryClient = ExtensionRepositoryClient(
-        client = httpClient,
-        // A repository mapped to a trusted publisher requires that publisher's current key; any
-        // other URL keeps the configured pins.
-        repositoryTrustPolicy = PublisherRepositoryTrustPolicy(
-            publishers = publisherTrustStore,
-            blocklist = pluginBlocklist,
-            fallback = ConfiguredRepositoryTrustPolicy(
-                roots = repositoryTrustRootStore,
-                // Every unpinned repository is rejected before transport, except what developer
-                // mode admits: this device and the LAN addresses the user entered.
-                allowUnsignedDeveloperCompatibility = { url -> pluginDeveloperMode.admitsRepository(url) },
-            ),
-        ),
-        repositorySecurityState = repositorySecurityState,
-        repositoryHostResolver = platformPluginHostResolver,
-        repositoryTransport = platformPinnedPluginTransport,
-        developerRepository = pluginDeveloperMode::admitsRepository,
-    )
-    private val repositoryStore = KeyValueExtensionRepositoryStore(pluginKeyValueStore)
-    private val pluginLoginRequests = PluginLoginRequestCoordinator()
-    private val pluginEventUiJob = SupervisorJob()
-    private val pluginLogoutRequests = PluginLogoutRequestCoordinator(
-        CoroutineScope(pluginEventUiJob + defaultDispatcher),
-    )
-    private val networkConfiguration = PluginNetworkConfigurationProvider {
-        repository.currentSnapshot.settings.advanced.let { settings ->
-            PluginNetworkConfiguration(
-                proxyEnabled = settings.proxyEnabled,
-                proxyWorkerUrl = settings.proxyWorkerUrl,
-                proxyApiKey = settings.proxyApiKey,
-                customUserAgent = settings.customUserAgent,
-            )
-        }
-    }
-    private val requestBuilder = PluginRequestBuilder(
-        storage = pluginStorage,
-        userAgents = ConfiguredPluginUserAgentProvider(
-            configuration = networkConfiguration,
-            fallback = platformBrowserUserAgentProvider,
-        ),
-        proxyResolver = ConfiguredPluginProxyResolver(pluginStorage, networkConfiguration),
-    )
-    private val pluginNetwork = PluginNetworkClient(
-        transport = platformPinnedPluginTransport ?: KtorPluginHttpTransport(pluginHttpClient),
-        storage = pluginStorage,
-        requestBuilder = requestBuilder,
-        hostResolver = platformPluginHostResolver,
-    )
-    private val pluginEventAuthorizer: MutablePluginSystemEventAuthorizer = MutablePluginSystemEventAuthorizer()
-    private val pluginEventContextRegistry: PluginEventContextRegistry = PluginEventContextRegistry()
-    private val pluginEventGrantAdmission = KeyValuePluginEventGrantAdmission(
-        store = pluginKeyValueStore,
-        authorizer = pluginEventAuthorizer,
-    )
-    private val pluginDiagnosticLog = BoundedPluginDiagnosticLog()
-    private val pluginSourceInvalidations = ExactSourceRefreshInvalidations()
-    private val pluginLifecycleObserver = object : PluginEventObserver {
-        override fun onCompleted(report: dev.shinsou.kmp.plugin.events.PluginEventExecutionReport) = Unit
-        override fun onRuntimeClosed(scope: dev.shinsou.kmp.plugin.events.BoundPluginScope) {
-            val target = dev.shinsou.kmp.domain.model.ExactPluginSourceTarget(
-                scope.artifactIdentity,
-                scope.sourceKey,
-            )
-            pluginSourceInvalidations.clear(target)
-            pluginLoginRequests.clearTarget(target)
-            pluginLogoutRequests.clearSource(target)
-        }
-        override fun onArtifactInvalidated(identity: dev.shinsou.kmp.domain.model.PluginArtifactIdentity) {
-            pluginLoginRequests.clearArtifact(identity)
-            pluginLogoutRequests.clearArtifact(identity)
-        }
-    }
-    private val pluginEventRegistry: PluginSystemEventHandlerRegistry = PluginSystemEventHandlerRegistry().apply {
-        registerV1HostHandlers(
-            PluginSystemEventHostPorts(
-                login = PluginLoginIntentPort { target, eventId, payload ->
-                    if (pluginLogoutRequests.hasTarget(target)) {
-                        return@PluginLoginIntentPort PluginEventOutcome.Suppressed
-                    }
-                    val sourceKey = target.sourceKey
-                    val legacy = pluginManager.exactLegacySource(target)
-                    val exactV2 = pluginManager.exactExtensionSource(target)
-                    val sourceId = sourceKey.legacyLongId
-                        ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
-                    val sourceName = legacy?.name ?: exactV2?.descriptor?.displayName
-                        ?: return@PluginLoginIntentPort PluginEventOutcome.Suppressed
-                    if (pluginLoginRequests.requestEvent(eventId, target, sourceId, sourceName, payload.fallbackMessage)) {
-                        PluginEventOutcome.Succeeded
-                    } else {
-                        PluginEventOutcome.Suppressed
-                    }
-                },
-                refresh = PluginSourceRefreshPort { target, _, _ ->
-                    val sourceKey = target.sourceKey
-                    // This deliberately checks only the exact live source. It never calls the
-                    // repository/global refresh coordinator.
-                    val exactV2 = pluginManager.exactExtensionSource(target)
-                    val legacy = pluginManager.exactLegacySource(target)
-                    if (exactV2 != null || legacy != null) {
-                        pluginSourceInvalidations.invalidate(target)
-                        PluginEventOutcome.Succeeded
-                    } else PluginEventOutcome.Suppressed
-                },
-                logout = PluginLogoutPort { target, eventId, payload ->
-                    // Logout wins the exact-source modal conflict and expires only that login.
-                    pluginLoginRequests.clearTarget(target)
-                    val sourceKey = target.sourceKey
-                    val exactName = pluginManager.exactExtensionSource(target)?.descriptor?.displayName
-                    val legacyName = pluginManager.exactLegacySource(target)?.name
-                    val sourceName = exactName ?: legacyName
-                        ?: return@PluginLogoutPort PluginEventOutcome.Suppressed
-                    if (pluginLogoutRequests.request(PluginLogoutConfirmation(
-                            eventId = eventId,
-                            target = target,
-                            sourceName = sourceName,
-                            message = payload.fallbackMessage,
-                        ))) PluginEventOutcome.Succeeded else PluginEventOutcome.Suppressed
-                },
-                diagnostic = PluginDiagnosticPort { target, eventId, count, payload ->
-                    // REPORT_DIAGNOSTIC is log-only. User projection additionally requires the
-                    // separate REPORT_USER_MESSAGE exact grant and a host presenter.
-                    pluginDiagnosticLog.report(target, eventId, payload, count)
-                },
-            ),
-        )
-    }
-    private val pluginEventGateway: PluginSystemEventGateway = PluginSystemEventGateway(
-        registry = pluginEventRegistry,
-        authorizer = pluginEventAuthorizer,
-        observer = PluginEventObserverGroup(pluginDiagnosticLog, pluginLifecycleObserver),
-        contextRegistry = pluginEventContextRegistry,
-    )
-    private val pluginManager: PluginManager = PluginManager(
-        repositoryClient = repositoryClient,
-        packageStore = FilePluginPackageStore(
-            fileSystem = fileSystem,
-            legacyStore = KeyValuePluginPackageStore(pluginKeyValueStore),
-        ),
-        verifier = PluginVerifier(trustStore),
-        runtimeFactory = runtimeFactory,
-        environment = ScriptPluginEnvironment(
-            network = pluginNetwork,
-            storage = pluginStorage,
-            hostResolver = platformPluginHostResolver,
-            browserSessionTransport = pluginBrowserSessionTransport,
-            loginRequester = pluginLoginRequests,
-            systemEventSink = pluginEventGateway,
-            systemEventContextRegistry = pluginEventContextRegistry,
-        ),
-        eventGrantAdmission = pluginEventGrantAdmission,
-        reviewedImageTransport = dev.shinsou.kmp.plugin.createPlatformReviewedImageTransport(),
-        executionTierGate = PublisherExecutionTierGate(publisherTrustStore, executionTierResolver),
-        developerRepository = pluginDeveloperMode::admitsRepository,
-    )
-    private val coordinator = RepositoryPluginCoordinator(
+    /** Plugins: repositories, trust, the plugin network, runtimes, and the browse facade below. */
+    private val plugins: PluginSubsystem = PluginSubsystem.create(
         repository = repository,
-        manager = pluginManager,
-        // [browse] is made below; this runs only when a chapter is loaded.
-        awaitInstalledSources = { browse.awaitInstalledSources() },
+        platform = PluginSubsystem.PlatformInputs(
+            httpClient = httpClient,
+            keyValueStore = pluginKeyValueStore,
+            fileSystem = fileSystem,
+            runtimeFactory = runtimeFactory,
+            browserSessionTransport = pluginBrowserSessionTransport,
+            browserUserAgentProvider = platformBrowserUserAgentProvider,
+        ),
+        contentFoundation = contentFoundation,
+        backgroundScope = trackingScope,
+        defaultDispatcher = defaultDispatcher,
     )
-    private val trackingJob = SupervisorJob()
-    private val trackingScope = CoroutineScope(trackingJob + defaultDispatcher)
+
+    /** Non-secret plugin network capability, for support/diagnostics. */
+    public val pluginNetworkCapability: PlatformPluginNetworkCapability get() = plugins.networkCapability
 
     /**
      * Sync v3 (ADR-0003): account, dirty tracking and push/pull against a user-chosen server.
@@ -465,41 +232,9 @@ public class ShinsouComposition(
             scope = trackingScope,
             device = syncDeviceInfo,
             publications = { key -> contentFoundation?.publications?.find(key) },
-            resolveLegacySource = { id -> pluginManager.exactSourceKeyForLegacyId(id) },
-            resolveCreatableSource = { packageId, sourceId ->
-                pluginManager.extensionSourceV2(SourceKey(packageId = packageId, sourceId = sourceId))?.descriptor?.sourceKey
-                    // A package installed from another device's list waits for its permission review and
-                    // has no runtime yet; its stored manifest still names the source, so the title can be
-                    // created and the review is asked for when it is first opened.
-                    ?: pluginManager.installedSourceKey(packageId, sourceId)
-            },
-            sourceInfo = {
-                // Native packages have no stored manifest; what they have loaded describes them.
-                val loaded = pluginManager.loadedExtensionDescriptorsV2().flatMap { extension ->
-                    extension.sources.map { source ->
-                        (source.sourceKey.packageId to source.sourceKey.sourceId) to
-                            SyncSourceInfo(name = source.displayName, language = source.languageTag, repositoryUrl = null)
-                    }
-                }
-                val stored = pluginManager.installedPlugins().flatMap { stored ->
-                    stored.manifest.sources.orEmpty().map { source ->
-                        (stored.manifest.id to (source.canonicalSourceId ?: source.id.toString())) to SyncSourceInfo(
-                            name = source.name,
-                            language = source.lang,
-                            repositoryUrl = stored.metadata.repositoryBaseUrl,
-                        )
-                    }
-                }
-                // A title synced from another device may belong to a package that is not installed
-                // here. The added repositories still say which of them publishes it; that describes
-                // the package as a whole, not one source of it.
-                val published = pluginManager.knownRepositoryPackages().mapNotNull { known ->
-                    val repository = known.repositoryBaseUrl ?: return@mapNotNull null
-                    (known.id to SyncSourceInfo.WHOLE_PACKAGE) to
-                        SyncSourceInfo(name = known.name, language = known.lang, repositoryUrl = repository)
-                }
-                (published + loaded + stored).toMap()
-            },
+            resolveLegacySource = { id -> plugins.exactSourceKeyForLegacyId(id) },
+            resolveCreatableSource = { packageId, sourceId -> plugins.creatableSourceKey(packageId, sourceId) },
+            sourceInfo = { plugins.describeSources(SyncSourceInfo.WHOLE_PACKAGE, ::SyncSourceInfo) },
         )
     }
     /** Staged ShuYue migration. */
@@ -555,7 +290,7 @@ public class ShinsouComposition(
                             rightsGrants = foundation.rightsGrants.all(),
                             auxiliary = foundation.portableAuxiliaryState(),
                         ),
-                        candidates = publications.backupV2Candidates(),
+                        candidates = BackupV2AttachmentCandidate.allOf(publications),
                         blobStore = foundation.blobStore,
                         operationGate = features.operationGate,
                         createdAtEpochMillis = Clock.System.now().toEpochMilliseconds(),
@@ -571,76 +306,23 @@ public class ShinsouComposition(
                 },
             )
         }
-    private val trackerManager = TrackerManager(
-        adapters = emptyList(),
-        repository = repository,
-        scope = trackingScope,
-    )
-    private var proxySecretPersistenceJob: Job? = null
+    private val trackingSubsystem = TrackingSubsystem(repository, trackingScope)
     private var portableRepositoryReconciliationJob: Job? = null
     private var installedSourcesSyncJob: Job? = null
     private var syncKindsJob: Job? = null
-    /** M1 orphan discovery/GC runs only after the app enters a background window. */
-    private var contentBlobRecoveryJob: Job? = null
-    /** Conflated derived-index invalidations; import/restore never waits for plaintext indexing. */
-    private val searchIndexReconciliationSignals = Channel<Unit>(Channel.CONFLATED)
-    private var searchIndexReconciliationJob: Job? = null
-    /** Conflated requests to drop legacy outbox drafts and the blob-sync jobs nothing drains. */
-    private val contentOutboxDiscardSignals = Channel<Unit>(Channel.CONFLATED)
-    private var contentOutboxDiscardJob: Job? = null
-    private val contentOutboxDiscarder: ContentOutboxDiscarder? =
-        contentFoundation?.let { ContentOutboxDiscarder(it.transactions) }
-    private val contentBlobRecoveryCoordinator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        contentFoundation?.let { foundation ->
-            ContentBlobRecoveryCoordinator(
-                blobStore = foundation.blobStore,
-                minimumAgeMillis = CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS,
-            )
-        }
-    }
     /** Optional source/tracking hydration must never hold the first Compose frame hostage. */
     private var startupHydrationJob: Job? = null
 
-    public val tracking: TrackingCoordinator = TrackingCoordinator(
-        manager = TrackerManagerAdapter(trackerManager, repository),
-        providers = listOf(
-            TrackingProvider(
-                descriptor = TrackerDescriptor(
-                    id = TrackerIds.MY_ANIME_LIST,
-                    name = "MyAnimeList",
-                    scoreFormat = TrackerScoreFormat.POINT_10,
-                ),
-                configured = false,
-                configurationMessage = "MyAnimeList client ID 尚未設定，暫時無法登入。",
-            ),
-        ),
-        authenticators = emptyList(),
-    )
+    public val tracking: TrackingCoordinator = trackingSubsystem.coordinator
 
     public val downloads: DownloadManager = DownloadManager(
         repository = repository,
         fileSystem = fileSystem,
-        pageProvider = coordinator,
-        pageFetcher = coordinator,
-    ).also { manager -> coordinator.attachDownloads(DownloadManagerChapterDownloads(manager, repository, fileSystem)) }
+        pageProvider = plugins.chapterPages,
+        pageFetcher = plugins.downloadPages,
+    ).also { manager -> plugins.attachDownloads(DownloadManagerChapterDownloads(manager, repository, fileSystem)) }
 
-    public val browse: PluginBrowseAdapter = PluginBrowseAdapter(
-        manager = pluginManager,
-        repositoryClient = repositoryClient,
-        repositoryStore = repositoryStore,
-        pluginStorage = pluginStorage,
-        keyValueStore = pluginKeyValueStore,
-        trustStore = trustStore,
-        mangaResolver = coordinator,
-        migrationHandler = coordinator,
-        migrationProvider = coordinator,
-        requestBuilder = requestBuilder,
-        portableRepository = repository,
-        loginRequestCoordinator = pluginLoginRequests,
-        logoutRequestCoordinator = pluginLogoutRequests,
-        exactSourceRefreshInvalidations = pluginSourceInvalidations,
-        packageSecurity = PluginPackageSecurity(publisherTrustStore, publisherRevocationStore, pluginBlocklist, repositoryClient),
-        developerMode = pluginDeveloperMode,
+    public val browse: PluginBrowseAdapter = plugins.openBrowse(
         accountRepositories = sync?.let { service ->
             object : AccountRepositoryDirectory {
                 override val repositories = service.accountRepositories
@@ -653,83 +335,28 @@ public class ShinsouComposition(
                 override val packages = service.accountPackages
             }
         },
-        suggestionScope = trackingScope,
-        extensionContentConsumerV2 = contentFoundation?.let { foundation ->
-            ExtensionContentConsumerV2(
-                gateway = ExtensionBrowseContentGatewayV2(
-                    ExtensionSourceResolverV2 { sourceKey -> pluginManager.extensionSourceV2(sourceKey) },
-                ),
-                foundation = foundation,
-                offlineStoreAuthorizer = HostContentBodyOfflineStoreAuthorizer(
-                    authority = foundation.rightsAuthority,
-                    durableGrant = foundation.rightsGrants::find,
-                    nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
-                ),
-                resourceFetcher = PluginNetworkExtensionResourceFetcherV2(
-                    contentScope = pluginManager::contentNetworkScopeForSource,
-                ),
-                nowEpochMillis = { Clock.System.now().toEpochMilliseconds() },
-                localUnitProgress = { publicationKey ->
-                    val snapshot = repository.currentSnapshot
-                    val chapters = snapshot.chapters.filter { chapter ->
-                        typedLocalChapterUnitKey(chapter.url)?.publicationKey == publicationKey
-                    }
-                    val chapterById = chapters.associateBy { it.id }
-                    val completed = chapters.asSequence()
-                        .filter { it.read }
-                        .mapNotNull { typedLocalChapterUnitKey(it.url) }
-                        .toSet()
-                    val histories = snapshot.histories.filter { it.chapterId in chapterById }
-                    val inProgress = histories.mapNotNull { history ->
-                        val chapter = chapterById[history.chapterId] ?: return@mapNotNull null
-                        if (chapter.read) return@mapNotNull null
-                        val unitKey = typedLocalChapterUnitKey(chapter.url) ?: return@mapNotNull null
-                        unitKey to extensionUnitPageProgress(chapter.lastPageRead, history.lastPageCount)
-                    }.toMap()
-                    val latestHistory = histories
-                        .asSequence()
-                        .maxWithOrNull(
-                            compareBy<History> { it.lastRead }
-                                .thenBy { it.id },
-                        )
-                    val latest = latestHistory
-                        ?.chapterId
-                        ?.let(chapterById::get)
-                        ?.url
-                        ?.let(::typedLocalChapterUnitKey)
-                    ExtensionLocalUnitProgressV2(
-                        completedUnitKeys = completed,
-                        lastReadUnitKey = latest,
-                        inProgressUnits = inProgress,
-                        lastReadAtMillis = latestHistory?.lastRead?.takeIf { latest != null },
-                    )
-                },
-                syncedReading = { sourceKey, remotePublicationId ->
-                    sync?.pendingReading(sourceKey, remotePublicationId)?.let { pending ->
-                        ExtensionSyncedReadingV2(
-                            lastReadRemoteUnitId = pending.lastReadUnitId,
-                            lastReadAtMillis = pending.lastReadAtMillis,
-                            completedRemoteUnitIds = pending.readUnitIds,
-                            pageIndexByRemoteUnit = pending.lastPageIndexByUnit,
-                            locatorOf = pending::locator,
-                        )
-                    }
-                },
-            )
+        syncedReading = { sourceKey, remotePublicationId ->
+            sync?.pendingReading(sourceKey, remotePublicationId)?.let { pending ->
+                ExtensionSyncedReadingV2(
+                    lastReadRemoteUnitId = pending.lastReadUnitId,
+                    lastReadAtMillis = pending.lastReadAtMillis,
+                    completedRemoteUnitIds = pending.readUnitIds,
+                    pageIndexByRemoteUnit = pending.lastPageIndexByUnit,
+                    locatorOf = pending::locator,
+                )
+            }
         },
-        fileSystem = fileSystem,
     )
 
     public val localContent: LocalContentManager = LocalContentManager(
         repository = repository,
         fileSystem = fileSystem,
-        remote = coordinator,
+        remote = plugins.remoteContent,
         contentFoundation = contentFoundation,
         epubArchiveExtractor = BoundedEpubArchiveExtractor(),
         onTypedContentCommitted = ::scheduleSearchIndexReconciliation,
-        remoteAssetScopeFor = { sourceKey -> pluginManager.contentNetworkScopeForSource(sourceKey) },
+        remoteAssetScopeFor = { sourceKey -> plugins.contentNetworkScope(sourceKey) },
     )
-
     public val content: ContentCallbacks = localContent
 
     /** Both download queues as one piece of background work for the platform keep-alives. */
@@ -795,7 +422,7 @@ public class ShinsouComposition(
             // Before any refresh: repository trust and install keys read it synchronously, and
             // until it is loaded developer mode counts as off.
             try {
-                pluginDeveloperMode.load()
+                plugins.loadDeveloperMode()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (logged: Throwable) {
@@ -853,7 +480,7 @@ public class ShinsouComposition(
                 // and all compatibility rows share one CAS, so a later launch retries safely.
             }
             try {
-                hydrateAndPersistProxySecret()
+                plugins.hydrateProxySecret()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (logged: Throwable) {
@@ -875,9 +502,7 @@ public class ShinsouComposition(
                 // Do not turn a readable local reviewed favorite into an unavailable remote row.
                 // Installed-source hydration happens at the start of browse.refresh(), even when
                 // optional repository discovery later times out or fails.
-                if (pluginManager.source(BILIMANGA_MANGA_SOURCE_ID) != null) {
-                    biliMangaStandaloneLibraryMigration?.migrate()
-                }
+                plugins.migrateBiliMangaStandaloneLibrary()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (logged: Throwable) {
@@ -895,7 +520,7 @@ public class ShinsouComposition(
                         .distinctUntilChanged()
                         .collect {
                             // The account also records which packages were installed (the package kind).
-                            sync.packagesChanged(installedAccountPackages())
+                            sync.packagesChanged(plugins.installedAccountPackages())
                             if (!first) sync.sourcesChanged()
                             first = false
                         }
@@ -941,29 +566,8 @@ public class ShinsouComposition(
             backgroundDownloads.resumeAfterSystem(unlessStoppedSince = stopsAtStart)
             // Drafts left by earlier launches (and by this startup's migrations) are dropped once
             // the startup work above is done.
-            startContentOutboxDiscarder()
+            contentBackgroundWork?.startOutboxDiscarder()
             scheduleContentOutboxDiscard()
-        }
-    }
-
-    /**
-     * The packages installed from a repository, for the account's package list. Developer builds and
-     * packages without a repository are left out: another device could not install them anyway.
-     */
-    private suspend fun installedAccountPackages(): List<AccountPackage> {
-        val fingerprints = repository.currentSnapshot.extensionRepositories
-            .associate { it.baseUrl.trim().trimEnd('/') to it.signingKeyFingerprint }
-        return pluginManager.installedPlugins().mapNotNull { stored ->
-            val url = stored.metadata.repositoryBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            if (isDeveloperInstallKey(stored.manifest.id)) return@mapNotNull null
-            AccountPackage(
-                packageId = stored.manifest.id,
-                repositoryUrl = url,
-                name = stored.manifest.name,
-                version = stored.manifest.version,
-                versionCode = (stored.manifest.versionCode ?: PluginVerifier.versionInt(stored.manifest.version)).toLong(),
-                signingKeyFingerprint = fingerprints[url].orEmpty(),
-            )
         }
     }
 
@@ -997,16 +601,9 @@ public class ShinsouComposition(
             Log.warn("Startup", logged) { "Could not resume the extension downloads" }
             // The Downloads screen still offers retry.
         }
-        val previousRecovery = contentBlobRecoveryJob
-        contentBlobRecoveryJob = null
-        val previousSearchReconciliation = searchIndexReconciliationJob
-        searchIndexReconciliationJob = null
         // No full-library derived-state work may compete with an interactive frame: wait until
         // the background slices have observed cancellation and released their resources.
-        previousRecovery?.cancel()
-        previousSearchReconciliation?.cancel()
-        previousRecovery?.join()
-        previousSearchReconciliation?.join()
+        contentBackgroundWork?.stopBackgroundSlices()
         scheduleContentOutboxDiscard()
         try {
             sync?.onForeground()
@@ -1031,91 +628,18 @@ public class ShinsouComposition(
             // Retried by the next foreground sync or the periodic background worker.
         }
         scheduleContentOutboxDiscard()
-        scheduleContentBlobRecovery()
-        startSearchIndexReconciler()
+        contentBackgroundWork?.scheduleBlobRecovery()
+        contentBackgroundWork?.startDerivedDataReconciler()
         scheduleSearchIndexReconciliation()
     }
 
-    /** Starts the single consumer that discards the content outbox; idempotent. */
-    private fun startContentOutboxDiscarder() {
-        val discarder = contentOutboxDiscarder ?: return
-        if (contentOutboxDiscardJob?.isActive == true) return
-        contentOutboxDiscardJob = trackingScope.launch(defaultDispatcher) {
-            for (ignored in contentOutboxDiscardSignals) {
-                try {
-                    yield()
-                    discarder.discardPending()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (logged: Throwable) {
-                    Log.warn("Startup", logged) { "Could not discard the pending content drafts" }
-                    // The drafts stay durable and harmless; the next commit or lifecycle edge
-                    // retries the discard.
-                }
-            }
-        }
-    }
-
-    /** Requests a discard pass; conflated, and buffered until the startup pass starts the consumer. */
+    /** Requests an outbox discard pass; buffered until the startup pass starts the consumer. */
     private fun scheduleContentOutboxDiscard() {
-        if (contentOutboxDiscarder == null) return
-        contentOutboxDiscardSignals.trySend(Unit)
-    }
-
-    private fun scheduleContentBlobRecovery() {
-        val foundation = contentFoundation ?: return
-        val recovery = contentBlobRecoveryCoordinator ?: return
-        if (contentBlobRecoveryJob?.isActive == true) return
-        // Capture the exact generation before enqueueing. New publications cannot enter this
-        // slice even if the coroutine begins after their blob receipts have been released.
-        val safetyCutoffGeneration = foundation.blobStore.currentGeneration
-        contentBlobRecoveryJob = trackingScope.launch {
-            try {
-                yield()
-                recovery.runLowPrioritySlice(safetyCutoffGeneration)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "The content blob recovery pass failed" }
-                // Recovery is conservative and retryable. A failure retains bytes for a later
-                // background pass and never blocks foreground content access.
-            }
-        }
-    }
-
-    /** Starts one background-only consumer; conflation gives bursts of imports one eventual rescan. */
-    @Suppress("SuspendFunSwallowedCancellation") // Cancellation is rethrown after keeping one pending reconciliation signal.
-    private fun startSearchIndexReconciler() {
-        val features = contentFeatures ?: return
-        if (searchIndexReconciliationJob?.isActive == true) return
-        searchIndexReconciliationJob = trackingScope.launch {
-            for (ignored in searchIndexReconciliationSignals) {
-                try {
-                    yield()
-                    // These complete-library scans are background-only, metadata-paged, and
-                    // cancellation-safe. Targeted invalidations run first so a revoked grant does
-                    // not wait behind unrelated library reconciliation.
-                    features.reconcilePendingRightsInvalidations()
-                    features.sweepExpiredRightsDerivedData()
-                    features.sweepUnauthorizedDerivedData()
-                    features.reconcileSearchIndexIfChanged()
-                } catch (cancelled: CancellationException) {
-                    // The actor may already have consumed the conflated invalidation. Preserve one
-                    // retry for the next background edge before releasing foreground resources.
-                    searchIndexReconciliationSignals.trySend(Unit)
-                    throw cancelled
-                } catch (logged: Throwable) {
-                    Log.warn("Startup", logged) { "The derived-data maintenance pass failed" }
-                    // Derived rows remain rebuildable. A later background/import signal retries
-                    // without making startup, restore, or reader interaction fail.
-                }
-            }
-        }
+        contentBackgroundWork?.scheduleOutboxDiscard()
     }
 
     private fun scheduleSearchIndexReconciliation() {
-        if (contentFeatures == null) return
-        searchIndexReconciliationSignals.trySend(Unit)
+        contentBackgroundWork?.scheduleDerivedDataReconciliation()
     }
 
     /** [stage] names each shutdown step before it runs (the desktop startup probe records them). */
@@ -1131,34 +655,27 @@ public class ShinsouComposition(
         closing.step("backgroundJobs.cancel") {
             startupHydrationJob?.cancel()
             startupHydrationJob = null
-            contentOutboxDiscardJob?.cancel()
-            contentOutboxDiscardJob = null
-            contentOutboxDiscardSignals.close()
-            contentBlobRecoveryJob?.cancel()
-            contentBlobRecoveryJob = null
-            searchIndexReconciliationJob?.cancel()
-            searchIndexReconciliationJob = null
-            searchIndexReconciliationSignals.close()
-            proxySecretPersistenceJob?.cancel()
+            contentBackgroundWork?.cancel()
+            plugins.cancelProxySecretPersistence()
             portableRepositoryReconciliationJob?.cancel()
             installedSourcesSyncJob?.cancel()
             syncKindsJob?.cancel()
         }
-        closing.step("trackerManager.cancelAll") { trackerManager.cancelAll() }
+        closing.step("trackerManager.cancelAll") { trackingSubsystem.cancelPendingUpdates() }
         closing.step("trackingJob.cancelAndJoin") { trackingJob.cancelAndJoin() }
-        closing.step("pluginEventUiJob.cancelAndJoin") { pluginEventUiJob.cancelAndJoin() }
+        closing.step("pluginEventUiJob.cancelAndJoin") { plugins.cancelEventUi() }
         closing.step("browse.close") { browse.close() }
         closing.step("downloads.close") { downloads.close() }
-        closing.step("pluginManager.close") { pluginManager.close() }
-        closing.step("pluginBrowserSessionTransport.close") { pluginBrowserSessionTransport.close() }
-        closing.step("pluginEventGateway.close") { pluginEventGateway.close() }
-        closing.step("pluginDiagnosticLog.clear") { pluginDiagnosticLog.clear() }
+        closing.step("pluginManager.close") { plugins.closeRuntimes() }
+        closing.step("pluginBrowserSessionTransport.close") { plugins.closeBrowserSessions() }
+        closing.step("pluginEventGateway.close") { plugins.closeEventGateway() }
+        closing.step("pluginDiagnosticLog.clear") { plugins.clearDiagnostics() }
         closing.step("contentFeatures.close") {
             if (contentFeatures != null) contentFeatures.close() else platformTextToSpeechEngine?.close()
         }
         // Every mutation producer is stopped; flush and terminate the coalesced writer.
         closing.step("repository.closePersistence") { repository.closePersistence() }
-        closing.step("pluginHttpClient.close") { pluginHttpClient.close() }
+        closing.step("pluginHttpClient.close") { plugins.closeHttpClient() }
         closing.step("httpClient.close") { httpClient.close() }
         closing.throwFirstFailure()
     }
@@ -1185,65 +702,7 @@ public class ShinsouComposition(
         }
     }
 
-    private suspend fun hydrateAndPersistProxySecret() {
-        val legacyValue = repository.currentSnapshot.settings.advanced.proxyApiKey
-        val secureValue = pluginKeyValueStore.getString(PROXY_API_KEY_STORAGE_KEY)
-        val effectiveValue = secureValue ?: legacyValue
-        if (secureValue == null && legacyValue.isNotEmpty()) {
-            pluginKeyValueStore.putString(PROXY_API_KEY_STORAGE_KEY, legacyValue)
-        }
-        if (legacyValue.isNotEmpty() || legacyValue != effectiveValue) {
-            repository.updateSettings { settings ->
-                settings.copy(advanced = settings.advanced.copy(proxyApiKey = effectiveValue))
-            }
-        }
-        if (proxySecretPersistenceJob == null) {
-            proxySecretPersistenceJob = trackingScope.launch {
-                repository.snapshot
-                    .map { it.settings.advanced.proxyApiKey }
-                    .distinctUntilChanged()
-                    .collect { value ->
-                        if (value.isEmpty()) pluginKeyValueStore.remove(PROXY_API_KEY_STORAGE_KEY)
-                        else pluginKeyValueStore.putString(PROXY_API_KEY_STORAGE_KEY, value)
-                    }
-            }
-        }
-    }
-
     private companion object {
-        const val PROXY_API_KEY_STORAGE_KEY = "network.proxy.secret"
-        const val CONTENT_BLOB_ORPHAN_MINIMUM_AGE_MILLIS = 7L * 24L * 60L * 60L * 1_000L
         const val CONTENT_BACKUP_APP_VERSION = SHINSOU_APP_VERSION
     }
 }
-
-private fun List<Publication>.backupV2Candidates(): List<BackupV2AttachmentCandidate> =
-    flatMap { publication ->
-        publication.acquisitions.flatMap { acquisition ->
-            acquisition.units.flatMap { unit ->
-                unit.manifestRevisions.map { manifest ->
-                    val attachment = ManifestAttachment(
-                        owner = ContentManifestOwner(
-                            publicationKey = publication.key,
-                            acquisitionId = acquisition.id,
-                            unitKey = unit.key,
-                        ),
-                        manifest = manifest,
-                    )
-                    BackupV2AttachmentCandidate(
-                        attachment = attachment,
-                        access = ContentAccessRequest(
-                            grantReference = acquisition.rightsGrantRef,
-                            scope = RightsScope(
-                                publicationId = publication.key,
-                                acquisitionId = acquisition.id,
-                                unitId = unit.key,
-                                manifestId = manifest.manifestId,
-                                contentRevision = manifest.contentRevision,
-                            ),
-                        ),
-                    )
-                }
-            }
-        }
-    }

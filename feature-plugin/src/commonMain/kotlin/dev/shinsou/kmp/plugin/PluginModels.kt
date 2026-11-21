@@ -19,7 +19,7 @@ import kotlinx.serialization.json.Json
 
 /** Metadata returned by a Shinsou repository's `repo.json`. */
 @Serializable
-public data class RepositoryDocument(
+internal data class RepositoryDocument(
     val meta: RepositoryMeta,
 )
 
@@ -30,14 +30,14 @@ public data class RepositoryDocument(
  * no longer supported).
  */
 @Serializable
-public data class UnifiedRepositoryDocument(
+internal data class UnifiedRepositoryDocument(
     val format: String = "shinsou-unified-v1",
     val shinsou: List<PluginIndexEntry> = emptyList(),
     val legacy: List<PluginIndexEntry> = emptyList(),
 )
 
 @Serializable
-public data class RepositoryMeta(
+internal data class RepositoryMeta(
     val name: String,
     val shortName: String? = null,
     val website: String? = null,
@@ -326,7 +326,7 @@ internal fun pluginHttpsOriginOrNull(value: String): String? = runCatching {
 }.getOrNull()
 
 /** Accepts both native Shinsou numeric IDs and Mihon's quoted 64-bit IDs. */
-public object StringOrNumberLongSerializer : KSerializer<Long> {
+internal object StringOrNumberLongSerializer : KSerializer<Long> {
     override val descriptor: SerialDescriptor =
         PrimitiveSerialDescriptor("StringOrNumberLong", PrimitiveKind.LONG)
 

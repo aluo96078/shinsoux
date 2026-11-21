@@ -24,4 +24,4 @@ public data class PlatformPluginNetworkCapability(
 }
 
 /** Returns a non-secret explanation of the platform's pinned plugin-network capability. */
-public expect fun inspectPlatformPluginNetwork(): PlatformPluginNetworkCapability
+internal expect fun inspectPlatformPluginNetwork(): PlatformPluginNetworkCapability

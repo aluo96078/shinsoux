@@ -141,7 +141,7 @@ public class ExtensionSyncedReadingV2(
 }
 
 /** Where a unit opened here the first time starts: another device's position and page in it. */
-public data class ExtensionSyncedStartV2(val locator: ReadingLocator?, val pageIndex: Int?)
+internal data class ExtensionSyncedStartV2(val locator: ReadingLocator?, val pageIndex: Int?)
 
 /**
  * This device's reading with [synced] added for the units it has not stored: the later of the
@@ -176,14 +176,14 @@ public data class ExtensionUnitPageProgressV2(
 }
 
 /** Clamps persisted chapter/history values, which may predate a re-paginated rendition. */
-public fun extensionUnitPageProgress(lastPageRead: Int, lastPageCount: Int?): ExtensionUnitPageProgressV2 {
+internal fun extensionUnitPageProgress(lastPageRead: Int, lastPageCount: Int?): ExtensionUnitPageProgressV2 {
     val pageIndex = lastPageRead.coerceAtLeast(0)
     val pageCount = lastPageCount?.takeIf { it > pageIndex }
     return ExtensionUnitPageProgressV2(pageIndex, pageCount)
 }
 
 /** App compatibility keys used to join local history to the typed extension graph. */
-public data class ExtensionLocalUnitProgressV2(
+internal data class ExtensionLocalUnitProgressV2(
     val completedUnitKeys: Set<UnitKey> = emptySet(),
     val lastReadUnitKey: UnitKey? = null,
     val inProgressUnits: Map<UnitKey, ExtensionUnitPageProgressV2> = emptyMap(),
@@ -192,7 +192,7 @@ public data class ExtensionLocalUnitProgressV2(
 )
 
 /** Exact rights-gated reader input for one materialized extension representation. */
-public data class ExtensionReadableContentV2(
+internal data class ExtensionReadableContentV2(
     val content: UnifiedReaderContent,
     val canonicalText: String?,
     val access: ContentAccessRequest,
@@ -221,7 +221,7 @@ public sealed class ExtensionContentConsumerException(message: String) : Illegal
 }
 
 /** A bounded immutable response returned by the host network plane, never by extension code. */
-public class ExtensionFetchedResourceV2(
+internal class ExtensionFetchedResourceV2(
     bytes: ByteArray,
     public val mediaType: String?,
 ) {
@@ -232,7 +232,7 @@ public class ExtensionFetchedResourceV2(
 }
 
 /** Maps an exact portable source identity to a process-local network/cookie isolation scope. */
-public fun interface ExtensionNetworkScopeResolverV2 {
+internal fun interface ExtensionNetworkScopeResolverV2 {
     public fun resolve(sourceKey: SourceKey): Long?
 
     public companion object {
@@ -243,7 +243,7 @@ public fun interface ExtensionNetworkScopeResolverV2 {
 }
 
 /** Executes an already validated v2 request plan through a host-controlled network scope. */
-public fun interface ExtensionResourceFetcherV2 {
+internal fun interface ExtensionResourceFetcherV2 {
     public suspend fun fetch(sourceKey: SourceKey, request: RemoteRequestPlanV2): ExtensionFetchedResourceV2
 }
 
@@ -254,7 +254,7 @@ public fun interface ExtensionResourceFetcherV2 {
  * chosen one representation explicitly, acquired every byte through a host boundary, admitted a
  * conservative rights grant and atomically attached the resulting blobs/publication/outbox rows.
  */
-public class ExtensionContentConsumerV2(
+internal class ExtensionContentConsumerV2(
     private val gateway: ExtensionBrowseContentGatewayV2,
     private val foundation: ContentFoundationRuntime,
     private val offlineStoreAuthorizer: ContentBodyOfflineStoreAuthorizer,

@@ -9,7 +9,7 @@ package dev.shinsou.kmp.plugin
  * character) removed and look-alike digits read as letters, so `Shinsou_Official`, `ＯＦＦＩＣＩＡＬ`,
  * `0fficial` and `官 方` all match.
  */
-public object PluginNamePolicy {
+internal object PluginNamePolicy {
     private val MISLEADING = listOf("official", "offical", "官方", "公式")
 
     /** Explicit disclaimers are fine; anything left after removing them still counts. */
@@ -34,5 +34,5 @@ public object PluginNamePolicy {
     }
 }
 
-public class MisleadingPluginNameException(public val name: String) :
+internal class MisleadingPluginNameException(public val name: String) :
     IllegalArgumentException("'$name' claims to be official; plugins cannot use that name")

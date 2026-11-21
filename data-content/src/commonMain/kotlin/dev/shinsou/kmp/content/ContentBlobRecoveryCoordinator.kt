@@ -20,7 +20,7 @@ public enum class ContentBlobRecoverySliceOutcome {
 }
 
 /** Bounded diagnostics returned to the lifecycle/background scheduler. */
-public data class ContentBlobRecoverySliceResult(
+internal data class ContentBlobRecoverySliceResult(
     val outcome: ContentBlobRecoverySliceOutcome,
     val boundary: RecoveryBoundary,
     /** Every unreferenced blob observed at or before the explicit generation cutoff. */
@@ -89,7 +89,7 @@ public data class ContentBlobRecoverySliceResult(
  * [minimumAgeMillis], and [ContentBlobStore.sweepRecovery] then rechecks the exact reference,
  * incarnation, generation, attachment, receipt, and active-reader state.
  */
-public class ContentBlobRecoveryCoordinator(
+internal class ContentBlobRecoveryCoordinator(
     private val blobStore: ContentBlobStore,
     public val minimumAgeMillis: Long = DEFAULT_MINIMUM_AGE_MILLIS,
     public val maximumSweepCandidatesPerSlice: Int = DEFAULT_MAXIMUM_SWEEP_CANDIDATES_PER_SLICE,

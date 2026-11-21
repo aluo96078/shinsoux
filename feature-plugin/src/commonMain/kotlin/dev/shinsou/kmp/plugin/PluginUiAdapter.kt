@@ -21,7 +21,7 @@ internal class SourceLoginStageException(
     cause: Throwable,
 ) : RuntimeException(cause)
 
-public fun interface PluginMangaResolver {
+internal fun interface PluginMangaResolver {
     public suspend fun resolve(manga: BrowseManga): Long?
 
     public companion object {
@@ -29,7 +29,7 @@ public fun interface PluginMangaResolver {
     }
 }
 
-public fun interface PluginMigrationHandler {
+internal fun interface PluginMigrationHandler {
     public suspend fun migrate(mangaId: Long, target: BrowseManga)
 
     public companion object {
@@ -37,7 +37,7 @@ public fun interface PluginMigrationHandler {
     }
 }
 
-public fun interface PluginMigrationProvider {
+internal fun interface PluginMigrationProvider {
     public suspend fun candidates(): List<MigrationCandidate>
 
     public companion object {
@@ -84,7 +84,7 @@ public class PluginBrowseAdapter private constructor(
     ExtensionManagement by parts.management,
     ExtensionTrust by parts.trust {
 
-    public constructor(
+    internal constructor(
         manager: PluginManager,
         repositoryClient: ExtensionRepositoryClient,
         repositoryStore: ExtensionRepositoryStore,

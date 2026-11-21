@@ -14,7 +14,7 @@ import kotlin.time.Clock
  * A host of a source failed several times in a row; the request was not sent. The message (shown
  * to the user) names the host, which says what the user reads: it is never logged.
  */
-public class PluginSourceBackoffException(host: String, retryInMillis: Long) :
+internal class PluginSourceBackoffException(host: String, retryInMillis: Long) :
     IllegalStateException("$host failed several times in a row; trying again in ${(retryInMillis + 999) / 1_000} s"),
     dev.shinsou.kmp.logging.QuotesExternalText {
     override val loggableSummary: String get() = "PluginSourceBackoffException"
@@ -25,7 +25,7 @@ public class PluginSourceBackoffException(host: String, retryInMillis: Long) :
  * status line, header or chunk, a length that does not match the body. It is the host failing,
  * unlike an answer that is well-formed and refused for its size or encoding.
  */
-public class PluginMalformedResponseException(message: String) : IllegalArgumentException(message)
+internal class PluginMalformedResponseException(message: String) : IllegalArgumentException(message)
 
 /** [require] for what makes an answer malformed: fails with [PluginMalformedResponseException]. */
 @OptIn(ExperimentalContracts::class)

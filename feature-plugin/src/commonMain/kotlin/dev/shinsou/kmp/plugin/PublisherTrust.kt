@@ -27,7 +27,7 @@ import kotlinx.serialization.json.longOrNull
  */
 
 /** D3: how a publisher's first key may be trusted. Set globally; a publisher may be made stricter. */
-public enum class PublisherTrustMode {
+internal enum class PublisherTrustMode {
     /** (a) Trust on first use; a fingerprint, when one is supplied, must match. */
     TOFU_WITH_OPTIONAL_MATCH,
 
@@ -36,9 +36,9 @@ public enum class PublisherTrustMode {
 }
 
 /** How the publisher's key came to be trusted (the `verification` field of §8.2). */
-public enum class PublisherVerification { TOFU, FINGERPRINT_MATCHED, OFFICIAL_BUILT_IN }
+internal enum class PublisherVerification { TOFU, FINGERPRINT_MATCHED, OFFICIAL_BUILT_IN }
 
-public enum class PublisherTrustStatus {
+internal enum class PublisherTrustStatus {
     TRUSTED,
 
     /** TOFU-trusted while mode (b) applies: installed packages keep running, nothing new installs. */
@@ -56,7 +56,7 @@ public enum class PublisherTrustStatus {
  * a key replaced after loss starts a new publisher.
  */
 @Serializable
-public data class PublisherTrustRecord(
+internal data class PublisherTrustRecord(
     val publisherId: String,
     val currentPublicKey: String,
     val currentFingerprint: String,
@@ -86,15 +86,15 @@ public data class PublisherTrustRecord(
     }
 }
 
-public sealed class PublisherTrustException(message: String) : IllegalArgumentException(message) {
-    public class FingerprintRequired : PublisherTrustException("This publisher can only be trusted by matching its full fingerprint")
-    public class FingerprintMismatch : PublisherTrustException("The publisher's key does not match the given fingerprint")
-    public class KeyRevoked(publisherId: String) : PublisherTrustException("Publisher $publisherId revoked its key")
-    public class KeyReplaced(publisherId: String) : PublisherTrustException("Publisher $publisherId was replaced by a new key")
-    public class Blocked(entry: PluginBlockEntry) : PublisherTrustException("Blocked on this device: $entry")
-    public class NotTrusted(subject: String) : PublisherTrustException("No trusted publisher for $subject")
-    public class NotInstallable(reason: String) : PublisherTrustException("Not installable: $reason")
-    public class InvalidDocument(reason: String) : PublisherTrustException("Invalid publisher document: $reason")
+internal sealed class PublisherTrustException(message: String) : IllegalArgumentException(message) {
+    class FingerprintRequired : PublisherTrustException("This publisher can only be trusted by matching its full fingerprint")
+    class FingerprintMismatch : PublisherTrustException("The publisher's key does not match the given fingerprint")
+    class KeyRevoked(publisherId: String) : PublisherTrustException("Publisher $publisherId revoked its key")
+    class KeyReplaced(publisherId: String) : PublisherTrustException("Publisher $publisherId was replaced by a new key")
+    class Blocked(entry: PluginBlockEntry) : PublisherTrustException("Blocked on this device: $entry")
+    class NotTrusted(subject: String) : PublisherTrustException("No trusted publisher for $subject")
+    class NotInstallable(reason: String) : PublisherTrustException("Not installable: $reason")
+    class InvalidDocument(reason: String) : PublisherTrustException("Invalid publisher document: $reason")
 }
 
 /** §8.2 fingerprints: SHA-256 of the raw Ed25519 public key. */
@@ -154,7 +154,7 @@ public data class AddRepositoryLink(val repositoryUrl: String, val fingerprint: 
  * many URLs (mirrors) without trusting it again; a URL presenting another key is a key
  * substitution, which only [replaceAfterExplicitApproval] resolves.
  */
-public class PublisherTrustStore(
+internal class PublisherTrustStore(
     private val keyValueStore: KeyValueStore,
     private val securityState: RepositorySecurityStateStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
@@ -477,7 +477,7 @@ public class PublisherTrustStore(
  * §8.4 artifact withdrawals and the D8 freshness of a publisher's signed documents. The latest
  * `publisher-revocations` document replaces the previous one; its sequence never goes back.
  */
-public class PublisherRevocationStore(
+internal class PublisherRevocationStore(
     private val keyValueStore: KeyValueStore,
     private val publishers: PublisherTrustStore,
     securityState: RepositorySecurityStateStore,
@@ -535,7 +535,7 @@ public class PublisherRevocationStore(
 }
 
 @Serializable
-public data class PublisherRevocations(
+internal data class PublisherRevocations(
     val sequence: Long,
     val revokedArtifacts: List<String>,
     /** Unix seconds. Past it, nothing new installs from this publisher; installed packages keep running (D8). */
@@ -546,7 +546,7 @@ public data class PublisherRevocations(
 
 /** D5: what the user blocked on this device. Never signed, downloaded, backed up or synced. */
 @Serializable
-public sealed interface PluginBlockEntry {
+internal sealed interface PluginBlockEntry {
     /** [publisherId] is [NO_PUBLISHER] for packages without one (unsigned, developer). */
     @Serializable
     public data class Package(val packageId: String, val publisherId: String) : PluginBlockEntry {
@@ -562,7 +562,7 @@ public sealed interface PluginBlockEntry {
     public data class Publisher(val publisherId: String) : PluginBlockEntry
 }
 
-public class LocalPluginBlocklist(
+internal class LocalPluginBlocklist(
     private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) {
@@ -616,7 +616,7 @@ public class LocalPluginBlocklist(
  * user-blocked publishers are refused before any request. URLs without a publisher fall back to
  * [fallback] (URL pins and developer-mode compatibility).
  */
-public class PublisherRepositoryTrustPolicy(
+internal class PublisherRepositoryTrustPolicy(
     private val publishers: PublisherTrustStore,
     private val blocklist: LocalPluginBlocklist,
     private val fallback: RepositoryTrustPolicy,
@@ -658,7 +658,7 @@ public data class ExecutionTierCandidate(
     val developerLocalSource: Boolean = false,
 )
 
-public class ExecutionTierResolver(
+internal class ExecutionTierResolver(
     private val publishers: PublisherTrustStore,
     private val revocations: PublisherRevocationStore,
     private val blocklist: LocalPluginBlocklist,
@@ -743,7 +743,7 @@ public interface PluginExecutionTierGate {
     public suspend fun resolve(candidate: ExecutionTierCandidate): ExecutionTier
 }
 
-public class PublisherExecutionTierGate(
+internal class PublisherExecutionTierGate(
     private val publishers: PublisherTrustStore,
     private val resolver: ExecutionTierResolver,
 ) : PluginExecutionTierGate {
@@ -757,7 +757,7 @@ public class PublisherExecutionTierGate(
 }
 
 /** The tier decision left this package inert: no runtime is built for it. */
-public class PluginExecutionInertException(public val pluginId: String, public val reason: InertReason) :
+internal class PluginExecutionInertException(public val pluginId: String, public val reason: InertReason) :
     ScriptRuntimeUnavailableException("Plugin '$pluginId' cannot run: $reason")
 
 /**
@@ -798,7 +798,7 @@ public data class RepositoryKeyPresentation(
  * The publisher-trust state the app manages as one unit: trusted keys, withdrawals, the block list,
  * and keeping them current from each publisher's signed documents (§8.3, §8.4).
  */
-public class PluginPackageSecurity(
+internal class PluginPackageSecurity(
     public val publishers: PublisherTrustStore,
     public val revocations: PublisherRevocationStore,
     public val blocklist: LocalPluginBlocklist,

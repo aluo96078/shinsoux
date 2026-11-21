@@ -63,7 +63,7 @@ public fun interface RepositoryTrustPolicy {
 }
 
 /** Exact-URL trust roots. An unlisted URL fails closed. */
-public class PinnedRepositoryTrustPolicy(
+internal class PinnedRepositoryTrustPolicy(
     roots: Map<String, RepositoryTrustRoot>,
 ) : RepositoryTrustPolicy {
     private val roots: Map<String, RepositoryTrustRoot> = roots.toMap()
@@ -91,15 +91,15 @@ public object RepositoryTrustPolicies {
  * identity (packages installed from it keep their bare install key, see `PluginInstallKeys`), and
  * the repository is trusted like any other, through its publisher-signed documents.
  */
-public const val OFFICIAL_SHINSOU_REPOSITORY_BASE_URL: String =
+internal const val OFFICIAL_SHINSOU_REPOSITORY_BASE_URL: String =
     "https://raw.githubusercontent.com/aluo96078/shinsou_plugin/refs/heads/master"
 
 /** User-facing canonical index location; repository trust is keyed by its normalized base URL. */
-public const val OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL: String =
+internal const val OFFICIAL_SHINSOU_REPOSITORY_INDEX_URL: String =
     "$OFFICIAL_SHINSOU_REPOSITORY_BASE_URL/index.json"
 
 /** Durable configuration boundary for an out-of-band or user-confirmed author key. */
-public interface RepositoryTrustRootStore {
+internal interface RepositoryTrustRootStore {
     public suspend fun get(normalizedBaseUrl: String): RepositoryTrustRoot?
     /** First pin is immutable; a different key requires [replaceAfterExplicitApproval]. */
     public suspend fun put(normalizedBaseUrl: String, root: RepositoryTrustRoot)
@@ -107,7 +107,7 @@ public interface RepositoryTrustRootStore {
     public suspend fun remove(normalizedBaseUrl: String)
 }
 
-public class KeyValueRepositoryTrustRootStore(
+internal class KeyValueRepositoryTrustRootStore(
     private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) : RepositoryTrustRootStore {
@@ -172,7 +172,7 @@ public class KeyValueRepositoryTrustRootStore(
  * URL. A configured pin always takes precedence so a compatibility URL returns to authenticated
  * verification as soon as the host provisions its trust root.
  */
-public class ConfiguredRepositoryTrustPolicy(
+internal class ConfiguredRepositoryTrustPolicy(
     private val roots: RepositoryTrustRootStore,
     private val allowUnsignedDeveloperCompatibility: (String) -> Boolean = { false },
 ) : RepositoryTrustPolicy {
@@ -186,7 +186,7 @@ public class ConfiguredRepositoryTrustPolicy(
 }
 
 /** Conservative predicate intended only for an explicitly enabled local development workflow. */
-public fun isLocalUnsignedDeveloperRepository(normalizedBaseUrl: String): Boolean {
+internal fun isLocalUnsignedDeveloperRepository(normalizedBaseUrl: String): Boolean {
     val authority = normalizedBaseUrl.substringAfter("://", "").substringBefore('/').substringBeforeLast('@')
     val host = if (authority.startsWith('[')) authority.substringAfter('[').substringBefore(']')
     else authority.substringBefore(':')
@@ -366,7 +366,7 @@ internal fun RepositorySecurityStateStore.isConfigured(): Boolean =
         this !== RepositorySecurityStateStore.Disabled
 
 /** Key-value implementation shared by Android, iOS, Desktop, and future encrypted stores. */
-public class KeyValueRepositorySecurityStateStore(
+internal class KeyValueRepositorySecurityStateStore(
     private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) : RepositorySecurityStateStore {

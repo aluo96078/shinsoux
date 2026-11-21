@@ -7,7 +7,7 @@ import dev.shinsou.kmp.domain.model.TrackStatus
 import dev.shinsou.kmp.domain.model.TrackerAccountState
 import kotlinx.coroutines.CoroutineScope
 
-class TrackerManager(
+internal class TrackerManager(
     adapters: List<TrackerAdapter>,
     private val repository: ShinsouRepository,
     scope: CoroutineScope,

@@ -15,7 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
-public actual fun createPlatformPluginHostResolver(): PluginHostResolver = jvmPluginHostResolver()
+internal actual fun createPlatformPluginHostResolver(): PluginHostResolver = jvmPluginHostResolver()
 
 private fun jvmPluginHostResolver(ioDispatcher: CoroutineDispatcher = Dispatchers.IO): PluginHostResolver = PluginHostResolver { host ->
     withContext(ioDispatcher) {
@@ -26,7 +26,7 @@ private fun jvmPluginHostResolver(ioDispatcher: CoroutineDispatcher = Dispatcher
     }
 }
 
-public actual fun createPlatformPinnedPluginHttpTransport(): PluginHttpTransport? =
+internal actual fun createPlatformPinnedPluginHttpTransport(): PluginHttpTransport? =
     JvmPinnedPluginHttpTransport()
 
 private class JvmPinnedPluginHttpTransport(

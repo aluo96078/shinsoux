@@ -28,13 +28,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.time.TimeSource
 
 /** The protocol namespace is deliberately separate from repository and content contracts. */
-public object PluginSystemEventProtocol {
+internal object PluginSystemEventProtocol {
     public const val NAME: String = "dev.shinsou.system"
     public const val VERSION: Int = 1
 }
 
 /** Names are registry keys, not an open-ended action language. */
-public object PluginSystemEventNames {
+internal object PluginSystemEventNames {
     public const val AUTH_LOGIN_REQUEST: String = "auth.login.request"
     public const val SOURCE_REFRESH_REQUEST: String = "source.refresh.request"
     public const val AUTH_LOGOUT_REQUEST: String = "auth.logout.request"
@@ -65,14 +65,14 @@ public enum class PluginHostPermission {
 }
 
 @Serializable
-public enum class PluginSystemEventLane {
+internal enum class PluginSystemEventLane {
     MODAL,
     REFRESH,
     TRANSIENT,
 }
 
 @Serializable(with = PluginSystemEventKindSerializer::class)
-public enum class PluginSystemEventKind {
+internal enum class PluginSystemEventKind {
     COMMAND,
 
     EVENT,
@@ -81,7 +81,7 @@ public enum class PluginSystemEventKind {
     UNKNOWN,
 }
 
-public object PluginSystemEventKindSerializer : KSerializer<PluginSystemEventKind> {
+internal object PluginSystemEventKindSerializer : KSerializer<PluginSystemEventKind> {
     override val descriptor: SerialDescriptor =
         PrimitiveSerialDescriptor("PluginSystemEventKind", PrimitiveKind.STRING)
 
@@ -259,7 +259,7 @@ public fun interface PluginEventClock {
     public fun nowMillis(): Long
 }
 
-public object SystemPluginEventClock : PluginEventClock {
+internal object SystemPluginEventClock : PluginEventClock {
     private val origin: TimeSource.Monotonic.ValueTimeMark = TimeSource.Monotonic.markNow()
 
     override fun nowMillis(): Long = origin.elapsedNow().inWholeMilliseconds
@@ -319,7 +319,7 @@ public data class PluginSystemEventLimits(
 }
 
 @Serializable
-public data class LoginRequestV1(
+internal data class LoginRequestV1(
     val reasonCode: String? = null,
     val fallbackMessage: String? = null,
 ) {
@@ -330,13 +330,13 @@ public data class LoginRequestV1(
 }
 
 @Serializable
-public enum class SourceRefreshScope {
+internal enum class SourceRefreshScope {
     SELF,
     ACTIVE_CONTEXT,
 }
 
 @Serializable
-public data class SourceRefreshRequestV1(
+internal data class SourceRefreshRequestV1(
     val scope: SourceRefreshScope = SourceRefreshScope.SELF,
     val reasonCode: String? = null,
 ) {
@@ -344,7 +344,7 @@ public data class SourceRefreshRequestV1(
 }
 
 @Serializable
-public data class LogoutRequestV1(
+internal data class LogoutRequestV1(
     val reasonCode: String? = null,
     val fallbackMessage: String? = null,
 ) {
@@ -355,14 +355,14 @@ public data class LogoutRequestV1(
 }
 
 @Serializable
-public enum class PluginDiagnosticSeverity {
+internal enum class PluginDiagnosticSeverity {
     INFO,
     WARNING,
     ERROR,
 }
 
 @Serializable
-public data class DiagnosticMessageV1(
+internal data class DiagnosticMessageV1(
     val code: String,
     val operation: String? = null,
     val severity: PluginDiagnosticSeverity,
@@ -406,7 +406,7 @@ public data class PluginSystemEventNegotiation(
     val hardLimits: PluginSystemEventLimits = PluginSystemEventLimits(),
 )
 
-public class PluginSystemCapabilityNegotiator(
+internal class PluginSystemCapabilityNegotiator(
     private val supportedVersion: Int = PluginSystemEventProtocol.VERSION,
     supportedCapabilities: Set<String> = PluginSystemEventNames.V1,
     private val hardLimits: PluginSystemEventLimits = PluginSystemEventLimits(),
@@ -442,7 +442,7 @@ public data class PluginEventGrantKey(
 )
 
 @Serializable
-public data class PluginEventGrant(
+internal data class PluginEventGrant(
     val key: PluginEventGrantKey,
     val permissions: Set<PluginHostPermission>,
 )
@@ -478,7 +478,7 @@ public data class PluginEventAuthorization(
 )
 
 /** Synchronous authorization seam used by the bounded gateway. */
-public fun interface PluginSystemEventAuthorizer {
+internal fun interface PluginSystemEventAuthorizer {
     public fun authorize(
         scope: BoundPluginScope,
         requiredPermission: PluginHostPermission,
@@ -502,7 +502,7 @@ public fun interface PluginSystemEventAuthorizer {
     ): PluginEventAuthorization = authorize(scope, requiredPermission, requiredSourceCapability)
 }
 
-public object DenyAllPluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
+internal object DenyAllPluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
     override fun authorize(
         scope: BoundPluginScope,
         requiredPermission: PluginHostPermission,
@@ -638,7 +638,7 @@ public class MutablePluginSystemEventAuthorizer : PluginSystemEventAuthorizer {
 }
 
 /** Strict codec shared by both native transports. */
-public class PluginSystemEventCodec(
+internal class PluginSystemEventCodec(
     public val limits: PluginSystemEventLimits = PluginSystemEventLimits(),
 ) {
     private val json: Json = Json {
@@ -768,7 +768,7 @@ public class PluginSystemEventCodec(
 }
 
 @Serializable
-public data class PluginSystemEventEnvelope(
+internal data class PluginSystemEventEnvelope(
     val protocol: String,
     val version: Int,
     val kind: PluginSystemEventKind,
@@ -793,7 +793,7 @@ public data class PluginSystemEventEnvelope(
     }
 }
 
-public class PluginSystemEventCodecException(message: String) : IllegalArgumentException(message)
+internal class PluginSystemEventCodecException(message: String) : IllegalArgumentException(message)
 
 private class JsonStructureValidator(
     private val input: String,

@@ -9,7 +9,7 @@ import kotlinx.serialization.json.Json
 
 /** Details and the full unit list of a library title, as last seen from its source. */
 @Serializable
-public data class CachedExtensionPublicationV2(
+internal data class CachedExtensionPublicationV2(
     val sourceCanonicalId: String,
     val publication: RemotePublicationV2,
     val units: List<RemoteUnitV2>,
@@ -21,7 +21,7 @@ public data class CachedExtensionPublicationV2(
  * once and offline, and replaces it whenever a fresh load succeeds. Holds metadata only; chapter
  * bodies live in the content foundation.
  */
-public class ExtensionPublicationCacheV2(private val fileSystem: AppFileSystem) {
+internal class ExtensionPublicationCacheV2(private val fileSystem: AppFileSystem) {
     public suspend fun read(sourceKey: SourceKey, remotePublicationId: String): CachedExtensionPublicationV2? {
         val bytes = fileSystem.read(path(sourceKey, remotePublicationId)) ?: return null
         // A damaged or outdated file is just a cache miss; the next successful load rewrites it.

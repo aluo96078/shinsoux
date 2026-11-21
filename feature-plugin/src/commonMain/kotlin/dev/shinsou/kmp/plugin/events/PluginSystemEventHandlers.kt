@@ -13,11 +13,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /** Narrow exact-source host ports. Implementations cannot widen a plugin request to a repository. */
-public fun interface PluginLoginIntentPort {
+internal fun interface PluginLoginIntentPort {
     public suspend fun request(target: ExactPluginSourceTarget, eventId: String, payload: LoginRequestV1): PluginEventOutcome
 }
 
-public fun interface PluginSourceRefreshPort {
+internal fun interface PluginSourceRefreshPort {
     public suspend fun refreshExactSource(
         target: ExactPluginSourceTarget,
         contextRef: String?,
@@ -25,7 +25,7 @@ public fun interface PluginSourceRefreshPort {
     ): PluginEventOutcome
 }
 
-public fun interface PluginLogoutPort {
+internal fun interface PluginLogoutPort {
     public suspend fun logoutExactSource(
         target: ExactPluginSourceTarget,
         eventId: String,
@@ -33,7 +33,7 @@ public fun interface PluginLogoutPort {
     ): PluginEventOutcome
 }
 
-public fun interface PluginDiagnosticPort {
+internal fun interface PluginDiagnosticPort {
     public suspend fun report(
         target: ExactPluginSourceTarget,
         eventId: String,
@@ -42,7 +42,7 @@ public fun interface PluginDiagnosticPort {
     ): PluginEventOutcome
 }
 
-public data class PluginSystemEventHostPorts(
+internal data class PluginSystemEventHostPorts(
     val login: PluginLoginIntentPort,
     val refresh: PluginSourceRefreshPort,
     val logout: PluginLogoutPort,
@@ -50,7 +50,7 @@ public data class PluginSystemEventHostPorts(
 )
 
 /** Host-owned exact-source invalidation generations; consumers key reloads by full SourceKey. */
-public class ExactSourceRefreshInvalidations {
+internal class ExactSourceRefreshInvalidations {
     private val mutableGenerations = MutableStateFlow<Map<SourceKey, Long>>(emptyMap())
     private val targets = mutableMapOf<SourceKey, ExactPluginSourceTarget>()
     private val lock = SynchronousLock()
@@ -78,7 +78,7 @@ public class ExactSourceRefreshInvalidations {
     }
 }
 
-public data class SafePluginDiagnosticRecord(
+internal data class SafePluginDiagnosticRecord(
     val artifactIdentity: PluginArtifactIdentity,
     val sourceKey: SourceKey,
     val eventId: String,
@@ -91,7 +91,7 @@ public data class SafePluginDiagnosticRecord(
 )
 
 /** Runtime-bounded, non-persistent diagnostic log. Raw exceptions and secrets have no field here. */
-public class BoundedPluginDiagnosticLog(
+internal class BoundedPluginDiagnosticLog(
     private val capacity: Int = 64,
     private val ttlMillis: Long = 60_000,
     private val nowMillis: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
@@ -146,7 +146,7 @@ public class BoundedPluginDiagnosticLog(
 }
 
 /** Registers the four system-v1 messages in host code; plugins cannot extend this registry. */
-public fun PluginSystemEventHandlerRegistry.registerV1HostHandlers(
+internal fun PluginSystemEventHandlerRegistry.registerV1HostHandlers(
     ports: PluginSystemEventHostPorts,
     json: Json = Json { ignoreUnknownKeys = false; explicitNulls = true },
 ) {

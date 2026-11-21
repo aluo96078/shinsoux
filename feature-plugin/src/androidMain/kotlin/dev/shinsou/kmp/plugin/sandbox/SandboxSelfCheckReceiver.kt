@@ -29,7 +29,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * installed app can start it. It touches no user data: a built-in script, an in-memory store and
  * no network. The broadcast's result data is [SELF_CHECK_PASSED], or what failed (its kind only).
  */
-public class SandboxSelfCheckReceiver : BroadcastReceiver() {
+internal class SandboxSelfCheckReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val pending = goAsync()
         val app = context.applicationContext

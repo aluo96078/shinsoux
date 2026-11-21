@@ -43,7 +43,7 @@ public data class LegacyLoginCredentialsV2(
  * Executable v1 manga compatibility adapter. The numeric id is retained only as the lossless
  * legacy projection; v2 lookup always uses the complete opaque [SourceKey].
  */
-public class LegacyMangaExtensionSourceV2(
+internal class LegacyMangaExtensionSourceV2(
     private val source: CatalogueSource,
     packageId: String,
     sourceKey: SourceKey = SourceKey.fromLegacy(packageId, source.id),

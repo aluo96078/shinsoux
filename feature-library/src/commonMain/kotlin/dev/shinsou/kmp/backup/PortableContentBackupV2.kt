@@ -243,6 +243,43 @@ public data class BackupV2AttachmentCandidate(
             "Backup attachment and rights scope do not match"
         }
     }
+
+    public companion object {
+        /**
+         * One candidate per manifest revision of every unit of [publications], bound to the rights
+         * grant of the acquisition that holds it.
+         */
+        public fun allOf(publications: List<Publication>): List<BackupV2AttachmentCandidate> =
+            publications.flatMap { publication ->
+                publication.acquisitions.flatMap { acquisition ->
+                    acquisition.units.flatMap { unit ->
+                        unit.manifestRevisions.map { manifest ->
+                            val attachment = ManifestAttachment(
+                                owner = ContentManifestOwner(
+                                    publicationKey = publication.key,
+                                    acquisitionId = acquisition.id,
+                                    unitKey = unit.key,
+                                ),
+                                manifest = manifest,
+                            )
+                            BackupV2AttachmentCandidate(
+                                attachment = attachment,
+                                access = ContentAccessRequest(
+                                    grantReference = acquisition.rightsGrantRef,
+                                    scope = RightsScope(
+                                        publicationId = publication.key,
+                                        acquisitionId = acquisition.id,
+                                        unitId = unit.key,
+                                        manifestId = manifest.manifestId,
+                                        contentRevision = manifest.contentRevision,
+                                    ),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+    }
 }
 
 public data class BackupV2CreatePolicy(

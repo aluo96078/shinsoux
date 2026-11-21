@@ -25,7 +25,7 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 /** Stable status reported after the asynchronous handler has run. */
-public enum class PluginEventExecutionStatus {
+internal enum class PluginEventExecutionStatus {
     SUCCEEDED,
     CANCELLED,
     FAILED,
@@ -33,7 +33,7 @@ public enum class PluginEventExecutionStatus {
     SUPPRESSED,
 }
 
-public data class PluginEventOutcome(
+internal data class PluginEventOutcome(
     val status: PluginEventExecutionStatus,
     val errorCode: String? = null,
 ) {
@@ -57,7 +57,7 @@ public data class PluginEventOutcome(
     }
 }
 
-public data class PluginEventExecutionReport(
+internal data class PluginEventExecutionReport(
     val eventId: String,
     val eventName: String,
     val status: PluginEventExecutionStatus,
@@ -66,13 +66,13 @@ public data class PluginEventExecutionReport(
     val sourceKey: dev.shinsou.kmp.domain.model.SourceKey? = null,
 )
 
-public fun interface PluginEventObserver {
+internal fun interface PluginEventObserver {
     public fun onCompleted(report: PluginEventExecutionReport)
     public fun onRuntimeClosed(scope: BoundPluginScope) {}
     public fun onArtifactInvalidated(identity: PluginArtifactIdentity) {}
 }
 
-public class PluginEventObserverGroup(
+internal class PluginEventObserverGroup(
     private vararg val observers: PluginEventObserver,
 ) : PluginEventObserver {
     override fun onCompleted(report: PluginEventExecutionReport) = observers.forEach {
@@ -87,12 +87,12 @@ public class PluginEventObserverGroup(
 }
 
 /** Host-owned issuer/validator for short-lived context handles. */
-public fun interface PluginEventContextReferenceValidator {
+internal fun interface PluginEventContextReferenceValidator {
     public fun accepts(scope: BoundPluginScope, contextRef: String): Boolean
 }
 
 /** Context visible to a typed host handler; no raw wire envelope or plugin-provided identity. */
-public data class AuthorizedPluginEventContext(
+internal data class AuthorizedPluginEventContext(
     public val scope: BoundPluginScope,
     public val eventId: String,
     public val eventName: String,
@@ -102,7 +102,7 @@ public data class AuthorizedPluginEventContext(
 )
 
 /** Host-registered, typed event handler. Plugins cannot add registry entries. */
-public interface PluginSystemEventHandler<P : Any> {
+internal interface PluginSystemEventHandler<P : Any> {
     public val name: String
     public val kind: PluginSystemEventKind
     public val payloadVersion: Int
@@ -119,7 +119,7 @@ public interface PluginSystemEventHandler<P : Any> {
 }
 
 /** Convenient typed adapter for host code and tests. */
-public class TypedPluginSystemEventHandler<P : Any>(
+internal class TypedPluginSystemEventHandler<P : Any>(
     override val name: String,
     override val kind: PluginSystemEventKind,
     override val payloadVersion: Int,
@@ -151,7 +151,7 @@ private data class HandlerKey(
 )
 
 /** Registry key is protocol + kind + name + payload version; action fallback is impossible. */
-public class PluginSystemEventHandlerRegistry {
+internal class PluginSystemEventHandlerRegistry {
     private val handlers = linkedMapOf<HandlerKey, PluginSystemEventHandler<*>>()
 
     public fun register(handler: PluginSystemEventHandler<*>): Unit {
@@ -229,7 +229,7 @@ private data class TokenBucket(
  * method performs decoding, authorization, dedupe, throttling and a non-blocking channel send;
  * handlers always run after the native/plugin invocation has returned.
  */
-public class PluginSystemEventGateway(
+internal class PluginSystemEventGateway(
     public val registry: PluginSystemEventHandlerRegistry,
     private val authorizer: PluginSystemEventAuthorizer = DenyAllPluginSystemEventAuthorizer,
     public val codec: PluginSystemEventCodec = PluginSystemEventCodec(),

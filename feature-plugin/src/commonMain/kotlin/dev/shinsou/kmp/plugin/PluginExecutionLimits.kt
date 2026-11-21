@@ -244,7 +244,7 @@ internal fun pluginJsonShapeWithin(
 }
 
 /** Stable error used when a plugin exceeds a host-owned resource boundary. */
-public class PluginResourceLimitException(message: String) : IllegalStateException(message)
+internal class PluginResourceLimitException(message: String) : IllegalStateException(message)
 
 internal fun boundedPluginLogMessage(message: String, maxBytes: Int): String {
     if (pluginUtf8ByteCountAtMost(message, maxBytes) != null) return message
