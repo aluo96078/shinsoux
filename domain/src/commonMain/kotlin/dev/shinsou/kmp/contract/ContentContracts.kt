@@ -5,22 +5,22 @@ import dev.shinsou.kmp.domain.model.ReaderImageTransform
 // R4-1 (docs/architecture/0006): host contracts shared by the plugin, local and UI layers.
 
 /** Immutable random-access picker result; large files need not live in the Kotlin heap. */
-interface ImportedDocumentSource {
-    val byteSize: Long
+public interface ImportedDocumentSource {
+    public val byteSize: Long
     /** Returns exactly [byteCount] bytes or throws when the provider changed/truncated. */
-    fun read(offset: Long, byteCount: Int): ByteArray
+    public fun read(offset: Long, byteCount: Int): ByteArray
 }
 
-class ImportedDocument(
-    val name: String,
-    val source: ImportedDocumentSource,
+public class ImportedDocument(
+    public val name: String,
+    public val source: ImportedDocumentSource,
 ) {
-    constructor(name: String, contents: ByteArray) : this(name, ByteArrayImportedDocumentSource(contents))
+    public constructor(name: String, contents: ByteArray) : this(name, ByteArrayImportedDocumentSource(contents))
 
-    val byteSize: Long get() = source.byteSize
+    public val byteSize: Long get() = source.byteSize
 
     /** Compatibility materialization for bounded images, text and legacy callers. */
-    val contents: ByteArray
+    public val contents: ByteArray
         get() {
             require(byteSize <= Int.MAX_VALUE.toLong()) { "Imported document cannot fit in memory" }
             val output = ByteArray(byteSize.toInt())
@@ -53,7 +53,7 @@ private class ByteArrayImportedDocumentSource(
 private const val IMPORTED_DOCUMENT_READ_CHUNK_BYTES: Int = 64 * 1024
 
 /** One title [ContentCallbacks.importLocalDocuments] added to the built-in local source. */
-data class LocalImportResult(
+public data class LocalImportResult(
     val mangaId: Long,
     val chapterId: Long,
     val title: String,
@@ -61,43 +61,43 @@ data class LocalImportResult(
 )
 
 /** Network/source operations needed by detail, updates, downloads, and the reader. */
-interface ContentCallbacks {
+public interface ContentCallbacks {
     /** Copies selected image or ZIP-based comic documents into the built-in source 0. */
-    suspend fun importLocalDocuments(
+    public suspend fun importLocalDocuments(
         documents: List<ImportedDocument>,
         /** Explicit opt-in for rights-allowed TXT/EPUB bodies; ordinary import remains device-only. */
         syncContentBodies: Boolean = false,
     ): List<LocalImportResult> = emptyList()
 
-    suspend fun refreshLibrary(mangaIds: Set<Long>)
+    public suspend fun refreshLibrary(mangaIds: Set<Long>)
 
-    suspend fun refreshManga(mangaId: Long)
+    public suspend fun refreshManga(mangaId: Long)
 
     /** Resolves a persisted source-relative manga URL into the canonical external URL. */
-    suspend fun resolveMangaOriginalUrl(mangaId: Long): String?
+    public suspend fun resolveMangaOriginalUrl(mangaId: Long): String?
 
     /** Resolves a persisted chapter URL into a safe HTTP(S) URL suitable for an external browser. */
-    suspend fun resolveChapterOriginalUrl(mangaId: Long, chapterId: Long): String?
+    public suspend fun resolveChapterOriginalUrl(mangaId: Long, chapterId: Long): String?
 
-    suspend fun loadReaderChapter(mangaId: Long, chapterId: Long): ReaderChapter
+    public suspend fun loadReaderChapter(mangaId: Long, chapterId: Long): ReaderChapter
 
-    suspend fun enqueueDownload(mangaId: Long, chapterId: Long)
+    public suspend fun enqueueDownload(mangaId: Long, chapterId: Long)
 
-    suspend fun retryDownload(itemId: String)
+    public suspend fun retryDownload(itemId: String)
 
-    suspend fun removeDownload(itemId: String)
+    public suspend fun removeDownload(itemId: String)
 
     /** Removes a queue entry unless it finished downloading by the time the removal runs. */
-    suspend fun removeUnfinishedDownload(itemId: String) = removeDownload(itemId)
+    public suspend fun removeUnfinishedDownload(itemId: String): Unit = removeDownload(itemId)
 
-    suspend fun reorderDownloads(orderedIds: List<String>)
+    public suspend fun reorderDownloads(orderedIds: List<String>)
 
-    suspend fun clearCompletedDownloads()
+    public suspend fun clearCompletedDownloads()
 
-    suspend fun pauseDownloads(paused: Boolean)
+    public suspend fun pauseDownloads(paused: Boolean)
 
-    companion object {
-        val None: ContentCallbacks = EmptyContentCallbacks()
+    public companion object {
+        public val None: ContentCallbacks = EmptyContentCallbacks()
     }
 }
 
@@ -106,21 +106,21 @@ interface ContentCallbacks {
  * carry no defaults (R4-2, docs/architecture/0006) so a production implementation cannot leave
  * one out by accident; [ContentCallbacks.None] and test fakes extend this class instead.
  */
-open class EmptyContentCallbacks : ContentCallbacks {
-    override suspend fun refreshLibrary(mangaIds: Set<Long>) = Unit
-    override suspend fun refreshManga(mangaId: Long) = Unit
+public open class EmptyContentCallbacks : ContentCallbacks {
+    override suspend fun refreshLibrary(mangaIds: Set<Long>): Unit = Unit
+    override suspend fun refreshManga(mangaId: Long): Unit = Unit
     override suspend fun resolveMangaOriginalUrl(mangaId: Long): String? = null
     override suspend fun resolveChapterOriginalUrl(mangaId: Long, chapterId: Long): String? = null
     override suspend fun loadReaderChapter(mangaId: Long, chapterId: Long): ReaderChapter = ReaderChapter()
-    override suspend fun enqueueDownload(mangaId: Long, chapterId: Long) = Unit
-    override suspend fun retryDownload(itemId: String) = Unit
-    override suspend fun removeDownload(itemId: String) = Unit
-    override suspend fun reorderDownloads(orderedIds: List<String>) = Unit
-    override suspend fun clearCompletedDownloads() = Unit
-    override suspend fun pauseDownloads(paused: Boolean) = Unit
+    override suspend fun enqueueDownload(mangaId: Long, chapterId: Long): Unit = Unit
+    override suspend fun retryDownload(itemId: String): Unit = Unit
+    override suspend fun removeDownload(itemId: String): Unit = Unit
+    override suspend fun reorderDownloads(orderedIds: List<String>): Unit = Unit
+    override suspend fun clearCompletedDownloads(): Unit = Unit
+    override suspend fun pauseDownloads(paused: Boolean): Unit = Unit
 }
 
-data class ReaderChapter(
+public data class ReaderChapter(
     val pages: List<ReaderPage> = emptyList(),
     val referer: String? = null,
     val sourceHeaders: Map<String, String> = emptyMap(),
@@ -128,7 +128,7 @@ data class ReaderChapter(
     val typedSession: TypedReaderContentSession? = null,
 )
 
-data class ReaderPage(
+public data class ReaderPage(
     val index: Int,
     val imageUrl: String = "",
     /** Host-fetched bytes for plugin-controlled remote content; Coil never sees the remote URL. */
@@ -149,5 +149,5 @@ data class ReaderPage(
 )
 
 /** Display-only URL for diagnostics: drops the `#...` fragment, which can carry request headers. */
-fun diagnosticUrl(url: String?): String? =
+public fun diagnosticUrl(url: String?): String? =
     url?.substringBefore('#')?.trim()?.takeIf(String::isNotEmpty)

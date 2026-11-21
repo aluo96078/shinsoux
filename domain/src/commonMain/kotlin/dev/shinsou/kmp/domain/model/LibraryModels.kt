@@ -3,7 +3,7 @@ package dev.shinsou.kmp.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Category(
+public data class Category(
     val id: Long = 0,
     val name: String = "",
     val sort: Int = 0,
@@ -18,23 +18,23 @@ data class Category(
         get() = if (flags and SORT_DIRECTION_MASK == 0L) SortDirection.ASCENDING else SortDirection.DESCENDING
     val effectiveSort: LibrarySort get() = LibrarySort(sortTypeOverride, sortDirectionOverride)
 
-    fun withDisplayMode(mode: LibraryDisplayMode): Category = copy(
+    public fun withDisplayMode(mode: LibraryDisplayMode): Category = copy(
         flags = (flags and DISPLAY_MODE_MASK.inv()) or mode.rawValue.toLong(),
     )
 
-    fun withSortType(type: LibrarySortType): Category = copy(
+    internal fun withSortType(type: LibrarySortType): Category = copy(
         flags = (flags and SORT_TYPE_MASK.inv()) or (type.rawValue.toLong() shl SORT_TYPE_SHIFT),
     )
 
-    fun withSortDirection(direction: SortDirection): Category = copy(
+    internal fun withSortDirection(direction: SortDirection): Category = copy(
         flags = (flags and SORT_DIRECTION_MASK.inv()) or
             (if (direction == SortDirection.DESCENDING) 1L shl SORT_DIRECTION_SHIFT else 0L),
     )
 
-    fun withSort(sort: LibrarySort): Category = withSortType(sort.type).withSortDirection(sort.direction)
+    public fun withSort(sort: LibrarySort): Category = withSortType(sort.type).withSortDirection(sort.direction)
 
-    companion object {
-        val Default = Category(id = 0, name = "Default")
+    public companion object {
+        public val Default: Category = Category(id = 0, name = "Default")
 
         private const val DISPLAY_MODE_MASK: Long = 0x03
         private const val SORT_TYPE_MASK: Long = 0x3C
@@ -45,26 +45,26 @@ data class Category(
 }
 
 @Serializable
-enum class LibraryDisplayMode(val rawValue: Int) {
+public enum class LibraryDisplayMode(public val rawValue: Int) {
     COMPACT_GRID(0),
     COMFORTABLE_GRID(1),
     LIST(2),
     COVER_ONLY_GRID(3);
 
-    companion object {
-        fun fromRaw(rawValue: Int): LibraryDisplayMode = entries.firstOrNull { it.rawValue == rawValue } ?: COMPACT_GRID
+    public companion object {
+        internal fun fromRaw(rawValue: Int): LibraryDisplayMode = entries.firstOrNull { it.rawValue == rawValue } ?: COMPACT_GRID
     }
 }
 
 @Serializable
-data class LibrarySort(
+public data class LibrarySort(
     val type: LibrarySortType = LibrarySortType.ALPHABETICAL,
     val direction: SortDirection = SortDirection.ASCENDING,
     val randomSeed: Long = 0,
 )
 
 @Serializable
-enum class LibrarySortType(val rawValue: Int) {
+public enum class LibrarySortType(public val rawValue: Int) {
     ALPHABETICAL(0),
     LAST_READ(1),
     LAST_UPDATE(2),
@@ -76,21 +76,21 @@ enum class LibrarySortType(val rawValue: Int) {
     TRACKER_MEAN(8),
     RANDOM(9);
 
-    companion object {
-        fun fromRaw(rawValue: Int): LibrarySortType = entries.firstOrNull { it.rawValue == rawValue } ?: ALPHABETICAL
+    public companion object {
+        internal fun fromRaw(rawValue: Int): LibrarySortType = entries.firstOrNull { it.rawValue == rawValue } ?: ALPHABETICAL
     }
 }
 
 @Serializable
-enum class SortDirection(val rawValue: Int) {
+public enum class SortDirection(public val rawValue: Int) {
     ASCENDING(0),
     DESCENDING(1);
 
-    fun toggled(): SortDirection = if (this == ASCENDING) DESCENDING else ASCENDING
+    public fun toggled(): SortDirection = if (this == ASCENDING) DESCENDING else ASCENDING
 }
 
 @Serializable
-data class LibraryFilter(
+public data class LibraryFilter(
     val downloaded: LibraryFilterState = LibraryFilterState.DISABLED,
     val unread: LibraryFilterState = LibraryFilterState.DISABLED,
     val started: LibraryFilterState = LibraryFilterState.DISABLED,
@@ -103,9 +103,9 @@ data class LibraryFilter(
             started != LibraryFilterState.DISABLED || bookmarked != LibraryFilterState.DISABLED ||
             completed != LibraryFilterState.DISABLED || trackerFilters.values.any { it != LibraryFilterState.DISABLED }
 
-    fun trackerFilter(trackerId: Int): LibraryFilterState = trackerFilters[trackerId] ?: LibraryFilterState.DISABLED
+    public fun trackerFilter(trackerId: Int): LibraryFilterState = trackerFilters[trackerId] ?: LibraryFilterState.DISABLED
 
-    fun withTrackerFilter(trackerId: Int, state: LibraryFilterState): LibraryFilter {
+    public fun withTrackerFilter(trackerId: Int, state: LibraryFilterState): LibraryFilter {
         val updated = trackerFilters.toMutableMap()
         if (state == LibraryFilterState.DISABLED) updated.remove(trackerId) else updated[trackerId] = state
         return copy(trackerFilters = updated)
@@ -113,12 +113,12 @@ data class LibraryFilter(
 }
 
 @Serializable
-enum class LibraryFilterState {
+public enum class LibraryFilterState {
     DISABLED,
     INCLUDE,
     EXCLUDE;
 
-    fun next(): LibraryFilterState = when (this) {
+    public fun next(): LibraryFilterState = when (this) {
         DISABLED -> INCLUDE
         INCLUDE -> EXCLUDE
         EXCLUDE -> DISABLED
@@ -126,13 +126,13 @@ enum class LibraryFilterState {
 }
 
 @Serializable
-data class MangaCategory(
+public data class MangaCategory(
     val mangaId: Long,
     val categoryId: Long,
 )
 
 @Serializable
-data class LibraryManga(
+public data class LibraryManga(
     val manga: Manga,
     val totalChapters: Int = 0,
     val readCount: Int = 0,
@@ -149,7 +149,7 @@ data class LibraryManga(
 }
 
 @Serializable
-data class LibraryItem(
+public data class LibraryItem(
     val libraryManga: LibraryManga,
     val downloadCount: Long = 0,
     val isLocal: Boolean = false,
@@ -159,7 +159,7 @@ data class LibraryItem(
     val id: Long get() = libraryManga.id
     val unreadCount: Long get() = libraryManga.unreadCount.toLong()
 
-    fun matches(query: String): Boolean {
+    public fun matches(query: String): Boolean {
         val normalized = query.trim().lowercase()
         if (normalized.isEmpty()) return true
         if (normalized.startsWith("id:")) return libraryManga.manga.id.toString() == normalized.removePrefix("id:")
@@ -172,13 +172,13 @@ data class LibraryItem(
     }
 }
 
-object TrackerIds {
-    const val MY_ANIME_LIST = 1
-    const val KITSU = 3
-    const val SHIKIMORI = 4
-    const val BANGUMI = 5
-    const val MANGA_UPDATES = 6
-    const val KOMGA = 7
-    const val KAVITA = 8
-    const val SUWAYOMI = 9
+public object TrackerIds {
+    public const val MY_ANIME_LIST: Int = 1
+    internal const val KITSU: Int = 3
+    internal const val SHIKIMORI: Int = 4
+    internal const val BANGUMI: Int = 5
+    internal const val MANGA_UPDATES: Int = 6
+    public const val KOMGA: Int = 7
+    public const val KAVITA: Int = 8
+    public const val SUWAYOMI: Int = 9
 }

@@ -3,7 +3,7 @@ package dev.shinsou.kmp.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class History(
+public data class History(
     val id: Long = -1,
     val chapterId: Long,
     val lastRead: Long = 0,
@@ -15,7 +15,7 @@ data class History(
 )
 
 @Serializable
-data class HistoryItem(
+public data class HistoryItem(
     val manga: Manga,
     val chapter: Chapter,
     val lastRead: Long,
@@ -25,7 +25,7 @@ data class HistoryItem(
 }
 
 @Serializable
-data class LibraryUpdate(
+public data class LibraryUpdate(
     val mangaId: Long,
     val chapterId: Long,
     val discoveredAt: Long = 0,
@@ -34,7 +34,7 @@ data class LibraryUpdate(
 }
 
 @Serializable
-data class UpdateItem(
+public data class UpdateItem(
     val manga: Manga,
     val chapter: Chapter,
     val discoveredAt: Long = 0,
@@ -43,7 +43,7 @@ data class UpdateItem(
 }
 
 @Serializable
-data class Track(
+public data class Track(
     val id: Long = -1,
     val mangaId: Long = -1,
     val trackerId: Int = 0,
@@ -59,7 +59,7 @@ data class Track(
 )
 
 @Serializable
-data class TrackSearch(
+public data class TrackSearch(
     val id: Long,
     val title: String,
     val totalChapters: Int = 0,
@@ -71,7 +71,7 @@ data class TrackSearch(
 )
 
 @Serializable
-enum class TrackStatus(val rawValue: Int) {
+public enum class TrackStatus(public val rawValue: Int) {
     READING(1),
     COMPLETED(2),
     ON_HOLD(3),
@@ -81,7 +81,7 @@ enum class TrackStatus(val rawValue: Int) {
 }
 
 @Serializable
-data class ExtensionRepo(
+public data class ExtensionRepo(
     val baseUrl: String,
     val name: String,
     val shortName: String? = null,

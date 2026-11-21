@@ -7,7 +7,7 @@ package dev.shinsou.kmp.domain.model
  */
 
 /** Prevents a compatibility row already handed to a native/standalone source from being rebuilt. */
-fun shuyueCompatibilityProjectionHandoffMarker(publicationKey: PublicationKey): String =
+public fun shuyueCompatibilityProjectionHandoffMarker(publicationKey: PublicationKey): String =
     "$SHUYUE_COMPATIBILITY_PROJECTION_HANDOFF_PREFIX${publicationKey.value}"
 
 private const val SHUYUE_COMPATIBILITY_PROJECTION_HANDOFF_PREFIX: String =

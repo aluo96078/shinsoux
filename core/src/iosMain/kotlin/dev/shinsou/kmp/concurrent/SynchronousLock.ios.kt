@@ -2,9 +2,9 @@ package dev.shinsou.kmp.concurrent
 
 import platform.Foundation.NSRecursiveLock
 
-actual class SynchronousLock actual constructor() {
+public actual class SynchronousLock actual constructor() {
     private val delegate = NSRecursiveLock()
 
-    actual fun lock() = delegate.lock()
-    actual fun unlock() = delegate.unlock()
+    public actual fun lock(): Unit = delegate.lock()
+    public actual fun unlock(): Unit = delegate.unlock()
 }

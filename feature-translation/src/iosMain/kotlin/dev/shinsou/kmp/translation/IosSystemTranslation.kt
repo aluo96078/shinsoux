@@ -47,7 +47,7 @@ public fun registerAppleTranslation(bridge: AppleTranslationBridge) {
  * [SystemTranslationEngine] over the registered bridge. Read at each call, so it works however
  * early the app's services were built relative to the Swift registration.
  */
-object IosSystemTranslationEngine : SystemTranslationEngine {
+public object IosSystemTranslationEngine : SystemTranslationEngine {
     override val name: String get() = AppleTranslationRegistry.bridge?.engineName ?: "apple"
 
     private fun bridge(): AppleTranslationBridge =

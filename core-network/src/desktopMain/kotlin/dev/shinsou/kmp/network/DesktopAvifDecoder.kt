@@ -23,7 +23,7 @@ import org.jetbrains.skia.ImageInfo
  * otherwise reaches Coil and fails at the final decode step. Using the system framework keeps the
  * application self-contained and does not require Homebrew or a separately installed codec.
  */
-class DesktopAvifDecoder private constructor(
+public class DesktopAvifDecoder private constructor(
     private val result: SourceFetchResult,
     private val decoder: MacOsAvifImageDecoder,
 ) : Decoder {
@@ -44,12 +44,12 @@ class DesktopAvifDecoder private constructor(
         return DecodeResult(image = bitmap.asImage(), isSampled = false)
     }
 
-    class Factory internal constructor(
+    public class Factory internal constructor(
         private val platformName: String,
         private val decoderProvider: () -> MacOsAvifImageDecoder,
     ) : Decoder.Factory {
         /** The host's own decoder: macOS ImageIO, and no AVIF decoding elsewhere. */
-        constructor() : this(System.getProperty("os.name").orEmpty(), { JnaMacOsAvifImageDecoder.instance })
+        public constructor() : this(System.getProperty("os.name").orEmpty(), { JnaMacOsAvifImageDecoder.instance })
 
         override fun create(
             result: SourceFetchResult,

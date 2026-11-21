@@ -7,7 +7,7 @@
     <ID>ComplexCondition:ReadingLocator.kt:TextQuote$prefixStart &lt; 0 || !isUtf16Boundary(text, prefixStart) || !isUtf16Boundary(text, offset) || !text.regionMatches(prefixStart, prefix, 0, prefix.length)</ID>
     <ID>ComplexCondition:ReadingLocator.kt:TextQuote$suffixStart &gt; text.length || suffix.length &gt; text.length - suffixStart || !isUtf16Boundary(text, suffixStart) || !isUtf16Boundary(text, suffixStart + suffix.length) || !text.regionMatches(suffixStart, suffix, 0, suffix.length)</ID>
     <ID>CyclomaticComplexMethod:ContentManifest.kt:EpubPackage$public fun validate: Unit</ID>
-    <ID>CyclomaticComplexMethod:Manga.kt:fun Manga.applying: Manga</ID>
+    <ID>CyclomaticComplexMethod:Manga.kt:public fun Manga.applying: Manga</ID>
     <ID>CyclomaticComplexMethod:ReadingLocator.kt:TextQuote$public fun matchesAt: Boolean</ID>
     <ID>CyclomaticComplexMethod:ReadingLocator.kt:private fun requireCfiPath</ID>
     <ID>IgnoredReturnValue:ContentRights.kt:InMemoryRightsAuthority$remove(id)</ID>
@@ -25,15 +25,15 @@
     <ID>ReturnCount:ContentRights.kt:InMemoryRightsAuthority$override fun resolve: VerifiedRightsGrant?</ID>
     <ID>ReturnCount:ContentRights.kt:InMemoryRightsAuthority$public fun issueProtectionAuthorization: ProtectionAuthorization?</ID>
     <ID>ReturnCount:ContentRights.kt:VerifiedRightsGrant$public fun allows: Boolean</ID>
-    <ID>ReturnCount:ExtensionLibraryBindingV2.kt:fun decodeExtensionLibraryPublicationUrl: ExtensionLibraryBindingV2?</ID>
-    <ID>ReturnCount:LibraryModels.kt:LibraryItem$fun matches: Boolean</ID>
+    <ID>ReturnCount:ExtensionLibraryBindingV2.kt:public fun decodeExtensionLibraryPublicationUrl: ExtensionLibraryBindingV2?</ID>
+    <ID>ReturnCount:LibraryModels.kt:LibraryItem$public fun matches: Boolean</ID>
     <ID>ReturnCount:ReadingLocator.kt:TextQuote$public fun findIn: Int?</ID>
     <ID>ReturnCount:ReadingLocator.kt:TextQuote$public fun matchesAt: Boolean</ID>
     <ID>ReturnCount:ReadingLocator.kt:private fun isWellFormedText: Boolean</ID>
-    <ID>ReturnCount:SourceFailureMarker.kt:fun Throwable.sourceFailureMarker: String?</ID>
+    <ID>ReturnCount:SourceFailureMarker.kt:public fun Throwable.sourceFailureMarker: String?</ID>
     <ID>ReturnCount:UnifiedReaderNavigation.kt:private fun isWellFormedUtf16: Boolean</ID>
-    <ID>ThrowsCount:ImportedDocumentReader.kt:fun readBoundedImportedBytes: ByteArray</ID>
-    <ID>ThrowsCount:ImportedDocumentReader.kt:fun requireImportedDocumentSize: Long</ID>
+    <ID>ThrowsCount:ImportedDocumentReader.kt:public fun readBoundedImportedBytes: ByteArray</ID>
+    <ID>ThrowsCount:ImportedDocumentReader.kt:public fun requireImportedDocumentSize: Long</ID>
     <ID>ThrowsCount:LegacyMangaMapper.kt:InMemoryPortableAliasLedger$override fun resolveOrBindAll: List&lt;PortableAliasBinding&gt;</ID>
     <ID>ThrowsCount:LegacyMangaMapper.kt:LegacyMangaMapper$public fun toLegacy: LegacyMangaAggregateV1</ID>
     <ID>TooGenericExceptionCaught:ImportedDocumentReader.kt:error: Throwable</ID>

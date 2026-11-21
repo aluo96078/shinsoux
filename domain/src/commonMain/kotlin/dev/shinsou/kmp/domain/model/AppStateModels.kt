@@ -3,7 +3,7 @@ package dev.shinsou.kmp.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class AppSettings(
+public data class AppSettings(
     val general: GeneralSettings = GeneralSettings(),
     val appearance: AppearanceSettings = AppearanceSettings(),
     val library: LibrarySettings = LibrarySettings(),
@@ -21,7 +21,7 @@ data class AppSettings(
 
 /** Checking GitHub for a newer version of the app; off until the user switches it on. */
 @Serializable
-data class UpdateSettings(
+public data class UpdateSettings(
     val checkForUpdates: Boolean = false,
     /** Betas too: the newest version, beta or release, is offered. */
     val includeBeta: Boolean = false,
@@ -30,7 +30,7 @@ data class UpdateSettings(
 )
 
 @Serializable
-data class GeneralSettings(
+public data class GeneralSettings(
     val languagePreference: String? = null,
     val dateFormat: String = "MM/dd/yyyy",
     val confirmBeforeClosing: Boolean = true,
@@ -38,7 +38,7 @@ data class GeneralSettings(
 )
 
 @Serializable
-enum class MainSection {
+public enum class MainSection {
     LIBRARY,
     UPDATES,
     HISTORY,
@@ -47,7 +47,7 @@ enum class MainSection {
 }
 
 @Serializable
-data class AppearanceSettings(
+public data class AppearanceSettings(
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val amoledDark: Boolean = false,
     val tintColor: String = "system",
@@ -56,14 +56,14 @@ data class AppearanceSettings(
 )
 
 @Serializable
-enum class ThemeMode {
+public enum class ThemeMode {
     SYSTEM,
     LIGHT,
     DARK,
 }
 
 @Serializable
-data class LibrarySettings(
+public data class LibrarySettings(
     val displayMode: LibraryDisplayMode = LibraryDisplayMode.COMPACT_GRID,
     val sort: LibrarySort = LibrarySort(),
     val filter: LibraryFilter = LibraryFilter(),
@@ -78,7 +78,7 @@ data class LibrarySettings(
 )
 
 @Serializable
-data class ReaderSettings(
+public data class ReaderSettings(
     val readingMode: ReadingMode = ReadingMode.PAGER_LTR,
     val orientation: ReaderOrientation = ReaderOrientation.FREE,
     /** Reflowable novel typography; image readers intentionally ignore these values. */
@@ -101,7 +101,7 @@ data class ReaderSettings(
 )
 
 @Serializable
-enum class ReadingMode {
+public enum class ReadingMode {
     PAGER_LTR,
     PAGER_RTL,
     PAGER_VERTICAL,
@@ -110,7 +110,7 @@ enum class ReadingMode {
 }
 
 @Serializable
-enum class ReaderOrientation {
+public enum class ReaderOrientation {
     FREE,
     PORTRAIT,
     LANDSCAPE,
@@ -119,7 +119,7 @@ enum class ReaderOrientation {
 }
 
 @Serializable
-data class ReaderColorFilter(
+public data class ReaderColorFilter(
     val enabled: Boolean = false,
     val brightness: Float = 0f,
     val red: Float = 0f,
@@ -131,7 +131,7 @@ data class ReaderColorFilter(
 )
 
 @Serializable
-data class DownloadSettings(
+public data class DownloadSettings(
     val location: String = "",
     val autoDownloadNewChapters: Boolean = false,
     val deleteAfterReading: Boolean = false,
@@ -144,13 +144,13 @@ data class DownloadSettings(
 )
 
 @Serializable
-data class TrackingSettings(
+public data class TrackingSettings(
     val autoSyncAfterRead: Boolean = true,
     val updateProgressAfterRead: Boolean = true,
 )
 
 @Serializable
-data class SyncSettings(
+public data class SyncSettings(
     val enabled: Boolean = false,
     val syncOnForeground: Boolean = true,
     /** Which kinds of data this device sends to and applies from the account. */
@@ -164,7 +164,7 @@ data class SyncSettings(
  * one device can opt out without changing the others.
  */
 @Serializable
-data class SyncKindSettings(
+public data class SyncKindSettings(
     /** Library titles (the `library` records). */
     val library: Boolean = true,
     /** Reading progress and history (the `unit`, `progress` and `history` records). */
@@ -179,7 +179,7 @@ data class SyncKindSettings(
 )
 
 @Serializable
-data class BrowseSettings(
+public data class BrowseSettings(
     val checkExtensionUpdates: Boolean = true,
     // The original source list does not hide the official catalogue on first launch. The
     // official repository marks its manga sources as NSFW, so false here would make Browse
@@ -199,7 +199,7 @@ data class BrowseSettings(
 )
 
 @Serializable
-data class SecuritySettings(
+public data class SecuritySettings(
     val appLockEnabled: Boolean = false,
     val lockAfterSeconds: Int = 0,
     val secureScreen: Boolean = false,
@@ -207,7 +207,7 @@ data class SecuritySettings(
 )
 
 @Serializable
-data class AdvancedSettings(
+public data class AdvancedSettings(
     val dnsOverHttps: Boolean = false,
     val proxyEnabled: Boolean = false,
     val proxyWorkerUrl: String = "",
@@ -220,14 +220,14 @@ data class AdvancedSettings(
  * effect while [enabled] is on.
  */
 @Serializable
-data class DeveloperSettings(
+public data class DeveloperSettings(
     val enabled: Boolean = false,
     val showLoadingElapsed: Boolean = false,
     val showImageRequests: Boolean = false,
 )
 
 @Serializable
-data class BackupState(
+public data class BackupState(
     val status: BackupStatus = BackupStatus.IDLE,
     val automaticEnabled: Boolean = false,
     val intervalHours: Int = 24,
@@ -244,7 +244,7 @@ data class BackupState(
 )
 
 @Serializable
-enum class BackupStatus {
+public enum class BackupStatus {
     IDLE,
     CREATING,
     RESTORING,
@@ -253,7 +253,7 @@ enum class BackupStatus {
 }
 
 @Serializable
-data class DownloadQueueItem(
+public data class DownloadQueueItem(
     val id: String,
     val mangaId: Long,
     val chapterId: Long,
@@ -269,13 +269,13 @@ data class DownloadQueueItem(
     /** False after the user clears completed queue rows; downloaded-file state remains local. */
     val visibleInQueue: Boolean = true,
 ) {
-    companion object {
-        fun id(mangaId: Long, chapterId: Long): String = "${mangaId}_${chapterId}"
+    public companion object {
+        public fun id(mangaId: Long, chapterId: Long): String = "${mangaId}_${chapterId}"
     }
 }
 
 @Serializable
-enum class DownloadState {
+public enum class DownloadState {
     QUEUED,
     DOWNLOADING,
     PAUSED,
@@ -284,7 +284,7 @@ enum class DownloadState {
 }
 
 @Serializable
-data class TrackerAccountState(
+public data class TrackerAccountState(
     val trackerId: Int,
     val loggedIn: Boolean = false,
     val username: String? = null,

@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /** Core manga record. Field names and flag values intentionally mirror Shinsou's Swift model. */
 @Serializable
-data class Manga(
+public data class Manga(
     val id: Long = -1,
     val source: Long = -1,
     val favorite: Boolean = false,
@@ -60,46 +60,46 @@ data class Manga(
             else -> ChapterFilterState.DISABLED
         }
 
-    companion object {
-        const val SHOW_ALL: Long = 0x00000000
+    public companion object {
+        public const val SHOW_ALL: Long = 0x00000000
 
-        const val CHAPTER_SORT_DESC: Long = 0x00000000
-        const val CHAPTER_SORT_ASC: Long = 0x00000001
-        const val CHAPTER_SORT_DIR_MASK: Long = 0x00000001
+        public const val CHAPTER_SORT_DESC: Long = 0x00000000
+        public const val CHAPTER_SORT_ASC: Long = 0x00000001
+        public const val CHAPTER_SORT_DIR_MASK: Long = 0x00000001
 
-        const val CHAPTER_SHOW_UNREAD: Long = 0x00000002
-        const val CHAPTER_SHOW_READ: Long = 0x00000004
-        const val CHAPTER_UNREAD_MASK: Long = 0x00000006
+        public const val CHAPTER_SHOW_UNREAD: Long = 0x00000002
+        public const val CHAPTER_SHOW_READ: Long = 0x00000004
+        public const val CHAPTER_UNREAD_MASK: Long = 0x00000006
 
-        const val CHAPTER_SHOW_DOWNLOADED: Long = 0x00000008
-        const val CHAPTER_SHOW_NOT_DOWNLOADED: Long = 0x00000010
-        const val CHAPTER_DOWNLOADED_MASK: Long = 0x00000018
+        public const val CHAPTER_SHOW_DOWNLOADED: Long = 0x00000008
+        public const val CHAPTER_SHOW_NOT_DOWNLOADED: Long = 0x00000010
+        public const val CHAPTER_DOWNLOADED_MASK: Long = 0x00000018
 
-        const val CHAPTER_SHOW_BOOKMARKED: Long = 0x00000020
-        const val CHAPTER_SHOW_NOT_BOOKMARKED: Long = 0x00000040
-        const val CHAPTER_BOOKMARKED_MASK: Long = 0x00000060
+        public const val CHAPTER_SHOW_BOOKMARKED: Long = 0x00000020
+        public const val CHAPTER_SHOW_NOT_BOOKMARKED: Long = 0x00000040
+        public const val CHAPTER_BOOKMARKED_MASK: Long = 0x00000060
 
-        const val CHAPTER_SORTING_SOURCE: Long = 0x00000000
-        const val CHAPTER_SORTING_NUMBER: Long = 0x00000100
-        const val CHAPTER_SORTING_UPLOAD_DATE: Long = 0x00000200
-        const val CHAPTER_SORTING_ALPHABET: Long = 0x00000300
-        const val CHAPTER_SORTING_MASK: Long = 0x00000300
+        public const val CHAPTER_SORTING_SOURCE: Long = 0x00000000
+        public const val CHAPTER_SORTING_NUMBER: Long = 0x00000100
+        public const val CHAPTER_SORTING_UPLOAD_DATE: Long = 0x00000200
+        public const val CHAPTER_SORTING_ALPHABET: Long = 0x00000300
+        public const val CHAPTER_SORTING_MASK: Long = 0x00000300
 
-        const val CHAPTER_DISPLAY_NAME: Long = 0x00000000
-        const val CHAPTER_DISPLAY_NUMBER: Long = 0x00100000
-        const val CHAPTER_DISPLAY_MASK: Long = 0x00100000
+        internal const val CHAPTER_DISPLAY_NAME: Long = 0x00000000
+        public const val CHAPTER_DISPLAY_NUMBER: Long = 0x00100000
+        internal const val CHAPTER_DISPLAY_MASK: Long = 0x00100000
     }
 }
 
 @Serializable
-enum class ChapterFilterState {
+public enum class ChapterFilterState {
     DISABLED,
     INCLUDE,
     EXCLUDE,
 }
 
 /** Partial update shape used by repository callers without reconstructing a complete record. */
-data class MangaPatch(
+public data class MangaPatch(
     val favorite: Boolean? = null,
     val title: String? = null,
     val author: String? = null,
@@ -118,7 +118,7 @@ data class MangaPatch(
     val nextUpdate: Long? = null,
 )
 
-fun Manga.applying(patch: MangaPatch): Manga = copy(
+public fun Manga.applying(patch: MangaPatch): Manga = copy(
     favorite = patch.favorite ?: favorite,
     title = patch.title ?: title,
     author = patch.author ?: author,

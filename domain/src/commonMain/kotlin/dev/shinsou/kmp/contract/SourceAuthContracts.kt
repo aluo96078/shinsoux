@@ -5,7 +5,7 @@ package dev.shinsou.kmp.contract
 // may mint a capability.
 
 /** A non-blocking login prompt requested by an executable source. */
-data class SourceLoginRequest(
+public data class SourceLoginRequest(
     val sourceId: Long,
     val sourceName: String,
     val reason: String? = null,
@@ -15,7 +15,7 @@ data class SourceLoginRequest(
 )
 
 /** Stable failure boundary for a host-managed source login; no raw exception text is exposed. */
-enum class SourceLoginFailureStage {
+public enum class SourceLoginFailureStage {
     PREPARE_SOURCE,
     READ_CREDENTIALS,
     WRITE_CREDENTIALS,
@@ -26,20 +26,20 @@ enum class SourceLoginFailureStage {
 }
 
 /** Result of a host-managed source login, including an optional safe source error. */
-data class SourceLoginResult(
+public data class SourceLoginResult(
     val succeeded: Boolean,
     val errorMessage: String? = null,
     val failureStage: SourceLoginFailureStage? = null,
 )
 
 /** Secret source settings loaded only while an explicit account/settings surface is open. */
-data class SourceSecrets(
+public data class SourceSecrets(
     val credential: SourceCredential? = null,
     val cookies: List<SourceCookie> = emptyList(),
 )
 
 /** Typed secure-storage result; raw platform/runtime exceptions never cross into the UI. */
-data class SourceSecretsResult(
+public data class SourceSecretsResult(
     val secrets: SourceSecrets = SourceSecrets(),
     val failureStage: SourceLoginFailureStage? = null,
 ) {
@@ -47,12 +47,12 @@ data class SourceSecretsResult(
 }
 
 
-data class SourceCredential(
+public data class SourceCredential(
     val username: String,
     val password: String,
 )
 
-data class SourceCookie(
+public data class SourceCookie(
     val name: String,
     val value: String,
     val domain: String,
@@ -69,12 +69,12 @@ data class SourceCookie(
  * never enable this mode: only host-reviewed, immutable origin metadata may select
  * [ALLOW_REVIEWED_ORIGINS].
  */
-enum class WebChallengeEmbeddedPolicy {
+public enum class WebChallengeEmbeddedPolicy {
     DENY,
     ALLOW_REVIEWED_ORIGINS,
 }
 
-data class SourcePreference(
+public data class SourcePreference(
     val key: String,
     val title: String,
     val summary: String? = null,
@@ -84,7 +84,7 @@ data class SourcePreference(
     val kind: SourcePreferenceKind = SourcePreferenceKind.Text,
 )
 
-enum class SourcePreferenceKind {
+public enum class SourcePreferenceKind {
     Text,
     Toggle,
     Choice,

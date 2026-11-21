@@ -7,13 +7,13 @@ private val SOURCE_FAILURE_WRAPPER = Regex(
         "(?:\\s*\\([A-Za-z0-9._/-]{1,160}(?:#[0-9]+|:[0-9]+(?::[0-9]+)?)\\))?$",
 )
 
-fun sourceFailureMarker(message: String): String? {
+public fun sourceFailureMarker(message: String): String? {
     if (message.length > 512) return null
     return SOURCE_FAILURE_WRAPPER.matchEntire(message.trim())?.groupValues?.get(1)
 }
 
 /** The same bounded, host-owned classification drives both guidance and recovery actions. */
-fun Throwable.sourceFailureMarker(): String? {
+public fun Throwable.sourceFailureMarker(): String? {
     var error: Throwable? = this
     repeat(8) {
         val current = error ?: return null

@@ -43,7 +43,7 @@ import kotlin.time.TimeSource
  * the manga models already downloaded. Results go to the console, as `MANGABENCH` lines.
  */
 @OptIn(ExperimentalForeignApi::class)
-fun startMangaBenchmarkIfAsked(modelDirectory: String, http: () -> HttpClient) {
+public fun startMangaBenchmarkIfAsked(modelDirectory: String, http: () -> HttpClient) {
     val pagesDir = getenv("SHINSOU_MANGA_BENCH_DIR")?.toKString()?.takeIf { it.isNotBlank() } ?: return
     val documents = (NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true).firstOrNull() as? String) ?: return
     fun read(path: String): ByteArray? = NSData.dataWithContentsOfFile(path)?.let { data ->

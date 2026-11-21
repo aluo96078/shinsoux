@@ -6,7 +6,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.Comparator
 
-object DesktopAppDirectories {
+public object DesktopAppDirectories {
     private const val WINDOWS_DATA_DIRECTORY = "ShinsouXData"
     private const val LEGACY_WINDOWS_DATA_DIRECTORY = "Shinsou X"
 
@@ -16,7 +16,7 @@ object DesktopAppDirectories {
      * nor Roaming AppData is a safe persistence boundary for the library and secrets. Existing
      * AppData locations are retained as one-time migration sources below.
      */
-    val dataRoot: Path by lazy {
+    public val dataRoot: Path by lazy {
         val platform = DesktopPlatform.current
         resolveDataRoot(platform).also { root ->
             if (platform == DesktopPlatform.WINDOWS) {
@@ -26,9 +26,9 @@ object DesktopAppDirectories {
         }
     }
 
-    val contentRoot: Path by lazy { dataRoot.resolve("Content") }
+    internal val contentRoot: Path by lazy { dataRoot.resolve("Content") }
 
-    fun resolveDataRoot(
+    public fun resolveDataRoot(
         platform: DesktopPlatform,
         environment: (String) -> String? = System::getenv,
         property: (String) -> String? = System::getProperty,
@@ -60,7 +60,7 @@ object DesktopAppDirectories {
         }.normalize().toAbsolutePath()
     }
 
-    fun resolveLegacyWindowsDataRoot(
+    public fun resolveLegacyWindowsDataRoot(
         environment: (String) -> String? = System::getenv,
         property: (String) -> String? = System::getProperty,
     ): Path {
@@ -74,7 +74,7 @@ object DesktopAppDirectories {
             ).resolve(LEGACY_WINDOWS_DATA_DIRECTORY).normalize().toAbsolutePath()
     }
 
-    fun resolveLegacyRoamingWindowsDataRoot(
+    public fun resolveLegacyRoamingWindowsDataRoot(
         environment: (String) -> String? = System::getenv,
         property: (String) -> String? = System::getProperty,
     ): Path {
@@ -94,14 +94,14 @@ object DesktopAppDirectories {
      * If the new directory already exists, leave the legacy directory untouched so a failed or
      * partial migration cannot destroy user data.
      */
-    fun migrateLegacyWindowsData(dataRoot: Path) {
+    public fun migrateLegacyWindowsData(dataRoot: Path) {
         val legacyRoot = dataRoot.toAbsolutePath().normalize().parent
             ?.resolve(LEGACY_WINDOWS_DATA_DIRECTORY)
             ?: return
         migrateLegacyWindowsData(dataRoot, legacyRoot)
     }
 
-    fun migrateLegacyWindowsData(dataRoot: Path, legacyRoot: Path) {
+    public fun migrateLegacyWindowsData(dataRoot: Path, legacyRoot: Path) {
         val normalizedRoot = dataRoot.toAbsolutePath().normalize()
         val normalizedLegacyRoot = legacyRoot.toAbsolutePath().normalize()
         if (!Files.isDirectory(normalizedLegacyRoot) || Files.exists(normalizedRoot)) return

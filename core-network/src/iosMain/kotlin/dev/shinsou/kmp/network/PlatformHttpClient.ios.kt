@@ -5,7 +5,7 @@ import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.compression.ContentEncoding
 
-actual fun createPlatformHttpClient(): HttpClient = HttpClient(Darwin) {
+public actual fun createPlatformHttpClient(): HttpClient = HttpClient(Darwin) {
     expectSuccess = false
     followRedirects = true
     install(ContentEncoding) {

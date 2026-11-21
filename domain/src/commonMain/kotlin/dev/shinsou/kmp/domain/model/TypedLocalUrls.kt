@@ -9,11 +9,11 @@ package dev.shinsou.kmp.domain.model
 /** Legacy source id of the app-local library. */
 public const val LOCAL_SOURCE_ID: Long = 0L
 
-fun isTypedLocalCompatibilityUrl(value: String): Boolean =
+public fun isTypedLocalCompatibilityUrl(value: String): Boolean =
     value.startsWith(TYPED_LOCAL_URL_PREFIX)
 
 /** Strict local-only decoder used to join compatibility history to typed unit identity. */
-fun typedLocalChapterUnitKey(value: String): UnitKey? {
+public fun typedLocalChapterUnitKey(value: String): UnitKey? {
     val parts = value.takeIf { it.startsWith(TYPED_LOCAL_URL_PREFIX) }
         ?.removePrefix(TYPED_LOCAL_URL_PREFIX)
         ?.split('/')
@@ -28,7 +28,7 @@ fun typedLocalChapterUnitKey(value: String): UnitKey? {
 }
 
 /** Returns the publication identity only for the publication-scoped compatibility URL. */
-fun decodeTypedLocalPublicationUrl(value: String): PublicationKey? {
+public fun decodeTypedLocalPublicationUrl(value: String): PublicationKey? {
     val encoded = value.takeIf { it.startsWith(TYPED_LOCAL_URL_PREFIX) }
         ?.removePrefix(TYPED_LOCAL_URL_PREFIX)
         ?.takeIf { '/' !in it }
@@ -42,7 +42,7 @@ fun decodeTypedLocalPublicationUrl(value: String): PublicationKey? {
  * historical: the referenced acquisition may be local or extension-backed, and [load] resolves
  * it exclusively through the typed Publication graph.
  */
-fun encodeTypedLocalChapterUrl(
+public fun encodeTypedLocalChapterUrl(
     publicationKey: PublicationKey,
     acquisitionId: String,
     unitKey: UnitKey,
@@ -59,9 +59,9 @@ fun encodeTypedLocalChapterUrl(
 }
 
 /** Publication-scoped identity used by multi-unit legacy compatibility projections. */
-fun encodeTypedLocalPublicationUrl(publicationKey: PublicationKey): String {
+public fun encodeTypedLocalPublicationUrl(publicationKey: PublicationKey): String {
     publicationKey.validate()
     return "$TYPED_LOCAL_URL_PREFIX${publicationKey.value}"
 }
 
-const val TYPED_LOCAL_URL_PREFIX: String = "local://typed/v1/"
+public const val TYPED_LOCAL_URL_PREFIX: String = "local://typed/v1/"

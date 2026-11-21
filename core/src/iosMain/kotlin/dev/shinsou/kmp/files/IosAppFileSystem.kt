@@ -28,8 +28,8 @@ import platform.Foundation.writeToFile
 import kotlinx.cinterop.ByteVar
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class, ExperimentalUuidApi::class)
-class IosAppFileSystem constructor(private val root: String) : AppFileSystem {
-    constructor() : this(defaultContentRoot())
+public class IosAppFileSystem constructor(private val root: String) : AppFileSystem {
+    public constructor() : this(defaultContentRoot())
 
     private val manager = NSFileManager.defaultManager
 

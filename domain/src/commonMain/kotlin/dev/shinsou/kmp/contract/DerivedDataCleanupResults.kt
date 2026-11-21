@@ -17,7 +17,7 @@ public data class DerivedRightsCleanupResult(
     val concurrentAnnotationChangesDeferred: Int,
     val speechStopped: Boolean,
 ) {
-    operator fun plus(other: DerivedRightsCleanupResult): DerivedRightsCleanupResult =
+    public operator fun plus(other: DerivedRightsCleanupResult): DerivedRightsCleanupResult =
         DerivedRightsCleanupResult(
             targetsExamined = targetsExamined + other.targetsExamined,
             searchDocumentsExamined = searchDocumentsExamined + other.searchDocumentsExamined,
@@ -29,7 +29,7 @@ public data class DerivedRightsCleanupResult(
             speechStopped = speechStopped || other.speechStopped,
         )
 
-    companion object {
-        val Empty: DerivedRightsCleanupResult = DerivedRightsCleanupResult(0, 0, 0, 0, 0, 0, false)
+    public companion object {
+        public val Empty: DerivedRightsCleanupResult = DerivedRightsCleanupResult(0, 0, 0, 0, 0, 0, false)
     }
 }

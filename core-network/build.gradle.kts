@@ -7,6 +7,7 @@ plugins {
 }
 
 kotlin {
+    explicitApi()
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core"))

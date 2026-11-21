@@ -11,7 +11,7 @@ import java.nio.ByteBuffer
 import org.aomedia.avif.android.AvifDecoder
 
 /** Self-contained AVIF support for Android versions whose platform decoder predates AVIF. */
-class AndroidAvifDecoder private constructor(
+public class AndroidAvifDecoder private constructor(
     private val result: SourceFetchResult,
 ) : Decoder {
     override suspend fun decode(): DecodeResult {
@@ -43,7 +43,7 @@ class AndroidAvifDecoder private constructor(
         }
     }
 
-    class Factory : Decoder.Factory {
+    public class Factory : Decoder.Factory {
         override fun create(
             result: SourceFetchResult,
             options: Options,

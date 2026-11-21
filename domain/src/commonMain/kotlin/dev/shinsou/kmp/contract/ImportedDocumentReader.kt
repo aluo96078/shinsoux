@@ -8,15 +8,15 @@ import kotlin.math.min
  * [maxBytesByExtension] is useful when one picker accepts both images and archives: images can
  * retain their smaller per-page limit while archives use [maxBytesPerFile].
  */
-class ImportedDocumentLimits(
-    val maxBytesPerFile: Long,
-    val maxTotalBytes: Long = maxBytesPerFile,
+public class ImportedDocumentLimits(
+    public val maxBytesPerFile: Long,
+    public val maxTotalBytes: Long = maxBytesPerFile,
     maxBytesByExtension: Map<String, Long> = emptyMap(),
     randomAccessExtensions: Set<String> = emptySet(),
 ) {
-    val maxBytesByExtension: Map<String, Long> = maxBytesByExtension
+    public val maxBytesByExtension: Map<String, Long> = maxBytesByExtension
         .mapKeys { (extension, _) -> extension.trimStart('.').lowercase() }
-    val randomAccessExtensions: Set<String> = randomAccessExtensions
+    public val randomAccessExtensions: Set<String> = randomAccessExtensions
         .mapTo(linkedSetOf()) { it.trimStart('.').lowercase() }
 
     init {
@@ -29,19 +29,19 @@ class ImportedDocumentLimits(
         }
     }
 
-    fun maxBytesFor(name: String): Long {
+    public fun maxBytesFor(name: String): Long {
         val extension = name.substringAfterLast('.', "").lowercase()
         return maxBytesByExtension[extension] ?: maxBytesPerFile
     }
 
-    fun prefersRandomAccess(name: String): Boolean =
+    public fun prefersRandomAccess(name: String): Boolean =
         name.substringAfterLast('.', "").lowercase() in randomAccessExtensions
 }
 
-class ImportedDocumentReadException(message: String, cause: Throwable? = null) : Exception(message, cause)
+public class ImportedDocumentReadException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** A conservative fallback for snapshot/backup documents without a narrower format limit. */
-val DEFAULT_IMPORTED_DOCUMENT_LIMITS: ImportedDocumentLimits = ImportedDocumentLimits(
+public val DEFAULT_IMPORTED_DOCUMENT_LIMITS: ImportedDocumentLimits = ImportedDocumentLimits(
     maxBytesPerFile = 64L * 1024L * 1024L,
 )
 
@@ -51,7 +51,7 @@ val DEFAULT_IMPORTED_DOCUMENT_LIMITS: ImportedDocumentLimits = ImportedDocumentL
  * Platforms supply a small `InputStream`/`NSFileHandle` adapter through [read]. A one-byte probe
  * after the declared payload catches a file/provider that grew between metadata lookup and read.
  */
-fun readBoundedImportedBytes(
+public fun readBoundedImportedBytes(
     name: String,
     declaredSize: Long?,
     limits: ImportedDocumentLimits,
@@ -97,7 +97,7 @@ fun readBoundedImportedBytes(
 }
 
 /** Applies picker byte limits without allocating the selected document. */
-fun requireImportedDocumentSize(
+public fun requireImportedDocumentSize(
     name: String,
     declaredSize: Long?,
     limits: ImportedDocumentLimits,

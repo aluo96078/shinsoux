@@ -11,8 +11,8 @@ import okio.BufferedSink
 import okio.buffer
 import okio.sink
 
-class AndroidAppFileSystem internal constructor(rootDirectory: File) : AppFileSystem {
-    constructor(context: Context) : this(File(context.filesDir, "shinsou-content"))
+public class AndroidAppFileSystem internal constructor(rootDirectory: File) : AppFileSystem {
+    public constructor(context: Context) : this(File(context.filesDir, "shinsou-content"))
 
     // file() returns canonical paths. Use that same base for relative directory entries;
     // Android can expose filesDir through a different alias after process reconstruction.

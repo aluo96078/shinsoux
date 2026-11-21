@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Raw key pair used at the crypto boundary. Private bytes must only enter protected storage. */
-data class SodiumKeyPair(
+public data class SodiumKeyPair(
     val publicKey: ByteArray,
     val privateKey: ByteArray,
 )
@@ -23,12 +23,12 @@ data class SodiumKeyPair(
  * Initialization is explicit because the JVM binding extracts and loads a native library. No
  * operation silently falls back to a weaker or plaintext implementation.
  */
-object SodiumPrimitives {
+public object SodiumPrimitives {
     private val initializationMutex = Mutex()
     @Volatile
     private var initialized = false
 
-    suspend fun initialize() {
+    public suspend fun initialize() {
         if (initialized) return
         initializationMutex.withLock {
             if (initialized) return
@@ -37,12 +37,12 @@ object SodiumPrimitives {
         }
     }
 
-    fun sha256(value: ByteArray): ByteArray {
+    public fun sha256(value: ByteArray): ByteArray {
         requireReady()
         return Hash.sha256(value.asUByteArray()).asByteArray().copyOf()
     }
 
-    fun generateEd25519KeyPair(): SodiumKeyPair {
+    public fun generateEd25519KeyPair(): SodiumKeyPair {
         requireReady()
         val pair = Signature.keypair()
         return SodiumKeyPair(
@@ -51,13 +51,13 @@ object SodiumPrimitives {
         )
     }
 
-    fun signEd25519(message: ByteArray, privateKey: ByteArray): ByteArray {
+    public fun signEd25519(message: ByteArray, privateKey: ByteArray): ByteArray {
         requireReady()
         require(privateKey.size == ED25519_PRIVATE_KEY_BYTES) { "Invalid Ed25519 private key" }
         return Signature.detached(message.asUByteArray(), privateKey.asUByteArray()).asByteArray().copyOf()
     }
 
-    fun verifyEd25519(message: ByteArray, signature: ByteArray, publicKey: ByteArray): Boolean {
+    public fun verifyEd25519(message: ByteArray, signature: ByteArray, publicKey: ByteArray): Boolean {
         requireReady()
         if (signature.size != ED25519_SIGNATURE_BYTES || publicKey.size != ED25519_PUBLIC_KEY_BYTES) return false
         // libsodium signals a bad signature by throwing; that is the expected "invalid" answer.
@@ -70,18 +70,18 @@ object SodiumPrimitives {
         }.isSuccess
     }
 
-    fun constantTimeEquals(first: ByteArray, second: ByteArray): Boolean {
+    public fun constantTimeEquals(first: ByteArray, second: ByteArray): Boolean {
         requireReady()
         if (first.size != second.size) return false
         return LibsodiumUtil.memcmp(first.asUByteArray(), second.asUByteArray())
     }
 
-    fun base64UrlEncode(value: ByteArray): String {
+    public fun base64UrlEncode(value: ByteArray): String {
         requireReady()
         return LibsodiumUtil.toBase64(value.asUByteArray(), Base64Variants.URLSAFE_NO_PADDING)
     }
 
-    fun destroy(value: ByteArray) {
+    public fun destroy(value: ByteArray) {
         if (value.isEmpty()) return
         if (initialized) LibsodiumUtil.memzero(value.asUByteArray()) else value.fill(0)
     }

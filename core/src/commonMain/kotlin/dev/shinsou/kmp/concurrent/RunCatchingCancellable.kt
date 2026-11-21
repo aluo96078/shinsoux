@@ -10,7 +10,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * [CancellationException] that is not about this coroutine (a `withTimeout` inside the block, or
  * a job it awaited being cancelled) is captured like any other failure.
  */
-suspend inline fun <R> runCatchingCancellable(block: () -> R): Result<R> =
+public suspend inline fun <R> runCatchingCancellable(block: () -> R): Result<R> =
     try {
         Result.success(block())
     } catch (error: Throwable) {
@@ -19,7 +19,7 @@ suspend inline fun <R> runCatchingCancellable(block: () -> R): Result<R> =
     }
 
 /** The receiver form of [runCatchingCancellable], matching [runCatching] on a receiver. */
-suspend inline fun <T, R> T.runCatchingCancellable(block: T.() -> R): Result<R> =
+public suspend inline fun <T, R> T.runCatchingCancellable(block: T.() -> R): Result<R> =
     try {
         Result.success(block())
     } catch (error: Throwable) {

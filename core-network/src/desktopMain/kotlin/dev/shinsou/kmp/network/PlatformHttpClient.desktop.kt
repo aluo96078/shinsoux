@@ -6,7 +6,7 @@ import io.ktor.client.engine.cio.endpoint
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.compression.ContentEncoding
 
-actual fun createPlatformHttpClient(): HttpClient = HttpClient(CIO) {
+public actual fun createPlatformHttpClient(): HttpClient = HttpClient(CIO) {
     expectSuccess = false
     followRedirects = true
     // Sources such as ShuYue's relay explicitly request gzip. Decode the response in Ktor before

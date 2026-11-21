@@ -6,7 +6,7 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.compression.ContentEncoding
 import java.net.Proxy
 
-actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
+public actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
     expectSuccess = false
     followRedirects = true
     install(ContentEncoding) {

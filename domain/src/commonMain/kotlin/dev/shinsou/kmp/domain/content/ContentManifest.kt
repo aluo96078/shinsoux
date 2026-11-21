@@ -810,7 +810,7 @@ private class ImmutableSnapshotMap<K, V> private constructor(
 }
 
 /** Common deep-immutable collection constructors used at content admission boundaries. */
-fun <E> immutableListOf(values: Iterable<E>): List<E> = ImmutableSnapshotList.from(values)
+public fun <E> immutableListOf(values: Iterable<E>): List<E> = ImmutableSnapshotList.from(values)
 
 internal fun <E> immutableSetOf(values: Iterable<E>): Set<E> = ImmutableSnapshotSet.from(values)
 
@@ -821,7 +821,7 @@ internal fun <K, V> immutableMapOf(values: Map<K, V>): Map<K, V> = ImmutableSnap
  * on JVM it may still expose a mutable Java collection through a cast, while on Native it can
  * retain the caller's mutable backing object.  This snapshot owns all list/map/set storage.
  */
-fun ContentManifest.deepImmutableSnapshot(): ContentManifest = ContentManifest(
+public fun ContentManifest.deepImmutableSnapshot(): ContentManifest = ContentManifest(
     manifestId = manifestId,
     schemaVersion = schemaVersion,
     contentRevision = contentRevision,
@@ -910,8 +910,8 @@ private const val MAX_RESOURCES_TOTAL: Int = 100_000
 private const val MAX_REPRESENTATIONS: Int = 32
 private const val MAX_TRANSFORMS: Int = 16
 private const val MAX_RENDITIONS: Int = 64
-const val MAX_EPUB_AUXILIARY_GRAPH_ENTRIES: Int = 100_000
-const val MAX_CONTENT_METADATA_JSON_CHARS: Int = 4_000_000
+public const val MAX_EPUB_AUXILIARY_GRAPH_ENTRIES: Int = 100_000
+public const val MAX_CONTENT_METADATA_JSON_CHARS: Int = 4_000_000
 private const val EPUB_ARCHIVE_MEDIA_TYPE: String = "application/epub+zip"
 private const val ZERO_UUID: String = "00000000-0000-0000-0000-000000000000"
 private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")

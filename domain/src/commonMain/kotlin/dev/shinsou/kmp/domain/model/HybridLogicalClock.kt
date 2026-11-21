@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * the sync reducer: physical time, logical counter, then the installation-specific device id.
  */
 @Serializable
-data class HlcTimestamp(
+public data class HlcTimestamp(
     val millis: Long,
     val counter: Int,
     val deviceId: String,
@@ -29,8 +29,8 @@ data class HlcTimestamp(
  * Mutable clock state intended to be serialized by its owning sync store transaction.
  * Callers must not share one instance between unsynchronised threads.
  */
-class HybridLogicalClock(
-    val deviceId: String,
+public class HybridLogicalClock(
+    public val deviceId: String,
     initial: HlcTimestamp = HlcTimestamp(0, 0, deviceId),
     private val wallClockMillis: () -> Long,
 ) {
@@ -42,11 +42,11 @@ class HybridLogicalClock(
         last = initial
     }
 
-    fun current(): HlcTimestamp = last
+    public fun current(): HlcTimestamp = last
 
-    fun tick(): HlcTimestamp = tick(wallClockMillis())
+    public fun tick(): HlcTimestamp = tick(wallClockMillis())
 
-    fun tick(wallMillis: Long): HlcTimestamp {
+    public fun tick(wallMillis: Long): HlcTimestamp {
         require(wallMillis >= 0) { "Wall clock cannot be negative" }
         last = if (wallMillis > last.millis) {
             HlcTimestamp(wallMillis, 0, deviceId)
@@ -57,9 +57,9 @@ class HybridLogicalClock(
     }
 
     /** Incorporates a received timestamp before producing the next local timestamp. */
-    fun observe(remote: HlcTimestamp): HlcTimestamp = observe(remote, wallClockMillis())
+    public fun observe(remote: HlcTimestamp): HlcTimestamp = observe(remote, wallClockMillis())
 
-    fun observe(remote: HlcTimestamp, wallMillis: Long): HlcTimestamp {
+    public fun observe(remote: HlcTimestamp, wallMillis: Long): HlcTimestamp {
         require(wallMillis >= 0) { "Wall clock cannot be negative" }
         val maxMillis = maxOf(wallMillis, last.millis, remote.millis)
         val nextCounter = when {

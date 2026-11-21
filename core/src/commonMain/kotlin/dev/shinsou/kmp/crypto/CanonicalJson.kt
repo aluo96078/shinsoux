@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * Arrays retain their wire order, object keys are sorted by code point (all protocol keys are
  * ASCII), and numbers are restricted to integral values that JavaScript can represent exactly.
  */
-fun canonicalJson(value: JsonElement): String = when (value) {
+public fun canonicalJson(value: JsonElement): String = when (value) {
     JsonNull -> "null"
     is JsonPrimitive -> canonicalPrimitive(value)
     is JsonArray -> value.joinToString(prefix = "[", postfix = "]", separator = ",", transform = ::canonicalJson)

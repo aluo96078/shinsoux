@@ -22,7 +22,7 @@ public data class ExtensionLibraryBindingV2(
 }
 
 /** Encodes one source-backed title without granting or invoking the source favorite capability. */
-fun encodeExtensionLibraryPublicationUrl(
+public fun encodeExtensionLibraryPublicationUrl(
     sourceKey: SourceKey,
     remotePublicationId: String,
 ): String {
@@ -50,7 +50,7 @@ fun encodeExtensionLibraryPublicationUrl(
 }
 
 /** Strictly decodes only the reversible extension-library URL format. */
-fun decodeExtensionLibraryPublicationUrl(value: String): ExtensionLibraryBindingV2? {
+public fun decodeExtensionLibraryPublicationUrl(value: String): ExtensionLibraryBindingV2? {
     if (!value.startsWith(EXTENSION_LIBRARY_URL_PREFIX) || value.length > MAX_EXTENSION_LIBRARY_URL_CHARS) {
         return null
     }

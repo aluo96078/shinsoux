@@ -11,7 +11,7 @@ import okio.BufferedSink
 import okio.buffer
 import okio.sink
 
-class DesktopAppFileSystem(
+public class DesktopAppFileSystem(
     root: Path = DesktopAppDirectories.contentRoot,
     /** Where the blocking file calls run. */
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,

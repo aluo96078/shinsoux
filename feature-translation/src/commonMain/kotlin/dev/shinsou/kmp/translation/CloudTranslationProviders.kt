@@ -191,7 +191,7 @@ public abstract class CloudTranslationProvider(
     }
 
     protected companion object {
-        const val MAX_REQUEST_TEXT_BYTES = 60 * 1024
+        internal const val MAX_REQUEST_TEXT_BYTES: Int = 60 * 1024
         private const val RATE_LIMIT_RETRIES = 2
         private const val RATE_LIMIT_BACKOFF_MILLIS = 1_000L
         private const val MAX_RATE_LIMIT_WAIT_MILLIS = 30_000L

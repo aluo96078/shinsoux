@@ -25,7 +25,7 @@ public data class ExactPluginSourceTarget(
 )
 
 /** Whether [value] is a non-empty identifier of at most [maxBytes] safe ASCII characters. */
-fun isSafeAsciiIdentifier(value: String, maxBytes: Int): Boolean =
+public fun isSafeAsciiIdentifier(value: String, maxBytes: Int): Boolean =
     value.isNotEmpty() && value.encodeToByteArray().size <= maxBytes &&
         value.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in ".:_/-~" }
 

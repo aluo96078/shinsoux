@@ -124,7 +124,7 @@ public data class ChapterTranslation(
     val complete: Boolean get() = segments.all { it.translation != null || it.kept || it.source.isBlank() }
 
     /** The translated chapter as text, line for line with the source. */
-    fun text(): String = segments.joinToString("\n") { it.translation ?: it.source }
+    public fun text(): String = segments.joinToString("\n") { it.translation ?: it.source }
 }
 
 public data class ChapterTranslationRequest(

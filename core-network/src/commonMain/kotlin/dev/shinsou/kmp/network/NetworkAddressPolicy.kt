@@ -7,7 +7,7 @@ package dev.shinsou.kmp.network
  */
 
 /** Rejects IPv4 alternate spellings and IPv6 (including IPv4-mapped IPv6) without platform APIs. */
-fun isBlockedNetworkAddress(raw: String): Boolean {
+public fun isBlockedNetworkAddress(raw: String): Boolean {
     val host = raw.trim().trim('[', ']').trimEnd('.').lowercase()
     val ipv4 = parseIpv4(host)
     return when {
@@ -19,7 +19,7 @@ fun isBlockedNetworkAddress(raw: String): Boolean {
 }
 
 /** Whether [raw] is a canonical IPv4 or IPv6 literal, as a resolver answer must be. */
-fun isCanonicalIpLiteral(raw: String): Boolean {
+public fun isCanonicalIpLiteral(raw: String): Boolean {
     val host = raw.trim().trim('[', ']').trimEnd('.')
     return isCanonicalIpv4(host) ||
         (':' in host && parseIpv6(host) != null && host.split(':').none { '.' in it && !isCanonicalIpv4(it) })

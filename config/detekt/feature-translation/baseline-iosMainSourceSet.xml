@@ -2,7 +2,7 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>CyclomaticComplexMethod:IosMangaBenchmark.kt:@OptIn(ExperimentalForeignApi::class) fun startMangaBenchmarkIfAsked</ID>
+    <ID>CyclomaticComplexMethod:IosMangaBenchmark.kt:@OptIn(ExperimentalForeignApi::class) public fun startMangaBenchmarkIfAsked</ID>
     <ID>CyclomaticComplexMethod:IosMangaBenchmark.kt:@OptIn(ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class) private fun coreMlDetector</ID>
     <ID>EmptyElseBlock:IosCoreMlDetector.kt:IosCoreMlDetector$if (index[d] &lt; shape[d]) break</ID>
     <ID>RethrowCaughtException:IosSystemTranslation.kt:IosSystemTranslationEngine$throw cancelled</ID>

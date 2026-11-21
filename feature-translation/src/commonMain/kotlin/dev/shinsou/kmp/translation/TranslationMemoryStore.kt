@@ -718,10 +718,10 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
  * The translation memory tables (R3-1). Formats 2 to 4 each added a column; [create] makes the
  * first tables and then adds them, so a new database and an upgraded one are the same.
  */
-object TranslationMemorySchema {
-    const val VERSION: Long = 4
+public object TranslationMemorySchema {
+    public const val VERSION: Long = 4
 
-    val component: SchemaComponent = SchemaComponent(
+    public val component: SchemaComponent = SchemaComponent(
         name = "translation_memory",
         version = VERSION,
         create = ::create,

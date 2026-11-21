@@ -13,7 +13,7 @@ package dev.shinsou.kmp.domain.model
  * share the exact compatibility URL that the reader/history bridge creates later. Keep this
  * derivation in one place; changing it would split one remote publication into two local rows.
  */
-fun extensionAcquisitionId(
+public fun extensionAcquisitionId(
     sourceKey: SourceKey,
     remotePublicationId: String,
 ): String {
@@ -26,7 +26,7 @@ fun extensionAcquisitionId(
 }
 
 /** The typed unit an exact source unit materializes into; shared with library migration. */
-fun extensionUnitKey(
+public fun extensionUnitKey(
     sourceKey: SourceKey,
     remotePublicationId: String,
     remoteUnitId: String,
@@ -41,7 +41,7 @@ fun extensionUnitKey(
     )
 }
 
-fun extensionPublicationKey(
+public fun extensionPublicationKey(
     sourceKey: SourceKey,
     remotePublicationId: String,
 ): PublicationKey {
@@ -55,7 +55,7 @@ fun extensionPublicationKey(
     )
 }
 
-fun framedIdentity(vararg fields: String): String = buildString {
+public fun framedIdentity(vararg fields: String): String = buildString {
     append("shinsou-extension-content-v2")
     fields.forEach { field ->
         append('|')
@@ -65,4 +65,4 @@ fun framedIdentity(vararg fields: String): String = buildString {
     }
 }
 
-val EXTENSION_CONTENT_NAMESPACE = MigrationNamespaceId("bcdcd2d9-9908-5e51-a976-f3b8c19af82a")
+public val EXTENSION_CONTENT_NAMESPACE: MigrationNamespaceId = MigrationNamespaceId("bcdcd2d9-9908-5e51-a976-f3b8c19af82a")

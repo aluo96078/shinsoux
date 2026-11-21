@@ -3,7 +3,7 @@ package dev.shinsou.kmp.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Chapter(
+public data class Chapter(
     val id: Long = -1,
     val mangaId: Long = -1,
     val url: String = "",
@@ -20,7 +20,7 @@ data class Chapter(
     val version: Long = 1,
 )
 
-data class ChapterPatch(
+public data class ChapterPatch(
     val read: Boolean? = null,
     val bookmark: Boolean? = null,
     val lastPageRead: Int? = null,
@@ -29,7 +29,7 @@ data class ChapterPatch(
     val dateUpload: Long? = null,
 )
 
-fun Chapter.applying(patch: ChapterPatch): Chapter = copy(
+public fun Chapter.applying(patch: ChapterPatch): Chapter = copy(
     read = patch.read ?: read,
     bookmark = patch.bookmark ?: bookmark,
     lastPageRead = patch.lastPageRead ?: lastPageRead,
