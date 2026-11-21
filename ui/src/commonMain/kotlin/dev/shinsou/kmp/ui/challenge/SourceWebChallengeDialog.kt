@@ -35,6 +35,7 @@ import androidx.compose.ui.window.DialogProperties
 import dev.shinsou.kmp.contract.SourceCookie
 import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
+import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 
@@ -116,43 +117,12 @@ private fun EmbeddedChallenge(
                 },
                 onSessionCaptured = { captured ->
                     capturing = false
-                    val safe = normalizeWebChallengeCookies(request.url, captured.cookies)
-                    val safeStorage = normalizeWebChallengeLocalStorage(
-                        captured.localStorage,
-                        request.localStorageKeys,
-                    )
-                    val userAgent = normalizeWebChallengeUserAgent(captured.userAgent)
-                    val missingStorage = request.requiredLocalStorageKeys.filter { key ->
-                        safeStorage[key].isNullOrEmpty()
-                    }
-                    if (safe.isEmpty() && safeStorage.isEmpty()) {
-                        errorVisible = true
-                        message = strings.text(StringKey.ERROR_NO_USABLE_BROWSER_SESSION_WAS_FOUND)
-                    } else if (userAgent == null) {
-                        errorVisible = true
-                        message = strings.text(StringKey.ERROR_THE_BROWSER_USER_AGENT_COULD_NOT)
-                    } else if (request.requiredCookieName != null &&
-                        safe.none { it.name.equals(request.requiredCookieName, ignoreCase = true) }
-                    ) {
-                        errorVisible = true
-                        message = strings.text(
-                            StringKey.ERROR_CLOUDFLARE_VERIFICATION_IS_NOT_COMPLETE_BECAUSE,
-                            request.requiredCookieName,
-                        )
-                    } else if (missingStorage.isNotEmpty()) {
-                        errorVisible = true
-                        message = strings.text(
-                            StringKey.ERROR_WEBSITE_SIGN_IN_IS_NOT_COMPLETE,
-                        )
+                    val (accepted, error) = validateWebChallengeCapture(request, captured, strings)
+                    if (accepted != null) {
+                        onImport(accepted)
                     } else {
-                        onImport(
-                            WebChallengeCapture(
-                                capability = captured.capability,
-                                cookies = safe,
-                                userAgent = userAgent,
-                                localStorage = safeStorage,
-                            ),
-                        )
+                        errorVisible = true
+                        message = error.orEmpty()
                     }
                 },
                 onError = { error ->
@@ -180,6 +150,45 @@ private fun EmbeddedChallenge(
             ) { Text(strings.text(StringKey.IMPORT_BROWSER_SESSION)) }
         }
     }
+}
+
+/** The sanitized [captured] session, or null plus the localized reason it cannot be imported for [request]. */
+private fun validateWebChallengeCapture(
+    request: SourceWebChallengeRequest,
+    captured: WebChallengeCapture,
+    strings: ShinsouStrings,
+): Pair<WebChallengeCapture?, String?> {
+    val safe = normalizeWebChallengeCookies(request.url, captured.cookies)
+    val safeStorage = normalizeWebChallengeLocalStorage(
+        captured.localStorage,
+        request.localStorageKeys,
+    )
+    val userAgent = normalizeWebChallengeUserAgent(captured.userAgent)
+    val missingStorage = request.requiredLocalStorageKeys.filter { key ->
+        safeStorage[key].isNullOrEmpty()
+    }
+    val error = if (safe.isEmpty() && safeStorage.isEmpty()) {
+        strings.text(StringKey.ERROR_NO_USABLE_BROWSER_SESSION_WAS_FOUND)
+    } else if (userAgent == null) {
+        strings.text(StringKey.ERROR_THE_BROWSER_USER_AGENT_COULD_NOT)
+    } else if (request.requiredCookieName != null &&
+        safe.none { it.name.equals(request.requiredCookieName, ignoreCase = true) }
+    ) {
+        strings.text(
+            StringKey.ERROR_CLOUDFLARE_VERIFICATION_IS_NOT_COMPLETE_BECAUSE,
+            request.requiredCookieName,
+        )
+    } else if (missingStorage.isNotEmpty()) {
+        strings.text(StringKey.ERROR_WEBSITE_SIGN_IN_IS_NOT_COMPLETE)
+    } else {
+        return WebChallengeCapture(
+            capability = captured.capability,
+            cookies = safe,
+            userAgent = userAgent,
+            localStorage = safeStorage,
+        ) to null
+    }
+    return null to error
 }
 
 @Composable

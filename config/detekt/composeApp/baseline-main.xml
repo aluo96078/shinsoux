@@ -4,7 +4,6 @@
   <CurrentIssues>
     <ID>ComplexCondition:DesktopPlatform.kt:!ctrlPressed || metaPressed || altPressed || shiftPressed</ID>
     <ID>CyclomaticComplexMethod:DesktopPlatform.kt:internal fun desktopShortcutAction: DesktopShortcutAction?</ID>
-    <ID>CyclomaticComplexMethod:ShinsouComposition.kt:ShinsouComposition$public suspend fun start</ID>
     <ID>ForbiddenMethodCall:Main.kt:println("Shinsou X desktop runtime verification passed.")</ID>
     <ID>ForbiddenMethodCall:Main.kt:runBlocking { dev.shinsou.kmp.crypto.SodiumPrimitives.initialize() }</ID>
     <ID>FunctionNaming:MacOsKeychainMasterKeyStore.kt:JnaMacOsKeychainApi.CoreFoundationFramework$fun CFDataGetBytePtr: Pointer?</ID>
@@ -23,7 +22,6 @@
     <ID>FunctionNaming:WindowsDpapiMasterKeyStore.kt:JnaWindowsDpapiApi.Crypt32Library$fun CryptUnprotectData: Int</ID>
     <ID>FunctionNaming:WindowsDpapiMasterKeyStore.kt:JnaWindowsDpapiApi.Kernel32Library$fun LocalFree: Pointer?</ID>
     <ID>ImplicitDefaultLocale:DesktopSingleInstance.kt:DesktopSingleInstance.Companion$"%02x".format(it)</ID>
-    <ID>LargeClass:ShinsouComposition.kt:ShinsouComposition</ID>
     <ID>LongParameterList:DesktopAppServices.kt:DesktopAppServices</ID>
     <ID>LongParameterList:DesktopPlatform.kt:internal fun desktopShortcutAction: DesktopShortcutAction?</ID>
     <ID>LongParameterList:MacOsKeychainMasterKeyStore.kt:JnaMacOsKeychainApi.SecurityFramework$fun SecKeychainAddGenericPassword: Int</ID>
@@ -38,10 +36,8 @@
     <ID>ReturnCount:DesktopSingleInstance.kt:DesktopSingleInstance.Companion$private fun send: Boolean</ID>
     <ID>ReturnCount:LegacyPublicationStartupMigration.kt:LegacyPublicationStartupMigration$private fun candidateGraph: Publication?</ID>
     <ID>ReturnCount:MacOsKeychainMasterKeyStore.kt:JnaMacOsKeychainApi$private fun copyPassword: MacOsKeychainReadAttempt</ID>
-    <ID>ReturnFromFinally:DesktopAppServices.kt:finally { Files.deleteIfExists(temporary) }</ID>
     <ID>ThrowsCount:DesktopAppServices.kt:DesktopAppServices$private fun readImportedDocument: ImportedDocument</ID>
     <ID>ThrowsCount:MacOsKeychainMasterKeyStore.kt:MacOsKeychainMasterKeyStore$private fun &lt;T&gt; awaitKeychainCall: T</ID>
-    <ID>ThrowsCount:ShinsouComposition.kt:ShinsouComposition$public suspend fun start</ID>
     <ID>TooGenericExceptionCaught:DesktopAppServices.kt:DesktopAppServices$error: Throwable</ID>
     <ID>TooGenericExceptionCaught:DesktopAppServices.kt:DesktopAppServices.DesktopPathImportedDocumentSource$error: Throwable</ID>
     <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$/** The operating system's own translation, where the platform has one. */ private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null</ID>

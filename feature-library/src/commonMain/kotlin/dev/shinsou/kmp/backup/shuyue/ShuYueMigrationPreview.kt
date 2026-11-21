@@ -267,152 +267,13 @@ internal object ShuYueBackupV1Stager {
         writer.string("sourceDigestSha256")
         writer.string(sourceDigestSha256)
 
-        writer.string("books")
-        writer.int(session.books.size)
-        session.books.forEach { book ->
-            writer.string("book")
-            writer.string(book.id)
-            writer.string(book.title)
-            writer.nullableString(book.author)
-            writer.nullableString(book.description)
-            // The cover is part of the staged publication metadata. Bind it to the result
-            // fingerprint so a staged/imported publication cannot silently lose or change its
-            // cover while retaining an otherwise identical migration result.
-            writer.nullableString(book.coverImage)
-            writer.string(book.origin)
-            writer.nullableString(book.sourceId)
-            writer.nullableString(book.originalUri)
-            writer.string(book.category)
-            writer.string(book.categoryId.value)
-            writer.long(book.addedAt)
-            writer.long(book.updatedAt)
-            writer.string(ShuYueReadingLocatorMapper.publicationId(book).value)
-            writer.string(ShuYueReadingLocatorMapper.acquisitionId(book))
-        }
-
-        val booksById = session.books.associateBy { it.id }
-        writer.string("chapters")
-        writer.int(session.chapters.size)
-        session.chapters.forEach { chapter ->
-            val book = requireNotNull(booksById[chapter.bookId]) {
-                "Staged chapter has no staged parent book"
-            }
-            val textBytes = chapter.text.encodeToByteArray()
-            writer.string("chapter")
-            writer.string(chapter.id)
-            writer.string(chapter.bookId)
-            writer.string(chapter.title)
-            writer.int(chapter.index)
-            writer.nullableString(chapter.href)
-            writer.int(chapter.wordCount)
-            writer.long(textBytes.size.toLong())
-            writer.string(Sha256.hex(textBytes))
-            writer.string(ShuYueReadingLocatorMapper.unitId(book, chapter.id).value)
-            writer.string(ShuYueReadingLocatorMapper.resourceId(book, chapter.id))
-        }
-
-        writer.string("categories")
-        val categories = session.categories.sortedBy { it.name }
-        writer.int(categories.size)
-        categories.forEach { category ->
-            writer.string(category.name)
-            writer.string(category.id.value)
-        }
-
-        writer.string("progress")
-        writer.int(session.progress.size)
-        session.progress.forEach { stagedProgress ->
-            val raw = stagedProgress.raw
-            writer.string("rawProgress")
-            writer.string(raw.bookId)
-            writer.string(raw.chapterId)
-            writer.int(raw.charOffset)
-            writer.float(raw.progress)
-            writer.long(raw.updatedAt)
-
-            val locator = stagedProgress.locator
-            val scope = locator.scope
-            writer.string("textLocator")
-            writer.int(locator.schemaVersion)
-            writer.int(scope.schemaVersion)
-            writer.string(scope.publicationId.value)
-            writer.string(scope.acquisitionId)
-            writer.string(scope.unitId.publicationKey.value)
-            writer.string(scope.unitId.value)
-            writer.long(scope.contentRevision)
-            writer.string(locator.resourceId)
-            writer.string(locator.blockId)
-            writer.int(locator.offset)
-            writer.string(locator.offsetUnit.name)
-            writer.nullableDouble(locator.progression)
-            writer.string(locator.direction.name)
-            val quote = locator.quote
-            writer.boolean(quote != null)
-            if (quote != null) {
-                writer.string(quote.exact)
-                writer.string(quote.prefix)
-                writer.string(quote.suffix)
-                writer.int(quote.occurrence)
-            }
-        }
-
-        val settings = session.readerSettings
-        writer.string("readerSettings")
-        writer.string(settings.language.name)
-        writer.float(settings.fontSizeSp)
-        writer.int(settings.lineHeightPercent)
-        writer.int(settings.pageChars)
-        writer.string(settings.theme.name)
-        writer.string(settings.accentColor.name)
-        writer.boolean(settings.volumeKeysEnabled)
-        writer.string(settings.volumeUpAction.name)
-        writer.string(settings.volumeDownAction.name)
-        writer.boolean(settings.keepScreenOn)
-        writer.boolean(settings.syncOnLaunch)
-        writer.boolean(settings.appLockEnabled)
-        writer.boolean(settings.secureScreen)
-        writer.boolean(settings.incognitoMode)
-        writer.boolean(settings.showNsfwSources)
-        writer.boolean(settings.imageParsingEnabled)
-        writer.boolean(settings.showPluginErrors)
-
-        writer.string("preferences")
-        val preferences = session.preferences.entries.sortedBy { it.key }
-        writer.int(preferences.size)
-        preferences.forEach { (key, value) ->
-            writer.string(key)
-            writer.string(value)
-        }
-
-        writer.string("imageParsingPolicies")
-        val imagePolicies = session.imageParsingPolicies.entries.sortedBy { it.key }
-        writer.int(imagePolicies.size)
-        imagePolicies.forEach { (key, value) ->
-            writer.string(key)
-            writer.string(value.name)
-        }
-
-        writer.string("pluginQuarantine")
-        writer.int(session.pluginInstallations.size)
-        session.pluginInstallations.forEach { plugin ->
-            val scriptBytes = plugin.script.encodeToByteArray()
-            writer.string(plugin.id)
-            writer.string(plugin.version)
-            writer.int(plugin.versionCode)
-            writer.int(plugin.sourceIds.size)
-            plugin.sourceIds.forEach(writer::string)
-            writer.string(plugin.origin)
-            writer.int(plugin.ordinal)
-            // Bind both staged metadata and the payload-derived values. A corrupted or modified
-            // staging object therefore cannot retain the fingerprint by changing only one side.
-            writer.string(plugin.sha256)
-            writer.long(plugin.scriptByteCount)
-            writer.string(Sha256.hex(scriptBytes))
-            writer.long(scriptBytes.size.toLong())
-            writer.boolean(plugin.enabled != null)
-            if (plugin.enabled != null) writer.boolean(plugin.enabled)
-            writer.nullableLong(plugin.installedAt)
-        }
+        writer.writeBooks(session)
+        writer.writeChapters(session)
+        writer.writeCategories(session)
+        writer.writeProgress(session)
+        writer.writeReaderSettings(session.readerSettings)
+        writer.writePreferences(session)
+        writer.writePluginQuarantine(session)
 
         return Sha256.hex(writer.bytes())
     }
@@ -1187,3 +1048,163 @@ private val ShuYueV1BookOrigin.serialName: String
         ShuYueV1BookOrigin.LOCAL_EPUB -> "LocalEpub"
         ShuYueV1BookOrigin.REMOTE_PLUGIN -> "RemotePlugin"
     }
+
+private fun ShuYueFingerprintWriter.writeBooks(session: ShuYueStagingSession) {
+    string("books")
+    int(session.books.size)
+    session.books.forEach { book ->
+        string("book")
+        string(book.id)
+        string(book.title)
+        nullableString(book.author)
+        nullableString(book.description)
+        // The cover is part of the staged publication metadata. Bind it to the result
+        // fingerprint so a staged/imported publication cannot silently lose or change its
+        // cover while retaining an otherwise identical migration result.
+        nullableString(book.coverImage)
+        string(book.origin)
+        nullableString(book.sourceId)
+        nullableString(book.originalUri)
+        string(book.category)
+        string(book.categoryId.value)
+        long(book.addedAt)
+        long(book.updatedAt)
+        string(ShuYueReadingLocatorMapper.publicationId(book).value)
+        string(ShuYueReadingLocatorMapper.acquisitionId(book))
+    }
+}
+
+private fun ShuYueFingerprintWriter.writeChapters(session: ShuYueStagingSession) {
+    val booksById = session.books.associateBy { it.id }
+    string("chapters")
+    int(session.chapters.size)
+    session.chapters.forEach { chapter ->
+        val book = requireNotNull(booksById[chapter.bookId]) {
+            "Staged chapter has no staged parent book"
+        }
+        val textBytes = chapter.text.encodeToByteArray()
+        string("chapter")
+        string(chapter.id)
+        string(chapter.bookId)
+        string(chapter.title)
+        int(chapter.index)
+        nullableString(chapter.href)
+        int(chapter.wordCount)
+        long(textBytes.size.toLong())
+        string(Sha256.hex(textBytes))
+        string(ShuYueReadingLocatorMapper.unitId(book, chapter.id).value)
+        string(ShuYueReadingLocatorMapper.resourceId(book, chapter.id))
+    }
+}
+
+private fun ShuYueFingerprintWriter.writeCategories(session: ShuYueStagingSession) {
+    string("categories")
+    val categories = session.categories.sortedBy { it.name }
+    int(categories.size)
+    categories.forEach { category ->
+        string(category.name)
+        string(category.id.value)
+    }
+}
+
+private fun ShuYueFingerprintWriter.writeProgress(session: ShuYueStagingSession) {
+    string("progress")
+    int(session.progress.size)
+    session.progress.forEach { stagedProgress ->
+        val raw = stagedProgress.raw
+        string("rawProgress")
+        string(raw.bookId)
+        string(raw.chapterId)
+        int(raw.charOffset)
+        float(raw.progress)
+        long(raw.updatedAt)
+
+        val locator = stagedProgress.locator
+        val scope = locator.scope
+        string("textLocator")
+        int(locator.schemaVersion)
+        int(scope.schemaVersion)
+        string(scope.publicationId.value)
+        string(scope.acquisitionId)
+        string(scope.unitId.publicationKey.value)
+        string(scope.unitId.value)
+        long(scope.contentRevision)
+        string(locator.resourceId)
+        string(locator.blockId)
+        int(locator.offset)
+        string(locator.offsetUnit.name)
+        nullableDouble(locator.progression)
+        string(locator.direction.name)
+        val quote = locator.quote
+        boolean(quote != null)
+        if (quote != null) {
+            string(quote.exact)
+            string(quote.prefix)
+            string(quote.suffix)
+            int(quote.occurrence)
+        }
+    }
+}
+
+private fun ShuYueFingerprintWriter.writeReaderSettings(settings: ShuYueV1ReaderSettings) {
+    string("readerSettings")
+    string(settings.language.name)
+    float(settings.fontSizeSp)
+    int(settings.lineHeightPercent)
+    int(settings.pageChars)
+    string(settings.theme.name)
+    string(settings.accentColor.name)
+    boolean(settings.volumeKeysEnabled)
+    string(settings.volumeUpAction.name)
+    string(settings.volumeDownAction.name)
+    boolean(settings.keepScreenOn)
+    boolean(settings.syncOnLaunch)
+    boolean(settings.appLockEnabled)
+    boolean(settings.secureScreen)
+    boolean(settings.incognitoMode)
+    boolean(settings.showNsfwSources)
+    boolean(settings.imageParsingEnabled)
+    boolean(settings.showPluginErrors)
+}
+
+private fun ShuYueFingerprintWriter.writePreferences(session: ShuYueStagingSession) {
+    string("preferences")
+    val preferences = session.preferences.entries.sortedBy { it.key }
+    int(preferences.size)
+    preferences.forEach { (key, value) ->
+        string(key)
+        string(value)
+    }
+
+    string("imageParsingPolicies")
+    val imagePolicies = session.imageParsingPolicies.entries.sortedBy { it.key }
+    int(imagePolicies.size)
+    imagePolicies.forEach { (key, value) ->
+        string(key)
+        string(value.name)
+    }
+}
+
+private fun ShuYueFingerprintWriter.writePluginQuarantine(session: ShuYueStagingSession) {
+    string("pluginQuarantine")
+    int(session.pluginInstallations.size)
+    session.pluginInstallations.forEach { plugin ->
+        val scriptBytes = plugin.script.encodeToByteArray()
+        string(plugin.id)
+        string(plugin.version)
+        int(plugin.versionCode)
+        int(plugin.sourceIds.size)
+        plugin.sourceIds.forEach { string(it) }
+        string(plugin.origin)
+        int(plugin.ordinal)
+        // Bind both staged metadata and the payload-derived values. A corrupted or modified
+        // staging object therefore cannot retain the fingerprint by changing only one side.
+        string(plugin.sha256)
+        long(plugin.scriptByteCount)
+        string(Sha256.hex(scriptBytes))
+        long(scriptBytes.size.toLong())
+        boolean(plugin.enabled != null)
+        if (plugin.enabled != null) boolean(plugin.enabled)
+        nullableLong(plugin.installedAt)
+    }
+}

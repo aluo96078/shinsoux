@@ -31,25 +31,7 @@ internal class PluginRepositoryRefresher(
         val installed = packageStore.list().associateBy { it.manifest.id }
         val result = linkedMapOf<String, ExtensionDescriptor>()
 
-        installed.values.forEach { stored ->
-            val manifest = stored.manifest
-            result[manifest.id] = ExtensionDescriptor(
-                id = manifest.id,
-                name = manifest.name,
-                version = manifest.version,
-                versionCode = manifest.versionCode ?: PluginVerifier.versionInt(manifest.version),
-                lang = manifest.lang,
-                nsfw = manifest.nsfw,
-                sources = manifest.sources.orEmpty(),
-                repositoryBaseUrl = stored.metadata.repositoryBaseUrl,
-                scriptUrl = null,
-                iconUrl = manifest.sources?.firstOrNull()?.baseUrl?.trimEnd('/')?.plus("/favicon.ico"),
-                description = null,
-                state = ExtensionState.INSTALLED,
-                installedVersion = manifest.version,
-                contentType = manifest.installedContentType(),
-            )
-        }
+        installed.values.forEach { stored -> result[stored.manifest.id] = installedDescriptor(stored) }
 
         val snapshots = linkedMapOf<String, RepositoryIndexSnapshot>()
         val needingTrust = linkedSetOf<String>()
@@ -72,71 +54,7 @@ internal class PluginRepositoryRefresher(
             }
             snapshots[repository.baseUrl] = snapshot
             val installKeyOf = installKeyResolver(repository)
-            when (val index = snapshot.index) {
-                is RepositoryIndex.Plugins -> index.entries.forEach { entry ->
-                    val key = installKeyOf(entry.id) ?: return@forEach
-                    val local = installed[key]
-                    val state = when {
-                        local == null -> ExtensionState.AVAILABLE
-                        entry.versionCode > (local.manifest.versionCode
-                            ?: PluginVerifier.versionInt(local.manifest.version)) -> ExtensionState.UPDATE_AVAILABLE
-                        entry.versionCode == (local.manifest.versionCode
-                            ?: PluginVerifier.versionInt(local.manifest.version)) &&
-                            entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
-                        // A development build changes without a version bump.
-                        PluginInstallKeys.isDeveloperKey(key) && entry.sha256 != null &&
-                            !entry.sha256.equals(local.metadata.installedSha256, ignoreCase = true) -> ExtensionState.UPDATE_AVAILABLE
-                        else -> ExtensionState.INSTALLED
-                    }
-                    result[key] = entry.toDescriptor(
-                        repository,
-                        state,
-                        local?.manifest?.version,
-                        local?.manifest?.installedContentType(),
-                    ).copy(id = key)
-                }
-
-                is RepositoryIndex.Legacy -> index.entries.forEach { entry ->
-                    val local = installed[entry.pkg]
-                    val localCode = local?.manifest?.versionCode
-                        ?: local?.manifest?.version?.let(PluginVerifier::versionInt)
-                    val state = when {
-                        local == null -> ExtensionState.AVAILABLE
-                        localCode == null || entry.code > localCode ||
-                            (entry.code == localCode && entry.version != local.manifest.version) ->
-                            ExtensionState.UPDATE_AVAILABLE
-                        else -> ExtensionState.INSTALLED
-                    }
-                    result[entry.pkg] = entry.toDescriptor(
-                        repository,
-                        state,
-                        local?.manifest?.version,
-                        local?.manifest?.installedContentType(),
-                    )
-                }
-                is RepositoryIndex.Combined -> index.plugins.forEach { entry ->
-                    val key = installKeyOf(entry.id) ?: return@forEach
-                    val local = installed[key]
-                    val state = when {
-                        local == null -> ExtensionState.AVAILABLE
-                        entry.versionCode > (local.manifest.versionCode
-                            ?: PluginVerifier.versionInt(local.manifest.version)) -> ExtensionState.UPDATE_AVAILABLE
-                        entry.versionCode == (local.manifest.versionCode
-                            ?: PluginVerifier.versionInt(local.manifest.version)) &&
-                            entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
-                        // A development build changes without a version bump.
-                        PluginInstallKeys.isDeveloperKey(key) && entry.sha256 != null &&
-                            !entry.sha256.equals(local.metadata.installedSha256, ignoreCase = true) -> ExtensionState.UPDATE_AVAILABLE
-                        else -> ExtensionState.INSTALLED
-                    }
-                    result[key] = entry.toDescriptor(
-                        repository,
-                        state,
-                        local?.manifest?.version,
-                        local?.manifest?.installedContentType(),
-                    ).copy(id = key)
-                }
-            }
+            addIndexDescriptors(snapshot.index, repository, installKeyOf, installed, result)
         }
         // Only a repository that answered replaces what it was last known to publish: a list
         // that could not be fetched says nothing about what was withdrawn.
@@ -150,6 +68,98 @@ internal class PluginRepositoryRefresher(
         } finally {
             state.packageMutationMutex.withLock { state.invalidateWebChallengeGrants() }
         }
+    }
+
+    private fun installedDescriptor(stored: StoredPlugin): ExtensionDescriptor {
+        val manifest = stored.manifest
+        return ExtensionDescriptor(
+            id = manifest.id,
+            name = manifest.name,
+            version = manifest.version,
+            versionCode = manifest.versionCode ?: PluginVerifier.versionInt(manifest.version),
+            lang = manifest.lang,
+            nsfw = manifest.nsfw,
+            sources = manifest.sources.orEmpty(),
+            repositoryBaseUrl = stored.metadata.repositoryBaseUrl,
+            scriptUrl = null,
+            iconUrl = manifest.sources?.firstOrNull()?.baseUrl?.trimEnd('/')?.plus("/favicon.ico"),
+            description = null,
+            state = ExtensionState.INSTALLED,
+            installedVersion = manifest.version,
+            contentType = manifest.installedContentType(),
+        )
+    }
+
+    /** Adds the descriptors a repository's index publishes, with their state against what is installed. */
+    private fun addIndexDescriptors(
+        index: RepositoryIndex,
+        repository: ExtensionRepository,
+        installKeyOf: (String) -> String?,
+        installed: Map<String, StoredPlugin>,
+        result: MutableMap<String, ExtensionDescriptor>,
+    ) {
+        when (index) {
+            is RepositoryIndex.Plugins -> index.entries.forEach { entry ->
+                val key = installKeyOf(entry.id) ?: return@forEach
+                result[key] = pluginEntryDescriptor(entry, key, repository, installed[key])
+            }
+
+            is RepositoryIndex.Legacy -> index.entries.forEach { entry ->
+                result[entry.pkg] = legacyEntryDescriptor(entry, repository, installed[entry.pkg])
+            }
+            is RepositoryIndex.Combined -> index.plugins.forEach { entry ->
+                val key = installKeyOf(entry.id) ?: return@forEach
+                result[key] = pluginEntryDescriptor(entry, key, repository, installed[key])
+            }
+        }
+    }
+
+    private fun legacyEntryDescriptor(
+        entry: LegacyExtensionIndexEntry,
+        repository: ExtensionRepository,
+        local: StoredPlugin?,
+    ): ExtensionDescriptor {
+        val localCode = local?.manifest?.versionCode
+            ?: local?.manifest?.version?.let(PluginVerifier::versionInt)
+        val state = when {
+            local == null -> ExtensionState.AVAILABLE
+            localCode == null || entry.code > localCode ||
+                (entry.code == localCode && entry.version != local.manifest.version) ->
+                ExtensionState.UPDATE_AVAILABLE
+            else -> ExtensionState.INSTALLED
+        }
+        return entry.toDescriptor(
+            repository,
+            state,
+            local?.manifest?.version,
+            local?.manifest?.installedContentType(),
+        )
+    }
+
+    private fun pluginEntryDescriptor(
+        entry: PluginIndexEntry,
+        key: String,
+        repository: ExtensionRepository,
+        local: StoredPlugin?,
+    ): ExtensionDescriptor {
+        val state = when {
+            local == null -> ExtensionState.AVAILABLE
+            entry.versionCode > (local.manifest.versionCode
+                ?: PluginVerifier.versionInt(local.manifest.version)) -> ExtensionState.UPDATE_AVAILABLE
+            entry.versionCode == (local.manifest.versionCode
+                ?: PluginVerifier.versionInt(local.manifest.version)) &&
+                entry.version != local.manifest.version -> ExtensionState.UPDATE_AVAILABLE
+            // A development build changes without a version bump.
+            PluginInstallKeys.isDeveloperKey(key) && entry.sha256 != null &&
+                !entry.sha256.equals(local.metadata.installedSha256, ignoreCase = true) -> ExtensionState.UPDATE_AVAILABLE
+            else -> ExtensionState.INSTALLED
+        }
+        return entry.toDescriptor(
+            repository,
+            state,
+            local?.manifest?.version,
+            local?.manifest?.installedContentType(),
+        ).copy(id = key)
     }
 
     /**

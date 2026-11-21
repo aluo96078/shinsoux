@@ -535,6 +535,55 @@ private fun UserRow(user: WireUserSummary, busy: Boolean, actions: UserActions) 
 
 // ---- share a title ------------------------------------------------------------------------------
 
+/** The recipients to choose from: a progress spinner while loading, an empty-state line, or radio rows. */
+@Composable
+private fun ShareCandidateList(
+    shown: List<WireUserSummary>?,
+    rows: List<WireUserSummary>,
+    picked: WireUserSummary?,
+    suggested: Boolean,
+    query: String,
+    busy: Boolean,
+    onPick: (WireUserSummary) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+        when {
+            shown == null -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            rows.isEmpty() -> Text(
+                if (suggested) {
+                    strings.text(StringKey.YOU_ARE_NOT_FOLLOWING_ANYONE_SEARCH_FOR)
+                } else {
+                    strings.text(StringKey.NO_ACCOUNT_STARTS_WITH_X, query.trim().removePrefix("@"))
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> rows.forEach { user ->
+                val selectable = user.canShare && !user.blocked
+                Row(
+                    Modifier.fillMaxWidth().selectable(
+                        selected = picked?.id == user.id,
+                        enabled = selectable && !busy,
+                        role = Role.RadioButton,
+                        onClick = { onPick(user) },
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = picked?.id == user.id, onClick = null, enabled = selectable)
+                    Column(Modifier.weight(1f)) {
+                        Text("@" + user.username, style = MaterialTheme.typography.bodyLarge)
+                        val badges = userBadges(strings, user)
+                        if (badges.isNotEmpty()) {
+                            Text(badges, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Picks a recipient for [workHash] among the accounts the user follows, or by username search. */
 @Composable
 internal fun ShareWithUserDialog(sync: SyncSharing, workHash: String, title: String, onDismiss: () -> Unit) {
@@ -594,41 +643,15 @@ internal fun ShareWithUserDialog(sync: SyncSharing, workHash: String, title: Str
                     picked != null && shown.none { it.id == picked?.id } -> listOfNotNull(picked) + shown
                     else -> shown
                 }
-                Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
-                    when {
-                        shown == null -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        rows.isEmpty() -> Text(
-                            if (suggested) {
-                                strings.text(StringKey.YOU_ARE_NOT_FOLLOWING_ANYONE_SEARCH_FOR)
-                            } else {
-                                strings.text(StringKey.NO_ACCOUNT_STARTS_WITH_X, query.trim().removePrefix("@"))
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        else -> rows.forEach { user ->
-                            val selectable = user.canShare && !user.blocked
-                            Row(
-                                Modifier.fillMaxWidth().selectable(
-                                    selected = picked?.id == user.id,
-                                    enabled = selectable && !busy,
-                                    role = Role.RadioButton,
-                                    onClick = { picked = user },
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(selected = picked?.id == user.id, onClick = null, enabled = selectable)
-                                Column(Modifier.weight(1f)) {
-                                    Text("@" + user.username, style = MaterialTheme.typography.bodyLarge)
-                                    val badges = userBadges(strings, user)
-                                    if (badges.isNotEmpty()) {
-                                        Text(badges, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                ShareCandidateList(
+                    shown = shown,
+                    rows = rows,
+                    picked = picked,
+                    suggested = suggested,
+                    query = query,
+                    busy = busy,
+                    onPick = { picked = it },
+                )
                 OutlinedTextField(
                     value = message,
                     onValueChange = { message = it.take(SHARE_MESSAGE_MAX) },

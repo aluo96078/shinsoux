@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -89,6 +90,180 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
 
+/** Plain-text reader: the paginated chapter surface, with the translation overlay. */
+@Composable
+private fun PlainTextUnifiedContentReader(
+    session: TypedReaderContentSession,
+    features: ContentFeatures,
+    settings: ReaderSettings,
+    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
+    requestedPageIndex: Int?,
+    pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
+    readerControlsVisible: Boolean,
+    translationRequestSerial: Long,
+    translationToggleSerial: Long,
+    onTranslationActiveChanged: (Boolean) -> Unit,
+    translationLabels: dev.shinsou.kmp.translation.TranslationLabels?,
+    onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
+    onReaderTap: (ReaderTapAction) -> Unit,
+    modifier: Modifier,
+) {
+    val strings = LocalShinsouStrings.current
+    val canonicalText = requireNotNull(session.canonicalText)
+    val access = session.access.withTextCharacters(canonicalText.length)
+    val displayAllowed = remember(session, features) {
+        // A rights denial is an expected outcome, shown to the reader just below.
+        runCatching {
+            features.operations.display(access, canonicalText.length.toLong()) { true }
+        }.getOrDefault(false)
+    }
+    if (!displayAllowed) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(strings.text(StringKey.THIS_CONTENT_IS_NO_LONGER_AVAILABLE_UNDER))
+        }
+        return
+    }
+
+    DisposableEffect(session, features) {
+        onDispose { features.textToSpeech.stop() }
+    }
+    val scope = session.content.navigation.scope
+    // Translations are kept on the device: a grant that allows display but not offline storage
+    // gets no translation at all, rather than one that quietly stores the text.
+    val translationStorageAllowed = remember(session, features) { readerTranslationAvailable(session, features) }
+    val translationState = rememberNovelTranslation(
+        translation = features.translation.takeIf { translationStorageAllowed },
+        workKey = scope.publicationId.value,
+        chapterKey = scope.unitId.value,
+        canonicalText = canonicalText,
+        exportable = { features.operations.export(access, canonicalText.length.toLong()) { true } },
+        labels = translationLabels,
+    )
+    val display = remember(translationState?.result, translationState?.settings?.mode, canonicalText) {
+        val state = translationState ?: return@remember null
+        state.result?.let { dev.shinsou.kmp.translation.TranslationDisplayText.build(canonicalText, it, state.settings.mode) }
+    }
+    // Switching between the original and a translation re-paginates: carry the reader's position
+    // across instead of going back to where the chapter was opened.
+    val latestLocator = remember(session) { arrayOf<ReadingLocator>(session.content.initialLocator) }
+    val anchorLocator = remember(session, display?.text) { latestLocator[0] }
+    val reopened = anchorLocator === session.content.initialLocator && display == null
+    var translationSheetVisible by remember { mutableStateOf(false) }
+    NovelTranslationControls(
+        session = session,
+        translationState = translationState,
+        translationSheetVisible = translationSheetVisible,
+        onTranslationSheetVisible = { translationSheetVisible = it },
+        translationRequestSerial = translationRequestSerial,
+        translationToggleSerial = translationToggleSerial,
+        onTranslationActiveChanged = onTranslationActiveChanged,
+    )
+
+    Box(modifier.fillMaxSize()) {
+        NovelReaderSurface(
+            canonicalText = canonicalText,
+            navigation = session.content.navigation as PlainTextNavigation,
+            initialLocator = anchorLocator,
+            settings = settings,
+            // Saved visual pages belong to the original text as it was first laid out.
+            initialVisualPageIndex = if (reopened) session.initialVisualPageIndex ?: requestedPageIndex else null,
+            initialVisualPageCount = if (reopened) session.initialVisualPageCount else null,
+            requestedPageIndex = requestedPageIndex,
+            pageRequestSerial = pageRequestSerial,
+            navigationAction = navigationAction,
+            navigationRequestKey = navigationRequestKey,
+            onPageChanged = onPageIndexChanged,
+            onLocatorChanged = { locator, pageIndex, pageCount ->
+                latestLocator[0] = locator
+                onLocatorChanged(locator, pageIndex, pageCount)
+            },
+            onNavigationBoundary = onNavigationBoundary,
+            onTapAction = onReaderTap,
+            remoteAssetScope = session.remoteAssetScope,
+            display = display,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (translationState != null) {
+            NovelTranslationOverlay(
+                state = translationState,
+                readerControlsVisible = readerControlsVisible,
+                sheetVisible = translationSheetVisible,
+                onSheetVisible = { translationSheetVisible = it },
+            )
+        }
+    }
+}
+
+/**
+ * The reader's translation controls: the panel opens on a press of the toolbar button, the other
+ * press turns the translation on or off, and the shell is told whether the chapter is shown translated.
+ */
+@Composable
+private fun NovelTranslationControls(
+    session: TypedReaderContentSession,
+    translationState: NovelTranslationState?,
+    translationSheetVisible: Boolean,
+    onTranslationSheetVisible: (Boolean) -> Unit,
+    translationRequestSerial: Long,
+    translationToggleSerial: Long,
+    onTranslationActiveChanged: (Boolean) -> Unit,
+) {
+    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
+    val returnFocus = LocalReaderFocusReturn.current
+    var sheetWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(translationSheetVisible) {
+        if (translationSheetVisible) sheetWasOpen = true
+        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
+    }
+    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
+    LaunchedEffect(translationRequestSerial) {
+        // Only a press of the button opens the panel. The reader's shell starts its counter
+        // again for every chapter, and that reset must not be read as a press.
+        val pressed = translationRequestSerial > handledTranslationRequest
+        handledTranslationRequest = translationRequestSerial
+        if (pressed) onTranslationSheetVisible(true)
+    }
+    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
+    LaunchedEffect(translationToggleSerial) {
+        val pressed = translationToggleSerial > handledTranslationToggle
+        handledTranslationToggle = translationToggleSerial
+        val state = translationState ?: return@LaunchedEffect
+        if (pressed && state.loaded) state.change(state.settings.toggled())
+    }
+    val translationActive = translationState?.let { it.settings.shown } == true
+    // the shell starts each chapter unlit, so a new chapter is told again
+    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
+}
+
+/** Over the page: the translation progress bar, its notice and, when opened, the translation panel. */
+@Composable
+private fun BoxScope.NovelTranslationOverlay(
+    state: NovelTranslationState,
+    readerControlsVisible: Boolean,
+    sheetVisible: Boolean,
+    onSheetVisible: (Boolean) -> Unit,
+) {
+    val progress = state.progress
+    if (progress != null) {
+        LinearProgressIndicator(
+            progress = { (progress.first.toFloat() / progress.second.toFloat()).coerceIn(0f, 1f) },
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+        )
+    }
+    NovelTranslationNotice(
+        state = state,
+        onOpen = { onSheetVisible(true) },
+        // Under the reader's top bar when it is showing.
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = if (readerControlsVisible) 72.dp else 14.dp),
+    )
+    if (sheetVisible) {
+        NovelTranslationSheet(state) { onSheetVisible(false) }
+    }
+}
+
 /** Plain-text M4 surface with local body search, paragraph notes, copy, and block-aware TTS. */
 @Composable
 internal fun UnifiedContentReader(
@@ -120,7 +295,6 @@ internal fun UnifiedContentReader(
     onReaderTap: (ReaderTapAction) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val strings = LocalShinsouStrings.current
     val representation = session.content.representation
     if (representation is ContentRepresentation.ImageSequence) {
         ImageSequenceUnifiedContentReader(
@@ -169,115 +343,25 @@ internal fun UnifiedContentReader(
         UnsupportedUnifiedContentReader(representation, modifier)
         return
     }
-    val canonicalText = requireNotNull(session.canonicalText)
-    val access = session.access.withTextCharacters(canonicalText.length)
-    val displayAllowed = remember(session, features) {
-        // A rights denial is an expected outcome, shown to the reader just below.
-        runCatching {
-            features.operations.display(access, canonicalText.length.toLong()) { true }
-        }.getOrDefault(false)
-    }
-    if (!displayAllowed) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(strings.text(StringKey.THIS_CONTENT_IS_NO_LONGER_AVAILABLE_UNDER))
-        }
-        return
-    }
-
-    DisposableEffect(session, features) {
-        onDispose { features.textToSpeech.stop() }
-    }
-    val scope = session.content.navigation.scope
-    // Translations are kept on the device: a grant that allows display but not offline storage
-    // gets no translation at all, rather than one that quietly stores the text.
-    val translationStorageAllowed = remember(session, features) { readerTranslationAvailable(session, features) }
-    val translationState = rememberNovelTranslation(
-        translation = features.translation.takeIf { translationStorageAllowed },
-        workKey = scope.publicationId.value,
-        chapterKey = scope.unitId.value,
-        canonicalText = canonicalText,
-        exportable = { features.operations.export(access, canonicalText.length.toLong()) { true } },
-        labels = translationLabels,
+    PlainTextUnifiedContentReader(
+        session = session,
+        features = features,
+        settings = settings,
+        onLocatorChanged = onLocatorChanged,
+        requestedPageIndex = requestedPageIndex,
+        pageRequestSerial = pageRequestSerial,
+        navigationAction = navigationAction,
+        navigationRequestKey = navigationRequestKey,
+        readerControlsVisible = readerControlsVisible,
+        translationRequestSerial = translationRequestSerial,
+        translationToggleSerial = translationToggleSerial,
+        onTranslationActiveChanged = onTranslationActiveChanged,
+        translationLabels = translationLabels,
+        onPageIndexChanged = onPageIndexChanged,
+        onNavigationBoundary = onNavigationBoundary,
+        onReaderTap = onReaderTap,
+        modifier = modifier,
     )
-    val display = remember(translationState?.result, translationState?.settings?.mode, canonicalText) {
-        val state = translationState ?: return@remember null
-        state.result?.let { dev.shinsou.kmp.translation.TranslationDisplayText.build(canonicalText, it, state.settings.mode) }
-    }
-    // Switching between the original and a translation re-paginates: carry the reader's position
-    // across instead of going back to where the chapter was opened.
-    val latestLocator = remember(session) { arrayOf<ReadingLocator>(session.content.initialLocator) }
-    val anchorLocator = remember(session, display?.text) { latestLocator[0] }
-    val reopened = anchorLocator === session.content.initialLocator && display == null
-    var translationSheetVisible by remember { mutableStateOf(false) }
-    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
-    val returnFocus = LocalReaderFocusReturn.current
-    var sheetWasOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(translationSheetVisible) {
-        if (translationSheetVisible) sheetWasOpen = true
-        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
-    }
-    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
-    LaunchedEffect(translationRequestSerial) {
-        // Only a press of the button opens the panel. The reader's shell starts its counter
-        // again for every chapter, and that reset must not be read as a press.
-        val pressed = translationRequestSerial > handledTranslationRequest
-        handledTranslationRequest = translationRequestSerial
-        if (pressed) translationSheetVisible = true
-    }
-    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
-    LaunchedEffect(translationToggleSerial) {
-        val pressed = translationToggleSerial > handledTranslationToggle
-        handledTranslationToggle = translationToggleSerial
-        val state = translationState ?: return@LaunchedEffect
-        if (pressed && state.loaded) state.change(state.settings.toggled())
-    }
-    val translationActive = translationState?.let { it.settings.shown } == true
-    // the shell starts each chapter unlit, so a new chapter is told again
-    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
-
-    Box(modifier.fillMaxSize()) {
-        NovelReaderSurface(
-            canonicalText = canonicalText,
-            navigation = session.content.navigation as PlainTextNavigation,
-            initialLocator = anchorLocator,
-            settings = settings,
-            // Saved visual pages belong to the original text as it was first laid out.
-            initialVisualPageIndex = if (reopened) session.initialVisualPageIndex ?: requestedPageIndex else null,
-            initialVisualPageCount = if (reopened) session.initialVisualPageCount else null,
-            requestedPageIndex = requestedPageIndex,
-            pageRequestSerial = pageRequestSerial,
-            navigationAction = navigationAction,
-            navigationRequestKey = navigationRequestKey,
-            onPageChanged = onPageIndexChanged,
-            onLocatorChanged = { locator, pageIndex, pageCount ->
-                latestLocator[0] = locator
-                onLocatorChanged(locator, pageIndex, pageCount)
-            },
-            onNavigationBoundary = onNavigationBoundary,
-            onTapAction = onReaderTap,
-            remoteAssetScope = session.remoteAssetScope,
-            display = display,
-            modifier = Modifier.fillMaxSize(),
-        )
-        if (translationState != null) {
-            val progress = translationState.progress
-            if (progress != null) {
-                LinearProgressIndicator(
-                    progress = { (progress.first.toFloat() / progress.second.toFloat()).coerceIn(0f, 1f) },
-                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-                )
-            }
-            NovelTranslationNotice(
-                state = translationState,
-                onOpen = { translationSheetVisible = true },
-                // Under the reader's top bar when it is showing.
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (readerControlsVisible) 72.dp else 14.dp),
-            )
-            if (translationSheetVisible) {
-                NovelTranslationSheet(translationState) { translationSheetVisible = false }
-            }
-        }
-    }
 }
 
 /**
@@ -552,6 +636,130 @@ internal suspend fun forEachReaderSearchSegment(
     }
 }
 
+/** The image chapter's pages in the layout the reading mode asks for, with page translations provided to them. */
+@Composable
+private fun ImageSequenceLayoutContent(
+    session: TypedReaderContentSession,
+    features: ContentFeatures,
+    navigation: ImageSequenceNavigation,
+    initialIndex: Int,
+    settings: ReaderSettings,
+    requestedPageIndex: Int?,
+    pageRequestSerial: Long,
+    navigationAction: ReaderTapAction?,
+    navigationRequestKey: Long,
+    onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onNavigationBoundary: (ReaderTapAction) -> Unit,
+    onReaderTap: (ReaderTapAction) -> Unit,
+    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int?) -> Unit,
+    translatedPage: (Int) -> ByteArray?,
+) {
+    CompositionLocalProvider(LocalTranslatedImagePage provides translatedPage) {
+        // Recreate pager state when direction/layout changes. requestedPageIndex is kept in the
+        // reader shell and makes the new container start on the page that was actually visible.
+        key(session.content.representation.representationId, settings.readingMode) {
+            when (imageSequenceReaderLayout(settings.readingMode)) {
+                ImageSequenceReaderLayout.HORIZONTAL_PAGER -> ImageSequenceHorizontalPager(
+                    session = session,
+                    features = features,
+                    navigation = navigation,
+                    initialIndex = initialIndex,
+                    settings = settings,
+                    requestedPageIndex = requestedPageIndex,
+                    pageRequestSerial = pageRequestSerial,
+                    navigationAction = navigationAction,
+                    navigationRequestKey = navigationRequestKey,
+                    onPageIndexChanged = onPageIndexChanged,
+                    onNavigationBoundary = onNavigationBoundary,
+                    onReaderTap = onReaderTap,
+                    onLocatorChanged = onLocatorChanged,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                ImageSequenceReaderLayout.VERTICAL_PAGER -> ImageSequenceVerticalPager(
+                    session = session,
+                    features = features,
+                    navigation = navigation,
+                    initialIndex = initialIndex,
+                    settings = settings,
+                    requestedPageIndex = requestedPageIndex,
+                    pageRequestSerial = pageRequestSerial,
+                    navigationAction = navigationAction,
+                    navigationRequestKey = navigationRequestKey,
+                    onPageIndexChanged = onPageIndexChanged,
+                    onNavigationBoundary = onNavigationBoundary,
+                    onReaderTap = onReaderTap,
+                    onLocatorChanged = onLocatorChanged,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                ImageSequenceReaderLayout.CONTINUOUS -> ImageSequenceContinuousReader(
+                    session = session,
+                    features = features,
+                    navigation = navigation,
+                    initialIndex = initialIndex,
+                    settings = settings,
+                    requestedPageIndex = requestedPageIndex,
+                    pageRequestSerial = pageRequestSerial,
+                    navigationAction = navigationAction,
+                    navigationRequestKey = navigationRequestKey,
+                    onPageIndexChanged = onPageIndexChanged,
+                    onNavigationBoundary = onNavigationBoundary,
+                    onReaderTap = onReaderTap,
+                    onLocatorChanged = onLocatorChanged,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The image reader's translation controls: focus returns to the reader when the panel closes or a
+ * translation ends, a press of the toolbar button opens the panel or toggles the translation, and
+ * the shell is told whether the chapter is shown translated.
+ */
+@Composable
+private fun MangaTranslationControls(
+    session: TypedReaderContentSession,
+    mangaState: MangaReaderTranslationState?,
+    translationSheetVisible: Boolean,
+    onTranslationSheetVisible: (Boolean) -> Unit,
+    translationRequestSerial: Long,
+    translationToggleSerial: Long,
+    onTranslationActiveChanged: (Boolean) -> Unit,
+) {
+    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
+    val returnFocus = LocalReaderFocusReturn.current
+    var sheetWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(translationSheetVisible) {
+        if (translationSheetVisible) sheetWasOpen = true
+        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
+    }
+    // when a translation ends its notice goes; whatever held the focus then, the reader takes it
+    LaunchedEffect(mangaState?.finished, mangaState?.failure) {
+        if (mangaState?.finished == true && !translationSheetVisible) returnFocus()
+    }
+    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
+    LaunchedEffect(translationRequestSerial) {
+        // Only a press of the button opens the panel (the shell resets its counter per chapter).
+        val pressed = translationRequestSerial > handledTranslationRequest
+        handledTranslationRequest = translationRequestSerial
+        if (pressed && mangaState != null) onTranslationSheetVisible(true)
+    }
+    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
+    LaunchedEffect(translationToggleSerial) {
+        val pressed = translationToggleSerial > handledTranslationToggle
+        handledTranslationToggle = translationToggleSerial
+        val state = mangaState ?: return@LaunchedEffect
+        val current = state.settings ?: return@LaunchedEffect
+        if (pressed) state.update(current.toggled())
+    }
+    val translationActive = mangaState?.settings?.shown == true
+    // the shell starts each chapter unlit, so a new chapter is told again
+    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
+}
+
 /** Image-sequence adapter sharing the same stable locator contract as text and EPUB. */
 @Composable
 private fun ImageSequenceUnifiedContentReader(
@@ -611,95 +819,33 @@ private fun ImageSequenceUnifiedContentReader(
         null
     }
     var translationSheetVisible by remember { mutableStateOf(false) }
-    // a closed sheet leaves focus nowhere: the reader takes it back so its keys page again
-    val returnFocus = LocalReaderFocusReturn.current
-    var sheetWasOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(translationSheetVisible) {
-        if (translationSheetVisible) sheetWasOpen = true
-        else if (sheetWasOpen) { kotlinx.coroutines.delay(50); returnFocus() }
-    }
-    // when a translation ends its notice goes; whatever held the focus then, the reader takes it
-    LaunchedEffect(mangaState?.finished, mangaState?.failure) {
-        if (mangaState?.finished == true && !translationSheetVisible) returnFocus()
-    }
-    var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
-    LaunchedEffect(translationRequestSerial) {
-        // Only a press of the button opens the panel (the shell resets its counter per chapter).
-        val pressed = translationRequestSerial > handledTranslationRequest
-        handledTranslationRequest = translationRequestSerial
-        if (pressed && mangaState != null) translationSheetVisible = true
-    }
-    var handledTranslationToggle by remember { mutableStateOf(translationToggleSerial) }
-    LaunchedEffect(translationToggleSerial) {
-        val pressed = translationToggleSerial > handledTranslationToggle
-        handledTranslationToggle = translationToggleSerial
-        val state = mangaState ?: return@LaunchedEffect
-        val current = state.settings ?: return@LaunchedEffect
-        if (pressed) state.update(current.toggled())
-    }
-    val translationActive = mangaState?.settings?.shown == true
-    // the shell starts each chapter unlit, so a new chapter is told again
-    LaunchedEffect(translationActive, session) { onTranslationActiveChanged(translationActive) }
+    MangaTranslationControls(
+        session = session,
+        mangaState = mangaState,
+        translationSheetVisible = translationSheetVisible,
+        onTranslationSheetVisible = { translationSheetVisible = it },
+        translationRequestSerial = translationRequestSerial,
+        translationToggleSerial = translationToggleSerial,
+        onTranslationActiveChanged = onTranslationActiveChanged,
+    )
 
     Box(modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalTranslatedImagePage provides { index -> mangaState?.translatedPage(index) }) {
-    // Recreate pager state when direction/layout changes. requestedPageIndex is kept in the
-    // reader shell and makes the new container start on the page that was actually visible.
-    key(session.content.representation.representationId, settings.readingMode) {
-        when (imageSequenceReaderLayout(settings.readingMode)) {
-            ImageSequenceReaderLayout.HORIZONTAL_PAGER -> ImageSequenceHorizontalPager(
-                session = session,
-                features = features,
-                navigation = navigation,
-                initialIndex = initialIndex,
-                settings = settings,
-                requestedPageIndex = requestedPageIndex,
-                pageRequestSerial = pageRequestSerial,
-                navigationAction = navigationAction,
-                navigationRequestKey = navigationRequestKey,
-                onPageIndexChanged = onPageIndexChanged,
-                onNavigationBoundary = onNavigationBoundary,
-                onReaderTap = onReaderTap,
-                onLocatorChanged = onLocatorChanged,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            ImageSequenceReaderLayout.VERTICAL_PAGER -> ImageSequenceVerticalPager(
-                session = session,
-                features = features,
-                navigation = navigation,
-                initialIndex = initialIndex,
-                settings = settings,
-                requestedPageIndex = requestedPageIndex,
-                pageRequestSerial = pageRequestSerial,
-                navigationAction = navigationAction,
-                navigationRequestKey = navigationRequestKey,
-                onPageIndexChanged = onPageIndexChanged,
-                onNavigationBoundary = onNavigationBoundary,
-                onReaderTap = onReaderTap,
-                onLocatorChanged = onLocatorChanged,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            ImageSequenceReaderLayout.CONTINUOUS -> ImageSequenceContinuousReader(
-                session = session,
-                features = features,
-                navigation = navigation,
-                initialIndex = initialIndex,
-                settings = settings,
-                requestedPageIndex = requestedPageIndex,
-                pageRequestSerial = pageRequestSerial,
-                navigationAction = navigationAction,
-                navigationRequestKey = navigationRequestKey,
-                onPageIndexChanged = onPageIndexChanged,
-                onNavigationBoundary = onNavigationBoundary,
-                onReaderTap = onReaderTap,
-                onLocatorChanged = onLocatorChanged,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    }
-    }
+        ImageSequenceLayoutContent(
+            session = session,
+            features = features,
+            navigation = navigation,
+            initialIndex = initialIndex,
+            settings = settings,
+            requestedPageIndex = requestedPageIndex,
+            pageRequestSerial = pageRequestSerial,
+            navigationAction = navigationAction,
+            navigationRequestKey = navigationRequestKey,
+            onPageIndexChanged = onPageIndexChanged,
+            onNavigationBoundary = onNavigationBoundary,
+            onReaderTap = onReaderTap,
+            onLocatorChanged = onLocatorChanged,
+            translatedPage = { index -> mangaState?.translatedPage(index) },
+        )
         if (mangaState != null) {
             MangaTranslationNotice(
                 state = mangaState,

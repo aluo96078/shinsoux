@@ -92,99 +92,140 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslationService) {
         )
         for (state in states) {
             val a = state.support.accelerator
-            val running = work[a]
-            Surface(
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth().testTag("manga-accelerator-${a.name.lowercase()}"),
-            ) {
-                Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = a in chosen,
-                            onCheckedChange = { choose(a, it) },
-                            enabled = state.installed && running == null && !(a in chosen && chosen.size == 1),
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(label(a), style = MaterialTheme.typography.titleMedium)
-                            val reason = state.support.unsupportedReason
-                            val lines = if (reason != null) listOf(strings.authoredOrExternal(reason)) else state.support.notes.map(strings::authoredOrExternal)
-                            for (line in lines) {
-                                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        when {
-                            !state.support.supported || running != null -> Unit
-                            !state.installed -> OutlinedButton(onClick = { download(a) }) {
-                                Text(strings.text(StringKey.DOWNLOAD_X_MB, megabytes(state.missingBytes)))
-                            }
-                            state.support.packs.isNotEmpty() || state.support.runtime != null ->
-                                TextButton(onClick = { scope.launch { manga.removeAccelerator(a); revision++ } }) { Text(strings.text(StringKey.REMOVE)) }
-                        }
-                    }
-                    if (running != null) {
-                        val fraction = running.fraction
-                        if (fraction == null) {
-                            Text(strings.text(StringKey.PREPARING_IT_FOR_THIS_DEVICE), style = MaterialTheme.typography.bodySmall)
-                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
-                        } else {
-                            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                        }
-                    }
-                }
-            }
+            AcceleratorCard(
+                state = state,
+                chosen = chosen,
+                running = work[a],
+                onChoose = { choose(a, it) },
+                onDownload = { download(a) },
+                onRemove = { scope.launch { manga.removeAccelerator(a); revision++ } },
+            )
         }
         failure?.let {
             Text(strings.text(StringKey.THE_DOWNLOAD_FAILED_X, it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         flow?.let { current ->
-            Surface(
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth().testTag("manga-translation-flow"),
-            ) {
-                Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
-                    Text(strings.text(StringKey.WHILE_READING), style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                        for (option in MangaTranslationFlow.entries) {
-                            FilterChip(
-                                selected = option == current,
-                                onClick = { flow = option; scope.launch { manga.setTranslationFlow(option); revision++ } },
-                                label = { Text(strings.text(flowLabel(option))) },
-                                modifier = Modifier.testTag("manga-translation-flow-${option.name.lowercase()}"),
-                            )
-                        }
+            TranslationFlowCard(
+                current = current,
+                onSelect = { option -> flow = option; scope.launch { manga.setTranslationFlow(option); revision++ } },
+            )
+        }
+        cpuMode?.let { mode ->
+            CpuModeCard(
+                mode = mode,
+                onSelect = { option -> cpuMode = option; scope.launch { manga.setCpuMode(option); revision++ } },
+            )
+        }
+    }
+}
+
+/** One accelerator: its checkbox, what it needs, and the download or remove action or progress. */
+@Composable
+private fun AcceleratorCard(
+    state: MangaTranslationService.AcceleratorState,
+    chosen: Set<MangaAccelerator>,
+    running: AcceleratorWork?,
+    onChoose: (Boolean) -> Unit,
+    onDownload: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    val a = state.support.accelerator
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().testTag("manga-accelerator-${a.name.lowercase()}"),
+    ) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = a in chosen,
+                    onCheckedChange = { onChoose(it) },
+                    enabled = state.installed && running == null && !(a in chosen && chosen.size == 1),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(label(a), style = MaterialTheme.typography.titleMedium)
+                    val reason = state.support.unsupportedReason
+                    val lines = if (reason != null) listOf(strings.authoredOrExternal(reason)) else state.support.notes.map(strings::authoredOrExternal)
+                    for (line in lines) {
+                        Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text(strings.text(flowNote(current)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                when {
+                    !state.support.supported || running != null -> Unit
+                    !state.installed -> OutlinedButton(onClick = { onDownload() }) {
+                        Text(strings.text(StringKey.DOWNLOAD_X_MB, megabytes(state.missingBytes)))
+                    }
+                    state.support.packs.isNotEmpty() || state.support.runtime != null ->
+                        TextButton(onClick = { onRemove() }) { Text(strings.text(StringKey.REMOVE)) }
+                }
+            }
+            if (running != null) {
+                val fraction = running.fraction
+                if (fraction == null) {
+                    Text(strings.text(StringKey.PREPARING_IT_FOR_THIS_DEVICE), style = MaterialTheme.typography.bodySmall)
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
+                } else {
+                    LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                 }
             }
         }
-        cpuMode?.let { mode ->
-            Surface(
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth().testTag("manga-cpu-mode"),
-            ) {
-                Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
-                    Text(strings.text(StringKey.CPU_PERFORMANCE), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        strings.text(StringKey.FOR_TEXT_RECOGNITION_AND_DETECTION_AND_REDRAWING),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    }
+}
+
+/** The choice between translating the whole chapter first and translating page by page. */
+@Composable
+private fun TranslationFlowCard(current: MangaTranslationFlow, onSelect: (MangaTranslationFlow) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().testTag("manga-translation-flow"),
+    ) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+            Text(strings.text(StringKey.WHILE_READING), style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                for (option in MangaTranslationFlow.entries) {
+                    FilterChip(
+                        selected = option == current,
+                        onClick = { onSelect(option) },
+                        label = { Text(strings.text(flowLabel(option))) },
+                        modifier = Modifier.testTag("manga-translation-flow-${option.name.lowercase()}"),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                        for (option in MangaCpuMode.entries) {
-                            FilterChip(
-                                selected = option == mode,
-                                onClick = { cpuMode = option; scope.launch { manga.setCpuMode(option); revision++ } },
-                                label = { Text(strings.text(cpuModeLabel(option))) },
-                                modifier = Modifier.testTag("manga-cpu-mode-${option.name.lowercase()}"),
-                            )
-                        }
-                    }
-                    Text(strings.text(cpuModeNote(mode)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            Text(strings.text(flowNote(current)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** The choice of how hard the CPU works on text recognition, detection and redrawing. */
+@Composable
+private fun CpuModeCard(mode: MangaCpuMode, onSelect: (MangaCpuMode) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().testTag("manga-cpu-mode"),
+    ) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+            Text(strings.text(StringKey.CPU_PERFORMANCE), style = MaterialTheme.typography.titleMedium)
+            Text(
+                strings.text(StringKey.FOR_TEXT_RECOGNITION_AND_DETECTION_AND_REDRAWING),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                for (option in MangaCpuMode.entries) {
+                    FilterChip(
+                        selected = option == mode,
+                        onClick = { onSelect(option) },
+                        label = { Text(strings.text(cpuModeLabel(option))) },
+                        modifier = Modifier.testTag("manga-cpu-mode-${option.name.lowercase()}"),
+                    )
+                }
+            }
+            Text(strings.text(cpuModeNote(mode)), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -309,7 +310,6 @@ private fun UpcomingPane(
     loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
     modifier: Modifier = Modifier,
 ) {
-    val strings = LocalShinsouStrings.current
     val timeZone = remember { TimeZone.currentSystemDefault() }
     val today = remember(timeZone) {
         Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
@@ -331,30 +331,17 @@ private fun UpcomingPane(
     val selectedPredictions = predictionsByDate[selectedDate].orEmpty()
 
     Column(modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(
-                onClick = {
-                    displayedMonth = shiftMonth(displayedMonth, -1)
-                    selectedDate = displayedMonth
-                },
-            ) { Icon(Icons.Outlined.KeyboardArrowLeft, contentDescription = strings.text(StringKey.PREVIOUS_MONTH)) }
-            Text(
-                monthTitle(displayedMonth, strings),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(
-                onClick = {
-                    displayedMonth = shiftMonth(displayedMonth, 1)
-                    selectedDate = displayedMonth
-                },
-            ) { Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = strings.text(StringKey.NEXT_MONTH)) }
-        }
+        UpcomingMonthHeader(
+            displayedMonth = displayedMonth,
+            onPreviousMonth = {
+                displayedMonth = shiftMonth(displayedMonth, -1)
+                selectedDate = displayedMonth
+            },
+            onNextMonth = {
+                displayedMonth = shiftMonth(displayedMonth, 1)
+                selectedDate = displayedMonth
+            },
+        )
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
             listOf("S", "M", "T", "W", "T", "F", "S").forEach { label ->
                 Text(
@@ -395,33 +382,78 @@ private fun UpcomingPane(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 9.dp),
             )
         }
-        if (selectedPredictions.isEmpty()) {
-            EmptyState(
-                title = strings.text(StringKey.NO_EXPECTED_UPDATES),
-                message = if (predictions.isEmpty()) {
-                    strings.text(StringKey.AT_LEAST_TWO_CHAPTER_UPLOAD_DATES_ARE)
-                } else {
-                    strings.text(StringKey.NO_TITLE_IS_EXPECTED_TO_UPDATE_ON)
-                },
-                icon = { Icon(Icons.Outlined.CalendarMonth, null, Modifier.size(30.dp)) },
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(selectedPredictions, key = { it.manga.id }) { prediction ->
-                    ActivityRow(
-                        title = prediction.manga.title,
-                        subtitle = prediction.averageIntervalDays?.let { strings.text(StringKey.USUALLY_EVERY_X_DAYS, it) }
-                            ?: strings.text(StringKey.ESTIMATED_FROM_THE_LAST_LIBRARY_UPDATE),
-                        detail = strings.text(StringKey.EXPECTED_TODAY),
-                        coverUrl = prediction.manga.thumbnailUrl,
-                        loadCoverBytes = loadCoverBytes(prediction.manga),
-                        onClick = { onOpenManga(prediction.manga.id) },
-                    )
-                }
+        UpcomingPredictionList(
+            selectedPredictions = selectedPredictions,
+            hasAnyPredictions = predictions.isNotEmpty(),
+            onOpenManga = onOpenManga,
+            loadCoverBytes = loadCoverBytes,
+        )
+    }
+}
+
+/** The month title between its previous- and next-month buttons. */
+@Composable
+private fun UpcomingMonthHeader(
+    displayedMonth: LocalDate,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onPreviousMonth) {
+            Icon(Icons.Outlined.KeyboardArrowLeft, contentDescription = strings.text(StringKey.PREVIOUS_MONTH))
+        }
+        Text(
+            monthTitle(displayedMonth, strings),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onNextMonth) {
+            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = strings.text(StringKey.NEXT_MONTH))
+        }
+    }
+}
+
+/** The expected updates of the selected day, or an empty state when there are none. */
+@Composable
+private fun ColumnScope.UpcomingPredictionList(
+    selectedPredictions: List<UpcomingPrediction>,
+    hasAnyPredictions: Boolean,
+    onOpenManga: (Long) -> Unit,
+    loadCoverBytes: (Manga) -> (suspend () -> ByteArray?)?,
+) {
+    val strings = LocalShinsouStrings.current
+    if (selectedPredictions.isEmpty()) {
+        EmptyState(
+            title = strings.text(StringKey.NO_EXPECTED_UPDATES),
+            message = if (!hasAnyPredictions) {
+                strings.text(StringKey.AT_LEAST_TWO_CHAPTER_UPLOAD_DATES_ARE)
+            } else {
+                strings.text(StringKey.NO_TITLE_IS_EXPECTED_TO_UPDATE_ON)
+            },
+            icon = { Icon(Icons.Outlined.CalendarMonth, null, Modifier.size(30.dp)) },
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            items(selectedPredictions, key = { it.manga.id }) { prediction ->
+                ActivityRow(
+                    title = prediction.manga.title,
+                    subtitle = prediction.averageIntervalDays?.let { strings.text(StringKey.USUALLY_EVERY_X_DAYS, it) }
+                        ?: strings.text(StringKey.ESTIMATED_FROM_THE_LAST_LIBRARY_UPDATE),
+                    detail = strings.text(StringKey.EXPECTED_TODAY),
+                    coverUrl = prediction.manga.thumbnailUrl,
+                    loadCoverBytes = loadCoverBytes(prediction.manga),
+                    onClick = { onOpenManga(prediction.manga.id) },
+                )
             }
         }
     }

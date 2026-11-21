@@ -82,55 +82,8 @@ public class LocalContentManager(
         importMutex.withLock {
             val selected = documents.filterNot { it.name.isBlank() }
             if (selected.isEmpty()) return@withLock emptyList()
-            val unsupported = selected.filter {
-                fileExtension(it.name) !in LOCAL_IMAGE_EXTENSIONS &&
-                    fileExtension(it.name) !in LOCAL_ARCHIVE_EXTENSIONS &&
-                    fileExtension(it.name) !in LOCAL_TYPED_CONTENT_EXTENSIONS
-            }
-            if (unsupported.isNotEmpty()) {
-                throw LocalContentImportException(
-                    "Unsupported local file type: ${unsupported.joinToString { it.name }}",
-                )
-            }
-
-            val typedDocuments = selected.filter { fileExtension(it.name) in LOCAL_TYPED_CONTENT_EXTENSIONS }
-            if (typedDocuments.isNotEmpty() && typedContent == null) {
-                throw LocalContentImportException(
-                    "TXT/EPUB import requires the shared content database on this platform.",
-                )
-            }
-            val works = mutableListOf<LocalWork>()
-            val directImages = selected.filter { isSupportedLocalImage(it.name) }
-            if (directImages.isNotEmpty()) {
-                val pages = withContext(defaultDispatcher) {
-                    val importContext = currentCoroutineContext()
-                    directImages
-                        .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
-                        .map { document ->
-                            document.toPagePayload { importContext.ensureActive() }
-                        }
-                }
-                works += LocalWork(
-                    title = deriveLocalTitle(directImages.map(ImportedDocument::name)),
-                    packageKind = LocalPackageKind.IMAGES,
-                    pages = pages,
-                )
-            }
-            selected.filter { fileExtension(it.name) in LOCAL_ARCHIVE_EXTENSIONS }
-                .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
-                .forEach { archive ->
-                    works += LocalWork(
-                        title = archive.name.substringBeforeLast('.', archive.name).trim()
-                            .ifBlank { "Local Manga" }
-                            .take(200),
-                        packageKind = if (fileExtension(archive.name) == "cbz") {
-                            LocalPackageKind.CBZ
-                        } else {
-                            LocalPackageKind.ZIP
-                        },
-                        pages = extractArchivePages(archive),
-                    )
-                }
+            val typedDocuments = validateImportSelection(selected)
+            val works = collectImageWorks(selected)
             if (works.isEmpty() && typedDocuments.isEmpty()) {
                 throw LocalContentImportException("No supported local content was selected.")
             }
@@ -140,24 +93,7 @@ public class LocalContentManager(
                 typedDocuments
                     .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
                     .forEach { document ->
-                        val typed = try {
-                            withContext(defaultDispatcher) {
-                                val importContext = currentCoroutineContext()
-                                requireNotNull(typedContent).import(
-                                    document = document,
-                                    syncContentBodies = syncContentBodies,
-                                    cancellationCheckpoint = { importContext.ensureActive() },
-                                )
-                            }
-                        } catch (error: Throwable) {
-                            if (error is CancellationException) throw error
-                            if (error is LocalContentImportException) throw error
-                            throw LocalContentImportException(
-                                "Unable to import typed document “${document.name}”.",
-                                error,
-                            )
-                        }
-                        imported += persistTyped(typed)
+                        imported += persistTyped(importTypedDocument(document, syncContentBodies))
                         // Publication/blob/outbox state is already durable. Notify only after the
                         // compatibility Manga/Chapter projection is also visible, and keep the
                         // callback non-blocking so derived indexing never enters the import path.
@@ -168,28 +104,7 @@ public class LocalContentManager(
                     if (typed == null) {
                         imported += persist(work)
                     } else {
-                        val content = try {
-                            withContext(defaultDispatcher) {
-                                val importContext = currentCoroutineContext()
-                                typed.importImageSequence(
-                                    title = work.title,
-                                    pages = work.pages.mapIndexed { index, page ->
-                                        page.toTypedSource(index) { importContext.ensureActive() }
-                                    },
-                                    packageKind = work.packageKind,
-                                    syncContentBodies = syncContentBodies,
-                                    cancellationCheckpoint = { importContext.ensureActive() },
-                                )
-                            }
-                        } catch (error: Throwable) {
-                            if (error is CancellationException) throw error
-                            if (error is LocalContentImportException) throw error
-                            throw LocalContentImportException(
-                                "Unable to import image publication “${work.title}”.",
-                                error,
-                            )
-                        }
-                        imported += persistTyped(content)
+                        imported += persistTyped(importImageWork(typed, work, syncContentBodies))
                         onTypedContentCommitted()
                     }
                 }
@@ -204,6 +119,118 @@ public class LocalContentManager(
                 throw error
             }
             imported
+        }
+
+    /** Rejects unsupported file types and returns the TXT/EPUB documents of [selected]. */
+    private fun validateImportSelection(selected: List<ImportedDocument>): List<ImportedDocument> {
+        val unsupported = selected.filter {
+            fileExtension(it.name) !in LOCAL_IMAGE_EXTENSIONS &&
+                fileExtension(it.name) !in LOCAL_ARCHIVE_EXTENSIONS &&
+                fileExtension(it.name) !in LOCAL_TYPED_CONTENT_EXTENSIONS
+        }
+        if (unsupported.isNotEmpty()) {
+            throw LocalContentImportException(
+                "Unsupported local file type: ${unsupported.joinToString { it.name }}",
+            )
+        }
+
+        val typedDocuments = selected.filter { fileExtension(it.name) in LOCAL_TYPED_CONTENT_EXTENSIONS }
+        if (typedDocuments.isNotEmpty() && typedContent == null) {
+            throw LocalContentImportException(
+                "TXT/EPUB import requires the shared content database on this platform.",
+            )
+        }
+        return typedDocuments
+    }
+
+    /** Builds the direct-image work and one work per archive of [selected]. */
+    private suspend fun collectImageWorks(selected: List<ImportedDocument>): MutableList<LocalWork> {
+        val works = mutableListOf<LocalWork>()
+        val directImages = selected.filter { isSupportedLocalImage(it.name) }
+        if (directImages.isNotEmpty()) {
+            val pages = withContext(defaultDispatcher) {
+                val importContext = currentCoroutineContext()
+                directImages
+                    .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
+                    .map { document ->
+                        document.toPagePayload { importContext.ensureActive() }
+                    }
+            }
+            works += LocalWork(
+                title = deriveLocalTitle(directImages.map(ImportedDocument::name)),
+                packageKind = LocalPackageKind.IMAGES,
+                pages = pages,
+            )
+        }
+        selected.filter { fileExtension(it.name) in LOCAL_ARCHIVE_EXTENSIONS }
+            .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
+            .forEach { archive ->
+                works += LocalWork(
+                    title = archive.name.substringBeforeLast('.', archive.name).trim()
+                        .ifBlank { "Local Manga" }
+                        .take(200),
+                    packageKind = if (fileExtension(archive.name) == "cbz") {
+                        LocalPackageKind.CBZ
+                    } else {
+                        LocalPackageKind.ZIP
+                    },
+                    pages = extractArchivePages(archive),
+                )
+            }
+        return works
+    }
+
+    private suspend fun importTypedDocument(
+        document: ImportedDocument,
+        syncContentBodies: Boolean,
+    ): LocalTypedImport =
+        try {
+            withContext(defaultDispatcher) {
+                val importContext = currentCoroutineContext()
+                requireNotNull(typedContent).import(
+                    document = document,
+                    syncContentBodies = syncContentBodies,
+                    cancellationCheckpoint = { importContext.ensureActive() },
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: LocalContentImportException) {
+            throw error
+        } catch (error: Throwable) {
+            throw LocalContentImportException(
+                "Unable to import typed document “${document.name}”.",
+                error,
+            )
+        }
+
+    private suspend fun importImageWork(
+        typed: LocalTypedContentController,
+        work: LocalWork,
+        syncContentBodies: Boolean,
+    ): LocalTypedImport =
+        try {
+            withContext(defaultDispatcher) {
+                val importContext = currentCoroutineContext()
+                typed.importImageSequence(
+                    title = work.title,
+                    pages = work.pages.mapIndexed { index, page ->
+                        page.toTypedSource(index) { importContext.ensureActive() }
+                    },
+                    packageKind = work.packageKind,
+                    syncContentBodies = syncContentBodies,
+                    cancellationCheckpoint = { importContext.ensureActive() },
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: LocalContentImportException) {
+            throw error
+        } catch (error: Throwable) {
+            throw LocalContentImportException(
+                "Unable to import image publication “${work.title}”.",
+                error,
+            )
         }
 
     /**

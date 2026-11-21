@@ -13,14 +13,12 @@
     <ID>ComplexCondition:EpubUrlStreamHandlerProvider.kt:nameEnd &lt; html.length &amp;&amp; html.regionMatches(nameStart, elementName, 0, elementName.length, ignoreCase = true) &amp;&amp; (html[nameEnd].isWhitespace() || html[nameEnd] == '&gt;')</ID>
     <ID>CyclomaticComplexMethod:ContentTextToSpeech.kt:private fun splitText: List&lt;IntRange&gt;</ID>
     <ID>CyclomaticComplexMethod:DesktopTextToSpeechEngine.kt:DesktopTextToSpeechEngine$override suspend fun speak: PlatformSpeechResult</ID>
-    <ID>CyclomaticComplexMethod:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$fun createPanel: JFXPanel</ID>
     <ID>CyclomaticComplexMethod:EpubBrowserView.desktop.kt:DesktopEpubBrowserState$private fun handlePagedScroll: Boolean</ID>
     <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlHead: HtmlHeadScan</ID>
     <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlTag: HtmlMarkupTag?</ID>
     <ID>CyclomaticComplexMethod:EpubUrlStreamHandlerProvider.kt:internal fun scopeDesktopEpubHtml: String</ID>
     <ID>CyclomaticComplexMethod:EpubUrlStreamHandlerProvider.kt:private fun parseHtmlStartTag: ParsedHtmlStartTag?</ID>
     <ID>CyclomaticComplexMethod:LocalArchive.kt:private fun compareNaturalPaths: Int</ID>
-    <ID>CyclomaticComplexMethod:LocalContentManager.kt:LocalContentManager$override suspend fun importLocalDocuments: List&lt;LocalImportResult&gt;</ID>
     <ID>CyclomaticComplexMethod:LocalContentManager.kt:LocalContentManager$private suspend fun extractArchivePages: List&lt;LocalPagePayload&gt;</ID>
     <ID>DoubleMutabilityForCollection:EpubBrowserView.kt:EpubBrowserDocumentState$private var committedRequestsByDocument: MutableMap&lt;Int, EpubRenderRequest&gt; = linkedMapOf(initialRequest.documentIndex to initialRequest)</ID>
     <ID>DoubleMutabilityForCollection:EpubBrowserView.kt:EpubBrowserDocumentState$private var pendingRequestsByDocument: MutableMap&lt;Int, EpubRenderRequest&gt;? = null</ID>

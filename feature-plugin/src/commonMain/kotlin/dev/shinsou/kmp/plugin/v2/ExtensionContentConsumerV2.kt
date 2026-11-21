@@ -871,16 +871,24 @@ internal class ExtensionContentConsumerV2(
             "Extension EPUB graph does not exactly match its fetched archive"
         }
         val remoteIdByHref = remoteResources.mapValues { (_, resource) -> resource.id }
-        fun remoteResourceId(href: String): String = requireNotNull(remoteIdByHref[href]) {
-            "Extension EPUB resource href is missing from the declared remote graph"
-        }
         val remotePackageDocument = payload.packageGraph.resources.single {
             it.id == payload.packageGraph.packageDocumentId
         }
         require(remotePackageDocument.href == metadata.packageDocumentHref) {
             "Extension EPUB package document does not match its fetched archive"
         }
-        val typedResources = payload.packageGraph.resources.map { remote ->
+        val typedResources = typedEpubResources(payload, actualResources)
+        val representation = epubRepresentation(actual, payload, typedResources, remoteIdByHref)
+        val acquired = acquisitionService.publish(prepared, representation)
+        return PreparedExtensionRepresentation(representation, acquired.publishedBlobs)
+    }
+
+    /** Cross-checks every declared EPUB resource against what the fetched archive actually holds. */
+    private fun typedEpubResources(
+        payload: UnitContentPayload.EpubSpine,
+        actualResources: Map<String, EpubResource>,
+    ): List<EpubResource> {
+        return payload.packageGraph.resources.map { remote ->
             val extracted = requireNotNull(actualResources[remote.href])
             require(extracted.mediaType == remote.mediaType) {
                 "Extension EPUB resource media type does not match its fetched archive"
@@ -906,12 +914,23 @@ internal class ExtensionContentConsumerV2(
                 properties = extracted.properties,
             )
         }
+    }
+
+    private fun epubRepresentation(
+        actual: ContentRepresentation.EpubSpine,
+        payload: UnitContentPayload.EpubSpine,
+        typedResources: List<EpubResource>,
+        remoteIdByHref: Map<String, String>,
+    ): ContentRepresentation.EpubSpine {
+        fun remoteResourceId(href: String): String = requireNotNull(remoteIdByHref[href]) {
+            "Extension EPUB resource href is missing from the declared remote graph"
+        }
         require(actual.documents.map(EpubSpineDocument::href) ==
             payload.documents.map(RemoteEpubSpineDocumentV2::href)
         ) {
             "Extension EPUB spine does not exactly match its fetched archive"
         }
-        val representation = actual.copy(
+        return actual.copy(
             packageGraph = actual.packageGraph.copy(
                 packageDocumentId = payload.packageGraph.packageDocumentId,
                 resources = typedResources,
@@ -945,8 +964,6 @@ internal class ExtensionContentConsumerV2(
                 )
             },
         )
-        val acquired = acquisitionService.publish(prepared, representation)
-        return PreparedExtensionRepresentation(representation, acquired.publishedBlobs)
     }
 
     private suspend fun fetch(
@@ -1056,36 +1073,13 @@ internal class ExtensionContentConsumerV2(
         val representation = prepared.representation.withRepresentationId(
             extensionId("representation", selection, selection.unit.remoteId, remoteRepresentationId),
         )
-        val publicationBinding = SourceBinding(
-            sourceKey = selection.sourceKey,
-            remoteId = selection.remotePublicationId,
-            canonicalUrl = null,
-            entityKind = RemoteEntityKind.PUBLICATION,
-        )
-        val unitBinding = SourceBinding(
-            sourceKey = selection.sourceKey,
-            remoteId = selection.unit.remoteId,
-            canonicalUrl = selection.unit.url,
-            entityKind = RemoteEntityKind.UNIT,
-            parentPublication = publicationBinding.remoteEntityKey,
-        )
+        val publicationBinding = remotePublicationBinding(selection)
+        val unitBinding = remoteUnitBinding(selection, publicationBinding)
         val expectedOrigin = AcquisitionOrigin.ExtensionSource(publicationBinding)
         val durablePublication = foundation.publications.find(publicationKey)
         val durableAcquisition = durablePublication?.acquisitions?.singleOrNull { it.id == acquisitionId }
-        durablePublication?.acquisitions
-            ?.filterNot { it.id == acquisitionId }
-            ?.flatMap(Acquisition::units)
-            ?.singleOrNull { it.key == unitKey }
-            ?.let { error("Extension unit identity is already owned by another acquisition") }
-
-        if (durableAcquisition != null) {
-            require(durableAcquisition.origin == expectedOrigin) {
-                "Extension acquisition identity is bound to a different source publication"
-            }
-            require(durableAcquisition.rightsGrantRef == null || durableAcquisition.rightsGrantRef == grant.grantId) {
-                "Extension acquisition identity is bound to a different rights grant"
-            }
-        }
+        requireUnitNotOwnedByOtherAcquisition(durablePublication, acquisitionId, unitKey)
+        requireDurableAcquisitionBinding(durableAcquisition, expectedOrigin, grant)
 
         val durableUnit = durableAcquisition?.units?.singleOrNull { it.key == unitKey }
         if (durableUnit != null) {
@@ -1098,20 +1092,7 @@ internal class ExtensionContentConsumerV2(
             ?.singleOrNull { it.representationId == representation.representationId }
         val graphChanged = durableUnit == null || latest == null || durableRepresentation != representation
         val manifest = if (graphChanged) {
-            val revision = latest?.let { current ->
-                require(current.contentRevision < Long.MAX_VALUE) { "Extension unit revision overflow" }
-                current.contentRevision + 1
-            } ?: 0L
-            val representations = latest?.representations.orEmpty().toMutableList().apply {
-                val index = indexOfFirst { it.representationId == representation.representationId }
-                if (index >= 0) set(index, representation) else add(representation)
-            }
-            buildManifest(
-                unitKey = unitKey,
-                contentRevision = revision,
-                representations = representations,
-                resources = latest?.resources.orEmpty(),
-            )
+            revisedManifest(unitKey, latest, representation)
         } else {
             requireNotNull(latest)
         }
@@ -1179,6 +1160,73 @@ internal class ExtensionContentConsumerV2(
             manifest = manifest,
             graphChanged = graphChanged,
             publicationChanged = publicationChanged,
+        )
+    }
+
+    private fun remotePublicationBinding(selection: ExtensionUnitSelectionV2): SourceBinding = SourceBinding(
+        sourceKey = selection.sourceKey,
+        remoteId = selection.remotePublicationId,
+        canonicalUrl = null,
+        entityKind = RemoteEntityKind.PUBLICATION,
+    )
+
+    private fun remoteUnitBinding(
+        selection: ExtensionUnitSelectionV2,
+        publicationBinding: SourceBinding,
+    ): SourceBinding = SourceBinding(
+        sourceKey = selection.sourceKey,
+        remoteId = selection.unit.remoteId,
+        canonicalUrl = selection.unit.url,
+        entityKind = RemoteEntityKind.UNIT,
+        parentPublication = publicationBinding.remoteEntityKey,
+    )
+
+    private fun requireUnitNotOwnedByOtherAcquisition(
+        durablePublication: Publication?,
+        acquisitionId: String,
+        unitKey: UnitKey,
+    ) {
+        durablePublication?.acquisitions
+            ?.filterNot { it.id == acquisitionId }
+            ?.flatMap(Acquisition::units)
+            ?.singleOrNull { it.key == unitKey }
+            ?.let { error("Extension unit identity is already owned by another acquisition") }
+    }
+
+    private fun requireDurableAcquisitionBinding(
+        durableAcquisition: Acquisition?,
+        expectedOrigin: AcquisitionOrigin,
+        grant: RightsGrant,
+    ) {
+        if (durableAcquisition != null) {
+            require(durableAcquisition.origin == expectedOrigin) {
+                "Extension acquisition identity is bound to a different source publication"
+            }
+            require(durableAcquisition.rightsGrantRef == null || durableAcquisition.rightsGrantRef == grant.grantId) {
+                "Extension acquisition identity is bound to a different rights grant"
+            }
+        }
+    }
+
+    /** The next manifest revision of a unit, with [representation] replacing or joining its predecessor. */
+    private fun revisedManifest(
+        unitKey: UnitKey,
+        latest: ContentManifest?,
+        representation: ContentRepresentation,
+    ): ContentManifest {
+        val revision = latest?.let { current ->
+            require(current.contentRevision < Long.MAX_VALUE) { "Extension unit revision overflow" }
+            current.contentRevision + 1
+        } ?: 0L
+        val representations = latest?.representations.orEmpty().toMutableList().apply {
+            val index = indexOfFirst { it.representationId == representation.representationId }
+            if (index >= 0) set(index, representation) else add(representation)
+        }
+        return buildManifest(
+            unitKey = unitKey,
+            contentRevision = revision,
+            representations = representations,
+            resources = latest?.resources.orEmpty(),
         )
     }
 

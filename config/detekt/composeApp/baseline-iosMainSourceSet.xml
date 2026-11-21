@@ -9,7 +9,6 @@
     <ID>ReturnCount:IosAppServices.kt:IosAppServices$override suspend fun saveImage: Boolean</ID>
     <ID>ReturnCount:IosPersistence.kt:IosPluginKeyValueStore$@OptIn(ExperimentalNativeApi::class) private fun markKeychainUnavailable: Boolean</ID>
     <ID>ReturnCount:IosPersistence.kt:IosSnapshotPersistence$fun load: AppSnapshot</ID>
-    <ID>ReturnCount:IosSyncScheduler.kt:IosSyncScheduler$fun register: Boolean</ID>
     <ID>ThrowsCount:IosAppServices.kt:@OptIn(ExperimentalForeignApi::class) private fun NSURL.readImportedDocument: ImportedDocument</ID>
     <ID>ThrowsCount:IosAppServices.kt:IosUrlImportedDocumentSource$override fun read: ByteArray</ID>
     <ID>TooGenericExceptionCaught:IosAppServices.kt:IosUrlImportedDocumentSource$error: Throwable</ID>

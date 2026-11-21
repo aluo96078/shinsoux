@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.reader
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.net.http.SslError
 import android.os.SystemClock
 import android.view.GestureDetector
@@ -18,6 +19,7 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -52,36 +54,7 @@ public actual fun EpubBrowserView(
     val currentReaderTap = rememberUpdatedState(onReaderTap)
     val currentError = rememberUpdatedState(onError)
     val state = remember<AndroidEpubBrowserState>(request.publicationRootUrl) {
-        val webView = WebView(context).apply {
-            settings.apply {
-                // Publisher scripts remain blocked by the injected/response CSP. JavaScript is
-                // enabled only for host-authored layout, navigation, viewport and selection work.
-                javaScriptEnabled = true
-                javaScriptCanOpenWindowsAutomatically = false
-                domStorageEnabled = false
-                databaseEnabled = false
-                allowFileAccess = false
-                allowContentAccess = false
-                allowFileAccessFromFileURLs = false
-                allowUniversalAccessFromFileURLs = false
-                blockNetworkLoads = true
-                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                cacheMode = WebSettings.LOAD_NO_CACHE
-                safeBrowsingEnabled = true
-                setSupportMultipleWindows(false)
-                builtInZoomControls = true
-                displayZoomControls = false
-            }
-            isHorizontalScrollBarEnabled = false
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            isFocusable = true
-            isFocusableInTouchMode = true
-            removeJavascriptInterface("searchBoxJavaBridge_")
-            removeJavascriptInterface("accessibility")
-            removeJavascriptInterface("accessibilityTraversal")
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
-        }
+        val webView = createHardenedEpubWebView(context)
         AndroidEpubBrowserState(
             webView = webView,
             initialRequest = request,
@@ -90,140 +63,14 @@ public actual fun EpubBrowserView(
                 currentViewportChanged.value.invoke(locator, pageIndex, pageCount)
             },
         ).also { browserState ->
-            val tapDetector = GestureDetector(
-                context,
-                object : GestureDetector.SimpleOnGestureListener() {
-                    override fun onDown(event: MotionEvent): Boolean = true
-
-                    override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
-                        val width = webView.width
-                        val height = webView.height
-                        if (width <= 0 || height <= 0) return false
-                        browserState.tap(
-                            horizontalFraction = (event.x / width.toDouble()).coerceIn(0.0, 1.0),
-                            verticalFraction = (event.y / height.toDouble()).coerceIn(0.0, 1.0),
-                            onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
-                            onReaderTap = { action -> currentReaderTap.value.invoke(action) },
-                            onError = { message -> currentError.value.invoke(message) },
-                        )
-                        return true
-                    }
-                },
+            installEpubInputListeners(
+                context = context,
+                browserState = browserState,
+                currentLocatorChanged = currentLocatorChanged,
+                currentReaderTap = currentReaderTap,
+                currentError = currentError,
             )
-            webView.setOnTouchListener { view, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) view.requestFocus()
-                tapDetector.onTouchEvent(event)
-                // Observation only: WebView retains native scrolling, links, selection and zoom.
-                false
-            }
-            webView.setOnKeyListener { _, keyCode, event ->
-                browserState.handleKeyEvent(
-                    keyCode = keyCode,
-                    event = event,
-                    onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
-                    onReaderTap = { action -> currentReaderTap.value.invoke(action) },
-                    onError = { message -> currentError.value.invoke(message) },
-                )
-            }
-            webView.setOnScrollChangeListener { _, _, _, _, _ ->
-                browserState.sampleViewport(force = false) { locator ->
-                    currentLocatorChanged.value.invoke(locator)
-                }
-            }
-            webView.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView?,
-                    navigation: WebResourceRequest,
-                ): WebResourceResponse = browserState.response(navigation.url.toString())
-
-                @Deprecated("Legacy WebView callback retained for subresources on old engines")
-                override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse =
-                    browserState.response(url.orEmpty())
-
-                override fun shouldOverrideUrlLoading(view: WebView?, navigation: WebResourceRequest): Boolean {
-                    val target = navigation.url.toString()
-                    if (navigation.isForMainFrame) {
-                        val admitted = browserState.navigationRequested(target)
-                        if (admitted == null) {
-                            currentError.value.invoke(BLOCKED_NAVIGATION_MESSAGE)
-                            return true
-                        }
-                        if (admitted != target) {
-                            view?.loadUrl(admitted)
-                            return true
-                        }
-                        return false
-                    }
-                    return true
-                }
-
-                @Deprecated("Legacy WebView callback retained for old engines")
-                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                    val target = url.orEmpty()
-                    val admitted = browserState.navigationRequested(target)
-                    if (admitted == null) {
-                        currentError.value.invoke(BLOCKED_NAVIGATION_MESSAGE)
-                        return true
-                    }
-                    if (admitted != target) {
-                        view?.loadUrl(admitted)
-                        return true
-                    }
-                    return false
-                }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    browserState.documentLoaded(
-                        url = url.orEmpty(),
-                        onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
-                        onError = { message -> currentError.value.invoke(message) },
-                    )
-                }
-
-                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-                    val target = browserState.locationChanged(url.orEmpty()) ?: return
-                    if (target.hasExplicitAnchor) {
-                        browserState.sameDocumentLoaded(
-                            url = url.orEmpty(),
-                            onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
-                            onError = { message -> currentError.value.invoke(message) },
-                        )
-                    }
-                }
-
-                override fun onReceivedError(
-                    view: WebView?,
-                    navigation: WebResourceRequest,
-                    error: WebResourceError,
-                ) {
-                    if (navigation.isForMainFrame &&
-                        browserState.documentLoadFailed(view, navigation.url.toString())
-                    ) {
-                        currentError.value.invoke(error.description.toString())
-                    }
-                }
-
-                override fun onReceivedHttpError(
-                    view: WebView?,
-                    navigation: WebResourceRequest,
-                    errorResponse: WebResourceResponse,
-                ) {
-                    if (navigation.isForMainFrame &&
-                        browserState.documentLoadFailed(view, navigation.url.toString())
-                    ) {
-                        currentError.value.invoke(
-                            "The EPUB document request failed with HTTP ${errorResponse.statusCode}.",
-                        )
-                    }
-                }
-
-                override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler, error: SslError?) {
-                    handler.cancel()
-                    if (browserState.documentLoadFailed(view, error?.url.orEmpty())) {
-                        currentError.value.invoke("Blocked TLS request from EPUB content.")
-                    }
-                }
-            }
+            webView.webViewClient = epubWebViewClient(browserState, currentLocatorChanged, currentError)
         }
     }
 
@@ -277,6 +124,194 @@ public actual fun EpubBrowserView(
         }
     }
 }
+
+/** Creates the locked-down WebView that renders EPUB documents (no file/network/cookie access). */
+@SuppressLint("SetJavaScriptEnabled")
+private fun createHardenedEpubWebView(context: Context): WebView =
+    WebView(context).apply {
+        settings.apply {
+            // Publisher scripts remain blocked by the injected/response CSP. JavaScript is
+            // enabled only for host-authored layout, navigation, viewport and selection work.
+            javaScriptEnabled = true
+            javaScriptCanOpenWindowsAutomatically = false
+            domStorageEnabled = false
+            databaseEnabled = false
+            allowFileAccess = false
+            allowContentAccess = false
+            allowFileAccessFromFileURLs = false
+            allowUniversalAccessFromFileURLs = false
+            blockNetworkLoads = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            cacheMode = WebSettings.LOAD_NO_CACHE
+            safeBrowsingEnabled = true
+            setSupportMultipleWindows(false)
+            builtInZoomControls = true
+            displayZoomControls = false
+        }
+        isHorizontalScrollBarEnabled = false
+        isVerticalScrollBarEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        isFocusable = true
+        isFocusableInTouchMode = true
+        removeJavascriptInterface("searchBoxJavaBridge_")
+        removeJavascriptInterface("accessibility")
+        removeJavascriptInterface("accessibilityTraversal")
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+    }
+
+/** Registers the tap, key and scroll observers of the EPUB WebView; observation only. */
+@SuppressLint("ClickableViewAccessibility")
+private fun installEpubInputListeners(
+    context: Context,
+    browserState: AndroidEpubBrowserState,
+    currentLocatorChanged: State<(ReadingLocator.Epub) -> Unit>,
+    currentReaderTap: State<(ReaderTapAction) -> Unit>,
+    currentError: State<(String) -> Unit>,
+) {
+    val webView = browserState.webView
+    val tapDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(event: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
+                val width = webView.width
+                val height = webView.height
+                if (width <= 0 || height <= 0) return false
+                browserState.tap(
+                    horizontalFraction = (event.x / width.toDouble()).coerceIn(0.0, 1.0),
+                    verticalFraction = (event.y / height.toDouble()).coerceIn(0.0, 1.0),
+                    onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                    onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+                    onError = { message -> currentError.value.invoke(message) },
+                )
+                return true
+            }
+        },
+    )
+    webView.setOnTouchListener { view, event ->
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) view.requestFocus()
+        tapDetector.onTouchEvent(event)
+        // Observation only: WebView retains native scrolling, links, selection and zoom.
+        false
+    }
+    webView.setOnKeyListener { _, keyCode, event ->
+        browserState.handleKeyEvent(
+            keyCode = keyCode,
+            event = event,
+            onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+            onReaderTap = { action -> currentReaderTap.value.invoke(action) },
+            onError = { message -> currentError.value.invoke(message) },
+        )
+    }
+    webView.setOnScrollChangeListener { _, _, _, _, _ ->
+        browserState.sampleViewport(force = false) { locator ->
+            currentLocatorChanged.value.invoke(locator)
+        }
+    }
+}
+
+/** WebViewClient that routes EPUB resources and navigation through [browserState]. */
+@Suppress("DEPRECATION")
+private fun epubWebViewClient(
+    browserState: AndroidEpubBrowserState,
+    currentLocatorChanged: State<(ReadingLocator.Epub) -> Unit>,
+    currentError: State<(String) -> Unit>,
+): WebViewClient =
+    object : WebViewClient() {
+        override fun shouldInterceptRequest(
+            view: WebView?,
+            navigation: WebResourceRequest,
+        ): WebResourceResponse = browserState.response(navigation.url.toString())
+
+        @Deprecated("Legacy WebView callback retained for subresources on old engines")
+        override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse =
+            browserState.response(url.orEmpty())
+
+        override fun shouldOverrideUrlLoading(view: WebView?, navigation: WebResourceRequest): Boolean {
+            val target = navigation.url.toString()
+            if (navigation.isForMainFrame) {
+                val admitted = browserState.navigationRequested(target)
+                if (admitted == null) {
+                    currentError.value.invoke(BLOCKED_NAVIGATION_MESSAGE)
+                    return true
+                }
+                if (admitted != target) {
+                    view?.loadUrl(admitted)
+                    return true
+                }
+                return false
+            }
+            return true
+        }
+
+        @Deprecated("Legacy WebView callback retained for old engines")
+        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+            val target = url.orEmpty()
+            val admitted = browserState.navigationRequested(target)
+            if (admitted == null) {
+                currentError.value.invoke(BLOCKED_NAVIGATION_MESSAGE)
+                return true
+            }
+            if (admitted != target) {
+                view?.loadUrl(admitted)
+                return true
+            }
+            return false
+        }
+
+        override fun onPageFinished(view: WebView?, url: String?) {
+            browserState.documentLoaded(
+                url = url.orEmpty(),
+                onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                onError = { message -> currentError.value.invoke(message) },
+            )
+        }
+
+        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+            val target = browserState.locationChanged(url.orEmpty()) ?: return
+            if (target.hasExplicitAnchor) {
+                browserState.sameDocumentLoaded(
+                    url = url.orEmpty(),
+                    onLocator = { locator -> currentLocatorChanged.value.invoke(locator) },
+                    onError = { message -> currentError.value.invoke(message) },
+                )
+            }
+        }
+
+        override fun onReceivedError(
+            view: WebView?,
+            navigation: WebResourceRequest,
+            error: WebResourceError,
+        ) {
+            if (navigation.isForMainFrame &&
+                browserState.documentLoadFailed(view, navigation.url.toString())
+            ) {
+                currentError.value.invoke(error.description.toString())
+            }
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView?,
+            navigation: WebResourceRequest,
+            errorResponse: WebResourceResponse,
+        ) {
+            if (navigation.isForMainFrame &&
+                browserState.documentLoadFailed(view, navigation.url.toString())
+            ) {
+                currentError.value.invoke(
+                    "The EPUB document request failed with HTTP ${errorResponse.statusCode}.",
+                )
+            }
+        }
+
+        override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler, error: SslError?) {
+            handler.cancel()
+            if (browserState.documentLoadFailed(view, error?.url.orEmpty())) {
+                currentError.value.invoke("Blocked TLS request from EPUB content.")
+            }
+        }
+    }
 
 private class AndroidEpubBrowserState(
     val webView: WebView,

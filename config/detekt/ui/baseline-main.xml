@@ -21,10 +21,8 @@
     <ID>CyclomaticComplexMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterRow</ID>
     <ID>CyclomaticComplexMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
     <ID>CyclomaticComplexMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
-    <ID>CyclomaticComplexMethod:ExtensionsPane.kt:@Composable private fun ExtensionRow</ID>
     <ID>CyclomaticComplexMethod:KeyboardDismissPolicy.kt:internal fun Modifier.onUnconsumedBlankTap: Modifier</ID>
     <ID>CyclomaticComplexMethod:LibraryScreen.kt:@Composable fun LibraryScreen</ID>
-    <ID>CyclomaticComplexMethod:MangaAcceleratorSettings.kt:@Composable internal fun MangaAcceleratorSettings</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable fun MangaDetailScreen</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable private fun MangaInfoPane</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable private fun ChapterPane</ID>
@@ -38,12 +36,10 @@
     <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
     <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
     <ID>CyclomaticComplexMethod:NovelReader.kt:@Composable private fun ContinuousNovelReader</ID>
-    <ID>CyclomaticComplexMethod:NovelReader.kt:@OptIn(ExperimentalFoundationApi::class) @Composable private fun PagedNovelReader</ID>
     <ID>CyclomaticComplexMethod:NovelReader.kt:internal fun sanitizeNovelDisplayText: NovelDisplayText</ID>
     <ID>CyclomaticComplexMethod:NovelReader.kt:private fun decodeNovelDisplayEntity: String?</ID>
     <ID>CyclomaticComplexMethod:NovelTranslationPanel.kt:@Composable internal fun rememberNovelTranslation: NovelTranslationState?</ID>
     <ID>CyclomaticComplexMethod:NovelTranslationPanel.kt:@Composable private fun NovelTranslationStatus</ID>
-    <ID>CyclomaticComplexMethod:PackageSecurityDialogs.kt:@Composable internal fun PackageSecurityDialog</ID>
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:MacOsWebChallengeState$private fun readEvents</ID>
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$fun isValidCapturedCookie: Boolean</ID>
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:private fun NativeHelperEvent.isValidForChallenge: Boolean</ID>
@@ -51,7 +47,6 @@
     <ID>CyclomaticComplexMethod:ReaderControls.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ReaderSettingsSheet</ID>
     <ID>CyclomaticComplexMethod:ReaderPages.kt:@Composable private fun ResolvedReaderPageImage</ID>
     <ID>CyclomaticComplexMethod:ReviewMarkdown.kt:private fun inline: List&lt;MarkdownInline&gt;</ID>
-    <ID>CyclomaticComplexMethod:ReviewsPane.kt:@Composable private fun RepliesPanel</ID>
     <ID>CyclomaticComplexMethod:ReviewsPane.kt:@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class) @Composable private fun ReviewsSheet</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
@@ -61,11 +56,9 @@
     <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable internal fun SourceLoginDialog</ID>
     <ID>CyclomaticComplexMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
     <ID>CyclomaticComplexMethod:SourceWebChallengeCookies.kt:internal fun normalizeWebChallengeCookies: List&lt;SourceCookie&gt;</ID>
-    <ID>CyclomaticComplexMethod:SourcesPane.kt:@Composable internal fun SourcesPane</ID>
     <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedInSection</ID>
     <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedOutSection</ID>
     <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:internal fun Throwable.userMessage: String</ID>
-    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@Composable internal fun ShareWithUserDialog</ID>
     <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@Composable private fun ShareBox</ID>
     <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun PeoplePanel</ID>
     <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun ShareRow</ID>
@@ -74,10 +67,8 @@
     <ID>CyclomaticComplexMethod:TranslationScreen.kt:@Composable internal fun TranslationScreen</ID>
     <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable internal fun TranslationSettingsPane</ID>
     <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable private fun LlmServiceSetting</ID>
-    <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable internal fun UnifiedContentReader</ID>
     <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceContinuousReader</ID>
     <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceHorizontalPager</ID>
-    <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceUnifiedContentReader</ID>
     <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceVerticalPager</ID>
     <ID>EmptyElseBlock:MangaTranslationPanel.kt:MangaReaderTranslationState$if (known) autoPending = false</ID>
     <ID>FunctionNaming:Drawable0.commonMain.kt:@InternalResourceApi internal fun _collectCommonMainDrawable0Resources</ID>

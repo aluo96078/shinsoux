@@ -477,31 +477,36 @@ private fun ResolvedReaderPageImage(
         )
         ReaderColorOverlay(settings.colorFilter)
         if (imageError) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.82f),
-                shape = RoundedCornerShape(14.dp),
-            ) {
-                Column(
-                    Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        strings.text(StringKey.PAGE_X_FAILED_TO_LOAD, page.index + 1),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(
-                        onClick = {
-                            imageError = false
-                            retryKey++
-                        },
-                    ) {
-                        Icon(Icons.Outlined.Refresh, null, tint = Color.White)
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.text(StringKey.RETRY_THIS_PAGE), color = Color.White)
-                    }
-                }
+            ReaderPageLoadError(page.index) {
+                imageError = false
+                retryKey++
+            }
+        }
+    }
+}
+
+/** The retry card shown over a page whose image failed to load. */
+@Composable
+private fun ReaderPageLoadError(pageIndex: Int, onRetry: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        color = Color.Black.copy(alpha = 0.82f),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                strings.text(StringKey.PAGE_X_FAILED_TO_LOAD, pageIndex + 1),
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onRetry) {
+                Icon(Icons.Outlined.Refresh, null, tint = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text(strings.text(StringKey.RETRY_THIS_PAGE), color = Color.White)
             }
         }
     }

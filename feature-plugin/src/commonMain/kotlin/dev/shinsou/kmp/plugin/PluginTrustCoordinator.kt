@@ -43,61 +43,12 @@ internal class PluginTrustCoordinator(
             val stored = packageStore.get(pluginId)
                 ?: throw IllegalArgumentException("Extension '$pluginId' is not installed")
             if (!trusted) {
-                currentCoroutineContext().ensureActive()
-                withContext(NonCancellable) {
-                    // Install the denial before touching fallible stores. Even a total storage
-                    // outage cannot make a later in-process reload revive this package.
-                    state.locallyRevokedPluginIds += pluginId
-                    state.locallyRevokedArtifacts += stored.artifactIdentity()
-                    var failure: Throwable? = null
-                    fun capture(error: Throwable) {
-                        if (failure == null) failure = error else failure?.addSuppressed(error)
-                    }
-
-                    // Attempt every durable revocation even if an earlier store is unavailable;
-                    // independent stores may still successfully remove their authority.
-                    if (stored.metadata.legacyTrustOnInstall) {
-                        runCatchingCancellable {
-                            packageStore.put(
-                                stored.copy(
-                                    metadata = stored.metadata.copy(legacyTrustOnInstall = false),
-                                ),
-                            )
-                        }.exceptionOrNull()?.let(::capture)
-                    }
-                    runCatchingCancellable { verifier.revokeAll(pluginId) }
-                        .exceptionOrNull()?.let(::capture)
-                    runCatchingCancellable { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
-                        .exceptionOrNull()?.let(::capture)
-
-                    // Revocation is fail-closed in memory. A durable-store failure must never
-                    // leave attacker-controlled code running with the permissions it had before
-                    // the user requested revocation.
-                    runCatchingCancellable { state.lifecycleMutex.withLock { runtimeLoader.unloadPlugin(pluginId) } }
-                        .exceptionOrNull()?.let(::capture)
-                    failure?.let { throw it }
-                }
+                revokePluginTrust(pluginId, stored)
                 return@packageMutation
             }
 
             if (stored.isMetadataOnly()) {
-                val reservation = state.lifecycleMutex.withLock { runtimeLoader.reserveManifestSources(stored.manifest) }
-                currentCoroutineContext().ensureActive()
-                try {
-                    withContext(NonCancellable) {
-                        verifier.trustMetadataOnly(stored.manifest, stored.metadata.installedSha256)
-                        state.locallyRevokedPluginIds.remove(pluginId)
-                        state.locallyRevokedArtifacts.remove(stored.artifactIdentity())
-                        state.lifecycleMutex.withLock {
-                            runtimeLoader.unloadPlugin(pluginId)
-                            runtimeLoader.addMetadataSources(stored)
-                            runtimeLoader.commitReservation(reservation)
-                        }
-                    }
-                } catch (error: Throwable) {
-                    state.lifecycleMutex.withLock { runtimeLoader.rollbackReservation(reservation) }
-                    throw error
-                }
+                trustMetadataOnlyPlugin(pluginId, stored)
                 return@packageMutation
             }
 
@@ -172,6 +123,66 @@ internal class PluginTrustCoordinator(
             }
         }
         }
+
+    /** Denies the package in memory first, then removes every durable authority it still holds. */
+    private suspend fun revokePluginTrust(pluginId: String, stored: StoredPlugin) {
+        currentCoroutineContext().ensureActive()
+        withContext(NonCancellable) {
+            // Install the denial before touching fallible stores. Even a total storage
+            // outage cannot make a later in-process reload revive this package.
+            state.locallyRevokedPluginIds += pluginId
+            state.locallyRevokedArtifacts += stored.artifactIdentity()
+            var failure: Throwable? = null
+            fun capture(error: Throwable) {
+                if (failure == null) failure = error else failure?.addSuppressed(error)
+            }
+
+            // Attempt every durable revocation even if an earlier store is unavailable;
+            // independent stores may still successfully remove their authority.
+            if (stored.metadata.legacyTrustOnInstall) {
+                runCatchingCancellable {
+                    packageStore.put(
+                        stored.copy(
+                            metadata = stored.metadata.copy(legacyTrustOnInstall = false),
+                        ),
+                    )
+                }.exceptionOrNull()?.let(::capture)
+            }
+            runCatchingCancellable { verifier.revokeAll(pluginId) }
+                .exceptionOrNull()?.let(::capture)
+            runCatchingCancellable { eventGrantAdmission?.revoke(stored.artifactIdentity()) }
+                .exceptionOrNull()?.let(::capture)
+
+            // Revocation is fail-closed in memory. A durable-store failure must never
+            // leave attacker-controlled code running with the permissions it had before
+            // the user requested revocation.
+            runCatchingCancellable { state.lifecycleMutex.withLock { runtimeLoader.unloadPlugin(pluginId) } }
+                .exceptionOrNull()?.let(::capture)
+            failure?.let { throw it }
+        }
+    }
+
+    /** Grants a metadata-only package: its sources are registered, no script runs. */
+    @Suppress("SuspendFunSwallowedCancellation") // The reservation is rolled back, then the failure is rethrown unchanged.
+    private suspend fun trustMetadataOnlyPlugin(pluginId: String, stored: StoredPlugin) {
+        val reservation = state.lifecycleMutex.withLock { runtimeLoader.reserveManifestSources(stored.manifest) }
+        currentCoroutineContext().ensureActive()
+        try {
+            withContext(NonCancellable) {
+                verifier.trustMetadataOnly(stored.manifest, stored.metadata.installedSha256)
+                state.locallyRevokedPluginIds.remove(pluginId)
+                state.locallyRevokedArtifacts.remove(stored.artifactIdentity())
+                state.lifecycleMutex.withLock {
+                    runtimeLoader.unloadPlugin(pluginId)
+                    runtimeLoader.addMetadataSources(stored)
+                    runtimeLoader.commitReservation(reservation)
+                }
+            }
+        } catch (error: Throwable) {
+            state.lifecycleMutex.withLock { runtimeLoader.rollbackReservation(reservation) }
+            throw error
+        }
+    }
 
     /** Returns the verified exact-digest permission review, if this artifact requested host access. */
     suspend fun pendingEventGrantReview(pluginId: String): PluginEventGrantReview? =

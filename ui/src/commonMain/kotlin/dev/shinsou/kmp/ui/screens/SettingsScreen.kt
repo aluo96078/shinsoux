@@ -417,6 +417,83 @@ private fun AppearanceSettingsPane(settings: AppSettings, onChange: (SettingsEdi
     }
 }
 
+/** The library grid: layout and the portrait / landscape column counts. */
+private fun androidx.compose.foundation.lazy.LazyListScope.libraryLayoutSettings(settings: AppSettings, onChange: (SettingsEdit<AppSettings>) -> Unit) {
+    item {
+        val strings = LocalShinsouStrings.current
+        ChoiceSetting(
+            strings.text(StringKey.LIBRARY_LAYOUT),
+            selectedLabel = strings.text(settings.library.displayMode.labelKey()),
+            choices = LibraryDisplayMode.entries.map { strings.text(it.labelKey()) },
+        ) { label ->
+            val mode = LibraryDisplayMode.entries.first { strings.text(it.labelKey()) == label }
+            onChange { current -> current.copy(library = current.library.copy(displayMode = mode)) }
+        }
+    }
+    item {
+        val strings = LocalShinsouStrings.current
+        SliderSetting(strings.text(StringKey.PORTRAIT_COLUMNS), settings.library.portraitColumns.toFloat(), 2f..8f, 1) {
+            onChange { current -> current.copy(library = current.library.copy(portraitColumns = it.roundToInt())) }
+        }
+    }
+    item {
+        val strings = LocalShinsouStrings.current
+        SliderSetting(strings.text(StringKey.LANDSCAPE_COLUMNS), settings.library.landscapeColumns.toFloat(), 3f..12f, 1) {
+            onChange { current -> current.copy(library = current.library.copy(landscapeColumns = it.roundToInt())) }
+        }
+    }
+}
+
+/** Which categories take part in library updates and the Wi-Fi / charging restrictions. */
+private fun androidx.compose.foundation.lazy.LazyListScope.libraryUpdateSettings(settings: AppSettings, onChange: (SettingsEdit<AppSettings>) -> Unit) {
+    item {
+        val strings = LocalShinsouStrings.current
+        ChoiceSetting(
+            title = strings.text(StringKey.CATEGORY_UPDATES),
+            summary = strings.text(StringKey.CHOOSE_WHICH_CATEGORIES_PARTICIPATE_IN_LIBRARY_UPDATES),
+            selectedLabel = when (settings.library.categoryUpdateBehaviour) {
+                "selected" -> strings.text(StringKey.SELECTED_CATEGORIES_ONLY)
+                "none" -> strings.text(StringKey.DISABLED)
+                else -> strings.text(StringKey.ALL_CATEGORIES)
+            },
+            choices = listOf(strings.text(StringKey.ALL_CATEGORIES), strings.text(StringKey.SELECTED_CATEGORIES_ONLY), strings.text(StringKey.DISABLED)),
+        ) { label ->
+            val value = when (label) {
+                strings.text(StringKey.SELECTED_CATEGORIES_ONLY) -> "selected"
+                strings.text(StringKey.DISABLED) -> "none"
+                else -> "all"
+            }
+            onChange { current -> current.copy(library = current.library.copy(categoryUpdateBehaviour = value)) }
+        }
+    }
+    item {
+        val strings = LocalShinsouStrings.current
+        ToggleSetting(
+            strings.text(StringKey.WI_FI_ONLY_UPDATES),
+            strings.text(StringKey.REFRESH_LIBRARY_METADATA_ONLY_ON_WI_FI),
+            "wifi_only" in settings.library.globalUpdateRestrictions,
+        ) { enabled ->
+            onChange { current ->
+                val restrictions = current.library.globalUpdateRestrictions.withToggle("wifi_only", enabled)
+                current.copy(library = current.library.copy(globalUpdateRestrictions = restrictions))
+            }
+        }
+    }
+    item {
+        val strings = LocalShinsouStrings.current
+        ToggleSetting(
+            strings.text(StringKey.CHARGING_ONLY_UPDATES),
+            strings.text(StringKey.REFRESH_THE_LIBRARY_ONLY_WHILE_THIS_DEVICE),
+            "charging_only" in settings.library.globalUpdateRestrictions,
+        ) { enabled ->
+            onChange { current ->
+                val restrictions = current.library.globalUpdateRestrictions.withToggle("charging_only", enabled)
+                current.copy(library = current.library.copy(globalUpdateRestrictions = restrictions))
+            }
+        }
+    }
+}
+
 @Composable
 private fun LibrarySettingsPane(
     settings: AppSettings,
@@ -442,26 +519,7 @@ private fun LibrarySettingsPane(
         ?.key
         ?: Category.Default.name
     SettingsList {
-        item {
-            ChoiceSetting(
-                strings.text(StringKey.LIBRARY_LAYOUT),
-                selectedLabel = strings.text(settings.library.displayMode.labelKey()),
-                choices = LibraryDisplayMode.entries.map { strings.text(it.labelKey()) },
-            ) { label ->
-                val mode = LibraryDisplayMode.entries.first { strings.text(it.labelKey()) == label }
-                onChange { current -> current.copy(library = current.library.copy(displayMode = mode)) }
-            }
-        }
-        item {
-            SliderSetting(strings.text(StringKey.PORTRAIT_COLUMNS), settings.library.portraitColumns.toFloat(), 2f..8f, 1) {
-                onChange { current -> current.copy(library = current.library.copy(portraitColumns = it.roundToInt())) }
-            }
-        }
-        item {
-            SliderSetting(strings.text(StringKey.LANDSCAPE_COLUMNS), settings.library.landscapeColumns.toFloat(), 3f..12f, 1) {
-                onChange { current -> current.copy(library = current.library.copy(landscapeColumns = it.roundToInt())) }
-            }
-        }
+        libraryLayoutSettings(settings, onChange)
         item {
             ChoiceSetting(
                 title = strings.text(StringKey.DEFAULT_CATEGORY),
@@ -478,49 +536,7 @@ private fun LibrarySettingsPane(
                 }
             }
         }
-        item {
-            ChoiceSetting(
-                title = strings.text(StringKey.CATEGORY_UPDATES),
-                summary = strings.text(StringKey.CHOOSE_WHICH_CATEGORIES_PARTICIPATE_IN_LIBRARY_UPDATES),
-                selectedLabel = when (settings.library.categoryUpdateBehaviour) {
-                    "selected" -> strings.text(StringKey.SELECTED_CATEGORIES_ONLY)
-                    "none" -> strings.text(StringKey.DISABLED)
-                    else -> strings.text(StringKey.ALL_CATEGORIES)
-                },
-                choices = listOf(strings.text(StringKey.ALL_CATEGORIES), strings.text(StringKey.SELECTED_CATEGORIES_ONLY), strings.text(StringKey.DISABLED)),
-            ) { label ->
-                val value = when (label) {
-                    strings.text(StringKey.SELECTED_CATEGORIES_ONLY) -> "selected"
-                    strings.text(StringKey.DISABLED) -> "none"
-                    else -> "all"
-                }
-                onChange { current -> current.copy(library = current.library.copy(categoryUpdateBehaviour = value)) }
-            }
-        }
-        item {
-            ToggleSetting(
-                strings.text(StringKey.WI_FI_ONLY_UPDATES),
-                strings.text(StringKey.REFRESH_LIBRARY_METADATA_ONLY_ON_WI_FI),
-                "wifi_only" in settings.library.globalUpdateRestrictions,
-            ) { enabled ->
-                onChange { current ->
-                    val restrictions = current.library.globalUpdateRestrictions.withToggle("wifi_only", enabled)
-                    current.copy(library = current.library.copy(globalUpdateRestrictions = restrictions))
-                }
-            }
-        }
-        item {
-            ToggleSetting(
-                strings.text(StringKey.CHARGING_ONLY_UPDATES),
-                strings.text(StringKey.REFRESH_THE_LIBRARY_ONLY_WHILE_THIS_DEVICE),
-                "charging_only" in settings.library.globalUpdateRestrictions,
-            ) { enabled ->
-                onChange { current ->
-                    val restrictions = current.library.globalUpdateRestrictions.withToggle("charging_only", enabled)
-                    current.copy(library = current.library.copy(globalUpdateRestrictions = restrictions))
-                }
-            }
-        }
+        libraryUpdateSettings(settings, onChange)
         item {
             CategoryManagementSetting(
                 categories = orderedCategories.filterNot { it.isSystemCategory },
@@ -820,6 +836,35 @@ private fun AdvancedSettingsPane(settings: AppSettings, onChange: (SettingsEdit<
     }
 }
 
+/** One custom category: its name with move up / down, rename and delete actions. */
+@Composable
+private fun CategoryManageRow(
+    category: Category,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMove: (delta: Int) -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(category.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        IconButton(enabled = canMoveUp, onClick = { onMove(-1) }) {
+            Icon(Icons.Outlined.KeyboardArrowUp, strings.text(StringKey.MOVE_X_UP, category.name))
+        }
+        IconButton(enabled = canMoveDown, onClick = { onMove(1) }) {
+            Icon(Icons.Outlined.KeyboardArrowDown, strings.text(StringKey.MOVE_X_DOWN, category.name))
+        }
+        IconButton(onClick = onRename) { Icon(Icons.Outlined.Edit, strings.text(StringKey.RENAME_X, category.name)) }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Outlined.Delete, strings.text(StringKey.DELETE_X, category.name))
+        }
+    }
+}
+
 @Composable
 private fun CategoryManagementSetting(
     categories: List<Category>,
@@ -877,27 +922,17 @@ private fun CategoryManagementSetting(
             } else {
                 categories.forEachIndexed { index, category ->
                     if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(category.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        IconButton(enabled = index > 0, onClick = { move(category.id, -1) }) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, strings.text(StringKey.MOVE_X_UP, category.name))
-                        }
-                        IconButton(enabled = index < categories.lastIndex, onClick = { move(category.id, 1) }) {
-                            Icon(Icons.Outlined.KeyboardArrowDown, strings.text(StringKey.MOVE_X_DOWN, category.name))
-                        }
-                        IconButton(
-                            onClick = {
-                                name = category.name
-                                editing = category
-                            },
-                        ) { Icon(Icons.Outlined.Edit, strings.text(StringKey.RENAME_X, category.name)) }
-                        IconButton(onClick = { deleting = category }) {
-                            Icon(Icons.Outlined.Delete, strings.text(StringKey.DELETE_X, category.name))
-                        }
-                    }
+                    CategoryManageRow(
+                        category = category,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < categories.lastIndex,
+                        onMove = { delta -> move(category.id, delta) },
+                        onRename = {
+                            name = category.name
+                            editing = category
+                        },
+                        onDelete = { deleting = category },
+                    )
                 }
             }
         }

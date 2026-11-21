@@ -210,39 +210,64 @@ private fun materialize(
     current: AppSnapshot,
     authority: ShuYueProjectionAuthority,
 ): MaterializedProjection {
-    val mangas = current.mangas.toMutableList()
-    val chapters = current.chapters.toMutableList()
-    val categories = current.categories.toMutableList()
-    val memberships = current.mangaCategories.toMutableList()
-    val histories = current.histories.toMutableList()
-    val projectedMangaIds = mutableMapOf<String, Long>()
-    val newlyCreatedPublicationIds = linkedSetOf<String>()
+    val builder = ProjectionMaterializer(current, authority)
+    builder.projectPublications()
+    builder.projectCategories()
+    builder.projectSettings()
+    return builder.build()
+}
 
-    var nextMangaId = nextLegacyId(mangas.map(Manga::id))
-    var nextChapterId = nextLegacyId(chapters.map(Chapter::id))
-    var nextHistoryId = nextLegacyId(histories.map(History::id))
-    var mangasCreated = 0
-    var chaptersCreated = 0
-    var categoriesCreated = 0
-    var membershipsCreated = 0
-    var historiesCreated = 0
-    var categoryBindingsCreated = 0
+/** Mutable working copy of the legacy snapshot plus the creation counters of one projection pass. */
+private class ProjectionMaterializer(
+    private val current: AppSnapshot,
+    private val authority: ShuYueProjectionAuthority,
+) {
+    private val mangas = current.mangas.toMutableList()
+    private val chapters = current.chapters.toMutableList()
+    private val categories = current.categories.toMutableList()
+    private val memberships = current.mangaCategories.toMutableList()
+    private val histories = current.histories.toMutableList()
+    private val projectedMangaIds = mutableMapOf<String, Long>()
+    private val newlyCreatedPublicationIds = linkedSetOf<String>()
 
-    authority.publications.forEach { publication ->
-        if (
-            shuyueCompatibilityProjectionHandoffMarker(publication.key) in
-            current.contentAuthorityProjectionMarkers
-        ) {
-            return@forEach
+    private var nextMangaId = nextLegacyId(mangas.map(Manga::id))
+    private var nextChapterId = nextLegacyId(chapters.map(Chapter::id))
+    private var nextHistoryId = nextLegacyId(histories.map(History::id))
+    private var mangasCreated = 0
+    private var chaptersCreated = 0
+    private var categoriesCreated = 0
+    private var membershipsCreated = 0
+    private var historiesCreated = 0
+    private var categoryBindingsCreated = 0
+
+    private val categoryBindings = current.shuyueCategoryProjectionBindings.toMutableMap()
+    private val categoryIdsByPortableId = mutableMapOf(PortableCategoryId.DEFAULT.value to Category.Default.id)
+
+    private var projectedSettings = current.settings
+    private val projectionMarkers = current.contentAuthorityProjectionMarkers.toMutableSet()
+    private var settingsFieldsApplied = 0
+    private var projectionMarkersCreated = 0
+
+    fun projectPublications() {
+        authority.publications.forEach { publication ->
+            if (
+                shuyueCompatibilityProjectionHandoffMarker(publication.key) in
+                current.contentAuthorityProjectionMarkers
+            ) {
+                return@forEach
+            }
+            val existing = findProjectedManga(current.copy(mangas = mangas, chapters = chapters), publication.key)
+            val manga = existing ?: publication.toLegacyManga(nextMangaId++).also {
+                mangas += it
+                mangasCreated++
+                newlyCreatedPublicationIds += publication.key.value
+            }
+            projectedMangaIds[publication.key.value] = manga.id
+            projectUnits(publication, manga)
         }
-        val existing = findProjectedManga(current.copy(mangas = mangas, chapters = chapters), publication.key)
-        val manga = existing ?: publication.toLegacyManga(nextMangaId++).also {
-            mangas += it
-            mangasCreated++
-            newlyCreatedPublicationIds += publication.key.value
-        }
-        projectedMangaIds[publication.key.value] = manga.id
+    }
 
+    private fun projectUnits(publication: Publication, manga: Manga) {
         publication.unitProjections().forEachIndexed { index, projectedUnit ->
             val chapterUrl = encodeTypedLocalChapterUrl(
                 publication.key,
@@ -272,86 +297,92 @@ private fun materialize(
         }
     }
 
-    val categoryBindings = current.shuyueCategoryProjectionBindings.toMutableMap()
-    val categoryIdsByPortableId = mutableMapOf(PortableCategoryId.DEFAULT.value to Category.Default.id)
-    newlyCreatedPublicationIds.forEach { publicationId ->
-        val mangaId = requireNotNull(projectedMangaIds[publicationId])
-        val portableMemberships = authority.membershipsByPublication[publicationId].orEmpty()
-        val resolvedCategoryIds = portableMemberships.mapNotNullTo(linkedSetOf()) { membership ->
-            val imported = authority.categories[membership.categoryId] ?: return@mapNotNullTo null
-            categoryIdsByPortableId[imported.categoryId] ?: run {
-                val boundId = categoryBindings[imported.categoryId]
-                val boundCategory = boundId?.let { id -> categories.firstOrNull { it.id == id } }
-                if (boundId != null && boundCategory == null) return@mapNotNullTo null
-                val category = boundCategory ?: run {
-                    val stableId = shuyueLegacyCategoryId(imported.categoryId)
-                    if (categories.any { it.id == stableId }) {
-                        throw ShuYueCompatibilityProjectionConflictException(imported.categoryId, stableId)
-                    }
-                    categories.firstOrNull {
-                        it.name.trim().equals(imported.name.trim(), ignoreCase = true)
-                    } ?: Category(
-                        id = stableId,
-                        name = imported.name.trim().ifBlank { "Imported" },
-                        sort = nextCategorySort(categories),
-                    ).also {
-                        categories += it
-                        categoriesCreated++
-                    }
+    fun projectCategories() {
+        newlyCreatedPublicationIds.forEach { publicationId ->
+            val mangaId = requireNotNull(projectedMangaIds[publicationId])
+            val portableMemberships = authority.membershipsByPublication[publicationId].orEmpty()
+            val resolvedCategoryIds = portableMemberships.mapNotNullTo(linkedSetOf()) { membership ->
+                val imported = authority.categories[membership.categoryId] ?: return@mapNotNullTo null
+                categoryIdsByPortableId[imported.categoryId] ?: resolveImportedCategory(imported)
+            }.ifEmpty { linkedSetOf(Category.Default.id) }
+            resolvedCategoryIds.forEach { categoryId ->
+                val link = MangaCategory(mangaId, categoryId)
+                if (link !in memberships) {
+                    memberships += link
+                    membershipsCreated++
                 }
-                if (imported.categoryId !in categoryBindings) {
-                    categoryBindings[imported.categoryId] = category.id
-                    categoryBindingsCreated++
-                }
-                categoryIdsByPortableId[imported.categoryId] = category.id
-                category.id
-            }
-        }.ifEmpty { linkedSetOf(Category.Default.id) }
-        resolvedCategoryIds.forEach { categoryId ->
-            val link = MangaCategory(mangaId, categoryId)
-            if (link !in memberships) {
-                memberships += link
-                membershipsCreated++
             }
         }
     }
 
-    var projectedSettings = current.settings
-    val projectionMarkers = current.contentAuthorityProjectionMarkers.toMutableSet()
-    var settingsFieldsApplied = 0
-    var projectionMarkersCreated = 0
-    authority.settings.forEach { pending ->
-        if (pending.marker !in projectionMarkers) {
-            val next = applyImportedSettings(projectedSettings, pending.settings)
-            settingsFieldsApplied += settingsDifferenceCount(projectedSettings, next)
-            projectedSettings = next
-            projectionMarkers += pending.marker
-            projectionMarkersCreated++
+    /** Returns the legacy category id for [imported], or null when its stale binding must be skipped. */
+    private fun resolveImportedCategory(imported: ShuYueImportedCategory): Long? {
+        val boundId = categoryBindings[imported.categoryId]
+        val boundCategory = boundId?.let { id -> categories.firstOrNull { it.id == id } }
+        if (boundId != null && boundCategory == null) return null
+        val category = boundCategory ?: findOrCreateCategory(imported)
+        if (imported.categoryId !in categoryBindings) {
+            categoryBindings[imported.categoryId] = category.id
+            categoryBindingsCreated++
+        }
+        categoryIdsByPortableId[imported.categoryId] = category.id
+        return category.id
+    }
+
+    private fun findOrCreateCategory(imported: ShuYueImportedCategory): Category {
+        val stableId = shuyueLegacyCategoryId(imported.categoryId)
+        if (categories.any { it.id == stableId }) {
+            throw ShuYueCompatibilityProjectionConflictException(imported.categoryId, stableId)
+        }
+        return categories.firstOrNull {
+            it.name.trim().equals(imported.name.trim(), ignoreCase = true)
+        } ?: Category(
+            id = stableId,
+            name = imported.name.trim().ifBlank { "Imported" },
+            sort = nextCategorySort(categories),
+        ).also {
+            categories += it
+            categoriesCreated++
         }
     }
-    val result = ShuYueCompatibilityProjectionRepairResult(
-        mangasCreated = mangasCreated,
-        chaptersCreated = chaptersCreated,
-        categoriesCreated = categoriesCreated,
-        membershipsCreated = membershipsCreated,
-        historiesCreated = historiesCreated,
-        settingsFieldsApplied = settingsFieldsApplied,
-        projectionMarkersCreated = projectionMarkersCreated,
-        categoryBindingsCreated = categoryBindingsCreated,
-    )
-    return MaterializedProjection(
-        snapshot = current.copy(
-            settings = projectedSettings,
-            mangas = mangas,
-            chapters = chapters,
-            categories = categories,
-            mangaCategories = memberships,
-            histories = histories,
-            contentAuthorityProjectionMarkers = projectionMarkers,
-            shuyueCategoryProjectionBindings = categoryBindings,
-        ),
-        result = result,
-    )
+
+    fun projectSettings() {
+        authority.settings.forEach { pending ->
+            if (pending.marker !in projectionMarkers) {
+                val next = applyImportedSettings(projectedSettings, pending.settings)
+                settingsFieldsApplied += settingsDifferenceCount(projectedSettings, next)
+                projectedSettings = next
+                projectionMarkers += pending.marker
+                projectionMarkersCreated++
+            }
+        }
+    }
+
+    fun build(): MaterializedProjection {
+        val result = ShuYueCompatibilityProjectionRepairResult(
+            mangasCreated = mangasCreated,
+            chaptersCreated = chaptersCreated,
+            categoriesCreated = categoriesCreated,
+            membershipsCreated = membershipsCreated,
+            historiesCreated = historiesCreated,
+            settingsFieldsApplied = settingsFieldsApplied,
+            projectionMarkersCreated = projectionMarkersCreated,
+            categoryBindingsCreated = categoryBindingsCreated,
+        )
+        return MaterializedProjection(
+            snapshot = current.copy(
+                settings = projectedSettings,
+                mangas = mangas,
+                chapters = chapters,
+                categories = categories,
+                mangaCategories = memberships,
+                histories = histories,
+                contentAuthorityProjectionMarkers = projectionMarkers,
+                shuyueCategoryProjectionBindings = categoryBindings,
+            ),
+            result = result,
+        )
+    }
 }
 
 private fun findProjectedManga(snapshot: AppSnapshot, publicationKey: PublicationKey): Manga? {

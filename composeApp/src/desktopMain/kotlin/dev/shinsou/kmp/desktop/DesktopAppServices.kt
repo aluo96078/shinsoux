@@ -356,10 +356,10 @@ internal fun writeBinaryDocument(
             // Atomic moves are optional on this file system; a plain replace is enough.
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
         }
-        true
     } finally {
         Files.deleteIfExists(temporary)
     }
+    true
 }.onFailure { Log.warn("Desktop", it) { "Exporting a binary document failed" } }.getOrDefault(false)
 
 internal object DesktopPersistence {

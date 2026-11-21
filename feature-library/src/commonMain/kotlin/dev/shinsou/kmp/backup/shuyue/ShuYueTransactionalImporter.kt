@@ -8,6 +8,7 @@ import dev.shinsou.kmp.content.ContentBlobStore
 import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.ContentCommitBatch
 import dev.shinsou.kmp.content.ContentCommitResult
+import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.content.ContentManifestOwner
 import dev.shinsou.kmp.content.ContentMetadataMutation
@@ -164,24 +165,7 @@ public class ShuYueTransactionalImporter<D : Any>(
         )
         when (lookup.status) {
             ContentMigrationLookupStatus.CONFLICT -> throw ShuYueMigrationConflictException()
-            ContentMigrationLookupStatus.REPLAY -> {
-                stagedReceiptsByCommit.remove(ledger.commitId)
-                val replay = transactionStore.commit(
-                    ContentCommitBatch(
-                        commitId = ledger.commitId,
-                        migrations = listOf(ledger),
-                    ),
-                )
-                return ShuYueTransactionalImportResult(
-                    commit = replay,
-                    publicationCount = resolved.books.size,
-                    unitCount = resolved.chapters.size,
-                    contentBlobCount = resolved.chapters.size,
-                    quarantineCount = resolved.pluginInstallations.size,
-                    categoryCount = selectedCategories(prepared, resolved).size,
-                    progressCount = resolved.progress.size,
-                )
-            }
+            ContentMigrationLookupStatus.REPLAY -> return replayImport(prepared, resolved)
             ContentMigrationLookupStatus.MISSING -> Unit
         }
 
@@ -201,32 +185,7 @@ public class ShuYueTransactionalImporter<D : Any>(
         val publications = publicationPlans.map { plan ->
             buildPublication(plan, receipts, attachments, rights, stagedReceipts)
         }
-        val quarantines = resolved.pluginInstallations.map { staged ->
-            val quarantineId = quarantineId(ledger.sourceDigestSha256, staged)
-            val cacheKey = "quarantine:$quarantineId"
-            val receipt = stagedReceipts[cacheKey] ?: blobStore.put(
-                staged.script.encodeToByteArray(),
-                ContentQuarantineMutation.QUARANTINED_SCRIPT_MEDIA_TYPE,
-            ).also { stagedReceipts[cacheKey] = it }
-            receipts += receipt
-            val mutation = ContentQuarantineMutation(
-                quarantineId = quarantineId,
-                packageId = staged.id,
-                version = staged.version,
-                versionCode = staged.versionCode,
-                sourceIds = staged.sourceIds,
-                origin = staged.origin,
-                ordinal = staged.ordinal,
-                scriptBlob = receipt.reference,
-                enabledHint = staged.enabled,
-                installedAtEpochMillis = staged.installedAt,
-            )
-            mutation to AuxiliaryBlobAttachment(
-                ownerId = mutation.auxiliaryOwnerId,
-                purpose = AuxiliaryBlobPurpose.PLUGIN_QUARANTINE,
-                blobs = listOf(receipt.reference),
-            )
-        }
+        val quarantines = stageQuarantines(resolved, ledger.sourceDigestSha256, receipts, stagedReceipts)
         val categories = selectedCategories(prepared, resolved)
         val progress = resolved.progress.map { staged ->
             ShuYueImportedReadingProgress(
@@ -243,12 +202,7 @@ public class ShuYueTransactionalImporter<D : Any>(
         // publication resources enter the metadata/body planes.
         val allBlobs = attachments.flatMap { it.blobs }.distinctBy { it.blobId }
         val syncableBlobs = if (resolved.includeContentBodySync) {
-            val syncablePublicationIds = rights
-                .filter { ContentOperation.SYNC_BLOB in it.grant.allowedOperations }
-                .mapTo(hashSetOf()) { it.grant.scope.publicationId }
-            attachments.filter { it.owner.publicationKey in syncablePublicationIds }
-                .flatMap { it.blobs }
-                .distinctBy { it.blobId }
+            syncableBlobReferences(attachments, rights)
         } else {
             emptyList()
         }
@@ -297,6 +251,74 @@ public class ShuYueTransactionalImporter<D : Any>(
             categoryCount = categories.size,
             progressCount = progress.size,
         )
+    }
+
+    private fun replayImport(
+        prepared: ShuYuePreparedImport,
+        resolved: ResolvedShuYueImportSelection,
+    ): ShuYueTransactionalImportResult {
+        val ledger = resolved.ledgerMutation
+        stagedReceiptsByCommit.remove(ledger.commitId)
+        val replay = transactionStore.commit(
+            ContentCommitBatch(
+                commitId = ledger.commitId,
+                migrations = listOf(ledger),
+            ),
+        )
+        return ShuYueTransactionalImportResult(
+            commit = replay,
+            publicationCount = resolved.books.size,
+            unitCount = resolved.chapters.size,
+            contentBlobCount = resolved.chapters.size,
+            quarantineCount = resolved.pluginInstallations.size,
+            categoryCount = selectedCategories(prepared, resolved).size,
+            progressCount = resolved.progress.size,
+        )
+    }
+
+    private fun stageQuarantines(
+        resolved: ResolvedShuYueImportSelection,
+        sourceDigestSha256: String,
+        receipts: MutableList<BlobPublishReceipt>,
+        stagedReceipts: MutableMap<String, BlobPublishReceipt>,
+    ): List<Pair<ContentQuarantineMutation, AuxiliaryBlobAttachment>> =
+        resolved.pluginInstallations.map { staged ->
+            val quarantineId = quarantineId(sourceDigestSha256, staged)
+            val cacheKey = "quarantine:$quarantineId"
+            val receipt = stagedReceipts[cacheKey] ?: blobStore.put(
+                staged.script.encodeToByteArray(),
+                ContentQuarantineMutation.QUARANTINED_SCRIPT_MEDIA_TYPE,
+            ).also { stagedReceipts[cacheKey] = it }
+            receipts += receipt
+            val mutation = ContentQuarantineMutation(
+                quarantineId = quarantineId,
+                packageId = staged.id,
+                version = staged.version,
+                versionCode = staged.versionCode,
+                sourceIds = staged.sourceIds,
+                origin = staged.origin,
+                ordinal = staged.ordinal,
+                scriptBlob = receipt.reference,
+                enabledHint = staged.enabled,
+                installedAtEpochMillis = staged.installedAt,
+            )
+            mutation to AuxiliaryBlobAttachment(
+                ownerId = mutation.auxiliaryOwnerId,
+                purpose = AuxiliaryBlobPurpose.PLUGIN_QUARANTINE,
+                blobs = listOf(receipt.reference),
+            )
+        }
+
+    private fun syncableBlobReferences(
+        attachments: List<ManifestAttachment>,
+        rights: List<ContentRightsGrantMutation>,
+    ): List<BlobRef> {
+        val syncablePublicationIds = rights
+            .filter { ContentOperation.SYNC_BLOB in it.grant.allowedOperations }
+            .mapTo(hashSetOf()) { it.grant.scope.publicationId }
+        return attachments.filter { it.owner.publicationKey in syncablePublicationIds }
+            .flatMap { it.blobs }
+            .distinctBy { it.blobId }
     }
 
     public suspend fun importSecrets(

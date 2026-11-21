@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -142,58 +143,76 @@ public fun ImageViewerDialog(
                         translationY = shownOffset.y
                     },
             )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .safeDrawingPadding()
-                    .padding(8.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ViewerButton(onClick = onDismiss) {
-                    Icon(Icons.Outlined.Close, contentDescription = strings.text(StringKey.CLOSE), tint = Color.White)
-                }
-                if (saver != null) {
-                    ViewerButton(
-                        enabled = !saving,
-                        onClick = {
-                            saving = true
-                            scope.launch {
-                                val saved = try {
-                                    saver(suggestedName, bytes)
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (logged: Throwable) {
-                                    Log.warn("Ui", logged) { "Saving the image failed" }
-                                    false
-                                }
-                                saving = false
-                                message = strings.text(if (saved) StringKey.IMAGE_SAVED else StringKey.COULD_NOT_SAVE_THE_IMAGE)
-                            }
-                        },
-                    ) {
-                        if (saving) {
-                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.padding(10.dp))
-                        } else {
-                            Icon(Icons.Outlined.Download, contentDescription = strings.text(StringKey.SAVE_IMAGE), tint = Color.White)
+            ViewerTopBar(
+                saveEnabled = saver != null,
+                saving = saving,
+                onDismiss = onDismiss,
+                onSave = {
+                    saving = true
+                    scope.launch {
+                        val saved = try {
+                            saver?.invoke(suggestedName, bytes) ?: false
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (logged: Throwable) {
+                            Log.warn("Ui", logged) { "Saving the image failed" }
+                            false
                         }
+                        saving = false
+                        message = strings.text(if (saved) StringKey.IMAGE_SAVED else StringKey.COULD_NOT_SAVE_THE_IMAGE)
                     }
-                }
-            }
-            message?.let { text ->
-                Surface(
-                    color = Color.Black.copy(alpha = 0.78f),
-                    contentColor = Color.White,
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .safeDrawingPadding()
-                        .padding(bottom = 32.dp),
-                ) {
-                    Text(text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                },
+            )
+            message?.let { text -> ViewerMessage(text) }
+        }
+    }
+}
+
+/** The close button and, when the host can save pictures, the save button over the picture. */
+@Composable
+private fun ViewerTopBar(
+    saveEnabled: Boolean,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .safeDrawingPadding()
+            .padding(8.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ViewerButton(onClick = onDismiss) {
+            Icon(Icons.Outlined.Close, contentDescription = strings.text(StringKey.CLOSE), tint = Color.White)
+        }
+        if (saveEnabled) {
+            ViewerButton(enabled = !saving, onClick = onSave) {
+                if (saving) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.padding(10.dp))
+                } else {
+                    Icon(Icons.Outlined.Download, contentDescription = strings.text(StringKey.SAVE_IMAGE), tint = Color.White)
                 }
             }
         }
+    }
+}
+
+/** The transient save-result toast at the bottom of the viewer. */
+@Composable
+private fun BoxScope.ViewerMessage(text: String) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.78f),
+        contentColor = Color.White,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .safeDrawingPadding()
+            .padding(bottom = 32.dp),
+    ) {
+        Text(text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
     }
 }
 

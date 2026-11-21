@@ -401,114 +401,70 @@ public class ShinsouComposition(
     public suspend fun start() {
         if (startupHydrationJob?.isActive == true) return
         startupHydrationJob = trackingScope.launch {
-            try {
+            // On failure: stays pending; the next content operation loads it and reports the failure.
+            startupStep("Could not load the attachment ledger at startup") {
                 // Deferred out of construction (the first frame); load it here, off the main thread.
                 contentFoundation?.warmAttachmentLedger()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not load the attachment ledger at startup" }
-                // Stays pending; the next content operation loads it and reports the failure.
             }
-            try {
+            // On failure: the Sync settings page shows the logged; startup continues.
+            startupStep("Could not start sync") {
                 // Restores a stored sync session (observer, stream) once content storage is ready.
                 sync?.start()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not start sync" }
-                // The Sync settings page shows the logged; startup continues.
             }
             // Before any refresh: repository trust and install keys read it synchronously, and
             // until it is loaded developer mode counts as off.
-            try {
+            // On failure: unreadable, developer mode stays off.
+            startupStep("Could not read developer mode; it stays off") {
                 plugins.loadDeveloperMode()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not read developer mode; it stays off" }
-                // Unreadable: developer mode stays off.
             }
-            try {
+            // On failure: browse.refresh() below loads them again and reports the logged.
+            startupStep("Could not show the installed sources") {
                 // Installed sources appear now; the migrations below can take a while.
                 browse.showInstalledSources()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not show the installed sources" }
-                // browse.refresh() below loads them again and reports the logged.
             }
             val stopsAtStart = backgroundDownloads.stopCount()
-            try {
+            // On failure: same as the manga queue: a damaged saved queue just starts empty.
+            startupStep("Could not restore the extension download queue; it starts empty") {
                 // Shown (and kept alive by the platform download service) right away; the
                 // downloads themselves start after browse.refresh() below has loaded the sources.
                 browse.restoreExtensionDownloadsV2()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not restore the extension download queue; it starts empty" }
-                // Same as the manga queue: a damaged saved queue just starts empty.
             }
             // Its downloads are still held back here; a system stop that came while it loaded
             // pauses them before they can start.
             backgroundDownloads.novelQueueRestored()
-            try {
+            // On failure: the transaction is atomic and restart-safe. A later launch retries the exact
+            // deterministic projection without delaying this launch's interactive frame.
+            startupStep("The legacy publication migration failed; the next launch retries it") {
                 legacyPublicationStartupMigration?.migrate(repository.currentSnapshot)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "The legacy publication migration failed; the next launch retries it" }
-                // The transaction is atomic and restart-safe. A later launch retries the exact
-                // deterministic projection without delaying this launch's interactive frame.
             }
-            try {
+            // On failure: the typed Publication remains authoritative. Deterministic compatibility URLs
+            // make this crash-gap repair safe to retry at the next launch.
+            startupStep("Could not repair the typed content projection") {
                 localContent.repairTypedContentLegacyProjection()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not repair the typed content projection" }
-                // The typed Publication remains authoritative. Deterministic compatibility URLs
-                // make this crash-gap repair safe to retry at the next launch.
             }
-            try {
+            // On failure: ShuYue's typed transaction remains authoritative. The one-shot settings marker
+            // and all compatibility rows share one CAS, so a later launch retries safely.
+            startupStep("Could not repair the ShuYue compatibility projection") {
                 shuYueCompatibilityProjection?.repair()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not repair the ShuYue compatibility projection" }
-                // ShuYue's typed transaction remains authoritative. The one-shot settings marker
-                // and all compatibility rows share one CAS, so a later launch retries safely.
             }
-            try {
+            // On failure: secure proxy hydration can be retried from settings when keychain access returns.
+            startupStep("Could not load the proxy secret") {
                 plugins.hydrateProxySecret()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not load the proxy secret" }
-                // Secure proxy hydration can be retried from settings when keychain access returns.
             }
-            try {
+            // On failure: PluginBrowseAdapter publishes its actionable logged in BrowseSnapshot.
+            startupStep("Could not refresh the sources at startup") {
                 browse.refresh()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not refresh the sources at startup" }
-                // PluginBrowseAdapter publishes its actionable logged in BrowseSnapshot.
             }
             // The repository lists say which repository publishes a synced title's package.
             sync?.sourcesChanged()
             browse.openExtensionDownloadsV2()
-            try {
+            // On failure: migration is an idempotent source/url rewrite. A missing standalone package or
+            // incomplete typed chapter graph leaves the old row intact for a later launch.
+            startupStep("The standalone library migration failed; the next launch retries it") {
                 // Do not turn a readable local reviewed favorite into an unavailable remote row.
                 // Installed-source hydration happens at the start of browse.refresh(), even when
                 // optional repository discovery later times out or fails.
                 plugins.migrateBiliMangaStandaloneLibrary()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "The standalone library migration failed; the next launch retries it" }
-                // Migration is an idempotent source/url rewrite. A missing standalone package or
-                // incomplete typed chapter graph leaves the old row intact for a later launch.
             }
             if (sync != null && installedSourcesSyncJob == null) {
                 // Titles synced from another device wait for their source; installing or removing a
@@ -541,25 +497,17 @@ public class ShinsouComposition(
                         .distinctUntilChanged()
                         .drop(1)
                         .collect {
-                            try {
+                            // On failure: BrowseSnapshot already exposes the repository refresh failure.
+                            startupStep("Could not refresh the sources after the repositories changed") {
                                 browse.refresh()
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (logged: Throwable) {
-                                Log.warn("Startup", logged) { "Could not refresh the sources after the repositories changed" }
-                                // BrowseSnapshot already exposes the repository refresh failure.
                             }
                             sync?.sourcesChanged()
                         }
                 }
             }
-            try {
+            // On failure: a corrupt queue entry must not prevent the rest of the app from opening.
+            startupStep("Could not restore the download queue") {
                 downloads.restoreQueue()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (logged: Throwable) {
-                Log.warn("Startup", logged) { "Could not restore the download queue" }
-                // A corrupt queue entry must not prevent the rest of the app from opening.
             }
             // Queues the system stopped before the process died pick up where they left off,
             // unless the system stopped them again while this startup was running.
@@ -568,6 +516,20 @@ public class ShinsouComposition(
             // the startup work above is done.
             contentBackgroundWork?.startOutboxDiscarder()
             scheduleContentOutboxDiscard()
+        }
+    }
+
+    /**
+     * One step of [start]: a failure is logged as [failure] and startup goes on without it;
+     * cancellation still ends startup.
+     */
+    private inline fun startupStep(failure: String, step: () -> Unit) {
+        try {
+            step()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (logged: Throwable) {
+            Log.warn("Startup", logged) { failure }
         }
     }
 

@@ -402,36 +402,19 @@ internal fun ExtensionV2ChapterStatus(model: ExtensionV2ChapterPaneModel, visibl
 
 @Composable
 internal fun ExtensionV2ChapterRow(model: ExtensionV2ChapterPaneModel, selection: ExtensionUnitSelectionV2) {
-    val units = model.units
     val selectedUnitIds = model.selectedUnitIds
     val readUnitIds = model.readUnitIds
     val inProgressUnits = model.inProgressUnits
     val bookmarkedUnitIds = model.bookmarkedUnitIds
     val downloadedUnitIds = model.downloadedUnitIds
-    val chapterFilter = model.chapterFilter
-    val reverseWebsiteOrder = model.reverseWebsiteOrder
-    val loading = model.loading
-    val loadingMore = model.loadingMore
-    val loadError = model.loadError
-    val hasNextPage = model.hasNextPage
-    val operationMessage = model.operationMessage
-    val operationFailed = model.operationFailed
     val busyUnitId = model.busyUnitId
     val openingReaderUnitId = model.openingReaderUnitId
     val queuedUnitIds = model.queuedUnitIds
-    val onRetry = model.onRetry
-    val onLoadMore = model.onLoadMore
     val onReadUnit = model.onReadUnit
     val onDownloadUnits = model.onDownloadUnits
-    val onTranslateUnits = model.onTranslateUnits
     val translatedUnitIds = model.translatedUnitIds
     val prefetchByUnit = model.prefetchByUnit
     val onSelectionChange = model.onSelectionChange
-    val onReadStateChange = model.onReadStateChange
-    val onBookmarkStateChange = model.onBookmarkStateChange
-    val onDeleteDownloads = model.onDeleteDownloads
-    val onFilterChange = model.onFilterChange
-    val onToggleWebsiteOrder = model.onToggleWebsiteOrder
     val strings = LocalShinsouStrings.current
     val unitId = selection.unit.remoteId
     val selected = unitId in selectedUnitIds

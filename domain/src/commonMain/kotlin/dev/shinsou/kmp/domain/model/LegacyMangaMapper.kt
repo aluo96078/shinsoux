@@ -177,16 +177,7 @@ public object LegacyMangaMapper {
             add(aliasRequest(namespace, mangaAlias))
             add(aliasRequest(namespace, acquisitionAlias))
             chapterAliases.forEach { add(aliasRequest(namespace, it)) }
-            input.categories.zip(categoryAliases).forEach { (record, alias) ->
-                add(
-                    PortableAliasRequest(
-                        namespace,
-                        alias,
-                        if (record.id == Category.Default.id) PortableCategoryId.DEFAULT.value
-                        else deriveAliasUuid(namespace, alias),
-                    ),
-                )
-            }
+            addAll(categoryAliasRequests(namespace, input.categories, categoryAliases))
         }
         val bindings = aliases.resolveOrBindAll(requests)
         val bound = bindings.associate { it.alias to it.portableUuid }
@@ -244,19 +235,7 @@ public object LegacyMangaMapper {
             authors = listOfNotNull(input.record.author).filter(String::isNotBlank),
             thumbnailUrl = input.record.thumbnailUrl,
         )
-        val portableCategories = input.categories.zip(categoryAliases).map { (record, alias) ->
-            PortableLegacyCategory(PortableCategoryId(requireNotNull(bound[alias])), record)
-        }
-        val categoryIdsByLegacy = portableCategories.associate { it.legacyRecord.id to it.id }
-        val portableLinks = input.links.map { link ->
-            PortableLegacyCategoryLink(
-                publicationKey = publicationKey,
-                categoryId = requireNotNull(categoryIdsByLegacy[link.categoryId]) {
-                    "Legacy category link has no portable category"
-                },
-                legacyRecord = link,
-            )
-        }
+        val (portableCategories, portableLinks) = portableCategoriesAndLinks(input, categoryAliases, bound, publicationKey)
         return LegacyPublicationBundle(
             namespace = namespace,
             publication = publication,
@@ -277,39 +256,14 @@ public object LegacyMangaMapper {
             "Legacy Manga compatibility facet is missing"
         }
         require(mangaFacet.namespace == bundle.namespace) { "Legacy Manga namespace mismatch" }
-        require(mangaFacet.sourcePackageId == LEGACY_PACKAGE_ID) {
-            "Legacy Manga source package changed"
-        }
-        require(publication.title == mangaFacet.record.title) {
-            "Legacy Manga title projection is stale"
-        }
-        require(publication.description == mangaFacet.record.description) {
-            "Legacy Manga description projection is stale"
-        }
-        require(
-            publication.authors == listOfNotNull(mangaFacet.record.author).filter(String::isNotBlank),
-        ) { "Legacy Manga author projection is stale" }
-        require(publication.workLinks.isEmpty()) {
-            "Legacy Manga projection cannot discard work links"
-        }
+        requirePublicationProjection(publication, mangaFacet)
 
         val mangaAlias = LegacyAliasKey.Manga(mangaFacet.record.id, mangaFacet.record.source)
         val acquisitionAlias = LegacyAliasKey.Acquisition(mangaFacet.record.id, mangaFacet.record.source)
         require(binding(bundle, mangaAlias) == publication.key.value) { "Publication alias does not match" }
         require(binding(bundle, acquisitionAlias) == acquisition.id) { "Acquisition alias does not match" }
 
-        require(acquisition.contentRevision == 0L) {
-            "Legacy Manga projection cannot discard acquisition content revision"
-        }
-        require(acquisition.availability == AcquisitionAvailability.AVAILABLE) {
-            "Legacy Manga projection cannot discard acquisition availability"
-        }
-        require(acquisition.rightsGrantRef == null) {
-            "Legacy Manga projection cannot discard acquisition rights"
-        }
-        require(acquisition.acquiredAtEpochMillis == mangaFacet.record.dateAdded.takeIf { it >= 0L }) {
-            "Legacy Manga acquisition timestamp projection is stale"
-        }
+        requireAcquisitionProjection(acquisition, mangaFacet)
 
         val sourceBinding = acquisition.sourceBinding
             ?: throw IllegalArgumentException("Legacy acquisition source binding is missing")
@@ -359,6 +313,100 @@ public object LegacyMangaMapper {
         }
 
         val categories = bundle.categories
+        val links = bundle.categoryLinks
+        requireCategoryProjection(bundle, mangaFacet, publication)
+
+        val expectedAliases = buildSet {
+            add(mangaAlias)
+            add(acquisitionAlias)
+            chapters.forEach { add(LegacyAliasKey.Chapter(it.mangaId, it.id, mangaFacet.record.source)) }
+            categories.forEach { add(LegacyAliasKey.Category(it.legacyRecord.id)) }
+        }
+        require(bundle.aliases.map { it.alias }.toSet() == expectedAliases) {
+            "Legacy bundle contains missing or unexpected aliases"
+        }
+        return LegacyMangaAggregateV1(
+            record = mangaFacet.record,
+            chapters = chapters,
+            categories = categories.map(PortableLegacyCategory::legacyRecord),
+            links = links.map(PortableLegacyCategoryLink::legacyRecord),
+        )
+    }
+
+    private fun categoryAliasRequests(
+        namespace: MigrationNamespaceId,
+        categories: List<LegacyCategoryRecordV1>,
+        aliases: List<LegacyAliasKey>,
+    ): List<PortableAliasRequest> = categories.zip(aliases).map { (record, alias) ->
+        PortableAliasRequest(
+            namespace,
+            alias,
+            if (record.id == Category.Default.id) PortableCategoryId.DEFAULT.value
+            else deriveAliasUuid(namespace, alias),
+        )
+    }
+
+    private fun portableCategoriesAndLinks(
+        input: LegacyMangaAggregateV1,
+        categoryAliases: List<LegacyAliasKey>,
+        bound: Map<LegacyAliasKey, String>,
+        publicationKey: PublicationKey,
+    ): Pair<List<PortableLegacyCategory>, List<PortableLegacyCategoryLink>> {
+        val portableCategories = input.categories.zip(categoryAliases).map { (record, alias) ->
+            PortableLegacyCategory(PortableCategoryId(requireNotNull(bound[alias])), record)
+        }
+        val categoryIdsByLegacy = portableCategories.associate { it.legacyRecord.id to it.id }
+        val portableLinks = input.links.map { link ->
+            PortableLegacyCategoryLink(
+                publicationKey = publicationKey,
+                categoryId = requireNotNull(categoryIdsByLegacy[link.categoryId]) {
+                    "Legacy category link has no portable category"
+                },
+                legacyRecord = link,
+            )
+        }
+        return portableCategories to portableLinks
+    }
+
+    private fun requirePublicationProjection(publication: Publication, mangaFacet: LegacyMangaCompatibilityFacetV1) {
+        require(mangaFacet.sourcePackageId == LEGACY_PACKAGE_ID) {
+            "Legacy Manga source package changed"
+        }
+        require(publication.title == mangaFacet.record.title) {
+            "Legacy Manga title projection is stale"
+        }
+        require(publication.description == mangaFacet.record.description) {
+            "Legacy Manga description projection is stale"
+        }
+        require(
+            publication.authors == listOfNotNull(mangaFacet.record.author).filter(String::isNotBlank),
+        ) { "Legacy Manga author projection is stale" }
+        require(publication.workLinks.isEmpty()) {
+            "Legacy Manga projection cannot discard work links"
+        }
+    }
+
+    private fun requireAcquisitionProjection(acquisition: Acquisition, mangaFacet: LegacyMangaCompatibilityFacetV1) {
+        require(acquisition.contentRevision == 0L) {
+            "Legacy Manga projection cannot discard acquisition content revision"
+        }
+        require(acquisition.availability == AcquisitionAvailability.AVAILABLE) {
+            "Legacy Manga projection cannot discard acquisition availability"
+        }
+        require(acquisition.rightsGrantRef == null) {
+            "Legacy Manga projection cannot discard acquisition rights"
+        }
+        require(acquisition.acquiredAtEpochMillis == mangaFacet.record.dateAdded.takeIf { it >= 0L }) {
+            "Legacy Manga acquisition timestamp projection is stale"
+        }
+    }
+
+    private fun requireCategoryProjection(
+        bundle: LegacyPublicationBundle,
+        mangaFacet: LegacyMangaCompatibilityFacetV1,
+        publication: Publication,
+    ) {
+        val categories = bundle.categories
         require(categories.map(PortableLegacyCategory::legacyRecord) ==
             mangaFacet.categories) {
             "Legacy category compatibility data changed"
@@ -379,22 +427,6 @@ public object LegacyMangaMapper {
                 "Legacy category link target changed"
             }
         }
-
-        val expectedAliases = buildSet {
-            add(mangaAlias)
-            add(acquisitionAlias)
-            chapters.forEach { add(LegacyAliasKey.Chapter(it.mangaId, it.id, mangaFacet.record.source)) }
-            categories.forEach { add(LegacyAliasKey.Category(it.legacyRecord.id)) }
-        }
-        require(bundle.aliases.map { it.alias }.toSet() == expectedAliases) {
-            "Legacy bundle contains missing or unexpected aliases"
-        }
-        return LegacyMangaAggregateV1(
-            record = mangaFacet.record,
-            chapters = chapters,
-            categories = categories.map(PortableLegacyCategory::legacyRecord),
-            links = links.map(PortableLegacyCategoryLink::legacyRecord),
-        )
     }
 
     private fun aliasRequest(namespace: MigrationNamespaceId, alias: LegacyAliasKey): PortableAliasRequest =

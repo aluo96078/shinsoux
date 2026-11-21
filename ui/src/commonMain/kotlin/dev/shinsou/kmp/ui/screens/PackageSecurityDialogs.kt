@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.shinsou.kmp.plugin.PackagePublisher
 import dev.shinsou.kmp.plugin.PackageSecuritySnapshot
+import dev.shinsou.kmp.plugin.PluginDeveloperModeSettings
 import dev.shinsou.kmp.plugin.PublisherTrustState
 import dev.shinsou.kmp.plugin.RepositoryTrustPrompt
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -83,6 +85,110 @@ internal fun RepositoryTrustDialog(
     )
 }
 
+/** One trusted publisher: its fingerprint, state, block / match actions and the inline fingerprint match field. */
+@Composable
+private fun PublisherTrustRow(
+    publisher: PackagePublisher,
+    enabled: Boolean,
+    matching: String?,
+    fingerprint: String,
+    onMatching: (String?) -> Unit,
+    onFingerprint: (String) -> Unit,
+    onPublisherBlocked: (publisherId: String, blocked: Boolean) -> Unit,
+    onConfirmFingerprint: (publisherId: String, fingerprint: String) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(publisher.displayFingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            buildString {
+                append(
+                    when (publisher.state) {
+                        PublisherTrustState.TRUSTED -> strings.text(StringKey.TRUSTED)
+                        PublisherTrustState.PENDING_FINGERPRINT -> strings.text(StringKey.PENDING_FINGERPRINT_MATCH)
+                        PublisherTrustState.KEY_REVOKED -> strings.text(StringKey.KEY_REVOKED_BY_THE_PUBLISHER)
+                        PublisherTrustState.KEY_REPLACED -> strings.text(StringKey.KEY_REPLACED)
+                    },
+                )
+                append(" · ")
+                append(
+                    when {
+                        publisher.fingerprintVerified -> strings.text(StringKey.FINGERPRINT_MATCHED)
+                        else -> strings.text(StringKey.TRUSTED_ON_FIRST_USE)
+                    },
+                )
+                if (publisher.blocked) append(" · ").append(strings.text(StringKey.BLOCKED))
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row {
+            TextButton(enabled = enabled, onClick = { onPublisherBlocked(publisher.id, !publisher.blocked) }) {
+                Text(if (publisher.blocked) strings.text(StringKey.UNBLOCK) else strings.text(StringKey.BLOCK))
+            }
+            if (!publisher.fingerprintVerified && publisher.state != PublisherTrustState.KEY_REVOKED &&
+                publisher.state != PublisherTrustState.KEY_REPLACED
+            ) {
+                TextButton(enabled = enabled, onClick = { onMatching(publisher.id); onFingerprint("") }) {
+                    Text(strings.text(StringKey.MATCH_FINGERPRINT))
+                }
+            }
+        }
+        if (matching == publisher.id) {
+            OutlinedTextField(
+                value = fingerprint,
+                onValueChange = onFingerprint,
+                label = { Text(strings.text(StringKey.FULL_FINGERPRINT_REQUIRED)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(
+                enabled = enabled && fingerprint.isNotBlank(),
+                onClick = { onConfirmFingerprint(publisher.id, fingerprint.trim()); onMatching(null) },
+            ) { Text(strings.text(StringKey.MATCH)) }
+        }
+        HorizontalDivider()
+    }
+}
+
+/** The developer-mode switch row. */
+@Composable
+private fun DeveloperModeSwitchRow(developer: PluginDeveloperModeSettings, enabled: Boolean, onDeveloperMode: (Boolean) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(strings.text(StringKey.DEVELOPER_MODE), style = MaterialTheme.typography.titleSmall)
+            Text(
+                strings.text(StringKey.LOAD_UNSIGNED_PLUGINS_FROM_A_DEVELOPMENT_SERVER),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Switch(checked = developer.enabled, enabled = enabled, onCheckedChange = onDeveloperMode)
+    }
+}
+
+/** The editable development server addresses and the button that saves them. */
+@Composable
+private fun DeveloperHostsEditor(
+    developerHosts: String,
+    onDeveloperHostsChange: (String) -> Unit,
+    enabled: Boolean,
+    onSave: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Column {
+        OutlinedTextField(
+            value = developerHosts,
+            onValueChange = onDeveloperHostsChange,
+            label = { Text(strings.text(StringKey.DEVELOPMENT_SERVER_ADDRESSES)) },
+            supportingText = { Text(strings.text(StringKey.PRIVATE_NETWORK_ADDRESSES_ONE_PER_LINE_FOR)) },
+            minLines = 2,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        TextButton(enabled = enabled, onClick = onSave) { Text(strings.text(StringKey.SAVE_ADDRESSES)) }
+    }
+}
+
 /** ADR-0002 §8.2, §8.4: the trust mode, trusted publishers and the device's block list. */
 @Composable
 internal fun PackageSecurityDialog(
@@ -126,87 +232,27 @@ internal fun PackageSecurityDialog(
                     item("no-publishers") { Text(strings.text(StringKey.NO_TRUSTED_PUBLISHERS), style = MaterialTheme.typography.bodySmall) }
                 }
                 items(snapshot.publishers, key = { "publisher-${it.id}" }) { publisher ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Text(publisher.displayFingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            buildString {
-                                append(
-                                    when (publisher.state) {
-                                        PublisherTrustState.TRUSTED -> strings.text(StringKey.TRUSTED)
-                                        PublisherTrustState.PENDING_FINGERPRINT -> strings.text(StringKey.PENDING_FINGERPRINT_MATCH)
-                                        PublisherTrustState.KEY_REVOKED -> strings.text(StringKey.KEY_REVOKED_BY_THE_PUBLISHER)
-                                        PublisherTrustState.KEY_REPLACED -> strings.text(StringKey.KEY_REPLACED)
-                                    },
-                                )
-                                append(" · ")
-                                append(
-                                    when {
-                                        publisher.fingerprintVerified -> strings.text(StringKey.FINGERPRINT_MATCHED)
-                                        else -> strings.text(StringKey.TRUSTED_ON_FIRST_USE)
-                                    },
-                                )
-                                if (publisher.blocked) append(" · ").append(strings.text(StringKey.BLOCKED))
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row {
-                            TextButton(enabled = enabled, onClick = { onPublisherBlocked(publisher.id, !publisher.blocked) }) {
-                                Text(if (publisher.blocked) strings.text(StringKey.UNBLOCK) else strings.text(StringKey.BLOCK))
-                            }
-                            if (!publisher.fingerprintVerified && publisher.state != PublisherTrustState.KEY_REVOKED &&
-                                publisher.state != PublisherTrustState.KEY_REPLACED
-                            ) {
-                                TextButton(enabled = enabled, onClick = { matching = publisher.id; fingerprint = "" }) {
-                                    Text(strings.text(StringKey.MATCH_FINGERPRINT))
-                                }
-                            }
-                        }
-                        if (matching == publisher.id) {
-                            OutlinedTextField(
-                                value = fingerprint,
-                                onValueChange = { fingerprint = it },
-                                label = { Text(strings.text(StringKey.FULL_FINGERPRINT_REQUIRED)) },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            TextButton(
-                                enabled = enabled && fingerprint.isNotBlank(),
-                                onClick = { onConfirmFingerprint(publisher.id, fingerprint.trim()); matching = null },
-                            ) { Text(strings.text(StringKey.MATCH)) }
-                        }
-                        HorizontalDivider()
-                    }
+                    PublisherTrustRow(
+                        publisher = publisher,
+                        enabled = enabled,
+                        matching = matching,
+                        fingerprint = fingerprint,
+                        onMatching = { matching = it },
+                        onFingerprint = { fingerprint = it },
+                        onPublisherBlocked = onPublisherBlocked,
+                        onConfirmFingerprint = onConfirmFingerprint,
+                    )
                 }
                 snapshot.developerMode?.let { developer ->
-                    item("developer-title") {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text(strings.text(StringKey.DEVELOPER_MODE), style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    strings.text(StringKey.LOAD_UNSIGNED_PLUGINS_FROM_A_DEVELOPMENT_SERVER),
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                            Switch(checked = developer.enabled, enabled = enabled, onCheckedChange = onDeveloperMode)
-                        }
-                    }
+                    item("developer-title") { DeveloperModeSwitchRow(developer, enabled, onDeveloperMode) }
                     if (developer.enabled) {
                         item("developer-hosts") {
-                            Column {
-                                OutlinedTextField(
-                                    value = developerHosts,
-                                    onValueChange = { developerHosts = it },
-                                    label = { Text(strings.text(StringKey.DEVELOPMENT_SERVER_ADDRESSES)) },
-                                    supportingText = { Text(strings.text(StringKey.PRIVATE_NETWORK_ADDRESSES_ONE_PER_LINE_FOR)) },
-                                    minLines = 2,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                TextButton(
-                                    enabled = enabled,
-                                    onClick = { onDeveloperHosts(developerHosts.lines().map(String::trim).filter(String::isNotEmpty)) },
-                                ) { Text(strings.text(StringKey.SAVE_ADDRESSES)) }
-                            }
+                            DeveloperHostsEditor(
+                                developerHosts = developerHosts,
+                                onDeveloperHostsChange = { developerHosts = it },
+                                enabled = enabled,
+                                onSave = { onDeveloperHosts(developerHosts.lines().map(String::trim).filter(String::isNotEmpty)) },
+                            )
                         }
                     }
                 }

@@ -2,6 +2,7 @@ package dev.shinsou.kmp.reader
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -71,18 +72,7 @@ public actual fun EpubBrowserView(
             policy = documentState.urlPolicy,
         )
         val schemeHandler = IosEpubSchemeHandler(resolverHolder)
-        val webConfiguration = WKWebViewConfiguration().apply {
-            websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()
-            // Publisher execution stays disabled below and by CSP; the host still needs
-            // evaluateJavaScript for an explicit DOM-selection snapshot.
-            preferences.javaScriptEnabled = true
-            defaultWebpagePreferences.allowsContentJavaScript = false
-            setURLSchemeHandler(schemeHandler, request.securityPolicy.publicationScheme)
-        }
-        val webView = WKWebView(CGRectMake(0.0, 0.0, 0.0, 0.0), webConfiguration).apply {
-            allowsBackForwardNavigationGestures = false
-            allowsLinkPreview = false
-        }
+        val webView = createEpubWebView(schemeHandler, request.securityPolicy.publicationScheme)
         val scrollDelegate = IosEpubScrollDelegate(
             webView = webView,
             initialRequest = request,
@@ -98,51 +88,14 @@ public actual fun EpubBrowserView(
         val tapHandler = IosEpubTapHandler(webView) { horizontalFraction, verticalFraction ->
             scrollDelegate.handleTap(horizontalFraction, verticalFraction)
         }
-        val tapGestureRecognizer = UITapGestureRecognizer(
-            target = tapHandler,
-            action = NSSelectorFromString("handleTap:"),
-        ).apply {
-            cancelsTouchesInView = false
-        }
+        val tapGestureRecognizer = createEpubTapGestureRecognizer(tapHandler)
         webView.addGestureRecognizer(tapGestureRecognizer)
-        val delegate = IosEpubNavigationDelegate(
-            allowNavigation = { url ->
-                documentState.navigationRequested(url)?.let { target ->
-                    IosEpubNavigationAdmission(
-                        browserUrl = url,
-                        generation = requireNotNull(documentState.pendingLoadGeneration),
-                        sameDocument = target.hasExplicitAnchor &&
-                            target.documentIndex == documentState.committedRequest.documentIndex &&
-                            target.resourceHref == documentState.committedRequest.document.href,
-                    )
-                }
-            },
-            onLoaded = { url, generation ->
-                documentState.documentLoaded(url, generation)?.let { loaded ->
-                    resolverHolder.commit()
-                    scrollDelegate.update(loaded.target.request)
-                    scrollDelegate.documentLoaded(
-                        loaded = loaded,
-                        browserPublicationRootUrl = documentState.urlPolicy.browserPublicationRootUrl,
-                        onError = { currentError.value.invoke(it) },
-                    )
-                }
-            },
-            onLoadFailed = { message, generation ->
-                if (documentState.ownsPendingLoad(generation)) {
-                    resolverHolder.rollback()
-                    val rollback = checkNotNull(documentState.documentLoadFailed(generation))
-                    val visibleUrl = webView.URL?.absoluteString
-                    scrollDelegate.documentLoadFailed(
-                        rollbackRequest = rollback.request,
-                        oldDocumentAvailable = visibleUrl != null &&
-                            epubBrowserUrlWithoutLoadGeneration(visibleUrl) ==
-                            epubBrowserUrlWithoutLoadGeneration(rollback.browserUrl),
-                    )
-                    currentError.value.invoke(message)
-                }
-            },
-            onPolicyError = { currentError.value.invoke(it) },
+        val delegate = createEpubNavigationDelegate(
+            webView = webView,
+            documentState = documentState,
+            resolverHolder = resolverHolder,
+            scrollDelegate = scrollDelegate,
+            currentError = currentError,
         )
         webView.navigationDelegate = delegate
         webView.scrollView.delegate = scrollDelegate
@@ -190,6 +143,83 @@ public actual fun EpubBrowserView(
         )
     }
 }
+
+/** Builds the non-persistent WKWebView whose publication scheme is served by [schemeHandler]. */
+@OptIn(ExperimentalForeignApi::class)
+private fun createEpubWebView(schemeHandler: IosEpubSchemeHandler, publicationScheme: String): WKWebView {
+    val webConfiguration = WKWebViewConfiguration().apply {
+        websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()
+        // Publisher execution stays disabled below and by CSP; the host still needs
+        // evaluateJavaScript for an explicit DOM-selection snapshot.
+        preferences.javaScriptEnabled = true
+        defaultWebpagePreferences.allowsContentJavaScript = false
+        setURLSchemeHandler(schemeHandler, publicationScheme)
+    }
+    val webView = WKWebView(CGRectMake(0.0, 0.0, 0.0, 0.0), webConfiguration).apply {
+        allowsBackForwardNavigationGestures = false
+        allowsLinkPreview = false
+    }
+    return webView
+}
+
+/** Builds the tap recognizer that forwards taps to [tapHandler] without cancelling WebKit touches. */
+@OptIn(ExperimentalForeignApi::class)
+private fun createEpubTapGestureRecognizer(tapHandler: IosEpubTapHandler): UITapGestureRecognizer =
+    UITapGestureRecognizer(
+        target = tapHandler,
+        action = NSSelectorFromString("handleTap:"),
+    ).apply {
+        cancelsTouchesInView = false
+    }
+
+/** Builds the navigation delegate that admits publication navigations and rolls back failed loads. */
+@OptIn(ExperimentalForeignApi::class)
+private fun createEpubNavigationDelegate(
+    webView: WKWebView,
+    documentState: EpubBrowserDocumentState,
+    resolverHolder: IosEpubResolverHolder,
+    scrollDelegate: IosEpubScrollDelegate,
+    currentError: State<(String) -> Unit>,
+): IosEpubNavigationDelegate =
+    IosEpubNavigationDelegate(
+        allowNavigation = { url ->
+            documentState.navigationRequested(url)?.let { target ->
+                IosEpubNavigationAdmission(
+                    browserUrl = url,
+                    generation = requireNotNull(documentState.pendingLoadGeneration),
+                    sameDocument = target.hasExplicitAnchor &&
+                        target.documentIndex == documentState.committedRequest.documentIndex &&
+                        target.resourceHref == documentState.committedRequest.document.href,
+                )
+            }
+        },
+        onLoaded = { url, generation ->
+            documentState.documentLoaded(url, generation)?.let { loaded ->
+                resolverHolder.commit()
+                scrollDelegate.update(loaded.target.request)
+                scrollDelegate.documentLoaded(
+                    loaded = loaded,
+                    browserPublicationRootUrl = documentState.urlPolicy.browserPublicationRootUrl,
+                    onError = { currentError.value.invoke(it) },
+                )
+            }
+        },
+        onLoadFailed = { message, generation ->
+            if (documentState.ownsPendingLoad(generation)) {
+                resolverHolder.rollback()
+                val rollback = checkNotNull(documentState.documentLoadFailed(generation))
+                val visibleUrl = webView.URL?.absoluteString
+                scrollDelegate.documentLoadFailed(
+                    rollbackRequest = rollback.request,
+                    oldDocumentAvailable = visibleUrl != null &&
+                        epubBrowserUrlWithoutLoadGeneration(visibleUrl) ==
+                        epubBrowserUrlWithoutLoadGeneration(rollback.browserUrl),
+                )
+                currentError.value.invoke(message)
+            }
+        },
+        onPolicyError = { currentError.value.invoke(it) },
+    )
 
 @OptIn(ExperimentalForeignApi::class)
 private class IosEpubBrowserState(

@@ -485,6 +485,38 @@ public object PortableContentBackupV2Service {
         require(candidates.map { it.attachment.attachmentKey }.distinct().size == candidates.size) {
             "Backup candidates must have unique attachment keys"
         }
+        val sanitizedState = sanitizedPortableState(state, candidates, operationGate)
+        val stateBytes = BackupV2Json.encodeToUtf8(
+            BackupV2PortableState.serializer(),
+            sanitizedState,
+            maximumBytes = minOf(MAX_PORTABLE_STATE_BYTES.toLong(), policy.maximumArchiveBytes),
+        ) { "Portable backup metadata exceeds the archive limit" }
+        val assembly = ArchiveAssembly(blobStore, operationGate, policy, stateBytes)
+        requireCandidatesMatchState(sanitizedState, candidates)
+
+        candidates.sortedBy { it.attachment.attachmentKey }.forEach(assembly::addCandidate)
+
+        val manifest = BackupV2ArchiveManifest(
+            createdAtEpochMillis = createdAtEpochMillis,
+            appVersion = appVersion,
+            entries = assembly.descriptors.values.sortedBy(BackupV2EntryDescriptor::path),
+            attachments = assembly.included,
+            omittedAttachments = assembly.omitted,
+        )
+        val envelope = BackupV2ManifestEnvelope(manifest, BackupV2ManifestCodec.digest(manifest))
+        val manifestBytes = BackupV2ManifestCodec.encode(envelope)
+        require(assembly.archiveBytes + manifestBytes.size <= policy.maximumArchiveBytes) {
+            "Backup manifest exceeds the archive limit"
+        }
+        assembly.archiveEntries[MANIFEST_PATH] = MemoryBackupV2ArchiveEntry(manifestBytes)
+        return BackupV2CreateResult(BackupV2Archive.fromOwnedEntries(assembly.archiveEntries), envelope)
+    }
+
+    private fun sanitizedPortableState(
+        state: BackupV2PortableState,
+        candidates: List<BackupV2AttachmentCandidate>,
+        operationGate: ContentOperationGate,
+    ): BackupV2PortableState {
         val sortedState = state.copy(
             legacySnapshot = state.legacySnapshot.withoutPortableSecrets(),
             publications = state.publications.sortedBy { it.key.value },
@@ -496,32 +528,19 @@ public object PortableContentBackupV2Service {
                 migrations = state.auxiliary.migrations.sortedBy { it.migrationKey },
             ),
         ).validate()
-        val sanitizedState = sortedState.copy(
+        return sortedState.copy(
             annotations = sortedState.annotations.filter { annotation ->
                 annotationExportRequests(annotation, sortedState, candidates).any { access ->
                     operationGate.decide(access, ContentOperation.EXPORT) == RightsDecision.ALLOW
                 }
             },
         ).validate()
-        val stateBytes = BackupV2Json.encodeToUtf8(
-            BackupV2PortableState.serializer(),
-            sanitizedState,
-            maximumBytes = minOf(MAX_PORTABLE_STATE_BYTES.toLong(), policy.maximumArchiveBytes),
-        ) { "Portable backup metadata exceeds the archive limit" }
-        val stateDescriptor = BackupV2EntryDescriptor(
-            path = PORTABLE_STATE_PATH,
-            kind = BackupV2EntryKind.PORTABLE_STATE,
-            byteSize = stateBytes.size.toLong(),
-            sha256 = Sha256.hex(stateBytes),
-            mediaType = "application/json",
-        )
-        val archiveEntries = linkedMapOf<String, BackupV2ArchiveEntry>(
-            PORTABLE_STATE_PATH to MemoryBackupV2ArchiveEntry(stateBytes),
-        )
-        val descriptors = linkedMapOf(PORTABLE_STATE_PATH to stateDescriptor)
-        val included = ArrayList<BackupV2AttachmentRecord>()
-        val omitted = ArrayList<BackupV2OmittedAttachment>()
-        var archiveBytes = stateBytes.size.toLong()
+    }
+
+    private fun requireCandidatesMatchState(
+        sanitizedState: BackupV2PortableState,
+        candidates: List<BackupV2AttachmentCandidate>,
+    ) {
         val stateAttachments = sanitizedState.publications.flatMap { publication ->
             publication.acquisitions.flatMap { acquisition ->
                 acquisition.units.flatMap { unit ->
@@ -539,23 +558,78 @@ public object PortableContentBackupV2Service {
                 "Backup candidate is not the exact manifest graph in portable state"
             }
         }
+    }
 
-        candidates.sortedBy { it.attachment.attachmentKey }.forEach { candidate ->
+    /** Blobs verified for one attachment, or the reason the whole attachment has to be omitted. */
+    private class StagedAttachmentBlobs(
+        val references: List<BlobRef>,
+        val failure: BackupV2OmissionReason?,
+    )
+
+    /** Mutable archive contents accumulated while the creation candidates are processed in key order. */
+    private class ArchiveAssembly(
+        private val blobStore: ContentBlobStore,
+        private val operationGate: ContentOperationGate,
+        private val policy: BackupV2CreatePolicy,
+        stateBytes: ByteArray,
+    ) {
+        val archiveEntries = linkedMapOf<String, BackupV2ArchiveEntry>(
+            PORTABLE_STATE_PATH to MemoryBackupV2ArchiveEntry(stateBytes),
+        )
+        val descriptors = linkedMapOf(
+            PORTABLE_STATE_PATH to BackupV2EntryDescriptor(
+                path = PORTABLE_STATE_PATH,
+                kind = BackupV2EntryKind.PORTABLE_STATE,
+                byteSize = stateBytes.size.toLong(),
+                sha256 = Sha256.hex(stateBytes),
+                mediaType = "application/json",
+            ),
+        )
+        val included = ArrayList<BackupV2AttachmentRecord>()
+        val omitted = ArrayList<BackupV2OmittedAttachment>()
+        var archiveBytes = stateBytes.size.toLong()
+            private set
+
+        fun addCandidate(candidate: BackupV2AttachmentCandidate) {
             val attachment = candidate.attachment
-            if (!policy.includeContentBlobs) {
-                omitted += BackupV2OmittedAttachment(
-                    attachment.attachmentKey,
-                    BackupV2OmissionReason.NOT_REQUESTED,
-                )
-                return@forEach
+            val skipReason = skipReasonBeforeStaging(candidate)
+            if (skipReason != null) {
+                omitted += BackupV2OmittedAttachment(attachment.attachmentKey, skipReason)
+                return
             }
-            if (operationGate.decide(candidate.access, ContentOperation.EXPORT) != RightsDecision.ALLOW) {
-                omitted += BackupV2OmittedAttachment(
-                    attachment.attachmentKey,
-                    BackupV2OmissionReason.RIGHTS_DENIED,
-                )
-                return@forEach
+            val staged = stageBlobs(attachment)
+            if (staged.failure != null) {
+                omitted += BackupV2OmittedAttachment(attachment.attachmentKey, staged.failure)
+                return
             }
+            staged.references.forEach { reference ->
+                val descriptor = BackupV2EntryDescriptor(
+                    path = blobPath(reference),
+                    kind = BackupV2EntryKind.CONTENT_BLOB,
+                    byteSize = reference.byteSize,
+                    sha256 = reference.plaintextDigest,
+                    mediaType = reference.mediaType,
+                    blob = reference,
+                )
+                descriptors[descriptor.path] = descriptor
+                archiveEntries[descriptor.path] = BlobBackupV2ArchiveEntry(blobStore, reference)
+                archiveBytes += reference.byteSize
+            }
+            included += BackupV2AttachmentRecord(
+                attachment = attachment,
+                blobEntryPaths = attachment.blobs.map(::blobPath),
+            )
+        }
+
+        private fun skipReasonBeforeStaging(candidate: BackupV2AttachmentCandidate): BackupV2OmissionReason? =
+            when {
+                !policy.includeContentBlobs -> BackupV2OmissionReason.NOT_REQUESTED
+                operationGate.decide(candidate.access, ContentOperation.EXPORT) != RightsDecision.ALLOW ->
+                    BackupV2OmissionReason.RIGHTS_DENIED
+                else -> null
+            }
+
+        private fun stageBlobs(attachment: ManifestAttachment): StagedAttachmentBlobs {
             val staged = ArrayList<BlobRef>()
             var stagedBytes = 0L
             var failure: BackupV2OmissionReason? = null
@@ -583,43 +657,8 @@ public object PortableContentBackupV2Service {
                     stagedBytes += reference.byteSize
                 }
             }
-            if (failure != null) {
-                omitted += BackupV2OmittedAttachment(attachment.attachmentKey, requireNotNull(failure))
-                return@forEach
-            }
-            staged.forEach { reference ->
-                val descriptor = BackupV2EntryDescriptor(
-                    path = blobPath(reference),
-                    kind = BackupV2EntryKind.CONTENT_BLOB,
-                    byteSize = reference.byteSize,
-                    sha256 = reference.plaintextDigest,
-                    mediaType = reference.mediaType,
-                    blob = reference,
-                )
-                descriptors[descriptor.path] = descriptor
-                archiveEntries[descriptor.path] = BlobBackupV2ArchiveEntry(blobStore, reference)
-                archiveBytes += reference.byteSize
-            }
-            included += BackupV2AttachmentRecord(
-                attachment = attachment,
-                blobEntryPaths = attachment.blobs.map(::blobPath),
-            )
+            return StagedAttachmentBlobs(staged, failure)
         }
-
-        val manifest = BackupV2ArchiveManifest(
-            createdAtEpochMillis = createdAtEpochMillis,
-            appVersion = appVersion,
-            entries = descriptors.values.sortedBy(BackupV2EntryDescriptor::path),
-            attachments = included,
-            omittedAttachments = omitted,
-        )
-        val envelope = BackupV2ManifestEnvelope(manifest, BackupV2ManifestCodec.digest(manifest))
-        val manifestBytes = BackupV2ManifestCodec.encode(envelope)
-        require(archiveBytes + manifestBytes.size <= policy.maximumArchiveBytes) {
-            "Backup manifest exceeds the archive limit"
-        }
-        archiveEntries[MANIFEST_PATH] = MemoryBackupV2ArchiveEntry(manifestBytes)
-        return BackupV2CreateResult(BackupV2Archive.fromOwnedEntries(archiveEntries), envelope)
     }
 
     public fun inspect(

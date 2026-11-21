@@ -215,34 +215,48 @@ public class PluginNetworkClient(
                 "Refusing an HTTPS to HTTP redirect"
             }
 
-            val crossOrigin = !sameOrigin(built.originalUrl, nextUrl)
-            val switchToGet = response.status == 303 ||
-                response.status in setOf(301, 302) && currentRequest.method.equals("POST", ignoreCase = true)
-            check(
-                !crossOrigin || switchToGet || currentRequest.body.isEmpty() &&
-                    (currentRequest.method.equals("GET", ignoreCase = true) ||
-                        currentRequest.method.equals("HEAD", ignoreCase = true)),
-            ) { "Refusing to redirect a request body to a different origin" }
-            val redirectedHeaders = if (crossOrigin) {
-                safeCrossOriginHeaders(
-                    currentRequest.headers,
-                    includeReferer = credentialsEnabled && policy.maySendCredentials(nextUrl, initialUrl),
-                )
-            } else {
-                currentRequest.headers
-            }.filterKeys { name ->
-                !switchToGet || !name.equals("Content-Length", ignoreCase = true) &&
-                    !name.equals("Content-Type", ignoreCase = true) &&
-                    !name.equals("Transfer-Encoding", ignoreCase = true)
-            }
-            currentRequest = currentRequest.copy(
-                method = if (switchToGet) "GET" else currentRequest.method,
-                url = nextUrl.toString(),
-                body = if (switchToGet) ByteArray(0) else currentRequest.body,
-                headers = redirectedHeaders,
-            )
+            currentRequest = redirectedRequest(currentRequest, response.status, built.originalUrl, nextUrl, initialUrl)
             redirects++
         }
+    }
+
+    /**
+     * The request that follows a redirect. A cross-origin hop drops credentials and may not carry
+     * a body, and 303 (or a 301/302 after POST) turns the request into a bodiless GET.
+     */
+    private fun redirectedRequest(
+        currentRequest: PluginHttpRequest,
+        status: Int,
+        from: Url,
+        nextUrl: Url,
+        initialUrl: Url,
+    ): PluginHttpRequest {
+        val crossOrigin = !sameOrigin(from, nextUrl)
+        val switchToGet = status == 303 ||
+            status in setOf(301, 302) && currentRequest.method.equals("POST", ignoreCase = true)
+        check(
+            !crossOrigin || switchToGet || currentRequest.body.isEmpty() &&
+                (currentRequest.method.equals("GET", ignoreCase = true) ||
+                    currentRequest.method.equals("HEAD", ignoreCase = true)),
+        ) { "Refusing to redirect a request body to a different origin" }
+        val redirectedHeaders = if (crossOrigin) {
+            safeCrossOriginHeaders(
+                currentRequest.headers,
+                includeReferer = credentialsEnabled && policy.maySendCredentials(nextUrl, initialUrl),
+            )
+        } else {
+            currentRequest.headers
+        }.filterKeys { name ->
+            !switchToGet || !name.equals("Content-Length", ignoreCase = true) &&
+                !name.equals("Content-Type", ignoreCase = true) &&
+                !name.equals("Transfer-Encoding", ignoreCase = true)
+        }
+        return currentRequest.copy(
+            method = if (switchToGet) "GET" else currentRequest.method,
+            url = nextUrl.toString(),
+            body = if (switchToGet) ByteArray(0) else currentRequest.body,
+            headers = redirectedHeaders,
+        )
     }
 
     /**

@@ -8,15 +8,11 @@
     <ID>CyclomaticComplexMethod:LwwMerge.kt:LwwMerge$public fun applyRemote: LocalState</ID>
     <ID>CyclomaticComplexMethod:LwwMerge.kt:LwwMerge$public fun merge: MergeOutcome</ID>
     <ID>CyclomaticComplexMethod:SyncClockKeeper.kt:SyncClockKeeper$suspend fun rebaseClockIfAhead</ID>
-    <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$fun diff: List&lt;DirtyEntry&gt;</ID>
     <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$fun markAll: List&lt;DirtyEntry&gt;</ID>
     <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$private fun tombstoneEmptiedHistories</ID>
     <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
     <ID>CyclomaticComplexMethod:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun isLocalOrPrivateHost: Boolean</ID>
     <ID>CyclomaticComplexMethod:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun parse: SyncServerAddress</ID>
-    <ID>CyclomaticComplexMethod:SyncProjection.kt:SyncApplier$private fun applyCategory: ApplyOutcome</ID>
-    <ID>CyclomaticComplexMethod:SyncProjection.kt:SyncApplier$private fun applyLibrary: ApplyOutcome</ID>
-    <ID>CyclomaticComplexMethod:SyncProjection.kt:SyncApplier$private fun applyUnit: ApplyOutcome</ID>
     <ID>CyclomaticComplexMethod:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
     <ID>CyclomaticComplexMethod:SyncPromoter.kt:SyncPromoter$private fun promoteRef</ID>
     <ID>CyclomaticComplexMethod:SyncPuller.kt:SyncPuller$fun ingest</ID>
@@ -25,9 +21,9 @@
     <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B, R&gt; call: R</ID>
     <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B&gt; exchange: Pair&lt;Int, String&gt;</ID>
     <ID>LongParameterList:SyncApi.kt:SyncApi$suspend fun listReviews: WireReviewPage</ID>
+    <ID>LongParameterList:SyncClient.kt:SyncClient$public suspend fun register: Result&lt;Unit&gt;</ID>
     <ID>LongParameterList:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
     <ID>LongParameterList:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
-    <ID>LongParameterList:SyncClient.kt:SyncClient$public suspend fun register: Result&lt;Unit&gt;</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service.Companion$fun create: SyncV3Service</ID>
     <ID>LoopWithTooManyJumpStatements:SyncDiff.kt:SyncDiff$for</ID>
@@ -37,7 +33,6 @@
     <ID>NestedBlockDepth:SyncPromoter.kt:SyncPromoter$private fun tombstone</ID>
     <ID>NoNameShadowing:SyncPuller.kt:SyncPuller${ it.value to it.key }</ID>
     <ID>RedundantSuspendModifier:SyncApi.kt:SyncApi$suspend</ID>
-    <ID>RedundantSuspendModifier:SyncV3Service.kt:SyncV3Service$suspend</ID>
     <ID>ReturnCount:LwwMerge.kt:LwwMerge$private fun validate: String?</ID>
     <ID>ReturnCount:SyncClockKeeper.kt:SyncClockKeeper$suspend fun rebaseClockIfAhead</ID>
     <ID>ReturnCount:SyncIdentity.kt:SyncIdentityResolver$fun scopeFor: ReadingScope?</ID>
@@ -65,7 +60,6 @@
     <ID>TooGenericExceptionCaught:SyncApi.kt:SyncApi$error: Throwable</ID>
     <ID>TooGenericExceptionCaught:SyncClockKeeper.kt:SyncClockKeeper$error: Throwable</ID>
     <ID>TooGenericExceptionCaught:SyncDirtyTracker.kt:SyncDirtyTracker.DirtyObserver$error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:SyncV3Service.kt:SyncV3Service$error: Throwable</ID>
     <ID>UnnecessarySafeCall:SyncDirtyTracker.kt:SyncDirtyTracker$stored?.state</ID>
     <ID>UnnecessarySafeCall:SyncPuller.kt:SyncPuller$previous?.pendingReason</ID>
     <ID>UnreachableCode:SyncProjection.kt:SyncApplier$changed = true</ID>

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -413,58 +414,7 @@ private fun ExtensionRow(
                     Icon(Icons.Outlined.Extension, null, Modifier.size(20.dp))
                 }
             }
-            Column(Modifier.weight(1f)) {
-                Text(extension.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val details = buildList {
-                    add(extension.language.uppercase())
-                    add("v${extension.version}")
-                    add(extension.contentType.label(strings))
-                    if (extension.inDevelopment) add(strings.text(StringKey.IN_DEVELOPMENT))
-                    if (extension.updateAvailable) add(strings.text(StringKey.UPDATE_AVAILABLE))
-                }.joinToString(" · ")
-                Text(
-                    details,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                // The user's block list wins over the permission grant: a blocked package never
-                // runs, installed or not, and the only way back is unblocking it here.
-                if (extension.blockedByUser) {
-                    Text(
-                        strings.text(StringKey.BLOCKED_ON_THIS_DEVICE_IT_WILL_NOT),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    TextButton(onClick = onUnblock, contentPadding = PaddingValues(0.dp)) {
-                        Text(strings.text(StringKey.UNBLOCK), style = MaterialTheme.typography.labelSmall)
-                    }
-                } else if (extension.installed) {
-                    Text(
-                        if (extension.trusted) strings.text(StringKey.EXECUTION_ALLOWED) else strings.text(StringKey.EXECUTION_BLOCKED),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (extension.trusted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (extension.preinstalledFromAccount) {
-                    Text(
-                        strings.text(StringKey.PRE_INSTALLED_FROM_ANOTHER_DEVICE_WAITING_FOR),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (operation?.extensionId == extension.id) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(top = 2.dp),
-                    ) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                        Text(strings.text(operation.labelKey), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
+            ExtensionRowDetails(extension, operation, onUnblock)
             when {
                 !extension.installed ->
                     Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.install) }
@@ -472,52 +422,141 @@ private fun ExtensionRow(
                     Button(enabled = operation == null, onClick = { onInstall(extension) }) { Text(strings.text(StringKey.UPDATE)) }
             }
             if (extension.installed) {
-                Box {
-                    IconButton(enabled = operation == null, onClick = { menuVisible = true }) {
-                        Icon(Icons.Outlined.MoreVert, strings.text(StringKey.MORE))
-                    }
-                    DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (extension.trusted) strings.text(StringKey.BLOCK_EXECUTION)
-                                    else strings.text(StringKey.ALLOW_EXECUTION),
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.Security, null) },
-                            onClick = {
-                                menuVisible = false
-                                onTrust(extension, !extension.trusted)
-                            },
-                        )
-                        if (extension.trusted) {
-                            DropdownMenuItem(
-                                text = { Text(strings.text(StringKey.PERMISSIONS)) },
-                                onClick = {
-                                    menuVisible = false
-                                    onPermissions(extension)
-                                },
-                            )
-                        }
-                        // ADR-0002 D5: the user's own block list; undone from Package security.
-                        DropdownMenuItem(
-                            text = { Text(strings.text(if (extension.blockedByUser) StringKey.UNBLOCK else StringKey.BLOCK)) },
-                            onClick = {
-                                menuVisible = false
-                                if (extension.blockedByUser) onUnblock() else onBlock(extension)
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(strings.uninstall, color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
-                            onClick = {
-                                menuVisible = false
-                                onUninstall(extension)
-                            },
-                        )
-                    }
-                }
+                ExtensionRowMenu(
+                    extension = extension,
+                    enabled = operation == null,
+                    menuVisible = menuVisible,
+                    onMenuVisibleChange = { menuVisible = it },
+                    onTrust = onTrust,
+                    onBlock = onBlock,
+                    onPermissions = onPermissions,
+                    onUnblock = onUnblock,
+                    onUninstall = onUninstall,
+                )
             }
+        }
+    }
+}
+
+/** The extension's name, version details, trust and block state, and any running operation. */
+@Composable
+private fun RowScope.ExtensionRowDetails(
+    extension: BrowseExtension,
+    operation: ExtensionOperation?,
+    onUnblock: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(Modifier.weight(1f)) {
+        Text(extension.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val details = buildList {
+            add(extension.language.uppercase())
+            add("v${extension.version}")
+            add(extension.contentType.label(strings))
+            if (extension.inDevelopment) add(strings.text(StringKey.IN_DEVELOPMENT))
+            if (extension.updateAvailable) add(strings.text(StringKey.UPDATE_AVAILABLE))
+        }.joinToString(" · ")
+        Text(
+            details,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // The user's block list wins over the permission grant: a blocked package never
+        // runs, installed or not, and the only way back is unblocking it here.
+        if (extension.blockedByUser) {
+            Text(
+                strings.text(StringKey.BLOCKED_ON_THIS_DEVICE_IT_WILL_NOT),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = onUnblock, contentPadding = PaddingValues(0.dp)) {
+                Text(strings.text(StringKey.UNBLOCK), style = MaterialTheme.typography.labelSmall)
+            }
+        } else if (extension.installed) {
+            Text(
+                if (extension.trusted) strings.text(StringKey.EXECUTION_ALLOWED) else strings.text(StringKey.EXECUTION_BLOCKED),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (extension.trusted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            )
+        }
+        if (extension.preinstalledFromAccount) {
+            Text(
+                strings.text(StringKey.PRE_INSTALLED_FROM_ANOTHER_DEVICE_WAITING_FOR),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+        }
+        if (operation?.extensionId == extension.id) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(top = 2.dp),
+            ) {
+                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                Text(strings.text(operation.labelKey), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+/** The overflow menu of an installed extension: trust, permissions, block and uninstall. */
+@Composable
+private fun ExtensionRowMenu(
+    extension: BrowseExtension,
+    enabled: Boolean,
+    menuVisible: Boolean,
+    onMenuVisibleChange: (Boolean) -> Unit,
+    onTrust: (BrowseExtension, Boolean) -> Unit,
+    onBlock: (BrowseExtension) -> Unit,
+    onPermissions: (BrowseExtension) -> Unit,
+    onUnblock: () -> Unit,
+    onUninstall: (BrowseExtension) -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Box {
+        IconButton(enabled = enabled, onClick = { onMenuVisibleChange(true) }) {
+            Icon(Icons.Outlined.MoreVert, strings.text(StringKey.MORE))
+        }
+        DropdownMenu(expanded = menuVisible, onDismissRequest = { onMenuVisibleChange(false) }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (extension.trusted) strings.text(StringKey.BLOCK_EXECUTION)
+                        else strings.text(StringKey.ALLOW_EXECUTION),
+                    )
+                },
+                leadingIcon = { Icon(Icons.Outlined.Security, null) },
+                onClick = {
+                    onMenuVisibleChange(false)
+                    onTrust(extension, !extension.trusted)
+                },
+            )
+            if (extension.trusted) {
+                DropdownMenuItem(
+                    text = { Text(strings.text(StringKey.PERMISSIONS)) },
+                    onClick = {
+                        onMenuVisibleChange(false)
+                        onPermissions(extension)
+                    },
+                )
+            }
+            // ADR-0002 D5: the user's own block list; undone from Package security.
+            DropdownMenuItem(
+                text = { Text(strings.text(if (extension.blockedByUser) StringKey.UNBLOCK else StringKey.BLOCK)) },
+                onClick = {
+                    onMenuVisibleChange(false)
+                    if (extension.blockedByUser) onUnblock() else onBlock(extension)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(strings.uninstall, color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    onMenuVisibleChange(false)
+                    onUninstall(extension)
+                },
+            )
         }
     }
 }

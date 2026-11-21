@@ -37,6 +37,78 @@ import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.launch
 
+/** The credential form of [SourceLoginDialog]: the prompt, the fields, the error and the browser sign-in hint. */
+@Composable
+private fun SourceLoginFields(
+    request: SourceLoginRequest,
+    requiresBrowserSession: Boolean,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    secretsLoading: Boolean,
+    busy: Boolean,
+    errorMessage: String?,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            request.reason?.takeIf(String::isNotBlank)
+                ?: strings.text(StringKey.SIGN_IN_TO_X_TO_CONTINUE_USING, request.sourceName),
+        )
+        if (secretsLoading) {
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(strings.text(StringKey.PREPARING))
+            }
+        }
+        OutlinedTextField(
+            value = username,
+            onValueChange = onUsernameChange,
+            label = { Text(strings.text(StringKey.USERNAME)) },
+            singleLine = true,
+            enabled = !busy && !secretsLoading,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = onPasswordChange,
+            label = { Text(strings.text(StringKey.PASSWORD)) },
+            singleLine = true,
+            enabled = !busy && !secretsLoading,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        errorMessage?.let { message ->
+            Text(message, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+        }
+        if (requiresBrowserSession) {
+            Text(
+                strings.text(
+                    StringKey.THIS_SOURCE_MUST_SIGN_IN_THROUGH_ITS,
+                ),
+            )
+        }
+    }
+}
+
+/** The confirm button's content: a progress spinner while [busy] and the sign-in label. */
+@Composable
+private fun SourceLoginConfirmLabel(busy: Boolean, requiresBrowserSession: Boolean) {
+    val strings = LocalShinsouStrings.current
+    Row(horizontalArrangement = Arrangement.Center) {
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(7.dp))
+        }
+        Text(
+            strings.text(
+                if (requiresBrowserSession) StringKey.SIGN_IN_IN_BROWSER else StringKey.LOGIN,
+            ),
+        )
+    }
+}
+
 /** App-wide credential prompt raised asynchronously by an executable source. */
 @Composable
 internal fun SourceLoginDialog(
@@ -173,45 +245,17 @@ internal fun SourceLoginDialog(
         onDismissRequest = ::dismiss,
         title = { Text(strings.text(StringKey.LOGIN_REQUIRED)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    request.reason?.takeIf(String::isNotBlank)
-                        ?: strings.text(StringKey.SIGN_IN_TO_X_TO_CONTINUE_USING, request.sourceName),
-                )
-                if (secretsLoading) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(strings.text(StringKey.PREPARING))
-                    }
-                }
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text(strings.text(StringKey.USERNAME)) },
-                    singleLine = true,
-                    enabled = !busy && !secretsLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text(strings.text(StringKey.PASSWORD)) },
-                    singleLine = true,
-                    enabled = !busy && !secretsLoading,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                errorMessage?.let { message ->
-                    Text(message, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
-                }
-                if (source?.requiresBrowserSessionLogin == true) {
-                    Text(
-                        strings.text(
-                            StringKey.THIS_SOURCE_MUST_SIGN_IN_THROUGH_ITS,
-                        ),
-                    )
-                }
-            }
+            SourceLoginFields(
+                request = request,
+                requiresBrowserSession = source?.requiresBrowserSessionLogin == true,
+                username = username,
+                onUsernameChange = { username = it },
+                password = password,
+                onPasswordChange = { password = it },
+                secretsLoading = secretsLoading,
+                busy = busy,
+                errorMessage = errorMessage,
+            )
         },
         confirmButton = {
             Button(
@@ -220,17 +264,7 @@ internal fun SourceLoginDialog(
                     (source?.requiresBrowserSessionLogin == true ||
                         (username.isNotBlank() && password.isNotEmpty())),
             ) {
-                Row(horizontalArrangement = Arrangement.Center) {
-                    if (busy) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(7.dp))
-                    }
-                    Text(
-                        strings.text(
-                            if (source?.requiresBrowserSessionLogin == true) StringKey.SIGN_IN_IN_BROWSER else StringKey.LOGIN,
-                        ),
-                    )
-                }
+                SourceLoginConfirmLabel(busy, source?.requiresBrowserSessionLogin == true)
             }
         },
         dismissButton = {

@@ -428,34 +428,7 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
             contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(strings.text(StringKey.TRANSLATION), style = MaterialTheme.typography.headlineMedium)
-                        Text(
-                            if (ChineseScript.converts(settings.from, settings.to)) {
-                                strings.text(StringKey.CONVERTED_BETWEEN_SIMPLIFIED_AND_TRADITIONAL_CHINESE_ON)
-                            } else when (state.provider) {
-                                TranslationProviderKind.OFFLINE ->
-                                    strings.text(StringKey.MACHINE_TRANSLATION_ON_THIS_DEVICE_NOTHING_YOU)
-                                TranslationProviderKind.SYSTEM ->
-                                    strings.text(StringKey.TRANSLATED_BY_THE_SYSTEM_S_OWN_TRANSLATION)
-                                TranslationProviderKind.DEEPL ->
-                                    strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "DeepL")
-                                TranslationProviderKind.GOOGLE ->
-                                    strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "Google")
-                                TranslationProviderKind.AZURE ->
-                                    strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "Microsoft Azure")
-                                TranslationProviderKind.LLM ->
-                                    strings.text(StringKey.TRANSLATED_BY_THE_AI_MODEL_YOU_SET)
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = settings.enabled, onCheckedChange = { state.change(settings.copy(enabled = it)) })
-                }
-            }
+            item { NovelTranslationHeader(state) }
             item {
                 Text(strings.text(StringKey.ORIGINAL_LANGUAGE), style = MaterialTheme.typography.titleMedium)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -521,6 +494,39 @@ internal fun NovelTranslationPanel(state: NovelTranslationState, modifier: Modif
     }
 }
 
+/** The panel's title, which service translates, and the switch that turns translation on. */
+@Composable
+private fun NovelTranslationHeader(state: NovelTranslationState) {
+    val strings = LocalShinsouStrings.current
+    val settings = state.settings
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(strings.text(StringKey.TRANSLATION), style = MaterialTheme.typography.headlineMedium)
+            Text(
+                if (ChineseScript.converts(settings.from, settings.to)) {
+                    strings.text(StringKey.CONVERTED_BETWEEN_SIMPLIFIED_AND_TRADITIONAL_CHINESE_ON)
+                } else when (state.provider) {
+                    TranslationProviderKind.OFFLINE ->
+                        strings.text(StringKey.MACHINE_TRANSLATION_ON_THIS_DEVICE_NOTHING_YOU)
+                    TranslationProviderKind.SYSTEM ->
+                        strings.text(StringKey.TRANSLATED_BY_THE_SYSTEM_S_OWN_TRANSLATION)
+                    TranslationProviderKind.DEEPL ->
+                        strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "DeepL")
+                    TranslationProviderKind.GOOGLE ->
+                        strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "Google")
+                    TranslationProviderKind.AZURE ->
+                        strings.text(StringKey.TRANSLATED_BY_X_WITH_YOUR_API_KEY, "Microsoft Azure")
+                    TranslationProviderKind.LLM ->
+                        strings.text(StringKey.TRANSLATED_BY_THE_AI_MODEL_YOU_SET)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = settings.enabled, onCheckedChange = { state.change(settings.copy(enabled = it)) })
+    }
+}
+
 @Composable
 private fun NovelTranslationStatus(state: NovelTranslationState) {
     val strings = LocalShinsouStrings.current
@@ -557,62 +563,20 @@ private fun NovelTranslationStatus(state: NovelTranslationState) {
                 },
                 color = MaterialTheme.colorScheme.error,
             )
-            state.failure == TranslationFailure.INVALID_KEY -> {
-                Text(
-                    strings.text(StringKey.THE_API_KEY_IS_MISSING_OR_WAS),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
-            state.failure == TranslationFailure.QUOTA_EXCEEDED -> {
-                Text(strings.text(StringKey.THE_TRANSLATION_SERVICE_REPORTS_THAT_THE_QUOTA), color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
-            state.failure == TranslationFailure.RATE_LIMITED -> {
-                Text(
-                    strings.text(StringKey.THE_TRANSLATION_SERVICE_IS_RECEIVING_TOO_MANY),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
+            state.failure == TranslationFailure.INVALID_KEY -> RetryableFailure(strings.text(StringKey.THE_API_KEY_IS_MISSING_OR_WAS), state::retry)
+            state.failure == TranslationFailure.QUOTA_EXCEEDED -> RetryableFailure(strings.text(StringKey.THE_TRANSLATION_SERVICE_REPORTS_THAT_THE_QUOTA), state::retry)
+            state.failure == TranslationFailure.RATE_LIMITED -> RetryableFailure(strings.text(StringKey.THE_TRANSLATION_SERVICE_IS_RECEIVING_TOO_MANY), state::retry)
             state.failure == TranslationFailure.NOT_CONFIGURED -> Text(
                 strings.text(StringKey.THE_AI_MODEL_SERVICE_IS_NOT_SET),
                 color = MaterialTheme.colorScheme.error,
             )
-            state.failure == TranslationFailure.REFUSED -> {
-                Text(
-                    strings.text(StringKey.THE_MODEL_DECLINED_TO_TRANSLATE_THIS_CHAPTER),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
-            state.failure == TranslationFailure.DAILY_LIMIT -> {
-                Text(
-                    strings.text(StringKey.TODAY_S_LIMIT_FOR_PAID_TRANSLATION_IS),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
-            state.failure == TranslationFailure.PROVIDER_UNAVAILABLE -> {
-                Text(
-                    strings.text(StringKey.THE_TRANSLATION_SERVICE_COULD_NOT_BE_REACHED),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
+            state.failure == TranslationFailure.REFUSED -> RetryableFailure(strings.text(StringKey.THE_MODEL_DECLINED_TO_TRANSLATE_THIS_CHAPTER), state::retry)
+            state.failure == TranslationFailure.DAILY_LIMIT -> RetryableFailure(strings.text(StringKey.TODAY_S_LIMIT_FOR_PAID_TRANSLATION_IS), state::retry)
+            state.failure == TranslationFailure.PROVIDER_UNAVAILABLE -> RetryableFailure(strings.text(StringKey.THE_TRANSLATION_SERVICE_COULD_NOT_BE_REACHED), state::retry)
             state.failure == TranslationFailure.DEVICE_UNSUPPORTED ->
                 Text(strings.text(StringKey.OFFLINE_TRANSLATION_IS_NOT_AVAILABLE_ON_THIS), color = MaterialTheme.colorScheme.error)
-            state.failure == TranslationFailure.LOW_MEMORY -> {
-                Text(
-                    strings.text(StringKey.NOT_ENOUGH_FREE_MEMORY_TO_TRANSLATE_RIGHT),
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
-            state.failure != null -> {
-                Text(strings.text(StringKey.THE_TRANSLATION_STOPPED_BEFORE_IT_FINISHED), color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = state::retry) { Text(strings.retry) }
-            }
+            state.failure == TranslationFailure.LOW_MEMORY -> RetryableFailure(strings.text(StringKey.NOT_ENOUGH_FREE_MEMORY_TO_TRANSLATE_RIGHT), state::retry)
+            state.failure != null -> RetryableFailure(strings.text(StringKey.THE_TRANSLATION_STOPPED_BEFORE_IT_FINISHED), state::retry)
             progress != null -> {
                 Text(strings.text(StringKey.TRANSLATING_X_OF_X_LINES, progress.first, progress.second))
                 LinearProgressIndicator(
@@ -626,6 +590,14 @@ private fun NovelTranslationStatus(state: NovelTranslationState) {
             )
         }
     }
+}
+
+/** An error line with the button that tries again. */
+@Composable
+private fun RetryableFailure(message: String, onRetry: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Text(message, color = MaterialTheme.colorScheme.error)
+    TextButton(onClick = onRetry) { Text(strings.retry) }
 }
 
 @Composable

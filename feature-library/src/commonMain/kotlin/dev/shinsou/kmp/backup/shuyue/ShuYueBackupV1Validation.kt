@@ -756,6 +756,17 @@ internal object ShuYueBackupV1Validator {
             )
             return
         }
+        validatePluginSetConsistency(backup, findings)
+        validateInstalledPlugins(backup, limits, findings)
+        validatePluginInstallations(backup, limits, findings)
+        validateTotalPluginScriptBytes(backup, limits, findings)
+        validateTotalPluginSources(backup, limits, findings)
+    }
+
+    private fun validatePluginSetConsistency(
+        backup: ShuYueBackupV1,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         val installedById = backup.installedPlugins.mapIndexed { index, installed ->
             installed.manifest.id to (index to installed)
         }.toMap()
@@ -782,6 +793,13 @@ internal object ShuYueBackupV1Validator {
                 )
             }
         }
+    }
+
+    private fun validateInstalledPlugins(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         val installedIds = mutableSetOf<String>()
         backup.installedPlugins.forEachIndexed { index, installed ->
             val ref = ShuYueMigrationEntityRef("installedPlugin", installed.manifest.id, index = index)
@@ -795,6 +813,13 @@ internal object ShuYueBackupV1Validator {
             validateManifest(installed.manifest, ref, limits, findings)
             validateTimestamp(installed.installedAt, ref, findings)
         }
+    }
+
+    private fun validatePluginInstallations(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         val installationIds = mutableSetOf<String>()
         backup.pluginInstallations.forEachIndexed { index, installation ->
             val ref = ShuYueMigrationEntityRef("pluginInstallation", installation.plugin.id, index = index)
@@ -820,6 +845,13 @@ internal object ShuYueBackupV1Validator {
                 "Plugin script is retained only as untrusted quarantine metadata.",
             )
         }
+    }
+
+    private fun validateTotalPluginScriptBytes(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         var totalScriptBytes = 0L
         backup.installedPlugins.forEach {
             totalScriptBytes = safeAddTextChars(
@@ -844,6 +876,13 @@ internal object ShuYueBackupV1Validator {
                 "The total plugin script size exceeds the configured limit.",
             )
         }
+    }
+
+    private fun validateTotalPluginSources(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         var totalSourceCount = 0L
         backup.installedPlugins.forEach { totalSourceCount = safeAddTextChars(totalSourceCount, it.manifest.sources.size.toLong()) }
         backup.pluginInstallations.forEach { totalSourceCount = safeAddTextChars(totalSourceCount, it.plugin.sources.size.toLong()) }
@@ -954,83 +993,8 @@ internal object ShuYueBackupV1Validator {
         val urls = mutableSetOf<String>()
         var totalEntries = 0L
         backup.pluginRepositories.forEachIndexed { index, repository ->
-            val ref = ShuYueMigrationEntityRef("repository", repository.baseUrl, index = index)
-            if (!urls.add(repository.baseUrl)) {
-                findings += error(
-                    ShuYueMigrationIssueCode.DUPLICATE_REPOSITORY_URL,
-                    ref,
-                    "A repository URL occurs more than once.",
-                )
-            }
-            if (!isSafeHttpUrl(repository.baseUrl)) {
-                findings += error(
-                    ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
-                    ref,
-                    "A repository URL is invalid.",
-                )
-            }
-            validateRepositoryManifest(repository.manifest, ref, findings)
-            validateTimestamp(repository.lastLoadedAt, ref, findings)
+            validateRepository(repository, index, urls, limits, findings)
             totalEntries = safeAddTextChars(totalEntries, repository.entries.size.toLong())
-            if (repository.entries.size > limits.maxRepositoryEntriesPerRepository) {
-                findings += error(
-                    ShuYueMigrationIssueCode.REPOSITORY_ENTRY_LIMIT_EXCEEDED,
-                    ref,
-                    "The repository entry count exceeds the configured limit.",
-                )
-            }
-            val entryIds = mutableSetOf<String>()
-            repository.entries.forEachIndexed { entryIndex, entry ->
-                val entryRef = ShuYueMigrationEntityRef("repositoryEntry", entry.id, repository.baseUrl, entryIndex)
-                if (!entryIds.add(entry.id)) {
-                    findings += error(
-                        ShuYueMigrationIssueCode.DUPLICATE_PLUGIN_ID,
-                        entryRef,
-                        "A repository plugin identifier occurs more than once.",
-                    )
-                }
-                validateTextIdentifier(entry.id, entryRef, findings)
-                validatePrintableField(entry.name, "repository plugin name", entryRef, findings)
-                validatePrintableField(entry.version, "repository plugin version", entryRef, findings)
-                validatePrintableField(entry.lang, "repository plugin language", entryRef, findings)
-                validatePrintableField(entry.scriptUrl, "repository script URL", entryRef, findings)
-                if (!isSafeHttpUrl(entry.scriptUrl)) {
-                    findings += error(
-                        ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
-                        entryRef,
-                        "A repository script URL is invalid.",
-                    )
-                }
-                if (entry.iconUrl != null && !isSafeHttpUrl(entry.iconUrl)) {
-                    findings += error(
-                        ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
-                        entryRef,
-                        "A repository icon URL is invalid.",
-                    )
-                }
-                if (entry.versionCode < 0 || entry.nsfw < 0) {
-                    findings += error(
-                        ShuYueMigrationIssueCode.INVALID_SOURCE_DESCRIPTOR,
-                        entryRef,
-                        "A repository plugin entry contains an invalid numeric field.",
-                    )
-                }
-                val sourceIds = mutableSetOf<String>()
-                entry.sources.forEachIndexed { sourceIndex, source ->
-                    if (!sourceIds.add(source.id)) {
-                        findings += error(
-                            ShuYueMigrationIssueCode.DUPLICATE_SOURCE_ID,
-                            ShuYueMigrationEntityRef("repositorySource", source.id, entry.id, sourceIndex),
-                            "A source identifier occurs more than once in a repository entry.",
-                        )
-                    }
-                    validateSourceDescriptor(
-                        source,
-                        ShuYueMigrationEntityRef("repositorySource", source.id, entry.id, sourceIndex),
-                        findings,
-                    )
-                }
-            }
         }
         if (totalEntries > limits.maxRepositoryEntries.toLong()) {
             findings += error(
@@ -1039,6 +1003,107 @@ internal object ShuYueBackupV1Validator {
                 "The total repository entry count exceeds the configured limit.",
             )
         }
+        validateSelectedRepository(backup, urls, findings)
+    }
+
+    private fun validateRepository(
+        repository: ShuYueV1PersistedPluginRepository,
+        index: Int,
+        urls: MutableSet<String>,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
+        val ref = ShuYueMigrationEntityRef("repository", repository.baseUrl, index = index)
+        if (!urls.add(repository.baseUrl)) {
+            findings += error(
+                ShuYueMigrationIssueCode.DUPLICATE_REPOSITORY_URL,
+                ref,
+                "A repository URL occurs more than once.",
+            )
+        }
+        if (!isSafeHttpUrl(repository.baseUrl)) {
+            findings += error(
+                ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
+                ref,
+                "A repository URL is invalid.",
+            )
+        }
+        validateRepositoryManifest(repository.manifest, ref, findings)
+        validateTimestamp(repository.lastLoadedAt, ref, findings)
+        if (repository.entries.size > limits.maxRepositoryEntriesPerRepository) {
+            findings += error(
+                ShuYueMigrationIssueCode.REPOSITORY_ENTRY_LIMIT_EXCEEDED,
+                ref,
+                "The repository entry count exceeds the configured limit.",
+            )
+        }
+        val entryIds = mutableSetOf<String>()
+        repository.entries.forEachIndexed { entryIndex, entry ->
+            val entryRef = ShuYueMigrationEntityRef("repositoryEntry", entry.id, repository.baseUrl, entryIndex)
+            if (!entryIds.add(entry.id)) {
+                findings += error(
+                    ShuYueMigrationIssueCode.DUPLICATE_PLUGIN_ID,
+                    entryRef,
+                    "A repository plugin identifier occurs more than once.",
+                )
+            }
+            validateRepositoryEntry(entry, entryRef, findings)
+        }
+    }
+
+    private fun validateRepositoryEntry(
+        entry: ShuYueV1PluginIndexEntry,
+        entryRef: ShuYueMigrationEntityRef,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
+        validateTextIdentifier(entry.id, entryRef, findings)
+        validatePrintableField(entry.name, "repository plugin name", entryRef, findings)
+        validatePrintableField(entry.version, "repository plugin version", entryRef, findings)
+        validatePrintableField(entry.lang, "repository plugin language", entryRef, findings)
+        validatePrintableField(entry.scriptUrl, "repository script URL", entryRef, findings)
+        if (!isSafeHttpUrl(entry.scriptUrl)) {
+            findings += error(
+                ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
+                entryRef,
+                "A repository script URL is invalid.",
+            )
+        }
+        if (entry.iconUrl != null && !isSafeHttpUrl(entry.iconUrl)) {
+            findings += error(
+                ShuYueMigrationIssueCode.INVALID_REPOSITORY_URL,
+                entryRef,
+                "A repository icon URL is invalid.",
+            )
+        }
+        if (entry.versionCode < 0 || entry.nsfw < 0) {
+            findings += error(
+                ShuYueMigrationIssueCode.INVALID_SOURCE_DESCRIPTOR,
+                entryRef,
+                "A repository plugin entry contains an invalid numeric field.",
+            )
+        }
+        val sourceIds = mutableSetOf<String>()
+        entry.sources.forEachIndexed { sourceIndex, source ->
+            if (!sourceIds.add(source.id)) {
+                findings += error(
+                    ShuYueMigrationIssueCode.DUPLICATE_SOURCE_ID,
+                    ShuYueMigrationEntityRef("repositorySource", source.id, entry.id, sourceIndex),
+                    "A source identifier occurs more than once in a repository entry.",
+                )
+            }
+            validateSourceDescriptor(
+                source,
+                ShuYueMigrationEntityRef("repositorySource", source.id, entry.id, sourceIndex),
+                findings,
+            )
+        }
+    }
+
+    private fun validateSelectedRepository(
+        backup: ShuYueBackupV1,
+        urls: Set<String>,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         if (!backup.selectedPluginRepositoryUrl.isNullOrBlank()) {
             if (!isSafeHttpUrl(backup.selectedPluginRepositoryUrl)) {
                 findings += error(
@@ -1083,13 +1148,25 @@ internal object ShuYueBackupV1Validator {
         limits: ShuYueBackupV1Limits,
         findings: MutableList<ShuYueMigrationIssue>,
     ) {
+        if (!validateCredentials(backup, limits, findings)) return
+        if (!validateCookies(backup, limits, findings)) return
+        validatePreferences(backup, limits, findings)
+        validateImageParsingPolicies(backup, limits, findings)
+    }
+
+    /** Returns false when the credential count exceeds the limit, which aborts the secrets pass. */
+    private fun validateCredentials(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ): Boolean {
         if (backup.pluginCredentials.size > limits.maxCredentials) {
             findings += error(
                 ShuYueMigrationIssueCode.CREDENTIAL_LIMIT_EXCEEDED,
                 ShuYueMigrationEntityRef("credentials"),
                 "The credential count exceeds the configured limit.",
             )
-            return
+            return false
         }
         val credentialSourceIds = mutableSetOf<String>()
         backup.pluginCredentials.forEachIndexed { index, credential ->
@@ -1122,14 +1199,22 @@ internal object ShuYueBackupV1Validator {
                 "Credentials are quarantined and require explicit user consent.",
             )
         }
+        return true
+    }
 
+    /** Returns false when the cookie count exceeds the limit, which aborts the secrets pass. */
+    private fun validateCookies(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ): Boolean {
         if (backup.pluginCookies.size > limits.maxCookies) {
             findings += error(
                 ShuYueMigrationIssueCode.COOKIE_LIMIT_EXCEEDED,
                 ShuYueMigrationEntityRef("cookies"),
                 "The cookie count exceeds the configured limit.",
             )
-            return
+            return false
         }
         val cookieKeys = mutableSetOf<String>()
         backup.pluginCookies.forEachIndexed { index, cookie ->
@@ -1143,21 +1228,14 @@ internal object ShuYueBackupV1Validator {
                     "A cookie identity occurs more than once.",
                 )
             }
-            if (cookie.name.length > limits.maxCookieFieldChars ||
-                cookie.value.length > limits.maxCookieFieldChars ||
-                cookie.domain.length > limits.maxCookieFieldChars ||
-                cookie.path.length > limits.maxCookieFieldChars
-            ) {
+            if (cookieExceedsFieldLimit(cookie, limits.maxCookieFieldChars)) {
                 findings += error(
                     ShuYueMigrationIssueCode.COOKIE_LIMIT_EXCEEDED,
                     ref,
                     "A cookie field exceeds the configured limit.",
                 )
             }
-            if (!isSafeCookieName(cookie.name) || !isSafeCookieDomain(cookie.domain) ||
-                !isSafeCookiePath(cookie.path) || cookie.value.any { it == '\r' || it == '\n' } ||
-                cookie.expiresAt?.let { it < 0L } == true
-            ) {
+            if (isInvalidCookie(cookie)) {
                 findings += error(
                     ShuYueMigrationIssueCode.INVALID_COOKIE,
                     ref,
@@ -1172,7 +1250,24 @@ internal object ShuYueBackupV1Validator {
                 "Cookies are quarantined and require explicit user consent.",
             )
         }
+        return true
+    }
 
+    private fun cookieExceedsFieldLimit(cookie: ShuYueV1PluginCookie, maxChars: Int): Boolean =
+        maxOf(cookie.name.length, cookie.value.length, cookie.domain.length, cookie.path.length) > maxChars
+
+    private fun isInvalidCookie(cookie: ShuYueV1PluginCookie): Boolean {
+        if (!isSafeCookieName(cookie.name) || !isSafeCookieDomain(cookie.domain) || !isSafeCookiePath(cookie.path)) {
+            return true
+        }
+        return hasLineBreak(cookie.value) || cookie.expiresAt?.let { it < 0L } == true
+    }
+
+    private fun validatePreferences(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         if (backup.pluginPreferences.size > limits.maxPreferences) {
             findings += error(
                 ShuYueMigrationIssueCode.PREFERENCE_LIMIT_EXCEEDED,
@@ -1181,17 +1276,7 @@ internal object ShuYueBackupV1Validator {
             )
         }
         backup.pluginPreferences.entries.sortedBy { it.key }.forEach { (key, value) ->
-            val ref = ShuYueMigrationEntityRef("preference", key)
-            val separator = key.indexOf('\u0000')
-            val secondSeparator = if (separator < 0) -1 else key.indexOf('\u0000', separator + 1)
-            val sourceId = if (separator > 0) key.substring(0, separator) else ""
-            val preferenceKey = if (separator > 0) key.substring(separator + 1) else ""
-            if (key.length > limits.maxPreferenceFieldChars ||
-                value.length > limits.maxPreferenceFieldChars ||
-                separator <= 0 || secondSeparator >= 0 || sourceId.isBlank() || preferenceKey.isBlank() ||
-                sourceId.any(Char::isISOControl) || preferenceKey.any(Char::isISOControl) ||
-                value.any(Char::isISOControl)
-            ) {
+            if (isInvalidPreference(key, value, limits.maxPreferenceFieldChars)) {
                 findings += error(
                     ShuYueMigrationIssueCode.INVALID_PREFERENCE,
                     ShuYueMigrationEntityRef("preference", index = 0),
@@ -1199,6 +1284,27 @@ internal object ShuYueBackupV1Validator {
                 )
             }
         }
+    }
+
+    private fun isInvalidPreference(key: String, value: String, maxFieldChars: Int): Boolean {
+        val separator = key.indexOf('\u0000')
+        val secondSeparator = if (separator < 0) -1 else key.indexOf('\u0000', separator + 1)
+        val sourceId = if (separator > 0) key.substring(0, separator) else ""
+        val preferenceKey = if (separator > 0) key.substring(separator + 1) else ""
+        val oversized = key.length > maxFieldChars || value.length > maxFieldChars
+        val malformedKey = separator <= 0 || secondSeparator >= 0
+        val blankPart = sourceId.isBlank() || preferenceKey.isBlank()
+        val hasControl = sourceId.any(Char::isISOControl) || preferenceKey.any(Char::isISOControl) ||
+            value.any(Char::isISOControl)
+        val structurallyInvalid = oversized || malformedKey || blankPart
+        return structurallyInvalid || hasControl
+    }
+
+    private fun validateImageParsingPolicies(
+        backup: ShuYueBackupV1,
+        limits: ShuYueBackupV1Limits,
+        findings: MutableList<ShuYueMigrationIssue>,
+    ) {
         if (backup.pluginImageParsingPolicies.size > limits.maxImageParsingPolicies) {
             findings += error(
                 ShuYueMigrationIssueCode.IMAGE_POLICY_LIMIT_EXCEEDED,
@@ -1221,10 +1327,10 @@ internal object ShuYueBackupV1Validator {
         settings: ShuYueV1ReaderSettings,
         findings: MutableList<ShuYueMigrationIssue>,
     ) {
-        if (!settings.fontSizeSp.isFinite() || settings.fontSizeSp <= 0f || settings.fontSizeSp > 200f ||
-            settings.lineHeightPercent <= 0 || settings.lineHeightPercent > 1_000 ||
-            settings.pageChars <= 0 || settings.pageChars > 10_000_000
-        ) {
+        val fontInvalid = !settings.fontSizeSp.isFinite() || settings.fontSizeSp <= 0f || settings.fontSizeSp > 200f
+        val lineHeightInvalid = settings.lineHeightPercent <= 0 || settings.lineHeightPercent > 1_000
+        val pageCharsInvalid = settings.pageChars <= 0 || settings.pageChars > 10_000_000
+        if (fontInvalid || lineHeightInvalid || pageCharsInvalid) {
             findings += error(
                 ShuYueMigrationIssueCode.INVALID_READER_SETTINGS,
                 ShuYueMigrationEntityRef("readerSettings"),
@@ -1315,46 +1421,46 @@ internal object ShuYueBackupV1Validator {
     }
 
     private fun isSafeCookieDomain(value: String): Boolean {
-        if (value.isBlank() || value.any(Char::isISOControl) || value.contains('/') ||
-            value.contains('\\') || value.contains(':') || value.contains('@') ||
-            value.any(Char::isWhitespace)
-        ) return false
+        if (hasUnsafeDomainCharacters(value)) return false
         val domain = value.removePrefix(".")
-        if (domain.isBlank() || domain.startsWith('.') || domain.endsWith('.')) return false
-        return domain.split('.').all { label ->
-            label.isNotEmpty() && !label.startsWith('-') && !label.endsWith('-') &&
-                label.all { it.isLetterOrDigit() || it == '-' }
-        }
+        return !(domain.isBlank() || domain.startsWith('.') || domain.endsWith('.')) &&
+            domain.split('.').all { isValidDnsLabel(it) }
     }
+
+    private fun hasUnsafeDomainCharacters(value: String): Boolean =
+        value.isBlank() || value.any { isForbiddenDomainChar(it) }
 
     private fun isSafeCookiePath(value: String): Boolean =
         value.startsWith('/') && value.none { it == '\r' || it == '\n' || it == ';' }
 
-    private fun isSafeHttpUrl(value: String): Boolean =
-        if (!(value.startsWith("https://") || value.startsWith("http://"))) {
-            false
-        } else {
-            val authorityStart = value.indexOf("://") + 3
-            val authorityEnd = value.indexOfAny(charArrayOf('/', '?', '#'), authorityStart)
-                .let { if (it < 0) value.length else it }
-            val authority = value.substring(authorityStart, authorityEnd)
-            if (authority.isBlank() || authority.any { it.isWhitespace() || it.isISOControl() } ||
-                authority.contains('@')
-            ) {
-                false
-            } else if (authority.startsWith('[')) {
-                authority.contains(']') && authority.substringAfter(']').let { suffix ->
-                    suffix.isEmpty() || suffix.startsWith(':') && suffix.drop(1).all(Char::isDigit)
-                }
-            } else {
-                val host = authority.substringBefore(':')
-                val port = authority.substringAfter(':', "")
-                host.isNotBlank() && host.split('.').all { label ->
-                    label.isNotEmpty() && !label.startsWith('-') && !label.endsWith('-') &&
-                        label.all { it.isLetterOrDigit() || it == '-' }
-                } && (port.isEmpty() || port.all(Char::isDigit))
-            }
+    private fun isSafeHttpUrl(value: String): Boolean {
+        if (!(value.startsWith("https://") || value.startsWith("http://"))) return false
+        val authorityStart = value.indexOf("://") + 3
+        val authorityEnd = value.indexOfAny(charArrayOf('/', '?', '#'), authorityStart)
+            .let { if (it < 0) value.length else it }
+        return isSafeAuthority(value.substring(authorityStart, authorityEnd))
+    }
+
+    private fun isSafeAuthority(authority: String): Boolean = when {
+        hasUnsafeAuthorityCharacters(authority) -> false
+        authority.startsWith('[') -> isSafeBracketedHostAuthority(authority)
+        else -> isSafeHostPortAuthority(authority)
+    }
+
+    private fun hasUnsafeAuthorityCharacters(authority: String): Boolean =
+        authority.isBlank() || authority.any { isWhitespaceOrControl(it) } || authority.contains('@')
+
+    private fun isSafeBracketedHostAuthority(authority: String): Boolean =
+        authority.contains(']') && authority.substringAfter(']').let { suffix ->
+            suffix.isEmpty() || suffix.startsWith(':') && suffix.drop(1).all(Char::isDigit)
         }
+
+    private fun isSafeHostPortAuthority(authority: String): Boolean {
+        val host = authority.substringBefore(':')
+        val port = authority.substringAfter(':', "")
+        return host.isNotBlank() && host.split('.').all { isValidDnsLabel(it) } &&
+            (port.isEmpty() || port.all(Char::isDigit))
+    }
 
     private fun safeAddTextChars(current: Long, addition: Long): Long =
         if (addition > Long.MAX_VALUE - current) Long.MAX_VALUE else current + addition
@@ -1406,6 +1512,18 @@ private class CappedIssueList(maxIssues: Int) : AbstractMutableList<ShuYueMigrat
 
     override fun removeAt(index: Int): ShuYueMigrationIssue = delegate.removeAt(index)
 }
+
+private fun hasLineBreak(value: String): Boolean = value.any { it == '\r' || it == '\n' }
+
+private fun isWhitespaceOrControl(value: Char): Boolean = value.isWhitespace() || value.isISOControl()
+
+private fun isForbiddenDomainChar(value: Char): Boolean =
+    value.isISOControl() || value.isWhitespace() || value in "/\\:@"
+
+private fun isValidDnsLabel(label: String): Boolean =
+    label.isNotEmpty() && !hasHyphenEdge(label) && label.all { it.isLetterOrDigit() || it == '-' }
+
+private fun hasHyphenEdge(label: String): Boolean = label.startsWith('-') || label.endsWith('-')
 
 private fun isUnsafeTextControl(value: Char): Boolean =
     value == '\u0000' || (value.isISOControl() && value != '\n' && value != '\r' && value != '\t')

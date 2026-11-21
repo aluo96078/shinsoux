@@ -70,6 +70,21 @@ internal interface SyncDiffEnv {
     fun forgetCategory(localId: Long)
 }
 
+/** Collects the [DirtyEntry] rows of one [SyncDiff.diff] run, stamping each with the next clock tick. */
+private class DirtyCollector(val env: SyncDiffEnv) {
+    val out = ArrayList<DirtyEntry>(8)
+
+    fun add(
+        kind: String,
+        ref: String,
+        field: String,
+        aux: String? = null,
+        tombstone: Pair<String, String?>? = null,
+    ) {
+        out += DirtyEntry(kind, ref, field, env.nextClock(), aux, tombstone?.first, tombstone?.second)
+    }
+}
+
 /**
  * Finds the syncable fields that changed between two snapshots. It compares by reference first
  * (the repository copies lists but shares unchanged elements), so an edit costs one pass over
@@ -78,170 +93,168 @@ internal interface SyncDiffEnv {
 internal object SyncDiff {
     fun diff(previous: AppSnapshot, next: AppSnapshot, env: SyncDiffEnv): List<DirtyEntry> {
         if (previous === next) return emptyList()
-        val out = ArrayList<DirtyEntry>(8)
-        fun add(
-            kind: String,
-            ref: String,
-            field: String,
-            aux: String? = null,
-            tombKey: String? = null,
-            tombWork: String? = null,
-        ) {
-            out += DirtyEntry(kind, ref, field, env.nextClock(), aux, tombKey, tombWork)
-        }
-
-        fun libraryFields(m: Manga) {
-            add(SyncKinds.LIBRARY, mangaRef(m.id), DirtyEntry.DELETED_FIELD, aux = "false")
-            add(SyncKinds.LIBRARY, mangaRef(m.id), "addedAt")
-            add(SyncKinds.LIBRARY, mangaRef(m.id), "categoryIds")
-        }
-
-        if (previous.mangas !== next.mangas) {
-            diffList(
-                previous.mangas, next.mangas, { it.id },
-                added = { m -> if (m.favorite) libraryFields(m) },
-                removed = { m ->
-                    if (m.favorite) {
-                        env.tombstoneWork(m)?.let { (key, hash) ->
-                            add(SyncKinds.LIBRARY, removedRef(mangaRef(m.id), key), DirtyEntry.DELETED_FIELD, "true", key, hash)
-                        }
-                    }
-                },
-                changed = { p, n ->
-                    if (p.favorite != n.favorite) {
-                        if (n.favorite) libraryFields(n) else add(SyncKinds.LIBRARY, mangaRef(n.id), DirtyEntry.DELETED_FIELD, "true")
-                    } else if (n.favorite && p.dateAdded != n.dateAdded) {
-                        add(SyncKinds.LIBRARY, mangaRef(n.id), "addedAt")
-                    }
-                },
-            )
-        }
-
-        if (previous.mangaCategories !== next.mangaCategories) {
-            val before = previous.mangaCategories.toHashSet()
-            val after = next.mangaCategories.toHashSet()
-            val affected = LinkedHashSet<Long>()
-            for (link in after) if (link !in before) affected += link.mangaId
-            for (link in before) if (link !in after) affected += link.mangaId
-            if (affected.isNotEmpty()) {
-                val favorites = if (affected.size > 8) {
-                    next.mangas.asSequence().filter { it.favorite }.mapTo(HashSet()) { it.id }
-                } else {
-                    null
-                }
-                for (id in affected) {
-                    val favorite = favorites?.contains(id) ?: next.mangas.any { it.id == id && it.favorite }
-                    if (favorite) add(SyncKinds.LIBRARY, mangaRef(id), "categoryIds")
-                }
-            }
-        }
-
-        if (previous.categories !== next.categories) {
-            fun categoryFields(c: Category) {
-                val ref = categoryRef(c.id)
-                if (c.id != Category.Default.id) {
-                    add(SyncKinds.CATEGORY, ref, "name")
-                    add(SyncKinds.CATEGORY, ref, "order")
-                }
-                add(SyncKinds.CATEGORY, ref, "flags")
-            }
-            diffList(
-                previous.categories, next.categories, { it.id },
-                added = { c ->
-                    add(SyncKinds.CATEGORY, categoryRef(c.id), DirtyEntry.DELETED_FIELD, aux = "false")
-                    categoryFields(c)
-                },
-                removed = { c ->
-                    if (c.id != Category.Default.id) {
-                        env.categoryUuid(c.id)?.let { uuid ->
-                            add(SyncKinds.CATEGORY, removedRef(categoryRef(c.id), uuid), DirtyEntry.DELETED_FIELD, "true", uuid)
-                        }
-                        env.forgetCategory(c.id)
-                    }
-                },
-                changed = { p, n ->
-                    val ref = categoryRef(n.id)
-                    if (n.id != Category.Default.id) {
-                        if (p.name != n.name) add(SyncKinds.CATEGORY, ref, "name")
-                        if (p.sort != n.sort) add(SyncKinds.CATEGORY, ref, "order")
-                    }
-                    if (p.flags != n.flags) add(SyncKinds.CATEGORY, ref, "flags")
-                },
-            )
-        }
-
-        if (previous.chapters !== next.chapters) {
-            fun chapterFields(p: Chapter?, n: Chapter) {
-                val ref = chapterRef(n.id)
-                if (n.read != (p?.read ?: false)) add(SyncKinds.UNIT, ref, "read")
-                if (n.bookmark != (p?.bookmark ?: false)) add(SyncKinds.UNIT, ref, "bookmarked")
-                if (n.lastPageRead != (p?.lastPageRead ?: 0)) add(SyncKinds.UNIT, ref, "lastPageIndex")
-            }
-            diffList(
-                previous.chapters, next.chapters, { it.id },
-                added = { c -> chapterFields(null, c) },
-                removed = { },
-                changed = { p, n -> chapterFields(p, n) },
-            )
-        }
-
-        if (previous.histories !== next.histories) {
-            val touched = LinkedHashMap<Long, Boolean>() // mangaId -> locator changed
-            val removedChapterIds = ArrayList<Long>()
-            diffList(
-                previous.histories, next.histories, { it.id },
-                added = { h -> historyTouched(next.chapters, h, h.lastLocator != null, touched) },
-                removed = { h -> removedChapterIds += h.chapterId },
-                changed = { p, n ->
-                    if (p.chapterId != n.chapterId) {
-                        removedChapterIds += p.chapterId
-                        historyTouched(next.chapters, n, n.lastLocator != null, touched)
-                    } else if (p.lastRead != n.lastRead || p.lastLocator != n.lastLocator) {
-                        historyTouched(next.chapters, n, p.lastLocator != n.lastLocator && n.lastLocator != null, touched)
-                    }
-                },
-            )
-            for ((mangaId, locatorChanged) in touched) {
-                val ref = mangaRef(mangaId)
-                add(SyncKinds.HISTORY, ref, DirtyEntry.DELETED_FIELD, aux = "false")
-                add(SyncKinds.HISTORY, ref, "lastReadAt")
-                add(SyncKinds.HISTORY, ref, "unitRemoteId")
-                add(SyncKinds.PROGRESS, ref, DirtyEntry.DELETED_FIELD, aux = "false")
-                add(SyncKinds.PROGRESS, ref, "unitRemoteId")
-                if (locatorChanged) {
-                    add(SyncKinds.PROGRESS, ref, "locator")
-                    add(SyncKinds.PROGRESS, ref, "progression")
-                }
-            }
-            if (removedChapterIds.isNotEmpty()) tombstoneEmptiedHistories(previous, next, removedChapterIds, env, ::add)
-        }
-        if (previous.extensionRepositories !== next.extensionRepositories) {
-            val before = HashMap<String, ExtensionRepo>()
-            previous.extensionRepositories.forEach { before[it.baseUrl] = it }
-            val after = HashSet<String>()
-            for (repo in next.extensionRepositories) {
-                if (repo.baseUrl.isBlank() || !after.add(repo.baseUrl)) continue
-                val ref = repositoryRef(repo.baseUrl)
-                val old = before[repo.baseUrl]
-                if (old == null) {
-                    add(SyncKinds.REPOSITORY, ref, DirtyEntry.DELETED_FIELD, aux = "false")
-                    REPOSITORY_FIELDS.forEach { add(SyncKinds.REPOSITORY, ref, it) }
-                } else {
-                    if (old.name != repo.name) add(SyncKinds.REPOSITORY, ref, "name")
-                    if (old.signingKeyFingerprint != repo.signingKeyFingerprint) add(SyncKinds.REPOSITORY, ref, "trustedPublishers")
-                }
-            }
-            // A repository removed here is deliberately not tombstoned: the account's list is a set of
-            // suggestions for other devices, and deleting locally must not take the suggestion away.
-            // Removing it from the account is an explicit act (SyncV3Service.forgetRepository).
-        }
-
+        val c = DirtyCollector(env)
+        if (previous.mangas !== next.mangas) diffMangas(previous, next, c)
+        if (previous.mangaCategories !== next.mangaCategories) diffMangaCategories(previous, next, c)
+        if (previous.categories !== next.categories) diffCategories(previous, next, c)
+        if (previous.chapters !== next.chapters) diffChapters(previous, next, c)
+        if (previous.histories !== next.histories) diffHistories(previous, next, c)
+        if (previous.extensionRepositories !== next.extensionRepositories) diffRepositories(previous, next, c)
         if (previous.settings !== next.settings) {
             for (path in PortableSettings.changed(previous.settings, next.settings)) {
-                add(SyncKinds.SETTING, settingRef(path), SETTING_FIELD)
+                c.add(SyncKinds.SETTING, settingRef(path), SETTING_FIELD)
             }
         }
-        return out
+        return c.out
+    }
+
+    private fun libraryFields(m: Manga, c: DirtyCollector) {
+        c.add(SyncKinds.LIBRARY, mangaRef(m.id), DirtyEntry.DELETED_FIELD, aux = "false")
+        c.add(SyncKinds.LIBRARY, mangaRef(m.id), "addedAt")
+        c.add(SyncKinds.LIBRARY, mangaRef(m.id), "categoryIds")
+    }
+
+    private fun diffMangas(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        diffList(
+            previous.mangas, next.mangas, { it.id },
+            added = { m -> if (m.favorite) libraryFields(m, c) },
+            removed = { m ->
+                if (m.favorite) {
+                    c.env.tombstoneWork(m)?.let { (key, hash) ->
+                        c.add(SyncKinds.LIBRARY, removedRef(mangaRef(m.id), key), DirtyEntry.DELETED_FIELD, "true", key to hash)
+                    }
+                }
+            },
+            changed = { p, n ->
+                if (p.favorite != n.favorite) {
+                    if (n.favorite) libraryFields(n, c) else c.add(SyncKinds.LIBRARY, mangaRef(n.id), DirtyEntry.DELETED_FIELD, "true")
+                } else if (n.favorite && p.dateAdded != n.dateAdded) {
+                    c.add(SyncKinds.LIBRARY, mangaRef(n.id), "addedAt")
+                }
+            },
+        )
+    }
+
+    private fun diffMangaCategories(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        val before = previous.mangaCategories.toHashSet()
+        val after = next.mangaCategories.toHashSet()
+        val affected = LinkedHashSet<Long>()
+        for (link in after) if (link !in before) affected += link.mangaId
+        for (link in before) if (link !in after) affected += link.mangaId
+        if (affected.isNotEmpty()) {
+            val favorites = if (affected.size > 8) {
+                next.mangas.asSequence().filter { it.favorite }.mapTo(HashSet()) { it.id }
+            } else {
+                null
+            }
+            for (id in affected) {
+                val favorite = favorites?.contains(id) ?: next.mangas.any { it.id == id && it.favorite }
+                if (favorite) c.add(SyncKinds.LIBRARY, mangaRef(id), "categoryIds")
+            }
+        }
+    }
+
+    private fun categoryFields(cat: Category, c: DirtyCollector) {
+        val ref = categoryRef(cat.id)
+        if (cat.id != Category.Default.id) {
+            c.add(SyncKinds.CATEGORY, ref, "name")
+            c.add(SyncKinds.CATEGORY, ref, "order")
+        }
+        c.add(SyncKinds.CATEGORY, ref, "flags")
+    }
+
+    private fun diffCategories(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        diffList(
+            previous.categories, next.categories, { it.id },
+            added = { cat ->
+                c.add(SyncKinds.CATEGORY, categoryRef(cat.id), DirtyEntry.DELETED_FIELD, aux = "false")
+                categoryFields(cat, c)
+            },
+            removed = { cat ->
+                if (cat.id != Category.Default.id) {
+                    c.env.categoryUuid(cat.id)?.let { uuid ->
+                        c.add(SyncKinds.CATEGORY, removedRef(categoryRef(cat.id), uuid), DirtyEntry.DELETED_FIELD, "true", uuid to null)
+                    }
+                    c.env.forgetCategory(cat.id)
+                }
+            },
+            changed = { p, n ->
+                val ref = categoryRef(n.id)
+                if (n.id != Category.Default.id) {
+                    if (p.name != n.name) c.add(SyncKinds.CATEGORY, ref, "name")
+                    if (p.sort != n.sort) c.add(SyncKinds.CATEGORY, ref, "order")
+                }
+                if (p.flags != n.flags) c.add(SyncKinds.CATEGORY, ref, "flags")
+            },
+        )
+    }
+
+    private fun chapterFields(p: Chapter?, n: Chapter, c: DirtyCollector) {
+        val ref = chapterRef(n.id)
+        if (n.read != (p?.read ?: false)) c.add(SyncKinds.UNIT, ref, "read")
+        if (n.bookmark != (p?.bookmark ?: false)) c.add(SyncKinds.UNIT, ref, "bookmarked")
+        if (n.lastPageRead != (p?.lastPageRead ?: 0)) c.add(SyncKinds.UNIT, ref, "lastPageIndex")
+    }
+
+    private fun diffChapters(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        diffList(
+            previous.chapters, next.chapters, { it.id },
+            added = { ch -> chapterFields(null, ch, c) },
+            removed = { },
+            changed = { p, n -> chapterFields(p, n, c) },
+        )
+    }
+
+    private fun diffHistories(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        val touched = LinkedHashMap<Long, Boolean>() // mangaId -> locator changed
+        val removedChapterIds = ArrayList<Long>()
+        diffList(
+            previous.histories, next.histories, { it.id },
+            added = { h -> historyTouched(next.chapters, h, h.lastLocator != null, touched) },
+            removed = { h -> removedChapterIds += h.chapterId },
+            changed = { p, n ->
+                if (p.chapterId != n.chapterId) {
+                    removedChapterIds += p.chapterId
+                    historyTouched(next.chapters, n, n.lastLocator != null, touched)
+                } else if (p.lastRead != n.lastRead || p.lastLocator != n.lastLocator) {
+                    historyTouched(next.chapters, n, p.lastLocator != n.lastLocator && n.lastLocator != null, touched)
+                }
+            },
+        )
+        for ((mangaId, locatorChanged) in touched) {
+            val ref = mangaRef(mangaId)
+            c.add(SyncKinds.HISTORY, ref, DirtyEntry.DELETED_FIELD, aux = "false")
+            c.add(SyncKinds.HISTORY, ref, "lastReadAt")
+            c.add(SyncKinds.HISTORY, ref, "unitRemoteId")
+            c.add(SyncKinds.PROGRESS, ref, DirtyEntry.DELETED_FIELD, aux = "false")
+            c.add(SyncKinds.PROGRESS, ref, "unitRemoteId")
+            if (locatorChanged) {
+                c.add(SyncKinds.PROGRESS, ref, "locator")
+                c.add(SyncKinds.PROGRESS, ref, "progression")
+            }
+        }
+        if (removedChapterIds.isNotEmpty()) tombstoneEmptiedHistories(previous, next, removedChapterIds, c)
+    }
+
+    private fun diffRepositories(previous: AppSnapshot, next: AppSnapshot, c: DirtyCollector) {
+        val before = HashMap<String, ExtensionRepo>()
+        previous.extensionRepositories.forEach { before[it.baseUrl] = it }
+        val after = HashSet<String>()
+        for (repo in next.extensionRepositories) {
+            if (repo.baseUrl.isBlank() || !after.add(repo.baseUrl)) continue
+            val ref = repositoryRef(repo.baseUrl)
+            val old = before[repo.baseUrl]
+            if (old == null) {
+                c.add(SyncKinds.REPOSITORY, ref, DirtyEntry.DELETED_FIELD, aux = "false")
+                REPOSITORY_FIELDS.forEach { c.add(SyncKinds.REPOSITORY, ref, it) }
+            } else {
+                if (old.name != repo.name) c.add(SyncKinds.REPOSITORY, ref, "name")
+                if (old.signingKeyFingerprint != repo.signingKeyFingerprint) c.add(SyncKinds.REPOSITORY, ref, "trustedPublishers")
+            }
+        }
+        // A repository removed here is deliberately not tombstoned: the account's list is a set of
+        // suggestions for other devices, and deleting locally must not take the suggestion away.
+        // Removing it from the account is an explicit act (SyncV3Service.forgetRepository).
     }
 
     val REPOSITORY_FIELDS = listOf("url", "name", "trustedPublishers")
@@ -256,8 +269,7 @@ internal object SyncDiff {
         previous: AppSnapshot,
         next: AppSnapshot,
         removedChapterIds: List<Long>,
-        env: SyncDiffEnv,
-        add: (String, String, String, String?, String?, String?) -> Unit,
+        c: DirtyCollector,
     ) {
         val removed = removedChapterIds.toHashSet()
         val mangaIds = LinkedHashSet<Long>()
@@ -274,9 +286,9 @@ internal object SyncDiff {
         for (mangaId in mangaIds) {
             if (mangaId in stillHasHistory) continue
             val manga = previous.mangas.firstOrNull { it.id == mangaId } ?: continue
-            val (key, hash) = env.tombstoneWork(manga) ?: continue
-            add(SyncKinds.HISTORY, mangaRef(mangaId), DirtyEntry.DELETED_FIELD, "true", key, hash)
-            add(SyncKinds.PROGRESS, mangaRef(mangaId), DirtyEntry.DELETED_FIELD, "true", key, hash)
+            val (key, hash) = c.env.tombstoneWork(manga) ?: continue
+            c.add(SyncKinds.HISTORY, mangaRef(mangaId), DirtyEntry.DELETED_FIELD, "true", key to hash)
+            c.add(SyncKinds.PROGRESS, mangaRef(mangaId), DirtyEntry.DELETED_FIELD, "true", key to hash)
         }
     }
 

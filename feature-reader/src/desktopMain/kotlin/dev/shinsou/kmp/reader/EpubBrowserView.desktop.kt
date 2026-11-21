@@ -154,102 +154,8 @@ private class DesktopEpubBrowserState(
                 // Publisher resources remain immutable and CSP blocks their scripts. Host-authored
                 // evaluation installs the isolated reader style and drives portable reader actions.
                 isJavaScriptEnabled = true
-                loadWorker.stateProperty().addListener { _, _, state ->
-                    if (closed.get()) return@addListener
-                    when (state) {
-                        Worker.State.SUCCEEDED -> location?.let { location ->
-                            val generation = epubBrowserLoadGeneration(location) ?: return@let
-                            val loaded = documentState.documentLoaded(location, generation) ?: run {
-                                if (!documentState.ownsPendingLoad(generation)) {
-                                    // JavaFX may repeat SUCCEEDED for an already committed document.
-                                    if (documentState.pendingTarget == null) installNavigationGuard(this)
-                                    return@let
-                                }
-                                EpubProtocolRegistry.rollback(owner, protocolSession)
-                                val rollback = documentState.documentLoadFailed(generation) ?: return@let
-                                activate(rollback.request)
-                                if (epubBrowserUrlWithoutLoadGeneration(location) != rollback.browserUrl) {
-                                    stageNavigation(rollback.browserUrl)?.let { retryUrl -> this.load(retryUrl) }
-                                }
-                                onError("The desktop EPUB browser committed an unexpected document.")
-                                return@let
-                            }
-                            EpubProtocolRegistry.commit(owner, protocolSession)
-                            activate(loaded.target.request)
-                            installNavigationGuard(this)
-                            val configured = installReaderConfiguration(this, loaded.target.request)
-                            if (loaded.restoreInitialLocator) {
-                                emitViewport(
-                                    browser = this,
-                                    sampledRequest = loaded.target.request,
-                                    script = epubBrowserRestoreScript(loaded.target.request),
-                                    force = true,
-                                )
-                            } else {
-                                emitViewport(
-                                    browser = this,
-                                    sampledRequest = loaded.target.request,
-                                    script = epubBrowserViewportScript(loaded.target.request),
-                                    force = true,
-                                )
-                            }
-                            if (configured) drainPendingReaderAction()
-                        }
-                        Worker.State.FAILED -> {
-                            val failedLocation = location ?: return@addListener
-                            val generation = epubBrowserLoadGeneration(failedLocation) ?: return@addListener
-                            if (!documentState.ownsPendingLoad(generation)) return@addListener
-                            EpubProtocolRegistry.rollback(owner, protocolSession)
-                            val rollback = documentState.documentLoadFailed(generation) ?: return@addListener
-                            activate(rollback.request)
-                            if (epubBrowserUrlWithoutLoadGeneration(failedLocation) != rollback.browserUrl) {
-                                stageNavigation(rollback.browserUrl)?.let { retryUrl -> this.load(retryUrl) }
-                            }
-                            onError(
-                                loadWorker.exception?.message
-                                    ?: "The desktop EPUB browser could not load this resource.",
-                            )
-                        }
-                        else -> Unit
-                    }
-                }
-                locationProperty().addListener { _, oldLocation, newLocation ->
-                    if (closed.get() || newLocation.isNullOrBlank()) return@addListener
-                    val target = documentState.navigationRequested(newLocation)
-                    if (target != null) {
-                        if (target.hasExplicitAnchor) {
-                            val generation = requireNotNull(documentState.pendingLoadGeneration)
-                            documentState.sameDocumentNavigationLoaded(newLocation, generation)?.let { loaded ->
-                                EpubProtocolRegistry.commit(owner, protocolSession)
-                                activate(loaded.target.request)
-                                Platform.runLater {
-                                    val configured = installReaderConfiguration(this, loaded.target.request)
-                                    emitViewport(
-                                        browser = this,
-                                        sampledRequest = loaded.target.request,
-                                        script = epubBrowserViewportScript(loaded.target.request),
-                                        force = true,
-                                    )
-                                    if (configured) drainPendingReaderAction()
-                                }
-                                return@addListener
-                            }
-                        }
-                        val taggedLocation = taggedPendingNavigation(newLocation)
-                        if (taggedLocation != newLocation) {
-                            loadWorker.cancel()
-                            load(taggedLocation)
-                        }
-                        return@addListener
-                    }
-                    loadWorker.cancel()
-                    onError("Blocked EPUB navigation outside this publication.")
-                    if (!oldLocation.isNullOrBlank() &&
-                        documentState.urlPolicy.canonicalUrl(oldLocation) != null
-                    ) {
-                        stageNavigation(oldLocation)?.let { retryUrl -> this.load(retryUrl) }
-                    }
-                }
+                installLoadStateListener()
+                installLocationListener()
             }
             engine = browser
             viewportTimer = object : AnimationTimer() {
@@ -274,6 +180,120 @@ private class DesktopEpubBrowserState(
             browser.load(pendingDocumentUrl)
             Platform.runLater {
                 if (!closed.get()) view.requestFocus()
+            }
+        }
+    }
+
+    /** Commits the document the load worker just finished, or rolls back an unexpected one. */
+    private fun WebEngine.onLoadSucceeded() {
+        location?.let { location ->
+            val generation = epubBrowserLoadGeneration(location) ?: return@let
+            val loaded = documentState.documentLoaded(location, generation) ?: run {
+                if (!documentState.ownsPendingLoad(generation)) {
+                    // JavaFX may repeat SUCCEEDED for an already committed document.
+                    if (documentState.pendingTarget == null) installNavigationGuard(this)
+                    return@let
+                }
+                EpubProtocolRegistry.rollback(owner, protocolSession)
+                val rollback = documentState.documentLoadFailed(generation) ?: return@let
+                activate(rollback.request)
+                if (epubBrowserUrlWithoutLoadGeneration(location) != rollback.browserUrl) {
+                    stageNavigation(rollback.browserUrl)?.let { retryUrl -> this.load(retryUrl) }
+                }
+                onError("The desktop EPUB browser committed an unexpected document.")
+                return@let
+            }
+            EpubProtocolRegistry.commit(owner, protocolSession)
+            activate(loaded.target.request)
+            installNavigationGuard(this)
+            val configured = installReaderConfiguration(this, loaded.target.request)
+            if (loaded.restoreInitialLocator) {
+                emitViewport(
+                    browser = this,
+                    sampledRequest = loaded.target.request,
+                    script = epubBrowserRestoreScript(loaded.target.request),
+                    force = true,
+                )
+            } else {
+                emitViewport(
+                    browser = this,
+                    sampledRequest = loaded.target.request,
+                    script = epubBrowserViewportScript(loaded.target.request),
+                    force = true,
+                )
+            }
+            if (configured) drainPendingReaderAction()
+        }
+    }
+
+    /** Rolls back the pending navigation after the load worker failed. */
+    private fun WebEngine.onLoadFailed() {
+        run {
+            val failedLocation = location ?: return@run
+            val generation = epubBrowserLoadGeneration(failedLocation) ?: return@run
+            if (!documentState.ownsPendingLoad(generation)) return@run
+            EpubProtocolRegistry.rollback(owner, protocolSession)
+            val rollback = documentState.documentLoadFailed(generation) ?: return@run
+            activate(rollback.request)
+            if (epubBrowserUrlWithoutLoadGeneration(failedLocation) != rollback.browserUrl) {
+                stageNavigation(rollback.browserUrl)?.let { retryUrl -> this.load(retryUrl) }
+            }
+            onError(
+                loadWorker.exception?.message
+                    ?: "The desktop EPUB browser could not load this resource.",
+            )
+        }
+    }
+
+    /** Reacts to the load worker state of this engine: commits the loaded document or rolls back a failed load. */
+    private fun WebEngine.installLoadStateListener() {
+        loadWorker.stateProperty().addListener { _, _, state ->
+            if (closed.get()) return@addListener
+            when (state) {
+                Worker.State.SUCCEEDED -> onLoadSucceeded()
+                Worker.State.FAILED -> onLoadFailed()
+                else -> Unit
+            }
+        }
+    }
+
+    /** Admits, redirects or blocks every location change of this engine against the publication policy. */
+    private fun WebEngine.installLocationListener() {
+        locationProperty().addListener { _, oldLocation, newLocation ->
+            if (closed.get() || newLocation.isNullOrBlank()) return@addListener
+            val target = documentState.navigationRequested(newLocation)
+            if (target != null) {
+                if (target.hasExplicitAnchor) {
+                    val generation = requireNotNull(documentState.pendingLoadGeneration)
+                    documentState.sameDocumentNavigationLoaded(newLocation, generation)?.let { loaded ->
+                        EpubProtocolRegistry.commit(owner, protocolSession)
+                        activate(loaded.target.request)
+                        Platform.runLater {
+                            val configured = installReaderConfiguration(this, loaded.target.request)
+                            emitViewport(
+                                browser = this,
+                                sampledRequest = loaded.target.request,
+                                script = epubBrowserViewportScript(loaded.target.request),
+                                force = true,
+                            )
+                            if (configured) drainPendingReaderAction()
+                        }
+                        return@addListener
+                    }
+                }
+                val taggedLocation = taggedPendingNavigation(newLocation)
+                if (taggedLocation != newLocation) {
+                    loadWorker.cancel()
+                    load(taggedLocation)
+                }
+                return@addListener
+            }
+            loadWorker.cancel()
+            onError("Blocked EPUB navigation outside this publication.")
+            if (!oldLocation.isNullOrBlank() &&
+                documentState.urlPolicy.canonicalUrl(oldLocation) != null
+            ) {
+                stageNavigation(oldLocation)?.let { retryUrl -> this.load(retryUrl) }
             }
         }
     }

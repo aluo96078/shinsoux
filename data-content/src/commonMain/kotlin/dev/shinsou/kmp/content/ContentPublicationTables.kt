@@ -121,117 +121,131 @@ internal class ContentPublicationTables(sql: ContentSqlOps) : ContentSqlOps by s
             val publication = mutation.publication
             val durable = findPublication(mutation.publicationKey)
             if (durable == publication) return@forEach
-            if (durable == null) {
-                execute(
-                    "INSERT INTO $TABLE_PUBLICATIONS(publication_id, publication_json) VALUES (?, ?)",
-                    2,
-                ) {
-                    bindString(0, publication.key.value)
-                    bindString(1, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
-                }
-            } else {
-                execute(
-                    "UPDATE $TABLE_PUBLICATIONS SET publication_json = ? WHERE publication_id = ?",
-                    2,
-                ) {
-                    bindString(0, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
-                    bindString(1, publication.key.value)
-                }
-            }
+            writePublicationRow(publication, durable)
             maybeFail(ContentTransactionFailurePoint.AFTER_PUBLICATION_WRITE)
             maybeFail(ContentTransactionFailurePoint.AFTER_EACH_PUBLICATION_WRITE)
             val durableAcquisitions = durable?.acquisitions?.associateBy(Acquisition::id).orEmpty()
             publication.acquisitions.forEach { acquisition ->
-                val durableAcquisition = durableAcquisitions[acquisition.id]
-                if (durableAcquisition == null) {
-                    execute(
-                        """
-                            INSERT INTO $TABLE_ACQUISITIONS(
-                              acquisition_id, publication_id, acquisition_json
-                            ) VALUES (?, ?, ?)
-                        """.trimIndent(),
-                        3,
-                    ) {
-                        bindString(0, acquisition.id)
-                        bindString(1, publication.key.value)
-                        bindString(2, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
-                    }
-                } else if (durableAcquisition != acquisition) {
-                    execute(
-                        """
-                            UPDATE $TABLE_ACQUISITIONS SET acquisition_json = ?
-                            WHERE acquisition_id = ? AND publication_id = ?
-                        """.trimIndent(),
-                        3,
-                    ) {
-                        bindString(0, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
-                        bindString(1, acquisition.id)
-                        bindString(2, publication.key.value)
-                    }
-                }
-                acquisition.rightsGrantRef?.let { rights ->
-                    if (durableAcquisition?.rightsGrantRef == null) {
-                        execute(
-                            """
-                                INSERT INTO $TABLE_ACQUISITION_RIGHTS(
-                                  acquisition_id, publication_id, grant_ref_json
-                                ) VALUES (?, ?, ?)
-                            """.trimIndent(),
-                            3,
-                        ) {
-                            bindString(0, acquisition.id)
-                            bindString(1, publication.key.value)
-                            bindString(2, encodeJson(RightsGrantRef.serializer(), rights))
-                        }
-                    }
-                }
-                val durableUnits = durableAcquisition?.units?.associateBy { it.key }.orEmpty()
-                acquisition.units.forEach { unit ->
-                    val durableUnit = durableUnits[unit.key]
-                    if (durableUnit == null) {
-                        execute(
-                            """
-                                INSERT INTO $TABLE_UNITS(
-                                  unit_id, publication_id, acquisition_id, unit_json
-                                ) VALUES (?, ?, ?, ?)
-                            """.trimIndent(),
-                            4,
-                        ) {
-                            bindString(0, unit.key.value)
-                            bindString(1, publication.key.value)
-                            bindString(2, acquisition.id)
-                            bindString(3, encodeJson(PublicationUnit.serializer(), unit))
-                        }
-                    } else if (durableUnit != unit) {
-                        execute(
-                            """
-                                UPDATE $TABLE_UNITS SET unit_json = ?
-                                WHERE unit_id = ? AND publication_id = ? AND acquisition_id = ?
-                            """.trimIndent(),
-                            4,
-                        ) {
-                            bindString(0, encodeJson(PublicationUnit.serializer(), unit))
-                            bindString(1, unit.key.value)
-                            bindString(2, publication.key.value)
-                            bindString(3, acquisition.id)
-                        }
-                    }
-                }
+                writeAcquisition(publication, acquisition, durableAcquisitions[acquisition.id])
             }
-            if (durable == null) publication.workLinks.forEachIndexed { index, link ->
+            if (durable == null) writeWorkLinks(publication)
+        }
+    }
+
+    private fun writePublicationRow(publication: Publication, durable: Publication?) {
+        if (durable == null) {
+            execute(
+                "INSERT INTO $TABLE_PUBLICATIONS(publication_id, publication_json) VALUES (?, ?)",
+                2,
+            ) {
+                bindString(0, publication.key.value)
+                bindString(1, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
+            }
+        } else {
+            execute(
+                "UPDATE $TABLE_PUBLICATIONS SET publication_json = ? WHERE publication_id = ?",
+                2,
+            ) {
+                bindString(0, encodeJson(Publication.serializer(), publication.withoutManifestRevisions()))
+                bindString(1, publication.key.value)
+            }
+        }
+    }
+
+    private fun writeAcquisition(publication: Publication, acquisition: Acquisition, durableAcquisition: Acquisition?) {
+        if (durableAcquisition == null) {
+            execute(
+                """
+                    INSERT INTO $TABLE_ACQUISITIONS(
+                      acquisition_id, publication_id, acquisition_json
+                    ) VALUES (?, ?, ?)
+                """.trimIndent(),
+                3,
+            ) {
+                bindString(0, acquisition.id)
+                bindString(1, publication.key.value)
+                bindString(2, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
+            }
+        } else if (durableAcquisition != acquisition) {
+            execute(
+                """
+                    UPDATE $TABLE_ACQUISITIONS SET acquisition_json = ?
+                    WHERE acquisition_id = ? AND publication_id = ?
+                """.trimIndent(),
+                3,
+            ) {
+                bindString(0, encodeJson(Acquisition.serializer(), acquisition.withoutManifestRevisions()))
+                bindString(1, acquisition.id)
+                bindString(2, publication.key.value)
+            }
+        }
+        acquisition.rightsGrantRef?.let { rights ->
+            if (durableAcquisition?.rightsGrantRef == null) {
                 execute(
                     """
-                        INSERT INTO $TABLE_WORK_LINKS(
-                          publication_id, ordinal, target_publication_id, link_json
-                        ) VALUES (?, ?, ?, ?)
+                        INSERT INTO $TABLE_ACQUISITION_RIGHTS(
+                          acquisition_id, publication_id, grant_ref_json
+                        ) VALUES (?, ?, ?)
                     """.trimIndent(),
-                    4,
+                    3,
                 ) {
-                    bindString(0, publication.key.value)
-                    bindLong(1, index.toLong())
-                    bindString(2, link.target.value)
-                    bindString(3, encodeJson(WorkLink.serializer(), link))
+                    bindString(0, acquisition.id)
+                    bindString(1, publication.key.value)
+                    bindString(2, encodeJson(RightsGrantRef.serializer(), rights))
                 }
+            }
+        }
+        val durableUnits = durableAcquisition?.units?.associateBy { it.key }.orEmpty()
+        acquisition.units.forEach { unit ->
+            writeUnit(publication, acquisition, unit, durableUnits[unit.key])
+        }
+    }
+
+    private fun writeUnit(publication: Publication, acquisition: Acquisition, unit: PublicationUnit, durableUnit: PublicationUnit?) {
+        if (durableUnit == null) {
+            execute(
+                """
+                    INSERT INTO $TABLE_UNITS(
+                      unit_id, publication_id, acquisition_id, unit_json
+                    ) VALUES (?, ?, ?, ?)
+                """.trimIndent(),
+                4,
+            ) {
+                bindString(0, unit.key.value)
+                bindString(1, publication.key.value)
+                bindString(2, acquisition.id)
+                bindString(3, encodeJson(PublicationUnit.serializer(), unit))
+            }
+        } else if (durableUnit != unit) {
+            execute(
+                """
+                    UPDATE $TABLE_UNITS SET unit_json = ?
+                    WHERE unit_id = ? AND publication_id = ? AND acquisition_id = ?
+                """.trimIndent(),
+                4,
+            ) {
+                bindString(0, encodeJson(PublicationUnit.serializer(), unit))
+                bindString(1, unit.key.value)
+                bindString(2, publication.key.value)
+                bindString(3, acquisition.id)
+            }
+        }
+    }
+
+    private fun writeWorkLinks(publication: Publication) {
+        publication.workLinks.forEachIndexed { index, link ->
+            execute(
+                """
+                    INSERT INTO $TABLE_WORK_LINKS(
+                      publication_id, ordinal, target_publication_id, link_json
+                    ) VALUES (?, ?, ?, ?)
+                """.trimIndent(),
+                4,
+            ) {
+                bindString(0, publication.key.value)
+                bindLong(1, index.toLong())
+                bindString(2, link.target.value)
+                bindString(3, encodeJson(WorkLink.serializer(), link))
             }
         }
     }

@@ -304,9 +304,7 @@ public class ExtensionRepositoryClient(
         require(root["contractVersion"]?.jsonPrimitive?.intOrNull == 2) { "Unsupported V2 contract" }
         val packages = root["packages"] as? JsonArray ?: error("V2 packages must be an array")
         require(packages.size <= MAX_INDEX_PACKAGES) { "Repository contains too many packages" }
-        var totalSources = 0
-        val packageIds = mutableSetOf<String>()
-        val sourceIdsByPackage = mutableMapOf<String, MutableSet<String>>()
+        val tally = V2IndexTally()
         val shinsou = mutableListOf<PluginIndexEntry>()
         packages.forEach { element ->
             val pkg = element.jsonObject
@@ -322,126 +320,161 @@ public class ExtensionRepositoryClient(
                 "Unsupported V2 runtime '$runtime' for contract '$contract'"
             }
             val packageId = pkg.requiredString("id")
-            require(packageIds.add(packageId)) { "Duplicate V2 package id '$packageId'" }
-            val sourceIds = sourceIdsByPackage.getOrPut(packageId) { mutableSetOf() }
-            val packageSources = pkg["sources"] as? JsonArray ?: error("Missing sources")
-            require(packageSources.size <= MAX_INDEX_SOURCES_PER_PACKAGE) {
-                "Repository package '$packageId' contains too many sources"
-            }
-            totalSources += packageSources.size
-            require(totalSources <= MAX_INDEX_TOTAL_SOURCES) { "Repository contains too many sources" }
-            packageSources.forEach { source ->
-                val sourceId = source.jsonObject.requiredString("sourceId")
-                require(sourceIds.add(sourceId)) { "Duplicate V2 source id '$sourceId'" }
-            }
-            // Reference-only/non-installable Shinsou packages may intentionally use opaque
-            // source IDs (for example, a login capability sample). They are not executable
-            // legacy-adapter entries and must not make the installable half of a mixed V2 index
-            // fail while coercing source IDs to Long. Existing installed packages are still
-            // projected from packageStore by PluginManager.refresh().
-            if (pkg["installable"]?.jsonPrimitive?.booleanOrNull == false ||
-                pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull == true ||
-                pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull == true
-            ) {
-                requireV2PackageAdmissionFields(pkg)
-                return@forEach
-            }
-            // A package declaring a permission this app does not know was published for a newer app:
-            // it is left out like a non-installable row (never granted an unknown permission), while
-            // the rest of the repository stays usable instead of the whole index failing.
-            val knownHostPermissions = PluginHostPermission.entries.mapTo(hashSetOf()) { it.name }
-            val knownRuntimePermissions = PluginRuntimePermission.entries.mapTo(hashSetOf()) { it.name }
-            if (!knownHostPermissions.containsAll(pkg.requiredStringSet("requestedHostPermissions")) ||
-                !knownRuntimePermissions.containsAll(pkg.requiredStringSet("runtimePermissions"))
-            ) {
-                requireV2PackageAdmissionFields(pkg)
-                return@forEach
-            }
-            val eventObject = pkg["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
-            require(eventObject.requiredString("protocol") == "dev.shinsou.system")
-            val events = PluginSystemEventDeclaration(
-                minVersion = eventObject.requiredInt("minVersion"),
-                maxVersion = eventObject.requiredInt("maxVersion"),
-                required = eventObject.requiredStringSet("required"),
-                optional = eventObject.requiredStringSet("optional"),
-            )
-            val requested = pkg.requiredStringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
-                PluginHostPermission.valueOf(it)
-            }
-            val runtimePermissions = pkg.requiredStringSet("runtimePermissions").let { permissions ->
-                permissions.mapTo(linkedSetOf()) {
-                    runCatching { PluginRuntimePermission.valueOf(it) }
-                        .getOrElse { error("Unknown runtime permission '$it'") }
-                }
-            }
-            val packageContentKinds = pkg.requiredStringSet("contentKinds")
-            shinsou += PluginIndexEntry(
-                id = packageId,
-                name = pkg.requiredString("name"),
-                version = pkg.requiredString("version"),
-                versionCode = pkg["versionCode"]?.jsonPrimitive?.intOrNull ?: error("Missing versionCode"),
-                lang = pkg.requiredString("lang"),
-                nsfw = if (pkg.requiredBoolean("nsfw")) 1 else 0,
-                scriptUrl = pkg.requiredString("scriptUrl"),
-                description = pkg["description"]?.jsonPrimitive?.contentOrNull,
-                sources = packageSources.map { sourceElement ->
-                    val source = sourceElement.jsonObject
-                    val rawId = source.requiredString("sourceId")
-                    SourceIndexEntry(
-                        name = source.requiredString("name"),
-                        lang = source.requiredString("lang"),
-                        // A numeric sourceId is its own engine id. A string sourceId (an existing
-                        // library identity, such as a former ShuYue source) names its numeric
-                        // engine and storage id in legacyLongId.
-                        id = rawId.toLongOrNull() ?: run {
-                            require(STRING_SOURCE_ID.matches(rawId)) { "Invalid source id '$rawId'" }
-                            source.requiredNullableString("legacyLongId")?.toLongOrNull()
-                                ?: error("Source '$rawId' needs a numeric legacyLongId")
-                        },
-                        baseUrl = source.requiredString("baseUrl"),
-                        // Preserve the raw index metadata. An omitted source refinement is
-                        // meaningful to exact installed-manifest matching; sidecar validation
-                        // applies package inheritance only at its semantic comparison boundary.
-                        contentType = source["contentType"]?.jsonPrimitive?.contentOrNull,
-                        // The published V2 schema permits these source-level refinements to be
-                        // omitted.  Missing origin declarations stay explicitly empty (and the
-                        // V2 policy marker below keeps them fail-closed); they must never fall
-                        // through to the legacy base-origin compatibility policy.
-                        contentKinds = source.optionalStringSet("contentKinds"),
-                        contentKindsDeclared = "contentKinds" in source,
-                        requestOrigins = source.optionalStringSet("requestOrigins"),
-                        credentialOrigins = source.optionalStringSet("credentialOrigins"),
-                        contentOrigins = source.optionalStringSet("contentOrigins"),
-                        browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
-                        contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
-                        browserImageOrigins = source.optionalStringSet("browserImageOrigins"),
-                        browserLoginOrigins = source.optionalStringSet("browserLoginOrigins"),
-                        browserLoginResourceOrigins = source.optionalStringSet("browserLoginResourceOrigins"),
-                        originPolicyVersion = 2,
-                        legacyLongId = source.requiredNullableString("legacyLongId"),
-                        canonicalSourceId = rawId,
-                    )
-                },
-                sha256 = pkg.requiredString("sha256"),
-                byteSize = pkg["byteSize"]?.jsonPrimitive?.intOrNull ?: error("Missing byteSize"),
-                contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
-                contract = contract,
-                runtime = pkg.requiredString("runtime"),
-                contentKinds = packageContentKinds,
-                capabilities = pkg.requiredStringSet("capabilities"),
-                sidecarUrl = pkg.requiredString("sidecarUrl"),
-                systemEvents = events,
-                requestedHostPermissions = requested,
-                runtimePermissions = runtimePermissions,
-                installable = pkg["installable"]?.jsonPrimitive?.booleanOrNull ?: true,
-                referenceOnly = pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-                legacyCompatibilityOnly = pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
-            )
+            val packageSources = requireV2PackageWithinBounds(tally, pkg, packageId)
+            if (isSkippedV2Package(pkg)) return@forEach
+            shinsou += decodeV2Package(pkg, packageId, contract, packageSources)
         }
         require(shinsou.map { it.id }.distinct().size == shinsou.size)
         RepositoryIndex.Combined(shinsou)
     } catch (error: Throwable) {
         throw ExtensionRepositoryException.InvalidDocument(url, error)
+    }
+
+    /** Running totals that bound a V2 index while its packages are decoded one by one. */
+    private class V2IndexTally {
+        var totalSources = 0
+        val packageIds = mutableSetOf<String>()
+        val sourceIdsByPackage = mutableMapOf<String, MutableSet<String>>()
+    }
+
+    /** Enforces the package, source and duplicate-id bounds of one V2 package; returns its sources. */
+    private fun requireV2PackageWithinBounds(
+        tally: V2IndexTally,
+        pkg: JsonObject,
+        packageId: String,
+    ): JsonArray {
+        require(tally.packageIds.add(packageId)) { "Duplicate V2 package id '$packageId'" }
+        val sourceIds = tally.sourceIdsByPackage.getOrPut(packageId) { mutableSetOf() }
+        val packageSources = pkg["sources"] as? JsonArray ?: error("Missing sources")
+        require(packageSources.size <= MAX_INDEX_SOURCES_PER_PACKAGE) {
+            "Repository package '$packageId' contains too many sources"
+        }
+        tally.totalSources += packageSources.size
+        require(tally.totalSources <= MAX_INDEX_TOTAL_SOURCES) { "Repository contains too many sources" }
+        packageSources.forEach { source ->
+            val sourceId = source.jsonObject.requiredString("sourceId")
+            require(sourceIds.add(sourceId)) { "Duplicate V2 source id '$sourceId'" }
+        }
+        return packageSources
+    }
+
+    /**
+     * Whether a V2 package is left out of the executable index. Its admission fields are still
+     * validated so a malformed row keeps failing the whole document.
+     */
+    private fun isSkippedV2Package(pkg: JsonObject): Boolean {
+        val skipped = isNonExecutableV2Package(pkg) || declaresUnknownV2Permission(pkg)
+        if (skipped) requireV2PackageAdmissionFields(pkg)
+        return skipped
+    }
+
+    // Reference-only/non-installable Shinsou packages may intentionally use opaque
+    // source IDs (for example, a login capability sample). They are not executable
+    // legacy-adapter entries and must not make the installable half of a mixed V2 index
+    // fail while coercing source IDs to Long. Existing installed packages are still
+    // projected from packageStore by PluginManager.refresh().
+    private fun isNonExecutableV2Package(pkg: JsonObject): Boolean =
+        pkg["installable"]?.jsonPrimitive?.booleanOrNull == false ||
+            pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull == true ||
+            pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull == true
+
+    // A package declaring a permission this app does not know was published for a newer app:
+    // it is left out like a non-installable row (never granted an unknown permission), while
+    // the rest of the repository stays usable instead of the whole index failing.
+    private fun declaresUnknownV2Permission(pkg: JsonObject): Boolean {
+        val knownHostPermissions = PluginHostPermission.entries.mapTo(hashSetOf()) { it.name }
+        val knownRuntimePermissions = PluginRuntimePermission.entries.mapTo(hashSetOf()) { it.name }
+        return !knownHostPermissions.containsAll(pkg.requiredStringSet("requestedHostPermissions")) ||
+            !knownRuntimePermissions.containsAll(pkg.requiredStringSet("runtimePermissions"))
+    }
+
+    private fun decodeV2Package(
+        pkg: JsonObject,
+        packageId: String,
+        contract: String,
+        packageSources: JsonArray,
+    ): PluginIndexEntry {
+        val eventObject = pkg["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
+        require(eventObject.requiredString("protocol") == "dev.shinsou.system")
+        val events = PluginSystemEventDeclaration(
+            minVersion = eventObject.requiredInt("minVersion"),
+            maxVersion = eventObject.requiredInt("maxVersion"),
+            required = eventObject.requiredStringSet("required"),
+            optional = eventObject.requiredStringSet("optional"),
+        )
+        val requested = pkg.requiredStringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
+            PluginHostPermission.valueOf(it)
+        }
+        val runtimePermissions = pkg.requiredStringSet("runtimePermissions").let { permissions ->
+            permissions.mapTo(linkedSetOf()) {
+                runCatching { PluginRuntimePermission.valueOf(it) }
+                    .getOrElse { error("Unknown runtime permission '$it'") }
+            }
+        }
+        val packageContentKinds = pkg.requiredStringSet("contentKinds")
+        return PluginIndexEntry(
+            id = packageId,
+            name = pkg.requiredString("name"),
+            version = pkg.requiredString("version"),
+            versionCode = pkg["versionCode"]?.jsonPrimitive?.intOrNull ?: error("Missing versionCode"),
+            lang = pkg.requiredString("lang"),
+            nsfw = if (pkg.requiredBoolean("nsfw")) 1 else 0,
+            scriptUrl = pkg.requiredString("scriptUrl"),
+            description = pkg["description"]?.jsonPrimitive?.contentOrNull,
+            sources = packageSources.map { decodeV2Source(it.jsonObject) },
+            sha256 = pkg.requiredString("sha256"),
+            byteSize = pkg["byteSize"]?.jsonPrimitive?.intOrNull ?: error("Missing byteSize"),
+            contentType = pkg["contentType"]?.jsonPrimitive?.contentOrNull,
+            contract = contract,
+            runtime = pkg.requiredString("runtime"),
+            contentKinds = packageContentKinds,
+            capabilities = pkg.requiredStringSet("capabilities"),
+            sidecarUrl = pkg.requiredString("sidecarUrl"),
+            systemEvents = events,
+            requestedHostPermissions = requested,
+            runtimePermissions = runtimePermissions,
+            installable = pkg["installable"]?.jsonPrimitive?.booleanOrNull ?: true,
+            referenceOnly = pkg["referenceOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+            legacyCompatibilityOnly = pkg["legacyCompatibilityOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+        )
+    }
+
+    private fun decodeV2Source(source: JsonObject): SourceIndexEntry {
+        val rawId = source.requiredString("sourceId")
+        return SourceIndexEntry(
+            name = source.requiredString("name"),
+            lang = source.requiredString("lang"),
+            // A numeric sourceId is its own engine id. A string sourceId (an existing
+            // library identity, such as a former ShuYue source) names its numeric
+            // engine and storage id in legacyLongId.
+            id = rawId.toLongOrNull() ?: run {
+                require(STRING_SOURCE_ID.matches(rawId)) { "Invalid source id '$rawId'" }
+                source.requiredNullableString("legacyLongId")?.toLongOrNull()
+                    ?: error("Source '$rawId' needs a numeric legacyLongId")
+            },
+            baseUrl = source.requiredString("baseUrl"),
+            // Preserve the raw index metadata. An omitted source refinement is
+            // meaningful to exact installed-manifest matching; sidecar validation
+            // applies package inheritance only at its semantic comparison boundary.
+            contentType = source["contentType"]?.jsonPrimitive?.contentOrNull,
+            // The published V2 schema permits these source-level refinements to be
+            // omitted.  Missing origin declarations stay explicitly empty (and the
+            // V2 policy marker below keeps them fail-closed); they must never fall
+            // through to the legacy base-origin compatibility policy.
+            contentKinds = source.optionalStringSet("contentKinds"),
+            contentKindsDeclared = "contentKinds" in source,
+            requestOrigins = source.optionalStringSet("requestOrigins"),
+            credentialOrigins = source.optionalStringSet("credentialOrigins"),
+            contentOrigins = source.optionalStringSet("contentOrigins"),
+            browserSessionOrigins = source.optionalStringSet("browserSessionOrigins"),
+            contentHostSuffixes = source.optionalStringSet("contentHostSuffixes"),
+            browserImageOrigins = source.optionalStringSet("browserImageOrigins"),
+            browserLoginOrigins = source.optionalStringSet("browserLoginOrigins"),
+            browserLoginResourceOrigins = source.optionalStringSet("browserLoginResourceOrigins"),
+            originPolicyVersion = 2,
+            legacyLongId = source.requiredNullableString("legacyLongId"),
+            canonicalSourceId = rawId,
+        )
     }
 
     public suspend fun downloadPluginScript(baseUrl: String, scriptUrl: String): ByteArray {
@@ -473,29 +506,7 @@ public class ExtensionRepositoryClient(
         val sidecar = verified.payload as? JsonObject
             ?: throw ExtensionRepositoryException.InvalidDocument(url, IllegalArgumentException("V2 sidecar must be an object"))
         try {
-            require(sidecar.requiredString("format") == "shinsou-extension-sidecar-v2")
-            require(sidecar.requiredInt("contractVersion") == 2)
-            require(sidecar.requiredString("packageId") == entry.id)
-            require(sidecar.requiredString("version") == entry.version)
-            require(sidecar.requiredInt("versionCode") == entry.versionCode)
-            require(sidecar.requiredString("contract") == entry.contract)
-            requireSidecarRuntimeParity(normalized, sidecar, entry)
-            require(sidecar.requiredString("name") == entry.name)
-            require(sidecar.requiredString("lang") == entry.lang)
-            require(sidecar.requiredBoolean("nsfw") == (entry.nsfw == 1))
-            require(sidecar.requiredBoolean("installable") == entry.installable)
-            require(sidecar.optionalBoolean("referenceOnly", false) == entry.referenceOnly)
-            require(sidecar.optionalBoolean("legacyCompatibilityOnly", false) == entry.legacyCompatibilityOnly)
-            val artifact = sidecar["artifact"]?.jsonObject ?: error("Missing artifact")
-            require(artifact.requiredString("scriptUrl") == entry.scriptUrl)
-            require(artifact.requiredString("sha256") == entry.sha256)
-            require(artifact.requiredInt("byteSize") == entry.byteSize)
-            val content = sidecar["content"]?.jsonObject ?: error("Missing content")
-            require(content.requiredInt("contractVersion") == 2)
-            require(content.requiredString("type") == entry.contentType)
-            require(content.requiredString("contract") == "extension-content-v2")
-            require(content.requiredStringSet("kinds") == entry.contentKinds)
-            require(sidecar.requiredStringSet("capabilities") == entry.capabilities)
+            requireSidecarPackageParity(normalized, sidecar, entry)
             val sidecarSources = sidecar["sources"] as? JsonArray ?: error("Missing sources")
             require(sidecarSources.size == entry.sources.orEmpty().size)
             entry.sources.orEmpty().forEach { expected ->
@@ -503,77 +514,123 @@ public class ExtensionRepositoryClient(
                 val match = sidecarSources.map { it.jsonObject }.single { source ->
                     source.requiredString("sourceId") == expectedSourceId
                 }
-                val sourceKey = match["sourceKey"]?.jsonObject ?: error("Missing sourceKey")
-                require(sourceKey.requiredInt("contractVersion") == 2)
-                require(sourceKey.requiredString("packageId") == entry.id)
-                require(sourceKey.requiredString("sourceId") == expectedSourceId)
-                requireNullableStringParity(sourceKey, "legacyLongId", expected.legacyLongId)
-                require(match.requiredString("name") == expected.name)
-                require(match.requiredString("lang") == expected.lang)
-                require(match.requiredString("baseUrl") == expected.baseUrl)
-                val expectedContentType = expected.contentType
-                    ?: entry.contentType
-                // Source contentType is an optional refinement on both sides. When the index
-                // omits it, the package type is the semantic inherited value; maintained
-                // sidecars may omit the redundant source field as well. Explicit values still
-                // have to match and are never widened.
-                requireOptionalNullableStringParity(
-                    match,
-                    "contentType",
-                    expectedContentType,
-                    allowMissing = expected.contentType == null && entry.contentType in setOf("manga", "novel"),
-                )
-                require("contentKinds" in match) {
-                    "Sidecar source contentKinds must preserve its explicit V2 binding"
-                }
-                val sidecarContentKinds = match.optionalStringSet("contentKinds")
-                val expectedSidecarContentKinds = if (expected.contentKindsDeclared == false) {
-                    // The maintained index omits this source refinement and the sidecar repeats
-                    // the package-level contract. Preserve omission as empty on SourceIndexEntry,
-                    // but do not confuse an explicitly empty source declaration with inheritance.
-                    entry.contentKinds
-                } else {
-                    expected.contentKinds
-                }
-                require(sidecarContentKinds == expectedSidecarContentKinds)
-                require(match.optionalStringSet("requestOrigins") == expected.requestOrigins)
-                require(match.optionalStringSet("credentialOrigins") == expected.credentialOrigins)
-                require(match.optionalStringSet("contentOrigins") == expected.contentOrigins)
-                require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
-                require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
-                require(match.optionalStringSet("browserImageOrigins") == expected.browserImageOrigins)
-                require(match.optionalStringSet("browserLoginOrigins") == expected.browserLoginOrigins)
-                require(match.optionalStringSet("browserLoginResourceOrigins") == expected.browserLoginResourceOrigins)
-                require(match.requiredStringSet("capabilities") == entry.capabilities)
-                val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
-                require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
-                require(
-                    match.requiredStringSet("requestedHostPermissions") ==
-                        entry.requestedHostPermissions.mapTo(linkedSetOf()) { it.name },
-                )
-                require(
-                    match.requiredStringSet("runtimePermissions") ==
-                        entry.runtimePermissions.orEmpty().mapTo(linkedSetOf()) { it.name },
-                )
+                requireSidecarSourceParity(match, entry, expected, expectedSourceId)
             }
-            val events = sidecar["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
-            val declaration = parseEventDeclaration(events)
-            require(declaration == entry.systemEvents)
-            val requested = sidecar.requiredStringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
-                PluginHostPermission.valueOf(it)
-            }
-            require(requested == entry.requestedHostPermissions)
-            val runtimePermissions = sidecar.requiredStringSet("runtimePermissions").mapTo(linkedSetOf()) {
-                runCatchingCancellable { PluginRuntimePermission.valueOf(it) }
-                    .getOrElse { error("Unknown runtime permission '$it'") }
-            }
-            require(runtimePermissions == entry.runtimePermissions)
+            requireSidecarEventsAndPermissionsParity(sidecar, entry)
             signedDocuments.commit(verified.admission)
         } catch (error: Throwable) {
             if (error is kotlinx.coroutines.CancellationException) currentCoroutineContext().ensureActive()
             // Cancelling this coroutine is not an invalid document; a timeout inside still is.
             throw ExtensionRepositoryException.InvalidDocument(url, error)
         }
+    }
+
+    /** Package-level half of the sidecar cross-check: identity, flags, artifact and content. */
+    private fun requireSidecarPackageParity(normalized: String, sidecar: JsonObject, entry: PluginIndexEntry) {
+        require(sidecar.requiredString("format") == "shinsou-extension-sidecar-v2")
+        require(sidecar.requiredInt("contractVersion") == 2)
+        require(sidecar.requiredString("packageId") == entry.id)
+        require(sidecar.requiredString("version") == entry.version)
+        require(sidecar.requiredInt("versionCode") == entry.versionCode)
+        require(sidecar.requiredString("contract") == entry.contract)
+        requireSidecarRuntimeParity(normalized, sidecar, entry)
+        require(sidecar.requiredString("name") == entry.name)
+        require(sidecar.requiredString("lang") == entry.lang)
+        require(sidecar.requiredBoolean("nsfw") == (entry.nsfw == 1))
+        require(sidecar.requiredBoolean("installable") == entry.installable)
+        require(sidecar.optionalBoolean("referenceOnly", false) == entry.referenceOnly)
+        require(sidecar.optionalBoolean("legacyCompatibilityOnly", false) == entry.legacyCompatibilityOnly)
+        val artifact = sidecar["artifact"]?.jsonObject ?: error("Missing artifact")
+        require(artifact.requiredString("scriptUrl") == entry.scriptUrl)
+        require(artifact.requiredString("sha256") == entry.sha256)
+        require(artifact.requiredInt("byteSize") == entry.byteSize)
+        val content = sidecar["content"]?.jsonObject ?: error("Missing content")
+        require(content.requiredInt("contractVersion") == 2)
+        require(content.requiredString("type") == entry.contentType)
+        require(content.requiredString("contract") == "extension-content-v2")
+        require(content.requiredStringSet("kinds") == entry.contentKinds)
+        require(sidecar.requiredStringSet("capabilities") == entry.capabilities)
+    }
+
+    /** Cross-checks one sidecar source against the index entry that declared it. */
+    private fun requireSidecarSourceParity(
+        match: JsonObject,
+        entry: PluginIndexEntry,
+        expected: SourceIndexEntry,
+        expectedSourceId: String,
+    ) {
+        val sourceKey = match["sourceKey"]?.jsonObject ?: error("Missing sourceKey")
+        require(sourceKey.requiredInt("contractVersion") == 2)
+        require(sourceKey.requiredString("packageId") == entry.id)
+        require(sourceKey.requiredString("sourceId") == expectedSourceId)
+        requireNullableStringParity(sourceKey, "legacyLongId", expected.legacyLongId)
+        require(match.requiredString("name") == expected.name)
+        require(match.requiredString("lang") == expected.lang)
+        require(match.requiredString("baseUrl") == expected.baseUrl)
+        val expectedContentType = expected.contentType
+            ?: entry.contentType
+        // Source contentType is an optional refinement on both sides. When the index
+        // omits it, the package type is the semantic inherited value; maintained
+        // sidecars may omit the redundant source field as well. Explicit values still
+        // have to match and are never widened.
+        requireOptionalNullableStringParity(
+            match,
+            "contentType",
+            expectedContentType,
+            allowMissing = expected.contentType == null && entry.contentType in setOf("manga", "novel"),
+        )
+        require("contentKinds" in match) {
+            "Sidecar source contentKinds must preserve its explicit V2 binding"
+        }
+        val sidecarContentKinds = match.optionalStringSet("contentKinds")
+        val expectedSidecarContentKinds = if (expected.contentKindsDeclared == false) {
+            // The maintained index omits this source refinement and the sidecar repeats
+            // the package-level contract. Preserve omission as empty on SourceIndexEntry,
+            // but do not confuse an explicitly empty source declaration with inheritance.
+            entry.contentKinds
+        } else {
+            expected.contentKinds
+        }
+        require(sidecarContentKinds == expectedSidecarContentKinds)
+        requireSidecarOriginParity(match, expected)
+        require(match.requiredStringSet("capabilities") == entry.capabilities)
+        val sourceEvents = match["systemEvents"]?.jsonObject ?: error("Missing source systemEvents")
+        require(parseEventDeclaration(sourceEvents) == entry.systemEvents)
+        require(
+            match.requiredStringSet("requestedHostPermissions") ==
+                entry.requestedHostPermissions.mapTo(linkedSetOf()) { it.name },
+        )
+        require(
+            match.requiredStringSet("runtimePermissions") ==
+                entry.runtimePermissions.orEmpty().mapTo(linkedSetOf()) { it.name },
+        )
+    }
+
+    private fun requireSidecarOriginParity(match: JsonObject, expected: SourceIndexEntry) {
+        require(match.optionalStringSet("requestOrigins") == expected.requestOrigins)
+        require(match.optionalStringSet("credentialOrigins") == expected.credentialOrigins)
+        require(match.optionalStringSet("contentOrigins") == expected.contentOrigins)
+        require(match.optionalStringSet("browserSessionOrigins") == expected.browserSessionOrigins)
+        require(match.optionalStringSet("contentHostSuffixes") == expected.contentHostSuffixes)
+        require(match.optionalStringSet("browserImageOrigins") == expected.browserImageOrigins)
+        require(match.optionalStringSet("browserLoginOrigins") == expected.browserLoginOrigins)
+        require(match.optionalStringSet("browserLoginResourceOrigins") == expected.browserLoginResourceOrigins)
+    }
+
+    /** Sidecar-level system events and permissions must equal what the index declared. */
+    private suspend fun requireSidecarEventsAndPermissionsParity(sidecar: JsonObject, entry: PluginIndexEntry) {
+        val events = sidecar["systemEvents"]?.jsonObject ?: error("Missing systemEvents")
+        val declaration = parseEventDeclaration(events)
+        require(declaration == entry.systemEvents)
+        val requested = sidecar.requiredStringSet("requestedHostPermissions").mapTo(linkedSetOf()) {
+            PluginHostPermission.valueOf(it)
+        }
+        require(requested == entry.requestedHostPermissions)
+        val runtimePermissions = sidecar.requiredStringSet("runtimePermissions").mapTo(linkedSetOf()) {
+            runCatchingCancellable { PluginRuntimePermission.valueOf(it) }
+                .getOrElse { error("Unknown runtime permission '$it'") }
+        }
+        require(runtimePermissions == entry.runtimePermissions)
     }
 
     public fun resolveAssetUrl(baseUrl: String, relativePath: String): String {
@@ -936,12 +993,14 @@ public class ExtensionRepositoryClient(
     private fun validateRelativePath(path: String) {
         val route = path.substringBefore('?').substringBefore('#')
         if ('\\' in route) throw ExtensionRepositoryException.InvalidUrl(path)
-        val segments = route.split('/')
-        if (route.isBlank() || route.startsWith('/') || "://" in route || segments.any { it == ".." || it == "." }) {
-            throw ExtensionRepositoryException.InvalidUrl(path)
-        }
+        if (isAbsoluteOrTraversingRoute(route)) throw ExtensionRepositoryException.InvalidUrl(path)
         if (route.any { it.isWhitespace() || it.isISOControl() }) throw ExtensionRepositoryException.InvalidUrl(path)
         validatePercentEncodedPath(route)
+    }
+
+    private fun isAbsoluteOrTraversingRoute(route: String): Boolean {
+        val isAbsolute = route.isBlank() || route.startsWith('/') || "://" in route
+        return isAbsolute || route.split('/').any { it == ".." || it == "." }
     }
 
     private fun validatePercentEncodedPath(route: String) {
@@ -964,17 +1023,10 @@ public class ExtensionRepositoryClient(
         val scheme = match.groupValues[1].lowercase()
         val authority = match.groupValues[2]
         if (scheme !in setOf("http", "https") || '@' in authority || '%' in authority) throw ExtensionRepositoryException.InvalidUrl(value)
-        val host: String
-        if (authority.startsWith('[')) {
-            val close = authority.indexOf(']')
-            if (close <= 1 || authority.substring(close + 1).let { it.isNotEmpty() && !it.startsWith(':') }) throw ExtensionRepositoryException.InvalidUrl(value)
-            host = authority.substring(1, close).lowercase()
+        val host = if (authority.startsWith('[')) {
+            parseBracketedHost(authority, value)
         } else {
-            if (authority.count { it == ':' } > 1) throw ExtensionRepositoryException.InvalidUrl(value)
-            host = authority.substringBefore(':').lowercase()
-            val port = authority.substringAfter(':', "")
-            if (port.isNotEmpty() && (port.any { !it.isDigit() } || port.toIntOrNull() !in 1..65535)) throw ExtensionRepositoryException.InvalidUrl(value)
-            if (host.isBlank() || host.any { !(it.isLetterOrDigit() || it == '.' || it == '-') }) throw ExtensionRepositoryException.InvalidUrl(value)
+            parseNamedHost(authority, value)
         }
         val path = match.groupValues[3].ifEmpty { "/" }
         if (path != "/") {
@@ -985,18 +1037,50 @@ public class ExtensionRepositoryClient(
         return ParsedRepositoryUrl(scheme, host, "$scheme://$authority", path)
     }
 
+    /** The IPv6 literal host of a `[host]:port` authority. */
+    private fun parseBracketedHost(authority: String, value: String): String {
+        val close = authority.indexOf(']')
+        if (close <= 1 || authority.substring(close + 1).let { it.isNotEmpty() && !it.startsWith(':') }) throw ExtensionRepositoryException.InvalidUrl(value)
+        return authority.substring(1, close).lowercase()
+    }
+
+    /** The DNS or IPv4 host of a `host:port` authority; the port and host characters are checked. */
+    private fun parseNamedHost(authority: String, value: String): String {
+        if (authority.count { it == ':' } > 1) throw ExtensionRepositoryException.InvalidUrl(value)
+        val host = authority.substringBefore(':').lowercase()
+        val port = authority.substringAfter(':', "")
+        if (port.isNotEmpty() && !isValidPort(port) || !isValidHostName(host)) throw ExtensionRepositoryException.InvalidUrl(value)
+        return host
+    }
+
+    private fun isValidPort(port: String): Boolean = port.none { !it.isDigit() } && port.toIntOrNull() in 1..65535
+
+    private fun isValidHostName(host: String): Boolean =
+        host.isNotBlank() && host.none { !(it.isLetterOrDigit() || it == '.' || it == '-') }
+
     private fun resolveRedirect(base: String, location: String): String =
         if (location.startsWith("/")) parseRepositoryUrl(base).origin + location
         else if (location.startsWith("http://") || location.startsWith("https://")) location
         else parseRepositoryUrl(base).origin + "/" + location
 
     private fun isPrivateHost(host: String): Boolean {
-        if (host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.endsWith(".local")) return true
+        if (isLocalHostName(host)) return true
         if (':' in host) return isPrivateIpv6Literal(host)
         val octets = host.split('.').map(String::toIntOrNull)
         if (octets.size != 4 || octets.any { it == null || it !in 0..255 }) return false
-        val a = octets[0]!!; val b = octets[1]!!
-        return a == 0 || a == 10 || a == 127 || a == 169 && b == 254 || a == 172 && b in 16..31 || a == 192 && b == 168
+        return isPrivateIpv4(octets[0]!!, octets[1]!!)
+    }
+
+    private fun isLocalHostName(host: String): Boolean =
+        host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.endsWith(".local")
+
+    /** Loopback, unspecified and RFC 1918 / link-local ranges, from the first two octets. */
+    private fun isPrivateIpv4(a: Int, b: Int): Boolean = when (a) {
+        0, 10, 127 -> true
+        169 -> b == 254
+        172 -> b in 16..31
+        192 -> b == 168
+        else -> false
     }
 
     private fun isPrivateIpv6Literal(host: String): Boolean {
@@ -1026,22 +1110,7 @@ public class ExtensionRepositoryClient(
         var totalSources = 0
         val ids = mutableSetOf<String>()
         entries.forEach { entry ->
-            requireIndexString(entry.id, MAX_INDEX_ID_BYTES, "package id")
-            requireIndexString(entry.name, MAX_INDEX_NAME_BYTES, "package name")
-            requireIndexString(entry.version, MAX_INDEX_VERSION_BYTES, "package version")
-            requireIndexString(entry.lang, MAX_INDEX_LANG_BYTES, "package language")
-            requireIndexString(entry.scriptUrl, MAX_INDEX_URL_BYTES, "script URL")
-            entry.iconUrl?.let { requireIndexString(it, MAX_INDEX_URL_BYTES, "icon URL") }
-            entry.description?.let { requireIndexString(it, MAX_INDEX_DESCRIPTION_BYTES, "description") }
-            entry.sidecarUrl?.let { requireIndexString(it, MAX_INDEX_URL_BYTES, "sidecar URL") }
-            require(entry.contentKinds.size <= MAX_INDEX_SET_VALUES &&
-                entry.capabilities.size <= MAX_INDEX_SET_VALUES &&
-                entry.requestedHostPermissions.size <= MAX_INDEX_SET_VALUES &&
-                entry.runtimePermissions.orEmpty().size <= MAX_INDEX_SET_VALUES
-            ) { "Repository package declaration contains too many values" }
-            (entry.contentKinds + entry.capabilities).forEach {
-                requireIndexString(it, MAX_INDEX_ID_BYTES, "package declaration")
-            }
+            requirePluginEntryStrings(entry)
             require(ids.add(entry.id)) { "Duplicate plugin package id '${entry.id}'" }
             val sources = entry.sources.orEmpty()
             require(sources.size <= MAX_INDEX_SOURCES_PER_PACKAGE) {
@@ -1055,9 +1124,7 @@ public class ExtensionRepositoryClient(
                 require(sourceIds.add(source.id)) { "Duplicate source id '${source.id}' in '${entry.id}'" }
             }
             entry.runtimePermissions?.forEach { /* enum deserialization already rejects unknown values */ }
-            if (requireAuthenticatedArtifacts && entry.installable &&
-                !entry.referenceOnly && !entry.legacyCompatibilityOnly
-            ) {
+            if (requireAuthenticatedArtifacts && isSignedExecutableCandidate(entry)) {
                 require(entry.sha256?.matches(SHA256_HEX) == true) {
                     "Signed executable '${entry.id}' must declare a canonical SHA-256"
                 }
@@ -1065,6 +1132,29 @@ public class ExtensionRepositoryClient(
                     "Signed executable '${entry.id}' must declare a bounded byteSize"
                 }
             }
+        }
+    }
+
+    private fun isSignedExecutableCandidate(entry: PluginIndexEntry): Boolean =
+        entry.installable && !entry.referenceOnly && !entry.legacyCompatibilityOnly
+
+    /** Bounds every free-form string and declaration set of one package entry. */
+    private fun requirePluginEntryStrings(entry: PluginIndexEntry) {
+        requireIndexString(entry.id, MAX_INDEX_ID_BYTES, "package id")
+        requireIndexString(entry.name, MAX_INDEX_NAME_BYTES, "package name")
+        requireIndexString(entry.version, MAX_INDEX_VERSION_BYTES, "package version")
+        requireIndexString(entry.lang, MAX_INDEX_LANG_BYTES, "package language")
+        requireIndexString(entry.scriptUrl, MAX_INDEX_URL_BYTES, "script URL")
+        entry.iconUrl?.let { requireIndexString(it, MAX_INDEX_URL_BYTES, "icon URL") }
+        entry.description?.let { requireIndexString(it, MAX_INDEX_DESCRIPTION_BYTES, "description") }
+        entry.sidecarUrl?.let { requireIndexString(it, MAX_INDEX_URL_BYTES, "sidecar URL") }
+        require(entry.contentKinds.size <= MAX_INDEX_SET_VALUES &&
+            entry.capabilities.size <= MAX_INDEX_SET_VALUES &&
+            entry.requestedHostPermissions.size <= MAX_INDEX_SET_VALUES &&
+            entry.runtimePermissions.orEmpty().size <= MAX_INDEX_SET_VALUES
+        ) { "Repository package declaration contains too many values" }
+        (entry.contentKinds + entry.capabilities).forEach {
+            requireIndexString(it, MAX_INDEX_ID_BYTES, "package declaration")
         }
     }
 

@@ -64,6 +64,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.FileSystem
@@ -588,16 +589,7 @@ public fun MangaTranslationPanel(state: MangaReaderTranslationState, modifier: M
     val settings = state.settings ?: return
     fun update(next: WorkTranslationSettings) { scope.launch { state.update(next) } }
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(strings.text(StringKey.TRANSLATE_MANGA_PAGES), style = MaterialTheme.typography.titleMedium)
-                Text(
-                    strings.text(StringKey.TEXT_ON_EACH_PAGE_IS_RECOGNISED_ON),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = settings.enabled, onCheckedChange = { update(settings.copy(enabled = it)) }, enabled = state.deviceSupported)
-        }
+        MangaPanelHeader(settings.enabled, state.deviceSupported) { update(settings.copy(enabled = it)) }
         if (!state.deviceSupported) {
             Text(strings.text(StringKey.MANGA_TRANSLATION_IS_NOT_AVAILABLE_ON_THIS), color = MaterialTheme.colorScheme.error)
             return@Column
@@ -653,74 +645,111 @@ public fun MangaTranslationPanel(state: MangaReaderTranslationState, modifier: M
                     onClick = { update(settings.copy(mode = mode)) }, label = { Text(strings.text(label)) })
             }
         }
-        if (state.textModelBytes > 0) {
-            Text(strings.text(StringKey.THIS_LANGUAGE_PAIR_NEEDS_TRANSLATION_MODELS_X, (state.textModelBytes + 999_999) / 1_000_000))
-            if (state.textModelDownloadFailed) {
-                Text(strings.text(StringKey.THE_DOWNLOAD_FAILED_CHECK_THE_CONNECTION_AND), color = MaterialTheme.colorScheme.error)
-            }
-            val textDownload = state.textModelDownload
-            if (textDownload != null) {
-                LinearProgressIndicator(progress = { textDownload.first.toFloat() / textDownload.second }, modifier = Modifier.fillMaxWidth())
-            } else {
-                Button(onClick = { scope.launch { state.downloadTextModels() } }) { Text(strings.text(StringKey.DOWNLOAD_MODELS)) }
-            }
-        }
-        if (state.systemLanguagesMissing) {
-            Text(strings.text(StringKey.THE_SYSTEM_TRANSLATION_NEEDS_THESE_LANGUAGES_DOWNLOADED))
-            if (state.textModelDownloadFailed) {
-                Text(strings.text(StringKey.THE_LANGUAGES_WERE_NOT_DOWNLOADED_TRY_AGAIN), color = MaterialTheme.colorScheme.error)
-            }
-            if (state.systemLanguagesDownloading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            } else {
-                Button(onClick = { scope.launch { state.downloadSystemLanguages() } }) { Text(strings.text(StringKey.DOWNLOAD_LANGUAGES)) }
-            }
-        }
+        MangaPanelTextModels(state, scope)
         Text(strings.text(StringKey.TEXT_DRAWN_OVER_THE_ARTWORK), style = MaterialTheme.typography.labelLarge)
-        val inpaintDownload = state.inpaintDownload
-        when {
-            inpaintDownload != null -> LinearProgressIndicator(
-                progress = { if (inpaintDownload.second > 0) inpaintDownload.first.toFloat() / inpaintDownload.second else 0f },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            state.inpaintInstalled -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(strings.text(StringKey.TRANSLATED_TOO_THE_ART_BENEATH_IS_REDRAWN), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = { scope.launch { state.removeInpaint() } }) { Text(strings.text(StringKey.REMOVE)) }
-            }
-            else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    strings.text(StringKey.KEPT_AS_DRAWN_AN_OPTIONAL_X_MB, (state.missingInpaintBytes + 999_999) / 1_000_000),
-                    Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
-                )
-                TextButton(onClick = { scope.launch { state.downloadInpaint() } }, enabled = state.modelsInstalled) { Text(strings.text(StringKey.DOWNLOAD)) }
-            }
-        }
+        MangaPanelInpaint(state, scope)
         state.failure?.let { message ->
             Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             Button(onClick = { state.retry() }) { Text(strings.text(StringKey.RETRY)) }
         }
         // developer diagnostics: how this device is used, and where the last chapter's time went
-        val tuning = state.tuning
-        if (dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics.current.showLoadingElapsed && tuning != null) {
-            Text(
-                strings.text(StringKey.DEVICE_TUNING_DETECTION_X_THREADS_OCR_X, tuning.detectorThreads, tuning.ocrWorkers, tuning.ocrThreads, tuning.pageLoadsAhead),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            state.lastRun?.let { run ->
-                Text(
-                    if (run.fromCache) strings.text(StringKey.LAST_CHAPTER_X_PAGES_SHOWN_AS_DRAWN, run.pages)
-                    else strings.text(StringKey.LAST_CHAPTER_X_PAGES_LOADING_AND_READING, run.pages, seconds(run.readMs), seconds(run.translateMs), seconds(run.drawMs)) +
-                        (if (run.fromCache) "" else " · " + strings.text(StringKey.FIRST_PAGE_X_S, seconds(run.firstPageMs))) +
-                        " · " + run.detector,
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        MangaPanelDiagnostics(state)
         Text(
             strings.text(StringKey.THE_TRANSLATION_SERVICE_AND_ITS_KEYS_ARE) + " " +
                 strings.text(StringKey.WHERE_TEXT_IS_DETECTED_CPU_GPU_OR),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** The panel's title, what translating does, and the switch that turns it on for this work. */
+@Composable
+private fun MangaPanelHeader(enabled: Boolean, deviceSupported: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(strings.text(StringKey.TRANSLATE_MANGA_PAGES), style = MaterialTheme.typography.titleMedium)
+            Text(
+                strings.text(StringKey.TEXT_ON_EACH_PAGE_IS_RECOGNISED_ON),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabledChange, enabled = deviceSupported)
+    }
+}
+
+/** The translation-model and system-language downloads the chosen language pair needs. */
+@Composable
+private fun MangaPanelTextModels(state: MangaReaderTranslationState, scope: CoroutineScope) {
+    val strings = LocalShinsouStrings.current
+    if (state.textModelBytes > 0) {
+        Text(strings.text(StringKey.THIS_LANGUAGE_PAIR_NEEDS_TRANSLATION_MODELS_X, (state.textModelBytes + 999_999) / 1_000_000))
+        if (state.textModelDownloadFailed) {
+            Text(strings.text(StringKey.THE_DOWNLOAD_FAILED_CHECK_THE_CONNECTION_AND), color = MaterialTheme.colorScheme.error)
+        }
+        val textDownload = state.textModelDownload
+        if (textDownload != null) {
+            LinearProgressIndicator(progress = { textDownload.first.toFloat() / textDownload.second }, modifier = Modifier.fillMaxWidth())
+        } else {
+            Button(onClick = { scope.launch { state.downloadTextModels() } }) { Text(strings.text(StringKey.DOWNLOAD_MODELS)) }
+        }
+    }
+    if (state.systemLanguagesMissing) {
+        Text(strings.text(StringKey.THE_SYSTEM_TRANSLATION_NEEDS_THESE_LANGUAGES_DOWNLOADED))
+        if (state.textModelDownloadFailed) {
+            Text(strings.text(StringKey.THE_LANGUAGES_WERE_NOT_DOWNLOADED_TRY_AGAIN), color = MaterialTheme.colorScheme.error)
+        }
+        if (state.systemLanguagesDownloading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+            Button(onClick = { scope.launch { state.downloadSystemLanguages() } }) { Text(strings.text(StringKey.DOWNLOAD_LANGUAGES)) }
+        }
+    }
+}
+
+/** The optional model that redraws the art beneath translated text: its download, or removal. */
+@Composable
+private fun MangaPanelInpaint(state: MangaReaderTranslationState, scope: CoroutineScope) {
+    val strings = LocalShinsouStrings.current
+    val inpaintDownload = state.inpaintDownload
+    when {
+        inpaintDownload != null -> LinearProgressIndicator(
+            progress = { if (inpaintDownload.second > 0) inpaintDownload.first.toFloat() / inpaintDownload.second else 0f },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        state.inpaintInstalled -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(strings.text(StringKey.TRANSLATED_TOO_THE_ART_BENEATH_IS_REDRAWN), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { scope.launch { state.removeInpaint() } }) { Text(strings.text(StringKey.REMOVE)) }
+        }
+        else -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                strings.text(StringKey.KEPT_AS_DRAWN_AN_OPTIONAL_X_MB, (state.missingInpaintBytes + 999_999) / 1_000_000),
+                Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+            )
+            TextButton(onClick = { scope.launch { state.downloadInpaint() } }, enabled = state.modelsInstalled) { Text(strings.text(StringKey.DOWNLOAD)) }
+        }
+    }
+}
+
+/** Developer diagnostics: how this device is used, and where the last chapter's time went. */
+@Composable
+private fun MangaPanelDiagnostics(state: MangaReaderTranslationState) {
+    val strings = LocalShinsouStrings.current
+    val tuning = state.tuning
+    if (dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics.current.showLoadingElapsed && tuning != null) {
+        Text(
+            strings.text(StringKey.DEVICE_TUNING_DETECTION_X_THREADS_OCR_X, tuning.detectorThreads, tuning.ocrWorkers, tuning.ocrThreads, tuning.pageLoadsAhead),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        state.lastRun?.let { run ->
+            Text(
+                if (run.fromCache) strings.text(StringKey.LAST_CHAPTER_X_PAGES_SHOWN_AS_DRAWN, run.pages)
+                else strings.text(StringKey.LAST_CHAPTER_X_PAGES_LOADING_AND_READING, run.pages, seconds(run.readMs), seconds(run.translateMs), seconds(run.drawMs)) +
+                    (if (run.fromCache) "" else " · " + strings.text(StringKey.FIRST_PAGE_X_S, seconds(run.firstPageMs))) +
+                    " · " + run.detector,
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

@@ -463,7 +463,16 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
      * translations are. Translations of content whose grant does not allow export stay out.
      */
     public fun exportBackup(includePaid: Boolean, includeFree: Boolean, segmentByteBudget: Long): TranslationBackup = transaction {
-        val works = namedQuery(
+        val works = exportWorks()
+        val glossaries = exportGlossaries()
+        val wanted = buildList { if (includePaid) add(1L); if (includeFree) add(0L) }
+        val (segments, truncated) = exportSegments(wanted, segmentByteBudget)
+        val chapters = exportChapters(wanted, segments, truncated)
+        TranslationBackup(works, glossaries, chapters, segments, truncated)
+    }
+
+    private fun exportWorks(): List<TranslationBackup.Work> =
+        namedQuery(
             "SELECT $WORK_PROJECTION FROM tm_work ORDER BY work_key",
             "tm_work",
         ) { row ->
@@ -477,6 +486,8 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 row.longOrNull("from_picked") == 1L,
             )
         }
+
+    private fun exportGlossaries(): List<TranslationBackup.Glossary> {
         val terms = namedQuery(
             "SELECT work_key, to_lang, id, source, target FROM tm_glossary ORDER BY work_key, to_lang, id",
             "tm_glossary",
@@ -497,7 +508,7 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
             .filter { '.' in it }
             .map { it.substringBeforeLast('.') to it.substringAfterLast('.') }
             .filter { it !in byScope }
-        val glossaries = (byScope.keys + emptied).map { scope ->
+        return (byScope.keys + emptied).map { scope ->
             val (workKey, to) = scope
             val rows = byScope[scope].orEmpty()
             TranslationBackup.Glossary(
@@ -508,7 +519,13 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 terms = rows.map { it.third },
             )
         }
-        val wanted = buildList { if (includePaid) add(1L); if (includeFree) add(0L) }
+    }
+
+    /**
+     * The stored translations of the [wanted] kinds (paid first), newest first, until
+     * [segmentByteBudget] of backup file is used up; and whether some were left out.
+     */
+    private fun exportSegments(wanted: List<Long>, segmentByteBudget: Long): Pair<List<TranslationBackup.Segment>, Boolean> {
         val segments = ArrayList<TranslationBackup.Segment>()
         var truncated = false
         var used = 0L
@@ -547,9 +564,14 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 binders = { bindLong(0, paid) },
             ).value
         }
+        return segments to truncated
+    }
+
+    /** The chapter records of the [wanted] kinds, each with its lines as indexes into [segments]. */
+    private fun exportChapters(wanted: List<Long>, segments: List<TranslationBackup.Segment>, truncated: Boolean): List<TranslationBackup.Chapter> {
         val segmentIndex = HashMap<MemoryKey, Int>(segments.size * 2)
         segments.forEachIndexed { index, segment -> segmentIndex[MemoryKey(segment.sourceHash, segment.from, segment.to, segment.engine)] = index }
-        val chapters = if (wanted.isEmpty()) emptyList() else namedQuery(
+        return if (wanted.isEmpty()) emptyList() else namedQuery(
             "SELECT $CHAPTER_PROJECTION FROM tm_chapter ORDER BY work_key, chapter_key",
             "tm_chapter",
         ) { it.readChapter() }.filter { (if (it.paid) 1L else 0L) in wanted }.map {
@@ -583,7 +605,6 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 sourceName = work?.third,
             )
         }
-        TranslationBackup(works, glossaries, chapters, segments, truncated)
     }
 
     /**

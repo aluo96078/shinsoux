@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,6 +78,161 @@ import kotlinx.coroutines.flow.filter
 
 // R4-4 (docs/architecture/0006): moved out of ReaderScreen.kt without changing it.
 
+/** The gradient top bar: close, title, and the web / favourite / translation / chapter list / settings actions. */
+@Composable
+private fun BoxScope.ReaderTopBar(
+    manga: Manga,
+    chapter: Chapter,
+    minimal: Boolean,
+    inLibrary: Boolean,
+    onClose: () -> Unit,
+    onOpenWeb: (() -> Unit)?,
+    onFavorite: () -> Unit,
+    onChapterList: () -> Unit,
+    onSettings: () -> Unit,
+    onTranslation: (() -> Unit)?,
+    onTranslationToggle: (() -> Unit)?,
+    translationActive: Boolean,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(
+        Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.9f), Color.Transparent)),
+            )
+            // The page stays edge to edge, the controls do not: on iOS the host lays
+            // Compose out over the whole screen, so the Dynamic Island (or a landscape
+            // notch) would cover them. On Android the reader already reserved the status
+            // bar, which this then leaves as it is.
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.Outlined.ArrowBack, strings.text(StringKey.CLOSE_READER), tint = Color.White)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    manga.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    chapter.name,
+                    color = Color.White.copy(alpha = 0.74f),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!minimal) {
+                onOpenWeb?.let { openWeb ->
+                    IconButton(onClick = openWeb) {
+                        Icon(Icons.Outlined.OpenInNew, strings.text(StringKey.OPEN_IN_BROWSER), tint = Color.White)
+                    }
+                }
+                IconButton(onClick = onFavorite) {
+                    Icon(
+                        if (inLibrary) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (inLibrary) strings.unfavorite else strings.favorite,
+                        tint = if (inLibrary) MaterialTheme.colorScheme.primary else Color.White,
+                    )
+                }
+            }
+            onTranslation?.let { openTranslation ->
+                if (onTranslationToggle == null) {
+                    IconButton(onClick = openTranslation) {
+                        Icon(Icons.Outlined.Translate, strings.text(StringKey.TRANSLATION), tint = Color.White)
+                    }
+                } else {
+                    TranslationToggleButton(translationActive, onTranslationToggle, openTranslation)
+                }
+            }
+            IconButton(onClick = onChapterList) {
+                Icon(Icons.Outlined.MenuBook, strings.text(StringKey.CHAPTER_LIST), tint = Color.White)
+            }
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Outlined.Settings, strings.readerSettings, tint = Color.White)
+            }
+        }
+    }
+}
+
+/** The gradient bottom bar: page slider and previous / next chapter. [sliderDragValue] lives in the caller. */
+@Composable
+private fun BoxScope.ReaderPageBar(
+    page: Int,
+    pageCount: Int,
+    sliderMax: Float,
+    /** Read when used: the slider's callbacks see the latest drag, not the one of the last composition. */
+    sliderDragValue: () -> Float?,
+    onSliderDragValue: (Float?) -> Unit,
+    hasPreviousChapter: Boolean,
+    hasNextChapter: Boolean,
+    onPageChange: (Int) -> Unit,
+    onPreviousChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Column(
+        Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))),
+            )
+            .padding(horizontal = 18.dp, vertical = 15.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${page + 1}", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Slider(
+                value = (sliderDragValue() ?: page.toFloat()).coerceIn(0f, sliderMax),
+                onValueChange = { value ->
+                    val previous = readerSliderPage(sliderDragValue() ?: page.toFloat(), pageCount)
+                    onSliderDragValue(value)
+                    val target = readerSliderPage(value, pageCount)
+                    if (target != null && target != previous) onPageChange(target)
+                },
+                onValueChangeFinished = { onSliderDragValue(null) },
+                enabled = pageCount > 1,
+                valueRange = 0f..sliderMax,
+                modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+            )
+            Text("$pageCount", color = Color.White, style = MaterialTheme.typography.labelLarge)
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            TextButton(onClick = onPreviousChapter, enabled = hasPreviousChapter) {
+                Icon(Icons.Outlined.ArrowBack, null)
+                Spacer(Modifier.width(4.dp))
+                Text(strings.previousChapter)
+            }
+            Surface(
+                shape = CircleShape,
+                color = Color.White.copy(alpha = 0.12f),
+            ) {
+                Text(
+                    "${page + 1} / $pageCount",
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+            TextButton(onClick = onNextChapter, enabled = hasNextChapter) {
+                Text(strings.nextChapter)
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Outlined.ArrowForward, null)
+            }
+        }
+    }
+}
+
 @Composable
 internal fun ReaderControls(
     visible: Boolean,
@@ -103,131 +259,18 @@ internal fun ReaderControls(
     onTranslationToggle: (() -> Unit)? = null,
     translationActive: Boolean = false,
 ) {
-    val strings = LocalShinsouStrings.current
     // The thumb follows the finger while dragging; the reader position catches up through
     // onPageChange instead of snapping the thumb back to the page the pager has reached so far.
     var sliderDragValue by remember(chapter.id, visible) { mutableStateOf<Float?>(null) }
     val sliderMax = (pageCount - 1).coerceAtLeast(1).toFloat()
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
         Box(Modifier.fillMaxSize()) {
-            Column(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.9f), Color.Transparent)),
-                    )
-                    // The page stays edge to edge, the controls do not: on iOS the host lays
-                    // Compose out over the whole screen, so the Dynamic Island (or a landscape
-                    // notch) would cover them. On Android the reader already reserved the status
-                    // bar, which this then leaves as it is.
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 8.dp, vertical = 7.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.ArrowBack, strings.text(StringKey.CLOSE_READER), tint = Color.White)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            manga.title,
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            chapter.name,
-                            color = Color.White.copy(alpha = 0.74f),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (!minimal) {
-                        onOpenWeb?.let { openWeb ->
-                            IconButton(onClick = openWeb) {
-                                Icon(Icons.Outlined.OpenInNew, strings.text(StringKey.OPEN_IN_BROWSER), tint = Color.White)
-                            }
-                        }
-                        IconButton(onClick = onFavorite) {
-                            Icon(
-                                if (inLibrary) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                                if (inLibrary) strings.unfavorite else strings.favorite,
-                                tint = if (inLibrary) MaterialTheme.colorScheme.primary else Color.White,
-                            )
-                        }
-                    }
-                    onTranslation?.let { openTranslation ->
-                        if (onTranslationToggle == null) {
-                            IconButton(onClick = openTranslation) {
-                                Icon(Icons.Outlined.Translate, strings.text(StringKey.TRANSLATION), tint = Color.White)
-                            }
-                        } else {
-                            TranslationToggleButton(translationActive, onTranslationToggle, openTranslation)
-                        }
-                    }
-                    IconButton(onClick = onChapterList) {
-                        Icon(Icons.Outlined.MenuBook, strings.text(StringKey.CHAPTER_LIST), tint = Color.White)
-                    }
-                    IconButton(onClick = onSettings) {
-                        Icon(Icons.Outlined.Settings, strings.readerSettings, tint = Color.White)
-                    }
-                }
-            }
-            if (showPageControls) Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))),
-                    )
-                    .padding(horizontal = 18.dp, vertical = 15.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${page + 1}", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                    Slider(
-                        value = (sliderDragValue ?: page.toFloat()).coerceIn(0f, sliderMax),
-                        onValueChange = { value ->
-                            val previous = readerSliderPage(sliderDragValue ?: page.toFloat(), pageCount)
-                            sliderDragValue = value
-                            val target = readerSliderPage(value, pageCount)
-                            if (target != null && target != previous) onPageChange(target)
-                        },
-                        onValueChangeFinished = { sliderDragValue = null },
-                        enabled = pageCount > 1,
-                        valueRange = 0f..sliderMax,
-                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                    )
-                    Text("$pageCount", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    TextButton(onClick = onPreviousChapter, enabled = hasPreviousChapter) {
-                        Icon(Icons.Outlined.ArrowBack, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(strings.previousChapter)
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.12f),
-                    ) {
-                        Text(
-                            "${page + 1} / $pageCount",
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-                    TextButton(onClick = onNextChapter, enabled = hasNextChapter) {
-                        Text(strings.nextChapter)
-                        Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Outlined.ArrowForward, null)
-                    }
-                }
-            }
+            ReaderTopBar(manga, chapter, minimal, inLibrary, onClose, onOpenWeb, onFavorite, onChapterList, onSettings,
+                onTranslation, onTranslationToggle, translationActive)
+            if (showPageControls) ReaderPageBar(
+                page, pageCount, sliderMax, { sliderDragValue }, { sliderDragValue = it }, hasPreviousChapter, hasNextChapter,
+                onPageChange, onPreviousChapter, onNextChapter,
+            )
             if (novelToolbar) NovelReaderProgressControls(
                 page = page,
                 pageCount = pageCount,
@@ -238,6 +281,135 @@ internal fun ReaderControls(
                 onNextChapter = onNextChapter,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
+        }
+    }
+}
+
+/** The progress row: current page, slider and page count. [sliderDragValue] lives in the caller. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NovelProgressSliderRow(
+    safePage: Int,
+    safePageCount: Int,
+    sliderEnabled: Boolean,
+    /** Read when used: the slider's callbacks see the latest drag, not the one of the last composition. */
+    sliderDragValue: () -> Float?,
+    onSliderDragValue: (Float?) -> Unit,
+    sliderInteractionSource: MutableInteractionSource,
+    onPageChange: (Int) -> Unit,
+) {
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = MaterialTheme.colorScheme.primary,
+        activeTrackColor = MaterialTheme.colorScheme.primary,
+        inactiveTrackColor = Color.White.copy(alpha = 0.30f),
+        disabledThumbColor = Color.White.copy(alpha = 0.38f),
+        disabledActiveTrackColor = Color.White.copy(alpha = 0.30f),
+        disabledInactiveTrackColor = Color.White.copy(alpha = 0.18f),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().height(44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "${safePage + 1}",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.width(28.dp),
+        )
+        Slider(
+            value = sliderDragValue() ?: safePage.toFloat(),
+            onValueChange = { value ->
+                val previous = readerSliderPage(sliderDragValue() ?: safePage.toFloat(), safePageCount)
+                onSliderDragValue(value)
+                val target = readerSliderPage(value, safePageCount)
+                if (target != null && target != previous) onPageChange(target)
+            },
+            onValueChangeFinished = { onSliderDragValue(null) },
+            valueRange = 0f..(safePageCount - 1).coerceAtLeast(1).toFloat(),
+            enabled = sliderEnabled,
+            colors = sliderColors,
+            interactionSource = sliderInteractionSource,
+            thumb = {
+                Box(
+                    Modifier
+                        .size(18.dp)
+                        .background(
+                            if (sliderEnabled) MaterialTheme.colorScheme.primary
+                            else Color.White.copy(alpha = 0.38f),
+                            CircleShape,
+                        ),
+                )
+            },
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(5.dp),
+                    enabled = sliderEnabled,
+                    colors = sliderColors,
+                    drawStopIndicator = null,
+                    thumbTrackGapSize = 0.dp,
+                    trackInsideCornerSize = 0.dp,
+                )
+            },
+            modifier = Modifier.weight(1f).height(44.dp).padding(horizontal = 8.dp),
+        )
+        Text(
+            "$safePageCount",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.width(28.dp),
+        )
+    }
+}
+
+/** The previous chapter / page position / next chapter row. */
+@Composable
+private fun NovelChapterNavRow(
+    safePage: Int,
+    safePageCount: Int,
+    interactionEnabled: Boolean,
+    hasPreviousChapter: Boolean,
+    hasNextChapter: Boolean,
+    onPreviousChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+) {
+    val strings = LocalShinsouStrings.current
+    Row(
+        Modifier.fillMaxWidth().height(44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            TextButton(
+                onClick = onPreviousChapter,
+                enabled = interactionEnabled && hasPreviousChapter,
+            ) {
+                Icon(Icons.Outlined.ArrowBack, null)
+                Spacer(Modifier.width(4.dp))
+                Text(strings.previousChapter, maxLines = 1)
+            }
+        }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Surface(
+                shape = CircleShape,
+                color = Color.White.copy(alpha = 0.12f),
+            ) {
+                Text(
+                    "${safePage + 1} / $safePageCount",
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            TextButton(
+                onClick = onNextChapter,
+                enabled = interactionEnabled && hasNextChapter,
+            ) {
+                Text(strings.nextChapter, maxLines = 1)
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Outlined.ArrowForward, null)
+            }
         }
     }
 }
@@ -260,21 +432,12 @@ internal fun NovelReaderProgressControls(
     modifier: Modifier = Modifier,
     interactionEnabled: Boolean = true,
 ) {
-    val strings = LocalShinsouStrings.current
     val safePageCount = pageCount.coerceAtLeast(1)
     val safePage = page.coerceIn(0, safePageCount - 1)
     val sliderEnabled = interactionEnabled && safePageCount > 1
     val sliderInteractionSource = remember { MutableInteractionSource() }
     // Follow the finger while dragging; the reader reports intermediate pages while it seeks.
     var sliderDragValue by remember { mutableStateOf<Float?>(null) }
-    val sliderColors = SliderDefaults.colors(
-        thumbColor = MaterialTheme.colorScheme.primary,
-        activeTrackColor = MaterialTheme.colorScheme.primary,
-        inactiveTrackColor = Color.White.copy(alpha = 0.30f),
-        disabledThumbColor = Color.White.copy(alpha = 0.38f),
-        disabledActiveTrackColor = Color.White.copy(alpha = 0.30f),
-        disabledInactiveTrackColor = Color.White.copy(alpha = 0.18f),
-    )
     Column(
         modifier
             .fillMaxWidth()
@@ -290,98 +453,12 @@ internal fun NovelReaderProgressControls(
             .readerNavigationBarsPadding()
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(44.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "${safePage + 1}",
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.width(28.dp),
-            )
-            Slider(
-                value = sliderDragValue ?: safePage.toFloat(),
-                onValueChange = { value ->
-                    val previous = readerSliderPage(sliderDragValue ?: safePage.toFloat(), safePageCount)
-                    sliderDragValue = value
-                    val target = readerSliderPage(value, safePageCount)
-                    if (target != null && target != previous) onPageChange(target)
-                },
-                onValueChangeFinished = { sliderDragValue = null },
-                valueRange = 0f..(safePageCount - 1).coerceAtLeast(1).toFloat(),
-                enabled = sliderEnabled,
-                colors = sliderColors,
-                interactionSource = sliderInteractionSource,
-                thumb = {
-                    Box(
-                        Modifier
-                            .size(18.dp)
-                            .background(
-                                if (sliderEnabled) MaterialTheme.colorScheme.primary
-                                else Color.White.copy(alpha = 0.38f),
-                                CircleShape,
-                            ),
-                    )
-                },
-                track = { sliderState ->
-                    SliderDefaults.Track(
-                        sliderState = sliderState,
-                        modifier = Modifier.height(5.dp),
-                        enabled = sliderEnabled,
-                        colors = sliderColors,
-                        drawStopIndicator = null,
-                        thumbTrackGapSize = 0.dp,
-                        trackInsideCornerSize = 0.dp,
-                    )
-                },
-                modifier = Modifier.weight(1f).height(44.dp).padding(horizontal = 8.dp),
-            )
-            Text(
-                "$safePageCount",
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.width(28.dp),
-            )
-        }
-        Row(
-            Modifier.fillMaxWidth().height(44.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                TextButton(
-                    onClick = onPreviousChapter,
-                    enabled = interactionEnabled && hasPreviousChapter,
-                ) {
-                    Icon(Icons.Outlined.ArrowBack, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.previousChapter, maxLines = 1)
-                }
-            }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.12f),
-                ) {
-                    Text(
-                        "${safePage + 1} / $safePageCount",
-                        color = Color.White,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-            }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                TextButton(
-                    onClick = onNextChapter,
-                    enabled = interactionEnabled && hasNextChapter,
-                ) {
-                    Text(strings.nextChapter, maxLines = 1)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Outlined.ArrowForward, null)
-                }
-            }
-        }
+        NovelProgressSliderRow(
+            safePage, safePageCount, sliderEnabled, { sliderDragValue }, { sliderDragValue = it }, sliderInteractionSource, onPageChange,
+        )
+        NovelChapterNavRow(
+            safePage, safePageCount, interactionEnabled, hasPreviousChapter, hasNextChapter, onPreviousChapter, onNextChapter,
+        )
     }
 }
 

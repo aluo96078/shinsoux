@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,6 +99,17 @@ internal fun SourcesPane(
         collapsedGroups = if (key in collapsedGroups) collapsedGroups - key else collapsedGroups + key
     }
     val openSettings: (BrowseSource) -> Unit = { settingsSourceIdentity = it.identityKey }
+    val sourceRow: @Composable (BrowseSource, Boolean) -> Unit = { source, pinned ->
+        SourceListRow(
+            source = source,
+            pinned = pinned,
+            onOpen = onOpen,
+            onToggle = onToggle,
+            onPinnedChange = onSourcePinnedChange,
+            onPinnedKeyChange = onSourcePinnedKeyChange,
+            onSettings = { openSettings(source) },
+        )
+    }
     LazyColumn(
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -112,17 +124,7 @@ internal fun SourcesPane(
                 )
             }
         }
-        item("sources-title") {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                Text(strings.text(StringKey.SOURCES), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                if (groupKeys.size > 1) {
-                    val allCollapsed = groupKeys.all { it in collapsedGroups }
-                    TextButton(onClick = { collapsedGroups = if (allCollapsed) emptyList() else groupKeys }) {
-                        Text(if (allCollapsed) strings.text(StringKey.EXPAND_ALL) else strings.text(StringKey.COLLAPSE_ALL))
-                    }
-                }
-            }
-        }
+        sourcesTitleItem(groupKeys, collapsedGroups) { collapsedGroups = it }
         if (sections.pinned.isEmpty() && sections.regular.isEmpty()) {
             item("sources-empty") {
                 EmptyState(
@@ -132,50 +134,10 @@ internal fun SourcesPane(
                 )
             }
         }
-        if (sections.pinned.isNotEmpty()) {
-            val collapsed = PINNED_SOURCE_GROUP in collapsedGroups
-            item("pinned-header") {
-                CollapsibleGroupHeader(strings.text(StringKey.PINNED), sections.pinned.size, collapsed, pinned = true) {
-                    toggleGroup(PINNED_SOURCE_GROUP)
-                }
-            }
-            if (!collapsed) {
-                items(sections.pinned, key = { "pinned:${it.identityKey}" }) { source ->
-                    SourceListRow(
-                        source = source,
-                        pinned = true,
-                        onOpen = onOpen,
-                        onToggle = onToggle,
-                        onPinnedChange = onSourcePinnedChange,
-                        onPinnedKeyChange = onSourcePinnedKeyChange,
-                        onSettings = { openSettings(source) },
-                    )
-                }
-            }
-        }
+        pinnedSourceItems(sections.pinned, PINNED_SOURCE_GROUP in collapsedGroups, toggleGroup, sourceRow)
         groups.filter { it.items.isNotEmpty() }.forEach { group ->
             val key = group.repository?.id ?: OTHER_SOURCE_GROUP
-            val collapsed = key in collapsedGroups
-            item("source-group-$key") {
-                CollapsibleGroupHeader(
-                    group.repository?.name ?: strings.text(StringKey.OTHER_SOURCES),
-                    group.items.size,
-                    collapsed,
-                ) { toggleGroup(key) }
-            }
-            if (!collapsed) {
-                items(group.items, key = { "source:$key:${it.identityKey}" }) { source ->
-                    SourceListRow(
-                        source = source,
-                        pinned = false,
-                        onOpen = onOpen,
-                        onToggle = onToggle,
-                        onPinnedChange = onSourcePinnedChange,
-                        onPinnedKeyChange = onSourcePinnedKeyChange,
-                        onSettings = { openSettings(source) },
-                    )
-                }
-            }
+            sourceGroupItems(group, key, key in collapsedGroups, toggleGroup, sourceRow)
         }
     }
     sources.firstOrNull { it.identityKey == settingsSourceIdentity }?.let { source ->
@@ -187,6 +149,64 @@ internal fun SourcesPane(
             onImportDocument = onImportDocument,
             onDismiss = { settingsSourceIdentity = null },
         )
+    }
+}
+
+/** The "Sources" heading with the expand / collapse all button once there is more than one group. */
+private fun LazyListScope.sourcesTitleItem(
+    groupKeys: List<String>,
+    collapsedGroups: List<String>,
+    onCollapsedGroups: (List<String>) -> Unit,
+) {
+    item("sources-title") {
+        val strings = LocalShinsouStrings.current
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            Text(strings.text(StringKey.SOURCES), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (groupKeys.size > 1) {
+                val allCollapsed = groupKeys.all { it in collapsedGroups }
+                TextButton(onClick = { onCollapsedGroups(if (allCollapsed) emptyList() else groupKeys) }) {
+                    Text(if (allCollapsed) strings.text(StringKey.EXPAND_ALL) else strings.text(StringKey.COLLAPSE_ALL))
+                }
+            }
+        }
+    }
+}
+
+/** The pinned sources section: a collapsible header and, while expanded, its rows. */
+private fun LazyListScope.pinnedSourceItems(
+    pinned: List<BrowseSource>,
+    collapsed: Boolean,
+    toggleGroup: (String) -> Unit,
+    sourceRow: @Composable (BrowseSource, Boolean) -> Unit,
+) {
+    if (pinned.isEmpty()) return
+    item("pinned-header") {
+        CollapsibleGroupHeader(LocalShinsouStrings.current.text(StringKey.PINNED), pinned.size, collapsed, pinned = true) {
+            toggleGroup(PINNED_SOURCE_GROUP)
+        }
+    }
+    if (!collapsed) {
+        items(pinned, key = { "pinned:${it.identityKey}" }) { source -> sourceRow(source, true) }
+    }
+}
+
+/** One repository's sources: a collapsible header and, while expanded, its rows. */
+private fun LazyListScope.sourceGroupItems(
+    group: RepositoryGroup<BrowseSource>,
+    key: String,
+    collapsed: Boolean,
+    toggleGroup: (String) -> Unit,
+    sourceRow: @Composable (BrowseSource, Boolean) -> Unit,
+) {
+    item("source-group-$key") {
+        CollapsibleGroupHeader(
+            group.repository?.name ?: LocalShinsouStrings.current.text(StringKey.OTHER_SOURCES),
+            group.items.size,
+            collapsed,
+        ) { toggleGroup(key) }
+    }
+    if (!collapsed) {
+        items(group.items, key = { "source:$key:${it.identityKey}" }) { source -> sourceRow(source, false) }
     }
 }
 

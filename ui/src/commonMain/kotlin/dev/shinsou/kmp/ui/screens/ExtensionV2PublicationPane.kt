@@ -245,7 +245,6 @@ private fun PublicationPage(
     navigation: PublicationPaneNavigation,
     sync: SyncClient?,
 ) {
-    val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     // Downloads run in the app-scoped queue so leaving this title does not cancel them.
     val extensionDownloads by services.acquisition.extensionDownloadsV2.collectAsState()
@@ -290,38 +289,7 @@ private fun PublicationPage(
         )
     }
 
-    val chapterPane = ExtensionV2ChapterPaneModel(
-        units = state.units,
-        selectedUnitIds = state.selectedUnitIds,
-        readUnitIds = state.readUnitIds,
-        inProgressUnits = state.inProgressUnits,
-        bookmarkedUnitIds = state.bookmarkedUnitIds,
-        downloadedUnitIds = state.downloadedUnitIds,
-        chapterFilter = state.chapterFilter,
-        reverseWebsiteOrder = state.reverseWebsiteOrder,
-        loading = state.loading,
-        loadingMore = state.loadingMore,
-        loadError = state.loadError,
-        hasNextPage = state.hasNextPage,
-        operationMessage = state.operationMessage,
-        operationFailed = state.operationFailed,
-        busyUnitId = state.busyUnitId,
-        queuedUnitIds = queuedUnitIds,
-        openingReaderUnitId = state.openingReaderUnitId,
-        onRetry = state::retry,
-        onLoadMore = state::loadMore,
-        onReadUnit = { state.materialize(it, openReader = true) },
-        onDownloadUnits = { state.downloadUnits(it, queuedUnitIds) },
-        onTranslateUnits = if (translation != null) ({ state.translateUnits(it) }) else null,
-        translatedUnitIds = state.storedTranslatedUnitIds,
-        prefetchByUnit = prefetchByUnit,
-        onSelectionChange = { state.selectedUnitIds = it },
-        onReadStateChange = state::setReadState,
-        onBookmarkStateChange = state::setBookmarked,
-        onDeleteDownloads = state::clearDownloadMarks,
-        onFilterChange = { state.chapterFilter = it },
-        onToggleWebsiteOrder = { state.reverseWebsiteOrder = !state.reverseWebsiteOrder },
-    )
+    val chapterPane = publicationChapterPaneModel(state, queuedUnitIds, prefetchByUnit, translation != null)
     val visibleChapterUnits = rememberVisibleChapterUnits(chapterPane)
     val info = rememberPublicationInfo(state, sync, reader, navigation, translation, queuedUnitIds, publicationPrefetch, scope)
 
@@ -363,6 +331,64 @@ private fun PublicationPage(
         }
     }
 
+    PendingRepresentationDialog(state)
+
+    val shareWorkHash = info.shareWorkHash
+    if (state.shareWithUserVisible && sync != null && shareWorkHash != null) {
+        ShareWithUserDialog(
+            sync = sync,
+            workHash = shareWorkHash,
+            title = state.displayPublication.title,
+            onDismiss = { state.shareWithUserVisible = false },
+        )
+    }
+}
+
+/** The chapter list's state and callbacks, built from the publication [state] and the work around it. */
+private fun publicationChapterPaneModel(
+    state: ExtensionPublicationState,
+    queuedUnitIds: Set<String>,
+    prefetchByUnit: Map<String, dev.shinsou.kmp.translation.PrefetchEntry>,
+    translationAvailable: Boolean,
+): ExtensionV2ChapterPaneModel {
+    return ExtensionV2ChapterPaneModel(
+        units = state.units,
+        selectedUnitIds = state.selectedUnitIds,
+        readUnitIds = state.readUnitIds,
+        inProgressUnits = state.inProgressUnits,
+        bookmarkedUnitIds = state.bookmarkedUnitIds,
+        downloadedUnitIds = state.downloadedUnitIds,
+        chapterFilter = state.chapterFilter,
+        reverseWebsiteOrder = state.reverseWebsiteOrder,
+        loading = state.loading,
+        loadingMore = state.loadingMore,
+        loadError = state.loadError,
+        hasNextPage = state.hasNextPage,
+        operationMessage = state.operationMessage,
+        operationFailed = state.operationFailed,
+        busyUnitId = state.busyUnitId,
+        queuedUnitIds = queuedUnitIds,
+        openingReaderUnitId = state.openingReaderUnitId,
+        onRetry = state::retry,
+        onLoadMore = state::loadMore,
+        onReadUnit = { state.materialize(it, openReader = true) },
+        onDownloadUnits = { state.downloadUnits(it, queuedUnitIds) },
+        onTranslateUnits = if (translationAvailable) ({ state.translateUnits(it) }) else null,
+        translatedUnitIds = state.storedTranslatedUnitIds,
+        prefetchByUnit = prefetchByUnit,
+        onSelectionChange = { state.selectedUnitIds = it },
+        onReadStateChange = state::setReadState,
+        onBookmarkStateChange = state::setBookmarked,
+        onDeleteDownloads = state::clearDownloadMarks,
+        onFilterChange = { state.chapterFilter = it },
+        onToggleWebsiteOrder = { state.reverseWebsiteOrder = !state.reverseWebsiteOrder },
+    )
+}
+
+/** Asks which content format to open a chapter in when the source offers several. */
+@Composable
+private fun PendingRepresentationDialog(state: ExtensionPublicationState) {
+    val strings = LocalShinsouStrings.current
     // Behind the app lock: a restored chapter can ask for its format before the user unlocks.
     state.pendingRepresentation?.takeIf { LocalAppUnlocked.current }?.let { pending ->
         AlertDialog(
@@ -385,16 +411,6 @@ private fun PublicationPage(
                     Text(strings.cancel)
                 }
             },
-        )
-    }
-
-    val shareWorkHash = info.shareWorkHash
-    if (state.shareWithUserVisible && sync != null && shareWorkHash != null) {
-        ShareWithUserDialog(
-            sync = sync,
-            workHash = shareWorkHash,
-            title = state.displayPublication.title,
-            onDismiss = { state.shareWithUserVisible = false },
         )
     }
 }

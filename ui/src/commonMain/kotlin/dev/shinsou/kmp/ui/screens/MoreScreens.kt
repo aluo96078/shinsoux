@@ -173,73 +173,86 @@ fun MoreScreen(
                 )
             }
             item("local-content-import") {
-                Surface(
-                    onClick = { onImportLocal(false) },
-                    shape = RoundedCornerShape(13.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier.padding(13.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(13.dp),
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(42.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.FolderOpen, null, tint = MaterialTheme.colorScheme.onPrimary)
-                            }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text(strings.text(StringKey.IMPORT_LOCAL_CONTENT), style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                strings.text(StringKey.IMAGES_CBZ_ZIP_TXT_OR_EPUB_STORED),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
-                    }
-                }
+                LocalImportCard(onClick = { onImportLocal(false) })
             }
             items(rows, key = { it.destination.name }) { row ->
-                Surface(
-                    onClick = { onOpen(row.destination) },
-                    shape = RoundedCornerShape(13.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier.padding(13.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(13.dp),
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(42.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) { Icon(row.icon, null) }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text(row.title, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                row.subtitle,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
-                    }
+                MoreRowCard(row, onClick = { onOpen(row.destination) })
+            }
+        }
+    }
+}
+
+/** The prominent card that imports local content. */
+@Composable
+private fun LocalImportCard(onClick: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(42.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.FolderOpen, null, tint = MaterialTheme.colorScheme.onPrimary)
                 }
             }
+            Column(Modifier.weight(1f)) {
+                Text(strings.text(StringKey.IMPORT_LOCAL_CONTENT), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    strings.text(StringKey.IMAGES_CBZ_ZIP_TXT_OR_EPUB_STORED),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
+        }
+    }
+}
+
+/** One destination of the More list: its icon, title and subtitle. */
+@Composable
+private fun MoreRowCard(row: MoreRow, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.size(42.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) { Icon(row.icon, null) }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(row.title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    row.subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
         }
     }
 }

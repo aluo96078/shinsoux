@@ -385,24 +385,7 @@ private fun ReviewCard(sync: SyncReviews, review: WireReview, onChanged: () -> U
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            if (review.body.isNotBlank()) {
-                if (review.spoiler && !revealed) {
-                    Surface(
-                        onClick = { revealed = true },
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            strings.text(StringKey.CONTAINS_SPOILERS_TAP_TO_SHOW),
-                            modifier = Modifier.padding(10.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                } else {
-                    ReviewMarkdownText(review.body)
-                }
-            }
+            ReviewCardBody(review, revealed, onReveal = { revealed = true })
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (review.mine) {
                     Text(
@@ -454,6 +437,30 @@ private fun ReviewCard(sync: SyncReviews, review: WireReview, onChanged: () -> U
     }
 }
 
+/** The review text, or the tap-to-show spoiler cover while [revealed] is false. */
+@Composable
+private fun ReviewCardBody(review: WireReview, revealed: Boolean, onReveal: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    if (review.body.isNotBlank()) {
+        if (review.spoiler && !revealed) {
+            Surface(
+                onClick = onReveal,
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    strings.text(StringKey.CONTAINS_SPOILERS_TAP_TO_SHOW),
+                    modifier = Modifier.padding(10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        } else {
+            ReviewMarkdownText(review.body)
+        }
+    }
+}
+
 // ---- replies -------------------------------------------------------------------------------------
 
 @Composable
@@ -488,27 +495,7 @@ private fun RepliesPanel(sync: SyncReviews, review: WireReview, onCountChange: (
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             rows != null -> rows.forEach { reply ->
-                Column(Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        "@${reply.author.username} · ${formatTime(reply.createdAt)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (reply.status == "hidden") {
-                        Text(
-                            strings.text(StringKey.MODERATORS_HID_THIS_REPLY_SO_ONLY_YOU) +
-                                reply.hiddenReason?.takeIf { it.isNotBlank() }?.let { " " + strings.text(StringKey.REASON_X, it) }.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    ReviewMarkdownText(reply.body)
-                    if (reply.mine) {
-                        TextButton(onClick = { deletingReply = reply }) { Text(strings.delete) }
-                    } else {
-                        TextButton(onClick = { reportingReply = reply }) { Text(strings.text(StringKey.REPORT)) }
-                    }
-                }
+                ReplyRow(reply, onDelete = { deletingReply = reply }, onReport = { reportingReply = reply })
             }
         }
         if (rows != null && rows.size < total) {
@@ -532,15 +519,7 @@ private fun RepliesPanel(sync: SyncReviews, review: WireReview, onCountChange: (
         }
         ErrorText(error)
         notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { draft = it.take(REPLY_BODY_MAX) },
-            label = { Text(strings.text(StringKey.WRITE_A_REPLY)) },
-            supportingText = { Text("${draft.length} / $REPLY_BODY_MAX") },
-            minLines = 2,
-            maxLines = 6,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        ReplyDraftField(draft) { draft = it }
         Button(
             enabled = !busy && draft.isNotBlank(),
             onClick = {
@@ -566,27 +545,74 @@ private fun RepliesPanel(sync: SyncReviews, review: WireReview, onCountChange: (
         )
     }
     deletingReply?.let { reply ->
-        AlertDialog(
-            onDismissRequest = { deletingReply = null },
-            title = { Text(strings.text(StringKey.DELETE_YOUR_REPLY)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        deletingReply = null
-                        busy = true
-                        scope.launch {
-                            sync.deleteReply(reply.id).fold(
-                                onSuccess = { error = null; reloadTick++; onChanged() },
-                                onFailure = { error = it.reviewMessage(strings) },
-                            )
-                            busy = false
-                        }
-                    },
-                ) { Text(strings.delete) }
+        DeleteReplyDialog(
+            onDismiss = { deletingReply = null },
+            onConfirm = {
+                deletingReply = null
+                busy = true
+                scope.launch {
+                    sync.deleteReply(reply.id).fold(
+                        onSuccess = { error = null; reloadTick++; onChanged() },
+                        onFailure = { error = it.reviewMessage(strings) },
+                    )
+                    busy = false
+                }
             },
-            dismissButton = { TextButton(onClick = { deletingReply = null }) { Text(strings.cancel) } },
         )
     }
+}
+
+/** The reply editor with its length counter. */
+@Composable
+private fun ReplyDraftField(draft: String, onDraftChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { onDraftChange(it.take(REPLY_BODY_MAX)) },
+        label = { Text(LocalShinsouStrings.current.text(StringKey.WRITE_A_REPLY)) },
+        supportingText = { Text("${draft.length} / $REPLY_BODY_MAX") },
+        minLines = 2,
+        maxLines = 6,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** One reply: author and time, the moderation notice for a hidden reply, its text and delete / report. */
+@Composable
+private fun ReplyRow(reply: WireReply, onDelete: () -> Unit, onReport: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Column(Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "@${reply.author.username} · ${formatTime(reply.createdAt)}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (reply.status == "hidden") {
+            Text(
+                strings.text(StringKey.MODERATORS_HID_THIS_REPLY_SO_ONLY_YOU) +
+                    reply.hiddenReason?.takeIf { it.isNotBlank() }?.let { " " + strings.text(StringKey.REASON_X, it) }.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        ReviewMarkdownText(reply.body)
+        if (reply.mine) {
+            TextButton(onClick = onDelete) { Text(strings.delete) }
+        } else {
+            TextButton(onClick = onReport) { Text(strings.text(StringKey.REPORT)) }
+        }
+    }
+}
+
+/** Confirms deleting the user's own reply. */
+@Composable
+private fun DeleteReplyDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.text(StringKey.DELETE_YOUR_REPLY)) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(strings.delete) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
+    )
 }
 
 // ---- dialogs -------------------------------------------------------------------------------------

@@ -248,32 +248,36 @@ internal class SyncApplier(
             if (!isDefault) removedBindings += r.key
             return ApplyOutcome.Applied
         }
+        if (localId == null) return createCategoryFromRecord(r)
         fun field(name: String): JsonElement? =
             st.fields[name]?.takeIf { !it.dirty && name !in dirty }?.value
-        if (localId == null) {
-            val name = st.fields["name"]?.value?.str()?.trim()?.takeIf { it.isNotEmpty() }
-                ?: return ApplyOutcome.Pending("category_incomplete")
-            val adopted = categories.firstOrNull {
-                it.id != Category.Default.id && it.name.trim().equals(name, ignoreCase = true) && it.id !in bindings.values
-            }
-            if (adopted != null) {
-                newBindings[r.key] = adopted.id
-                updateCategory(adopted.id, null, st.fields["order"]?.value?.long()?.toInt(), st.fields["flags"]?.value?.long())
-            } else {
-                val id = (categories.maxOfOrNull { it.id } ?: 0L).coerceAtLeast(0L) + 1L
-                val sort = st.fields["order"]?.value?.long()?.toInt() ?: ((categories.maxOfOrNull { it.sort } ?: -1) + 1)
-                categories = categories + Category(id = id, name = name, sort = sort, flags = st.fields["flags"]?.value?.long() ?: 0L)
-                newBindings[r.key] = id
-                changed = true
-            }
-            return ApplyOutcome.Applied
-        }
         updateCategory(
             localId,
             if (isDefault) null else field("name")?.str()?.trim()?.takeIf { it.isNotEmpty() },
             if (isDefault) null else field("order")?.long()?.toInt(),
             field("flags")?.long(),
         )
+        return ApplyOutcome.Applied
+    }
+
+    /** A category record with no local counterpart: adopts a category of the same name, else adds one. */
+    private fun createCategoryFromRecord(r: StoredRecord): ApplyOutcome {
+        val st = r.state
+        val name = st.fields["name"]?.value?.str()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return ApplyOutcome.Pending("category_incomplete")
+        val adopted = categories.firstOrNull {
+            it.id != Category.Default.id && it.name.trim().equals(name, ignoreCase = true) && it.id !in bindings.values
+        }
+        if (adopted != null) {
+            newBindings[r.key] = adopted.id
+            updateCategory(adopted.id, null, st.fields["order"]?.value?.long()?.toInt(), st.fields["flags"]?.value?.long())
+        } else {
+            val id = (categories.maxOfOrNull { it.id } ?: 0L).coerceAtLeast(0L) + 1L
+            val sort = st.fields["order"]?.value?.long()?.toInt() ?: ((categories.maxOfOrNull { it.sort } ?: -1) + 1)
+            categories = categories + Category(id = id, name = name, sort = sort, flags = st.fields["flags"]?.value?.long() ?: 0L)
+            newBindings[r.key] = id
+            changed = true
+        }
         return ApplyOutcome.Applied
     }
 
@@ -365,20 +369,24 @@ internal class SyncApplier(
         val categoryIds = field("categoryIds")?.let { it as? JsonArray }?.mapNotNull { it.str() }
 
         if (mangaId == null) return createFromRecord(r, field("addedAt")?.long(), categoryIds)
+        refreshLibraryEntry(mangaId, dirty, field("addedAt")?.long(), categoryIds)
+        return ApplyOutcome.Applied
+    }
+
+    private fun refreshLibraryEntry(mangaId: Long, dirty: Set<String>, addedAt: Long?, categoryIds: List<String>?) {
         val index = mangaIndex.getValue(mangaId)
         var manga = mangas[index]
         if (!manga.favorite && DirtyEntry.DELETED_FIELD !in dirty) {
             setFavorite(mangaId, true)
             manga = mangas[index]
         }
-        field("addedAt")?.long()?.let { added ->
+        addedAt?.let { added ->
             if (manga.dateAdded != added) {
                 manga = manga.copy(dateAdded = added)
                 replaceManga(index, manga)
             }
         }
         if (categoryIds != null && manga.favorite) setLinks(mangaId, categoryIds)
-        return ApplyOutcome.Applied
     }
 
     private fun createFromRecord(r: StoredRecord, addedAt: Long?, categoryIds: List<String>?): ApplyOutcome {
@@ -457,6 +465,10 @@ internal class SyncApplier(
         val mangaId = mangaIdFor(workHash) ?: return ApplyOutcome.Pending("work_not_in_library")
         val chapterId = unitIndex(mangaId)[unitId] ?: return ApplyOutcome.Pending(PENDING_UNIT_UNKNOWN)
         if (!r.state.isLive) return ApplyOutcome.Applied
+        return applyUnitFields(r, chapterId)
+    }
+
+    private fun applyUnitFields(r: StoredRecord, chapterId: Long): ApplyOutcome {
         val dirty = ctx.dirtyFields(SyncKinds.UNIT, chapterRef(chapterId))
         fun field(name: String): JsonElement? = r.state.fields[name]?.takeIf { !it.dirty && name !in dirty }?.value
         val index = chapterIndex[chapterId] ?: return ApplyOutcome.Pending(PENDING_UNIT_UNKNOWN)

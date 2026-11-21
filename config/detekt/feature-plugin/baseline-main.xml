@@ -4,10 +4,6 @@
   <CurrentIssues>
     <ID>AbstractClassCanBeInterface:ExtensionRepositoryClient.kt:RepositoryIndex$RepositoryIndex</ID>
     <ID>ComplexCondition:ExtensionDownloadQueueV2.kt:ExtensionDownloadQueueV2$it.state == DownloadState.QUEUED &amp;&amp; it.remoteUnitId in stored &amp;&amp; it.remotePublicationId == entry.remotePublicationId &amp;&amp; it.sourceKey.canonicalId == publication</ID>
-    <ID>ComplexCondition:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" || host.endsWith(".local")</ID>
-    <ID>ComplexCondition:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$host.isBlank() || host.any { !(it.isLetterOrDigit() || it == '.' || it == '-') }</ID>
-    <ID>ComplexCondition:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$requireAuthenticatedArtifacts &amp;&amp; entry.installable &amp;&amp; !entry.referenceOnly &amp;&amp; !entry.legacyCompatibilityOnly</ID>
-    <ID>ComplexCondition:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$route.isBlank() || route.startsWith('/') || "://" in route || segments.any { it == ".." || it == "." }</ID>
     <ID>ComplexCondition:FilePluginPackageStore.kt:FilePluginPackageStore$(requiredFile != null &amp;&amp; fileName != requiredFile) || (fileName != METADATA_FILE &amp;&amp; fileName != AUTHORITATIVE_MARKER_FILE) || relative != "$pluginId/$fileName"</ID>
     <ID>ComplexCondition:FilePluginPackageStore.kt:FilePluginPackageStore$scriptFile != previousScriptFile || persisted == null || persisted.size &gt; MAX_PLUGIN_PACKAGE_SCRIPT_BYTES || !persisted.contentEquals(plugin.scriptBytes)</ID>
     <ID>ComplexCondition:PluginNetwork.kt:labels.size &lt; 2 || labels.any { it.isEmpty() || it.length &gt; 63 || it.startsWith('-') || it.endsWith('-') }</ID>
@@ -26,11 +22,6 @@
     <ID>CyclomaticComplexMethod:DesktopReviewedImageTransport.kt:DesktopReviewedImageTransport$override suspend fun executeResolved: PluginHttpResponse</ID>
     <ID>CyclomaticComplexMethod:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$private fun mergeGraph: ExtensionGraphMerge</ID>
     <ID>CyclomaticComplexMethod:ExtensionDownloadQueueV2.kt:ExtensionDownloadQueueV2$private suspend fun drain</ID>
-    <ID>CyclomaticComplexMethod:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun decodeV2Index: RepositoryIndex.Combined</ID>
-    <ID>CyclomaticComplexMethod:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun isPrivateHost: Boolean</ID>
-    <ID>CyclomaticComplexMethod:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun parseRepositoryUrl: ParsedRepositoryUrl</ID>
-    <ID>CyclomaticComplexMethod:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun validatePluginEntries</ID>
-    <ID>CyclomaticComplexMethod:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$public suspend fun verifyPluginV2Sidecar</ID>
     <ID>CyclomaticComplexMethod:ExtensionV2Contracts.kt:internal fun validateBrowseFilters</ID>
     <ID>CyclomaticComplexMethod:PluginBrowseCore.kt:PluginBrowseCore$internal suspend fun rebuildSnapshot: Unit</ID>
     <ID>CyclomaticComplexMethod:PluginExecutionLimits.kt:internal fun pluginJsonArrayCountsAtMost: Boolean</ID>
@@ -42,7 +33,6 @@
     <ID>CyclomaticComplexMethod:PluginNetwork.kt:internal fun isGrantableContentHostSuffix: Boolean</ID>
     <ID>CyclomaticComplexMethod:PluginNetworkClient.kt:PluginNetworkClient$private fun parseSetCookie: PluginCookie?</ID>
     <ID>CyclomaticComplexMethod:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun execute: PluginHttpResponse</ID>
-    <ID>CyclomaticComplexMethod:PluginRepositoryRefresher.kt:PluginRepositoryRefresher$internal suspend fun refreshWithAdmissions: PluginManager.RepositoryRefreshResult</ID>
     <ID>CyclomaticComplexMethod:PluginRuntimeLoader.kt:PluginRuntimeLoader$private suspend fun createScopedRuntime: ScriptPluginRuntime</ID>
     <ID>CyclomaticComplexMethod:PluginSourceCatalog.kt:PluginSourceCatalog$private suspend fun migrateExtensionPublicationV2</ID>
     <ID>CyclomaticComplexMethod:PluginSourceWebSession.kt:PluginSourceWebSession$override suspend fun sourceWebChallenge: SourceWebChallengeRequest?</ID>
@@ -83,12 +73,12 @@
     <ID>LongParameterList:LegacyMangaExtensionAdapterV2.kt:LegacyMangaExtensionSourceV2</ID>
     <ID>LongParameterList:LegacyMangaExtensionAdapterV2.kt:LegacyMangaPackageRuntimeV2</ID>
     <ID>LongParameterList:PluginBrowserSessionTransport.kt:internal suspend fun PluginBrowserSessionTransport.executeWithNetworkPolicy: PluginHttpResponse</ID>
-    <ID>LongParameterList:PluginManager.kt:PluginManager.WebChallengeAuthorization</ID>
     <ID>LongParameterList:PluginManager.kt:PluginManager</ID>
+    <ID>LongParameterList:PluginManager.kt:PluginManager.WebChallengeAuthorization</ID>
     <ID>LongParameterList:PluginNetwork.kt:PluginRequestBuilder$public suspend fun build: BuiltPluginRequest</ID>
+    <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient</ID>
     <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun post: PluginHttpResponse</ID>
     <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun postBatch: List&lt;PluginHttpResponse&gt;</ID>
-    <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient</ID>
     <ID>LongParameterList:PluginSystemEventContracts.kt:BoundPluginScope</ID>
     <ID>LongParameterList:PluginSystemEventContracts.kt:PluginSystemEventCodec$public fun &lt;P&gt; encodePayload: ByteArray</ID>
     <ID>LongParameterList:PluginSystemEventDispatcher.kt:PluginSystemEventGateway</ID>
@@ -105,7 +95,6 @@
     <ID>LoopWithTooManyJumpStatements:ViewerImageParser.kt:ViewerImageParser$while</ID>
     <ID>MatchingDeclarationName:ExtensionLibraryMigrationV2.kt:ExtensionLibraryMigrationPlanV2</ID>
     <ID>MatchingDeclarationName:PlatformPluginNetworkDiagnostics.kt:PlatformPluginNetworkCapability</ID>
-    <ID>NestedBlockDepth:PluginRepositoryRefresher.kt:PluginRepositoryRefresher$internal suspend fun refreshWithAdmissions: PluginManager.RepositoryRefreshResult</ID>
     <ID>NoNameShadowing:ExtensionRepositoryClient.kt:ExtensionRepositoryClient${ error("Unknown runtime permission '$it'") }</ID>
     <ID>RedundantSuspendModifier:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$suspend</ID>
     <ID>RedundantSuspendModifier:PluginManager.kt:PluginManager$suspend</ID>

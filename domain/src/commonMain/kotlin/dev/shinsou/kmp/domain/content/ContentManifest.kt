@@ -391,6 +391,16 @@ public data class EpubPackage(
         manifest.forEach(EpubPackageManifestItem::validate)
         val resourcesById = resources.associateBy(EpubResource::id)
         val manifestById = manifest.associateBy(EpubPackageManifestItem::manifestIdRef)
+        validateManifestDeclarations(resourcesById, manifestById)
+        validateNavigation(resourcesById)
+        validateCssDependencies()
+        validateAuxiliaryGraphAndEncryption()
+    }
+
+    private fun validateManifestDeclarations(
+        resourcesById: Map<String, EpubResource>,
+        manifestById: Map<String, EpubPackageManifestItem>,
+    ) {
         manifest.forEach { item ->
             val hintedResource = resourcesById[item.resourceId]
             hintedResource?.let {
@@ -413,6 +423,9 @@ public data class EpubPackage(
         spineTocManifestIdRef?.let { toc ->
             require(toc in manifestById) { "EPUB spine TOC references an unknown manifest id" }
         }
+    }
+
+    private fun validateNavigation(resourcesById: Map<String, EpubResource>) {
         require(navigation.size <= MAX_RESOURCES) { "EPUB package has too many navigation documents" }
         navigation.forEach { document ->
             document.validate()
@@ -424,21 +437,26 @@ public data class EpubPackage(
             require(resources.any { it.href == document.documentHref }) {
                 "EPUB navigation document references an unknown resource"
             }
-            document.points.forEach { point ->
-                point.resolvedHref?.let { targetHref ->
-                    point.resourceId?.let { targetId ->
-                        resourcesById[targetId]?.let { hintedTarget ->
-                            require(hintedTarget.href == targetHref) {
-                                "EPUB navigation point resource-id hint resolves to a different href"
-                            }
-                        }
-                    }
-                    require(resources.any { it.href == targetHref }) {
-                        "EPUB navigation point references an unknown resource"
+            document.points.forEach { point -> validateNavigationPoint(point, resourcesById) }
+        }
+    }
+
+    private fun validateNavigationPoint(point: EpubPackageNavigationPoint, resourcesById: Map<String, EpubResource>) {
+        point.resolvedHref?.let { targetHref ->
+            point.resourceId?.let { targetId ->
+                resourcesById[targetId]?.let { hintedTarget ->
+                    require(hintedTarget.href == targetHref) {
+                        "EPUB navigation point resource-id hint resolves to a different href"
                     }
                 }
             }
+            require(resources.any { it.href == targetHref }) {
+                "EPUB navigation point references an unknown resource"
+            }
         }
+    }
+
+    private fun validateCssDependencies() {
         require(cssDependencies.size <= MAX_RESOURCES) { "EPUB package has too many stylesheets" }
         cssDependencies.forEach { dependency ->
             dependency.validate()
@@ -451,6 +469,9 @@ public data class EpubPackage(
                 }
             }
         }
+    }
+
+    private fun validateAuxiliaryGraphAndEncryption() {
         val auxiliaryNodeCount = manifest.size.toLong() + navigation.size.toLong() +
             navigation.sumOf { it.points.size.toLong() } + cssDependencies.size.toLong() +
             cssDependencies.sumOf { it.references.size.toLong() } + renditions.size.toLong() +

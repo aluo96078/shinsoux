@@ -155,55 +155,10 @@ internal class SandboxBridgeDispatcher(
     }
 
     private suspend fun executeSync(invocation: SandboxInvocation, op: String, args: JsonArray): JsonElement = when (op) {
-        "httpGet", "httpGetWithHeaders", "httpGetResponse" -> {
-            require(PluginRuntimePermission.NETWORK)
-            val response = environment.network.get(
-                sourceId, args.string(0), args.stringMap(1), sourceHeaders = sourceHeaders, referer = referer(),
-            )
-            if (op == "httpGetResponse") statusAndBody(response) else JsonPrimitive(response.bodyText())
-        }
-        "httpPost", "httpPostResponse" -> {
-            require(PluginRuntimePermission.NETWORK)
-            val response = environment.network.post(
-                sourceId, args.string(0), args.string(1), args.stringMap(2), sourceHeaders = sourceHeaders, referer = referer(),
-            )
-            if (op == "httpPostResponse") statusAndBody(response) else JsonPrimitive(response.bodyText())
-        }
-        "httpPostBatch" -> {
-            require(PluginRuntimePermission.NETWORK)
-            val responses = environment.network.postBatch(
-                sourceId = sourceId,
-                urls = args.stringList(0),
-                bodies = args.stringList(1),
-                headers = args.stringMap(2),
-                sourceHeaders = sourceHeaders,
-                referer = referer(),
-            )
-            // Same JSON-string shape as the in-process engines (the reviewed ShuYue script parses it).
-            JsonPrimitive(encodeBoundedPluginBatchResponseBodies(responses, limits.maxBridgeResultBytes, jsonStringWrapped = true))
-        }
-        "browserSessionRequest" -> {
-            require(PluginRuntimePermission.BROWSER_CHALLENGE)
-            val prepared = preparePluginBrowserSessionRequest(
-                sourceOrigin = source.baseUrl.orEmpty(),
-                allowedOrigins = source.browserSessionOrigins,
-                request = PluginHttpRequest(
-                    method = args.string(1),
-                    url = args.string(0),
-                    body = args.string(2).encodeToByteArray(),
-                    headers = args.stringMap(3),
-                ),
-            )
-            val response = environment.browserSessionTransport.executeWithNetworkPolicy(
-                sourceId = sourceId,
-                sourceOrigin = prepared.sourceOrigin,
-                allowedOrigins = setOf(prepared.targetOrigin),
-                request = prepared.request,
-                resolver = environment.hostResolver,
-                allowDeveloperUnpinnedTransport = false, // never for repository code (§5.1)
-            )
-            statusAndBody(response)
-        }
+        "httpGet", "httpGetWithHeaders", "httpGetResponse" -> httpGet(op, args)
+        "httpPost", "httpPostResponse" -> httpPost(op, args)
+        "httpPostBatch" -> httpPostBatch(args)
+        "browserSessionRequest" -> browserSessionRequest(args)
 
         "getPreference" -> environment.storage.getPreference(sourceId, args.string(0))?.let(::JsonPrimitive) ?: JsonNull
         "setPreference" -> { environment.storage.setPreference(sourceId, args.string(0), args.string(1)); JsonNull }
@@ -227,33 +182,9 @@ internal class SandboxBridgeDispatcher(
         }
         "clearCredential" -> { requireLogin(invocation); environment.storage.clearCredential(sourceId); JsonNull }
 
-        "getCookie" -> {
-            requireCookieRead()
-            val target = credentialUrl(args.string(1))
-            val now = nowEpochMillis()
-            environment.storage.getCookies(sourceId).firstOrNull { it.name == args.string(0) && it.matches(target, now) }
-                ?.value?.let(::JsonPrimitive) ?: JsonNull
-        }
-        "getCookies" -> {
-            requireCookieRead()
-            val target = credentialUrl(args.string(0))
-            val now = nowEpochMillis()
-            JsonObject(environment.storage.getCookies(sourceId).filter { it.matches(target, now) }.associate { it.name to JsonPrimitive(it.value) })
-        }
-        "setCookie" -> {
-            require(PluginRuntimePermission.COOKIE_STORAGE)
-            environment.storage.setCookie(
-                sourceId,
-                PluginCookie(
-                    name = args.string(0),
-                    value = args.string(1),
-                    domain = credentialCookieDomain(args.string(2)),
-                    path = args.string(3).ifBlank { "/" },
-                    expiresAtEpochMillis = cookieExpiry(args.long(4)),
-                ),
-            )
-            JsonPrimitive(true)
-        }
+        "getCookie" -> getCookie(args)
+        "getCookies" -> getCookies(args)
+        "setCookie" -> setCookie(args)
         "deleteCookie" -> {
             require(PluginRuntimePermission.COOKIE_STORAGE)
             environment.storage.deleteCookie(sourceId, args.string(0), credentialCookieDomain(args.string(1)))
@@ -266,40 +197,127 @@ internal class SandboxBridgeDispatcher(
             PluginRuntimePermission.LOGIN_PROMPT in environment.runtimePermissions &&
                 submitLegacyLoginCompatibility(environment, supportsLogin = true, reason = args.string(0).takeIf(String::isNotBlank)),
         )
-        "requestHostEvent" -> {
-            val sink = environment.systemEventSink
-            val scope = environment.boundPluginScope // host-injected; never read from the frame
-            val receipt = if (sink == null || scope == null) {
-                PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.UNSUPPORTED)
-            } else {
-                try {
-                    sink.submit(scope, args.string(0).encodeToByteArray())
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (logged: Throwable) {
-                    Log.warn("Plugin", logged) {
-                        "Submitting a plugin system event failed; rejecting it as invalid"
-                    }
-                    PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
-                }
-            }
-            JsonPrimitive(PluginJson.encodeToString(PluginEventReceipt.serializer(), receipt))
-        }
+        "requestHostEvent" -> requestHostEvent(args)
         "getHostEventContext" -> environment.currentSystemEventContext()?.let(::JsonPrimitive) ?: JsonNull
-        "getHostEventCapabilities" -> buildJsonObject {
-            val negotiation = environment.systemEventDeclaration?.let { declaration ->
-                val gateway = environment.systemEventSink as? PluginSystemEventGateway
-                val scope = environment.boundPluginScope
-                if (gateway != null && scope != null) gateway.negotiate(scope, declaration) else environment.systemEventNegotiation
-            } ?: environment.systemEventNegotiation
-            put("enabled", negotiation?.enabled == true)
-            put("protocol", "dev.shinsou.system")
-            val version = negotiation?.version
-            if (version == null) put("version", JsonNull) else put("version", version)
-            put("grantedCapabilities", PluginJson.encodeToJsonElement(negotiation?.grantedCapabilities.orEmpty()))
-            put("hardLimits", PluginJson.encodeToJsonElement(negotiation?.hardLimits))
-        }
+        "getHostEventCapabilities" -> hostEventCapabilities()
         else -> throw UnknownOperation()
+    }
+
+    private suspend fun httpGet(op: String, args: JsonArray): JsonElement {
+        require(PluginRuntimePermission.NETWORK)
+        val response = environment.network.get(
+            sourceId, args.string(0), args.stringMap(1), sourceHeaders = sourceHeaders, referer = referer(),
+        )
+        return if (op == "httpGetResponse") statusAndBody(response) else JsonPrimitive(response.bodyText())
+    }
+
+    private suspend fun httpPost(op: String, args: JsonArray): JsonElement {
+        require(PluginRuntimePermission.NETWORK)
+        val response = environment.network.post(
+            sourceId, args.string(0), args.string(1), args.stringMap(2), sourceHeaders = sourceHeaders, referer = referer(),
+        )
+        return if (op == "httpPostResponse") statusAndBody(response) else JsonPrimitive(response.bodyText())
+    }
+
+    private suspend fun httpPostBatch(args: JsonArray): JsonElement {
+        require(PluginRuntimePermission.NETWORK)
+        val responses = environment.network.postBatch(
+            sourceId = sourceId,
+            urls = args.stringList(0),
+            bodies = args.stringList(1),
+            headers = args.stringMap(2),
+            sourceHeaders = sourceHeaders,
+            referer = referer(),
+        )
+        // Same JSON-string shape as the in-process engines (the reviewed ShuYue script parses it).
+        return JsonPrimitive(encodeBoundedPluginBatchResponseBodies(responses, limits.maxBridgeResultBytes, jsonStringWrapped = true))
+    }
+
+    private suspend fun browserSessionRequest(args: JsonArray): JsonElement {
+        require(PluginRuntimePermission.BROWSER_CHALLENGE)
+        val prepared = preparePluginBrowserSessionRequest(
+            sourceOrigin = source.baseUrl.orEmpty(),
+            allowedOrigins = source.browserSessionOrigins,
+            request = PluginHttpRequest(
+                method = args.string(1),
+                url = args.string(0),
+                body = args.string(2).encodeToByteArray(),
+                headers = args.stringMap(3),
+            ),
+        )
+        val response = environment.browserSessionTransport.executeWithNetworkPolicy(
+            sourceId = sourceId,
+            sourceOrigin = prepared.sourceOrigin,
+            allowedOrigins = setOf(prepared.targetOrigin),
+            request = prepared.request,
+            resolver = environment.hostResolver,
+            allowDeveloperUnpinnedTransport = false, // never for repository code (§5.1)
+        )
+        return statusAndBody(response)
+    }
+
+    private suspend fun getCookie(args: JsonArray): JsonElement {
+        requireCookieRead()
+        val target = credentialUrl(args.string(1))
+        val now = nowEpochMillis()
+        return environment.storage.getCookies(sourceId).firstOrNull { it.name == args.string(0) && it.matches(target, now) }
+            ?.value?.let(::JsonPrimitive) ?: JsonNull
+    }
+
+    private suspend fun getCookies(args: JsonArray): JsonElement {
+        requireCookieRead()
+        val target = credentialUrl(args.string(0))
+        val now = nowEpochMillis()
+        return JsonObject(environment.storage.getCookies(sourceId).filter { it.matches(target, now) }.associate { it.name to JsonPrimitive(it.value) })
+    }
+
+    private suspend fun setCookie(args: JsonArray): JsonElement {
+        require(PluginRuntimePermission.COOKIE_STORAGE)
+        environment.storage.setCookie(
+            sourceId,
+            PluginCookie(
+                name = args.string(0),
+                value = args.string(1),
+                domain = credentialCookieDomain(args.string(2)),
+                path = args.string(3).ifBlank { "/" },
+                expiresAtEpochMillis = cookieExpiry(args.long(4)),
+            ),
+        )
+        return JsonPrimitive(true)
+    }
+
+    private fun requestHostEvent(args: JsonArray): JsonElement {
+        val sink = environment.systemEventSink
+        val scope = environment.boundPluginScope // host-injected; never read from the frame
+        val receipt = if (sink == null || scope == null) {
+            PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.UNSUPPORTED)
+        } else {
+            try {
+                sink.submit(scope, args.string(0).encodeToByteArray())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (logged: Throwable) {
+                Log.warn("Plugin", logged) {
+                    "Submitting a plugin system event failed; rejecting it as invalid"
+                }
+                PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
+            }
+        }
+        return JsonPrimitive(PluginJson.encodeToString(PluginEventReceipt.serializer(), receipt))
+    }
+
+    private fun hostEventCapabilities(): JsonElement = buildJsonObject {
+        val negotiation = environment.systemEventDeclaration?.let { declaration ->
+            val gateway = environment.systemEventSink as? PluginSystemEventGateway
+            val scope = environment.boundPluginScope
+            if (gateway != null && scope != null) gateway.negotiate(scope, declaration) else environment.systemEventNegotiation
+        } ?: environment.systemEventNegotiation
+        put("enabled", negotiation?.enabled == true)
+        put("protocol", "dev.shinsou.system")
+        val version = negotiation?.version
+        if (version == null) put("version", JsonNull) else put("version", version)
+        put("grantedCapabilities", PluginJson.encodeToJsonElement(negotiation?.grantedCapabilities.orEmpty()))
+        put("hardLimits", PluginJson.encodeToJsonElement(negotiation?.hardLimits))
     }
 
     /** `bridge.net.fetch(url, {method, headers, body})` → `{status, headers, body}` (§5.3). */
