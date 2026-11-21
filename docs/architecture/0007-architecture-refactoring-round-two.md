@@ -35,7 +35,7 @@
 
 ## 3. B｜中等重構
 
-- B1 `:core` 拆成 `:core`（併發、日誌、加密、檔案）與 `:core-network`（Ktor、Coil、AVIF），只需要基礎能力的模組不再編譯 Coil／Ktor；`PluginKeyValueStore` 正名為通用名稱。
+- B1 `:core` 拆成 `:core`（併發、日誌、加密、檔案）與 `:core-network`（Ktor、Coil、AVIF），只需要基礎能力的模組不再編譯 Coil／Ktor；`KeyValueStore` 正名為通用名稱。
 - B2 `:feature-plugin`、`:feature-library`、`:data-content` 各自提供組裝入口，`ShinsouComposition` 只串接子系統；跨模組不再需要的類別收回 `internal`。
 - B3 `:core`、`:domain`、`:feature-translation` 啟用 `explicitApi()`。
 - B4 `ShinsouAppServices` 不再直接帶具體實作類別，改以窄介面注入。
@@ -59,4 +59,5 @@
 | A4 | 完成 | 只有 `ShinsouAppServices`、`BrowseCallbacks` 可超過上限；仍直接引用它們的 15 個檔案列在測試內，只減不增（B4 收斂） |
 | A5 | 完成（範圍有限） | `ContentSqlAccess` 與 `SqlDriverPortableAliasResolver` 的語句帶識別碼（每個行程最多 512 段 SQL）；DDL／PRAGMA 不快取；其餘約 60 處多行 SQL 未改 |
 | A6 | 完成 | `-j` 依處理器數；fetch task 以 `third_party/.fetched` 為輸出。CMake configure／build task 仍每次執行（cmake 本身是增量的） |
-| B1～B4 | 進行中 | |
+| B1 | 完成 | `:core-network` 承接 `network` 套件（Ktor、Coil、AVIF）；`:domain`、`:data-content`、`:data-repository`、`:feature-translation` 不再編譯 Ktor／Coil。`PluginKeyValueStore` 改名 `KeyValueStore`（平台實作類別名稱未改） |
+| B2～B4 | 進行中 | |

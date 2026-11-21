@@ -4,7 +4,7 @@ import dev.shinsou.kmp.contract.AccountRepository
 import dev.shinsou.kmp.contract.AccountRepositoryDirectory
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.ExtensionRepo
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -274,7 +274,7 @@ class PluginBrowseRepositoryReconciliationTest {
     }
 
     private fun createHarness(
-        kv: PluginKeyValueStore,
+        kv: KeyValueStore,
         store: ExtensionRepositoryStore,
         portable: ShinsouRepository,
         indexRequestStarted: CompletableDeferred<Unit>? = null,

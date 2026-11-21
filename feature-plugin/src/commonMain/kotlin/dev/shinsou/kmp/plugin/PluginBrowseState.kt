@@ -6,7 +6,7 @@ import dev.shinsou.kmp.contract.AccountRepositoryDirectory
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
@@ -24,7 +24,7 @@ internal data class PluginBrowseDependencies(
     val manager: PluginManager,
     val repositoryClient: ExtensionRepositoryClient,
     val repositoryStore: ExtensionRepositoryStore,
-    val keyValueStore: PluginKeyValueStore,
+    val keyValueStore: KeyValueStore,
     val trustStore: PluginTrustStore,
     val mangaResolver: PluginMangaResolver,
     val migrationHandler: PluginMigrationHandler,

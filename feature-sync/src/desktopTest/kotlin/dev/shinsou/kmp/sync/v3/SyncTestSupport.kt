@@ -19,7 +19,7 @@ import dev.shinsou.kmp.domain.model.encodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.extensionAcquisitionId
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.domain.model.extensionUnitKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -172,7 +172,7 @@ internal class TestDevice(
  * The key-value store a device's sync service keeps its tokens in (R5-1: the sync tests are in
  * :feature-sync, which does not see the plugin feature's InMemoryPluginKeyValueStore).
  */
-internal class InMemoryKeyValues : PluginKeyValueStore {
+internal class InMemoryKeyValues : KeyValueStore {
     private val values = mutableMapOf<String, String>()
     private val mutex = Mutex()
 

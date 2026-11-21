@@ -159,7 +159,8 @@ class DependencyDirectionTest {
         /** Package to (module, layer) of §4.2; a higher layer may use a lower one, never the reverse. */
         val MODULES: Map<String, Pair<String, Int>> = buildMap {
             fun module(name: String, layer: Int, vararg packages: String) = packages.forEach { put(it, name to layer) }
-            module("core", 0, "concurrent", "crypto", "files", "network", "logging", "buildinfo", "testing")
+            module("core", 0, "concurrent", "crypto", "files", "logging", "buildinfo", "testing")
+            module("core-network", 1, "network")
             module("domain", 1, "domain", "rights", "contract")
             module("data-content", 2, "content", "annotation", "search")
             module("data-repository", 2, "data", "migration")

@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,7 +21,7 @@ public data class PluginDeveloperModeState(
  * address, and the package's own requests stay HTTPS-only with the usual network rules. Such
  * packages install under their own `packageId~dev` key, so they never replace a real install.
  */
-public class PluginDeveloperModeStore(private val store: PluginKeyValueStore) {
+public class PluginDeveloperModeStore(private val store: KeyValueStore) {
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(PluginDeveloperModeState())
 

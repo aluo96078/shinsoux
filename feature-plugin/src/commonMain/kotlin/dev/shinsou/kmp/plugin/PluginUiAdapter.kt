@@ -4,7 +4,7 @@ import dev.shinsou.kmp.contract.AccountPackageDirectory
 import dev.shinsou.kmp.contract.AccountRepositoryDirectory
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.v2.ExtensionBrowseContentGatewayV2
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerV2
 import dev.shinsou.kmp.plugin.events.ExactSourceRefreshInvalidations
@@ -89,7 +89,7 @@ public class PluginBrowseAdapter private constructor(
         repositoryClient: ExtensionRepositoryClient,
         repositoryStore: ExtensionRepositoryStore,
         pluginStorage: PluginStorage,
-        keyValueStore: PluginKeyValueStore,
+        keyValueStore: KeyValueStore,
         trustStore: PluginTrustStore,
         mangaResolver: PluginMangaResolver = PluginMangaResolver.None,
         migrationHandler: PluginMigrationHandler = PluginMigrationHandler.None,

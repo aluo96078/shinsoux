@@ -4,7 +4,7 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.crypto.SodiumPrimitives
 import dev.shinsou.kmp.crypto.canonicalJson
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -108,7 +108,7 @@ public interface RepositoryTrustRootStore {
 }
 
 public class KeyValueRepositoryTrustRootStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) : RepositoryTrustRootStore {
     private val mutex = Mutex()
@@ -367,7 +367,7 @@ internal fun RepositorySecurityStateStore.isConfigured(): Boolean =
 
 /** Key-value implementation shared by Android, iOS, Desktop, and future encrypted stores. */
 public class KeyValueRepositorySecurityStateStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) : RepositorySecurityStateStore {
     private val mutex = Mutex()

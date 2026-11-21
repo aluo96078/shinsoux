@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.Sha256
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import dev.shinsou.kmp.crypto.SodiumPrimitives
@@ -36,7 +36,7 @@ class PluginManagerExecutionTierTest {
     }
 
     private class Host(
-        val keyValues: PluginKeyValueStore = InMemoryPluginKeyValueStore(),
+        val keyValues: KeyValueStore = InMemoryPluginKeyValueStore(),
         val packages: PluginPackageStore = InMemoryPluginPackageStore(),
         withSandbox: Boolean = true,
         trustPolicy: RepositoryTrustPolicy = RepositoryTrustPolicies.UNSIGNED_DEVELOPER_COMPATIBILITY,
@@ -690,7 +690,7 @@ class PluginManagerExecutionTierTest {
     }
 }
 
-private class StallingKeyValueStore(private val delegate: PluginKeyValueStore = InMemoryPluginKeyValueStore()) : PluginKeyValueStore {
+private class StallingKeyValueStore(private val delegate: KeyValueStore = InMemoryPluginKeyValueStore()) : KeyValueStore {
     var stallAfterWriting: String? = null
     val stalled = kotlinx.coroutines.CompletableDeferred<Unit>()
     override suspend fun getString(key: String): String? = delegate.getString(key)

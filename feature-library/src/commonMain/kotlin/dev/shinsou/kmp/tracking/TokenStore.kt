@@ -2,7 +2,7 @@ package dev.shinsou.kmp.tracking
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -53,7 +53,7 @@ class InMemoryTokenStore(initial: Map<String, OAuthToken> = emptyMap()) : TokenS
  * instead of repeatedly surfacing a broken authenticated state.
  */
 class KeyValueTokenStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: Json = TokenJson,
 ) : TokenStore {
     private val mutex = Mutex()

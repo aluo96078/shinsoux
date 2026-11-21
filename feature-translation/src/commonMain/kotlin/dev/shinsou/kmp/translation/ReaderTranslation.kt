@@ -90,7 +90,7 @@ public class ReaderTranslation internal constructor(
     private val memory: TranslationMemoryStore,
     platform: OfflineTranslationPlatform,
     private val http: HttpClient,
-    private val secrets: dev.shinsou.kmp.files.PluginKeyValueStore?,
+    private val secrets: dev.shinsou.kmp.files.KeyValueStore?,
     private val system: SystemTranslationEngine?,
     environment: ReaderTranslationEnvironment,
 ) {
@@ -99,7 +99,7 @@ public class ReaderTranslation internal constructor(
         platform: OfflineTranslationPlatform,
         http: HttpClient,
         /** Where API keys are kept (the platform's protected storage); null leaves only the offline engine. */
-        secrets: dev.shinsou.kmp.files.PluginKeyValueStore? = null,
+        secrets: dev.shinsou.kmp.files.KeyValueStore? = null,
         now: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
         /** The operating system's own translation, where the platform has one (iOS). */
         system: SystemTranslationEngine? = null,

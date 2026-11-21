@@ -47,6 +47,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core"))
+            implementation(project(":core-network"))
             implementation(project(":domain"))
             implementation(project(":data-content"))
             implementation(project(":data-repository"))
@@ -155,6 +156,7 @@ kotlin {
 // One coverage report over the app and the modules it is built from (R2-5, R5-1).
 dependencies {
     kover(project(":core"))
+    kover(project(":core-network"))
     kover(project(":domain"))
     kover(project(":data-content"))
     kover(project(":data-repository"))

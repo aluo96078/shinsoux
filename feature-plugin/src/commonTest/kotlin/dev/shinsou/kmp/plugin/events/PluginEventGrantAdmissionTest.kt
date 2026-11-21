@@ -3,7 +3,7 @@ package dev.shinsou.kmp.plugin.events
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.ListSerializer
@@ -444,7 +444,7 @@ class PluginEventGrantAdmissionTest {
         """{"artifact":{"packageId":"${review.artifact.packageId}","version":"${review.artifact.version}","versionCode":${review.artifact.versionCode},"sha256":"${review.artifact.sha256}"},"sourceKeys":[{"contractVersion":2,"packageId":"pkg.test","sourceId":"source","legacyLongId":null}],"permissions":[${review.requestedRuntimePermissions.joinToString { "\"${it.name}\"" }}]}"""
 }
 
-private class RecordingKeyValueStore : PluginKeyValueStore {
+private class RecordingKeyValueStore : KeyValueStore {
     private val delegate = InMemoryPluginKeyValueStore()
     val putKeys = mutableListOf<String>()
 
@@ -458,7 +458,7 @@ private class RecordingKeyValueStore : PluginKeyValueStore {
     override suspend fun remove(key: String) = delegate.remove(key)
 }
 
-private class FailingTombstoneKeyValueStore : PluginKeyValueStore {
+private class FailingTombstoneKeyValueStore : KeyValueStore {
     private val delegate = InMemoryPluginKeyValueStore()
     var failTombstones = false
 

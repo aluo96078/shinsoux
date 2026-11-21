@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.files.AppFileSystem
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -317,7 +317,7 @@ class FilePluginPackageStoreTest {
     }
 }
 
-private class InspectablePluginKeyValueStore : PluginKeyValueStore {
+private class InspectablePluginKeyValueStore : KeyValueStore {
     private val values = linkedMapOf<String, String>()
     val keys: Set<String> get() = values.keys
 

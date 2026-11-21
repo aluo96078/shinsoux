@@ -2,7 +2,7 @@ package dev.shinsou.kmp.desktop
 
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.PluginJson
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
@@ -29,7 +29,7 @@ internal class DesktopPluginKeyValueStore(
     private val masterKeyStore: DesktopMasterKeyStore = DesktopMasterKeyStoreFactory.create(directory),
     private val secureRandom: SecureRandom = SecureRandom(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-) : PluginKeyValueStore {
+) : KeyValueStore {
     private val lock = Any()
     private val stateFile = directory.resolve("plugin-state.json")
     private val keyFile = directory.resolve("plugin-secrets.key")

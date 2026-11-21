@@ -3,7 +3,7 @@ package dev.shinsou.kmp.plugin
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsSchemaV2
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.ExtensionCapability
@@ -1619,7 +1619,7 @@ private class FailingLoginExtensionSource(
 private fun testPluginManager(
     packageStore: PluginPackageStore,
     trustStore: PluginTrustStore,
-    keyValues: PluginKeyValueStore,
+    keyValues: KeyValueStore,
     runtimeFactory: ScriptPluginRuntimeFactory,
 ): PluginManager {
     val storage = KeyValuePluginStorage(keyValues)
@@ -1645,8 +1645,8 @@ private fun testPluginManager(
 }
 
 private class CountingPluginKeyValueStore(
-    private val delegate: PluginKeyValueStore,
-) : PluginKeyValueStore {
+    private val delegate: KeyValueStore,
+) : KeyValueStore {
     val reads = mutableMapOf<String, Int>()
 
     override suspend fun getString(key: String): String? {
@@ -1663,7 +1663,7 @@ private class CountingPluginKeyValueStore(
     }
 }
 
-private class SessionAccessTrackingKeyValueStore : PluginKeyValueStore {
+private class SessionAccessTrackingKeyValueStore : KeyValueStore {
     private val values = mutableMapOf<String, String>()
     val accessedSessionKeys = mutableSetOf<String>()
 

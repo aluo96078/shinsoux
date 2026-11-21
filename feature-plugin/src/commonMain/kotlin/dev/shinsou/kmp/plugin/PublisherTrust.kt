@@ -4,7 +4,7 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.crypto.SodiumPrimitives
 import dev.shinsou.kmp.crypto.canonicalJson
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.logging.Log
 import io.ktor.http.Url
 import kotlinx.coroutines.NonCancellable
@@ -155,7 +155,7 @@ public data class AddRepositoryLink(val repositoryUrl: String, val fingerprint: 
  * substitution, which only [replaceAfterExplicitApproval] resolves.
  */
 public class PublisherTrustStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val securityState: RepositorySecurityStateStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) {
@@ -478,7 +478,7 @@ public class PublisherTrustStore(
  * `publisher-revocations` document replaces the previous one; its sequence never goes back.
  */
 public class PublisherRevocationStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val publishers: PublisherTrustStore,
     securityState: RepositorySecurityStateStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
@@ -563,7 +563,7 @@ public sealed interface PluginBlockEntry {
 }
 
 public class LocalPluginBlocklist(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: kotlinx.serialization.json.Json = PluginJson,
 ) {
     private val mutex = Mutex()

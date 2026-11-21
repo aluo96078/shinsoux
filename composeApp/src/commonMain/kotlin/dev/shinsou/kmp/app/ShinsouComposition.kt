@@ -70,7 +70,7 @@ import dev.shinsou.kmp.contract.AccountPackageDirectory
 import dev.shinsou.kmp.contract.AccountPackage
 import dev.shinsou.kmp.plugin.PluginBrowseAdapter
 import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.PluginLoginRequestCoordinator
 import dev.shinsou.kmp.plugin.PluginLogoutConfirmation
 import dev.shinsou.kmp.plugin.PluginLogoutRequestCoordinator
@@ -150,7 +150,7 @@ import dev.shinsou.kmp.data.LegacyPublicationProjection
 public class ShinsouComposition(
     public val repository: ShinsouRepository,
     private val httpClient: HttpClient,
-    private val pluginKeyValueStore: PluginKeyValueStore,
+    private val pluginKeyValueStore: KeyValueStore,
     fileSystem: AppFileSystem,
     runtimeFactory: ScriptPluginRuntimeFactory,
     autoBackupService: AutoBackupService? = null,

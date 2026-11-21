@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import io.ktor.client.HttpClient
@@ -239,7 +239,7 @@ class PluginManagerExecutionAdmissionTest {
 
     private class Fixture(
         val packageStore: PluginPackageStore = InMemoryPluginPackageStore(),
-        val keyValues: PluginKeyValueStore = InMemoryPluginKeyValueStore(),
+        val keyValues: KeyValueStore = InMemoryPluginKeyValueStore(),
         runtimeFactory: ScriptPluginRuntimeFactory = TrackingRuntimeFactory(),
     ) {
         var script: String = ORIGINAL_SCRIPT
@@ -330,7 +330,7 @@ private class FailNextPutPackageStore : PluginPackageStore {
     override suspend fun remove(pluginId: String) = delegate.remove(pluginId)
 }
 
-private class FailingRemoveKeyValueStore : PluginKeyValueStore {
+private class FailingRemoveKeyValueStore : KeyValueStore {
     private val delegate = InMemoryPluginKeyValueStore()
     var failRemoves: Boolean = false
 

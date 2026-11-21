@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.sync.v3
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.sync.v3.SyncV3Service.Companion.KEY_ACCESS_TOKEN
 import dev.shinsou.kmp.sync.v3.SyncV3Service.Companion.KEY_REFRESH_TOKEN
 import dev.shinsou.kmp.sync.v3.SyncV3Service.Companion.META_ACCESS_EXPIRES
@@ -17,7 +17,7 @@ import kotlinx.coroutines.sync.withLock
  */
 internal class SyncSessionTokens(
     context: SyncV3Context,
-    private val keyValues: PluginKeyValueStore,
+    private val keyValues: KeyValueStore,
     private val onRefreshed: () -> Unit,
     private val onExpired: () -> Unit,
 ) {

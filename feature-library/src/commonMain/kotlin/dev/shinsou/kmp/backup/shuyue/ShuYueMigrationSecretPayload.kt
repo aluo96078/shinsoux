@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  * therefore replace the selected credential and cookie set without exposing an intermediate state.
  */
 class KeyValueShuYueMigrationSecretStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
 ) : ShuYueMigrationSecretStore {
     override val protectedAtRest: Boolean = true
 

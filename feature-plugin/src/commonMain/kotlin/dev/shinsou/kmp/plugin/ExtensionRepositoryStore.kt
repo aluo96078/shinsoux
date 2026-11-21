@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
@@ -16,7 +16,7 @@ public interface ExtensionRepositoryStore {
 }
 
 public class KeyValueExtensionRepositoryStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : ExtensionRepositoryStore {
     private val mutex = Mutex()

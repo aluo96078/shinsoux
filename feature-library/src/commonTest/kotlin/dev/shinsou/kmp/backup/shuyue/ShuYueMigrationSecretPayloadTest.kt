@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -75,7 +75,7 @@ class ShuYueMigrationSecretPayloadTest {
     private class RecordingKeyValueStore(
         var value: String? = null,
         private val failWrites: Boolean = false,
-    ) : PluginKeyValueStore {
+    ) : KeyValueStore {
         val writeKeys = mutableListOf<String>()
 
         override suspend fun getString(key: String): String? = value

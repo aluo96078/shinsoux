@@ -10,7 +10,7 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.contract.AccountPackage
 import dev.shinsou.kmp.contract.AccountRepository
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.CancellationException
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
@@ -41,7 +41,7 @@ public class SyncV3Service internal constructor(
     private val identity: SyncIdentityResolver,
     private val legacyKeys: LegacySourceKeyCache,
     private val api: SyncApi,
-    private val keyValues: PluginKeyValueStore,
+    private val keyValues: KeyValueStore,
     private val scope: CoroutineScope,
     private val device: SyncDeviceInfo,
     private val resolveLegacySource: suspend (Long) -> SourceKey?,
@@ -755,7 +755,7 @@ public class SyncV3Service internal constructor(
         fun create(
             repository: ShinsouRepository,
             driver: SqlDriver,
-            keyValues: PluginKeyValueStore,
+            keyValues: KeyValueStore,
             http: io.ktor.client.HttpClient,
             scope: CoroutineScope,
             device: SyncDeviceInfo,

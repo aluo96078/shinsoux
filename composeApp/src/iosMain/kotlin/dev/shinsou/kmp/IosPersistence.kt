@@ -4,7 +4,7 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.PluginJson
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.allowsIosKeychainPlaintextFallback
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import dev.shinsou.kmp.plugin.migrateLegacySensitivePluginValues
@@ -107,7 +107,7 @@ internal object IosSnapshotPersistence {
  * Existing sensitive values in the plain store are migrated to Keychain on first access.
  */
 @OptIn(ExperimentalForeignApi::class)
-public class IosPluginKeyValueStore : PluginKeyValueStore {
+public class IosPluginKeyValueStore : KeyValueStore {
     override suspend fun getString(key: String): String? = IosPluginState.mutex.withLock {
         ensureSensitiveValuesMigratedLocked()
         if (!isSensitivePluginKey(key) || IosPluginState.keychainUnavailable) {

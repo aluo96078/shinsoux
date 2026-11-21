@@ -6,7 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.isSensitivePluginKey
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -18,7 +18,7 @@ import javax.crypto.spec.GCMParameterSpec
  * SharedPreferences-backed plugin state. Credentials and tokens are encrypted by a non-exportable
  * Android Keystore AES key; manifests, scripts, preferences and trust hashes remain plain JSON.
  */
-internal class AndroidPluginKeyValueStore(context: Context) : PluginKeyValueStore {
+internal class AndroidPluginKeyValueStore(context: Context) : KeyValueStore {
     private val preferences = context.getSharedPreferences("shinsou-plugin-state", Context.MODE_PRIVATE)
     private val migrationLock = Any()
     @Volatile

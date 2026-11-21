@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.events.BoundPluginScopeFactory
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
@@ -122,7 +122,7 @@ class DurableAuthorityPersistenceTest {
     }
 }
 
-private class SilentMutationKeyValueStore : PluginKeyValueStore {
+private class SilentMutationKeyValueStore : KeyValueStore {
     val values = linkedMapOf<String, String>()
     var dropPut: (String, String) -> Boolean = { _, _ -> false }
     var dropRemove: (String) -> Boolean = { false }

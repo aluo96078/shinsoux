@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.SodiumKeyPair
 import dev.shinsou.kmp.crypto.SodiumPrimitives
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -39,7 +39,7 @@ class PublisherTrustTest {
     }
 
     private inner class Host(
-        val kv: PluginKeyValueStore = InMemoryPluginKeyValueStore(),
+        val kv: KeyValueStore = InMemoryPluginKeyValueStore(),
         val state: RepositorySecurityStateStore = KeyValueRepositorySecurityStateStore(kv),
     ) {
         var now = 1_000_000L
@@ -628,7 +628,7 @@ class PublisherTrustTest {
     }
 }
 
-private class FailingKeyValueStore(private val delegate: PluginKeyValueStore = InMemoryPluginKeyValueStore()) : PluginKeyValueStore {
+private class FailingKeyValueStore(private val delegate: KeyValueStore = InMemoryPluginKeyValueStore()) : KeyValueStore {
     var failWritesStartingWith: String? = null
     override suspend fun getString(key: String): String? = delegate.getString(key)
     override suspend fun putString(key: String, value: String) {

@@ -18,6 +18,7 @@ dependencyResolutionManagement {
 rootProject.name = "Shinsou X"
 // R5-1 (docs/architecture/0006 §4.2): the library modules, lowest layer first, and the app.
 include(":core")
+include(":core-network")
 include(":domain")
 include(":data-content")
 include(":data-repository")

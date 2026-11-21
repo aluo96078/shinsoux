@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.translation
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.withLock
  * The key-value store the translation providers keep keys and quotas in (R5-1: these tests are in
  * :feature-translation, which does not see the plugin feature's InMemoryPluginKeyValueStore).
  */
-internal class InMemoryKeyValues : PluginKeyValueStore {
+internal class InMemoryKeyValues : KeyValueStore {
     private val values = mutableMapOf<String, String>()
     private val mutex = Mutex()
 

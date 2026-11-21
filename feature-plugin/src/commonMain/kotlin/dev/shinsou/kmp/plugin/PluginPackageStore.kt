@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.logging.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -105,7 +105,7 @@ public class InMemoryPluginPackageStore : PluginPackageStore {
 
 /** Persistent package store requiring only the same KV primitive used by app settings. */
 public class KeyValuePluginPackageStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : PluginPackageStore {
     private val mutex = Mutex()

@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import io.ktor.http.Url
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -351,7 +351,7 @@ private val SENSITIVE_PLUGIN_KEY_MARKERS = listOf(
     "cookie",
 )
 
-public class InMemoryPluginKeyValueStore : PluginKeyValueStore {
+public class InMemoryPluginKeyValueStore : KeyValueStore {
     private val values = mutableMapOf<String, String>()
     private val mutex = Mutex()
 
@@ -362,7 +362,7 @@ public class InMemoryPluginKeyValueStore : PluginKeyValueStore {
 
 /** JSON-backed implementation preserving the original `source.<id>.*` key namespace. */
 public class KeyValuePluginStorage(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : PluginStorage, SourceKeyPluginStorage {
     private val mutex = Mutex()
@@ -1011,7 +1011,7 @@ private data class PluginPreferenceSnapshot(
  */
 public class MigratingPluginStorage(
     private val delegate: PluginStorage,
-    private val migrationState: PluginKeyValueStore,
+    private val migrationState: KeyValueStore,
     private val legacySourceId: Long = LEGACY_BILIMANGA_MANGA_STORAGE_ID,
     private val targetSourceId: Long = BILIMANGA_MANGA_SOURCE_ID,
 ) : PluginStorage, SourceKeyPluginStorage {
@@ -1257,7 +1257,7 @@ public interface PluginTrustStore {
 }
 
 public class KeyValuePluginTrustStore(
-    private val keyValueStore: PluginKeyValueStore,
+    private val keyValueStore: KeyValueStore,
     private val json: Json = PluginJson,
 ) : PluginTrustStore {
     private val mutex = Mutex()

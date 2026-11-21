@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.plugin
 
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,7 +119,7 @@ class MigratingPluginStorageTest {
     )
 }
 
-private class RecordingPluginKeyValueStore : PluginKeyValueStore {
+private class RecordingPluginKeyValueStore : KeyValueStore {
     private val values = mutableMapOf<String, String>()
     val accessedKeys = mutableListOf<String>()
 

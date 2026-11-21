@@ -3,7 +3,7 @@ package dev.shinsou.kmp.plugin.events
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.pluginJsonArrayCountsAtMost
 import dev.shinsou.kmp.plugin.pluginUtf8ByteCountAtMost
@@ -83,7 +83,7 @@ private data class LegacyPluginRuntimePermissionApproval(
 
 /** Durable exact-digest admission store. Repository requests never become grants without approve(). */
 public class KeyValuePluginEventGrantAdmission(
-    private val store: PluginKeyValueStore,
+    private val store: KeyValueStore,
     private val authorizer: MutablePluginSystemEventAuthorizer,
     private val json: Json = Json { ignoreUnknownKeys = false; encodeDefaults = true },
 ) {

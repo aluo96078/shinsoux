@@ -18,8 +18,8 @@ on:
       - "composeApp/build.gradle.kts"
       - "build-logic/**"
       - "feature-plugin/src/commonMain/**"
-      # The address policy plugins are held to (ADR-0002) lives in :core.
-      - "core/src/commonMain/kotlin/dev/shinsou/kmp/network/**"
+      # The address policy plugins are held to (ADR-0002) lives in :core-network.
+      - "core-network/src/commonMain/kotlin/dev/shinsou/kmp/network/**"
       - "gradle/**"
       - "composeApp/src/desktopMain/**"
       # R5-1: the platform code of every module the app is built from

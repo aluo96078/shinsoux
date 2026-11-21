@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin
 
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.files.PluginKeyValueStore
+import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.domain.model.ExactPluginSourceTarget
 import dev.shinsou.kmp.plugin.events.DiagnosticMessageV1
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
@@ -710,7 +710,7 @@ class BoundPluginStorageSecurityTest {
     }
 }
 
-private class RoutingRecordingPluginKeyValueStore : PluginKeyValueStore {
+private class RoutingRecordingPluginKeyValueStore : KeyValueStore {
     val values = mutableMapOf<String, String>()
 
     override suspend fun getString(key: String): String? = values[key]
@@ -722,7 +722,7 @@ private class RoutingRecordingPluginKeyValueStore : PluginKeyValueStore {
     }
 }
 
-private class FailingCredentialCleanupKeyValueStore : PluginKeyValueStore {
+private class FailingCredentialCleanupKeyValueStore : KeyValueStore {
     val values = mutableMapOf<String, String>()
     var failLegacyCleanup: Boolean = false
 

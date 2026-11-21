@@ -152,7 +152,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 ## 專案結構
 
-- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`domain`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui`，以及 App 本身 `composeApp`
+- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`core-network`、`domain`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui`，以及 App 本身 `composeApp`
 - `feature-plugin`：外掛 repository、信任、外掛網路、沙箱 runtime 與各平台 host（iOS WASM 沙箱 cinterop、Android 隔離程序與 `libshinsou_sandbox.so`）；`jvmCommonTest` 的 Rhino runtime 只供相容性測試比對
 - `ui`：Compose UI、navigation、i18n 與 App 圖示（Compose resource）
 - `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
