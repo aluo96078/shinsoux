@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.domain.model.ReaderSettings
-import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.manga.MangaTranslationService
 import dev.shinsou.kmp.testing.TestOnlyApi
 import dev.shinsou.kmp.translation.PrefetchChapter
 import dev.shinsou.kmp.translation.TranslationLabels
@@ -23,7 +23,7 @@ public object UiTestAccess {
         session: TypedReaderContentSession,
         features: ContentFeatures,
         labels: TranslationLabels?,
-        manga: MangaTranslation? = null,
+        manga: MangaTranslationService? = null,
     ): PrefetchChapter = dev.shinsou.kmp.ui.screens.prefetchChapter(session, features, labels, manga)
 
     /** The unified reader with the arguments a test sets; the rest keep their defaults. */
@@ -33,7 +33,7 @@ public object UiTestAccess {
         features: ContentFeatures,
         settings: ReaderSettings,
         translationRequestSerial: Long,
-        mangaTranslation: MangaTranslation?,
+        mangaTranslation: MangaTranslationService?,
         modifier: Modifier = Modifier,
     ) {
         dev.shinsou.kmp.ui.screens.UnifiedContentReader(

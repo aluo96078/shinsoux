@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
  * [page] is what the shell shows: a review whose title open no longer stands once it changed goes.
  */
 @Composable
-internal fun PluginReviewDialogs(reviews: PluginReviewCoordinator, page: Any?) {
+internal fun PluginReviewDialogs(reviews: PluginReviewCoordinator<*>, page: Any?) {
     val strings = LocalShinsouStrings.current
     val state by reviews.state.collectAsState()
     state.linkedRepositoryTrust?.let { prompt ->

@@ -64,7 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncClient
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.logging.Log
 import androidx.compose.runtime.mutableStateOf
@@ -122,7 +122,7 @@ internal fun ExtensionV2PublicationPane(
     favorites: PublicationFavorites,
     reader: ExtensionReaderHost,
     navigation: PublicationPaneNavigation,
-    sync: SyncV3Service? = null,
+    sync: SyncClient? = null,
 ) {
     val scope = rememberCoroutineScope()
     val strings = rememberUpdatedState(LocalShinsouStrings.current)
@@ -174,7 +174,7 @@ private fun PublicationPageUnderCover(
     services: ExtensionPublicationServices,
     reader: ExtensionReaderHost,
     navigation: PublicationPaneNavigation,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
 ) {
     Box(Modifier.fillMaxSize()) {
         PublicationPage(state, services, reader, navigation, sync)
@@ -243,7 +243,7 @@ private fun PublicationPage(
     services: ExtensionPublicationServices,
     reader: ExtensionReaderHost,
     navigation: PublicationPaneNavigation,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
 ) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
@@ -520,7 +520,7 @@ private fun publicationActions(
 @Composable
 private fun rememberPublicationInfo(
     state: ExtensionPublicationState,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
     reader: ExtensionReaderHost,
     navigation: PublicationPaneNavigation,
     translation: dev.shinsou.kmp.translation.ReaderTranslation?,

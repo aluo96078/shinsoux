@@ -16,6 +16,9 @@ import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
+import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
+import dev.shinsou.kmp.sync.v3.SyncClient
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -50,15 +53,15 @@ internal fun extensionBindingOf(
  * device whose reading waits for chapters not stored here. Null when nothing is being read.
  */
 @Composable
-internal fun rememberLibraryContinueReading(
+internal fun <B> rememberLibraryContinueReading(
     snapshot: AppSnapshot,
     libraryItems: List<LibraryItem>,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,
-    appServices: ShinsouAppServices,
+    sync: SyncClient?,
+    browse: B,
     workDispatcher: CoroutineDispatcher,
-): LibraryContinueReading? {
+): LibraryContinueReading? where B : ExtensionPublicationCatalog, B : ExtensionLibraryBinding {
     val strings = LocalShinsouStrings.current
-    val sync = appServices.sync
     // A sync that ends may bring reading from other devices without changing the library.
     val syncState = sync?.state?.collectAsState()?.value
     var result by remember { mutableStateOf<LibraryContinueReading?>(null) }
@@ -71,7 +74,7 @@ internal fun rememberLibraryContinueReading(
                     .filter { (_, at) -> at > 0 }
                     .maxByOrNull { (_, at) -> at }
                     ?.first
-                latest?.let { continueReadingOf(it, snapshot, typedBindings, appServices, strings) }
+                latest?.let { continueReadingOf(it, snapshot, typedBindings, browse, strings) }
             }
         }.onFailure { Log.warn("Library", it) { "Reading the title to continue failed" } }.getOrNull()
     }
@@ -82,16 +85,15 @@ internal fun rememberLibraryContinueReading(
  * Where "continue reading" takes [item]; null when there is nothing left to continue. Blocks on
  * the content store: call off the UI thread.
  */
-internal suspend fun continueReadingOf(
+internal suspend fun <B> continueReadingOf(
     item: LibraryItem,
     snapshot: AppSnapshot,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,
-    appServices: ShinsouAppServices,
+    browse: B,
     strings: ShinsouStrings,
-): LibraryContinueReading? {
+): LibraryContinueReading? where B : ExtensionPublicationCatalog, B : ExtensionLibraryBinding {
     val binding = extensionBindingOf(item.libraryManga.manga, typedBindings)
         ?: return localContinueReading(item, snapshot, strings)
-    val browse = appServices.browse
     // The saved list of a library title names its chapters without asking the source.
     val units = browse.cachedExtensionPublicationPageV2(binding.sourceKey, binding.remotePublicationId)
         ?.units.orEmpty()

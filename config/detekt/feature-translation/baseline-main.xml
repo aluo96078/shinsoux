@@ -47,7 +47,7 @@
     <ID>EmptyElseBlock:MangaTranslation.kt:MangaTranslation$if (firstPage == null) firstPage = started.elapsedNow()</ID>
     <ID>EmptyElseBlock:TranslationMemoryStore.kt:TranslationMemoryStore$if (includePaid) add(1L)</ID>
     <ID>FunctionParameterNaming:MangaEraser.kt:MangaEraser$W: Int</ID>
-    <ID>LargeClass:MangaTranslation.kt:MangaTranslation</ID>
+    <ID>LargeClass:MangaTranslation.kt:MangaTranslation : MangaTranslationService</ID>
     <ID>LongParameterList:MangaEraser.kt:Erased</ID>
     <ID>LongParameterList:MangaEraser.kt:MangaEraser$private fun bubbleInterior: Region?</ID>
     <ID>LongParameterList:MangaEraser.kt:MangaEraser$private fun inkColour: FloatArray?</ID>
@@ -99,8 +99,8 @@
     <ID>ReturnCount:MangaLayout.kt:MangaLayout$internal fun breakLines: List&lt;List&lt;Token&gt;&gt;?</ID>
     <ID>ReturnCount:MangaPipeline.kt:internal fun tidyTranslation: String?</ID>
     <ID>ReturnCount:MangaStorage.kt:MangaModelStore$private fun bytesUnder: Long</ID>
-    <ID>ReturnCount:MangaTranslation.kt:MangaTranslation$public suspend fun readsChineseScript: String?</ID>
-    <ID>ReturnCount:MangaTranslation.kt:MangaTranslation$public suspend fun readsJapanese: Boolean?</ID>
+    <ID>ReturnCount:MangaTranslation.kt:MangaTranslation$override suspend fun readsChineseScript: String?</ID>
+    <ID>ReturnCount:MangaTranslation.kt:MangaTranslation$override suspend fun readsJapanese: Boolean?</ID>
     <ID>ReturnCount:OfflineModelCatalog.kt:OfflineModelCatalog$public fun route: List&lt;OfflineModel&gt;?</ID>
     <ID>ReturnCount:OfflineModelStore.kt:OfflineModelStore$override fun installed: OfflineModelPaths?</ID>
     <ID>ReturnCount:ReaderTranslation.kt:ReaderTranslation$public suspend fun downloadSystemLanguages: Boolean</ID>

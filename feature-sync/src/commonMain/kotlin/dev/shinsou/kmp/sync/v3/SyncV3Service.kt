@@ -51,10 +51,10 @@ public class SyncV3Service internal constructor(
     private val autoSyncAfterSignIn: Boolean = true,
     automaticIntervalMillis: Long = MIN_AUTOMATIC_INTERVAL_MILLIS,
     private val sourceInfo: suspend () -> Map<Pair<String, String>, SyncSourceInfo> = { emptyMap() },
-) {
+) : SyncClient {
     private val context = SyncV3Context(repository, store, identity, api, nowMillis)
     private val publisher = SyncStatePublisher(context)
-    public val state: StateFlow<SyncUiState> = publisher.state
+    override val state: StateFlow<SyncUiState> = publisher.state
 
     /**
      * Repositories the account knows about (live server records), as suggestions for this device.
@@ -124,7 +124,7 @@ public class SyncV3Service internal constructor(
     // ---- account ----------------------------------------------------------------------------
 
     /** Validates [input], fetches `/.well-known/shinsou` and returns the address plus instance info. */
-    public suspend fun discover(input: String): Result<Pair<SyncServerAddress, WireInstance>> = offCallerCatching {
+    override suspend fun discover(input: String): Result<Pair<SyncServerAddress, WireInstance>> = offCallerCatching {
         val address = SyncNetworkPolicy.parse(input)
         val instance = api.instance(address.baseUrl)
         if (instance.apiVersions.min > 1 || instance.apiVersions.max < 1) {
@@ -133,12 +133,12 @@ public class SyncV3Service internal constructor(
         address to instance
     }
 
-    public suspend fun login(address: SyncServerAddress, username: String, password: String): Result<Unit> = offCallerCatching {
+    override suspend fun login(address: SyncServerAddress, username: String, password: String): Result<Unit> = offCallerCatching {
         val session = api.login(address.baseUrl, WireLoginRequest(username.trim(), password, deviceInfo()))
         completeSignIn(address, session)
     }
 
-    public suspend fun register(
+    override suspend fun register(
         address: SyncServerAddress,
         username: String,
         password: String,
@@ -188,7 +188,7 @@ public class SyncV3Service internal constructor(
     }
 
     /** Signs this device out on the server (best effort) and forgets all sync state. */
-    public suspend fun logout(): Unit = offCaller {
+    override suspend fun logout(): Unit = offCaller {
         val url = store.meta(META_SERVER_URL)
         // Signing out locally never depends on the server: an expired session simply skips the call.
         val token = runCatchingCancellable { tokens.accessTokenOrRefresh() }.getOrNull()
@@ -204,12 +204,12 @@ public class SyncV3Service internal constructor(
         publisher.publishState()
     }
 
-    public suspend fun listDevices(): Result<List<WireDevice>> = offCallerCatching {
+    override suspend fun listDevices(): Result<List<WireDevice>> = offCallerCatching {
         val url = baseUrl
         tokens.authed { api.listDevices(url, it) }
     }
 
-    public suspend fun renameDevice(id: String, name: String): Result<WireDevice> = offCallerCatching {
+    override suspend fun renameDevice(id: String, name: String): Result<WireDevice> = offCallerCatching {
         val url = baseUrl
         val renamed = tokens.authed { api.renameDevice(url, it, id, name.trim()) }
         if (renamed.current) {
@@ -219,7 +219,7 @@ public class SyncV3Service internal constructor(
         renamed
     }
 
-    public suspend fun signOutDevice(id: String, isCurrent: Boolean): Result<Unit> = offCallerCatching {
+    override suspend fun signOutDevice(id: String, isCurrent: Boolean): Result<Unit> = offCallerCatching {
         if (isCurrent) {
             logout()
         } else {
@@ -231,7 +231,7 @@ public class SyncV3Service internal constructor(
     // ---- sharing ----------------------------------------------------------------------------
 
     /** Asks the server which optional features it offers and remembers the answer. */
-    public suspend fun refreshFeatures(): Result<WireFeatures> = offCallerCatching {
+    override suspend fun refreshFeatures(): Result<WireFeatures> = offCallerCatching {
         val url = baseUrl
         val features = api.instance(url).features
         // The store is only written under the cycle lock, never beside a running sync cycle.
@@ -252,15 +252,14 @@ public class SyncV3Service internal constructor(
      * The work hash to share [manga] by, or null when it cannot be shared: it has to be in the
      * library and come from a source (local-only titles have no identity another account can use).
      */
-    public fun shareableWork(manga: Manga): String? {
+    override fun shareableWork(manga: Manga): String? {
         if (!manga.favorite) return null
         // A title without a portable identity cannot be shared; that is an answer, not a failure.
-        val work = runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced ?: return null
-        return work.recordKey
+        return (runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced)?.recordKey
     }
 
     /** Shares [workHash] with another account. Uploads pending changes first so the server knows the work. */
-    public suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = offCallerCatching {
+    override suspend fun shareWork(workHash: String, recipientId: String, message: String): Result<WireShare> = offCallerCatching {
         val url = baseUrl
         uploadBeforeShare()
         val text = message.trim().take(MAX_SHARE_MESSAGE).ifEmpty { null }
@@ -277,46 +276,46 @@ public class SyncV3Service internal constructor(
     }
 
     /** Accepting adds the work to the library on the server; a sync brings it to this device. */
-    public suspend fun acceptShare(id: String): Result<WireShare> = offCallerCatching {
+    override suspend fun acceptShare(id: String): Result<WireShare> = offCallerCatching {
         val url = baseUrl
         val share = tokens.authed { api.answerShare(url, it, id, "accept") }
         scope.launch { syncQueued() }
         share
     }
 
-    public suspend fun listShares(sent: Boolean, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireSharePage> =
+    override suspend fun listShares(sent: Boolean, offset: Int, limit: Int): Result<WireSharePage> =
         offCaller { social.listShares(sent, offset, limit) }
 
     /** Received shares still waiting for an answer. */
-    public suspend fun pendingShares(): Result<Int> =
+    override suspend fun pendingShares(): Result<Int> =
         offCaller { social.pendingShares() }
 
-    public suspend fun dismissShare(id: String): Result<WireShare> =
+    override suspend fun dismissShare(id: String): Result<WireShare> =
         offCaller { social.dismissShare(id) }
 
     /** Removes a received share from the inbox, or withdraws one that was sent. */
-    public suspend fun deleteShare(id: String): Result<Unit> =
+    override suspend fun deleteShare(id: String): Result<Unit> =
         offCaller { social.deleteShare(id) }
 
     /** Accounts whose username starts with [query]; a leading `@` is ignored. */
-    public suspend fun searchUsers(query: String, limit: Int = SOCIAL_PAGE_SIZE): Result<List<WireUserSummary>> =
+    override suspend fun searchUsers(query: String, limit: Int): Result<List<WireUserSummary>> =
         offCaller { social.searchUsers(query, limit) }
 
-    public suspend fun listRelation(relation: SyncRelation, offset: Int, limit: Int = SOCIAL_PAGE_SIZE): Result<WireUserPage> =
+    override suspend fun listRelation(relation: SyncRelation, offset: Int, limit: Int): Result<WireUserPage> =
         offCaller { social.listRelation(relation, offset, limit) }
 
-    public suspend fun setFollowing(userId: String, following: Boolean): Result<Unit> =
+    override suspend fun setFollowing(userId: String, following: Boolean): Result<Unit> =
         offCaller { social.setFollowing(userId, following) }
 
     /** Blocking also removes follows in both directions and dismisses that account's open shares. */
-    public suspend fun setBlocked(userId: String, blocked: Boolean): Result<Unit> =
+    override suspend fun setBlocked(userId: String, blocked: Boolean): Result<Unit> =
         offCaller { social.setBlocked(userId, blocked) }
 
     /** Who may share with this account: `everyone`, `following` or `nobody`. */
-    public suspend fun receiveSharesFrom(): Result<String> =
+    override suspend fun receiveSharesFrom(): Result<String> =
         offCaller { social.receiveSharesFrom() }
 
-    public suspend fun setReceiveSharesFrom(value: String): Result<String> =
+    override suspend fun setReceiveSharesFrom(value: String): Result<String> =
         offCaller { social.setReceiveSharesFrom(value) }
 
     // ---- reviews ----------------------------------------------------------------------------
@@ -326,7 +325,7 @@ public class SyncV3Service internal constructor(
      * (local-only imports, uninstalled legacy sources). Unlike [shareableWork] this does not need
      * the title to be in the library: anyone may read reviews, only writing needs the library.
      */
-    public fun reviewableWork(manga: Manga): String? =
+    override fun reviewableWork(manga: Manga): String? =
         // A title without a portable identity has no reviews; that is an answer, not a failure.
         (runCatching { identity.workOf(manga) }.getOrNull() as? SyncedWork.Sourced)?.recordKey
 
@@ -334,7 +333,7 @@ public class SyncV3Service internal constructor(
      * The work hash of a source title by its source and remote id, for detail pages that show a
      * source's title directly. It is the hash [reviewableWork] gives once the title is in the library.
      */
-    public fun sourceWorkHash(sourceKey: SourceKey, remotePublicationId: String): String? =
+    override fun sourceWorkHash(sourceKey: SourceKey, remotePublicationId: String): String? =
         identity.sourceWorkOf(sourceKey, remotePublicationId)?.recordKey
 
     /**
@@ -354,7 +353,7 @@ public class SyncV3Service internal constructor(
      * reading is held back until this device stores the chapter ([pendingReading]). Reads the local
      * store only, but blocks: never call it on the UI thread.
      */
-    public fun pendingLastReadTimes(mangas: Collection<Manga>): Map<Long, Long> {
+    override fun pendingLastReadTimes(mangas: Collection<Manga>): Map<Long, Long> {
         val times = runCatching { store.lastReadWaitingForUnit(context.disabledKinds()) }
             .onFailure { Log.warn("Sync", it) { "Reading the synced reading times held back failed" } }
             .getOrNull()
@@ -371,7 +370,7 @@ public class SyncV3Service internal constructor(
      * Writes or edits the caller's review. Pending library changes are uploaded first, so the
      * server knows the work and the title is in the account's library (422 unknown_work otherwise).
      */
-    public suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = offCallerCatching {
+    override suspend fun writeReview(workHash: String, rating: Int?, body: String, spoiler: Boolean): Result<WireReview> = offCallerCatching {
         val url = baseUrl
         val pending = cycleMutex.withLock { context.pendingLocalCount() }
         if (pending > 0) syncQueued()
@@ -380,39 +379,39 @@ public class SyncV3Service internal constructor(
     }
 
     /** The work page: average rating, review count and the caller's own review. 404 when the server does not know the work. */
-    public suspend fun workPage(workHash: String): Result<WireWorkPage> =
+    override suspend fun workPage(workHash: String): Result<WireWorkPage> =
         offCaller { social.workPage(workHash) }
 
     /** [sort] is `newest` or `helpful`. */
-    public suspend fun listReviews(
+    override suspend fun listReviews(
         workHash: String,
         sort: String,
         offset: Int,
-        limit: Int = REVIEW_PAGE_SIZE,
+        limit: Int,
     ): Result<WireReviewPage> =
         offCaller { social.listReviews(workHash, sort, offset, limit) }
 
-    public suspend fun deleteReview(workHash: String): Result<Unit> =
+    override suspend fun deleteReview(workHash: String): Result<Unit> =
         offCaller { social.deleteReview(workHash) }
 
     /** Idempotent: sets or clears the caller's "helpful" vote and returns the current count. */
-    public suspend fun setHelpful(reviewId: String, helpful: Boolean): Result<WireVote> =
+    override suspend fun setHelpful(reviewId: String, helpful: Boolean): Result<WireVote> =
         offCaller { social.setHelpful(reviewId, helpful) }
 
-    public suspend fun listReplies(reviewId: String, offset: Int, limit: Int = REVIEW_PAGE_SIZE): Result<WireReplyPage> =
+    override suspend fun listReplies(reviewId: String, offset: Int, limit: Int): Result<WireReplyPage> =
         offCaller { social.listReplies(reviewId, offset, limit) }
 
-    public suspend fun writeReply(reviewId: String, body: String): Result<WireReply> =
+    override suspend fun writeReply(reviewId: String, body: String): Result<WireReply> =
         offCaller { social.writeReply(reviewId, body) }
 
-    public suspend fun deleteReply(replyId: String): Result<Unit> =
+    override suspend fun deleteReply(replyId: String): Result<Unit> =
         offCaller { social.deleteReply(replyId) }
 
     /** [reason] is `spam`, `harassment`, `spoiler`, `illegal` or `other`. */
-    public suspend fun reportReview(reviewId: String, reason: String, note: String): Result<WireReport> =
+    override suspend fun reportReview(reviewId: String, reason: String, note: String): Result<WireReport> =
         offCaller { social.reportReview(reviewId, reason, note) }
 
-    public suspend fun reportReply(replyId: String, reason: String, note: String): Result<WireReport> =
+    override suspend fun reportReply(replyId: String, reason: String, note: String): Result<WireReport> =
         offCaller { social.reportReply(replyId, reason, note) }
 
     // ---- lifecycle --------------------------------------------------------------------------
@@ -477,7 +476,7 @@ public class SyncV3Service internal constructor(
      * The "Sync now" button. A background cycle may hold the lock for minutes; rather than wait
      * behind it, the press gives up after a short wait and reports [ManualSyncResult.InProgress].
      */
-    public suspend fun syncFromUser(): ManualSyncResult = offCaller {
+    override suspend fun syncFromUser(): ManualSyncResult = offCaller {
         val owner = Any()
         when {
             store.meta(META_SIGNED_IN) != "1" -> ManualSyncResult.Failed
@@ -510,7 +509,7 @@ public class SyncV3Service internal constructor(
      * What this device knows about packages changed (a repository list arrived, a package was
      * installed): ask for an automatic cycle so titles waiting for a description get one.
      */
-    public fun sourcesChanged() {
+    override fun sourcesChanged() {
         triggers.signalDirty()
     }
 

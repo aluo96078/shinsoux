@@ -71,7 +71,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 // R5-1: the constructors of this page and of ExtensionUnitSelectionV2 are public for the browse
-// screen's tests (:ui fakes BrowseCallbacks). The authority stays with the consumer: a selection is
+// screen's tests (:ui fakes the browse callbacks). The authority stays with the consumer: a selection is
 // accepted only with the consumer's own process-local owner token, which nothing outside can read.
 /**
  * Host-owned page of exact v2 publication metadata.

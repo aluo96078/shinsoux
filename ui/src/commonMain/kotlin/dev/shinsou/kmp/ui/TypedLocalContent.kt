@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
+import dev.shinsou.kmp.plugin.ContentAcquisition
 import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.content.ContentKind
@@ -18,7 +19,8 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 
@@ -36,28 +38,29 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun rememberTypedLocalBindings(
     snapshot: AppSnapshot,
-    appServices: ShinsouAppServices,
+    library: ExtensionLibraryBinding,
+    acquisition: ContentAcquisition,
+    backup: PortableContentBackupV2UiController?,
     workDispatcher: CoroutineDispatcher,
     active: Boolean = true,
 ): Map<PublicationKey, ExtensionLibraryBindingV2> {
     val keys = rememberTypedLocalKeys(snapshot)
     var bindings by remember { mutableStateOf<Map<PublicationKey, ExtensionLibraryBindingV2>>(emptyMap()) }
-    val browse = appServices.browse
     suspend fun read(of: Collection<PublicationKey>) = runCatchingCancellable {
-        withContext(workDispatcher) { of.mapNotNull { key -> browse.extensionLibraryBindingV2(key)?.let { key to it } }.toMap() }
+        withContext(workDispatcher) { of.mapNotNull { key -> library.extensionLibraryBindingV2(key)?.let { key to it } }.toMap() }
     }.onFailure { Log.warn("Library", it) { "Reading the extension bindings of library titles failed" } }.getOrNull()
     // A row's binding can appear without its key changing (a beta-era favorite gains one when a
     // chapter is first downloaded or read): when a download finishes, a chapter is first read or
     // the typed rows' chapters change, the rows still without one are looked up again. Not on
     // every library write: imported books never gain one, and reading progress writes often.
-    val downloads by browse.extensionDownloadsV2.collectAsState()
+    val downloads by acquisition.extensionDownloadsV2.collectAsState()
     val downloaded = remember(downloads) { downloads.count { it.state == DownloadState.DOWNLOADED } }
     val bindingChances = remember(snapshot.mangas, snapshot.chapters, snapshot.histories) { bindingChances(snapshot) }
     val chances = bindingChances to downloaded
     // A content restore replaces the bindings under unchanged keys (one can lose its binding):
     // every key is read again, as when the keys change.
-    val restoreResult = appServices.portableContentBackupV2?.state?.collectAsState()?.value?.restoreResult
-    val wholeRead = Triple(keys, browse, restoreResult)
+    val restoreResult = backup?.state?.collectAsState()?.value?.restoreResult
+    val wholeRead = Triple(keys, library, restoreResult)
     var readFor by remember { mutableStateOf<Any?>(null) }
     var checkedChances by remember { mutableStateOf<Any?>(null) }
     LaunchedEffect(wholeRead, active) {
@@ -85,14 +88,13 @@ internal fun rememberTypedLocalBindings(
 @Composable
 internal fun rememberTypedPublicationKinds(
     snapshot: AppSnapshot,
-    appServices: ShinsouAppServices,
+    features: ContentFeatures?,
     workDispatcher: CoroutineDispatcher,
 ): Map<PublicationKey, Set<ContentKind>> {
     val keys = rememberTypedLocalKeys(snapshot)
     val typedChapters = remember(snapshot.mangas, snapshot.chapters) { typedChapterIdentities(snapshot) }
     var kinds by remember { mutableStateOf<Map<PublicationKey, Set<ContentKind>>>(emptyMap()) }
-    LaunchedEffect(keys, typedChapters, appServices.contentFeatures) {
-        val features = appServices.contentFeatures
+    LaunchedEffect(keys, typedChapters, features) {
         kinds = if (features == null || keys.isEmpty()) {
             emptyMap()
         } else {
@@ -160,7 +162,7 @@ internal fun rememberExtensionBinding(
 }
 
 /** What [rememberSyncWorkHashes] read the hashes for. */
-private data class SyncWorkKey(val manga: Manga, val sync: SyncV3Service?, val sharing: Boolean, val reviews: Boolean)
+private data class SyncWorkKey(val manga: Manga, val sync: SyncClient?, val sharing: Boolean, val reviews: Boolean)
 
 /** The sync identities of a title for sharing and reviews; null where they are not offered. */
 internal data class SyncWorkHashes(val share: String? = null, val reviews: String? = null)
@@ -168,7 +170,7 @@ internal data class SyncWorkHashes(val share: String? = null, val reviews: Strin
 @Composable
 internal fun rememberSyncWorkHashes(
     manga: Manga,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
     workDispatcher: CoroutineDispatcher,
 ): SyncWorkHashes {
     val syncState = sync?.state?.collectAsState()?.value

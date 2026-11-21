@@ -43,7 +43,7 @@ import dev.shinsou.kmp.sync.v3.SyncApiException
 import dev.shinsou.kmp.sync.v3.SyncServerAddress
 import dev.shinsou.kmp.sync.v3.SyncServerAddressException
 import dev.shinsou.kmp.sync.v3.SyncUiState
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncClient
 import dev.shinsou.kmp.sync.v3.WireDevice
 import dev.shinsou.kmp.sync.v3.WireInstance
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -58,7 +58,7 @@ import kotlin.time.Instant
 /** More → Sync: choose a server, sign in or register, then see status and manage devices. */
 @Composable
 internal fun SyncSettingsPane(
-    sync: SyncV3Service?,
+    sync: SyncClient?,
     copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
     kinds: SyncKindSettings = SyncKindSettings(),
     onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit = {},
@@ -98,7 +98,7 @@ internal fun ErrorText(message: String?) {
 }
 
 @Composable
-private fun SignedOutSection(sync: SyncV3Service, state: SyncUiState) {
+private fun SignedOutSection(sync: SyncClient, state: SyncUiState) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var addressInput by remember { mutableStateOf(state.serverUrl.orEmpty()) }
@@ -314,7 +314,7 @@ private fun SyncKindsCard(kinds: SyncKindSettings, onChange: (SettingsEdit<SyncK
 }
 
 @Composable
-private fun SignedInSection(sync: SyncV3Service, state: SyncUiState, kinds: SyncKindSettings, onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit) {
+private fun SignedInSection(sync: SyncClient, state: SyncUiState, kinds: SyncKindSettings, onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<WireDevice>?>(null) }

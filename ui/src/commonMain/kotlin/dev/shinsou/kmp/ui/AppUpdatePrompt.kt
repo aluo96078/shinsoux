@@ -26,7 +26,7 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.update.AppRelease
-import dev.shinsou.kmp.update.AppUpdateChecker
+import dev.shinsou.kmp.update.AppUpdateSource
 import dev.shinsou.kmp.update.UpdateChannel
 import kotlinx.coroutines.CancellationException
 
@@ -39,7 +39,7 @@ public sealed interface UpdateCheckResult {
 
 /** Where the app's update check stands: what was found, and whether its prompt is showing. */
 @Stable
-public class AppUpdateState(private val checker: AppUpdateChecker) {
+public class AppUpdateState(private val checker: AppUpdateSource) {
     public val currentVersion: String get() = checker.currentVersion
 
     internal fun claimLaunchCheck(): Boolean = checker.claimLaunchCheck()

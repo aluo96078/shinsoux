@@ -66,8 +66,8 @@ import dev.shinsou.kmp.domain.model.TrackSearch
 import dev.shinsou.kmp.domain.model.TrackStatus
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.tracking.TrackUpdate
-import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.tracking.TrackingProvider
+import dev.shinsou.kmp.tracking.TrackingService
 import dev.shinsou.kmp.ui.i18n.StringKey
 import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
@@ -81,7 +81,7 @@ import dev.shinsou.kmp.ui.i18n.text
 fun TrackingSheet(
     manga: Manga,
     tracks: List<Track>,
-    coordinator: TrackingCoordinator,
+    coordinator: TrackingService,
     onOpenExternalUrl: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -137,7 +137,7 @@ private fun TrackerProviderCard(
     manga: Manga,
     provider: TrackingProvider,
     track: Track?,
-    coordinator: TrackingCoordinator,
+    coordinator: TrackingService,
     onOpenExternalUrl: (String) -> Unit,
 ) {
     val strings = LocalShinsouStrings.current

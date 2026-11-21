@@ -83,15 +83,9 @@ class ServiceInterfaceSizeTest {
             "composeApp/src/desktopMain/kotlin/dev/shinsou/kmp/desktop/DesktopAppServices.kt",
             "composeApp/src/iosMain/kotlin/dev/shinsou/kmp/IosAppServices.kt",
             "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginUiAdapter.kt",
-            "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/v2/ExtensionContentConsumerV2.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/LibraryContinueReading.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/PluginReviewCoordinator.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ReaderHost.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouApp.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouAppPanes.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouAppState.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/TitleNavigationController.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/TypedLocalContent.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/screens/BrowseScreen.kt",
         )
     }

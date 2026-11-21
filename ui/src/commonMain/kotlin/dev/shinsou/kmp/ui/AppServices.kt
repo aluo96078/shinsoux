@@ -3,8 +3,8 @@ package dev.shinsou.kmp.ui
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.reader.ReaderTapAction
-import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.tracking.TrackingCoordinator
+import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.tracking.TrackingService
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import kotlinx.coroutines.CoroutineDispatcher
@@ -542,15 +542,15 @@ interface ShinsouAppServices :
         get() = null
 
     /** Checks GitHub for a newer version of the app; null where the host offers no checks. */
-    val appUpdates: dev.shinsou.kmp.update.AppUpdateChecker?
+    val appUpdates: dev.shinsou.kmp.update.AppUpdateSource?
         get() = null
 
     /** On-device manga translation (ADR-0005); null where translation itself is unavailable. */
-    val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslation?
+    val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslationService?
         get() = null
 
     /** Secure, platform-persisted tracker integration supplied by the application composition. */
-    val tracking: TrackingCoordinator?
+    val tracking: TrackingService?
         get() = null
 
     /** Checksummed binary content archive controller; null only when shared atomic storage is absent. */
@@ -558,7 +558,7 @@ interface ShinsouAppServices :
         get() = null
 
     /** Sync v3 account, status and manual sync; null only in previews/tests without shared storage. */
-    val sync: SyncV3Service?
+    val sync: SyncClient?
         get() = null
 
     /** Staged, redacted ShuYue v1 migration controller. */

@@ -1,7 +1,8 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.BrowseCallbacks
+import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.SourceCatalog
 import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.ExtensionLibraryBindingV2
@@ -37,14 +38,15 @@ internal class HolderEnvironment(
  * beta-era rows are repaired first, source titles are resolved into library rows, and everything
  * else opens the ordinary detail page.
  */
-internal class TitleNavigationController(
+internal class TitleNavigationController<B>(
     private val navigator: AppNavigator,
     private val repository: ShinsouRepository,
-    private val browse: BrowseCallbacks,
-    private val reviews: PluginReviewCoordinator,
+    /** The extension host: resolves source titles and keeps the library's extension bindings. */
+    private val browse: B,
+    private val reviews: PluginReviewCoordinator<*>,
     private val localLibrary: ExtensionLocalLibrary,
     private val environment: HolderEnvironment,
-) {
+) where B : SourceCatalog, B : ExtensionLibraryBinding {
     private val messages get() = environment.messages
     private var bindingLookup: Job? = null
 

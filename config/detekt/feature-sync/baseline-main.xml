@@ -27,8 +27,8 @@
     <ID>LongParameterList:SyncApi.kt:SyncApi$suspend fun listReviews: WireReviewPage</ID>
     <ID>LongParameterList:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
     <ID>LongParameterList:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
+    <ID>LongParameterList:SyncClient.kt:SyncClient$public suspend fun register: Result&lt;Unit&gt;</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service</ID>
-    <ID>LongParameterList:SyncV3Service.kt:SyncV3Service$public suspend fun register: Result&lt;Unit&gt;</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service.Companion$fun create: SyncV3Service</ID>
     <ID>LoopWithTooManyJumpStatements:SyncDiff.kt:SyncDiff$for</ID>
     <ID>LoopWithTooManyJumpStatements:SyncPromoter.kt:SyncPromoter$for</ID>
@@ -55,7 +55,6 @@
     <ID>ReturnCount:SyncPromoter.kt:SyncPromoter$private fun entityMissing: Boolean</ID>
     <ID>ReturnCount:SyncPromoter.kt:SyncPromoter$private fun promoteRef</ID>
     <ID>ReturnCount:SyncPuller.kt:SyncPuller$private fun projectionDiffers: Boolean</ID>
-    <ID>ReturnCount:SyncV3Service.kt:SyncV3Service$public fun shareableWork: String?</ID>
     <ID>ReturnCount:SyncV3Store.kt:SyncV3Store$private fun clockHead: Pair&lt;Long, Int&gt;?</ID>
     <ID>ReturnCount:WorkKey.kt:WorkKey.Companion$private fun hasLoneSurrogate: Boolean</ID>
     <ID>ThrowsCount:SyncApi.kt:SyncApi$private suspend fun &lt;B&gt; exchange: Pair&lt;Int, String&gt;</ID>

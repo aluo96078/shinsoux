@@ -158,26 +158,26 @@ public class MangaTranslation(
     /** Overrides the device's own [MangaTuning] (for measuring one against another). */
     private val tuning: MangaTuning? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-) {
+) : MangaTranslationService {
     /** How this device shares the models: the override, else the device's own; null where unsupported. */
-    public val deviceTuning: MangaTuning? get() = tuning ?: platform?.let { MangaTuning.of(it.profile(), models.cpuMode()) }
+    override val deviceTuning: MangaTuning? get() = tuning ?: platform?.let { MangaTuning.of(it.profile(), models.cpuMode()) }
 
     /** How chapters are translated: as a whole, or in parts as they are read. */
-    public fun translationFlow(): MangaTranslationFlow = models.translationFlow()
+    override fun translationFlow(): MangaTranslationFlow = models.translationFlow()
 
-    public fun setTranslationFlow(flow: MangaTranslationFlow): Unit = models.setTranslationFlow(flow)
+    override fun setTranslationFlow(flow: MangaTranslationFlow): Unit = models.setTranslationFlow(flow)
 
     /** How hard the CPU works on pages (all of recognition, and detection and redrawing on the CPU). */
-    public fun cpuMode(): MangaCpuMode = models.cpuMode()
+    override fun cpuMode(): MangaCpuMode = models.cpuMode()
 
     /** Chooses how hard the CPU works; chapters started from then on use it. */
-    public suspend fun setCpuMode(mode: MangaCpuMode) {
+    override suspend fun setCpuMode(mode: MangaCpuMode) {
         models.setCpuMode(mode)
         release()
     }
 
     /** The last chapter's timings (developer diagnostics). */
-    public var lastRun: MangaRunStats? = null
+    override var lastRun: MangaRunStats? = null
         private set
     private var pipeline: MangaPipeline? = null
     private val pipelineLock = Mutex()
@@ -189,13 +189,13 @@ public class MangaTranslation(
     private val removing = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     /** False on devices the inference and image libraries are not shipped for. */
-    public val deviceSupported: Boolean get() = platform != null
+    override val deviceSupported: Boolean get() = platform != null
 
-    public fun modelsInstalled(): Boolean = models.paths() != null
+    override fun modelsInstalled(): Boolean = models.paths() != null
 
-    public fun missingModelBytes(): Long = models.missingBytes(MangaModelCatalog.VISION)
+    override fun missingModelBytes(): Long = models.missingBytes(MangaModelCatalog.VISION)
 
-    public suspend fun downloadModels(onProgress: (received: Long, total: Long) -> Unit) {
+    override suspend fun downloadModels(onProgress: (received: Long, total: Long) -> Unit) {
         withContext(ioDispatcher) { models.download(MangaModelCatalog.VISION, onProgress) }
         release()
     }
@@ -204,10 +204,10 @@ public class MangaTranslation(
      * What a chapter from [from] into [to] still needs to download (MangaLanguages.packs): the
      * recogniser for pages not in Japanese, the font for simplified Chinese. Zero when all is here.
      */
-    public fun missingLanguageBytes(from: String, to: String): Long = MangaLanguages.packs(from, to).sumOf(models::missingBytes)
+    override fun missingLanguageBytes(from: String, to: String): Long = MangaLanguages.packs(from, to).sumOf(models::missingBytes)
 
     /** Downloads what [missingLanguageBytes] counts; chapters started from then on use it. */
-    public suspend fun downloadLanguage(from: String, to: String, onProgress: (received: Long, total: Long) -> Unit) {
+    override suspend fun downloadLanguage(from: String, to: String, onProgress: (received: Long, total: Long) -> Unit) {
         withContext(ioDispatcher) {
             val packs = MangaLanguages.packs(from, to)
             val total = packs.sumOf(models::missingBytes)
@@ -222,24 +222,14 @@ public class MangaTranslation(
         release()
     }
 
-    /** One way to run detection, as the settings list it. */
-    public data class AcceleratorState(
-        val support: AcceleratorSupport,
-        val selected: Boolean,
-        /** Its models (and runtime) are on the device. */
-        val installed: Boolean,
-        /** What its download would bring (its runtime as kept on the device). */
-        val missingBytes: Long,
-    )
-
     /** The ways this device can run detection, which are chosen, and what each still needs. */
-    public fun acceleratorStates(): List<AcceleratorState> {
+    override fun acceleratorStates(): List<MangaTranslationService.AcceleratorState> {
         val p = platform ?: return emptyList()
         val selected = models.selectedAccelerators()
         return p.accelerators().map { support ->
             val runtimeMissing = support.runtime?.takeIf { models.runtimeInstalled(it) == null }?.installedBytes ?: 0
             val missing = support.packs.sumOf { models.missingBytes(it) } + runtimeMissing
-            AcceleratorState(support, support.accelerator in selected, installed = support.supported && missing == 0L, missingBytes = missing)
+            MangaTranslationService.AcceleratorState(support, support.accelerator in selected, installed = support.supported && missing == 0L, missingBytes = missing)
         }
     }
 
@@ -248,10 +238,10 @@ public class MangaTranslation(
      * Maven Central), then readies it ([MangaPlatform.prepare]); [onPreparing] is told when the
      * downloads are done and the (longer) preparation starts.
      */
-    public suspend fun downloadAccelerator(
+    override suspend fun downloadAccelerator(
         accelerator: MangaAccelerator,
         onProgress: (received: Long, total: Long) -> Unit,
-        onPreparing: () -> Unit = {},
+        onPreparing: () -> Unit,
     ) {
         val p = platform ?: throw MangaModelException("Manga translation is not available on this device")
         val support = p.accelerators().first { it.accelerator == accelerator }
@@ -281,7 +271,7 @@ public class MangaTranslation(
      * Removes what [accelerator] downloaded and stops using it, and every other choice that needs
      * the same files (on an iPhone the GPU and the Neural Engine share one model).
      */
-    public suspend fun removeAccelerator(accelerator: MangaAccelerator) {
+    override suspend fun removeAccelerator(accelerator: MangaAccelerator) {
         val p = platform ?: return
         val supports = p.accelerators()
         val support = supports.first { it.accelerator == accelerator }
@@ -299,7 +289,7 @@ public class MangaTranslation(
     }
 
     /** Chooses where detection runs (at least one); chapters started from then on use the choice. */
-    public suspend fun selectAccelerators(accelerators: Set<MangaAccelerator>) {
+    override suspend fun selectAccelerators(accelerators: Set<MangaAccelerator>) {
         models.selectAccelerators(accelerators)
         release()
     }
@@ -316,7 +306,7 @@ public class MangaTranslation(
      * the recognition models, the optional packs, what each accelerator needs (one row for choices
      * that share their files), and what older builds left behind.
      */
-    public fun resources(): List<MangaResource> {
+    override fun resources(): List<MangaResource> {
         val p = platform ?: return emptyList()
         fun pack(kind: MangaResourceKind, pack: ModelPack, language: String? = null) =
             MangaResource(pack.id, kind, language, emptyList(), models.diskBytes(pack), models.missingBytes(pack))
@@ -344,7 +334,7 @@ public class MangaTranslation(
     }
 
     /** Downloads what [resource] still misses; an accelerator's download also chooses it. */
-    public suspend fun downloadResource(resource: MangaResource, onProgress: (received: Long, total: Long) -> Unit, onPreparing: () -> Unit = {}) {
+    override suspend fun downloadResource(resource: MangaResource, onProgress: (received: Long, total: Long) -> Unit, onPreparing: () -> Unit) {
         when (resource.kind) {
             MangaResourceKind.RECOGNITION -> downloadModels(onProgress)
             MangaResourceKind.INPAINT -> downloadInpaint(onProgress)
@@ -363,7 +353,7 @@ public class MangaTranslation(
     }
 
     /** Deletes [resource] from this device; chapters that need it offer the download again. */
-    public suspend fun removeResource(resource: MangaResource) {
+    override suspend fun removeResource(resource: MangaResource) {
         val p = platform ?: return
         when (resource.kind) {
             MangaResourceKind.RECOGNITION, MangaResourceKind.LANGUAGE, MangaResourceKind.FONT -> {
@@ -383,18 +373,18 @@ public class MangaTranslation(
         p.accelerators().flatMap { support -> support.packs.map { it.id } + listOfNotNull(support.runtime?.let { "runtime/${it.id}" }) }.toSet()
 
     /** Whether the optional LaMa pack is here: text drawn over the artwork is then translated too. */
-    public fun inpaintInstalled(): Boolean = models.installed(MangaModelCatalog.INPAINT) != null
+    override fun inpaintInstalled(): Boolean = models.installed(MangaModelCatalog.INPAINT) != null
 
-    public fun missingInpaintBytes(): Long = models.missingBytes(MangaModelCatalog.INPAINT)
+    override fun missingInpaintBytes(): Long = models.missingBytes(MangaModelCatalog.INPAINT)
 
     /** Downloads the LaMa pack; chapters started from then on use it. */
-    public suspend fun downloadInpaint(onProgress: (received: Long, total: Long) -> Unit) {
+    override suspend fun downloadInpaint(onProgress: (received: Long, total: Long) -> Unit) {
         withContext(ioDispatcher) { models.download(MangaModelCatalog.INPAINT, onProgress) }
         release()
     }
 
     /** Removes the LaMa pack; text over artwork stays as drawn again. */
-    public suspend fun removeInpaint() {
+    override suspend fun removeInpaint() {
         whileIdle { withContext(ioDispatcher) { models.remove(MangaModelCatalog.INPAINT) } }
     }
 
@@ -445,9 +435,9 @@ public class MangaTranslation(
      * is to be tried again. [MangaChapterRequest.loadPage] returns null for a page left as it is
      * on purpose (a scrambled one the reader descrambles itself), and throws for one that failed.
      */
-    public suspend fun translateChapter(
+    override suspend fun translateChapter(
         request: MangaChapterRequest,
-        onProgress: (MangaProgress) -> Unit = {},
+        onProgress: (MangaProgress) -> Unit,
         onPage: suspend (index: Int, jpeg: ByteArray?) -> Unit,
     ): Boolean {
         val codec = platform?.codec ?: throw MangaModelException("Manga translation is not available on this device")
@@ -870,7 +860,7 @@ public class MangaTranslation(
      * could not be told: no models, no pages, too little text. Remembered for [workKey] while the
      * app runs, so reopening the work does not read the pages again.
      */
-    public suspend fun readsJapanese(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): Boolean? {
+    override suspend fun readsJapanese(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): Boolean? {
         guessLock.withLock { japaneseGuesses[workKey] }?.let { return it }
         val codec = platform?.codec ?: return null
         if (!modelsInstalled() || pageCount == 0) return null
@@ -907,7 +897,7 @@ public class MangaTranslation(
      * Japanese kanji). Null when that could not be told: the recogniser is not downloaded, no
      * pages, too little text. Remembered for [workKey] while the app runs.
      */
-    public suspend fun readsChineseScript(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): String? {
+    override suspend fun readsChineseScript(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): String? {
         guessLock.withLock { scriptGuesses[workKey] }?.let { return it }
         val codec = platform?.codec ?: return null
         if (!modelsInstalled() || pageCount == 0) return null

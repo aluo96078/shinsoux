@@ -1,7 +1,9 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.BrowseCallbacks
+import dev.shinsou.kmp.plugin.ExtensionManagement
+import dev.shinsou.kmp.plugin.ExtensionTrust
+import dev.shinsou.kmp.plugin.SourceCatalog
 import dev.shinsou.kmp.plugin.BrowseExtension
 import dev.shinsou.kmp.plugin.PluginPermissionDetails
 import dev.shinsou.kmp.plugin.RepositoryTrustPrompt
@@ -62,8 +64,9 @@ internal data class PluginReviewState(
  * first-access permission review of a package pre-installed from the account, and repositories
  * added by a link. A link never adds anything by itself; the user confirms every one.
  */
-internal class PluginReviewCoordinator(
-    private val browse: BrowseCallbacks,
+internal class PluginReviewCoordinator<B>(
+    /** The extension host: its catalog, repository management and trust decisions. */
+    private val browse: B,
     private val scope: CoroutineScope,
     private val messages: AppMessages,
     /** Acknowledges a deep link to the platform, which then delivers the next one. */
@@ -71,7 +74,7 @@ internal class PluginReviewCoordinator(
     /** The package set changed: titles and progress waiting for a package can apply. */
     private val onSourcesChanged: suspend () -> Unit = {},
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
-) {
+) where B : SourceCatalog, B : ExtensionManagement, B : ExtensionTrust {
     private val mutableState = MutableStateFlow(PluginReviewState())
 
     val state: StateFlow<PluginReviewState> = mutableState.asStateFlow()

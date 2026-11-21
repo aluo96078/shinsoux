@@ -60,6 +60,32 @@ interface TrackerAuthenticator {
 }
 
 /**
+ * What the app's screens use of [TrackingCoordinator] (0007 B4): the providers, signing in and
+ * out, and binding, refreshing, updating and removing a title's tracks.
+ */
+interface TrackingService {
+    val providers: List<TrackingProvider>
+
+    fun authorizationUrl(trackerId: Int): String?
+
+    suspend fun isAuthenticated(trackerId: Int): Boolean
+
+    suspend fun completeAuthentication(trackerId: Int, pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken
+
+    suspend fun logout(trackerId: Int)
+
+    suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch>
+
+    suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track
+
+    suspend fun refresh(mangaId: Long, trackerId: Int): Track
+
+    suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track
+
+    suspend fun remove(mangaId: Long, trackerId: Int)
+}
+
+/**
  * UI-independent tracking use cases shared by Android, iOS and Desktop.
  *
  * Configured providers are backed by [TrackerManager]; unavailable providers remain visible so
@@ -69,8 +95,8 @@ class TrackingCoordinator(
     private val manager: TrackingManagerGateway,
     providers: List<TrackingProvider>,
     authenticators: List<TrackerAuthenticator>,
-) {
-    val providers: List<TrackingProvider> = providers.toList()
+) : TrackingService {
+    override val providers: List<TrackingProvider> = providers.toList()
     private val providersById = this.providers.associateBy { it.descriptor.id }
     private val authenticatorsById = authenticators.associateBy(TrackerAuthenticator::trackerId)
 
@@ -87,17 +113,17 @@ class TrackingCoordinator(
         }
     }
 
-    fun authorizationUrl(trackerId: Int): String? {
+    override fun authorizationUrl(trackerId: Int): String? {
         requireConfigured(trackerId)
         return authenticatorsById[trackerId]?.authorizationUrl()
     }
 
-    suspend fun isAuthenticated(trackerId: Int): Boolean {
+    override suspend fun isAuthenticated(trackerId: Int): Boolean {
         if (!provider(trackerId).configured) return false
         return manager.isAuthenticated(trackerId)
     }
 
-    suspend fun completeAuthentication(
+    override suspend fun completeAuthentication(
         trackerId: Int,
         pastedCallbackOrToken: String,
         nowEpochMillis: Long,
@@ -110,7 +136,7 @@ class TrackingCoordinator(
         return token
     }
 
-    suspend fun logout(trackerId: Int) {
+    override suspend fun logout(trackerId: Int) {
         requireConfigured(trackerId)
         val authenticator = authenticatorsById[trackerId]
             ?: throw TrackerAuthenticationException("${provider(trackerId).descriptor.name} logout is unavailable")
@@ -123,28 +149,28 @@ class TrackingCoordinator(
         return manager.refreshAuthenticationState(trackerId)
     }
 
-    suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch> {
+    override suspend fun search(trackerId: Int, query: String, limit: Int): List<TrackSearch> {
         requireAuthenticated(trackerId)
         return manager.search(trackerId, query, limit)
     }
 
-    suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track {
+    override suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track {
         requireAuthenticated(trackerId)
         return manager.bind(mangaId, trackerId, remote)
     }
 
-    suspend fun refresh(mangaId: Long, trackerId: Int): Track {
+    override suspend fun refresh(mangaId: Long, trackerId: Int): Track {
         requireAuthenticated(trackerId)
         return manager.refresh(mangaId, trackerId)
     }
 
-    suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track {
+    override suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track {
         requireAuthenticated(trackerId)
         if (update.isEmpty) return refresh(mangaId, trackerId)
         return manager.update(mangaId, trackerId, update)
     }
 
-    suspend fun remove(mangaId: Long, trackerId: Int) {
+    override suspend fun remove(mangaId: Long, trackerId: Int) {
         requireConfigured(trackerId)
         manager.remove(mangaId, trackerId)
     }

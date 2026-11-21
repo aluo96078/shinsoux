@@ -46,7 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncClient
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -181,7 +181,7 @@ internal fun BrowseScreen(
     host: BrowseHost,
     reader: ExtensionReaderHost,
     modifier: Modifier = Modifier,
-    sync: SyncV3Service? = null,
+    sync: SyncClient? = null,
     navigation: BrowseBackNavigation = BrowseBackNavigation(),
     initialSection: BrowseSection = BrowseSection.Sources,
 ) {
@@ -345,7 +345,7 @@ private fun BrowseExtensionsPage(
     extensions: ExtensionManagementState,
     snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
     filters: BrowseSourceFilters,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
 ) {
     ExtensionsPane(
         operation = extensions.operations.active,
@@ -380,7 +380,7 @@ private fun BrowseOverlays(
     callbacks: BrowseCallbacks,
     host: BrowseHost,
     reader: ExtensionReaderHost,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
     backGestureProgress: Float,
 ) {
     val state = holders.screen
@@ -473,7 +473,7 @@ private fun BrowsePublicationOverlay(
     source: BrowseSource?,
     callbacks: BrowseCallbacks,
     reader: ExtensionReaderHost,
-    sync: SyncV3Service?,
+    sync: SyncClient?,
     refreshGeneration: Long,
     modifier: Modifier,
 ) {

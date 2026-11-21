@@ -35,7 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.sync.v3.SyncRelation
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncSharing
 import dev.shinsou.kmp.sync.v3.WireShare
 import dev.shinsou.kmp.sync.v3.WireUserSummary
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -54,7 +54,7 @@ private const val SEARCH_DEBOUNCE_MILLIS = 350L
 /** More → Sync → Sharing: received and sent shares, and the people this account follows or blocks. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun SharingSection(sync: SyncV3Service, copyText: (label: String, text: String) -> Boolean) {
+internal fun SharingSection(sync: SyncSharing, copyText: (label: String, text: String) -> Boolean) {
     val strings = LocalShinsouStrings.current
     var tab by remember { mutableStateOf(SharingTab.Received) }
     var pending by remember { mutableIntStateOf(0) }
@@ -89,7 +89,7 @@ internal fun SharingSection(sync: SyncV3Service, copyText: (label: String, text:
 // ---- shares -------------------------------------------------------------------------------------
 
 @Composable
-private fun ShareBox(sync: SyncV3Service, sent: Boolean, copyText: (String, String) -> Boolean, onChanged: () -> Unit) {
+private fun ShareBox(sync: SyncSharing, sent: Boolean, copyText: (String, String) -> Boolean, onChanged: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var shares by remember(sent) { mutableStateOf<List<WireShare>?>(null) }
@@ -282,7 +282,7 @@ private fun ShareRow(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PeoplePanel(sync: SyncV3Service, onChanged: () -> Unit) {
+private fun PeoplePanel(sync: SyncSharing, onChanged: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var receiveFrom by remember { mutableStateOf<String?>(null) }
@@ -537,7 +537,7 @@ private fun UserRow(user: WireUserSummary, busy: Boolean, actions: UserActions) 
 
 /** Picks a recipient for [workHash] among the accounts the user follows, or by username search. */
 @Composable
-internal fun ShareWithUserDialog(sync: SyncV3Service, workHash: String, title: String, onDismiss: () -> Unit) {
+internal fun ShareWithUserDialog(sync: SyncSharing, workHash: String, title: String, onDismiss: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }

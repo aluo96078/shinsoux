@@ -206,8 +206,10 @@ internal fun SectionPane(
     // thread, and used by the covers below once known.
     val typedBindings = rememberTypedLocalBindings(
         snapshot,
-        appServices,
-        workDispatcher,
+        library = appServices.browse,
+        acquisition = appServices.browse,
+        backup = appServices.portableContentBackupV2,
+        workDispatcher = workDispatcher,
         active = section != MainSection.BROWSE && section != MainSection.MORE,
     )
     val loadCover: (Manga) -> (suspend () -> ByteArray?)? = { manga -> pluginImages.libraryCover(manga, typedBindings) }
@@ -243,12 +245,13 @@ internal fun SectionPane(
                     snapshot = snapshot,
                     libraryItems = libraryItems,
                     typedBindings = typedBindings,
-                    appServices = appServices,
+                    sync = appServices.sync,
+                    browse = appServices.browse,
                     workDispatcher = workDispatcher,
                 )
                 val continueScope = rememberCoroutineScope()
                 val strings = LocalShinsouStrings.current
-                val typedPublicationKinds = rememberTypedPublicationKinds(snapshot, appServices, workDispatcher)
+                val typedPublicationKinds = rememberTypedPublicationKinds(snapshot, appServices.contentFeatures, workDispatcher)
                 val legacyExtensionBindings = typedBindings
                 val waitingSources = appServices.sync?.state?.collectAsState()?.value?.missingSources.orEmpty()
                 LibraryScreen(
@@ -305,7 +308,7 @@ internal fun SectionPane(
                                 val unitId = continueReading?.takeIf { it.item.id == mangaId }?.extensionUnitId
                                     ?: runCatchingCancellable {
                                         withContext(workDispatcher) {
-                                            continueReadingOf(item, snapshot, typedBindings, appServices, strings)
+                                            continueReadingOf(item, snapshot, typedBindings, appServices.browse, strings)
                                         }
                                     }.onFailure { Log.warn("Library", it) { "Reading the chapter to continue failed" } }
                                         .getOrNull()?.extensionUnitId

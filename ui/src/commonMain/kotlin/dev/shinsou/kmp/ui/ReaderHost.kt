@@ -21,6 +21,7 @@ import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.Manga
+import dev.shinsou.kmp.manga.MangaTranslationService
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.buildReaderChapterNavigation
 import dev.shinsou.kmp.translation.TranslationLabels
@@ -93,7 +94,7 @@ private fun ReaderSessionContent(
         if (mangaTranslationOpen) MangaTranslationSheet(state, onDismiss = { mangaTranslationOpen = false })
     }
     val incognito = snapshot.settings.security.incognitoMode
-    val translationAvailable = rememberTypedTranslationAvailable(app.appServices, typedSession)
+    val translationAvailable = rememberTypedTranslationAvailable(app.appServices.contentFeatures, app.appServices.mangaTranslation, typedSession)
     ReaderScreen(
         content = ReaderScreenContent(
             manga = manga,
@@ -223,9 +224,11 @@ private fun mangaTranslationToggle(app: ShinsouAppState, state: MangaReaderTrans
 
 /** True when the typed chapter can be translated: text, or (ADR-0005) image chapters through manga translation. */
 @Composable
-private fun rememberTypedTranslationAvailable(appServices: ShinsouAppServices, typed: TypedReaderContentSession?): Boolean {
-    val features = appServices.contentFeatures
-    val manga = appServices.mangaTranslation
+private fun rememberTypedTranslationAvailable(
+    features: ContentFeatures?,
+    manga: MangaTranslationService?,
+    typed: TypedReaderContentSession?,
+): Boolean {
     return remember(typed, features, manga) {
         typed != null &&
             (readerTranslationAvailable(typed, features) || (manga != null && mangaTranslationAvailable(typed, features)))

@@ -58,7 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.sync.v3.SyncApiException
-import dev.shinsou.kmp.sync.v3.SyncV3Service
+import dev.shinsou.kmp.sync.v3.SyncReviews
 import dev.shinsou.kmp.sync.v3.WireReply
 import dev.shinsou.kmp.sync.v3.WireReview
 import dev.shinsou.kmp.sync.v3.WireWorkPage
@@ -96,7 +96,7 @@ private sealed interface EntryState {
  * row when it is in the library, so the first review can be written after a sync.
  */
 @Composable
-internal fun ReviewsEntry(sync: SyncV3Service, workHash: String, title: String, inLibrary: Boolean) {
+internal fun ReviewsEntry(sync: SyncReviews, workHash: String, title: String, inLibrary: Boolean) {
     val strings = LocalShinsouStrings.current
     var tick by remember(workHash) { mutableIntStateOf(0) }
     var state by remember(workHash) { mutableStateOf<EntryState>(EntryState.Loading) }
@@ -174,7 +174,7 @@ private fun Throwable.reviewMessage(strings: ShinsouStrings): String {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun ReviewsSheet(sync: SyncV3Service, workHash: String, title: String, inLibrary: Boolean, onDismiss: () -> Unit) {
+private fun ReviewsSheet(sync: SyncReviews, workHash: String, title: String, inLibrary: Boolean, onDismiss: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var sort by remember { mutableStateOf("newest") }
@@ -349,7 +349,7 @@ private fun ReviewsSheet(sync: SyncV3Service, workHash: String, title: String, i
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReviewCard(sync: SyncV3Service, review: WireReview, onChanged: () -> Unit) {
+private fun ReviewCard(sync: SyncReviews, review: WireReview, onChanged: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var revealed by remember(review.id) { mutableStateOf(false) }
@@ -457,7 +457,7 @@ private fun ReviewCard(sync: SyncV3Service, review: WireReview, onChanged: () ->
 // ---- replies -------------------------------------------------------------------------------------
 
 @Composable
-private fun RepliesPanel(sync: SyncV3Service, review: WireReview, onCountChange: (Int) -> Unit, onChanged: () -> Unit) {
+private fun RepliesPanel(sync: SyncReviews, review: WireReview, onCountChange: (Int) -> Unit, onChanged: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var replies by remember(review.id) { mutableStateOf<List<WireReply>?>(null) }

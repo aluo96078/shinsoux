@@ -31,7 +31,7 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaAccelerator
 import dev.shinsou.kmp.manga.MangaCpuMode
 import dev.shinsou.kmp.manga.MangaTranslationFlow
-import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.manga.MangaTranslationService
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.authoredOrExternal
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -47,11 +47,11 @@ private class AcceleratorWork(val fraction: Float?)
  * share a chapter's pages. Recognition, translation and drawing stay on the CPU.
  */
 @Composable
-internal fun MangaAcceleratorSettings(manga: MangaTranslation) {
+internal fun MangaAcceleratorSettings(manga: MangaTranslationService) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }
-    var states by remember { mutableStateOf(emptyList<MangaTranslation.AcceleratorState>()) }
+    var states by remember { mutableStateOf(emptyList<MangaTranslationService.AcceleratorState>()) }
     val work = remember { mutableStateMapOf<MangaAccelerator, AcceleratorWork>() }
     var failure by remember { mutableStateOf<String?>(null) }
     var cpuMode by remember { mutableStateOf<MangaCpuMode?>(null) }

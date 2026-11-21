@@ -66,15 +66,29 @@ public fun selectUpdate(current: AppVersion, releases: List<AppRelease>, channel
         ?.takeIf { it.version > current }
 
 /**
+ * What the app's update prompt uses of [AppUpdateChecker] (0007 B4): this version, whether the
+ * launch check is still to run, and the release to offer.
+ */
+public interface AppUpdateSource {
+    public val currentVersion: String
+
+    /** True once per source, so once per launch. */
+    public fun claimLaunchCheck(): Boolean
+
+    /** The release to offer on [channel], or null when this version is the newest (or unknown). */
+    public suspend fun check(channel: UpdateChannel): AppRelease?
+}
+
+/**
  * Asks GitHub for the app's releases. Only GitHub's public API is contacted, without
  * any account or identifier; drafts and releases that are not the app (model packs) are skipped.
  */
 public class AppUpdateChecker(
     private val http: HttpClient,
-    public val currentVersion: String,
+    override val currentVersion: String,
     private val repository: String = REPOSITORY,
     private val apiBase: String = "https://api.github.com",
-) {
+) : AppUpdateSource {
     private val json = Json { ignoreUnknownKeys = true }
     private var launchCheckClaimed = false
 
@@ -82,10 +96,10 @@ public class AppUpdateChecker(
      * True once per checker, so once per launch: the checker lives as long as the app's process,
      * and a screen built again (a rotated Android activity) does not check again.
      */
-    public fun claimLaunchCheck(): Boolean = !launchCheckClaimed.also { launchCheckClaimed = true }
+    override fun claimLaunchCheck(): Boolean = !launchCheckClaimed.also { launchCheckClaimed = true }
 
     /** The release to offer on [channel], or null when this version is the newest (or unknown). */
-    public suspend fun check(channel: UpdateChannel): AppRelease? {
+    override suspend fun check(channel: UpdateChannel): AppRelease? {
         val current = AppVersion.parse(currentVersion) ?: return null
         return selectUpdate(current, releases(), channel)
     }

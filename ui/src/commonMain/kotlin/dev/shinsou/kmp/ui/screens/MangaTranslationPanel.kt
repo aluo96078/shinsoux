@@ -46,7 +46,7 @@ import dev.shinsou.kmp.translation.TranslationFailure
 import dev.shinsou.kmp.translation.TranslationProviderKind
 import dev.shinsou.kmp.manga.MangaOrientation
 import dev.shinsou.kmp.manga.MangaProgress
-import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.manga.MangaTranslationService
 import dev.shinsou.kmp.translation.OfflineModelCatalog
 import dev.shinsou.kmp.translation.ReaderTranslation
 import dev.shinsou.kmp.translation.TranslationDisplayMode
@@ -75,7 +75,7 @@ import okio.Path.Companion.toPath
  */
 @Stable
 public class MangaReaderTranslationState internal constructor(
-    private val manga: MangaTranslation,
+    private val manga: MangaTranslationService,
     private val translation: ReaderTranslation,
     private val workKey: String,
 ) {
@@ -389,7 +389,7 @@ public class MangaReaderTranslationState internal constructor(
  */
 @Composable
 public fun rememberMangaReaderTranslation(
-    manga: MangaTranslation,
+    manga: MangaTranslationService,
     translation: ReaderTranslation,
     workKey: String,
     chapterKey: String,
@@ -414,7 +414,7 @@ public fun rememberMangaReaderTranslation(
  */
 @Composable
 public fun rememberMangaReaderTranslation(
-    manga: MangaTranslation,
+    manga: MangaTranslationService,
     translation: ReaderTranslation,
     workKey: String,
     chapterKey: String,

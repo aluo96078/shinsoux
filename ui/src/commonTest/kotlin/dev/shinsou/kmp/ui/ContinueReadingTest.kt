@@ -11,7 +11,6 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.encodeExtensionLibraryPublicationUrl
-import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
 import dev.shinsou.kmp.plugin.PluginTestAccess
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2
@@ -82,13 +81,10 @@ class ContinueReadingTest {
                 remoteUnitIds: Collection<String>,
             ) = reading.also { assertEquals(unitIds, remoteUnitIds.toList(), "asked with the saved chapter list") }
         }
-        val services = object : ShinsouAppServices {
-            override val browse: BrowseCallbacks get() = browse
-        }
         // A library row with no chapter stored here: only the synced reading knows the place.
         val manga = Manga(id = 1, url = encodeExtensionLibraryPublicationUrl(sourceKey, "p1"), favorite = true)
         val item = LibraryItem(LibraryManga(manga, lastRead = 0))
-        result = continueReadingOf(item, AppSnapshot(mangas = listOf(manga)), emptyMap(), services, ShinsouStrings())
+        result = continueReadingOf(item, AppSnapshot(mangas = listOf(manga)), emptyMap(), browse, ShinsouStrings())
     }
 
     private var result: LibraryContinueReading? = null

@@ -7,7 +7,7 @@ import dev.shinsou.kmp.manga.MangaChapterRequest
 import dev.shinsou.kmp.manga.MangaLanguages
 import dev.shinsou.kmp.manga.MangaOrientation
 import dev.shinsou.kmp.manga.MangaProgress
-import dev.shinsou.kmp.manga.MangaTranslation
+import dev.shinsou.kmp.manga.MangaTranslationService
 import dev.shinsou.kmp.translation.ChineseScript
 import dev.shinsou.kmp.translation.OfflineModelCatalog
 import dev.shinsou.kmp.translation.ReaderTranslation
@@ -22,7 +22,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.runtime.staticCompositionLocalOf
 
 /** The app's manga translation, for screens that queue chapters ahead (null where unavailable). */
-public val LocalMangaTranslation = staticCompositionLocalOf<MangaTranslation?> { null }
+public val LocalMangaTranslation = staticCompositionLocalOf<MangaTranslationService?> { null }
 
 /** The work a page-reader title is translated (and its settings stored) under. */
 public fun mangaWorkKey(manga: Manga): String = "page-reader:${manga.source}:${manga.url}"
@@ -39,7 +39,7 @@ public fun mangaPrefetchGroup(manga: Manga): String = mangaWorkKey(manga)
  * twice (OCR results, translations and drawn pages are all cached).
  */
 public fun mangaPrefetchJob(
-    manga: MangaTranslation,
+    manga: MangaTranslationService,
     translation: ReaderTranslation,
     work: Manga,
     chapter: Chapter,
@@ -77,7 +77,7 @@ public fun mangaPrefetchJob(
  * then opens translated. Throws [TranslationException] for what stops the queue.
  */
 internal suspend fun translateMangaChapterAhead(
-    manga: MangaTranslation,
+    manga: MangaTranslationService,
     translation: ReaderTranslation,
     workKey: String,
     chapterKey: String,
