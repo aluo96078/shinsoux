@@ -1,0 +1,71 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:PortableContentBackupV2.kt:offset &lt; 0 || byteCount &lt; 0 || offset &gt; byteSize || byteCount.toLong() &gt; byteSize - offset</ID>
+    <ID>ComplexCondition:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$previousSignificant == null || previousSignificant == '[' || previousSignificant == ',' || previousSignificant == ':'</ID>
+    <ID>ComplexCondition:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$end &lt; text.length &amp;&amp; end &gt; start &amp;&amp; text[end - 1].isHighSurrogate() &amp;&amp; text[end].isLowSurrogate()</ID>
+    <ID>ComplexCondition:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$result &gt; 0 &amp;&amp; result &lt; text.length &amp;&amp; text[result - 1].isHighSurrogate() &amp;&amp; text[result].isLowSurrogate()</ID>
+    <ID>ComplexCondition:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$start &gt; 0 &amp;&amp; start &lt; end &amp;&amp; text[start - 1].isHighSurrogate() &amp;&amp; text[start].isLowSurrogate()</ID>
+    <ID>CyclomaticComplexMethod:DownloadCompletionManifest.kt:DownloadCompletionManifests$private fun isStructurallyValid: Boolean</ID>
+    <ID>CyclomaticComplexMethod:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun decodeJsonMemberName: String</ID>
+    <ID>CyclomaticComplexMethod:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun validateJsonGuards</ID>
+    <ID>CyclomaticComplexMethod:SnapshotBackupService.kt:SnapshotBackupService$fun restore: RestoreResult</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:AppUpdates.kt:AppVersion.Companion$(a, b, c, beta)</ID>
+    <ID>InstanceOfCheckForException:AutoBackupService.kt:AutoBackupService$error is AutoBackupException</ID>
+    <ID>LargeClass:ShuYueBackupV1Validation.kt:ShuYueBackupV1Validator</ID>
+    <ID>LongParameterList:AppUpdates.kt:AppUpdateChecker.GitHubRelease</ID>
+    <ID>LongParameterList:BackgroundDownloadCoordinator.kt:BackgroundDownloadCoordinator</ID>
+    <ID>LongParameterList:PortableContentBackupV2.kt:PortableContentBackupV2Service$public fun create: BackupV2CreateResult</ID>
+    <ID>LongParameterList:ShuYuePreparedImport.kt:private fun selectionFingerprint: String</ID>
+    <ID>MatchingDeclarationName:ShuYueMigrationSecretPayload.kt:KeyValueShuYueMigrationSecretStore : ShuYueMigrationSecretStore</ID>
+    <ID>NestedBlockDepth:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun validateJsonGuards</ID>
+    <ID>ReturnCount:BackgroundDownloadCoordinator.kt:BackgroundDownloadCoordinator$private suspend fun loadPausedBySystem: SystemPausedQueues?</ID>
+    <ID>ReturnCount:BackgroundDownloadCoordinator.kt:BackgroundDownloadCoordinator$private suspend fun pauseRunningLocked</ID>
+    <ID>ReturnCount:DownloadCompletionManifest.kt:DownloadCompletionManifests$private fun isStructurallyValid: Boolean</ID>
+    <ID>ReturnCount:DownloadCompletionManifest.kt:DownloadCompletionManifests$private suspend fun filesMatchManifest: Boolean</ID>
+    <ID>ReturnCount:DownloadCompletionManifest.kt:DownloadCompletionManifests$suspend fun readPresent: DownloadCompletionManifest?</ID>
+    <ID>ReturnCount:DownloadCompletionManifest.kt:DownloadCompletionManifests$suspend fun readValid: DownloadCompletionManifest?</ID>
+    <ID>ReturnCount:DownloadCompletionManifest.kt:DownloadCompletionManifests$suspend fun readValidOrMigrateLegacy: DownloadCompletionManifest?</ID>
+    <ID>ReturnCount:DownloadManager.kt:DownloadManager$private suspend fun removeEntry</ID>
+    <ID>ReturnCount:MyAnimeListTracker.kt:MyAnimeListTracker$private fun parseSearch: TrackSearch?</ID>
+    <ID>ReturnCount:PortableContentBackupV2.kt:PortableContentBackupV2Service$private fun annotationExportRequests: List&lt;ContentAccessRequest&gt;</ID>
+    <ID>ReturnCount:ShuYueBackupV1Validation.kt:private fun hasMalformedSurrogate: Boolean</ID>
+    <ID>ReturnCount:ShuYueCompatibilityProjectionCoordinator.kt:ShuYueCompatibilityProjectionCoordinator$suspend fun repair: ShuYueCompatibilityProjectionRepairResult</ID>
+    <ID>ReturnCount:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$private fun buildQuote: TextQuote?</ID>
+    <ID>ReturnCount:ShuYuePreparedImport.kt:private fun isWellFormedSecret: Boolean</ID>
+    <ID>SwallowedException:BackupEnvelope.kt:BackupEnvelope$error: IllegalArgumentException</ID>
+    <ID>SwallowedException:PortableContentBackupV2.kt:BackupV2BinaryCodec$error: IllegalArgumentException</ID>
+    <ID>SwallowedException:PortableContentBackupV2.kt:BackupV2ManifestCodec$error: IllegalArgumentException</ID>
+    <ID>SwallowedException:PortableContentBackupV2.kt:PortableContentBackupV2Service$error: IllegalArgumentException</ID>
+    <ID>SwallowedException:PortableContentBackupV2.kt:PortableContentBackupV2Service$error: Throwable</ID>
+    <ID>SwallowedException:PortableContentBackupV2.kt:error: Throwable</ID>
+    <ID>ThrowsCount:AutoBackupService.kt:AutoBackupService$@Suppress("SuspendFunSwallowedCancellation") private suspend fun restoreLocked: RestoreResult</ID>
+    <ID>ThrowsCount:BackupEnvelope.kt:BackupEnvelope$fun validate: BackupEnvelope</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$private fun writeEncoded: Long</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$public fun decodeInspected: InspectedBackupV2Archive</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$public fun encode: ByteArray</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:PortableContentBackupV2Service$private fun publishArchiveEntry: dev.shinsou.kmp.content.BlobPublishReceipt</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:PortableContentBackupV2Service$private fun verifyArchiveEntry</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:PortableContentBackupV2Service$public fun inspect: BackupV2Inspection</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:private fun BackupV2ArchiveEntry.readFully: ByteArray</ID>
+    <ID>ThrowsCount:PortableContentBackupV2.kt:private fun BackupV2ArchiveSource.readExact: ByteArray</ID>
+    <ID>ThrowsCount:PortableContentBackupV2RestoreCoordinator.kt:PortableContentBackupV2RestoreCoordinator$private fun publishArchiveEntry: BlobPublishReceipt</ID>
+    <ID>ThrowsCount:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$internal fun decode: ShuYueBackupV1</ID>
+    <ID>ThrowsCount:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun decodeJsonMemberName: String</ID>
+    <ID>ThrowsCount:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun decodeText: ShuYueBackupV1</ID>
+    <ID>ThrowsCount:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun parseRoot: JsonObject</ID>
+    <ID>ThrowsCount:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun validateJsonGuards</ID>
+    <ID>TooGenericExceptionCaught:AutoBackupService.kt:AutoBackupService$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:DownloadManager.kt:DownloadManager$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PortableContentBackupV2.kt:PortableContentBackupV2Service$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PortableContentBackupV2.kt:error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PortableContentBackupV2RestoreCoordinator.kt:PortableContentBackupV2RestoreCoordinator$failure: Throwable</ID>
+    <ID>UnusedVariable:DownloadCompletionManifest.kt:DownloadCompletionManifests$val expectedImages = manifest.pages.mapTo(linkedSetOf()) { "$directory/${it.fileName}" }</ID>
+    <ID>UseCheckOrError:ShuYueCompatibilityProjectionCoordinator.kt:ShuYueCompatibilityProjectionCoordinator$throw IllegalStateException("ShuYue compatibility projection remained concurrently busy")</ID>
+    <ID>UseCheckOrError:TrackingCoordinator.kt:TrackingCoordinator$throw IllegalStateException( provider.configurationMessage ?: "${provider.descriptor.name} is not configured", )</ID>
+    <ID>UseOrEmpty:AppUpdates.kt:AppVersion$beta?.let { "-beta.$it" } ?: ""</ID>
+    <ID>UseOrEmpty:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$sourceId ?: ""</ID>
+    <ID>UseRequire:MyAnimeListTracker.kt:MyAnimeListTracker$throw IllegalArgumentException("MyAnimeList remoteId must be positive")</ID>
+  </CurrentIssues>
+</SmellBaseline>

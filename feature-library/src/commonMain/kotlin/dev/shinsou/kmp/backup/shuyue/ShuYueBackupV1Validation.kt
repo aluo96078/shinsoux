@@ -1294,10 +1294,10 @@ internal object ShuYueBackupV1Validator {
         val oversized = key.length > maxFieldChars || value.length > maxFieldChars
         val malformedKey = separator <= 0 || secondSeparator >= 0
         val blankPart = sourceId.isBlank() || preferenceKey.isBlank()
-        val hasControl = sourceId.any(Char::isISOControl) || preferenceKey.any(Char::isISOControl) ||
-            value.any(Char::isISOControl)
         val structurallyInvalid = oversized || malformedKey || blankPart
-        return structurallyInvalid || hasControl
+        // a structurally invalid preference is not scanned for control characters
+        return structurallyInvalid || sourceId.any(Char::isISOControl) || preferenceKey.any(Char::isISOControl) ||
+            value.any(Char::isISOControl)
     }
 
     private fun validateImageParsingPolicies(

@@ -724,6 +724,8 @@ private fun MangaTranslationControls(
     session: TypedReaderContentSession,
     mangaState: MangaReaderTranslationState?,
     translationSheetVisible: Boolean,
+    /** Whether the sheet shows now: read when an effect runs, not when it was composed. */
+    sheetShownNow: () -> Boolean,
     onTranslationSheetVisible: (Boolean) -> Unit,
     translationRequestSerial: Long,
     translationToggleSerial: Long,
@@ -738,7 +740,7 @@ private fun MangaTranslationControls(
     }
     // when a translation ends its notice goes; whatever held the focus then, the reader takes it
     LaunchedEffect(mangaState?.finished, mangaState?.failure) {
-        if (mangaState?.finished == true && !translationSheetVisible) returnFocus()
+        if (mangaState?.finished == true && !sheetShownNow()) returnFocus()
     }
     var handledTranslationRequest by remember { mutableStateOf(translationRequestSerial) }
     LaunchedEffect(translationRequestSerial) {
@@ -823,6 +825,7 @@ private fun ImageSequenceUnifiedContentReader(
         session = session,
         mangaState = mangaState,
         translationSheetVisible = translationSheetVisible,
+        sheetShownNow = { translationSheetVisible },
         onTranslationSheetVisible = { translationSheetVisible = it },
         translationRequestSerial = translationRequestSerial,
         translationToggleSerial = translationToggleSerial,

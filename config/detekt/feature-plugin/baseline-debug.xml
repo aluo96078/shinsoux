@@ -1,0 +1,333 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>AbstractClassCanBeInterface:ExtensionRepositoryClient.kt:RepositoryIndex$RepositoryIndex</ID>
+    <ID>ComplexCondition:ExtensionDownloadQueueV2.kt:ExtensionDownloadQueueV2$it.state == DownloadState.QUEUED &amp;&amp; it.remoteUnitId in stored &amp;&amp; it.remotePublicationId == entry.remotePublicationId &amp;&amp; it.sourceKey.canonicalId == publication</ID>
+    <ID>ComplexCondition:FilePluginPackageStore.kt:FilePluginPackageStore$(requiredFile != null &amp;&amp; fileName != requiredFile) || (fileName != METADATA_FILE &amp;&amp; fileName != AUTHORITATIVE_MARKER_FILE) || relative != "$pluginId/$fileName"</ID>
+    <ID>ComplexCondition:FilePluginPackageStore.kt:FilePluginPackageStore$scriptFile != previousScriptFile || persisted == null || persisted.size &gt; MAX_PLUGIN_PACKAGE_SCRIPT_BYTES || !persisted.contentEquals(plugin.scriptBytes)</ID>
+    <ID>ComplexCondition:PluginNetwork.kt:labels.size &lt; 2 || labels.any { it.isEmpty() || it.length &gt; 63 || it.startsWith('-') || it.endsWith('-') }</ID>
+    <ID>ComplexCondition:PluginNetwork.kt:suffix != suffix.lowercase() || suffix.length &gt; 253 || suffix.startsWith('.') || suffix.endsWith('.')</ID>
+    <ID>ComplexCondition:PluginNetwork.kt:suffix.any { !(it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.') }</ID>
+    <ID>ComplexCondition:PluginSystemEventContracts.kt:JsonStructureValidator$input.getOrNull(index)?.let { it == ' ' || it == '\n' || it == '\r' || it == '\t' } == true</ID>
+    <ID>ComplexCondition:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$activeAdmissions.any { it.runtimeKey == admissionKey.runtimeKey &amp;&amp; it.sourceKey == admissionKey.sourceKey &amp;&amp; it.name == admissionKey.name &amp;&amp; it.dedupeKey == admissionKey.dedupeKey }</ID>
+    <ID>ComplexCondition:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$event.envelope.name == PluginSystemEventNames.SOURCE_REFRESH_REQUEST &amp;&amp; refreshDirty.remove(event.admissionKey) &amp;&amp; !closed &amp;&amp; !artifactTombstonesSaturated &amp;&amp; event.scope.runtimeKey !in invalidRuntimeKeys &amp;&amp; event.scope.artifactIdentity !in invalidArtifactKeys</ID>
+    <ID>ComplexCondition:PluginVerifier.kt:PluginVerifier.Companion$value.isBlank() || value == "." || value == ".." || value.endsWith('.') || value.endsWith(' ') || value.any { character -&gt; character.code &lt; 32 || character in WINDOWS_FORBIDDEN_FILE_CHARACTERS } || windowsDeviceName in WINDOWS_RESERVED_DEVICE_NAMES</ID>
+    <ID>ComplexCondition:PublicSuffixList.kt:PublicSuffixList$normalized.any { !(it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '.') }</ID>
+    <ID>ComplexCondition:PublisherTrust.kt:PublisherRevocationStore$stored != null &amp;&amp; (revocations.sequence &lt; stored.sequence || revocations.sequence == stored.sequence &amp;&amp; revocations != stored)</ID>
+    <ID>ComplexCondition:ReviewedImageConnectPolicy.kt:header.isEmpty() || header.any { (it.code &lt; 0x20 &amp;&amp; it != '\r' &amp;&amp; it != '\n') || it.code &gt; 0x7e }</ID>
+    <ID>ComplexCondition:ViewerImageParser.kt:ViewerImageParser$boundary != null &amp;&amp; !boundary.isWhitespace() &amp;&amp; boundary != '/' &amp;&amp; boundary != '&gt;'</ID>
+    <ID>ComplexCondition:ViewerImageParser.kt:ViewerImageParser$index &lt; value.length &amp;&amp; !value[index].isWhitespace() &amp;&amp; value[index] != '=' &amp;&amp; value[index] != '/' &amp;&amp; value[index] != '&gt;'</ID>
+    <ID>CyclomaticComplexMethod:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$private fun mergeGraph: ExtensionGraphMerge</ID>
+    <ID>CyclomaticComplexMethod:ExtensionDownloadQueueV2.kt:ExtensionDownloadQueueV2$private suspend fun drain</ID>
+    <ID>CyclomaticComplexMethod:ExtensionV2Contracts.kt:internal fun validateBrowseFilters</ID>
+    <ID>CyclomaticComplexMethod:PluginBrowseCore.kt:PluginBrowseCore$internal suspend fun rebuildSnapshot: Unit</ID>
+    <ID>CyclomaticComplexMethod:PluginExecutionLimits.kt:internal fun pluginJsonArrayCountsAtMost: Boolean</ID>
+    <ID>CyclomaticComplexMethod:PluginExecutionLimits.kt:internal fun pluginJsonShapeWithin: Boolean</ID>
+    <ID>CyclomaticComplexMethod:PluginExtensionManagement.kt:PluginExtensionManagement$suspend fun preinstallAccountPackages: Unit</ID>
+    <ID>CyclomaticComplexMethod:PluginInstaller.kt:PluginInstaller$suspend fun install: ScriptPluginRuntime</ID>
+    <ID>CyclomaticComplexMethod:PluginNetwork.kt:BoundedPluginBatchJsonWriter$private fun appendJsonString</ID>
+    <ID>CyclomaticComplexMethod:PluginNetwork.kt:PluginRequestBuilder$public suspend fun build: BuiltPluginRequest</ID>
+    <ID>CyclomaticComplexMethod:PluginNetwork.kt:internal fun isGrantableContentHostSuffix: Boolean</ID>
+    <ID>CyclomaticComplexMethod:PluginNetworkClient.kt:PluginNetworkClient$private fun parseSetCookie: PluginCookie?</ID>
+    <ID>CyclomaticComplexMethod:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun execute: PluginHttpResponse</ID>
+    <ID>CyclomaticComplexMethod:PluginRuntimeLoader.kt:PluginRuntimeLoader$private suspend fun createScopedRuntime: ScriptPluginRuntime</ID>
+    <ID>CyclomaticComplexMethod:PluginSourceCatalog.kt:PluginSourceCatalog$private suspend fun migrateExtensionPublicationV2</ID>
+    <ID>CyclomaticComplexMethod:PluginSourceWebSession.kt:PluginSourceWebSession$override suspend fun sourceWebChallenge: SourceWebChallengeRequest?</ID>
+    <ID>CyclomaticComplexMethod:PluginSystemEventContracts.kt:JsonStructureValidator$private fun parseNumber</ID>
+    <ID>CyclomaticComplexMethod:PluginSystemEventContracts.kt:JsonStructureValidator$private fun parseString: String</ID>
+    <ID>CyclomaticComplexMethod:PluginSystemEventContracts.kt:MutablePluginSystemEventAuthorizer$private fun authorizeInternal: PluginEventAuthorization</ID>
+    <ID>CyclomaticComplexMethod:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$override fun submit: PluginEventReceipt</ID>
+    <ID>CyclomaticComplexMethod:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$private fun finish</ID>
+    <ID>CyclomaticComplexMethod:PluginTrustCoordinator.kt:PluginTrustCoordinator$suspend fun setPluginTrusted: Unit</ID>
+    <ID>CyclomaticComplexMethod:PublisherTrust.kt:ExecutionTierResolver$public suspend fun resolve: ExecutionTier</ID>
+    <ID>CyclomaticComplexMethod:RepositoryTrust.kt:internal fun isLocalUnsignedDeveloperRepository: Boolean</ID>
+    <ID>CyclomaticComplexMethod:ReviewedImageConnectPolicy.kt:internal fun isValidReviewedImageConnectHeader: Boolean</ID>
+    <ID>CyclomaticComplexMethod:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun executeSync: JsonElement</ID>
+    <ID>CyclomaticComplexMethod:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun guarded: BridgeOutcome</ID>
+    <ID>CyclomaticComplexMethod:SandboxProtocol.kt:SandboxFrameCodec$fun decodeBody: SandboxFrame</ID>
+    <ID>CyclomaticComplexMethod:SandboxProtocol.kt:SandboxFrameCodec$fun encodeBody: ByteArray</ID>
+    <ID>CyclomaticComplexMethod:SandboxScriptJson.kt:SandboxScriptJson$private fun filter: Filter?</ID>
+    <ID>CyclomaticComplexMethod:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$private suspend fun call: JsonElement</ID>
+    <ID>CyclomaticComplexMethod:UpdateGrantContinuation.kt:UpdateGrantContinuation$fun continuedSelection: PluginGrantSelection?</ID>
+    <ID>CyclomaticComplexMethod:ViewerImageParser.kt:ViewerImageParser$private fun parseAttributes: Map&lt;String, String&gt;</ID>
+    <ID>DoubleMutabilityForCollection:FilePluginPackageStore.kt:FilePluginPackageStore$private var cachedAuthoritativePluginIds: MutableSet&lt;String&gt;? = null</ID>
+    <ID>DoubleMutabilityForCollection:FilePluginPackageStore.kt:FilePluginPackageStore$private var cachedPlugins: MutableMap&lt;String, StoredPlugin&gt;? = null</ID>
+    <ID>DoubleMutabilityForCollection:PluginPackageStore.kt:KeyValuePluginPackageStore$private var cachedPlugins: MutableMap&lt;String, StoredPlugin&gt;? = null</ID>
+    <ID>ForEachOnRange:PluginVerifier.kt:PluginVerifier.Companion$1..9</ID>
+    <ID>FunctionOnlyReturningConstant:PluginManager.kt:PluginManager$public suspend fun authorizeWebChallenge: Boolean</ID>
+    <ID>FunctionOnlyReturningConstant:ReviewedBrowserImageTransport.kt:internal fun reviewedBrowserImageCleanupScript: String</ID>
+    <ID>FunctionOnlyReturningConstant:ReviewedBrowserImageTransport.kt:internal fun reviewedBrowserImagePollScript: String</ID>
+    <ID>InjectDispatcher:AndroidSandboxTransport.kt:AndroidSandboxTransport$IO</ID>
+    <ID>InjectDispatcher:AndroidSandboxTransport.kt:AndroidSandboxTransportProvider$IO</ID>
+    <ID>InjectDispatcher:SandboxSelfCheckReceiver.kt:SandboxSelfCheckReceiver$IO</ID>
+    <ID>LargeClass:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2</ID>
+    <ID>LargeClass:ExtensionRepositoryClient.kt:ExtensionRepositoryClient</ID>
+    <ID>LargeClass:PluginSystemEventDispatcher.kt:PluginSystemEventGateway : ScopedPluginSystemEventSinkAutoCloseable</ID>
+    <ID>LongMethod:PluginBrowseCore.kt:PluginBrowseCore$internal suspend fun rebuildSnapshot: Unit</ID>
+    <ID>LongMethod:PluginInstaller.kt:PluginInstaller$suspend fun install: ScriptPluginRuntime</ID>
+    <ID>LongMethod:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$override fun submit: PluginEventReceipt</ID>
+    <ID>LongParameterList:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2</ID>
+    <ID>LongParameterList:ExtensionRepositoryClient.kt:ExtensionRepositoryClient</ID>
+    <ID>LongParameterList:LegacyMangaExtensionAdapterV2.kt:LegacyMangaExtensionSourceV2</ID>
+    <ID>LongParameterList:LegacyMangaExtensionAdapterV2.kt:LegacyMangaPackageRuntimeV2</ID>
+    <ID>LongParameterList:PluginBrowserSessionTransport.kt:internal suspend fun PluginBrowserSessionTransport.executeWithNetworkPolicy: PluginHttpResponse</ID>
+    <ID>LongParameterList:PluginManager.kt:PluginManager</ID>
+    <ID>LongParameterList:PluginManager.kt:PluginManager.WebChallengeAuthorization</ID>
+    <ID>LongParameterList:PluginNetwork.kt:PluginRequestBuilder$public suspend fun build: BuiltPluginRequest</ID>
+    <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient</ID>
+    <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun post: PluginHttpResponse</ID>
+    <ID>LongParameterList:PluginNetworkClient.kt:PluginNetworkClient$public suspend fun postBatch: List&lt;PluginHttpResponse&gt;</ID>
+    <ID>LongParameterList:PluginSystemEventContracts.kt:BoundPluginScope</ID>
+    <ID>LongParameterList:PluginSystemEventContracts.kt:PluginSystemEventCodec$public fun &lt;P&gt; encodePayload: ByteArray</ID>
+    <ID>LongParameterList:PluginSystemEventDispatcher.kt:PluginSystemEventGateway</ID>
+    <ID>LongParameterList:PluginSystemEventDispatcher.kt:TypedPluginSystemEventHandler</ID>
+    <ID>LongParameterList:PluginUiAdapter.kt:PluginBrowseAdapter$constructor</ID>
+    <ID>LongParameterList:RepositoryTrust.kt:RepositorySignedDocumentVerifier$suspend fun verifyEnvelope: VerifiedRepositoryPayload</ID>
+    <ID>LongParameterList:RepositoryTrust.kt:RepositorySignedDocumentVerifier.Companion$public suspend fun signingMessage: ByteArray</ID>
+    <ID>LongParameterList:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher</ID>
+    <ID>LongParameterList:SandboxLifecycle.kt:SandboxLifecycle</ID>
+    <ID>LongParameterList:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime</ID>
+    <ID>LongParameterList:SandboxSession.kt:SandboxSession</ID>
+    <ID>LongParameterList:UpdateGrantContinuation.kt:UpdateGrantContinuation$fun continuedSelection: PluginGrantSelection?</ID>
+    <ID>LoopWithTooManyJumpStatements:AndroidSandboxTransport.kt:AndroidSandboxTransport$while</ID>
+    <ID>LoopWithTooManyJumpStatements:PluginExtensionManagement.kt:PluginExtensionManagement$for</ID>
+    <ID>LoopWithTooManyJumpStatements:ViewerImageParser.kt:ViewerImageParser$while</ID>
+    <ID>MatchingDeclarationName:ExtensionLibraryMigrationV2.kt:ExtensionLibraryMigrationPlanV2</ID>
+    <ID>MatchingDeclarationName:PlatformPluginNetworkDiagnostics.kt:PlatformPluginNetworkCapability</ID>
+    <ID>NoNameShadowing:ExtensionRepositoryClient.kt:ExtensionRepositoryClient${ error("Unknown runtime permission '$it'") }</ID>
+    <ID>RedundantSuspendModifier:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$suspend</ID>
+    <ID>RedundantSuspendModifier:PluginManager.kt:PluginManager$suspend</ID>
+    <ID>RedundantSuspendModifier:RepositoryTrust.kt:RepositorySignedDocumentVerifier.Companion$suspend</ID>
+    <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun extensionLibraryBinding: ExtensionLibraryBindingV2?</ID>
+    <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun purgeStoredContent: Int</ID>
+    <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun storedMaterialization: ExtensionContentMaterializationV2?</ID>
+    <ID>ReturnCount:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$public fun storedPublicationPage: ExtensionPublicationPageV2?</ID>
+    <ID>ReturnCount:ExtensionLibraryMigrationV2.kt:private fun parseUnitNumber: Int?</ID>
+    <ID>ReturnCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun isPrivateHost: Boolean</ID>
+    <ID>ReturnCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$public suspend fun fetchPluginIndex: List&lt;PluginIndexEntry&gt;</ID>
+    <ID>ReturnCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$public suspend fun fetchPublisherDocument: JsonObject?</ID>
+    <ID>ReturnCount:ExtensionV2Contracts.kt:ExtensionHostFacadeV2$public fun source: HostExtensionSourceV2?</ID>
+    <ID>ReturnCount:ExtensionV2Contracts.kt:public fun isPlaceholderPublicationTitle: Boolean</ID>
+    <ID>ReturnCount:FilePluginPackageStore.kt:FilePluginPackageStore$private fun authoritativePluginId: String?</ID>
+    <ID>ReturnCount:HostExtensionSourceV2.kt:HostTextChunkStreamV2$override suspend fun next: TextChunkResultV2</ID>
+    <ID>ReturnCount:LegacyMangaExtensionAdapterV2.kt:LegacyMangaExtensionSourceV2$override suspend fun login: LoginResultV2</ID>
+    <ID>ReturnCount:LegacyMangaExtensionAdapterV2.kt:LegacyMangaExtensionSourceV2$override suspend fun units: PagedResultV2&lt;RemoteUnitV2&gt;</ID>
+    <ID>ReturnCount:LegacyMangaExtensionAdapterV2.kt:LegacyMangaExtensionSourceV2.TextChapterRepresentationProvider$override suspend fun load: UnitContentPayload?</ID>
+    <ID>ReturnCount:LegacyPluginCompat.kt:LegacyPluginCompat$suspend fun installedSourceKey: SourceKey?</ID>
+    <ID>ReturnCount:PluginBrowseCore.kt:PluginBrowseCore$internal suspend fun fetchExtensionThumbnailV2: ByteArray?</ID>
+    <ID>ReturnCount:PluginBrowseRepositories.kt:PluginBrowseRepositories$internal suspend fun repositorySuggestions: List&lt;BrowseRepositorySuggestion&gt;</ID>
+    <ID>ReturnCount:PluginBrowserSessionTransport.kt:internal fun decodePluginBrowserSessionFetchResult: PluginBrowserSessionFetchResult?</ID>
+    <ID>ReturnCount:PluginContentScope.kt:internal fun PluginHttpResponse.imageBodyForDecoderOrNull: ByteArray?</ID>
+    <ID>ReturnCount:PluginContentScope.kt:private fun String.normalizedPluginMediaTypeOrNull: String?</ID>
+    <ID>ReturnCount:PluginDeveloperMode.kt:private fun repositoryHost: String?</ID>
+    <ID>ReturnCount:PluginDeveloperMode.kt:public fun PluginDeveloperModeState.admits: Boolean</ID>
+    <ID>ReturnCount:PluginEventGrantAdmission.kt:KeyValuePluginEventGrantAdmission$private fun &lt;T&gt; decodeBounded: T?</ID>
+    <ID>ReturnCount:PluginEventGrantAdmission.kt:KeyValuePluginEventGrantAdmission$private fun LegacyGrantRead.matches: Boolean</ID>
+    <ID>ReturnCount:PluginEventGrantAdmission.kt:KeyValuePluginEventGrantAdmission$private suspend fun isGrantedLocked: Boolean</ID>
+    <ID>ReturnCount:PluginExecutionAdmission.kt:PluginExecutionAdmission$internal suspend fun prepareExecutionAdmission: Boolean</ID>
+    <ID>ReturnCount:PluginExecutionLimits.kt:internal fun pluginJsonArrayCountsAtMost: Boolean</ID>
+    <ID>ReturnCount:PluginExecutionLimits.kt:internal fun pluginJsonShapeWithin: Boolean</ID>
+    <ID>ReturnCount:PluginExtensionManagement.kt:PluginExtensionManagement$override suspend fun inspectRepositoryTrust: RepositoryTrustPrompt?</ID>
+    <ID>ReturnCount:PluginExtensionManagement.kt:PluginExtensionManagement$private suspend fun indexEntryFor: Pair&lt;ExtensionRepository, PluginIndexEntry&gt;?</ID>
+    <ID>ReturnCount:PluginExtensionManagement.kt:PluginExtensionManagement$private suspend fun trustedForPreinstall: Boolean</ID>
+    <ID>ReturnCount:PluginInstaller.kt:PluginInstaller$suspend fun updateReviewPreview: PluginManager.UpdateReviewPreview?</ID>
+    <ID>ReturnCount:PluginNetwork.kt:ConfiguredPluginProxyResolver$override suspend fun route: PluginProxyRoute?</ID>
+    <ID>ReturnCount:PluginNetwork.kt:internal fun isGrantableContentHostSuffix: Boolean</ID>
+    <ID>ReturnCount:PluginNetworkClient.kt:PluginNetworkClient$private fun parseSaturatedSeconds: Long?</ID>
+    <ID>ReturnCount:PluginNetworkClient.kt:PluginNetworkClient$private fun parseSetCookie: PluginCookie?</ID>
+    <ID>ReturnCount:PluginPackageStore.kt:KeyValuePluginPackageStore$private suspend fun readPlugin: StoredPlugin?</ID>
+    <ID>ReturnCount:PluginRepositoryRefresher.kt:PluginRepositoryRefresher$internal suspend fun installKeyResolver: (String) -&gt; String?</ID>
+    <ID>ReturnCount:PluginRuntimeLoader.kt:PluginRuntimeLoader$internal suspend fun loadStored</ID>
+    <ID>ReturnCount:PluginSourceCatalog.kt:PluginSourceCatalog$override suspend fun loadPluginThumbnail: ByteArray?</ID>
+    <ID>ReturnCount:PluginSourceContentAccess.kt:PluginSourceContentAccess$private fun reviewedImageContentClient: PluginContentNetworkClient</ID>
+    <ID>ReturnCount:PluginSourceContentAccess.kt:PluginSourceContentAccess$private suspend fun browserImageOriginsFor: Set&lt;String&gt;</ID>
+    <ID>ReturnCount:PluginSourceWebSession.kt:PluginSourceWebSession$override suspend fun sourceWebChallenge: SourceWebChallengeRequest?</ID>
+    <ID>ReturnCount:PluginStorage.kt:KeyValuePluginStorage$private suspend fun readOrMigrateCredentialLocked: StoredPluginCredential?</ID>
+    <ID>ReturnCount:PluginStorage.kt:KeyValuePluginStorage$private suspend fun readPreferenceLocked: String?</ID>
+    <ID>ReturnCount:PluginStorage.kt:KeyValuePluginStorage.ExactSourceStorage$override suspend fun getWebChallengeUserAgent: String?</ID>
+    <ID>ReturnCount:PluginStorage.kt:KeyValuePluginTrustStore$private fun legacyTokenBelongsToPlugin: Boolean</ID>
+    <ID>ReturnCount:PluginStorage.kt:KeyValuePluginTrustStore$private suspend fun readTokens: Set&lt;String&gt;</ID>
+    <ID>ReturnCount:PluginStorage.kt:PluginCookie$public fun matches: Boolean</ID>
+    <ID>ReturnCount:PluginStorage.kt:internal fun normalizedPluginCookieOrNull: PluginCookie?</ID>
+    <ID>ReturnCount:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$override fun submit: PluginEventReceipt</ID>
+    <ID>ReturnCount:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$private fun cleanupSourceMutexLocked</ID>
+    <ID>ReturnCount:PluginTrustCoordinator.kt:PluginTrustCoordinator$internal suspend fun continuedGrantFor: PluginGrantSelection?</ID>
+    <ID>ReturnCount:PluginTrustCoordinator.kt:PluginTrustCoordinator$private suspend fun StoredPlugin.legacyCommunityPublisher: String?</ID>
+    <ID>ReturnCount:PluginVerifier.kt:PluginVerifier.Companion$public fun isLegacyTrustValid: Boolean</ID>
+    <ID>ReturnCount:PluginWebChallengeCoordinator.kt:PluginWebChallengeCoordinator$@OptIn(ExtensionImplementationApi::class) /** * ADR-0002 §6.2: the browser-challenge origins of a third-party (sandboxed) package's source: * only the browser-session origins the source declared — which the permission page showed — and * only while the user's grant includes BROWSER_CHALLENGE. Pages may load subresources from that * source's declared request origins too. Null when it may not open a challenge. */ /** * The sign-in sites a source declared for its browser challenge: where the browser may go * besides the source itself, and what those pages may load. Empty unless the challenge * itself is granted for [sourceKey]. */ private suspend fun webChallengeLoginOrigins: Pair&lt;Set&lt;String&gt;, Set&lt;String&gt;&gt;</ID>
+    <ID>ReturnCount:PluginWebChallengeCoordinator.kt:PluginWebChallengeCoordinator$private suspend fun genericWebChallengeOrigins: Pair&lt;Set&lt;String&gt;, Set&lt;String&gt;&gt;?</ID>
+    <ID>ReturnCount:PublicSuffixList.kt:PublicSuffixList$fun publicSuffixOf: String?</ID>
+    <ID>ReturnCount:PublicSuffixList.kt:PublicSuffixList$fun registrableDomain: String?</ID>
+    <ID>ReturnCount:PublicSuffixList.kt:PublicSuffixList$private fun normalizedLabels: List&lt;String&gt;?</ID>
+    <ID>ReturnCount:PublisherTrust.kt:AddRepositoryLink.Companion$public fun parse: AddRepositoryLink?</ID>
+    <ID>ReturnCount:PublisherTrust.kt:ExecutionTierResolver$public suspend fun resolve: ExecutionTier</ID>
+    <ID>ReturnCount:PublisherTrust.kt:PublisherFingerprint$private fun digestOf: ByteArray?</ID>
+    <ID>ReturnCount:PublisherTrust.kt:PublisherFingerprint$public fun parse: String?</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$override suspend fun resolve: PluginReaderChapterReference?</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$override suspend fun resolveChapterOriginalUrl: String?</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$override suspend fun resolveMangaOriginalUrl: String?</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$private suspend fun resolvePage: ResolvedPage</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:internal fun resolveSourceHttpUrl: String?</ID>
+    <ID>ReturnCount:RepositoryPluginCoordinator.kt:private fun canonicalHttpUrl: String?</ID>
+    <ID>ReturnCount:RepositoryTrust.kt:internal fun isLocalUnsignedDeveloperRepository: Boolean</ID>
+    <ID>ReturnCount:ReviewedImageConnectPolicy.kt:internal fun isValidReviewedImageConnectHeader: Boolean</ID>
+    <ID>ReturnCount:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$private suspend fun guarded: BridgeOutcome</ID>
+    <ID>ReturnCount:SandboxProtocol.kt:SandboxFrameReader$private fun onBody: SandboxFrame?</ID>
+    <ID>ReturnCount:SandboxScriptJson.kt:SandboxScriptJson$private fun preference: SourcePreference?</ID>
+    <ID>ReturnCount:SandboxScriptPluginRuntime.kt:private fun ScriptPluginEnvironment.withTextResultLimit: ScriptPluginEnvironment</ID>
+    <ID>ReturnCount:ScriptPluginRuntime.kt:internal fun submitLegacyLoginCompatibility: Boolean</ID>
+    <ID>ReturnCount:UpdateGrantContinuation.kt:UpdateGrantContinuation$fun continuedSelection: PluginGrantSelection?</ID>
+    <ID>ReturnCount:ViewerImageParser.kt:ViewerImageParser$fun extractImageSource: String?</ID>
+    <ID>ReturnCount:ViewerImageParser.kt:ViewerImageParser$fun resolveUrl: String</ID>
+    <ID>SpreadOperator:ExtensionContentConsumerV2.kt:ExtensionContentConsumerV2$( graph.publication.key.value, graph.manifest.manifestId, *prepared.receipts.map(BlobPublishReceipt::commitToken).toTypedArray(), )</ID>
+    <ID>SpreadOperator:PluginInstaller.kt:PluginInstaller$(entry.name, *entry.sources.orEmpty().map { it.name }.toTypedArray())</ID>
+    <ID>SuspendFunSwallowedCancellation:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$catch (e: Throwable) { runCatchingCancellable { context.unbindService(connection) } fromSandbox?.get(0)?.let { runCatchingCancellable { it.close() } } toSandbox?.get(1)?.let { runCatchingCancellable { it.close() } } throw e }</ID>
+    <ID>SwallowedException:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: RemoteException</ID>
+    <ID>SwallowedException:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: BadArgument</ID>
+    <ID>SwallowedException:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: Denied</ID>
+    <ID>SwallowedException:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: PluginResourceLimitException</ID>
+    <ID>SwallowedException:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: Throwable</ID>
+    <ID>SwallowedException:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: UnknownOperation</ID>
+    <ID>SwallowedException:SandboxCbor.kt:CborReader$e: CharacterCodingException</ID>
+    <ID>SwallowedException:SandboxSession.kt:SandboxSession$e: TimeoutCancellationException</ID>
+    <ID>SwallowedException:SandboxSession.kt:SandboxSession.Session$e: Throwable</ID>
+    <ID>ThrowsCount:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$suspend fun open: AndroidSandboxTransport</ID>
+    <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun parseRepositoryUrl: ParsedRepositoryUrl</ID>
+    <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun validateRelativePath</ID>
+    <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private suspend fun requestBytes: ByteArray</ID>
+    <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$public suspend fun inspectRepositoryKey: RepositoryKeyPresentation</ID>
+    <ID>ThrowsCount:PluginRuntimeLoader.kt:PluginRuntimeLoader$internal suspend fun loadStored</ID>
+    <ID>ThrowsCount:PluginSystemEventContracts.kt:PluginSystemEventCodec$public fun decode: PluginSystemEventEnvelope</ID>
+    <ID>ThrowsCount:PublisherTrust.kt:ExecutionTierResolver$public suspend fun requireInstallable</ID>
+    <ID>ThrowsCount:PublisherTrust.kt:PublisherRepositoryTrustPolicy$override suspend fun decisionFor: RepositoryTrustDecision</ID>
+    <ID>ThrowsCount:PublisherTrust.kt:PublisherTrustStore$private fun checkFingerprint: Boolean</ID>
+    <ID>ThrowsCount:RepositoryTrust.kt:RepositorySignedDocumentVerifier$suspend fun verifyEnvelope: VerifiedRepositoryPayload</ID>
+    <ID>ThrowsCount:SandboxProtocol.kt:SandboxFrameCodec$fun decodeBody: SandboxFrame</ID>
+    <ID>ThrowsCount:SandboxProtocol.kt:SandboxFrameReader$fun feed: List&lt;SandboxFrame&gt;</ID>
+    <ID>ThrowsCount:SandboxProtocol.kt:SandboxFrameReader$private fun onBody: SandboxFrame?</ID>
+    <ID>ThrowsCount:SandboxScriptJson.kt:SandboxScriptJson$fun parseBoundedResult: JsonElement</ID>
+    <ID>ThrowsCount:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$private suspend fun call: JsonElement</ID>
+    <ID>ThrowsCount:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$private suspend fun runOneShotLogin: JsonElement</ID>
+    <ID>TooGenericExceptionCaught:AndroidSandboxTransport.kt:AndroidSandboxTransport.Companion$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ExtensionContentConsumerV2Support.kt:StableExtensionBlobStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ExtensionDownloadQueueV2.kt:ExtensionDownloadQueueV2$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$legacyFailure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$pluginFailure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:FilePluginPackageStore.kt:FilePluginPackageStore$error: Exception</ID>
+    <ID>TooGenericExceptionCaught:FilePluginPackageStore.kt:FilePluginPackageStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:HostExtensionSourceV2.kt:HostTextChunkStreamV2$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginBrowseCore.kt:PluginBrowseCore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginEventGrantAdmission.kt:KeyValuePluginEventGrantAdmission$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginExtensionPublicationCatalog.kt:PluginExtensionPublicationCatalog$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginInstaller.kt:PluginInstaller$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginNetwork.kt:KtorPluginHttpTransport$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginPackageStore.kt:KeyValuePluginPackageStore$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginRepositoryRefresher.kt:PluginRepositoryRefresher$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginRuntimeLoader.kt:PluginRuntimeLoader$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginRuntimeLoader.kt:PluginRuntimeLoader$restoreError: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginSourceAuth.kt:PluginSourceAuth$failure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginSourceCatalog.kt:PluginSourceCatalog$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginTrustCoordinator.kt:PluginTrustCoordinator$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginWebChallengeCoordinator.kt:PluginWebChallengeCoordinator$writeFailure: Throwable</ID>
+    <ID>TooGenericExceptionCaught:RepositoryTrust.kt:RepositorySignedDocumentVerifier$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SandboxBridgeDispatcher.kt:SandboxBridgeDispatcher$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SandboxScriptPluginRuntime.kt:SandboxRuntimeFactory$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SandboxSession.kt:SandboxSession.Session$e: Throwable</ID>
+    <ID>UnnecessarySafeCall:PluginTrustCoordinator.kt:PluginTrustCoordinator$failure?.addSuppressed(error)</ID>
+    <ID>UnnecessarySafeCall:PluginTrustCoordinator.kt:PluginTrustCoordinator$failure?.addSuppressed(unloadFailure)</ID>
+    <ID>UnreachableCode:HostExtensionSourceV2.kt:HostTextChunkStreamV2$return fail("Text stream byte count overflow")</ID>
+    <ID>UnreachableCode:HostExtensionSourceV2.kt:HostTextChunkStreamV2$return fail("Text stream cursor cycle detected")</ID>
+    <ID>UnreachableCode:HostExtensionSourceV2.kt:HostTextChunkStreamV2$return fail("Text stream exceeded its aggregate byte limit")</ID>
+    <ID>UnreachableCode:HostExtensionSourceV2.kt:HostTextChunkStreamV2$return fail("Text stream exceeded its chunk limit")</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$decoded.forEach { cookie -&gt; val valid = requireNotNull(normalizedPluginCookieOrNull(cookie)) { "Stored plugin cookie jar contains an invalid cookie" } normalized[Triple(valid.name, valid.domain.lowercase(), valid.path)] = valid }</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$require(decoded.size &lt;= MAX_COOKIES_PER_SOURCE) { "Stored plugin cookie count quota exceeded" }</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$return normalized.values.toList()</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$return runCatching { json.decodeFromString(PluginPreferenceSnapshot.serializer(), encoded) } .getOrElse { throw IllegalArgumentException("Stored plugin preference snapshot is invalid", it) } .validated()</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$return runCatching { json.decodeFromString(StoredPluginCredential.serializer(), encoded) } .getOrElse { throw IllegalArgumentException("Stored plugin credential record is invalid", it) } .validated()</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$val decoded = runCatching { json.decodeFromString(ListSerializer(PluginCookie.serializer()), encoded) }.getOrElse { throw IllegalArgumentException("Stored plugin cookie jar is invalid", it) }</ID>
+    <ID>UnreachableCode:PluginStorage.kt:KeyValuePluginStorage$val normalized = LinkedHashMap&lt;Triple&lt;String, String, String&gt;, PluginCookie&gt;()</ID>
+    <ID>UnreachableCode:PluginSystemEventContracts.kt:PluginSystemEventCodec$return envelope</ID>
+    <ID>UnreachableCode:PluginSystemEventContracts.kt:PluginSystemEventCodec$try { envelope.validate(limits) } catch (_: Throwable) { throw PluginSystemEventCodecException("System event envelope is outside its limits") }</ID>
+    <ID>UnreachableCode:PluginSystemEventContracts.kt:PluginSystemEventCodec$val envelope = try { json.decodeFromJsonElement(PluginSystemEventEnvelope.serializer(), objectRoot) } catch (_: Throwable) { throw PluginSystemEventCodecException("System event envelope has an invalid schema") }</ID>
+    <ID>UnsafeCallOnNullableType:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$octets[0]!!</ID>
+    <ID>UnsafeCallOnNullableType:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$octets[1]!!</ID>
+    <ID>UnsafeCallOnNullableType:PluginDeveloperMode.kt:octets[0]!!</ID>
+    <ID>UnsafeCallOnNullableType:PluginDeveloperMode.kt:octets[1]!!</ID>
+    <ID>UnsafeCallOnNullableType:PluginStorage.kt:KeyValuePluginStorage$validateStoredPluginPreference(stored)!!</ID>
+    <ID>UnsafeCallOnNullableType:RepositoryTrust.kt:parts[0]!!</ID>
+    <ID>UnsafeCallOnNullableType:RepositoryTrust.kt:parts[1]!!</ID>
+    <ID>UnsafeCallOnNullableType:SandboxSession.kt:SandboxSession$broken!!</ID>
+    <ID>UnsafeCallOnNullableType:SandboxSession.kt:SandboxSession$run(timeoutMs = limits.invokeTimeoutMs, loginInvocation = loginInvocation) { callId -&gt; send(SandboxFrame.Invoke(callId, method, argsJson)) null }!!</ID>
+    <ID>UnusedParameter:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$normalizedBaseUrl: String? = null</ID>
+    <ID>UnusedParameter:PluginManager.kt:PluginManager$sourceId: Long</ID>
+    <ID>UnusedParameter:PluginNetwork.kt:PluginNetworkPolicy$initialUrl: Url? = null</ID>
+    <ID>UnusedParameter:SandboxSession.kt:SandboxSession$asyncOps: Map&lt;Long, Job&gt;</ID>
+    <ID>UnusedPrivateFunction:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun &lt;T&gt; decode: T</ID>
+    <ID>UnusedPrivateFunction:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun JsonElement.stringSet: Set&lt;String&gt;</ID>
+    <ID>UnusedPrivateFunction:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private inline fun &lt;reified T&gt; decode: T</ID>
+    <ID>UnusedPrivateFunction:ExtensionRepositoryClient.kt:private fun JsonObject.stringSet: Set&lt;String&gt;</ID>
+    <ID>UnusedPrivateFunction:ExtensionV2Contracts.kt:private fun String.substringBeforeAnyOf: String</ID>
+    <ID>UnusedPrivateFunction:ExtensionV2Contracts.kt:private fun requireCanonicalUuid</ID>
+    <ID>UnusedPrivateFunction:PluginSourceWebSession.kt:PluginSourceWebSession$private fun normalizeWebChallengeStorageKeyDeclaration: Set&lt;String&gt;</ID>
+    <ID>UnusedPrivateFunction:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$private fun SManga.toDomain: Manga</ID>
+    <ID>UnusedPrivateProperty:ExtensionContentConsumerV2Support.kt:PluginNetworkExtensionResourceFetcherV2$network: PluginNetworkClient</ID>
+    <ID>UnusedPrivateProperty:ExtensionContentConsumerV2Support.kt:PluginNetworkExtensionResourceFetcherV2$scopes: ExtensionNetworkScopeResolverV2 = ExtensionNetworkScopeResolverV2.LegacyOnly</ID>
+    <ID>UnusedPrivateProperty:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private val client: HttpClient</ID>
+    <ID>UnusedPrivateProperty:PluginContentAdapter.kt:PluginContentAdapter$private val requestBuilder: PluginRequestBuilder</ID>
+    <ID>UnusedPrivateProperty:PluginRuntimeLoader.kt:MetadataStubCatalogueSource$private val entry: SourceIndexEntry</ID>
+    <ID>UnusedPrivateProperty:PluginStorage.kt:KeyValuePluginStorage.ExactSourceStorage$private val sourceKey: SourceKey</ID>
+    <ID>UnusedPrivateProperty:PluginSystemEventDispatcher.kt:PluginSystemEventGateway$private val workers: List&lt;Job&gt; = listOf( ownScope.launch { consume(modal, serial = true) }, ownScope.launch { consume(refresh, serial = false) }, ownScope.launch { consume(transient, serial = false) }, )</ID>
+    <ID>UnusedPrivateProperty:PublisherTrust.kt:PublisherTrustStore$private val securityState: RepositorySecurityStateStore</ID>
+    <ID>UnusedVariable:PluginExtensionManagement.kt:PluginExtensionManagement$request</ID>
+    <ID>UnusedVariable:PluginSourceAuth.kt:PluginSourceAuth$val sourceKey = request.target.sourceKey</ID>
+    <ID>UseCheckNotNull:PluginEventGrantAdmission.kt:KeyValuePluginEventGrantAdmission$check(pluginUtf8ByteCountAtMost(encoded, MAX_EVENT_ADMISSION_RECORD_BYTES) != null) { "Plugin event admission record exceeds its durable size limit" }</ID>
+    <ID>UseCheckNotNull:PluginStorage.kt:KeyValuePluginStorage$check(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_CREDENTIAL_RECORD_ENCODED_BYTES) != null) { "Encoded plugin credential record exceeded its storage bound" }</ID>
+    <ID>UseCheckNotNull:PluginStorage.kt:KeyValuePluginStorage$check(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_PREFERENCE_SNAPSHOT_ENCODED_BYTES) != null) { "Encoded plugin preference snapshot exceeded its storage bound" }</ID>
+    <ID>UseCheckNotNull:PluginStorage.kt:KeyValuePluginTrustStore$check(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_TRUST_STORE_BYTES) != null) { "Plugin trust store exceeds its durable size limit" }</ID>
+    <ID>UseCheckOrError:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$throw IllegalStateException( "Pinned repository transport is unavailable; refusing an unbound DNS request", )</ID>
+    <ID>UseCheckOrError:PlatformPluginNetwork.jvm.kt:JvmPinnedPluginHttpTransport$throw IllegalStateException("Pinned plugin transport requires a validated DNS resolution")</ID>
+    <ID>UseCheckOrError:PluginBrowserSessionTransport.kt:PluginBrowserSessionTransport$throw IllegalStateException( "Browser-session transport cannot bind the request to its validated DNS answers", )</ID>
+    <ID>UseCheckOrError:PluginBrowserSessionTransport.kt:PluginBrowserSessionTransport.Companion.&lt;no name provided&gt;$throw IllegalStateException( "Browser-session transport is unavailable on this platform", )</ID>
+    <ID>UseCheckOrError:PluginContentAdapter.kt:PluginContentAdapter$throw IllegalStateException("Reader source '${reference.sourceId}' is not loaded")</ID>
+    <ID>UseCheckOrError:PluginExtensionManagement.kt:PluginExtensionManagement$throw IllegalStateException("Extension '$extensionId' has no repository")</ID>
+    <ID>UseCheckOrError:PluginExtensionManagement.kt:PluginExtensionManagement$throw IllegalStateException("Extension '$extensionId' is no longer in the repository")</ID>
+    <ID>UseCheckOrError:PluginExtensionManagement.kt:PluginExtensionManagement$throw IllegalStateException("Extension repository must be refreshed before installing")</ID>
+    <ID>UseCheckOrError:PluginExtensionManagement.kt:PluginExtensionManagement$throw IllegalStateException("Repository is no longer configured: $repositoryBaseUrl")</ID>
+    <ID>UseCheckOrError:PluginNetwork.kt:PluginHttpTransport$throw IllegalStateException( "Plugin transport cannot bind the request to its validated DNS answers", )</ID>
+    <ID>UseCheckOrError:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$throw IllegalStateException("Source '$sourceId' has no admitted content network policy")</ID>
+    <ID>UseCheckOrError:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$throw IllegalStateException("Source '${manga.sourceId}' is not loaded")</ID>
+    <ID>UseCheckOrError:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$throw IllegalStateException("Source '${reference.sourceId}' is not loaded")</ID>
+    <ID>UseCheckOrError:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$throw IllegalStateException("Source '${target.sourceId}' is not loaded")</ID>
+    <ID>UseCheckOrError:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$throw IllegalStateException("Plugin '$pluginId' returned no chapter page")</ID>
+    <ID>UseCheckOrError:SandboxScriptPluginRuntime.kt:SandboxScriptPluginRuntime$throw IllegalStateException("Plugin '$pluginId' returned no manga details")</ID>
+    <ID>UseOrEmpty:PluginSystemEventContracts.kt:MutablePluginSystemEventAuthorizer$grants[PluginEventGrantKey(scope.artifactIdentity, scope.sourceKey)] ?: grants[PluginEventGrantKey(scope.artifactIdentity, null)] ?: emptySet()</ID>
+    <ID>UseRequire:RepositoryPluginCoordinator.kt:RepositoryPluginCoordinator$throw IllegalArgumentException("Unknown manga: $mangaId")</ID>
+    <ID>UseRequireNotNull:ExtensionV2Contracts.kt:require(decoded != null) { "$label contains an invalid percent escape" }</ID>
+    <ID>UseRequireNotNull:PluginBrowserSessionTransport.kt:require(pluginUtf8ByteCountAtMost(received, PLUGIN_BROWSER_SESSION_MAX_RESULT_WIRE_BYTES) != null) { "Browser-session result frame is too large" }</ID>
+    <ID>UseRequireNotNull:PluginInstaller.kt:PluginInstaller$require(entry.runtimePermissions != null) { "New plugin '${entry.id}' must declare runtimePermissions" }</ID>
+    <ID>UseRequireNotNull:PluginNetwork.kt:BoundedPluginResponseHeaders$require(pluginUtf8ByteCountAtMost(value, PLUGIN_NETWORK_MAX_REDIRECT_LOCATION_BYTES) != null) { "Plugin redirect location is too large" }</ID>
+    <ID>UseRequireNotNull:PluginPackageStore.kt:KeyValuePluginPackageStore$require(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_PACKAGE_INDEX_BYTES) != null) { "Plugin package index is too large" }</ID>
+    <ID>UseRequireNotNull:PluginPackageStore.kt:require(pluginUtf8ByteCountAtMost(manifest.script, MAX_PLUGIN_PACKAGE_SCRIPT_NAME_BYTES) != null) { "Plugin package script name is too large" }</ID>
+    <ID>UseRequireNotNull:PluginPackageStore.kt:require(pluginUtf8ByteCountAtMost(pluginId, MAX_PLUGIN_PACKAGE_ID_BYTES) != null) { "Plugin package id is too large" }</ID>
+    <ID>UseRequireNotNull:PluginPackageStore.kt:require(pluginUtf8ByteCountAtMost(value, MAX_PLUGIN_PACKAGE_METADATA_BYTES) != null) { "Plugin package metadata is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:KeyValuePluginStorage$require(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_COOKIE_JAR_ENCODED_BYTES) != null) { "Plugin cookie jar byte quota exceeded" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:KeyValuePluginStorage$require(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_COOKIE_JAR_ENCODED_BYTES) != null) { "Stored plugin cookie jar is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:KeyValuePluginStorage$require(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_CREDENTIAL_RECORD_ENCODED_BYTES) != null) { "Stored plugin credential record is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:KeyValuePluginStorage$require(pluginUtf8ByteCountAtMost(encoded, MAX_PLUGIN_PREFERENCE_SNAPSHOT_ENCODED_BYTES) != null) { "Stored plugin preference snapshot is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:KeyValuePluginTrustStore$require(pluginUtf8ByteCountAtMost(pluginId, 256) != null) { "Plugin trust package id is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(it, MAX_PLUGIN_PREFERENCE_VALUE_BYTES) != null) { "Plugin preference value is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(it, MAX_PLUGIN_PREFERENCE_VALUE_BYTES) != null) { "Stored plugin preference value is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(key, MAX_PLUGIN_PREFERENCE_KEY_BYTES) != null) { "Plugin preference key is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(password, MAX_PLUGIN_CREDENTIAL_PASSWORD_BYTES) != null) { "Plugin credential password is too large" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(sourceKey.canonicalId, MAX_PLUGIN_SOURCE_CANONICAL_ID_BYTES) != null) { "Plugin source canonical identity is too large for exact storage" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(sourceKey.packageId, MAX_PLUGIN_SOURCE_PACKAGE_ID_BYTES) != null) { "Plugin source package id is too large for exact storage" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(sourceKey.sourceId, MAX_PLUGIN_SOURCE_ID_BYTES) != null) { "Plugin source id is too large for exact storage" }</ID>
+    <ID>UseRequireNotNull:PluginStorage.kt:require(pluginUtf8ByteCountAtMost(username, MAX_PLUGIN_CREDENTIAL_USERNAME_BYTES) != null) { "Plugin credential username is too large" }</ID>
+    <ID>UseRequireNotNull:PluginWebChallengeCoordinator.kt:PluginWebChallengeCoordinator$require(generic != null) { "Browser challenge storage scope is no longer granted" }</ID>
+    <ID>UseRequireNotNull:ReviewedBrowserImageTransport.kt:require(it.imageBodyForDecoderOrNull() != null) { "Browser image returned no valid content" }</ID>
+    <ID>UselessCallOnNotNull:PluginNetworkClient.kt:PluginNetworkClient$expiresValue.orEmpty()</ID>
+  </CurrentIssues>
+</SmellBaseline>

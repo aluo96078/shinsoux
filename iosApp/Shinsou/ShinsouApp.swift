@@ -694,7 +694,7 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
 
         if silentPlayer == nil || silentPlayer?.isPlaying == false {
             silentPlayer?.stop()
-            if let player = try? AVAudioPlayer(data: Self.silentWavData) {
+            if let player = try? AVAudioPlayer(data: SilentWav.data) {
                 player.numberOfLoops = -1
                 player.volume = 0
                 player.prepareToPlay()
@@ -732,6 +732,8 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         }
     }
 
+    // The monitor observes outputVolume with addObserver(_:forKeyPath:), so it receives it here.
+    // swiftlint:disable:next block_based_kvo
     override func observeValue(
         forKeyPath keyPath: String?,
         of object: Any?,
@@ -774,21 +776,21 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
             previousVolume,
             delta
         )
-        guard abs(delta) > Self.volumeThreshold else {
+        guard let key = VolumeKeyLogic.direction(delta: delta) else {
             ReaderVolumeKeyTrace.shared.record(
                 "source=kvo seq=\(eventSequence) event=ignored reason=threshold"
             )
             return
         }
 
-        let accepted = MainViewControllerKt.handleReaderVolumeKey(volumeUp: delta > 0)
-        let direction = delta > 0 ? "up" : "down"
+        let accepted = MainViewControllerKt.handleReaderVolumeKey(volumeUp: key == .up)
+        let direction = key == .up ? "up" : "down"
         ReaderVolumeKeyTrace.shared.record(
             "source=kvo seq=\(eventSequence) event=dispatch direction=\(direction) accepted=\(accepted ? 1 : 0)"
         )
         NSLog(
             "[ShinsouX.VolumeKeys] event direction=%@ accepted=%d",
-            delta > 0 ? "up" : "down",
+            direction,
             accepted ? 1 : 0
         )
 
@@ -854,12 +856,12 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
     }
 
     private func clampVolumeToSafeRange() {
-        if previousVolume <= 0.01 || previousVolume >= 0.99 {
+        if VolumeKeyLogic.needsSafeRange(previousVolume) {
             // Do not retain a fake 0.5 baseline when MPVolumeSlider has not materialized yet.
             // Otherwise the first volume-up event from a real volume of zero looks like a
             // negative delta and is misclassified as volume-down.
-            if setSystemVolume(Self.defaultVolume) {
-                previousVolume = Self.defaultVolume
+            if setSystemVolume(VolumeKeyLogic.defaultVolume) {
+                previousVolume = VolumeKeyLogic.defaultVolume
             }
         }
     }
@@ -902,7 +904,7 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
 
             let actual = self.audioSession.outputVolume
             let sequenceDescription = sourceSequence.map { String($0) } ?? "none"
-            if abs(actual - target) <= Self.volumeThreshold {
+            if VolumeKeyLogic.hasSettled(actual: actual, target: target) {
                 ReaderVolumeKeyTrace.shared.record(
                     "source=kvo seq=\(sequenceDescription) event=reset_settled target=\(target) actual=\(actual) attempts=\(self.resetAttempt)"
                 )
@@ -1030,8 +1032,6 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         return true
     }
 
-    private static let defaultVolume: Float = 0.5
-    private static let volumeThreshold: Float = 0.001
     private static let resetQuietPeriod: TimeInterval = 0.12
     private static let maximumResetAttempts = 3
 
@@ -1046,44 +1046,6 @@ private final class ReaderVolumeKeyMonitor: NSObject, ObservableObject {
         }
         return nil
     }
-
-    /// Exact silent PCM format used by the original app: 100 ms, 8 kHz, unsigned 8-bit mono.
-    private static let silentWavData: Data = {
-        let sampleRate: UInt32 = 8_000
-        let dataSize: UInt32 = sampleRate / 10
-        let channelCount: UInt16 = 1
-        let bitsPerSample: UInt16 = 8
-        let byteRate = sampleRate
-        let blockAlign: UInt16 = 1
-        var data = Data()
-
-        func appendAscii(_ value: String) {
-            data.append(value.data(using: .ascii)!)
-        }
-
-        func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
-            var littleEndian = value.littleEndian
-            Swift.withUnsafeBytes(of: &littleEndian) { bytes in
-                data.append(contentsOf: bytes)
-            }
-        }
-
-        appendAscii("RIFF")
-        appendLittleEndian(UInt32(36) + dataSize)
-        appendAscii("WAVE")
-        appendAscii("fmt ")
-        appendLittleEndian(UInt32(16))
-        appendLittleEndian(UInt16(1))
-        appendLittleEndian(channelCount)
-        appendLittleEndian(sampleRate)
-        appendLittleEndian(byteRate)
-        appendLittleEndian(blockAlign)
-        appendLittleEndian(bitsPerSample)
-        appendAscii("data")
-        appendLittleEndian(dataSize)
-        data.append(Data(repeating: 0x80, count: Int(dataSize)))
-        return data
-    }()
 }
 
 private struct PrivacyCover: View {

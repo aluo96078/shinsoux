@@ -2,7 +2,8 @@ name: Checks
 
 # R2-3 (docs/architecture/0006): what every change has to pass before it is merged or released:
 # static analysis with its baselines, the layering check and the desktop tests (Linux, the
-# quickest runner) with the merged coverage bound, and the Android unit tests (macOS).
+# quickest runner) with the merged coverage bound, the Android unit tests (macOS) and the Swift
+# layer (SwiftLint, XCTest of its pure logic, a compile check of the macOS helper; macOS).
 # release.yml calls this before it builds anything.
 
 on:
@@ -29,7 +30,7 @@ jobs:
   lint:
     name: detekt and its baselines
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,6 +42,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      # detektProduct includes the Android analysis with type resolution (detektDebugAndroid), which
+      # compiles the debug variant against the Android SDK. Kotlin/Native has no typed detekt task:
+      # the iOS source sets are analysed without type resolution (0007 C6).
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install required Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
@@ -148,3 +159,43 @@ jobs:
 
       - name: Android unit tests
         run: ./gradlew testDebugUnitTest -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace
+
+  # C6 (0007): the Swift layer. Only the pure logic in iosApp/Shinsou/Logic is unit-tested: it is
+  # compiled into the test bundle, so no ShinsouKit framework (and no Gradle build) is needed.
+  swift:
+    name: Swift (SwiftLint, XCTest, macOS helper)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      SWIFTLINT_VERSION: "0.65.1"
+      SWIFTLINT_SHA256: c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # The portable release, pinned by its checksum, so a new SwiftLint rule cannot fail a change.
+      - name: SwiftLint
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT_VERSION/portable_swiftlint.zip"
+          echo "$SWIFTLINT_SHA256  $RUNNER_TEMP/swiftlint.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
+          test "$("$RUNNER_TEMP/swiftlint/swiftlint" version)" = "$SWIFTLINT_VERSION"
+          "$RUNNER_TEMP/swiftlint/swiftlint" lint --strict --config .swiftlint.yml
+
+      # The WKWebView helper is one top-level script built by swiftc (NativeLibrariesPlugin.kt).
+      - name: macOS helper compiles
+        run: xcrun --sdk macosx swiftc -swift-version 5 -typecheck composeApp/src/desktopMain/swift/ShinsouWebChallenge/main.swift
+
+      - name: XcodeGen
+        run: brew install xcodegen
+
+      - name: XCTest
+        working-directory: iosApp
+        run: |
+          xcodegen generate
+          device=$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}')
+          xcodebuild test -project Shinsou.xcodeproj -scheme ShinsouTests \
+            -destination "platform=iOS Simulator,id=$device"

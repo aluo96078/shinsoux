@@ -1,0 +1,30 @@
+# C6 (docs/architecture/0007): Swift lint of the iOS host app, its tests and the macOS WKWebView
+# helper. Pinned in CI by SWIFTLINT_VERSION (.github/workflows/checks.yml); run locally with
+#   swiftlint lint --strict --config .swiftlint.yml
+included:
+  - iosApp/Shinsou
+  - iosApp/ShinsouTests
+  - iosApp/ShinsouWidgetExtension
+  - composeApp/src/desktopMain/swift
+  - scripts
+
+excluded:
+  - iosApp/Shinsou.xcodeproj
+
+# The default rule set, less what clashes with the code that is already here. Each choice:
+disabled_rules:
+  # Size and complexity limits: the app delegate / volume-key monitor and the WKWebView helper
+  # (a single top-level script with one big controller) are deliberately single files.
+  - line_length
+  - file_length
+  - type_body_length
+  - function_body_length
+  - cyclomatic_complexity
+  # The code writes trailing commas in multi-line literals and keeps `else` of a one-line
+  # if/else on its own line; neither is worth churning main.swift for (Kotlin tests read it).
+  - trailing_comma
+  - statement_position
+
+identifier_name:
+  # `to` (from:to:), `up`, `id` and the geometry names read better short.
+  excluded: [to, up, id, x, y, w, h]

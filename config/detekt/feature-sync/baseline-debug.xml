@@ -1,0 +1,78 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:LwwMerge.kt:LwwMerge$deleted != null &amp;&amp; deleted.dirty &amp;&amp; deleted.value &amp;&amp; (cleared == null || compare(deleted.clock, cleared) &gt; 0)</ID>
+    <ID>ComplexCondition:SyncNetworkPolicy.kt:SyncNetworkPolicy$h == "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home.arpa")</ID>
+    <ID>ComplexCondition:SyncPuller.kt:SyncPuller$(work.sourceName == null &amp;&amp; known.sourceName != null) || (work.repositoryUrl == null &amp;&amp; known.repositoryUrl != null)</ID>
+    <ID>CyclomaticComplexMethod:LwwMerge.kt:LwwMerge$public fun applyRemote: LocalState</ID>
+    <ID>CyclomaticComplexMethod:LwwMerge.kt:LwwMerge$public fun merge: MergeOutcome</ID>
+    <ID>CyclomaticComplexMethod:SyncClockKeeper.kt:SyncClockKeeper$suspend fun rebaseClockIfAhead</ID>
+    <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$fun markAll: List&lt;DirtyEntry&gt;</ID>
+    <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$private fun tombstoneEmptiedHistories</ID>
+    <ID>CyclomaticComplexMethod:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
+    <ID>CyclomaticComplexMethod:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun isLocalOrPrivateHost: Boolean</ID>
+    <ID>CyclomaticComplexMethod:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun parse: SyncServerAddress</ID>
+    <ID>CyclomaticComplexMethod:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
+    <ID>CyclomaticComplexMethod:SyncPromoter.kt:SyncPromoter$private fun promoteRef</ID>
+    <ID>CyclomaticComplexMethod:SyncPuller.kt:SyncPuller$fun ingest</ID>
+    <ID>CyclomaticComplexMethod:SyncPusher.kt:SyncPusher$private fun buildPush: Pair&lt;WirePushRequest, List&lt;StoredRecord&gt;&gt;</ID>
+    <ID>CyclomaticComplexMethod:SyncPusher.kt:SyncPusher$suspend fun pushAll: Int</ID>
+    <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B, R&gt; call: R</ID>
+    <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B&gt; exchange: Pair&lt;Int, String&gt;</ID>
+    <ID>LongParameterList:SyncApi.kt:SyncApi$suspend fun listReviews: WireReviewPage</ID>
+    <ID>LongParameterList:SyncClient.kt:SyncClient$public suspend fun register: Result&lt;Unit&gt;</ID>
+    <ID>LongParameterList:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
+    <ID>LongParameterList:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
+    <ID>LongParameterList:SyncV3Service.kt:SyncV3Service</ID>
+    <ID>LongParameterList:SyncV3Service.kt:SyncV3Service.Companion$fun create: SyncV3Service</ID>
+    <ID>LoopWithTooManyJumpStatements:SyncDiff.kt:SyncDiff$for</ID>
+    <ID>LoopWithTooManyJumpStatements:SyncPromoter.kt:SyncPromoter$for</ID>
+    <ID>LoopWithTooManyJumpStatements:SyncPusher.kt:SyncPusher$for</ID>
+    <ID>LoopWithTooManyJumpStatements:SyncPusher.kt:SyncPusher$while</ID>
+    <ID>NestedBlockDepth:SyncPromoter.kt:SyncPromoter$private fun tombstone</ID>
+    <ID>NoNameShadowing:SyncPuller.kt:SyncPuller${ it.value to it.key }</ID>
+    <ID>RedundantSuspendModifier:SyncApi.kt:SyncApi$suspend</ID>
+    <ID>ReturnCount:LwwMerge.kt:LwwMerge$private fun validate: String?</ID>
+    <ID>ReturnCount:SyncClockKeeper.kt:SyncClockKeeper$suspend fun rebaseClockIfAhead</ID>
+    <ID>ReturnCount:SyncIdentity.kt:SyncIdentityResolver$fun scopeFor: ReadingScope?</ID>
+    <ID>ReturnCount:SyncIdentity.kt:SyncIdentityResolver$fun workOf: SyncedWork?</ID>
+    <ID>ReturnCount:SyncNetworkPolicy.kt:SyncNetworkPolicy$private fun ipv4: Pair&lt;Int, Int&gt;?</ID>
+    <ID>ReturnCount:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun isLocalOrPrivateHost: Boolean</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyCategory: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyHistory: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyLibrary: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyProgress: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyRepository: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applySetting: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun applyUnit: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncProjection.kt:SyncApplier$private fun createFromRecord: ApplyOutcome</ID>
+    <ID>ReturnCount:SyncPromoter.kt:SyncPromoter$private fun entityMissing: Boolean</ID>
+    <ID>ReturnCount:SyncPromoter.kt:SyncPromoter$private fun promoteRef</ID>
+    <ID>ReturnCount:SyncPuller.kt:SyncPuller$private fun projectionDiffers: Boolean</ID>
+    <ID>ReturnCount:SyncV3Store.kt:SyncV3Store$private fun clockHead: Pair&lt;Long, Int&gt;?</ID>
+    <ID>ReturnCount:WorkKey.kt:WorkKey.Companion$private fun hasLoneSurrogate: Boolean</ID>
+    <ID>ThrowsCount:SyncApi.kt:SyncApi$private suspend fun &lt;B&gt; exchange: Pair&lt;Int, String&gt;</ID>
+    <ID>ThrowsCount:SyncApi.kt:SyncApi$suspend fun stream</ID>
+    <ID>ThrowsCount:SyncNetworkPolicy.kt:SyncNetworkPolicy$public fun parse: SyncServerAddress</ID>
+    <ID>ThrowsCount:SyncSessionTokens.kt:SyncSessionTokens$private suspend fun refreshLocked: String</ID>
+    <ID>ThrowsCount:SyncV3Service.kt:SyncV3Service$private suspend fun cycleBody</ID>
+    <ID>TooGenericExceptionCaught:SyncApi.kt:SyncApi$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SyncClockKeeper.kt:SyncClockKeeper$error: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SyncDirtyTracker.kt:SyncDirtyTracker.DirtyObserver$error: Throwable</ID>
+    <ID>UnnecessarySafeCall:SyncDirtyTracker.kt:SyncDirtyTracker$stored?.state</ID>
+    <ID>UnnecessarySafeCall:SyncPuller.kt:SyncPuller$previous?.pendingReason</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$changed = true</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$mangaIndex[id] = mangas.size - 1</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$mangas = mangas + manga</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$return ApplyOutcome.Applied</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$setLinks(id, categoryIds.orEmpty())</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val id = (mangas.maxOfOrNull { it.id } ?: 0L).coerceAtLeast(0L) + 1L</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val manga = Manga( id = id, source = LOCAL_SOURCE_ID, favorite = true, dateAdded = addedAt ?: now, url = url, title = work.title, author = work.author, genre = listOf("Extension"), thumbnailUrl = work.coverUrl, updateStrategy = 1, initialized = true, lastModifiedAt = now, favoriteModifiedAt = now, version = 1, )</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val now = ctx.nowMillis</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val sourceKey = ctx.creatable[r.key] ?: return ApplyOutcome.Pending(PENDING_SOURCE_NOT_INSTALLED)</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val url = encodeExtensionLibraryPublicationUrl(sourceKey, work.remoteId)</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$val work = r.workJson?.let { runCatching { SyncWireJson.decodeFromString(WireWork.serializer(), it) }.getOrNull() } ?: return ApplyOutcome.Pending("work_unknown")</ID>
+    <ID>UnreachableCode:SyncProjection.kt:SyncApplier$workIndex[r.key] = id</ID>
+  </CurrentIssues>
+</SmellBaseline>

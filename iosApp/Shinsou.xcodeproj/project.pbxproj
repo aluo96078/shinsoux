@@ -9,17 +9,25 @@
 /* Begin PBXBuildFile section */
 		0A8855874C2995DF13F43C08 /* ShinsouWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */; };
 		13916B7A9E9065A249ACA840 /* ShinsouWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		13D8863E0E112DE606C1560D /* JSDomLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = D17CBDA2661E4213983D2F80 /* JSDomLib.swift */; };
 		150698CA073E7EEFFABC2601 /* JavaScriptCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0650544E14A6630BFBC51175 /* JavaScriptCore.framework */; };
+		1F15ECB12EA964D55DE2ADB4 /* SilentWav.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA77CBABBA2554AA45298D0D /* SilentWav.swift */; };
+		42CA47199FADE7B26705B52B /* SilentWav.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA77CBABBA2554AA45298D0D /* SilentWav.swift */; };
 		54BCAB350F7AA94A176465BD /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2427BA1695B2CF749A686803 /* UserNotifications.framework */; };
+		62BB6A47100FE8088732EF2C /* VolumeKeyLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85359D2F1D926425AEE990D5 /* VolumeKeyLogicTests.swift */; };
 		64469F7C32352DD4CCEEF85A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 070842C60618E9AAB41D2823 /* WidgetKit.framework */; };
+		6BE8536794C30D9F4BCB89AE /* SilentWavTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F86711031E4104E0C5E244E /* SilentWavTests.swift */; };
 		8583A08EF937B01E977D3644 /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */; };
 		90ED20903A2EF6BE0860F312 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 450FD0B4BD0875569E7DC8F8 /* libsqlite3.tbd */; };
 		A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */; };
 		A233CB9AE0202544C0F25521 /* AppleTranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */; };
 		AD6B591B0949F7E69DD0F607 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E69591E6413F571C61BF418 /* LocalAuthentication.framework */; };
+		C8789B284574B4B630BA3AB4 /* JSDomLibTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C48959F4895BBF78EA0C8F0 /* JSDomLibTests.swift */; };
 		D6A39283A50BCFF28D52F213 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 79635F878DCD39F4CCB205A3 /* Assets.xcassets */; };
+		DB6602D39332BB63B1760C35 /* JSDomLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = D17CBDA2661E4213983D2F80 /* JSDomLib.swift */; };
 		DD6464B1E0DFC3D650F0417A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4312D99006921159A0800C44 /* Security.framework */; };
-		E6CF088DEAD639AF124DF5FC /* JSDomLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2058CC8F352C6CEECA95B14E /* JSDomLib.swift */; };
+		EF474122A11EBF892762ED56 /* VolumeKeyLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8846D44A293E7BB2EAA4955 /* VolumeKeyLogic.swift */; };
+		FEBDE5794FC45161D3C74AAC /* VolumeKeyLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8846D44A293E7BB2EAA4955 /* VolumeKeyLogic.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -49,10 +57,10 @@
 /* Begin PBXFileReference section */
 		0650544E14A6630BFBC51175 /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		070842C60618E9AAB41D2823 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		0C48959F4895BBF78EA0C8F0 /* JSDomLibTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSDomLibTests.swift; sourceTree = "<group>"; };
 		106921D95AC2BBC96DA61073 /* ShinsouWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShinsouWidgetExtension.entitlements; sourceTree = "<group>"; };
 		11B26BBCCDD26DCA81DE487E /* UniformTypeIdentifiers.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniformTypeIdentifiers.framework; path = System/Library/Frameworks/UniformTypeIdentifiers.framework; sourceTree = SDKROOT; };
 		1234B93552EDFD0F4E1BEFE4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		2058CC8F352C6CEECA95B14E /* JSDomLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSDomLib.swift; sourceTree = "<group>"; };
 		2427BA1695B2CF749A686803 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		26CCA6FB059AEE9D02D6D578 /* Shinsou.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Shinsou.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4312D99006921159A0800C44 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
@@ -61,12 +69,18 @@
 		6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouApp.swift; sourceTree = "<group>"; };
 		79635F878DCD39F4CCB205A3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7E69591E6413F571C61BF418 /* LocalAuthentication.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = LocalAuthentication.framework; path = System/Library/Frameworks/LocalAuthentication.framework; sourceTree = SDKROOT; };
+		85359D2F1D926425AEE990D5 /* VolumeKeyLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumeKeyLogicTests.swift; sourceTree = "<group>"; };
 		87492B8AA4B8815744C9B3DB /* ShinsouWidgetExtension.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShinsouWidgetExtension.debug.entitlements; sourceTree = "<group>"; };
+		8F86711031E4104E0C5E244E /* SilentWavTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilentWavTests.swift; sourceTree = "<group>"; };
+		A8846D44A293E7BB2EAA4955 /* VolumeKeyLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumeKeyLogic.swift; sourceTree = "<group>"; };
+		AA77CBABBA2554AA45298D0D /* SilentWav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilentWav.swift; sourceTree = "<group>"; };
 		C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShinsouWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3C6DEFDB0930F70046971C4 /* Shinsou.debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shinsou.debug.entitlements; sourceTree = "<group>"; };
 		C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleTranslationBridge.swift; sourceTree = "<group>"; };
+		D17CBDA2661E4213983D2F80 /* JSDomLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSDomLib.swift; sourceTree = "<group>"; };
 		EF035F63C497108A4F0BB514 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F302048D7E2AEBF0CCE8B703 /* ShinsouWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShinsouWidgets.swift; sourceTree = "<group>"; };
+		F4D8B20E45A1F770B8DA40B0 /* ShinsouTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ShinsouTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,10 +101,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		16C04FD2D0B83211C835E0FC /* ShinsouTests */ = {
+			isa = PBXGroup;
+			children = (
+				0C48959F4895BBF78EA0C8F0 /* JSDomLibTests.swift */,
+				8F86711031E4104E0C5E244E /* SilentWavTests.swift */,
+				85359D2F1D926425AEE990D5 /* VolumeKeyLogicTests.swift */,
+			);
+			path = ShinsouTests;
+			sourceTree = "<group>";
+		};
 		28CEB209C768ED5F008827E4 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				26CCA6FB059AEE9D02D6D578 /* Shinsou.app */,
+				F4D8B20E45A1F770B8DA40B0 /* ShinsouTests.xctest */,
 				C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */,
 			);
 			name = Products;
@@ -110,6 +135,16 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		9FB4AFDFA0719C53E70E81D8 /* Logic */ = {
+			isa = PBXGroup;
+			children = (
+				D17CBDA2661E4213983D2F80 /* JSDomLib.swift */,
+				AA77CBABBA2554AA45298D0D /* SilentWav.swift */,
+				A8846D44A293E7BB2EAA4955 /* VolumeKeyLogic.swift */,
+			);
+			path = Logic;
+			sourceTree = "<group>";
+		};
 		AC5A3675CD2388B1A371E97B /* ShinsouWidgetExtension */ = {
 			isa = PBXGroup;
 			children = (
@@ -127,10 +162,10 @@
 				C61AF6E49B7B55507D093E98 /* AppleTranslationBridge.swift */,
 				79635F878DCD39F4CCB205A3 /* Assets.xcassets */,
 				1234B93552EDFD0F4E1BEFE4 /* Info.plist */,
-				2058CC8F352C6CEECA95B14E /* JSDomLib.swift */,
 				C3C6DEFDB0930F70046971C4 /* Shinsou.debug.entitlements */,
 				5A0CA09CF92F32CCAD13D559 /* Shinsou.entitlements */,
 				6DFCC80B8762E3B8C4D0CE58 /* ShinsouApp.swift */,
+				9FB4AFDFA0719C53E70E81D8 /* Logic */,
 			);
 			path = Shinsou;
 			sourceTree = "<group>";
@@ -139,6 +174,7 @@
 			isa = PBXGroup;
 			children = (
 				B718FDDB533A78EF194517D3 /* Shinsou */,
+				16C04FD2D0B83211C835E0FC /* ShinsouTests */,
 				AC5A3675CD2388B1A371E97B /* ShinsouWidgetExtension */,
 				5FC597A45320FDC98ED90B85 /* Frameworks */,
 				28CEB209C768ED5F008827E4 /* Products */,
@@ -164,6 +200,23 @@
 			productName = ShinsouWidgetExtension;
 			productReference = C2EC5A66F94044F4C6975CB2 /* ShinsouWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
+		};
+		481DA486AFB53C03F059AC96 /* ShinsouTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DC6C803D249C6A100CAE6606 /* Build configuration list for PBXNativeTarget "ShinsouTests" */;
+			buildPhases = (
+				BC6C2A331CE14FD46D5DFB65 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShinsouTests;
+			packageProductDependencies = (
+			);
+			productName = ShinsouTests;
+			productReference = F4D8B20E45A1F770B8DA40B0 /* ShinsouTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		FF58475CEB7B28133C4A5175 /* Shinsou */ = {
 			isa = PBXNativeTarget;
@@ -219,6 +272,7 @@
 			projectRoot = "";
 			targets = (
 				FF58475CEB7B28133C4A5175 /* Shinsou */,
+				481DA486AFB53C03F059AC96 /* ShinsouTests */,
 				239AED4ED3F937A6C31BCD31 /* ShinsouWidgetExtension */,
 			);
 		};
@@ -263,8 +317,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				A233CB9AE0202544C0F25521 /* AppleTranslationBridge.swift in Sources */,
-				E6CF088DEAD639AF124DF5FC /* JSDomLib.swift in Sources */,
+				DB6602D39332BB63B1760C35 /* JSDomLib.swift in Sources */,
 				A1C1977C7C7E40E18BE2E497 /* ShinsouApp.swift in Sources */,
+				42CA47199FADE7B26705B52B /* SilentWav.swift in Sources */,
+				EF474122A11EBF892762ED56 /* VolumeKeyLogic.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -273,6 +329,19 @@
 			buildActionMask = 2147483647;
 			files = (
 				0A8855874C2995DF13F43C08 /* ShinsouWidgets.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC6C2A331CE14FD46D5DFB65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				13D8863E0E112DE606C1560D /* JSDomLib.swift in Sources */,
+				C8789B284574B4B630BA3AB4 /* JSDomLibTests.swift in Sources */,
+				1F15ECB12EA964D55DE2ADB4 /* SilentWav.swift in Sources */,
+				6BE8536794C30D9F4BCB89AE /* SilentWavTests.swift in Sources */,
+				FEBDE5794FC45161D3C74AAC /* VolumeKeyLogic.swift in Sources */,
+				62BB6A47100FE8088732EF2C /* VolumeKeyLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -351,6 +420,24 @@
 				SWIFT_VERSION = 5.10;
 			};
 			name = Debug;
+		};
+		37727C84CAB6BD74801C6C6F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		518F153076382711092565BA /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -519,6 +606,24 @@
 			};
 			name = Release;
 		};
+		F2E1BD2C203A8A7E5108F5A4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aluo.shinsoux.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -545,6 +650,15 @@
 			buildConfigurations = (
 				5FF12602A8C4EF0B9C6B98A3 /* Debug */,
 				E5AC3513E327A0C6981BA9F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DC6C803D249C6A100CAE6606 /* Build configuration list for PBXNativeTarget "ShinsouTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F2E1BD2C203A8A7E5108F5A4 /* Debug */,
+				37727C84CAB6BD74801C6C6F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

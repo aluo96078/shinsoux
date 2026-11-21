@@ -118,6 +118,21 @@ targets:
           ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
         basedOnDependencyAnalysis: false
 
+  # Unit tests of the pure Swift logic (Shinsou/Logic). The sources are compiled into the bundle
+  # instead of hosting the app, so the tests need neither ShinsouKit nor the Gradle build phase.
+  ShinsouTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - ShinsouTests
+      - Shinsou/Logic
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.aluo.shinsoux.tests
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: "NO"
+
   ShinsouWidgetExtension:
     type: app-extension
     platform: iOS

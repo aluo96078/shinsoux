@@ -19,13 +19,15 @@ public class QualityPlugin : Plugin<Project> {
                 baseline.set(rootProject.file("config/detekt/${project.name}/baseline.xml"))
             }
 
-            // What CI runs: the desktop compilation with type resolution (common, JVM and desktop
-            // sources; the serialization plugin and expect/actual are not seen there, so a few
-            // type-based rules are approximate) and the Android and iOS sources without it.
+            // What CI runs: the desktop and Android (debug variant) compilations with type resolution
+            // (common, JVM and platform sources; the serialization plugin and expect/actual are not
+            // seen there, so a few type-based rules are approximate) and the Android and iOS source
+            // sets without it. detekt has no typed task for Kotlin/Native targets (C6, 0007), so iOS
+            // stays untyped. The typed Android baselines are config/detekt/<module>/baseline-debug.xml.
             tasks.register("detektProduct") {
                 group = "verification"
                 description = "Runs detekt over every product source set against the committed baselines."
-                dependsOn("detektMainDesktop", "detektAndroidMainSourceSet", "detektIosMainSourceSet")
+                dependsOn("detektMainDesktop", "detektDebugAndroid", "detektAndroidMainSourceSet", "detektIosMainSourceSet")
             }
         }
 

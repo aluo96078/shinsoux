@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>InjectDispatcher:AndroidAppFileSystem.kt:AndroidAppFileSystem$IO</ID>
+    <ID>ReturnCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
+    <ID>ThrowsCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
+    <ID>TooGenericExceptionCaught:RunCatchingCancellable.kt:error: Throwable</ID>
+    <ID>UnusedPrivateProperty:SynchronousLock.jvm.kt:SynchronousLock$private val delegate = ReentrantLock(true)</ID>
+  </CurrentIssues>
+</SmellBaseline>
