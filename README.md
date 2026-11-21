@@ -25,8 +25,9 @@
 - 可驗證、安裝與管理的來源擴充套件，以及來源登入、Cookie、偏好與網路設定；所有擴充套件一律在
   隔離的沙箱中執行（Android isolated process、macOS／Windows OS 隔離 helper、iOS WebAssembly）
 - 下載佇列、本地 TXT／ZIP／CBZ／完整 EPUB／圖片匯入與備份還原
+- 小說與漫畫翻譯：小說章節邊讀邊翻，漫畫頁面在裝置上辨識文字並把譯文畫回原圖；可用內建離線引擎（模型下載後在裝置上翻譯）、iOS 系統翻譯、DeepL、Google、Azure，或自行設定的 AI 模型。譯文存在本機，不經帳號同步；備份時可選擇是否包含（來源未允許匯出的內容除外）
 - 多語系介面，以及 Android／iOS／macOS／Windows 各自的安全儲存
-- 可自行架設的帳號同步：書庫、分類、已讀與閱讀進度、來源儲存庫與可攜設定跨裝置同步，並可在同一台伺服器的帳號之間分享作品、撰寫評論
+- 可自行架設的帳號同步：書庫、分類、已讀與閱讀進度、來源儲存庫、已安裝套件清單與可攜設定跨裝置同步，並可在同一台伺服器的帳號之間分享作品、撰寫評論
 - Local-first 設計：專案本身不提供廣告或分析服務，也不內建任何同步伺服器；未登入時所有資料只在使用者裝置
 
 ## [ShuYue](https://github.com/aluo96078/shuyue) 風格小說閱讀器
@@ -73,8 +74,11 @@ Shinsou X 預設完全在本機運作。自 v1.0.1-beta.19 起可以選擇登入
 | 書庫 | 是否在書庫、加入時間、所屬分類、自訂標題等 |
 | 分類 | 名稱與順序 |
 | 章節狀態與進度 | 已讀、書籤、最後閱讀位置與閱讀紀錄 |
-| 來源儲存庫 | 儲存庫網址與發佈者指紋，只當作「來自其他裝置」的建議，由你決定是否加入（套件本身要在每台裝置各自安裝） |
+| 來源儲存庫 | 儲存庫網址與發佈者指紋，只當作「來自其他裝置」的建議，由你決定是否加入 |
+| 已安裝套件 | 套件 ID、名稱、版本與發佈者金鑰指紋（不含套件本身）。其他裝置只會從自己已加入並信任的儲存庫預先安裝，且不會自動授予權限 |
 | 可攜設定 | 語言、外觀、書庫排序與篩選、閱讀器偏好、瀏覽語言等與裝置無關的設定 |
+
+每一項都可以在同一個畫面分別關閉，關閉的項目不會從這台裝置送出。
 
 運作方式：
 
@@ -91,7 +95,7 @@ Shinsou X 預設完全在本機運作。自 v1.0.1-beta.19 起可以選擇登入
 
 ### 只留在本機的資料
 
-不論是否登入，以下資料都不會離開裝置：章節內文與圖片、下載 cache／queue、Local content 與 Local source 原始容器、extension packages、cookies、OAuth token、密碼、API key、tracker credentials，以及與裝置相關的設定（下載、版面、螢幕方向、安全、進階網路與同步本身）。
+不論是否登入，以下資料都不會離開裝置：章節內文與圖片、翻譯結果與翻譯設定（只能經由備份帶到其他裝置）、下載 cache／queue、Local content 與 Local source 原始容器、extension packages、cookies、OAuth token、密碼、API key、tracker credentials，以及與裝置相關的設定（下載、版面、螢幕方向、安全、進階網路與同步本身）。
 
 設計與決策紀錄見 [ADR-0003](docs/architecture/0003-open-sync-service-plan.md)。
 
@@ -152,6 +156,7 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 - `feature-plugin`：外掛 repository、信任、外掛網路、沙箱 runtime 與各平台 host（iOS WASM 沙箱 cinterop、Android 隔離程序與 `libshinsou_sandbox.so`）；`jvmCommonTest` 的 Rhino runtime 只供相容性測試比對
 - `ui`：Compose UI、navigation、i18n 與 App 圖示（Compose resource）
 - `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
+- `translation-core`：離線翻譯引擎的原生程式庫（CMake 建置）；它和 `sandbox-core` 一樣不是 Gradle 模組，由 build-logic 的 `shinsou.native-libraries` 取得或建置
 - `composeApp`：App 組裝（`app`）與各平台入口——Android Activity、WorkManager 與持久化接線；iOS framework entry、Keychain、BGTask 與 Widget payload；macOS／Windows Desktop host、Menu Bar、平台資料目錄、Keychain／DPAPI 接線，以及打包設定
 - `iosApp`：SwiftUI host、Reader 音量鍵 bridge、Widget extension、entitlements 與 XcodeGen 規格
 
@@ -208,6 +213,8 @@ Store 分發所需的憑證、profiles、entitlements 與 Apple Developer 會籍
 workflow 或產物設計，不等於目前已發布版本。每個 tag release 固定包含 Android APK、
 未簽章的 iOS IPA、macOS DMG 與 Windows MSI／EXE。若 Releases 頁面沒有項目，請依本節自行建置。
 
+v1.0.1 正式版之前發佈的所有測試版（`v1.0.0-beta.*` 與 `v1.0.1-beta.*`）都已不再支援，問題也不會再修正；請更新到 v1.0.1 或之後的版本。
+
 Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS 交叉產生）：
 
 ```powershell
@@ -223,9 +230,9 @@ Windows Desktop 安裝包必須在 Windows x64 主機執行（不能由 macOS �
 ## 文件與相關專案
 
 - [Shinsou X 官網](https://shinsoux.com)：產品介紹與使用文件
-- [產品下載](https://github.com/aluo96078/shinsoux/releases)：Android APK、macOS DMG 與 Windows MSI／EXE
+- [產品下載](https://github.com/aluo96078/shinsoux/releases)：Android APK、未簽章的 iOS IPA、macOS DMG 與 Windows MSI／EXE
 - [建置與驗證](docs/BUILDING.md)：環境需求、各平台建置、簽章與驗證清單
-- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android APK、DMG／MSI／EXE，以及 iOS 自行建置邊界
+- [GitHub Actions 發布](docs/RELEASING.md)：`vX.Y.Z` 正式 tag、`vX.Y.Z-beta.N` prerelease、Android APK、未簽章的 iOS IPA、DMG／MSI／EXE，以及 iOS 自行建置邊界
 - [Windows 建置與發布](docs/WINDOWS.md)：Windows x64 環境、DPAPI、MSI／EXE、CI 與 smoke checklist
 - [功能對齊狀態](docs/PARITY.md)：Android、iOS、macOS、Windows 的實作與外部驗證狀態
 - [套件作者指南](docs/PLUGIN_AUTHOR_GUIDE.md)：從金鑰、CLI、權限到簽章發佈、更新與撤回的完整作者流程
