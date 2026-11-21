@@ -123,8 +123,17 @@ internal class ShinsouAppState(
      * [remoteUnitId] in the reader once the page lists it, as a restored chapter reopens.
      */
     fun continueExtensionUnit(mangaId: Long, remoteUnitId: String) {
-        openManga(mangaId)
-        pendingLocalExtensionUnit = PendingExtensionReopen(mangaId, extensionUnitIdentity(remoteUnitId), userRequested = true)
+        dismissMobileInput()
+        pendingLocalExtensionUnit = null
+        titles.openManga(mangaId) { outcome ->
+            onTitleOpened(outcome)
+            // Asked for once the page shows, not before: opening some titles takes a lookup off the
+            // UI thread and restarts the shell's Back count, which the loading screen goes by; a
+            // title not opened in the end opens no chapter either.
+            if (outcome == TitleOpenOutcome.ELSEWHERE) {
+                pendingLocalExtensionUnit = PendingExtensionReopen(mangaId, extensionUnitIdentity(remoteUnitId), userRequested = true)
+            }
+        }
     }
 
     /** A title's detail page replaced the page: the incognito reader's title is no longer what shows. */

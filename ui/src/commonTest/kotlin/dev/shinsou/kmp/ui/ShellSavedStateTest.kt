@@ -658,6 +658,30 @@ class ShellSavedStateTest {
     }
 
     @Test
+    fun continueReadingAsksForTheChapterOnceItsTitleOpened() = runTest {
+        val repository = ShinsouRepository()
+        val typed = repository.upsertManga(
+            Manga(
+                source = LOCAL_SOURCE_ID,
+                url = encodeTypedLocalPublicationUrl(
+                    extensionPublicationKey(SourceKey(packageId = "pkg.test", sourceId = "s"), "typed-1"),
+                ),
+                title = "Typed",
+                favorite = true,
+            ),
+        )
+        repository.upsertChapter(Chapter(mangaId = typed.id, url = "/typed/1", name = "1"))
+        val app = ShellFixture(this, repository).app
+        // This title opens after a lookup off the UI thread: the chapter is asked for only then.
+        app.continueExtensionUnit(typed.id, "u1")
+        assertNull(app.pendingLocalExtensionUnit)
+        // Given up before it opened: no chapter is asked for either.
+        app.selectSection(MainSection.LIBRARY)
+        advanceUntilIdle()
+        assertNull(app.pendingLocalExtensionUnit)
+    }
+
+    @Test
     fun chapterSelectionsAreDroppedWhenTheUserMovedOnBeforeTheOpenFinished() = runTest {
         val repository = ShinsouRepository()
         val manga = repository.upsertManga(

@@ -20,7 +20,7 @@ class MacCoreMlDetectorTest {
         val v = packs.resolve("vision-v1")
         val paths = MangaModelPaths(v.resolve("detector.onnx").path, v.resolve("encoder.onnx").path, v.resolve("decoder.onnx").path, v.resolve("vocab.txt").path, v.resolve("NotoSansTC-VF.ttf").path, qnnDetector = model.path)
         val images = pages.map { platform.codec.decode(it.readBytes())!! }
-        val cpu = OrtQueryDetector(platform.ops, ai.onnxruntime.OrtEnvironment.getEnvironment().createSession(model.path), "cpu")
+        val cpu = OrtQueryDetector(platform.ops, ortEnvironment().createSession(model.path), "cpu")
         val expected = images.map { cpu.detect(it) }
         for (accelerator in listOf(MangaAccelerator.GPU, MangaAccelerator.NPU)) {
             val detector = platform.acceleratedDetector(paths, accelerator)!!

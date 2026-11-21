@@ -1,7 +1,6 @@
 package dev.shinsou.kmp.manga
 
 import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import java.io.File
 import java.nio.FloatBuffer
@@ -14,7 +13,7 @@ import kotlin.test.Test
  * SHINSOU_MANGA_BENCH=1, SHINSOU_MANGA_PACKS and SHINSOU_MANGA_FP32 (the fp32 originals) are set.
  */
 class MangaAcceleratorResearchTest {
-    private val env = OrtEnvironment.getEnvironment()
+    private val env = ortEnvironment()
     private val packs = System.getenv("SHINSOU_MANGA_PACKS")?.let(::File)
     private val fp32 = System.getenv("SHINSOU_MANGA_FP32")?.let(::File)
 

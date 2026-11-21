@@ -34,6 +34,8 @@ public class IosOnnxRuntime : OnnxRuntime {
         memScoped {
             val e = alloc<CPointerVar<OrtEnv>>()
             check(api.CreateEnv!!(OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING, "shinsou".cstr.ptr, e.ptr)); env = e.value!!
+            // Nothing about the translation leaves the device, ONNX Runtime's usage events included.
+            check(api.DisableTelemetryEvents!!(env))
             val m = alloc<CPointerVar<OrtMemoryInfo>>()
             check(api.CreateCpuMemoryInfo!!(OrtArenaAllocator, OrtMemTypeDefault, m.ptr)); memInfo = m.value!!
         }

@@ -109,7 +109,6 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -149,12 +148,6 @@ internal fun ExtensionV2PublicationPane(
             state.isShown = { false }
         }
     }
-    val reopen = rememberUpdatedState(navigation)
-    // The reopen request this page has taken on (main thread only): each one is handled once.
-    val claimedReopen = remember(state) { arrayOfNulls<PublicationReaderReopen>(1) }
-    fun claim(request: PublicationReaderReopen): Boolean =
-        (claimedReopen[0] !== request).also { if (it) claimedReopen[0] = request }
-
     // Visibility is opened explicitly when materialization returns and closed explicitly by the
     // reader/back handlers. Do not emit a transient `false` from an effect keyed only by a
     // nullable session: during the first materialization recomposition that stale callback can
@@ -165,29 +158,7 @@ internal fun ExtensionV2PublicationPane(
     }
     // Before the reader branch: a chapter opened while the list loads (a restored one, as soon as
     // it is listed) must not cancel the rest of the list, which the reader's next chapter needs.
-    LaunchedEffect(item.identityKey, navigation.refreshGeneration) {
-        // After a restart: the chapter the reader showed, once listed. It stays pending (and
-        // saved) until its open ends, opened or not.
-        val pending = reopen.value.reopen
-        // A pane replaced while it opens (the layout changed, the title stayed) leaves the chapter
-        // pending for the pane that replaces it; leaving the title gives it up elsewhere.
-        if (pending == null || !claim(pending)) {
-            state.load()
-        } else {
-            // The reader's loading screen from the start: the page is not shown, nor tapped, first.
-            val cover = state.coverForReader(pending.unit, pending.onHandled)
-            state.loadAndReopen(pending.unit, pending.stillWanted) { if (scope.isActive) settle(state, pending, cover) }
-        }
-    }
-    // "Continue reading" of this title while its page already shows: the load above ran for an
-    // earlier request (or none), so the chapter asked for now opens here.
-    val requested = navigation.reopen
-    LaunchedEffect(requested) {
-        if (requested != null && claim(requested)) {
-            val cover = state.coverForReader(requested.unit, requested.onHandled)
-            state.continueUnit(requested.unit, requested.stillWanted) { if (scope.isActive) settle(state, requested, cover) }
-        }
-    }
+    PublicationLoadAndReopenEffects(state, navigation, scope)
     val features = reader.contentFeatures
     if (openedReader != null && features != null) {
         PublicationReader(state, services, reader, features, openedReader, navigation.readerBackRequest)
@@ -218,12 +189,6 @@ private fun PublicationPageUnderCover(
             onRetry = state::retryReaderCover,
         )
     }
-}
-
-/** The covered open of [request] ended: it is no longer pending, and the cover shows how it went. */
-private fun settle(state: ExtensionPublicationState, request: PublicationReaderReopen, cover: ReaderCover) {
-    request.onHandled()
-    state.coveredOpenSettled(cover, reportFailure = request.userRequested)
 }
 
 /** The reader of a chapter opened from the publication page. */

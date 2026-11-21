@@ -367,6 +367,89 @@ class ExtensionPublicationStateTest {
     }
 
     @Test
+    fun retryAfterTheListFailedAsksForTheListAgain() = runTest {
+        val bridge = FakeBridge()
+        val state = readerState(bridge)
+        val cover = state.coverForReader(dev.shinsou.kmp.ui.extensionUnitIdentity("u1"))
+        state.loadAndReopen(cover.unit, { true }, userRequested = true) { state.coveredOpenSettled(cover, reportFailure = true) }
+        advanceUntilIdle()
+        assertNotNull(state.loadError)
+        assertNotNull(state.readerCover?.failure, "the source could not be reached")
+
+        bridge.pages[0] = page(0, listOf("u1"), hasNext = false)
+        state.retryReaderCover()
+        advanceUntilIdle()
+        assertEquals("u1", state.readerUnitId)
+        assertNull(state.readerCover)
+    }
+
+    @Test
+    fun continueReadingWhileAnotherChapterOpensOpensAfterIt() = runTest {
+        val bridge = FakeBridge()
+        bridge.pages[0] = page(0, listOf("u1", "u2"), hasNext = false)
+        val state = readerState(bridge)
+        state.load()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>().also { bridge.openGate = it }
+        assertTrue(state.materialize(state.units.first()))
+        runCurrent()
+        bridge.openGate = null
+        val cover = state.coverForReader(dev.shinsou.kmp.ui.extensionUnitIdentity("u2"))
+        val continuing = launch { state.continueUnit(cover.unit, { true }) { state.coveredOpenSettled(cover, reportFailure = true) } }
+        runCurrent()
+        assertNull(state.readerCover?.failure, "it waits rather than failing")
+        gate.complete(Unit)
+        advanceUntilIdle()
+        Snapshot.sendApplyNotifications()
+        advanceUntilIdle()
+        assertTrue(continuing.isCompleted)
+        assertEquals("u2", state.readerUnitId)
+        assertNull(state.readerCover)
+    }
+
+    @Test
+    fun aCoverWhoseOpenNeverBeganGoesWhenItsWorkStops() = runTest {
+        val bridge = FakeBridge()
+        bridge.pages[0] = page(0, listOf("u1"), hasNext = false)
+        val state = readerState(bridge)
+        state.load()
+        advanceUntilIdle()
+        val visibility = mutableListOf<Boolean>()
+        state.onReaderVisibilityChanged = { visibility += it }
+        val waiting = state.coverForReader(dev.shinsou.kmp.ui.extensionUnitIdentity("u1"))
+        state.coveredOpenCancelled(waiting)
+        assertNull(state.readerCover)
+        assertEquals(listOf(true, false), visibility)
+
+        // One whose chapter opens already stays until that open settles.
+        val gate = CompletableDeferred<Unit>().also { bridge.openGate = it }
+        val opening = state.coverForReader(dev.shinsou.kmp.ui.extensionUnitIdentity("u1"))
+        assertTrue(state.materialize(state.units.first()))
+        state.coveredOpenCancelled(opening)
+        assertEquals(opening, state.readerCover)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertNull(state.readerCover, "the reader replaced it")
+    }
+
+    @Test
+    fun aRequestedChapterOpensOnAPageWhereTheUserChoseAnother() = runTest {
+        val bridge = FakeBridge()
+        bridge.pages[0] = page(0, listOf("u1", "u2"), hasNext = false)
+        val state = readerState(bridge)
+        state.load()
+        advanceUntilIdle()
+        assertTrue(state.materialize(state.units.first()))
+        advanceUntilIdle()
+        state.closeReader()
+        advanceUntilIdle()
+        val cover = state.coverForReader(dev.shinsou.kmp.ui.extensionUnitIdentity("u2"))
+        state.loadAndReopen(cover.unit, { true }, userRequested = true) { state.coveredOpenSettled(cover, reportFailure = true) }
+        advanceUntilIdle()
+        assertEquals("u2", state.readerUnitId)
+    }
+
+    @Test
     fun aChapterNoLongerListedLeavesTheCoverWithAReason() = runTest {
         val bridge = FakeBridge()
         bridge.pages[0] = page(0, listOf("u1"), hasNext = false)

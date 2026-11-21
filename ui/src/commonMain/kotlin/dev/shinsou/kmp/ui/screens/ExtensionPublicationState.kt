@@ -356,6 +356,8 @@ internal class ExtensionPublicationState(
             readerClosedWhileOpening = false
         } else if (opened != null) {
             readerSession = opened
+            // The reader shows: no loading screen (nor an earlier failed one) waits beneath it.
+            readerCover = null
             readerUnitId = selection.unit.remoteId
             onReaderUnitChanged(selection.unit.remoteId)
             // Keep the parent layout in sync with the session creation frame. The lifecycle
@@ -790,19 +792,29 @@ internal class PrefetchContext(
 /**
  * After a restart: opens the listed unit whose [dev.shinsou.kmp.ui.extensionUnitIdentity] is
  * [identity] in the reader, through the ordinary open (rights included). [onSettled] runs once that
- * open ended, or at once when the unit is not listed (false) or another one is opening.
+ * open ended, or at once when the unit is not listed (false) or another one is opening. A chapter the
+ * user chose on this page holds a restored one back, unless the user asked for this one
+ * ([userRequested]).
  */
 internal fun ExtensionPublicationState.reopenUnit(
     identity: Long,
     stillWanted: () -> Boolean = { true },
+    userRequested: Boolean = false,
     onSettled: () -> Unit = {},
 ): Boolean {
-    // The user chose a chapter meanwhile (listed before the saved one): theirs stays open.
     val selection = units.firstOrNull { dev.shinsou.kmp.ui.extensionUnitIdentity(it.unit.remoteId) == identity }
-        ?.takeUnless { unitChosenByUser }
+        ?.takeUnless { yieldsToTheUser(userRequested) }
     val started = selection != null && materialize(selection, onSettled = onSettled, restoring = stillWanted)
     if (!started) onSettled()
     return started
+}
+
+/** The user chose a chapter here (listed before the saved one): theirs stays open. */
+private fun ExtensionPublicationState.yieldsToTheUser(userRequested: Boolean) = unitChosenByUser && !userRequested
+
+/** Until no chapter is opening: one asked for meanwhile opens after it, rather than failing. */
+private suspend fun ExtensionPublicationState.awaitNoOpen() {
+    snapshotFlow { busyUnitId == null }.first { it }
 }
 
 /**
@@ -813,6 +825,7 @@ internal fun ExtensionPublicationState.reopenUnit(
 internal suspend fun ExtensionPublicationState.loadAndReopen(
     identity: Long,
     stillWanted: () -> Boolean,
+    userRequested: Boolean = false,
     onSettled: () -> Unit,
 ) = coroutineScope {
     val loading = launch { load() }
@@ -826,22 +839,23 @@ internal suspend fun ExtensionPublicationState.loadAndReopen(
     listed.cancel()
     // Neither list has it (a chapter stored after the saved list, and the source no longer lists
     // it): it still opens from the device.
-    val stored = if (units.any { dev.shinsou.kmp.ui.extensionUnitIdentity(it.unit.remoteId) == identity } || unitChosenByUser) {
+    val stored = if (units.any { dev.shinsou.kmp.ui.extensionUnitIdentity(it.unit.remoteId) == identity } || yieldsToTheUser(userRequested)) {
         null
     } else {
         storedUnit(identity)
     }
+    awaitNoOpen()
     when {
-        stored == null -> reopenUnit(identity, stillWanted, onSettled)
-        // The user chose a chapter while the stored ones were read: theirs stays open.
-        unitChosenByUser || !materialize(stored, onSettled = onSettled, restoring = stillWanted) -> onSettled()
+        stored == null -> reopenUnit(identity, stillWanted, userRequested, onSettled)
+        yieldsToTheUser(userRequested) || !materialize(stored, onSettled = onSettled, restoring = stillWanted) -> onSettled()
     }
 }
 
 /**
  * "Continue reading" asked for [identity] while this page already shows (the wide layout keeps the
- * library beside it): it opens once listed, or from the device once the list is complete. Unlike
- * [reopenUnit] it is the user's request, so a chapter chosen here earlier does not hold it back.
+ * library beside it): it opens once listed, or from the device once the list is complete, after a
+ * chapter still opening. Unlike [reopenUnit] it is the user's request, so a chapter chosen here
+ * earlier does not hold it back.
  */
 internal suspend fun ExtensionPublicationState.continueUnit(
     identity: Long,
@@ -851,6 +865,7 @@ internal suspend fun ExtensionPublicationState.continueUnit(
     fun listed() = units.firstOrNull { dev.shinsou.kmp.ui.extensionUnitIdentity(it.unit.remoteId) == identity }
     snapshotFlow { !loading || listed() != null }.first { it }
     val selection = listed() ?: storedUnit(identity)
+    awaitNoOpen()
     if (selection == null || !materialize(selection, onSettled = onSettled, restoring = stillWanted)) onSettled()
 }
 

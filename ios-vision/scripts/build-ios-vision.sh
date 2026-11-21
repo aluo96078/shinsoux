@@ -19,14 +19,18 @@ DEPLOYMENT_TARGET=16.0
 fetch() { # url sha256 file [mirror-url...]
   local url="$1" sha="$2" file="$3"; shift 3
   if [ -f "$file" ] && [ "$(shasum -a 256 "$file" | cut -d' ' -f1)" = "$sha" ]; then return; fi
-  # The pinned SHA-256 decides: a mirror is tried only when a source fails, and must match too.
+  # The pinned SHA-256 decides: the next source is tried when one fails or serves anything else.
   for source in "$url" "$@"; do
     if curl -fsSL -o "$file.part" "$source"; then
-      [ "$(shasum -a 256 "$file.part" | cut -d' ' -f1)" = "$sha" ] || { echo "checksum mismatch: $source" >&2; rm -f "$file.part"; exit 1; }
-      mv "$file.part" "$file"
-      return
+      if [ "$(shasum -a 256 "$file.part" | cut -d' ' -f1)" = "$sha" ]; then
+        mv "$file.part" "$file"
+        return
+      fi
+      echo "checksum mismatch: $source" >&2
+    else
+      echo "download failed: $source" >&2
     fi
-    echo "download failed: $source" >&2
+    rm -f "$file.part"
   done
   rm -f "$file.part"; exit 1
 }

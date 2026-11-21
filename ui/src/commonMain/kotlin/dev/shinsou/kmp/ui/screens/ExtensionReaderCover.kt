@@ -29,7 +29,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
+import dev.shinsou.kmp.ui.extensionUnitIdentity
 import dev.shinsou.kmp.ui.i18n.text
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * The reader's loading screen over a publication page while "continue reading" opens [cover]'s
@@ -147,13 +151,108 @@ internal fun ExtensionPublicationState.leaveReaderCover() {
     if (readerSession == null) onReaderVisibilityChanged(false)
 }
 
-/** "Retry" on a failed cover: the chapter opens again, as the user's choice. */
+/** "Retry" on a failed cover: the chapter opens again, listed or stored, the list asked again first if it failed. */
 internal fun ExtensionPublicationState.retryReaderCover() {
     val failed = readerCover?.takeIf { it.failure != null } ?: return
-    val selection = units.firstOrNull { dev.shinsou.kmp.ui.extensionUnitIdentity(it.unit.remoteId) == failed.unit } ?: return
-    val cover = coverForReader(failed.unit)
-    operationMessage = null
-    if (!materialize(selection, onSettled = { coveredOpenSettled(cover, reportFailure = true) })) {
-        coveredOpenSettled(cover, reportFailure = true)
+    val cover = coverForReader(failed.unit, failed.onGiveUp)
+    work.scope.launch {
+        if (loadError != null && !loading) load()
+        continueUnit(failed.unit, stillWanted = { readerCover === cover }) { coveredOpenSettled(cover, reportFailure = true) }
     }
+}
+
+/** Whether the chapter [unit] ([extensionUnitIdentity]) is the one opening in the reader now. */
+internal fun ExtensionPublicationState.isOpeningUnit(unit: Long): Boolean =
+    openingReaderUnitId?.let { extensionUnitIdentity(it) == unit } == true
+
+/**
+ * The work [cover] stood for stopped before its chapter began opening (its request went, or the
+ * page reloads): the cover goes. One whose chapter opens already stays until that open settles.
+ */
+internal fun ExtensionPublicationState.coveredOpenCancelled(cover: ReaderCover) {
+    if (readerCover !== cover || isOpeningUnit(cover.unit)) return
+    readerCover = null
+    if (readerSession == null) onReaderVisibilityChanged(false)
+}
+
+/**
+ * Loads the page, and opens the chapter [navigation] asks for under the reader's loading screen:
+ * a restored one after a restart, or "continue reading" (also while the page already shows). Each
+ * request is handled once; one whose open had not begun when the page reloaded is taken again.
+ */
+@Composable
+internal fun PublicationLoadAndReopenEffects(
+    state: ExtensionPublicationState,
+    navigation: PublicationPaneNavigation,
+    scope: CoroutineScope,
+) {
+    val reopen = rememberUpdatedState(navigation)
+    val claim = remember(state) { ReopenClaim() }
+    LaunchedEffect(state, navigation.refreshGeneration) {
+        // A pane replaced while it opens (the layout changed, the title stayed) leaves the chapter
+        // pending for the pane that replaces it; leaving the title gives it up elsewhere.
+        val pending = reopen.value.reopen
+        if (pending == null || !claim.takeForLoad(pending, state)) {
+            state.load()
+        } else {
+            coveredOpen(state, pending, scope) { settled ->
+                state.loadAndReopen(pending.unit, pending.stillWanted, pending.userRequested, settled)
+            }
+        }
+    }
+    // "Continue reading" of this title while its page already shows: the load above ran for an
+    // earlier request (or none), so the chapter asked for now opens here.
+    val requested = navigation.reopen
+    LaunchedEffect(requested) {
+        if (requested != null && claim.take(requested)) {
+            coveredOpen(state, requested, scope) { settled -> state.continueUnit(requested.unit, requested.stillWanted, settled) }
+        }
+    }
+}
+
+/** The reopen request a page has taken on (main thread only), and whether its load took it. */
+private class ReopenClaim {
+    private var request: PublicationReaderReopen? = null
+    private var byLoad = false
+
+    fun take(next: PublicationReaderReopen): Boolean = (request !== next).also {
+        if (it) {
+            request = next
+            byLoad = false
+        }
+    }
+
+    /** As [take]; the reloading page also takes again the request its earlier load gave up unopened. */
+    fun takeForLoad(next: PublicationReaderReopen, state: ExtensionPublicationState): Boolean {
+        if (take(next)) {
+            byLoad = true
+            return true
+        }
+        return byLoad && state.readerSession == null && !state.isOpeningUnit(next.unit)
+    }
+}
+
+/** [open]s [request]'s chapter under the reader's loading screen, which goes however the open ends. */
+private suspend fun coveredOpen(
+    state: ExtensionPublicationState,
+    request: PublicationReaderReopen,
+    scope: CoroutineScope,
+    open: suspend (onSettled: () -> Unit) -> Unit,
+) {
+    // The reader's loading screen from the start: the page is not shown, nor tapped, first.
+    val cover = state.coverForReader(request.unit, request.onHandled)
+    try {
+        open { if (scope.isActive) settle(state, request, cover) }
+    } finally {
+        // A page that went (its scope with it) leaves the request to the page that replaces it.
+        if (scope.isActive) state.coveredOpenCancelled(cover)
+    }
+}
+
+/** The covered open of [request] ended: it is no longer pending, and the cover shows how it went. */
+private fun settle(state: ExtensionPublicationState, request: PublicationReaderReopen, cover: ReaderCover) {
+    // One asked for no longer (another title or chapter was asked for since) reports nothing.
+    val report = request.userRequested && request.stillWanted()
+    request.onHandled()
+    state.coveredOpenSettled(cover, reportFailure = report)
 }
