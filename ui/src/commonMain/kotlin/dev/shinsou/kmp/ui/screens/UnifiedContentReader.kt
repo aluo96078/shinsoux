@@ -23,7 +23,6 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -468,17 +467,16 @@ private fun NovelTextBlock(text: String) {
             when (segment) {
                 is NovelReaderSegment.Text -> {
                     if (segment.value.isNotBlank()) {
-                        SelectionContainer {
-                            Text(
-                                text = segment.value,
-                                color = NOVEL_READER_TEXT,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = 21.sp,
-                                    lineHeight = 39.sp,
-                                    letterSpacing = 0.15.sp,
-                                ),
-                            )
-                        }
+                        // Not selectable, like the paged novel reader's text.
+                        Text(
+                            text = segment.value,
+                            color = NOVEL_READER_TEXT,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 21.sp,
+                                lineHeight = 39.sp,
+                                letterSpacing = 0.15.sp,
+                            ),
+                        )
                     }
                 }
                 is NovelReaderSegment.Image -> NovelInlineImage(

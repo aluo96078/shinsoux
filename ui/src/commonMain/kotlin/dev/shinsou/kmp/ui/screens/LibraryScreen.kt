@@ -676,7 +676,7 @@ private val LIBRARY_GRID_HORIZONTAL_PADDING = 20.dp
 private val LIBRARY_GRID_SPACING = 14.dp
 
 /** Covers stop growing past this width; a wider window shows more of them instead. */
-internal val LIBRARY_MAX_COVER_WIDTH = 200.dp
+internal val LIBRARY_MAX_COVER_WIDTH = 160.dp
 
 /**
  * The configured column count is a minimum. On a window wider than those columns can fill at

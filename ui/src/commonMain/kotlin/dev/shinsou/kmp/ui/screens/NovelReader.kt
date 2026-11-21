@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -906,16 +905,15 @@ private fun NovelPage(
 ) {
     Box(modifier, contentAlignment = Alignment.TopCenter) {
         when (page) {
-            is NovelVisualPage.Text -> SelectionContainer {
-                Text(
-                    text = page.value,
-                    color = NOVEL_READER_TEXT,
-                    style = textStyle,
-                    modifier = Modifier
-                        .widthIn(max = columnWidth)
-                        .fillMaxWidth(),
-                )
-            }
+            // Not selectable: the chapter text is not to be highlighted or copied out of the reader.
+            is NovelVisualPage.Text -> Text(
+                text = page.value,
+                color = NOVEL_READER_TEXT,
+                style = textStyle,
+                modifier = Modifier
+                    .widthIn(max = columnWidth)
+                    .fillMaxWidth(),
+            )
             is NovelVisualPage.Image -> ProtectedNovelImage(
                 url = page.url,
                 alt = page.alt,

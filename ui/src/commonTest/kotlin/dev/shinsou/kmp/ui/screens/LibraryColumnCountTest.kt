@@ -17,9 +17,17 @@ class LibraryColumnCountTest {
         for (width in listOf(1_100, 1_600, 2_400, 3_800)) {
             val columns = libraryColumnCount(availableWidth = width.dp, configuredColumns = 4)
             val coverWidth = (width - 14 * (columns - 1)) / columns.toFloat()
-            assertTrue(coverWidth <= 200f, "$width dp wide: $columns columns of $coverWidth dp")
+            assertTrue(coverWidth <= 160f, "$width dp wide: $columns columns of $coverWidth dp")
             assertTrue(columns >= 4)
         }
+    }
+
+    @Test
+    fun aLibraryBesideATitlePageShowsMoreSmallerCovers() {
+        // A desktop window with a title open beside the library: its grid is about 610 dp wide.
+        val columns = libraryColumnCount(availableWidth = 610.dp, configuredColumns = 3)
+        assertEquals(4, columns)
+        assertTrue((610 - 14 * (columns - 1)) / columns.toFloat() <= 160f)
     }
 
     @Test
