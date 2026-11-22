@@ -1,7 +1,13 @@
-package dev.shinsou.kmp.ui.i18n
+package dev.shinsou.kmp.ui.screens
 
 import dev.shinsou.kmp.plugin.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
+import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.StringKey
+import dev.shinsou.kmp.ui.i18n.text
+
+// 0008: the labels of the plugin permissions are the shell's (the plugin review is), so the design
+// system (:ui-core) does not depend on :feature-plugin.
 
 /** Localized, human-readable labels for permissions shown in plugin review UI. */
 public fun PluginRuntimePermission.localizedLabel(strings: ShinsouStrings): String = strings.text(
@@ -29,9 +35,3 @@ public fun PluginHostPermission.localizedLabel(strings: ShinsouStrings): String 
         PluginHostPermission.REQUEST_BROWSER_CHALLENGE -> StringKey.REQUEST_BROWSER_CHALLENGE
     },
 )
-
-/** `hath.network:1024-65535` reads as the host family with its port range spelled out. */
-fun String.displaySuffix(strings: ShinsouStrings): String {
-    val base = removeSuffix(":1024-65535")
-    return if (base == this) this else strings.text(StringKey.X_ANY_PORT_FROM_1024, base)
-}

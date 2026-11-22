@@ -5,18 +5,27 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * What the app's screens use of sync v3 (0007 B4): the account, its devices, the manual sync and
- * the work hashes titles are shared and reviewed by. [SyncV3Service] implements it; the lifecycle,
- * background and package hooks stay on the service, which only the composition root holds.
+ * What the app's screens use of sync v3 (0007 B4), as a bundle: the account, its devices, the
+ * manual sync and the work hashes titles are shared and reviewed by. [SyncV3Service] implements
+ * it; the lifecycle, background and package hooks stay on the service, which only the composition
+ * root holds. 0008: code depends on the narrow interfaces it is made of instead
+ * (ServiceInterfaceSizeTest lists the files still naming it).
  */
-public interface SyncClient : SyncSharing, SyncReviews {
-    public val state: StateFlow<SyncUiState>
+public interface SyncClient : SyncAccount, SyncWorks, SyncSharing, SyncReviews
 
+/** The sync status the screens show: signed in or not, the server's features, the last sync. */
+public interface SyncStatus {
+    public val state: StateFlow<SyncUiState>
+}
+
+/** The account and its devices, and asking for a sync: the sync settings. */
+public interface SyncAccount : SyncStatus {
     /** Validates [input], fetches `/.well-known/shinsou` and returns the address plus instance info. */
     public suspend fun discover(input: String): Result<Pair<SyncServerAddress, WireInstance>>
 
     public suspend fun login(address: SyncServerAddress, username: String, password: String): Result<Unit>
 
+    @Suppress("LongParameterList") // The fields of the registration form, as the server's register call takes them.
     public suspend fun register(
         address: SyncServerAddress,
         username: String,
@@ -43,7 +52,10 @@ public interface SyncClient : SyncSharing, SyncReviews {
 
     /** What this device knows about packages changed: ask for an automatic cycle. */
     public fun sourcesChanged()
+}
 
+/** The work hashes titles are shared and reviewed by, and the reading other devices hold back. */
+public interface SyncWorks : SyncStatus {
     /** The work hash to share [manga] by, or null when it cannot be shared. */
     public fun shareableWork(manga: Manga): String?
 

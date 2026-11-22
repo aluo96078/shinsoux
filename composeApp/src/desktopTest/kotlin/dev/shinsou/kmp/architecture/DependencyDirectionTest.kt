@@ -71,6 +71,24 @@ class DependencyDirectionTest {
         if (upward.isNotEmpty()) fail(upward.joinToString("\n", "Module dependencies against the layers (§4.2):\n") { "  $it" })
     }
 
+    /**
+     * 0008: the design system (:ui-core) depends on no feature module, although the layers would
+     * allow it: every UI module depends on :ui-core, so a feature's ABI change would recompile all
+     * of them. A feature type a shared component needs comes through a small interface or a plain
+     * value declared in :ui-core (`PluginImageSource`, `translationServiceName`); the labels and
+     * composition locals of a feature live in the UI module that shows it.
+     */
+    @Test
+    fun designSystemDependsOnNoFeatureModule() {
+        val features = DESIGN_SYSTEM_MODULES.flatMap { module ->
+            PROJECT_DEPENDENCY.findAll(File("../$module/build.gradle.kts").readText()).map { it.groupValues[1] }
+                .filter { it.startsWith(FEATURE_MODULE_PREFIX) }
+                .map { ":$module -> :$it" }
+                .toList()
+        }
+        if (features.isNotEmpty()) fail(features.joinToString("\n", "The design system depends on a feature module:\n") { "  $it" })
+    }
+
     /** The module of [pkg] (below `dev.shinsou.kmp`): the entry of its longest prefix in [MODULES]. */
     private fun moduleOf(pkg: String): Pair<String, Int>? =
         generateSequence(pkg) { it.substringBeforeLast('.', "").ifEmpty { null } }.firstNotNullOfOrNull { MODULES[it] }
@@ -158,6 +176,8 @@ class DependencyDirectionTest {
         val INCLUDE = Regex("""^include\(":([\w-]+)"\)""", RegexOption.MULTILINE)
         val PROJECT_DEPENDENCY = Regex("""\bproject\(":([\w-]+)"\)""")
         const val APP_MODULE = "composeApp"
+        const val FEATURE_MODULE_PREFIX = "feature-"
+        val DESIGN_SYSTEM_MODULES = listOf("ui-core")
         val QUOTED = Regex("""'(?:\\.|[^'\\])'|"(?:\\.|[^"\\])*"""")
         val INLINE_COMMENT = Regex("""/\*.*?\*/""")
         const val ROOT = "(root)"

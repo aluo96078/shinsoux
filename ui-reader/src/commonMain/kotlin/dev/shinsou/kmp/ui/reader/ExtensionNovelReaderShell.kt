@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.reader
 
-import dev.shinsou.kmp.ui.i18n.label
+import dev.shinsou.kmp.ui.i18n.translationServiceName
 import dev.shinsou.kmp.ui.core.SettingsEdit
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -669,10 +669,10 @@ fun PrefetchSetupDialog(
                         null -> "…"
                         dev.shinsou.kmp.translation.TranslationProviderKind.OFFLINE,
                         dev.shinsou.kmp.translation.TranslationProviderKind.SYSTEM ->
-                            strings.text(StringKey.X_FREE_AND_ON_THIS_DEVICE_NOTHING, provider.label(strings))
+                            strings.text(StringKey.X_FREE_AND_ON_THIS_DEVICE_NOTHING, translationServiceName(provider.id, strings) ?: provider.id)
                         else -> strings.text(
                             StringKey.X_THE_CHAPTERS_TEXT_IS_SENT_TO,
-                            provider.label(strings),
+                            translationServiceName(provider.id, strings) ?: provider.id,
                             preferences?.charactersUsedToday ?: 0,
                             preferences?.dailyCharacterLimit?.takeIf { it > 0 }?.toString() ?: strings.text(StringKey.NO_LIMIT),
                         )

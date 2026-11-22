@@ -88,7 +88,9 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Track
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
-import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.sync.v3.SyncAccount
+import dev.shinsou.kmp.sync.v3.SyncSharing
+import dev.shinsou.kmp.sync.v3.SyncStatus
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -1268,7 +1270,7 @@ private const val MAX_RETAINED_BACKUPS = 20
 
 /** The line under "Sync" on the More screen: who is signed in, if anyone. */
 @Composable
-internal fun syncSummary(sync: SyncClient?): String {
+internal fun syncSummary(sync: SyncStatus?): String {
     val strings = LocalShinsouStrings.current
     if (sync == null) return strings.text(StringKey.SYNC_IS_UNAVAILABLE_IN_THIS_BUILD)
     val state by sync.state.collectAsState()
@@ -1278,14 +1280,14 @@ internal fun syncSummary(sync: SyncClient?): String {
 
 /** More → Sync: the sync account, its status and its devices. */
 @Composable
-internal fun SyncScreen(
-    sync: SyncClient?,
+internal fun <S> SyncScreen(
+    sync: S?,
     copyText: (label: String, text: String) -> Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     kinds: dev.shinsou.kmp.domain.model.SyncKindSettings = dev.shinsou.kmp.domain.model.SyncKindSettings(),
     onKindsChange: (dev.shinsou.kmp.ui.core.SettingsEdit<dev.shinsou.kmp.domain.model.SyncKindSettings>) -> Unit = {},
-) {
+) where S : SyncAccount, S : SyncSharing {
     val strings = LocalShinsouStrings.current
     Column(modifier.fillMaxSize()) {
         ScreenHeader(

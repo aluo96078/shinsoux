@@ -41,7 +41,7 @@ internal class MangaLanguageProbes(
     private val japaneseGuesses = mutableMapOf<String, Boolean>()
     private val scriptGuesses = mutableMapOf<String, String>()
 
-    /** See [MangaTranslationService.readsJapanese]. */
+    /** See [MangaChapterTranslator.readsJapanese]. */
     suspend fun readsJapanese(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): Boolean? =
         guessLock.withLock { japaneseGuesses[workKey] } ?: probeJapanese(workKey, pageCount, loadPage)
 
@@ -63,7 +63,7 @@ internal class MangaLanguageProbes(
         return guess
     }
 
-    /** See [MangaTranslationService.readsChineseScript]. */
+    /** See [MangaChapterTranslator.readsChineseScript]. */
     suspend fun readsChineseScript(workKey: String, pageCount: Int, loadPage: suspend (Int) -> ByteArray?): String? =
         guessLock.withLock { scriptGuesses[workKey] } ?: probeChineseScript(workKey, pageCount, loadPage)
 

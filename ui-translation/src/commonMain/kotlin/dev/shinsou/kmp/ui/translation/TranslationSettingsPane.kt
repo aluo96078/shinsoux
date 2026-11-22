@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.ui.translation
 
-import dev.shinsou.kmp.ui.i18n.label
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,7 +55,6 @@ import kotlinx.coroutines.launch
 import dev.shinsou.kmp.ui.components.ChoiceSetting
 import dev.shinsou.kmp.ui.components.SettingDescription
 import dev.shinsou.kmp.ui.components.SettingsList
-import dev.shinsou.kmp.ui.core.LocalMangaTranslation
 
 private class TranslationSettingsView(
     val preferences: TranslationPreferences,

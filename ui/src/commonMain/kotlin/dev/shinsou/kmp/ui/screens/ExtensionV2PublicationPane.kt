@@ -110,7 +110,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import dev.shinsou.kmp.ui.core.LocalMangaTranslation
+import dev.shinsou.kmp.ui.translation.LocalMangaTranslation
 import dev.shinsou.kmp.ui.reader.ExtensionNovelReaderShell
 import dev.shinsou.kmp.ui.reader.PrefetchProgress
 import dev.shinsou.kmp.ui.reader.PrefetchSetupDialog
@@ -540,16 +540,16 @@ private fun publicationActions(
 }
 
 @Composable
-private fun rememberPublicationInfo(
+private fun <S> rememberPublicationInfo(
     state: ExtensionPublicationState,
-    sync: SyncClient?,
+    sync: S?,
     reader: ExtensionReaderHost,
     navigation: PublicationPaneNavigation,
     translation: dev.shinsou.kmp.translation.ReaderTranslation?,
     queuedUnitIds: Set<String>,
     publicationPrefetch: List<dev.shinsou.kmp.translation.PrefetchEntry>,
     scope: kotlinx.coroutines.CoroutineScope,
-): PublicationInfo {
+): PublicationInfo where S : dev.shinsou.kmp.sync.v3.SyncWorks, S : dev.shinsou.kmp.sync.v3.SyncReviews {
     val strings = LocalShinsouStrings.current
     // Reviews and sharing need a signed-in account on a server that offers them. The work hash is
     // the same one the library record syncs under, so both work before and after adding the title.

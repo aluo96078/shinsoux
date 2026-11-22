@@ -343,7 +343,7 @@ private fun BrowseExtensionsPage(
     extensions: ExtensionManagementState,
     snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
     filters: BrowseSourceFilters,
-    sync: SyncClient?,
+    sync: dev.shinsou.kmp.sync.v3.SyncStatus?,
 ) {
     ExtensionsPane(
         operation = extensions.operations.active,

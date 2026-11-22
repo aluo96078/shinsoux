@@ -18,13 +18,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlin.test.assertNull
 import kotlin.test.assertSame
-import dev.shinsou.kmp.plugin.BrowseCallbacks
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.BrowseSource
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
-private val emptyBrowseState = kotlinx.coroutines.flow.MutableStateFlow(BrowseSnapshot())
+/**
+ * A source catalogue whose authority is the token [authorityState] holds (0008: what in the browse
+ * snapshot makes up the authority is the shell's, tested in `ui.SourceCatalogImagesTest`).
+ */
+private open class TestImageSource(private val authorityState: StateFlow<Any?> = MutableStateFlow(null)) : PluginImageSource {
+    override fun currentAuthority(): Any? = authorityState.value
+
+    override val authority: Flow<Any?> get() = authorityState
+
+    override suspend fun loadThumbnail(sourceId: Long, url: String, headers: Map<String, String>): ByteArray? = null
+
+    override suspend fun loadThumbnail(sourceKey: SourceKey, url: String, headers: Map<String, String>): ByteArray? = null
+}
 
 class PluginImageLoaderTest {
     @Test
@@ -36,9 +45,8 @@ class PluginImageLoaderTest {
         var starts = 0
         val counterLock = Mutex()
         val loader = PluginImageLoader(
-            catalog = object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            source = object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceKey: SourceKey,
                     url: String,
                     headers: Map<String, String>,
@@ -81,9 +89,8 @@ class PluginImageLoaderTest {
         val calls = mutableListOf<Triple<SourceKey, String, Map<String, String>>>()
         val sourceKey = SourceKey(2, "fixture.package", "fixture.source")
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceKey: SourceKey,
                     url: String,
                     headers: Map<String, String>,
@@ -117,9 +124,8 @@ class PluginImageLoaderTest {
     fun sourceZeroRemoteCoverRemainsInertAndNeverFallsBackToDirectNetwork() = runTest {
         var callbackCalls = 0
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceId: Long,
                     url: String,
                     headers: Map<String, String>,
@@ -141,9 +147,8 @@ class PluginImageLoaderTest {
     @Test
     fun legacySourceCoverFailureStaysAPlaceholder() = runTest {
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceId: Long,
                     url: String,
                     headers: Map<String, String>,
@@ -165,9 +170,8 @@ class PluginImageLoaderTest {
         var peak = 0
         val counterLock = Mutex()
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceKey: SourceKey,
                     url: String,
                     headers: Map<String, String>,
@@ -222,9 +226,8 @@ class PluginImageLoaderTest {
     fun failedCoverIsNotCachedAndIsRetriedOnNextLoad() = runTest {
         var attempts = 0
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceId: Long,
                     url: String,
                     headers: Map<String, String>,
@@ -323,7 +326,7 @@ class PluginImageLoaderTest {
 
     @Test
     fun removedSourceCanNoLongerServeCachedCovers() = runTest {
-        val state = MutableStateFlow(BrowseSnapshot(sources = listOf(BrowseSource(7L, "Fixture", "en"))))
+        val state = MutableStateFlow<Any?>(listOf("source 7"))
         val fixture = CountingCovers(state = state)
         val loader = PluginImageLoader(fixture.callbacks)
         val url = "https://cdn.example/cover.jpg"
@@ -332,7 +335,7 @@ class PluginImageLoaderTest {
         assertNotNull(request.cachedBytes())
 
         // Uninstall/revocation removes the source from the browse snapshot.
-        state.value = BrowseSnapshot()
+        state.value = listOf<String>()
 
         assertNull(request.cachedBytes())
         val after = assertNotNull(request.load())
@@ -342,28 +345,28 @@ class PluginImageLoaderTest {
 
     @Test
     fun replacedArtifactInvalidatesCachedCovers() = runTest {
-        val extension = BrowseExtension("fixture.package", "Fixture", "1.0", "en", installed = true, sourceIds = listOf(7L))
-        val state = MutableStateFlow(BrowseSnapshot(extensions = listOf(extension)))
+        val state = MutableStateFlow<Any?>(listOf("extension", "1.0"))
         val fixture = CountingCovers(state = state)
         val loader = PluginImageLoader(fixture.callbacks)
         val request = loader.load(7L, "https://cdn.example/cover.jpg")!!
 
         request()
-        state.value = BrowseSnapshot(extensions = listOf(extension.copy(version = "1.1")))
+        state.value = listOf("extension", "1.1")
         request()
 
         assertEquals(2, fixture.calls.size)
     }
 
     @Test
-    fun unrelatedSnapshotChangesKeepTheCache() = runTest {
-        val state = MutableStateFlow(BrowseSnapshot(sources = listOf(BrowseSource(7L, "Fixture", "en"))))
+    fun anEqualAuthorityKeepsTheCache() = runTest {
+        val state = MutableStateFlow<Any?>(listOf("source 7"))
         val fixture = CountingCovers(state = state)
         val loader = PluginImageLoader(fixture.callbacks)
         val request = loader.load(7L, "https://cdn.example/cover.jpg")!!
 
         request()
-        state.value = state.value.copy(isRefreshing = true, errorMessage = "transient")
+        // An unrelated snapshot change (a refresh, an error) yields an equal token.
+        state.value = listOf("source 7")
         request()
 
         assertEquals(1, fixture.calls.size)
@@ -371,13 +374,12 @@ class PluginImageLoaderTest {
 
     @Test
     fun coverRevokedWhileInFlightIsNeitherReturnedNorCached() = runTest {
-        val state = MutableStateFlow(BrowseSnapshot(sources = listOf(BrowseSource(7L, "Fixture", "en"))))
+        val state = MutableStateFlow<Any?>(listOf("source 7"))
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = state
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource(state) {
+                override suspend fun loadThumbnail(
                     sourceId: Long,
                     url: String,
                     headers: Map<String, String>,
@@ -392,7 +394,7 @@ class PluginImageLoaderTest {
         val pending = async { request() }
 
         started.await()
-        state.value = BrowseSnapshot()
+        state.value = listOf<String>()
         release.complete(Unit)
 
         assertNull(pending.await())
@@ -416,8 +418,7 @@ class PluginImageLoaderTest {
 
     @Test
     fun mountedCoverKeepsTheCoilKeyOfItsOwnGenerationAfterAnotherCoverAdvancesIt() = runTest {
-        val extension = BrowseExtension("fixture.package", "Fixture", "1.0", "en", installed = true, sourceIds = listOf(7L))
-        val state = MutableStateFlow(BrowseSnapshot(extensions = listOf(extension)))
+        val state = MutableStateFlow<Any?>(listOf("extension", "1.0"))
         val fixture = CountingCovers(state = state)
         val loader = PluginImageLoader(fixture.callbacks)
         val mounted = loader.load(7L, "https://cdn.example/mounted.jpg") as PluginImageRequest
@@ -428,7 +429,7 @@ class PluginImageLoaderTest {
         val heldKey = mounted.memoryCacheKey(held)
 
         // The extension is replaced and a different cover's access advances the generation.
-        state.value = BrowseSnapshot(extensions = listOf(extension.copy(version = "1.1")))
+        state.value = listOf("extension", "1.1")
         other.load()
 
         // Recomposing the mounted cover must not pair its old bytes with the new generation.
@@ -440,18 +441,17 @@ class PluginImageLoaderTest {
 
     @Test
     fun authorityFlowSignalsMountedCoversOnlyForAuthorityChanges() = runTest {
-        val extension = BrowseExtension("fixture.package", "Fixture", "1.0", "en", installed = true, sourceIds = listOf(7L))
-        val state = MutableStateFlow(BrowseSnapshot(extensions = listOf(extension)))
+        val state = MutableStateFlow<Any?>(listOf("extension", "1.0"))
         val loader = PluginImageLoader(CountingCovers(state = state).callbacks)
         val emissions = mutableListOf<Any?>()
         val collector = launch(UnconfinedTestDispatcher(testScheduler)) { loader.authority.toList(emissions) }
 
         assertEquals(loader.currentAuthority(), emissions.single())
-        state.value = state.value.copy(isRefreshing = true)
+        state.value = listOf("extension", "1.0")
         assertEquals(1, emissions.size)
-        state.value = BrowseSnapshot(extensions = listOf(extension.copy(version = "1.1")))
+        state.value = listOf("extension", "1.1")
         assertEquals(2, emissions.size)
-        state.value = BrowseSnapshot(extensions = listOf(extension.copy(version = "1.1", trusted = true)))
+        state.value = listOf("extension", "1.1", "trusted")
         assertEquals(3, emissions.size)
         assertEquals(loader.currentAuthority(), emissions.last())
         collector.cancel()
@@ -494,9 +494,8 @@ class PluginImageLoaderTest {
     fun redownloadAfterEvictionGetsANewCoilKey() = runTest {
         var version = 0
         val loader = PluginImageLoader(
-            object : EmptyBrowseCallbacks() {
-                override val state = emptyBrowseState
-                override suspend fun loadPluginThumbnail(
+            object : TestImageSource() {
+                override suspend fun loadThumbnail(
                     sourceKey: SourceKey,
                     url: String,
                     headers: Map<String, String>,
@@ -531,8 +530,7 @@ class PluginImageLoaderTest {
 
     @Test
     fun disabledSourceCanNoLongerServeCachedCovers() = runTest {
-        val source = BrowseSource(7L, "Fixture", "en")
-        val state = MutableStateFlow(BrowseSnapshot(sources = listOf(source)))
+        val state = MutableStateFlow<Any?>(listOf("source 7", "enabled"))
         val fixture = CountingCovers(state = state)
         val loader = PluginImageLoader(fixture.callbacks)
         val request = loader.load(7L, "https://cdn.example/cover.jpg") as PluginImageRequest
@@ -540,7 +538,7 @@ class PluginImageLoaderTest {
         val collector = launch(UnconfinedTestDispatcher(testScheduler)) { loader.authority.toList(emissions) }
 
         request()
-        state.value = BrowseSnapshot(sources = listOf(source.copy(enabled = false)))
+        state.value = listOf("source 7", "disabled")
 
         // Mounted covers are told to drop their bytes, and the cache no longer serves them.
         assertEquals(2, emissions.size)
@@ -551,12 +549,11 @@ class PluginImageLoaderTest {
 
     private class CountingCovers(
         private val size: Int? = null,
-        private val state: kotlinx.coroutines.flow.StateFlow<BrowseSnapshot> = emptyBrowseState,
+        private val state: StateFlow<Any?> = MutableStateFlow(null),
     ) {
         val calls = mutableListOf<String>()
-        val callbacks = object : EmptyBrowseCallbacks() {
-            override val state = this@CountingCovers.state
-            override suspend fun loadPluginThumbnail(
+        val callbacks = object : TestImageSource(state) {
+            override suspend fun loadThumbnail(
                 sourceId: Long,
                 url: String,
                 headers: Map<String, String>,
@@ -564,7 +561,7 @@ class PluginImageLoaderTest {
                 calls += url
                 return size?.let(::ByteArray) ?: url.encodeToByteArray()
             }
-            override suspend fun loadPluginThumbnail(
+            override suspend fun loadThumbnail(
                 sourceKey: SourceKey,
                 url: String,
                 headers: Map<String, String>,

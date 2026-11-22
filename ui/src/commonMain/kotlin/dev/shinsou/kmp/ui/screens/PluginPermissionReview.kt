@@ -34,7 +34,6 @@ import dev.shinsou.kmp.plugin.PublisherTrustState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
-import dev.shinsou.kmp.ui.i18n.localizedLabel
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.i18n.displaySuffix
 

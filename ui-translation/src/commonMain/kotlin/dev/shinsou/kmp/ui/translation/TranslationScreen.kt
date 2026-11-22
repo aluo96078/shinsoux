@@ -1,6 +1,5 @@
 package dev.shinsou.kmp.ui.translation
 
-import dev.shinsou.kmp.ui.i18n.label
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,7 +62,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import dev.shinsou.kmp.ui.components.SettingDescription
 import dev.shinsou.kmp.ui.components.SettingsList
-import dev.shinsou.kmp.ui.core.LocalMangaTranslation
 
 /** The parts of the translation screen, each its own page. */
 internal enum class TranslationPage(val icon: ImageVector) {

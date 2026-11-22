@@ -21,7 +21,7 @@ import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.Manga
-import dev.shinsou.kmp.manga.MangaTranslationService
+import dev.shinsou.kmp.manga.MangaChapterTranslation
 import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.reader.buildReaderChapterNavigation
 import dev.shinsou.kmp.translation.TranslationLabels
@@ -227,7 +227,7 @@ private fun mangaTranslationToggle(app: ShinsouAppState, state: MangaReaderTrans
 @Composable
 private fun rememberTypedTranslationAvailable(
     features: ContentFeatures?,
-    manga: MangaTranslationService?,
+    manga: MangaChapterTranslation?,
     typed: TypedReaderContentSession?,
 ): Boolean {
     return remember(typed, features, manga) {

@@ -788,7 +788,7 @@ internal suspend fun ExtensionPublicationState.loadTranslatedUnits(translation: 
 
 /** What translating ahead needs from the screen: the manga translator and the app's language. */
 internal class PrefetchContext(
-    val manga: dev.shinsou.kmp.manga.MangaTranslationService?,
+    val manga: dev.shinsou.kmp.manga.MangaChapterTranslation?,
     val appLanguage: String?,
 )
 

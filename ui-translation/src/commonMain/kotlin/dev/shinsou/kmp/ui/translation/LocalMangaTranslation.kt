@@ -1,4 +1,4 @@
-package dev.shinsou.kmp.ui.core
+package dev.shinsou.kmp.ui.translation
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import dev.shinsou.kmp.manga.MangaTranslationService

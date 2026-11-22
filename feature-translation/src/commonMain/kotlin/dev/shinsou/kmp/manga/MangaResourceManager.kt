@@ -43,12 +43,12 @@ internal class MangaResourceManager(
     }
 
     /** The ways this device can run detection, which are chosen, and what each still needs. */
-    fun acceleratorStates(): List<MangaTranslationService.AcceleratorState> {
+    fun acceleratorStates(): List<MangaAccelerators.AcceleratorState> {
         val p = platform ?: return emptyList()
         val selected = models.selectedAccelerators()
         return p.accelerators().map { support ->
             val missing = support.packs.sumOf { models.missingBytes(it) } + runtimeMissingBytes(support.runtime)
-            MangaTranslationService.AcceleratorState(support, support.accelerator in selected, installed = support.supported && missing == 0L, missingBytes = missing)
+            MangaAccelerators.AcceleratorState(support, support.accelerator in selected, installed = support.supported && missing == 0L, missingBytes = missing)
         }
     }
 

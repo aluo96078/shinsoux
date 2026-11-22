@@ -19,7 +19,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.sync.v3.SyncWorks
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -164,7 +164,7 @@ internal fun rememberExtensionBinding(
 }
 
 /** What [rememberSyncWorkHashes] read the hashes for. */
-private data class SyncWorkKey(val manga: Manga, val sync: SyncClient?, val sharing: Boolean, val reviews: Boolean)
+private data class SyncWorkKey(val manga: Manga, val sync: SyncWorks?, val sharing: Boolean, val reviews: Boolean)
 
 /** The sync identities of a title for sharing and reviews; null where they are not offered. */
 internal data class SyncWorkHashes(val share: String? = null, val reviews: String? = null)
@@ -172,7 +172,7 @@ internal data class SyncWorkHashes(val share: String? = null, val reviews: Strin
 @Composable
 internal fun rememberSyncWorkHashes(
     manga: Manga,
-    sync: SyncClient?,
+    sync: SyncWorks?,
     workDispatcher: CoroutineDispatcher,
 ): SyncWorkHashes {
     val syncState = sync?.state?.collectAsState()?.value
