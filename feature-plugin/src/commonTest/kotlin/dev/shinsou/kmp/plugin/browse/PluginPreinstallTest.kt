@@ -9,6 +9,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -272,7 +273,9 @@ class PluginPreinstallTest {
             // Reading a new repository's key (the trust dialog) does not wait at all.
             withTimeout(10_000) { runCatching { adapter.inspectRepositoryTrust("https://other.example") } }
             // Switching repositories waits for this one install only, not for the whole list.
-            val switch = launch { runCatching { adapter.selectRepository(null) } }
+            // UNDISPATCHED: the switch reaches its wait before the first install is released;
+            // a dispatched launch could start only after the preinstall had moved on.
+            val switch = launch(start = CoroutineStart.UNDISPATCHED) { runCatching { adapter.selectRepository(null) } }
             releaseFirst.complete(Unit)
             withTimeout(10_000) {
                 switch.join()
