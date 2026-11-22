@@ -129,7 +129,12 @@ class PageLayerOrderTest {
             for (readerOpen in listOf(false, true)) {
                 val arrangement = wideArrangement(state(*layers.toTypedArray(), readerOpen = readerOpen), splitDetail = false)
                 assertEquals(false, arrangement.sideBeside)
-                assertTrue(arrangement.cover == null || arrangement.side == null, "$layers")
+                if (readerOpen && PageLayer.LOCAL_EXTENSION in layers) {
+                    // The open reader stays mounted beneath whatever covers it.
+                    assertEquals(entry(PageLayer.LOCAL_EXTENSION), arrangement.side, "$layers")
+                } else {
+                    assertTrue(arrangement.cover == null || arrangement.side == null, "$layers")
+                }
             }
         }
     }
@@ -139,6 +144,20 @@ class PageLayerOrderTest {
         val arrangement = wideArrangement(state(PageLayer.LOCAL_EXTENSION, readerOpen = true), splitDetail = true)
         assertEquals(false, arrangement.sideBeside)
         assertEquals(entry(PageLayer.LOCAL_EXTENSION), arrangement.side)
+    }
+
+    @Test
+    fun aRecoveryOverAnOpenReaderKeepsTheReaderMountedBeneath() {
+        for (split in listOf(false, true)) {
+            val arrangement = wideArrangement(
+                state(PageLayer.LOCAL_EXTENSION, PageLayer.RECOVERING, readerOpen = true),
+                splitDetail = split,
+            )
+            assertEquals(entry(PageLayer.RECOVERING), arrangement.cover, "split=$split")
+            assertEquals(entry(PageLayer.LOCAL_EXTENSION), arrangement.side, "split=$split")
+            assertEquals(false, arrangement.sideBeside, "split=$split")
+            assertEquals(entry(PageLayer.RECOVERING), arrangement.front, "split=$split")
+        }
     }
 
     @Test

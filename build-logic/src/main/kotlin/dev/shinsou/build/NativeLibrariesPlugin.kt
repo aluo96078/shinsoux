@@ -138,13 +138,22 @@ private class CmakeSources(val root: File, private val directories: List<String>
 
 /**
  * A CMake configure step: its [arguments] are an input (another architecture or generator
- * configures again), its `CMakeCache.txt` the output that says it ran.
+ * configures again); its outputs are `CMakeCache.txt` and the generator's build file
+ * (`build.ninja` for Ninja, else the `Makefile`), so a build directory that lost the build file
+ * but kept the cache configures again instead of failing the build step.
  */
 private fun Exec.configuresCmake(sources: CmakeSources, buildDir: String, arguments: List<String>) {
     with(sources) { readsSources() }
     inputs.property("cmakeArguments", arguments)
     outputs.file(File(buildDir, "CMakeCache.txt"))
+    outputs.file(File(buildDir, cmakeBuildFile(arguments)))
     commandLine(listOf("cmake") + arguments)
+}
+
+/** The build file CMake's generator in [arguments] writes: Ninja's, else the default Makefiles'. */
+private fun cmakeBuildFile(arguments: List<String>): String {
+    val generator = arguments.zipWithNext().firstOrNull { (flag, _) -> flag == "-G" }?.second
+    return if (generator == "Ninja") "build.ninja" else "Makefile"
 }
 
 /**

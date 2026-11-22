@@ -213,28 +213,33 @@ internal fun WideShell(
     windowWidth: Dp,
     splitDetail: Boolean,
 ) {
-    Row(Modifier.fillMaxSize()) {
-        if (!nav.browseReaderOpen) {
-            DesktopSidebar(
-                selected = nav.section,
-                onSelect = app::selectSection,
-                downloadCount = pendingDownloadCount(app.repository, app.appServices.browse),
-                modifier = Modifier.width(228.dp).fillMaxHeight(),
-            )
-            VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+    // 0008: what is drawn, and in front of what, comes from the same PageLayer order Back uses.
+    val arrangement = wideArrangement(nav, splitDetail)
+    val publicationCoversMain = arrangement.side != null && !arrangement.sideBeside
+    Box(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize()) {
+            if (!nav.browseReaderOpen) {
+                DesktopSidebar(
+                    selected = nav.section,
+                    onSelect = app::selectSection,
+                    downloadCount = pendingDownloadCount(app.repository, app.appServices.browse),
+                    modifier = Modifier.width(228.dp).fillMaxHeight(),
+                )
+                VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+            }
+            val mainModifier = if (publicationCoversMain) {
+                Modifier.width(0.dp).fillMaxHeight()
+            } else {
+                Modifier.weight(if (arrangement.sideBeside && arrangement.side != null) 0.9f else 1f).fillMaxHeight()
+            }
+            Box(mainModifier) {
+                WideMainPane(app, nav, snapshot, backSwipe, arrangement, windowWidth, drawCover = !publicationCoversMain)
+            }
+            WideDetailColumn(app, nav, snapshot, arrangement)
         }
-        // 0008: what is drawn, and in front of what, comes from the same PageLayer order Back uses.
-        val arrangement = wideArrangement(nav, splitDetail)
-        val publicationCoversMain = arrangement.side != null && !arrangement.sideBeside
-        val mainModifier = if (publicationCoversMain) {
-            Modifier.width(0.dp).fillMaxHeight()
-        } else {
-            Modifier.weight(if (arrangement.sideBeside && arrangement.side != null) 0.9f else 1f).fillMaxHeight()
-        }
-        Box(mainModifier) {
-            WideMainPane(app, nav, snapshot, backSwipe, arrangement, windowWidth)
-        }
-        WideDetailColumn(app, nav, snapshot, arrangement)
+        // The publication fills the window (its reader is open) and a page covers it: drawn over
+        // everything, with the publication and its reader session still mounted beneath.
+        if (publicationCoversMain) WideCover(app, nav, snapshot, arrangement.cover)
     }
 }
 
@@ -252,6 +257,7 @@ private fun WideMainPane(
     backSwipe: BackSwipeProgress,
     arrangement: WideArrangement,
     windowWidth: Dp,
+    drawCover: Boolean,
 ) {
     Box(Modifier.fillMaxSize()) {
         val moreDestination = nav.moreDestination
@@ -273,18 +279,24 @@ private fun WideMainPane(
                 browseBackGestureProgress = if (nav.section == MainSection.BROWSE) backSwipe.value else 0f,
             )
         }
-        when (val cover = arrangement.cover) {
-            is PageEntry.Pending -> OpaquePage {
-                PendingMangaDetailPane(item = cover.item, onBack = app.navigator::cancelPendingBrowse)
-            }
-            is PageEntry.Recovering -> recoveringItem(app, cover.mangaId)?.let { item ->
-                OpaquePage { PendingMangaDetailPane(item = item, onBack = app.navigator::cancelRecovery) }
-            }
-            is PageEntry.Detail -> OpaquePage {
-                AppDetailPane(app, cover.mangaId, nav, snapshot, wideLayout = true)
-            }
-            else -> Unit
+        if (drawCover) WideCover(app, nav, snapshot, arrangement.cover)
+    }
+}
+
+/** The arrangement's cover page: opaque, over whatever it is drawn in. */
+@Composable
+private fun WideCover(app: ShinsouAppState, nav: NavigationState, snapshot: AppSnapshot, cover: PageEntry?) {
+    when (cover) {
+        is PageEntry.Pending -> OpaquePage {
+            PendingMangaDetailPane(item = cover.item, onBack = app.navigator::cancelPendingBrowse)
         }
+        is PageEntry.Recovering -> recoveringItem(app, cover.mangaId)?.let { item ->
+            OpaquePage { PendingMangaDetailPane(item = item, onBack = app.navigator::cancelRecovery) }
+        }
+        is PageEntry.Detail -> OpaquePage {
+            AppDetailPane(app, cover.mangaId, nav, snapshot, wideLayout = true)
+        }
+        else -> Unit
     }
 }
 

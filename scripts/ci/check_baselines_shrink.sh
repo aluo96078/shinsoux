@@ -13,9 +13,13 @@
 # androidMainSourceSet, and the untyped source-set tasks androidMainSourceSet / iosMainSourceSet
 # (build-logic DetektBaselines.kt and QualityPlugin). Before that layout main and debug listed the
 # findings of the common sources twice. So the detekt baselines are counted as unique findings: the
-# distinct `<ID>` entries of all of a module's files, added up over the modules (code moving between
+# distinct `<ID>` entries of a module's files, added up over the modules (code moving between
 # modules still moves entries without growing the total). The same count on the old layout of the
 # base ref is what makes the de-duplication neither growth nor a way to hide a finding.
+#
+# They are counted per analysis target as well, each target being the files its task reads (the
+# same formula on both layouts: before `common` existed, main and debug held it). So a finding
+# fixed for one platform does not make room for a new one on another.
 set -euo pipefail
 
 base="${1:?usage: check_baselines_shrink.sh <base ref>}"
@@ -62,41 +66,60 @@ baseline_files() { # <ref or "WORKTREE">: the detekt baseline files of every mod
   fi
 }
 
-findings() { # <ref or "WORKTREE">: "<module directory>|<ID entry>", one line per distinct finding
-  local file
-  for file in $(baseline_files "$1"); do
-    entries "$1" "$file" "<ID>" | sed -E 's/^[[:space:]]+//' | sed "s#^#$(dirname "$file")|#"
+findings() { # <ref or "WORKTREE"> [kind...]: "<module directory>|<ID entry>", one line per distinct
+  # finding of the baseline files of those kinds (all kinds when none are given)
+  local ref="$1" file kind
+  shift
+  for file in $(baseline_files "$ref"); do
+    if (( $# > 0 )); then
+      kind="$(basename "$file" .xml)"
+      kind="${kind#baseline-}"
+      [[ " $* " == *" $kind "* ]] || continue
+    fi
+    entries "$ref" "$file" "<ID>" | sed -E 's/^[[:space:]]+//' | sed "s#^#$(dirname "$file")|#"
   done | sort -u
 }
+
+# The analysis targets and the baseline kinds each one's task reads (build-logic DetektBaselines.kt).
+TARGETS=(
+  "desktop:common main"
+  "android:common debug androidMainSourceSet"
+  "androidMainSourceSet:androidMainSourceSet"
+  "iosMainSourceSet:iosMainSourceSet"
+)
 
 # The rule of a finding: <ID>Rule:File.kt$signature</ID>.
 rules() { sed -E 's/^[^|]*\|<ID>([A-Za-z]+):.*/\1/' | sort | uniq -c | awk '{print $2 " " $1}'; }
 
-check_findings() { # no more distinct findings in total, and none of any rule, than in the base
-  local before_list after_list before after rule
-  before_list="$(findings "$base")"
-  after_list="$(findings WORKTREE)"
+check_findings() { # <label> [kind...]: no more distinct findings, and none of any rule, than in the base
+  local label="$1" before_list after_list before after rule
+  shift
+  before_list="$(findings "$base" "$@")"
+  after_list="$(findings WORKTREE "$@")"
   before="$(printf '%s\n' "$before_list" | grep -c . || true)"
   after="$(printf '%s\n' "$after_list" | grep -c . || true)"
-  echo "detekt baselines (unique findings): $before -> $after"
+  echo "detekt baselines ($label): $before -> $after"
   # A base without baselines yet is being introduced, not grown.
   [[ -n "$(baseline_files "$base")" ]] || return 0
   if (( after > before )); then
-    echo "::error::the detekt baselines grew from $before to $after unique findings; fix the new findings instead"
+    echo "::error::the detekt baselines ($label) grew from $before to $after findings; fix the new findings instead"
     status=1
   fi
   # By rule as well: fixing one finding must not make room for a finding of another kind.
   while read -r rule after; do
     before="$(printf '%s\n' "$before_list" | rules | awk -v rule="$rule" '$1 == rule {print $2}')"
-    echo "  $rule: ${before:-0} -> $after"
     if (( after > ${before:-0} )); then
-      echo "::error::the detekt baselines have $after findings of $rule, up from ${before:-0}; fix the new findings instead"
+      echo "::error::the detekt baselines ($label) have $after findings of $rule, up from ${before:-0}; fix the new findings instead"
       status=1
     fi
   done < <(printf '%s\n' "$after_list" | rules)
 }
 
-check_findings
+check_findings "unique findings"
+for target in "${TARGETS[@]}"; do
+  # shellcheck disable=SC2086 # the kinds are words
+  check_findings "${target%%:*}" ${target#*:}
+done
 check config/architecture/dependency-allowlist.txt "^[^#].*|"
 check config/architecture/module-allowlist.txt "^[^#].*|"
 

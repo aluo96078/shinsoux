@@ -47,6 +47,8 @@ public class SqlDelightPlugin : Plugin<Project> {
         settings.internalGeneratedCode.convention(false)
         val internalize = settings.internalGeneratedCode
         tasks.withType(SqlDelightTask::class.java).configureEach {
+            // The rewrite changes the task's output, so the setting is part of its cache key.
+            inputs.property("shinsouInternalGeneratedCode", internalize)
             doLast {
                 if (internalize.get()) {
                     outputs.files.asFileTree.matching { include("**/*.kt") }.forEach { file ->
@@ -161,25 +163,23 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
         if (problems.isNotEmpty()) throw GradleException("SQL statement identifiers are not usable:\n" + problems.joinToString("\n"))
     }
 
-    /** `file:line` of every `execute(null, ...)`, `executeQuery(null, ...)` or `identifier = null` in product code. */
+    /**
+     * `file:line` of every driver call in product code whose identifier (its first argument,
+     * positional or named) is a literal null: `execute(null, ...)`, `executeQuery<T>(null, ...)`,
+     * `execute(identifier = null, ...)`. String literals and comments are masked first, so neither
+     * an SQL text nor a KDoc example counts, and an unrelated `identifier = null` does not either.
+     */
     private fun nullIdentifierUses(): List<String> {
         // The registry's own file holds the exemption helpers, which are the one place that passes null.
         val exempt = registrySource.get().asFile
         return productSources.files.filter { it != exempt }.sortedBy { it.path }.flatMap { file ->
-            val text = file.readText()
-            NULL_IDENTIFIER.findAll(text).filterNot { isInComment(text, it.range.first) }.map { match ->
+            val text = maskStringsAndComments(file.readText())
+            NULL_IDENTIFIER.findAll(text).map { match ->
                 "${file.name}:${text.substring(0, match.range.first).count { it == '\n' } + 1}"
             }.toList()
         }
     }
 
-    /** True when [index] lies in a `//` line comment or a block comment (KDoc included). */
-    private fun isInComment(text: String, index: Int): Boolean {
-        val lineStart = text.lastIndexOf('\n', index) + 1
-        if (text.substring(lineStart, index).contains("//")) return true
-        val open = text.lastIndexOf("/*", index)
-        return open >= 0 && text.lastIndexOf("*/", index).let { it < open }
-    }
 
     private fun registryConstant(source: String, name: String): Long =
         Regex("""const val $name(?::\s*Int)?\s*=\s*([0-9_]+)""").find(source)?.groupValues?.get(1)?.replace("_", "")?.toLong()
@@ -188,8 +188,47 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
 
 /** `driver.execute(id, ...)`, `driver.executeQuery(id, ...)` and the parameterless `Query(id, ...)`. */
 private val STATEMENT = Regex("""(?:\.execute|\.executeQuery|\bQuery)\(\s*(-?[0-9][0-9_]*)\s*,""")
-/** A driver call with a literal null identifier (the call's first argument, positional or named). */
-private val NULL_IDENTIFIER = Regex("""(?:\.execute|\.executeQuery)\(\s*(?:identifier\s*=\s*)?null\s*,|\bidentifier\s*=\s*null\b""")
+/** A driver call with a literal null identifier: its first argument, positional or named, after optional type arguments. */
+private val NULL_IDENTIFIER = Regex("""\.(?:execute|executeQuery)\s*(?:<[^()]*>)?\s*\(\s*(?:identifier\s*=\s*)?null\s*[,)]""")
+
+/**
+ * [source] with the contents of its string and character literals and its comments replaced by
+ * spaces (line breaks kept, so offsets and line numbers stay the same). Templates inside strings
+ * are masked too; that only hides code from the null-identifier check, never adds a match.
+ */
+internal fun maskStringsAndComments(source: String): String {
+    val out = StringBuilder(source)
+    fun blank(from: Int, to: Int) {
+        for (i in from until minOf(to, out.length)) if (out[i] != '\n') out[i] = ' '
+    }
+    var i = 0
+    while (i < source.length) {
+        val end = when {
+            source.startsWith("//", i) -> source.indexOf('\n', i).let { if (it < 0) source.length else it }
+            source.startsWith("/*", i) -> source.indexOf("*/", i + 2).let { if (it < 0) source.length else it + 2 }
+            source.startsWith("\"\"\"", i) -> source.indexOf("\"\"\"", i + 3).let { if (it < 0) source.length else it + 3 }
+            source[i] == '"' || source[i] == '\'' -> closingQuote(source, i)
+            else -> -1
+        }
+        if (end < 0) {
+            i++
+        } else {
+            blank(i, end)
+            i = end
+        }
+    }
+    return out.toString()
+}
+
+/** The index after the quote that closes the one-line string or char literal opened at [start]. */
+private fun closingQuote(source: String, start: Int): Int {
+    val quote = source[start]
+    var i = start + 1
+    while (i < source.length && source[i] != quote && source[i] != '\n') {
+        i += if (source[i] == '\\') 2 else 1
+    }
+    return minOf(i + 1, source.length)
+}
 private const val REGISTRY_PROJECT = ":data-content"
 private const val REGISTRY_SOURCE = "src/commonMain/kotlin/dev/shinsou/kmp/content/sql/SqlStatementIdentifiers.kt"
 private const val CHECK_TASK = "checkSqlStatementIdentifiers"

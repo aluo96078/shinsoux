@@ -7,7 +7,8 @@ package dev.shinsou.kmp.navigation
  *
  * The main area shows the section, or the More page when one is open ([PageStack.more]). Over it
  * come [cover] (an opaque page that replaces what the main area shows) and [side] (the detail
- * column). [front] is the one drawn in front of the other.
+ * column). [front] is the one drawn in front of the other. When [side] fills the window (not
+ * [sideBeside]) and a [cover] is set too, the cover is drawn over the whole window.
  */
 internal class WideArrangement(
     /** A page drawn over the main area (a title resolving, a recovery, or the detail when it does not fit beside). */
@@ -36,11 +37,13 @@ internal fun wideArrangement(state: NavigationState, splitDetail: Boolean): Wide
             sideBeside = true,
         )
     } else {
-        // One page fills the window: the front one, as on a phone.
+        // One page fills the window: the front one, as on a phone. An open extension reader stays
+        // mounted beneath a page that covers it (a recovery a deep link starts), so Back reveals
+        // the same chapter instead of a fresh chapter list with its reader session lost.
         val front = stack.top
         WideArrangement(
             cover = front?.takeIf { it.layer != PageLayer.MORE && it.layer != PageLayer.LOCAL_EXTENSION },
-            side = front?.takeIf { it.layer == PageLayer.LOCAL_EXTENSION },
+            side = if (state.browseReaderOpen) stack.localExtension else front?.takeIf { it.layer == PageLayer.LOCAL_EXTENSION },
             sideBeside = false,
         )
     }
