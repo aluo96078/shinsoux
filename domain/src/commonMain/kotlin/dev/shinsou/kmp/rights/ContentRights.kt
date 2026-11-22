@@ -1,7 +1,5 @@
 package dev.shinsou.kmp.rights
 
-import dev.shinsou.kmp.concurrent.SynchronousLock
-import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
 import kotlinx.serialization.SerialName
@@ -552,7 +550,7 @@ public class InMemoryRightsAuthority : RightsAuthority {
         val marker: Any = Any(),
     )
 
-    private val lock = SynchronousLock()
+    private val lock = rightsLock()
     private val records = LinkedHashMap<String, AdmissionRecord>()
     private val revoked = HashSet<String>()
     private val authorityNonce = Any()

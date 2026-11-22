@@ -1,5 +1,5 @@
 // R5-1 (docs/architecture/0006 §4.2): content (the SQL content store, blobs, acquisition),
-// annotation and search. Depends on :domain and :core.
+// annotation and search. Depends on :data-persistence-api, :domain and :core.
 plugins {
     id("shinsou.kmp-library")
     id("shinsou.sqldelight")
@@ -25,6 +25,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":core"))
             implementation(project(":domain"))
+            implementation(project(":data-persistence-api"))
             api(libs.sqldelight.runtime)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)

@@ -18,8 +18,8 @@ import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.LibraryUpdate
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.MangaCategory
-import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.Ordered
+import dev.shinsou.kmp.persistence.HotDelta
+import dev.shinsou.kmp.persistence.Ordered
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
@@ -87,7 +87,7 @@ class SnapshotPersistenceBenchmark {
             val store = SqlHotStateStore(driver)
             val everything = HotDelta(
                 progress = library.chapters.filter { it.read || it.bookmark || it.lastPageRead != 0 }
-                    .associate { it.id to dev.shinsou.kmp.domain.persistence.ChapterProgress(it.read, it.bookmark, it.lastPageRead) },
+                    .associate { it.id to dev.shinsou.kmp.persistence.ChapterProgress(it.read, it.bookmark, it.lastPageRead) },
                 histories = library.histories.mapIndexed(::Ordered),
                 downloads = library.downloadQueue.mapIndexed(::Ordered),
             )

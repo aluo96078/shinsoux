@@ -6,7 +6,7 @@ import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.openSnapshotPersistence
-import dev.shinsou.kmp.domain.persistence.HotStateStore
+import dev.shinsou.kmp.persistence.HotStateStore
 import dev.shinsou.kmp.logging.Log
 
 /**

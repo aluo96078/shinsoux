@@ -21,6 +21,7 @@ rootProject.name = "Shinsou X"
 include(":core")
 include(":core-network")
 include(":domain")
+include(":data-persistence-api")
 include(":data-content")
 include(":data-repository")
 include(":feature-sync")
