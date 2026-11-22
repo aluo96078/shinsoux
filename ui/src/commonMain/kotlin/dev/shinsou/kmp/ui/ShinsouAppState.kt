@@ -128,8 +128,7 @@ internal class ShinsouAppState(
         titles.openManga(mangaId) { outcome ->
             onTitleOpened(outcome)
             // Asked for once the page shows, not before: opening some titles takes a lookup off the
-            // UI thread and restarts the shell's Back count, which the loading screen goes by; a
-            // title not opened in the end opens no chapter either.
+            // UI thread, and a title not opened in the end opens no chapter either.
             if (outcome == TitleOpenOutcome.ELSEWHERE) {
                 pendingLocalExtensionUnit = PendingExtensionReopen(mangaId, extensionUnitIdentity(remoteUnitId), userRequested = true)
             }

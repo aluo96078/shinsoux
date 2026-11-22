@@ -10,6 +10,8 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.encodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.navigation.NavigationState
+import dev.shinsou.kmp.navigation.PageEntry
+import dev.shinsou.kmp.navigation.PageStack
 import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
@@ -232,8 +234,7 @@ class ShellSavedStateTest {
         val pending = BrowseManga(sourceId = 1L, url = "https://user:secret@example.test/m", title = "T")
         val navigation = NavigationState(
             section = MainSection.BROWSE,
-            selectedMangaId = 5L,
-            pendingBrowseManga = pending,
+            stack = PageStack.of(PageEntry.Detail(5L), PageEntry.Pending(pending, request = 1L)),
         )
         val selection = LibrarySelection(libraryIds = setOf(1L), categoryId = 4L)
         val reader = ReaderSavedSession(5L, 50L, 3)

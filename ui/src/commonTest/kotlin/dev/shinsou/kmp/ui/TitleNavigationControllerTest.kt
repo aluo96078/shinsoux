@@ -240,7 +240,7 @@ class TitleNavigationControllerTest {
         val f = Fixture(this)
         f.browse.resolved = 7L
         f.navigator.openBrowseManga(item)
-        f.titles.resolvePending(item, f.navigator.state.value.pendingBrowseRequest)
+        f.titles.resolvePending(item, checkNotNull(f.navigator.state.value.stack.pending).request)
         assertEquals(Destination.Manga(7L), f.navigator.state.value.destination)
         assertTrue(f.messages.isEmpty())
     }
@@ -250,7 +250,7 @@ class TitleNavigationControllerTest {
         val f = Fixture(this)
         f.browse.resolveFailure = IllegalStateException("source offline")
         f.navigator.openBrowseManga(item)
-        f.titles.resolvePending(item, f.navigator.state.value.pendingBrowseRequest)
+        f.titles.resolvePending(item, checkNotNull(f.navigator.state.value.stack.pending).request)
         assertEquals(Destination.Section, f.navigator.state.value.destination)
         assertEquals(listOf("source offline"), f.messages)
     }
@@ -260,7 +260,7 @@ class TitleNavigationControllerTest {
         val f = Fixture(this)
         f.browse.resolved = 7L
         f.navigator.openBrowseManga(item)
-        val request = f.navigator.state.value.pendingBrowseRequest
+        val request = checkNotNull(f.navigator.state.value.stack.pending).request
         f.navigator.cancelPendingBrowse()
         f.titles.resolvePending(item, request)
         assertEquals(Destination.Section, f.navigator.state.value.destination)

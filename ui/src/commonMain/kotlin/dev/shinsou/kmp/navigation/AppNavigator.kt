@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * R4-3 (docs/architecture/0006): the app shell's navigation, outside composition. Every event is
  * a pure transition of [NavigationState]; the composables only draw [state] and report events.
  * Selections that a navigation step discards live in [selection].
+ *
+ * 0007 C2: a transition pushes, pops or replaces pages of [NavigationState.stack]; what a page
+ * owns (its nested Back, its request token) goes with it, so closing a page resets nothing else.
  */
 internal class AppNavigator(
     initialSection: MainSection,
@@ -49,23 +52,10 @@ internal class AppNavigator(
     fun selectSection(next: MainSection) {
         transition { current ->
             current.copy(
-                recoveringLocalLibraryMangaId = null,
-                localLibraryRecoveryRequest = current.localLibraryRecoveryRequest +
-                    if (current.recoveringLocalLibraryMangaId != null) 1 else 0,
-                localLibraryPublication = null,
+                section = next,
+                stack = current.stack.clear(),
                 browseReaderOpen = false,
                 browseOwnedLegacyMangaId = null,
-                // A Browse title still resolving belongs to the page being left.
-                pendingBrowseRequest = current.pendingBrowseRequest + 1,
-                pendingBrowseManga = null,
-                section = next,
-                selectedMangaId = null,
-                moreDestination = null,
-                detailBackRequest = 0L,
-                detailNestedBackAvailable = false,
-                moreBackRequest = 0L,
-                moreNestedBackAvailable = false,
-                browseBackRequest = 0L,
                 browseBackAvailable = current.browseBackAvailable && next == MainSection.BROWSE,
             )
         }
@@ -75,15 +65,12 @@ internal class AppNavigator(
     /** The settings page, as a deep link opens it. */
     fun openSettings() = transition {
         it.copy(
-            // A local-library extension page (and its reader) would otherwise stay in front.
-            localLibraryPublication = null,
-            browseReaderOpen = false,
-            pendingBrowseRequest = it.pendingBrowseRequest + 1,
-            pendingBrowseManga = null,
             section = MainSection.MORE,
-            selectedMangaId = null,
-            moreBackRequest = 0L,
-            moreDestination = MoreDestination.Settings,
+            // A local-library extension page (and its reader) would otherwise stay in front, and
+            // a Browse title still resolving would open over it.
+            stack = it.stack.pop(PageLayer.LOCAL_EXTENSION, PageLayer.PENDING, PageLayer.DETAIL)
+                .push(PageEntry.More(MoreDestination.Settings, it.moreNestedBackAvailable)),
+            browseReaderOpen = false,
         )
     }
 
@@ -100,18 +87,10 @@ internal class AppNavigator(
             val moved = hostSection != null && hostSection != current.section
             current.copy(
                 section = if (moved) hostSection else current.section,
-                browseBackRequest = if (moved) 0L else current.browseBackRequest,
                 browseBackAvailable = if (moved) false else current.browseBackAvailable,
-                localLibraryPublication = null,
+                stack = current.stack.pop(PageLayer.LOCAL_EXTENSION, PageLayer.PENDING, PageLayer.MORE)
+                    .push(PageEntry.Detail(mangaId)),
                 browseReaderOpen = false,
-                pendingBrowseRequest = current.pendingBrowseRequest + 1,
-                pendingBrowseManga = null,
-                selectedMangaId = mangaId,
-                moreDestination = null,
-                detailBackRequest = 0L,
-                detailNestedBackAvailable = false,
-                moreBackRequest = 0L,
-                moreNestedBackAvailable = false,
             )
         }
         selection.clearChapters()
@@ -123,30 +102,25 @@ internal class AppNavigator(
      * nothing changes) while another title is still pending.
      */
     fun openBrowseManga(item: BrowseManga): Boolean {
-        if (mutableState.value.pendingBrowseManga != null) return false
+        if (mutableState.value.stack.pending != null) return false
         transition {
+            val request = it.requestSerial + 1
             it.copy(
-                localLibraryPublication = null,
+                stack = it.stack.pop(PageLayer.LOCAL_EXTENSION, PageLayer.DETAIL, PageLayer.MORE)
+                    .push(PageEntry.Pending(item, request)),
+                requestSerial = request,
                 browseReaderOpen = false,
                 browseOwnedLegacyMangaId = null,
-                pendingBrowseManga = item,
-                pendingBrowseRequest = it.pendingBrowseRequest + 1,
-                selectedMangaId = null,
-                moreDestination = null,
             )
         }
         return true
     }
 
     /** Whether [item] under [request] is still the pending title (not cancelled or replaced). */
-    fun isPendingBrowse(item: BrowseManga, request: Long): Boolean {
-        val current = mutableState.value
-        return current.pendingBrowseRequest == request && current.pendingBrowseManga == item
-    }
+    fun isPendingBrowse(item: BrowseManga, request: Long): Boolean =
+        mutableState.value.stack.pending == PageEntry.Pending(item, request)
 
-    fun cancelPendingBrowse() = transition {
-        it.copy(pendingBrowseRequest = it.pendingBrowseRequest + 1, pendingBrowseManga = null)
-    }
+    fun cancelPendingBrowse() = transition { it.copy(stack = it.stack.pop(PageLayer.PENDING)) }
 
     /**
      * The pending [item] resolved to [mangaId] (null: it could not be opened). Returns false, and
@@ -157,19 +131,12 @@ internal class AppNavigator(
         // Checked inside the transition: a tab change racing this result wins instead of being
         // overwritten by a check made against an older state.
         transition { current ->
-            finished = current.pendingBrowseRequest == request && current.pendingBrowseManga == item
-            if (!finished) {
-                current
-            } else if (mangaId == null) {
-                current.copy(pendingBrowseManga = null)
-            } else {
-                current.copy(
-                    pendingBrowseManga = null,
-                    detailBackRequest = 0L,
-                    detailNestedBackAvailable = false,
-                    browseOwnedLegacyMangaId = mangaId,
-                    selectedMangaId = mangaId,
-                )
+            finished = current.stack.pending == PageEntry.Pending(item, request)
+            val stack = current.stack.pop(PageLayer.PENDING)
+            when {
+                !finished -> current
+                mangaId == null -> current.copy(stack = stack)
+                else -> current.copy(stack = stack.push(PageEntry.Detail(mangaId)), browseOwnedLegacyMangaId = mangaId)
             }
         }
         if (finished && mangaId != null) selection.clearChapters()
@@ -189,12 +156,9 @@ internal class AppNavigator(
                 browseOwnedMangaId = current.browseOwnedLegacyMangaId,
             )
             selectionChanged = selected != current.selectedMangaId
+            val stack = current.stack.pop(PageLayer.PENDING)
             current.copy(
-                pendingBrowseRequest = current.pendingBrowseRequest + 1,
-                pendingBrowseManga = null,
-                selectedMangaId = selected,
-                detailBackRequest = if (selectionChanged) 0L else current.detailBackRequest,
-                detailNestedBackAvailable = current.detailNestedBackAvailable && !selectionChanged,
+                stack = if (selectionChanged) stack.pop(PageLayer.DETAIL) else stack,
                 browseOwnedLegacyMangaId = null,
             )
         }
@@ -203,22 +167,25 @@ internal class AppNavigator(
 
     fun openMore(destination: MoreDestination) = transition {
         it.copy(
-            localLibraryPublication = null,
+            stack = it.stack.pop(PageLayer.LOCAL_EXTENSION, PageLayer.DETAIL).push(PageEntry.More(destination)),
             browseReaderOpen = false,
-            moreBackRequest = 0L,
-            moreNestedBackAvailable = false,
-            moreDestination = destination,
-            selectedMangaId = null,
         )
     }
 
     /** A More page moved to another page, or back to the More section ([destination] null). */
     fun setMoreDestination(destination: MoreDestination?) = transition {
-        it.copy(moreDestination = destination)
+        it.copy(
+            stack = if (destination == null) {
+                it.stack.pop(PageLayer.MORE)
+            } else {
+                // The same page instance, showing another More page: its nested Back is kept.
+                it.stack.push(PageEntry.More(destination, it.moreNestedBackAvailable))
+            },
+        )
     }
 
     fun closeDetail() {
-        transition { it.copy(selectedMangaId = null) }
+        transition { it.copy(stack = it.stack.pop(PageLayer.DETAIL)) }
         selection.clearChapters()
     }
 
@@ -233,9 +200,7 @@ internal class AppNavigator(
      */
     fun closeRemovedTitles(mangaIds: Set<Long>, openExtensionRemoved: Boolean) {
         val current = mutableState.value
-        if (openExtensionRemoved) {
-            transition { it.copy(localLibraryPublication = null, browseReaderOpen = false) }
-        }
+        if (openExtensionRemoved) closeLocalExtension()
         if (current.selectedMangaId in mangaIds) closeDetail()
     }
 
@@ -243,83 +208,63 @@ internal class AppNavigator(
     fun openLocalExtension(item: BrowseManga, hostSection: MainSection) = transition {
         it.copy(
             section = hostSection,
-            selectedMangaId = null,
-            moreDestination = null,
-            localLibraryReaderBackRequest = 0L,
-            localLibraryPublication = item,
             // A Browse title still resolving would otherwise open beneath this one.
-            pendingBrowseRequest = it.pendingBrowseRequest + 1,
-            pendingBrowseManga = null,
+            stack = it.stack.pop(PageLayer.DETAIL, PageLayer.MORE, PageLayer.PENDING)
+                .push(PageEntry.LocalExtension(item)),
         )
     }
 
     fun closeLocalExtension() = transition {
-        it.copy(browseReaderOpen = false, localLibraryPublication = null)
+        it.copy(stack = it.stack.pop(PageLayer.LOCAL_EXTENSION), browseReaderOpen = false)
     }
 
     /** Starts recovering [mangaId]; the returned token tells a later result whether it still applies. */
     fun beginRecovery(mangaId: Long): Long {
         var request = 0L
         transition {
-            request = it.localLibraryRecoveryRequest + 1
+            request = it.requestSerial + 1
             it.copy(
-                localLibraryRecoveryRequest = request,
-                recoveringLocalLibraryMangaId = mangaId,
-                pendingBrowseRequest = it.pendingBrowseRequest + 1,
-                pendingBrowseManga = null,
+                stack = it.stack.pop(PageLayer.PENDING).push(PageEntry.Recovering(mangaId, request)),
+                requestSerial = request,
             )
         }
         return request
     }
 
-    fun isRecovering(request: Long, mangaId: Long): Boolean {
-        val current = mutableState.value
-        return current.localLibraryRecoveryRequest == request && current.recoveringLocalLibraryMangaId == mangaId
-    }
+    fun isRecovering(request: Long, mangaId: Long): Boolean =
+        mutableState.value.stack.recovering == PageEntry.Recovering(mangaId, request)
 
     /** Ends the recovery [request] of [mangaId] when it is still the current one. */
-    fun endRecovery(request: Long, mangaId: Long) {
-        transition { current ->
-            if (
-                current.localLibraryRecoveryRequest == request &&
-                current.recoveringLocalLibraryMangaId == mangaId
-            ) {
-                current.copy(recoveringLocalLibraryMangaId = null)
-            } else {
-                current
-            }
+    fun endRecovery(request: Long, mangaId: Long) = transition { current ->
+        if (current.stack.recovering == PageEntry.Recovering(mangaId, request)) {
+            current.copy(stack = current.stack.pop(PageLayer.RECOVERING))
+        } else {
+            current
         }
     }
 
-    fun cancelRecovery() = transition {
-        it.copy(
-            localLibraryRecoveryRequest = it.localLibraryRecoveryRequest + 1,
-            recoveringLocalLibraryMangaId = null,
-        )
-    }
+    fun cancelRecovery() = transition { it.copy(stack = it.stack.pop(PageLayer.RECOVERING)) }
 
     fun setBrowseReaderOpen(open: Boolean) = transition { it.copy(browseReaderOpen = open) }
 
     fun setBrowseBackAvailable(available: Boolean) = transition { it.copy(browseBackAvailable = available) }
 
-    fun setDetailNestedBackAvailable(available: Boolean) =
-        transition { it.copy(detailNestedBackAvailable = available) }
+    /** The open detail page reports whether it has a nested Back of its own (an open sheet). */
+    fun setDetailNestedBackAvailable(available: Boolean) = transition {
+        it.copy(stack = it.stack.update(it.stack.detail) { detail -> detail.copy(nestedBackAvailable = available) })
+    }
 
-    fun setMoreNestedBackAvailable(available: Boolean) =
-        transition { it.copy(moreNestedBackAvailable = available) }
+    /** The open More page reports whether it has a nested Back of its own. */
+    fun setMoreNestedBackAvailable(available: Boolean) = transition {
+        it.copy(stack = it.stack.update(it.stack.more) { more -> more.copy(nestedBackAvailable = available) })
+    }
 
     /**
-     * A reader opened on [mangaId]: its detail page sits beneath it, with no Back pending, and no
-     * Browse title still resolving replaces that page.
+     * A reader opened on [mangaId]: its detail page (a new instance, without a nested Back) sits
+     * beneath it, and no Browse title still resolving replaces that page.
      */
     fun onReaderOpened(mangaId: Long) = transition {
-        it.copy(
-            detailBackRequest = 0L,
-            detailNestedBackAvailable = false,
-            selectedMangaId = mangaId,
-            pendingBrowseRequest = it.pendingBrowseRequest + 1,
-            pendingBrowseManga = null,
-        )
+        it.copy(stack = it.stack.pop(PageLayer.PENDING).push(PageEntry.Detail(mangaId)))
     }
 
     /**
@@ -340,34 +285,35 @@ internal class AppNavigator(
     fun gestureMovesVisiblePage(): Boolean {
         val current = mutableState.value
         return when {
-            current.recoveringLocalLibraryMangaId != null -> true
-            current.localLibraryPublication != null && !current.browseReaderOpen -> true
-            current.pendingBrowseManga != null -> true
-            current.selectedMangaId != null -> !current.detailNestedBackAvailable
+            current.stack.recovering != null -> true
+            current.stack.localExtension != null && !current.browseReaderOpen -> true
+            current.stack.pending != null -> true
+            current.stack.detail != null -> !current.detailNestedBackAvailable
             // Settings supplies its own sliding child when nested; every other More page slides
             // the outer page.
-            current.moreDestination != null -> true
+            current.stack.more != null -> true
             else -> current.section == MainSection.BROWSE && current.browseBackAvailable
         }
     }
 }
 
-/** The state after one Back press, or null when navigation itself has nothing to close. */
-internal fun backTransition(state: NavigationState): NavigationState? = when {
-    state.localLibraryPublication != null && state.browseReaderOpen ->
-        state.copy(localLibraryReaderBackRequest = state.localLibraryReaderBackRequest + 1)
-    state.localLibraryPublication != null -> state.copy(localLibraryPublication = null)
-    state.recoveringLocalLibraryMangaId != null -> state.copy(
-        localLibraryRecoveryRequest = state.localLibraryRecoveryRequest + 1,
-        recoveringLocalLibraryMangaId = null,
-    )
-    state.selectedMangaId != null -> state.copy(detailBackRequest = state.detailBackRequest + 1)
-    state.moreDestination != null -> state.copy(moreBackRequest = state.moreBackRequest + 1)
-    state.pendingBrowseManga != null -> state.copy(
-        pendingBrowseRequest = state.pendingBrowseRequest + 1,
-        pendingBrowseManga = null,
-    )
-    state.section == MainSection.BROWSE && state.browseBackAvailable ->
-        state.copy(browseBackRequest = state.browseBackRequest + 1)
-    else -> null
+/**
+ * The state after one Back press, or null when navigation itself has nothing to close. A page
+ * with a nested Back of its own gets the press as a [BackRequests] change and decides itself;
+ * every other page is popped. The order is the shell's long-standing one: a local-library page
+ * (or its reader) first, even above a recovery started over it.
+ */
+internal fun backTransition(state: NavigationState): NavigationState? {
+    val stack = state.stack
+    fun handTo(target: BackTarget) = state.copy(backRequests = state.backRequests.after(target))
+    return when {
+        stack.localExtension != null && state.browseReaderOpen -> handTo(BackTarget.LOCAL_EXTENSION_READER)
+        stack.localExtension != null -> state.copy(stack = stack.pop(PageLayer.LOCAL_EXTENSION))
+        stack.recovering != null -> state.copy(stack = stack.pop(PageLayer.RECOVERING))
+        stack.detail != null -> handTo(BackTarget.DETAIL)
+        stack.more != null -> handTo(BackTarget.MORE)
+        stack.pending != null -> state.copy(stack = stack.pop(PageLayer.PENDING))
+        state.section == MainSection.BROWSE && state.browseBackAvailable -> handTo(BackTarget.BROWSE)
+        else -> null
+    }
 }

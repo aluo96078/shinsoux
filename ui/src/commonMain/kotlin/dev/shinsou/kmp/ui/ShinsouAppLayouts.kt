@@ -44,6 +44,7 @@ import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.MainSection
+import dev.shinsou.kmp.navigation.BackTarget
 import dev.shinsou.kmp.navigation.Destination
 import dev.shinsou.kmp.navigation.NavigationState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -78,16 +79,18 @@ internal fun PhoneShell(
         Box(Modifier.fillMaxSize().padding(padding)) {
             val destination = nav.destination
             LaunchedEffect(
+                nav.section,
                 destination,
                 nav.browseBackAvailable,
-                nav.browseBackRequest,
+                nav.backRequests[BackTarget.BROWSE],
                 nav.detailNestedBackAvailable,
                 nav.moreNestedBackAvailable,
             ) {
                 // A committed gesture has already moved the active surface off-screen. Reset after
                 // its route (or deepest nested route) changes. Browse owns nested publication
                 // routes, so its availability can stay true when a publication closes back to an
-                // active source catalogue; the request key is the route-change signal then.
+                // active source catalogue; the request key is the route-change signal then. (Back
+                // counts never reset, so a change of section is a key of its own.)
                 if (backSwipe.value > 0f) backSwipe.snapTo(0f)
             }
             // The section stays mounted beneath pushed pages: this makes the interactive edge
@@ -347,7 +350,7 @@ private fun AppSectionPane(
         onOpenMore = app::openMore,
         onLibraryTitlesRemoved = app::closeRemovedLibraryTitles,
         browse = BrowseSectionHooks(
-            navigation = BrowseBackNavigation(nav.browseBackRequest, browseBackGestureProgress),
+            navigation = BrowseBackNavigation(nav.backRequests[BackTarget.BROWSE], browseBackGestureProgress),
             onBackAvailabilityChanged = app.navigator::setBrowseBackAvailable,
             onParentDismissed = app.navigator::closeBrowseParentDetail,
             onReaderVisibilityChanged = app.navigator::setBrowseReaderOpen,
@@ -376,7 +379,7 @@ private fun AppDetailPane(
         repository = app.repository,
         appServices = app.appServices,
         wideLayout = wideLayout,
-        systemBackRequest = nav.detailBackRequest,
+        systemBackRequest = nav.backRequests[BackTarget.DETAIL],
         onNestedBackAvailabilityChanged = app.navigator::setDetailNestedBackAvailable,
         selectedChapterIds = selection.chapterIds,
         onSelectionChange = app.selection::selectChapters,
@@ -406,7 +409,7 @@ private fun AppMorePane(
         securityCapabilities = app.appServices.securityCapabilities,
         autoBackupService = app.autoBackupService,
         wideLayout = wideLayout,
-        systemBackRequest = nav.moreBackRequest,
+        systemBackRequest = nav.backRequests[BackTarget.MORE],
         backGestureProgress = backGestureProgress,
         onNestedBackAvailabilityChanged = app.navigator::setMoreNestedBackAvailable,
         downloadsPaused = downloadsPaused,
@@ -450,7 +453,7 @@ private fun LocalExtensionPane(
         ),
         navigation = PublicationPaneNavigation(
             refreshGeneration = item.sourceKey?.let(refreshInvalidations::get) ?: 0L,
-            readerBackRequest = nav.localLibraryReaderBackRequest,
+            readerBackRequest = nav.backRequests[BackTarget.LOCAL_EXTENSION_READER],
             onBack = app.navigator::closeLocalExtension,
             reader = PublicationReaderEvents(
                 onVisibilityChanged = app.navigator::setBrowseReaderOpen,

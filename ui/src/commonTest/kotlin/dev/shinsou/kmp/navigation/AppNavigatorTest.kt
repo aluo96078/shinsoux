@@ -7,6 +7,7 @@ import dev.shinsou.kmp.ui.screens.MoreDestination
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -15,6 +16,8 @@ class AppNavigatorTest {
     private val navigator = AppNavigator(MainSection.LIBRARY, selection)
     private val state get() = navigator.state.value
     private val item = BrowseManga(sourceId = 7L, url = "/title", title = "Title")
+
+    private fun pendingRequest(): Long = assertNotNull(state.stack.pending).request
 
     @Test
     fun startsOnTheGivenSectionWithNothingPushed() {
@@ -68,7 +71,7 @@ class AppNavigatorTest {
     @Test
     fun onlyOnePendingSourceTitleAtATime() {
         assertTrue(navigator.openBrowseManga(item))
-        val request = state.pendingBrowseRequest
+        val request = pendingRequest()
         assertFalse(navigator.openBrowseManga(item.copy(title = "Other")))
         assertEquals(Destination.Pending(item), state.destination)
         assertTrue(navigator.isPendingBrowse(item, request))
@@ -77,7 +80,7 @@ class AppNavigatorTest {
     @Test
     fun aResolvedPendingTitleOpensItsDetailAsTheBrowseCatalogueChild() {
         navigator.openBrowseManga(item)
-        val request = state.pendingBrowseRequest
+        val request = pendingRequest()
         assertTrue(navigator.finishPendingBrowse(item, request, mangaId = 9L))
         assertEquals(Destination.Manga(9L), state.destination)
         assertEquals(9L, state.browseOwnedLegacyMangaId)
@@ -89,7 +92,7 @@ class AppNavigatorTest {
     @Test
     fun aCancelledPendingTitleCannotNavigateLater() {
         navigator.openBrowseManga(item)
-        val request = state.pendingBrowseRequest
+        val request = pendingRequest()
         assertTrue(navigator.back())
         assertFalse(navigator.finishPendingBrowse(item, request, mangaId = 9L))
         assertNull(state.selectedMangaId)
@@ -99,7 +102,7 @@ class AppNavigatorTest {
     fun aTitleStillResolvingWhenTheTabChangesDoesNotOpenOverTheNewTab() {
         navigator.selectSection(MainSection.BROWSE)
         navigator.openBrowseManga(item)
-        val request = state.pendingBrowseRequest
+        val request = pendingRequest()
         navigator.selectSection(MainSection.HISTORY)
         assertNull(state.pendingBrowseManga)
         assertEquals(MainSection.HISTORY, state.section)
@@ -113,7 +116,7 @@ class AppNavigatorTest {
     @Test
     fun aTitleStillResolvingDoesNotOpenOverTheSettingsLink() {
         navigator.openBrowseManga(item)
-        val request = state.pendingBrowseRequest
+        val request = pendingRequest()
         navigator.openSettings()
         assertFalse(navigator.finishPendingBrowse(item, request, mangaId = 7L))
         assertEquals(Destination.More(MoreDestination.Settings), state.destination)
@@ -128,7 +131,7 @@ class AppNavigatorTest {
             { navigator.onReaderOpened(5L) },
         ).forEach { openLinkedPage ->
             navigator.openBrowseManga(item)
-            val request = state.pendingBrowseRequest
+            val request = pendingRequest()
             openLinkedPage()
             val linked = state
             assertNull(linked.pendingBrowseManga)
@@ -160,11 +163,11 @@ class AppNavigatorTest {
     fun backGoesThroughTheNestedPagesInOrder() {
         navigator.openMore(MoreDestination.Settings)
         assertTrue(navigator.back())
-        assertEquals(1L, state.moreBackRequest)
+        assertEquals(1L, state.backRequests[BackTarget.MORE])
         navigator.setMoreDestination(null)
         navigator.openMangaDetail(5L, favorite = null)
         assertTrue(navigator.back())
-        assertEquals(1L, state.detailBackRequest)
+        assertEquals(1L, state.backRequests[BackTarget.DETAIL])
         navigator.closeDetail()
         selection.selectLibraryTitles(setOf(1L, 2L))
         assertTrue(navigator.back())
@@ -177,7 +180,7 @@ class AppNavigatorTest {
         navigator.openLocalExtension(item, MainSection.LIBRARY)
         navigator.setBrowseReaderOpen(true)
         assertTrue(navigator.back())
-        assertEquals(1L, state.localLibraryReaderBackRequest)
+        assertEquals(1L, state.backRequests[BackTarget.LOCAL_EXTENSION_READER])
         assertEquals(item, state.localLibraryPublication)
         navigator.setBrowseReaderOpen(false)
         assertTrue(navigator.back())
@@ -242,10 +245,15 @@ class AppNavigatorTest {
     @Test
     fun openingTheReaderSelectsItsTitleWithoutAPendingBack() {
         navigator.openMangaDetail(2L, favorite = null)
+        navigator.setDetailNestedBackAvailable(true)
         navigator.back()
+        // The Back went to title 2's page; the reader's page only sees Back pressed after it opened.
+        val delivered = state.backRequests
         navigator.onReaderOpened(6L)
         assertEquals(6L, state.selectedMangaId)
-        assertEquals(0L, state.detailBackRequest)
+        assertEquals(delivered, state.backRequests)
+        assertEquals(PageEntry.Detail(6L), state.stack.detail)
+        assertFalse(state.detailNestedBackAvailable)
     }
 
     @Test

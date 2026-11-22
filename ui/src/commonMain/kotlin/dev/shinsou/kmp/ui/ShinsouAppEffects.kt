@@ -65,9 +65,10 @@ internal fun ReaderAndTitleEffects(
         if (lifecycle != AppLifecycleState.FOREGROUND || typed == null) return@LaunchedEffect
         app.reader.recheckRights(typed)
     }
-    LaunchedEffect(nav.pendingBrowseManga, nav.pendingBrowseRequest, app.appServices.browse) {
-        val item = nav.pendingBrowseManga ?: return@LaunchedEffect
-        val request = nav.pendingBrowseRequest
+    val pending = nav.stack.pending
+    LaunchedEffect(pending, app.appServices.browse) {
+        val item = pending?.item ?: return@LaunchedEffect
+        val request = pending.request
         // The pending page has entered composition. Waiting for the next frame draws its cover and
         // progress before plugin start-up begins.
         withFrameNanos { }
