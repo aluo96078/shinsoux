@@ -7,7 +7,7 @@ import android.util.Base64
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.isSensitivePluginKey
+import dev.shinsou.kmp.plugin.storage.isSensitivePluginKey
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator

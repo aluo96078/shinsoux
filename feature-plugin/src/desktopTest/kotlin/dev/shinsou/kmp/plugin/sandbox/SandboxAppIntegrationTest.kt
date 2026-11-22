@@ -1,34 +1,34 @@
 package dev.shinsou.kmp.plugin.sandbox
 
-import dev.shinsou.kmp.plugin.ExecutionTierResolver
-import dev.shinsou.kmp.plugin.ExtensionRepository
-import dev.shinsou.kmp.plugin.ExtensionRepositoryClient
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
-import dev.shinsou.kmp.plugin.InMemoryPluginPackageStore
-import dev.shinsou.kmp.plugin.KeyValuePluginStorage
-import dev.shinsou.kmp.plugin.KeyValuePluginTrustStore
-import dev.shinsou.kmp.plugin.KeyValueRepositorySecurityStateStore
-import dev.shinsou.kmp.plugin.LocalPluginBlocklist
-import dev.shinsou.kmp.plugin.PluginBlockEntry
-import dev.shinsou.kmp.plugin.PluginHostResolver
-import dev.shinsou.kmp.plugin.PluginHttpRequest
-import dev.shinsou.kmp.plugin.PluginHttpResponse
-import dev.shinsou.kmp.plugin.PluginHttpTransport
-import dev.shinsou.kmp.plugin.PluginIndexEntry
-import dev.shinsou.kmp.plugin.PluginManager
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
-import dev.shinsou.kmp.plugin.PluginVerifier
-import dev.shinsou.kmp.plugin.PublisherExecutionTierGate
-import dev.shinsou.kmp.plugin.PublisherRevocationStore
-import dev.shinsou.kmp.plugin.PublisherTrustStore
-import dev.shinsou.kmp.plugin.RepositoryTrustPolicies
-import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
-import dev.shinsou.kmp.plugin.SourceIndexEntry
-import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.approveCurrentEventGrantReview
-import dev.shinsou.kmp.plugin.publisherRoot
-import dev.shinsou.kmp.plugin.signedRevocations
+import dev.shinsou.kmp.plugin.trust.ExecutionTierResolver
+import dev.shinsou.kmp.plugin.model.ExtensionRepository
+import dev.shinsou.kmp.plugin.repository.ExtensionRepositoryClient
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginPackageStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginTrustStore
+import dev.shinsou.kmp.plugin.trust.KeyValueRepositorySecurityStateStore
+import dev.shinsou.kmp.plugin.trust.LocalPluginBlocklist
+import dev.shinsou.kmp.plugin.trust.PluginBlockEntry
+import dev.shinsou.kmp.plugin.network.PluginHostResolver
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.PluginHttpResponse
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.model.PluginIndexEntry
+import dev.shinsou.kmp.plugin.manager.PluginManager
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.trust.PluginVerifier
+import dev.shinsou.kmp.plugin.trust.PublisherExecutionTierGate
+import dev.shinsou.kmp.plugin.trust.PublisherRevocationStore
+import dev.shinsou.kmp.plugin.trust.PublisherTrustStore
+import dev.shinsou.kmp.plugin.trust.RepositoryTrustPolicies
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.trust.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.manager.approveCurrentEventGrantReview
+import dev.shinsou.kmp.plugin.trust.publisherRoot
+import dev.shinsou.kmp.plugin.trust.signedRevocations
 import dev.shinsou.kmp.plugin.events.KeyValuePluginEventGrantAdmission
 import dev.shinsou.kmp.plugin.events.MutablePluginSystemEventAuthorizer
 import dev.shinsou.kmp.crypto.SodiumPrimitives
@@ -43,6 +43,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.plugin.network.PluginHostResolution
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime
 
 /**
  * The app's composition end to end on this desktop: a trusted publisher's package, approved by the
@@ -80,7 +82,7 @@ class SandboxAppIntegrationTest {
         val requests = ArrayList<String>()
         val sites = object : PluginHttpTransport {
             override suspend fun execute(request: PluginHttpRequest) = respond(request)
-            override suspend fun executeResolved(request: PluginHttpRequest, resolution: dev.shinsou.kmp.plugin.PluginHostResolution) = respond(request)
+            override suspend fun executeResolved(request: PluginHttpRequest, resolution: dev.shinsou.kmp.plugin.network.PluginHostResolution) = respond(request)
             private fun respond(request: PluginHttpRequest): PluginHttpResponse {
                 synchronized(requests) { requests += request.url }
                 return PluginHttpResponse(200, "<ul><li><a href='/m/1'>沙箱一</a><li><a href='/m/2'>Two</a></ul>".encodeToByteArray())
@@ -120,9 +122,9 @@ class SandboxAppIntegrationTest {
             val sourceId = installed.manifest.sources!!.single().id
             manager.approveCurrentEventGrantReview(installed.manifest.id, emptySet())
             val page = manager.source(sourceId)!!.getPopularManga(1)
-            println("integration: requests=$requests logs=${(manager.source(sourceId) as dev.shinsou.kmp.plugin.ScriptPluginRuntime).recentLogs}")
+            println("integration: requests=$requests logs=${(manager.source(sourceId) as dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime).recentLogs}")
             assertEquals(listOf("沙箱一", "Two"), page.mangas.map { it.title })
-            assertTrue(manager.source(sourceId) is dev.shinsou.kmp.plugin.ScriptPluginRuntime)
+            assertTrue(manager.source(sourceId) is dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime)
             println("integration: ${page.mangas.size} titles from the confined helper")
 
             blocklist.block(PluginBlockEntry.Publisher(publisher))

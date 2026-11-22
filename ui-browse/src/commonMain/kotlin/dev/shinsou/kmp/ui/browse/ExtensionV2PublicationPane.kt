@@ -80,11 +80,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.ContentAcquisition
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
-import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.ContentAcquisition
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.ExtensionPublicationCatalog
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.ui.browse.ExtensionFavoriteDestination
 import dev.shinsou.kmp.ui.i18n.StringKey

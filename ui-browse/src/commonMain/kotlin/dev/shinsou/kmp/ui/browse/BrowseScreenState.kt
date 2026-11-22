@@ -8,8 +8,8 @@ import androidx.compose.runtime.setValue
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingLocator
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter

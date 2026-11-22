@@ -4,9 +4,9 @@ import android.content.Context
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
-import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
-import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
-import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.browser.AndroidBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.browser.AndroidPluginBrowserSessionTransport
+import dev.shinsou.kmp.plugin.trust.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.androidSandboxRuntimeFactory
 import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine

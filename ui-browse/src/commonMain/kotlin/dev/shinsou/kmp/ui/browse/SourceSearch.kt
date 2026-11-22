@@ -3,11 +3,11 @@ package dev.shinsou.kmp.ui.browse
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.items
-import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowsePage
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.ExtensionPublicationCatalog
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowsePage
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import kotlinx.coroutines.CancellationException

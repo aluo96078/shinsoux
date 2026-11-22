@@ -14,11 +14,11 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.domain.model.extensionUnitKey
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.ContentAcquisition
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
-import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
-import dev.shinsou.kmp.plugin.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.ContentAcquisition
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.ExtensionPublicationCatalog
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2

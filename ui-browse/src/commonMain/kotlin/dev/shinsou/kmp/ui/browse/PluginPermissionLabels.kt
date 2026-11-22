@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.browse
 
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey

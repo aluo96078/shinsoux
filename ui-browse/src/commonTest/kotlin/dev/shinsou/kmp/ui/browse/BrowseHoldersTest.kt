@@ -3,16 +3,16 @@
 package dev.shinsou.kmp.ui.browse
 
 import dev.shinsou.kmp.plugin.PluginTestAccess
-import dev.shinsou.kmp.plugin.SourceWebChallengeCapability
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowsePage
-import dev.shinsou.kmp.plugin.BrowseSource
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
-import dev.shinsou.kmp.plugin.InstalledPluginPermissions
-import dev.shinsou.kmp.plugin.PluginPermissionDetails
-import dev.shinsou.kmp.plugin.UpdatePermissionPreview
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeCapability
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowsePage
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.InstalledPluginPermissions
+import dev.shinsou.kmp.plugin.contracts.PluginPermissionDetails
+import dev.shinsou.kmp.plugin.contracts.UpdatePermissionPreview
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.ui.challenge.WebChallengeCapture

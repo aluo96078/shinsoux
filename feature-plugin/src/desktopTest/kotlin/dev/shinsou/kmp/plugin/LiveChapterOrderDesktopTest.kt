@@ -11,6 +11,20 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlin.test.Test
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.network.PluginHostResolver
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.network.createPlatformPinnedPluginHttpTransport
+import dev.shinsou.kmp.plugin.network.createPlatformPluginHostResolver
+import dev.shinsou.kmp.plugin.runtime.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.storage.PluginJson
 
 /**
  * Opt-in live check of the chapter-order contract: a source's chapter list is newest first

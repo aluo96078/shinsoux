@@ -56,10 +56,10 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseRepository
-import dev.shinsou.kmp.plugin.BrowseRepositorySuggestion
-import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseRepository
+import dev.shinsou.kmp.plugin.contracts.BrowseRepositorySuggestion
+import dev.shinsou.kmp.plugin.model.PluginContentType
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings

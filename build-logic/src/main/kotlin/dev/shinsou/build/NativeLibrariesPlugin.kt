@@ -169,7 +169,7 @@ private fun Project.sandboxCoreSources() = CmakeSources(
     root = rootProject.file("sandbox-core"),
     directories = listOf("src", "scripts", "test"),
     // Embedded into the driver by the CMake build (ssc_bootstrap_js.c).
-    extra = listOf(rootProject.file("feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt")),
+    extra = listOf(rootProject.file("feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/runtime/IosJavaScriptBootstrap.kt")),
 )
 
 private fun Project.translationCoreSources() = CmakeSources(
@@ -370,7 +370,7 @@ private fun Project.registerIosSandboxLibraries() {
         dependsOn("fetchSandboxCoreDeps")
         inputs.dir(sandboxCore.dir("src"))
         inputs.dir(sandboxCore.dir("wasm"))
-        inputs.file(layout.projectDirectory.file("src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt"))
+        inputs.file(layout.projectDirectory.file("src/iosMain/kotlin/dev/shinsou/kmp/plugin/runtime/IosJavaScriptBootstrap.kt"))
         outputs.file(guest)
         commandLine(
             "sh",

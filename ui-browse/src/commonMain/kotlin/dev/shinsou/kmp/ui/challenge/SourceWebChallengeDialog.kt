@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey

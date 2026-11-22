@@ -44,7 +44,7 @@ done
 compile -w -c "$L/lexbor/ports/posix/lexbor/core/memory.c"
 for f in ssc_frames ssc_core ssc_dom_js sbx_dom ssc_driver; do compile -Wall -Wextra -c "$CORE/src/$f.c"; done
 python3 -I "$CORE/scripts/embed-bootstrap.py" \
-  "$CORE/../feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt" "$OUT/ssc_bootstrap_js.c"
+  "$CORE/../feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/runtime/IosJavaScriptBootstrap.kt" "$OUT/ssc_bootstrap_js.c"
 compile -c "$OUT/ssc_bootstrap_js.c"
 compile -Wall -Wextra -c "$HERE/ssc_wasm_guest.c"
 clang --target=wasm32-wasip1 --sysroot=$SYS -O2 -mexec-model=reactor -fuse-ld=lld \

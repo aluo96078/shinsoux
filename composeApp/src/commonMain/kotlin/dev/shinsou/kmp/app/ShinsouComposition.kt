@@ -30,12 +30,12 @@ import dev.shinsou.kmp.files.KeyValueStore
 import dev.shinsou.kmp.local.LocalContentManager
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.manga.asMangaTranslator
-import dev.shinsou.kmp.plugin.PlatformPluginNetworkCapability
-import dev.shinsou.kmp.plugin.PluginBrowseAdapter
-import dev.shinsou.kmp.plugin.PluginBrowserSessionTransport
+import dev.shinsou.kmp.plugin.network.PlatformPluginNetworkCapability
+import dev.shinsou.kmp.plugin.browse.PluginBrowseAdapter
+import dev.shinsou.kmp.plugin.browser.PluginBrowserSessionTransport
 import dev.shinsou.kmp.plugin.PluginSubsystem
-import dev.shinsou.kmp.plugin.PluginUserAgentProvider
-import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.network.PluginUserAgentProvider
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.v2.ExtensionSyncedReadingV2
 import dev.shinsou.kmp.sync.v3.SyncDeviceInfo
 import dev.shinsou.kmp.sync.v3.SyncSourceInfo
@@ -93,7 +93,7 @@ public class ShinsouComposition(
     pluginBrowserSessionTransport: PluginBrowserSessionTransport =
         PluginBrowserSessionTransport.Unavailable,
     platformBrowserUserAgentProvider: PluginUserAgentProvider =
-        dev.shinsou.kmp.plugin.StickyPluginUserAgentProvider(),
+        dev.shinsou.kmp.plugin.network.StickyPluginUserAgentProvider(),
     private val syncDeviceInfo: SyncDeviceInfo = SyncDeviceInfo("This device", "desktop", ""),
     /** The platform's offline translation engine and model directory (ADR-0004); null disables translation. */
     private val offlineTranslation: OfflineTranslationPlatform? = null,

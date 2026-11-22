@@ -58,9 +58,9 @@ import androidx.compose.ui.zIndex
 import dev.aluo.shinsoux.generated.resources.Res
 import dev.aluo.shinsoux.generated.resources.shinsou_icon
 import dev.shinsou.kmp.backup.AutoBackupService
-import dev.shinsou.kmp.plugin.ContentAcquisition
+import dev.shinsou.kmp.plugin.contracts.ContentAcquisition
 import dev.shinsou.kmp.contract.ContentCallbacks
-import dev.shinsou.kmp.plugin.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.DownloadQueueItem

@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.ui.browse
 
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.BrowseSource
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseSnapshot
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
 import dev.shinsou.kmp.ui.core.PluginImageLoader
 import dev.shinsou.kmp.ui.core.PluginImageRequest
 import kotlinx.coroutines.flow.MutableStateFlow

@@ -8,7 +8,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest
-import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

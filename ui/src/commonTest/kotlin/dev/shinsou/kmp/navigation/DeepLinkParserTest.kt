@@ -44,7 +44,7 @@ class DeepLinkParserTest {
         val link = DeepLinkParser.parse("shinsou://add-repository?url=https%3A%2F%2Frepo.example%2Fx&fp=$hex")
         val parsed = link as ShinsouDeepLink.AddRepository
         assertEquals("https://repo.example/x", parsed.repositoryUrl)
-        assertEquals(dev.shinsou.kmp.plugin.PublisherFingerprint.parse(hex), parsed.fingerprint)
+        assertEquals(dev.shinsou.kmp.plugin.trust.PublisherFingerprint.parse(hex), parsed.fingerprint)
         assertEquals(
             ShinsouDeepLink.AddRepository("https://repo.example/x", null),
             DeepLinkParser.parse("shinsou://add-repository?url=https://repo.example/x"),

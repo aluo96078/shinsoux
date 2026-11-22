@@ -10,7 +10,7 @@ import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
 import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
-import dev.shinsou.kmp.plugin.BrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseCallbacks
 import dev.shinsou.kmp.ui.settings.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.ImportedDocument

@@ -1,8 +1,8 @@
 package dev.shinsou.kmp.ui.browse
 
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseSnapshot
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
 import dev.shinsou.kmp.ui.core.PluginImageSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged

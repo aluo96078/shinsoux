@@ -98,7 +98,7 @@ class ServiceInterfaceSizeTest {
         val UMBRELLAS = setOf("ShinsouAppServices", "BrowseCallbacks", "SyncClient", "MangaTranslationService")
         val DECLARING_FILES = setOf(
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/AppServices.kt",
-            "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/BrowseContracts.kt",
+            "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/contracts/BrowseContracts.kt",
             "feature-sync/src/commonMain/kotlin/dev/shinsou/kmp/sync/v3/SyncClient.kt",
             "feature-translation/src/commonMain/kotlin/dev/shinsou/kmp/manga/MangaTranslationService.kt",
         )
@@ -109,7 +109,7 @@ class ServiceInterfaceSizeTest {
             "composeApp/src/commonMain/kotlin/dev/shinsou/kmp/app/App.kt",
             "composeApp/src/desktopMain/kotlin/dev/shinsou/kmp/desktop/DesktopAppServices.kt",
             "composeApp/src/iosMain/kotlin/dev/shinsou/kmp/IosAppServices.kt",
-            "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/PluginUiAdapter.kt",
+            "feature-plugin/src/commonMain/kotlin/dev/shinsou/kmp/plugin/browse/PluginUiAdapter.kt",
             "feature-sync/src/commonMain/kotlin/dev/shinsou/kmp/sync/v3/SyncV3Service.kt",
             "feature-translation/src/commonMain/kotlin/dev/shinsou/kmp/manga/MangaTranslation.kt",
             "ui-translation/src/commonMain/kotlin/dev/shinsou/kmp/ui/translation/LocalMangaTranslation.kt",

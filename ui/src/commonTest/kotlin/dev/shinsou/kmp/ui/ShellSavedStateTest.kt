@@ -12,7 +12,7 @@ import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.navigation.NavigationState
 import dev.shinsou.kmp.navigation.PageEntry
 import dev.shinsou.kmp.navigation.PageStack
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.library.ALL_LIBRARY_CATEGORY_ID
 import dev.shinsou.kmp.ui.settings.MoreDestination

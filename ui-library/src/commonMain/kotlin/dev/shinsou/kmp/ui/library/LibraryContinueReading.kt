@@ -16,8 +16,8 @@ import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
-import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.ExtensionPublicationCatalog
 import dev.shinsou.kmp.sync.v3.SyncWorks
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings

@@ -7,7 +7,7 @@ import dev.shinsou.interop.sandbox.ssc_wasm_session_free
 import dev.shinsou.interop.sandbox.ssc_wasm_session_open
 import dev.shinsou.interop.sandbox.ssc_wasm_session_receive
 import dev.shinsou.interop.sandbox.ssc_wasm_session_send
-import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
 import kotlin.concurrent.AtomicInt
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer

@@ -8,21 +8,23 @@ import dev.shinsou.kmp.domain.content.ImageLayout
 import dev.shinsou.kmp.domain.content.ImageProgression
 import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.CatalogueSource
-import dev.shinsou.kmp.plugin.ConfigurableSource
-import dev.shinsou.kmp.plugin.FilterList
-import dev.shinsou.kmp.plugin.LoginSource
-import dev.shinsou.kmp.plugin.LoginAttemptResult
-import dev.shinsou.kmp.plugin.MangaStatus
-import dev.shinsou.kmp.plugin.PageRequestMetadata
-import dev.shinsou.kmp.plugin.SChapter
-import dev.shinsou.kmp.plugin.SManga
-import dev.shinsou.kmp.plugin.SourcePreference
-import dev.shinsou.kmp.plugin.TextChapterSource
-import dev.shinsou.kmp.plugin.toBrowseFilterV2
-import dev.shinsou.kmp.plugin.toPluginFilter
-import dev.shinsou.kmp.plugin.resolveSourceHttpUrl
+import dev.shinsou.kmp.plugin.contracts.CatalogueSource
+import dev.shinsou.kmp.plugin.contracts.ConfigurableSource
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.LoginSource
+import dev.shinsou.kmp.plugin.contracts.LoginAttemptResult
+import dev.shinsou.kmp.plugin.contracts.MangaStatus
+import dev.shinsou.kmp.plugin.contracts.PageRequestMetadata
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.contracts.SourcePreference
+import dev.shinsou.kmp.plugin.contracts.TextChapterSource
+import dev.shinsou.kmp.plugin.contracts.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.contracts.toPluginFilter
+import dev.shinsou.kmp.plugin.browse.resolveSourceHttpUrl
 import dev.shinsou.kmp.domain.model.ReaderImageTransform
+import dev.shinsou.kmp.plugin.browse.DEFAULT_FAVORITE_BROWSE_OPTION_KEY
+import dev.shinsou.kmp.plugin.contracts.MangasPage
 
 /** Resolves host-owned secret references without exposing a secret store to a v1 plugin. */
 public fun interface LegacyLoginCredentialsResolverV2 {
@@ -309,7 +311,7 @@ internal class LegacyMangaExtensionSourceV2(
         }
     }
 
-    private fun dev.shinsou.kmp.plugin.MangasPage.toV2Page(): PagedResultV2<RemotePublicationV2> {
+    private fun dev.shinsou.kmp.plugin.contracts.MangasPage.toV2Page(): PagedResultV2<RemotePublicationV2> {
         val bounded = mangas.take(LEGACY_PAGE_SIZE)
         return PagedResultV2(
             items = bounded.map { it.toRemotePublicationV2() },
@@ -435,5 +437,5 @@ private val LEGACY_SAFE_HEADER_HINTS: Set<String> = setOf(
     "x-image-ticket",
 )
 /** The browse option that opens a source's account collection; the UI sends this key and value. */
-private const val FAVORITE_BROWSE_OPTION_KEY: String = dev.shinsou.kmp.plugin.DEFAULT_FAVORITE_BROWSE_OPTION_KEY
+private const val FAVORITE_BROWSE_OPTION_KEY: String = dev.shinsou.kmp.plugin.browse.DEFAULT_FAVORITE_BROWSE_OPTION_KEY
 private const val FAVORITE_BROWSE_OPTION_VALUE: String = "bookcase"

@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.translation
 
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond

@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.reader
 
 import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
-import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
+import dev.shinsou.kmp.plugin.network.ungrantedContentHostSuffix
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures

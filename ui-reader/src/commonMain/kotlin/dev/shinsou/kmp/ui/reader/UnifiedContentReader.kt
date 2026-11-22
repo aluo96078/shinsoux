@@ -2,7 +2,7 @@ package dev.shinsou.kmp.ui.reader
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.ui.components.ShinsouLoadingIndicator
-import dev.shinsou.kmp.plugin.ungrantedContentHostSuffix
+import dev.shinsou.kmp.plugin.network.ungrantedContentHostSuffix
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy

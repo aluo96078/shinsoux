@@ -2,7 +2,7 @@ package dev.shinsou.kmp.plugin.sandbox
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context

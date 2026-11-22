@@ -6,7 +6,7 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.encodeTypedLocalPublicationUrl
-import dev.shinsou.kmp.plugin.PluginContentType
+import dev.shinsou.kmp.plugin.model.PluginContentType
 import dev.shinsou.kmp.domain.model.encodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.ExtensionLibraryBindingV2
 import dev.shinsou.kmp.domain.model.extensionPublicationKey

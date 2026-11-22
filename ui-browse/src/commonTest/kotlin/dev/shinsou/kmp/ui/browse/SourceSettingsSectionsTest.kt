@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.browse
 
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.contract.SourceCredential
 import kotlin.test.Test
 import kotlin.test.assertFalse

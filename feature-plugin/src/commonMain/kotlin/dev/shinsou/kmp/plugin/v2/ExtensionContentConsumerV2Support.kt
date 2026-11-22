@@ -11,12 +11,13 @@ import dev.shinsou.kmp.domain.model.EXTENSION_CONTENT_NAMESPACE
 import dev.shinsou.kmp.domain.model.Rfc9562UuidV5
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.domain.model.framedIdentity
-import dev.shinsou.kmp.plugin.PluginHttpRequest
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PLUGIN_NETWORK_MAX_RESPONSE_BYTES
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.network.PLUGIN_NETWORK_MAX_RESPONSE_BYTES
 import okio.Buffer
 import okio.HashingSink
 import okio.blackholeSink
+import dev.shinsou.kmp.plugin.network.TypedReaderRemoteAssetScope
 
 // R4-4 (docs/architecture/0006): moved out of ExtensionContentConsumerV2.kt without changing it.
 
@@ -25,7 +26,7 @@ import okio.blackholeSink
  * resolver; an opaque SourceKey is never hashed or narrowed into a Long.
  */
 internal class PluginNetworkExtensionResourceFetcherV2(
-    private val contentScope: suspend (SourceKey) -> dev.shinsou.kmp.plugin.TypedReaderRemoteAssetScope?,
+    private val contentScope: suspend (SourceKey) -> dev.shinsou.kmp.plugin.network.TypedReaderRemoteAssetScope?,
 ) : ExtensionResourceFetcherV2 {
     /** Compatibility constructor. Its unscoped client is no longer accepted for production. */
     @Deprecated("Pass an exact SourceKey content-scope resolver")

@@ -25,12 +25,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.plugin.events.PluginHostPermission
-import dev.shinsou.kmp.plugin.PluginPermissionDetails
-import dev.shinsou.kmp.plugin.PublisherTrustState
+import dev.shinsou.kmp.plugin.contracts.PluginPermissionDetails
+import dev.shinsou.kmp.plugin.contracts.PublisherTrustState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey

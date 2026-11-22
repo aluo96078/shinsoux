@@ -20,6 +20,42 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.plugin.browse.RepositoryPluginCoordinator
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.MangasPage
+import dev.shinsou.kmp.plugin.contracts.Page
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.manager.PluginExecutionAdmissionMode
+import dev.shinsou.kmp.plugin.manager.PluginManager
+import dev.shinsou.kmp.plugin.model.ExtensionRepository
+import dev.shinsou.kmp.plugin.model.PluginIndexEntry
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.network.ConfiguredPluginProxyResolver
+import dev.shinsou.kmp.plugin.network.PerHostRequestGate
+import dev.shinsou.kmp.plugin.network.PluginHostResolution
+import dev.shinsou.kmp.plugin.network.PluginHostResolver
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.PluginHttpResponse
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.network.PluginNetworkConfiguration
+import dev.shinsou.kmp.plugin.network.PluginRateLimit
+import dev.shinsou.kmp.plugin.network.PluginRateLimitProvider
+import dev.shinsou.kmp.plugin.network.PluginRequestBuilder
+import dev.shinsou.kmp.plugin.network.PluginUserAgentProvider
+import dev.shinsou.kmp.plugin.repository.ExtensionRepositoryClient
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginPackageStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginTrustStore
+import dev.shinsou.kmp.plugin.trust.PluginVerifier
+import dev.shinsou.kmp.plugin.trust.RepositoryTrustPolicies
 
 class RepositoryPluginCoordinatorTest {
     @Test

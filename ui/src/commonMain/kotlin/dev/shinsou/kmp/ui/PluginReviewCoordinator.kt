@@ -1,15 +1,15 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.ExtensionManagement
-import dev.shinsou.kmp.plugin.ExtensionTrust
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.PluginPermissionDetails
-import dev.shinsou.kmp.plugin.RepositoryTrustPrompt
+import dev.shinsou.kmp.plugin.contracts.ExtensionManagement
+import dev.shinsou.kmp.plugin.contracts.ExtensionTrust
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.PluginPermissionDetails
+import dev.shinsou.kmp.plugin.contracts.RepositoryTrustPrompt
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.PluginDeveloperModeState
-import dev.shinsou.kmp.plugin.admits
+import dev.shinsou.kmp.plugin.trust.PluginDeveloperModeState
+import dev.shinsou.kmp.plugin.trust.admits
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.ui.i18n.StringKey

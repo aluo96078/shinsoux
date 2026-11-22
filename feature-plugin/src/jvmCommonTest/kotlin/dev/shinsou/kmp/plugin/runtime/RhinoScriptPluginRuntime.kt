@@ -1,0 +1,1637 @@
+package dev.shinsou.kmp.plugin.runtime
+
+import io.ktor.http.Url
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import dev.shinsou.kmp.plugin.events.PluginEventDisposition
+import dev.shinsou.kmp.plugin.events.PluginEventReceipt
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
+import org.mozilla.javascript.Context
+import org.mozilla.javascript.ClassShutter
+import org.mozilla.javascript.ContextFactory
+import org.mozilla.javascript.BaseFunction
+import org.mozilla.javascript.Function
+import org.mozilla.javascript.NativeArray
+import org.mozilla.javascript.NativeJavaObject
+import org.mozilla.javascript.Scriptable
+import org.mozilla.javascript.ScriptableObject
+import org.mozilla.javascript.Undefined
+import org.mozilla.javascript.Wrapper
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.IdentityHashMap
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Clock
+import dev.shinsou.kmp.plugin.browse.header
+import dev.shinsou.kmp.plugin.browser.executeWithNetworkPolicy
+import dev.shinsou.kmp.plugin.browser.preparePluginBrowserSessionRequest
+import dev.shinsou.kmp.plugin.contracts.Filter
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.LoginAttemptResult
+import dev.shinsou.kmp.plugin.contracts.MangaStatus
+import dev.shinsou.kmp.plugin.contracts.MangasPage
+import dev.shinsou.kmp.plugin.contracts.Page
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.contracts.SortSelection
+import dev.shinsou.kmp.plugin.contracts.SourcePreference
+import dev.shinsou.kmp.plugin.contracts.TriStateValue
+import dev.shinsou.kmp.plugin.model.PluginExecutionLimits
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.model.PluginResourceLimitException
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.model.boundedPluginLogMessage
+import dev.shinsou.kmp.plugin.model.pluginUtf8ByteCountAtMost
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.encodeBoundedPluginBatchResponseBodies
+import dev.shinsou.kmp.plugin.storage.PluginCookie
+import dev.shinsou.kmp.plugin.storage.PluginCredential
+import dev.shinsou.kmp.plugin.storage.PluginJson
+
+/** Rhino is used instead of WebView so native HTTP bridge calls remain synchronous. */
+public class RhinoScriptPluginRuntimeFactory private constructor(
+    private val allowUnsandboxedScriptsForTests: Boolean,
+) : ScriptPluginRuntimeFactory {
+    public constructor() : this(false)
+
+    internal companion object {
+        /** Tests only: production callers must establish exact host-reviewed provenance. */
+        fun unsafeForTests(): RhinoScriptPluginRuntimeFactory =
+            RhinoScriptPluginRuntimeFactory(allowUnsandboxedScriptsForTests = true)
+    }
+
+    override suspend fun create(
+        script: String,
+        manifest: PluginManifest,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val source = manifest.requireLegacyExecutableSource()
+        val effectiveEnvironment = requireSafeInProcessProvenance(script, manifest, source, environment)
+        return RhinoScriptPluginRuntime.create(script, manifest, source, effectiveEnvironment)
+    }
+
+    override suspend fun createForSource(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginRuntime {
+        environment.requireRuntimePermission(PluginRuntimePermission.EXECUTE_SCRIPT)
+        val declaredSource = manifest.requireDeclaredExecutableSource(source)
+        val effectiveEnvironment = requireSafeInProcessProvenance(
+            script,
+            manifest,
+            declaredSource,
+            environment,
+        )
+        return RhinoScriptPluginRuntime.create(script, manifest, declaredSource, effectiveEnvironment)
+    }
+
+    private fun requireSafeInProcessProvenance(
+        script: String,
+        manifest: PluginManifest,
+        source: SourceIndexEntry?,
+        environment: ScriptPluginEnvironment,
+    ): ScriptPluginEnvironment {
+        if (allowUnsandboxedScriptsForTests) return environment
+        throw ScriptRuntimeUnavailableException(
+            "Plugin '${manifest.id}' cannot run in-process on Rhino: the JVM provides no " +
+                "per-runtime heap isolation. Packages run in the sandbox.",
+        )
+    }
+}
+
+private class RhinoScriptPluginRuntime private constructor(
+    override val pluginId: String,
+    private val manifest: PluginManifest,
+    private val selectedSource: SourceIndexEntry?,
+    private val environment: ScriptPluginEnvironment,
+    private val dispatcher: ExecutorCoroutineDispatcher,
+) : ScriptPluginRuntime {
+    private val contextFactory = SandboxedRhinoContextFactory(environment.executionLimits)
+    private lateinit var scope: Scriptable
+    private lateinit var sourceObject: Scriptable
+    private lateinit var bridge: RhinoPluginBridge
+    private val logs = CopyOnWriteArrayList<String>()
+    @Volatile
+    private var poisonedBy: PluginResourceLimitException? = null
+    @Volatile
+    private var activeInvocationJob: Job? = null
+
+    override var id: Long = selectedSource?.id ?: stableSourceId(manifest.id)
+        private set
+    override val canonicalSourceId: String
+        get() = selectedSource?.canonicalSourceId ?: id.toString()
+    override var name: String = selectedSource?.name ?: manifest.name
+        private set
+    override var lang: String = selectedSource?.lang ?: manifest.lang
+        private set
+    override var baseUrl: String = selectedSource?.baseUrl.orEmpty()
+        private set
+    override var supportsLatest: Boolean = false
+        private set
+    override var supportsLogin: Boolean = false
+        private set
+    override var supportsFavorites: Boolean = false
+        private set
+    override var headers: Map<String, String> = emptyMap()
+        private set
+    override var webChallengeUrl: String? = null
+    override var browserSessionOrigins: Set<String> = emptySet()
+        private set
+    override var webChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
+    override var requiredWebChallengeLocalStorageKeys: Set<String> = emptySet()
+        private set
+    override val recentLogs: List<String> get() = logs.toList()
+
+    private suspend fun initialize(script: String) = onEngine(initialization = true) { context ->
+        // Do not expose Rhino's Java/package gateways through the default standard-object
+        // bootstrap.  The bridge is the only host surface; ClassShutter remains a second
+        // defense for reflective access once the bridge is installed.
+        scope = context.initSafeStandardObjects()
+        bridge = RhinoPluginBridge(
+            pluginId = manifest.id,
+            sourceId = id,
+            sourceName = name,
+            sourceOrigin = selectedSource?.baseUrl.orEmpty(),
+            browserSessionOrigins = selectedSource?.browserSessionOrigins.orEmpty(),
+            environment = environment,
+            scopeProvider = { scope },
+            logs = logs,
+        )
+        // Do not pass the Kotlin bridge through Rhino's Java reflection adapter.  Besides
+        // making every public method visible, that adapter makes `getClass()` a reflection
+        // escape hatch even when the class shutter denies all Java packages.  The script gets a
+        // native Scriptable facade whose methods are bound directly to the host object.
+        ScriptableObject.putProperty(scope, "bridge", RhinoBridgeScriptable(scope, bridge))
+        selectedSource?.let { source ->
+            ScriptableObject.putProperty(
+                scope,
+                "__shinsouRequestedSourceId",
+                source.canonicalSourceId ?: source.id.toString(),
+            )
+            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceName", source.name)
+            ScriptableObject.putProperty(scope, "__shinsouRequestedSourceBaseUrl", source.baseUrl.orEmpty())
+        }
+        context.evaluateString(scope, RHINO_DOM_BOOTSTRAP, "shinsou-runtime.js", 1, null)
+        context.evaluateString(
+            scope,
+            "var console={log:function(x){bridge.log(String(x));}," +
+                "error:function(x){bridge.log(String(x));},warn:function(x){bridge.log(String(x));}," +
+                "info:function(x){bridge.log(String(x));}};",
+            "shinsou-console.js",
+            1,
+            null,
+        )
+        context.evaluateString(scope, RHINO_SYSTEM_EVENT_BOOTSTRAP, "shinsou-system-events.js", 1, null)
+        context.evaluateString(scope, script, manifest.script, 1, null)
+        sourceObject = selectSourceObject()
+
+        // The repository's exact source declaration scopes host network/storage identity. A v1
+        // script without source metadata can still supply its historical runtime baseUrl.
+        baseUrl = selectedSource?.baseUrl ?: sourceObject.stringProperty("baseUrl").orEmpty()
+        selectedSource?.let { source ->
+            // String form avoids IEEE-754 loss for published 64-bit Tachiyomi ids.
+            ScriptableObject.putProperty(sourceObject, "id", source.id.toString())
+            ScriptableObject.putProperty(sourceObject, "name", source.name)
+            ScriptableObject.putProperty(sourceObject, "lang", source.lang)
+            ScriptableObject.putProperty(sourceObject, "baseUrl", baseUrl)
+        }
+        supportsLatest = sourceObject.booleanProperty("supportsLatest") ?: false
+        supportsLogin = sourceObject.booleanProperty("supportsLogin") ?: false
+        supportsFavorites = sourceObject.booleanProperty("supportsFavorites") ?: false
+        bridge.supportsLogin = supportsLogin
+        headers = sourceObject.property("headers").toStringMap()
+        if (headers.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.isNotEmpty()) {
+            headers = headers + ("Referer" to baseUrl)
+        }
+        bridge.sourceHeaders = headers
+        webChallengeUrl = sourceObject.stringProperty("webChallengeUrl")?.takeIf(String::isNotBlank)
+        browserSessionOrigins = selectedSource?.browserSessionOrigins.orEmpty()
+        webChallengeLocalStorageKeys = sourceObject.property("webChallengeLocalStorageKeys").toStringSet()
+        requiredWebChallengeLocalStorageKeys =
+            sourceObject.property("requiredWebChallengeLocalStorageKeys").toStringSet()
+        ScriptableObject.putProperty(scope, "baseUrl", baseUrl)
+    }
+
+    /**
+     * v2-capable packages may export `sources` as an array or object keyed by source id.  A legacy
+     * package may continue to export the single `source` object.  Selection is always by the exact
+     * requested id; list order is never executable authority.
+     */
+    private fun selectSourceObject(): Scriptable {
+        val requestedId = selectedSource?.let { it.canonicalSourceId ?: it.id.toString() }
+        val exported = scope.property("sources") as? Scriptable
+        if (exported != null && requestedId != null) {
+            val matches = exported.ids.mapNotNull { key ->
+                val candidate = when (key) {
+                    is Int -> exported.get(key, exported)
+                    else -> exported.get(key.toString(), exported)
+                } as? Scriptable ?: return@mapNotNull null
+                val declaredId = candidate.stringProperty("id")
+                    ?: candidate.stringProperty("sourceId")
+                    ?: key.toString()
+                candidate.takeIf { declaredId == requestedId }
+            }
+            require(matches.size == 1) {
+                "Plugin '${manifest.id}' does not export exactly one source '$requestedId'"
+            }
+            return matches.single()
+        }
+
+        return scope.property("source") as? Scriptable
+            ?: throw IllegalArgumentException("Plugin '${manifest.id}' does not export a source object")
+    }
+
+    override suspend fun getPopularManga(page: Int): MangasPage =
+        invokeMangasPage("getPopularManga", listOf(page))
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage =
+        invokeMangasPage("getLatestUpdates", listOf(page))
+
+    override suspend fun getFavoriteManga(page: Int): MangasPage =
+        if (hasFunction("getFavoriteManga")) {
+            invokeMangasPage("getFavoriteManga", listOf(page))
+        } else {
+            MangasPage(emptyList(), false)
+        }
+
+    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
+        invokeMangasPage(
+            "getSearchManga",
+            buildList {
+                add(page)
+                add(query)
+                if (filters.isNotEmpty()) add(filters.map(::filterToMap))
+            },
+        )
+
+    override suspend fun getMangaDetails(manga: SManga): SManga {
+        val value = invoke("getMangaDetails", listOf(manga.toMap()))
+        return value.toStringAnyMap()?.toManga() ?: manga
+    }
+
+    override suspend fun getChapterList(manga: SManga): List<SChapter> =
+        invoke("getChapterList", listOf(manga.toMap())).toAnyList().mapNotNull { value ->
+            value.toStringAnyMap()?.toChapter()
+        }
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> =
+        invoke("getPageList", listOf(mapOf("url" to chapter.url))).toAnyList().mapIndexedNotNull { index, value ->
+            value.toStringAnyMap()?.toPage(index)
+        }
+
+    override suspend fun resolveImageUrl(pageUrl: String): String? {
+        if (!hasFunction("resolveImageUrl")) return null
+        return invoke("resolveImageUrl", listOf(pageUrl)).toString().takeIf(String::isNotBlank)
+    }
+
+    override suspend fun getFilterList(): FilterList {
+        // HttpSource supplies an empty default in original Shinsou, and older JavaScript sources
+        // commonly omit this optional hook entirely. Treat absence as "no filters" so global
+        // search can still call getSearchManga instead of failing before the request starts.
+        if (!hasFunction("getFilterList")) return emptyList()
+        return invoke("getFilterList", emptyList()).toAnyList().mapNotNull { it.toStringAnyMap()?.toFilter() }
+    }
+
+    override suspend fun getPreferenceDefinitions(): List<SourcePreference> {
+        val value = if (hasFunction("getPreferenceDefinitions")) {
+            invoke("getPreferenceDefinitions", emptyList())
+        } else {
+            onEngine {
+                sourceObject.property("preferences").fromRhino(
+                    limits = environment.executionLimits,
+                    pluginId = manifest.id,
+                )
+            }
+        }
+        return value.toAnyList().mapNotNull { it.toStringAnyMap()?.toSourcePreference() }
+    }
+
+    override suspend fun login(username: String, password: String): Boolean =
+        loginResult(username, password).loggedIn
+
+    override suspend fun loginResult(username: String, password: String): LoginAttemptResult {
+        if (!supportsLogin) return LoginAttemptResult(false)
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        val raw = invoke("login", listOf(username, password))
+        val result = raw.toLoginAttemptResult()
+        if (result.loggedIn) environment.storage.setCredential(id, PluginCredential(username, password))
+        return result
+    }
+
+    override suspend fun logout() {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.clearCredential(id)
+        if (hasFunction("logout")) invoke("logout", emptyList())
+    }
+
+    override suspend fun close() {
+        activeInvocationJob?.cancel(CancellationException("Plugin runtime '$pluginId' is closing"))
+        withContext(dispatcher + NonCancellable) {
+            bridge.releaseAll()
+        }
+        dispatcher.close()
+    }
+
+    private suspend fun invokeMangasPage(method: String, args: List<Any?>): MangasPage {
+        bridge.clearLogs()
+        bridge.releaseAll()
+        val result = invoke(method, args).toStringAnyMap() ?: return MangasPage(emptyList(), false)
+        val mangas = result["mangas"].toAnyList().mapNotNull { it.toStringAnyMap()?.toManga() }
+        return MangasPage(mangas, result["hasNextPage"].toBooleanValue())
+    }
+
+    private suspend fun hasFunction(name: String): Boolean = onEngine {
+        sourceObject.property(name) is Function
+    }
+
+    private suspend fun invoke(method: String, arguments: List<Any?>): Any? = onEngine { context ->
+        bridge.releaseAll()
+        val function = sourceObject.property(method) as? Function
+            ?: throw IllegalArgumentException("Plugin '${manifest.id}' has no function '$method'")
+        requireBoundedRhinoInvocationInput(arguments, environment.executionLimits, manifest.id)
+        val args = arguments.map { it.toRhino(context, scope) }.toTypedArray()
+        function.call(context, scope, sourceObject, args).fromRhino(
+            limits = environment.executionLimits,
+            pluginId = manifest.id,
+        )
+    }
+
+    private suspend fun <T> onEngine(
+        initialization: Boolean = false,
+        block: (Context) -> T,
+    ): T {
+        poisonedBy?.let { throw it }
+        return withContext(dispatcher) {
+            val invocationJob = currentCoroutineContext()[Job]
+            activeInvocationJob = invocationJob
+            if (::bridge.isInitialized) bridge.beginInvocation(invocationJob)
+            contextFactory.beginInvocation(initialization, invocationJob)
+            val context = contextFactory.enterContext()
+            try {
+                block(context).also {
+                    contextFactory.throwIfLimitExceeded()
+                    if (::bridge.isInitialized) bridge.throwIfLimitExceeded()
+                }
+            } catch (limited: PluginResourceLimitException) {
+                poisonedBy = limited
+                throw limited
+            } finally {
+                Context.exit()
+                contextFactory.endInvocation()
+                if (activeInvocationJob === invocationJob) activeInvocationJob = null
+            }
+        }
+    }
+
+    companion object {
+        suspend fun create(
+            script: String,
+            manifest: PluginManifest,
+            selectedSource: SourceIndexEntry?,
+            environment: ScriptPluginEnvironment,
+        ): RhinoScriptPluginRuntime {
+            val executor = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "shinsou-plugin-${manifest.id}").apply { isDaemon = true }
+            }
+            val runtime = RhinoScriptPluginRuntime(
+                manifest.id,
+                manifest,
+                selectedSource,
+                environment,
+                executor.asCoroutineDispatcher(),
+            )
+            try {
+                runtime.initialize(script)
+            } catch (error: Throwable) {
+                runtime.dispatcher.close()
+                throw error
+            }
+            return runtime
+        }
+    }
+}
+
+/** Host-side bridge; scripts receive only the native whitelist facade below. */
+public class RhinoPluginBridge internal constructor(
+    private val pluginId: String,
+    private val sourceId: Long,
+    private val sourceName: String,
+    private val sourceOrigin: String,
+    private val browserSessionOrigins: Set<String>,
+    private val environment: ScriptPluginEnvironment,
+    private val scopeProvider: () -> Scriptable,
+    private val logs: MutableList<String>,
+) {
+    private val limits: PluginExecutionLimits = environment.executionLimits
+    @Volatile
+    internal var sourceHeaders: Map<String, String> = emptyMap()
+
+    @Volatile
+    internal var supportsLogin: Boolean = false
+
+    private val nodes = linkedMapOf<Int, Node>()
+    private var nextHandle = 0
+    private var bridgeCalls = 0
+    private var logBytes = 0
+    private var limitFailure: PluginResourceLimitException? = null
+    private var invocationJob: Job? = null
+
+    private fun <T> awaitBridge(block: suspend () -> T): T =
+        runBlocking(invocationJob ?: EmptyCoroutineContext) { block() }
+
+    public fun httpGet(url: String): Any? = httpGetWithHeaders(url, null)
+
+    public fun httpGetWithHeaders(url: String, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
+            environment.network.get(
+                sourceId,
+                url,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).bodyText()
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to safeBridgeError(error))
+    }
+
+    /** Structured status/body variant for sources that must distinguish an empty result from HTTP failure. */
+    public fun httpGetResponse(url: String, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
+            environment.network.get(
+                sourceId,
+                url,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to safeBridgeError(error))
+    }
+
+    public fun httpPost(url: String, body: String, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
+            environment.network.post(
+                sourceId,
+                url,
+                body,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).bodyText()
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Structured status/body variant used by sources that must explain non-2xx login failures. */
+    public fun httpPostResponse(url: String, body: String, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        awaitBridge {
+            environment.network.post(
+                sourceId,
+                url,
+                body,
+                headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to safeBridgeError(error))
+    }
+
+    /** Exact-manifest, browser-backed request for APIs that reject native TLS identities. */
+    public fun browserSessionRequest(
+        url: String,
+        method: String,
+        body: String,
+        headers: Any?,
+    ): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.BROWSER_CHALLENGE)
+        awaitBridge {
+            val prepared = preparePluginBrowserSessionRequest(
+                sourceOrigin = sourceOrigin,
+                allowedOrigins = browserSessionOrigins,
+                request = PluginHttpRequest(
+                    method = method,
+                    url = url,
+                    body = body.encodeToByteArray(),
+                    headers = headers.toStringMap(),
+                ),
+            )
+            environment.browserSessionTransport.executeWithNetworkPolicy(
+                sourceId = sourceId,
+                sourceOrigin = prepared.sourceOrigin,
+                allowedOrigins = setOf(prepared.targetOrigin),
+                request = prepared.request,
+                resolver = environment.hostResolver,
+                allowDeveloperUnpinnedTransport = environment.allowDeveloperUnpinnedBrowserSession,
+            ).let { response ->
+                mapOf("status" to response.status, "body" to response.bodyText())
+            }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        mapOf("error" to (error.message ?: error::class.simpleName.orEmpty()))
+    }
+
+    /** Returns a JSON string because the reviewed ShuYue script parses the bridge result itself. */
+    public fun httpPostBatch(urls: Any?, bodies: Any?, headers: Any?): Any? = try {
+        environment.requireRuntimePermission(PluginRuntimePermission.NETWORK)
+        val urlList = urls.toStringList()
+        val bodyList = bodies.toStringList()
+        awaitBridge {
+            val responses = environment.network.postBatch(
+                sourceId = sourceId,
+                urls = urlList,
+                bodies = bodyList,
+                headers = headers.toStringMap(),
+                sourceHeaders = sourceHeaders,
+                referer = sourceHeaders.header("Referer"),
+            )
+            encodeBoundedPluginBatchResponseBodies(
+                responses,
+                limits.maxBridgeResultBytes,
+            )
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (limited: PluginResourceLimitException) {
+        // Resource admission failures must poison the invocation instead of looking like an
+        // ordinary recoverable transport failure to plugin code.
+        throw limited
+    } catch (_: Throwable) {
+        null
+    }
+
+    public fun htmlParse(html: String): Int {
+        requireDomInput(html)
+        return store(Jsoup.parse(html))
+    }
+
+    public fun htmlParseFragment(html: String, baseUri: String): Int {
+        requireDomInput(html)
+        return store(Jsoup.parse(html, baseUri))
+    }
+
+    public fun domSelect(handleId: Number, selector: String): IntArray {
+        requireSelector(selector)
+        return element(handleId)?.select(selector)?.map(::store)?.toIntArray() ?: IntArray(0)
+    }
+
+    public fun domFirst(handleId: Number, selector: String): Int {
+        requireSelector(selector)
+        return element(handleId)?.selectFirst(selector)?.let(::store) ?: -1
+    }
+
+    public fun domText(handleId: Number): String = element(handleId)?.text().orEmpty()
+    public fun domOwnText(handleId: Number): String = element(handleId)?.ownText().orEmpty()
+    public fun domHtml(handleId: Number): String = element(handleId)?.html().orEmpty()
+    public fun domOuterHtml(handleId: Number): String = node(handleId)?.outerHtml().orEmpty()
+    public fun domAttr(handleId: Number, name: String): String = element(handleId)?.attr(name).orEmpty()
+    public fun domHasAttr(handleId: Number, name: String): Boolean = element(handleId)?.hasAttr(name) == true
+    public fun domAbsUrl(handleId: Number, name: String): String = element(handleId)?.absUrl(name).orEmpty()
+    public fun domTagName(handleId: Number): String = element(handleId)?.tagName().orEmpty()
+    public fun domClassName(handleId: Number): String = element(handleId)?.className().orEmpty()
+    public fun domId(handleId: Number): String = element(handleId)?.id().orEmpty()
+    public fun domChildren(handleId: Number): IntArray =
+        element(handleId)?.children()?.map(::store)?.toIntArray() ?: IntArray(0)
+    public fun domParent(handleId: Number): Int = element(handleId)?.parent()?.let(::store) ?: -1
+    public fun domNextSibling(handleId: Number): Int = element(handleId)?.nextElementSibling()?.let(::store) ?: -1
+    public fun domPrevSibling(handleId: Number): Int = element(handleId)?.previousElementSibling()?.let(::store) ?: -1
+    public fun domRemove(handleId: Number) { element(handleId)?.remove() }
+    public fun domRelease(handleId: Number) { nodes.remove(handleId.toInt()) }
+    public fun domReleaseAll() { releaseAll() }
+
+    public fun parseHtml(html: String, selector: String): Any = try {
+        requireDomInput(html)
+        requireSelector(selector)
+        Jsoup.parse(html).select(selector).take(limits.maxParsedElements).map { element ->
+            mapOf(
+                "text" to element.text(),
+                "html" to element.html(),
+                "outerHtml" to element.outerHtml(),
+                "attr_href" to element.attr("href"),
+                "attr_src" to element.attr("src"),
+                "tagName" to element.tagName(),
+            )
+        }
+    } catch (limited: PluginResourceLimitException) {
+        throw limited
+    } catch (_: Throwable) {
+        html
+    }
+
+    public fun log(message: String) {
+        val bounded = boundedPluginLogMessage(message, limits.maxLogEntryBytes)
+        val bytes = bounded.encodeToByteArray().size
+        while (logs.isNotEmpty() && (logs.size >= limits.maxLogEntries || logBytes + bytes > limits.maxLogBytes)) {
+            logBytes -= logs.removeAt(0).encodeToByteArray().size
+        }
+        if (bytes <= limits.maxLogBytes) {
+            logs += bounded
+            logBytes += bytes
+            environment.logger.log(pluginId, bounded)
+        }
+    }
+
+    /** Reviewed ShuYue scripts retain their historical `bridge.log(sourceId, message)` call. */
+    public fun log(ignoredSourceId: String, message: Any?) {
+        log(message?.toString().orEmpty())
+    }
+
+    public fun getPreference(key: String): String? = awaitBridge {
+        environment.storage.getPreference(sourceId, key)
+    }
+
+    public fun setPreference(key: String, value: String) = awaitBridge {
+        environment.storage.setPreference(sourceId, key, value)
+    }
+
+    public fun getCredentialUsername(): String? = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.getCredential(sourceId)?.username
+    }
+
+    public fun getCredentialPassword(): String? = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.getCredential(sourceId)?.password
+    }
+
+    public fun setCredential(username: String, password: String) = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.setCredential(sourceId, PluginCredential(username, password))
+    }
+
+    public fun clearCredential() = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        environment.storage.clearCredential(sourceId)
+    }
+    public fun hasCredential(): Boolean = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.CREDENTIAL_ACCESS)
+        !environment.storage.getCredential(sourceId)?.username.isNullOrEmpty()
+    }
+
+    /** Explicit zero-argument overload is required for Rhino's Java reflection bridge. */
+    public fun requestLogin(): Boolean = requestLogin("")
+
+    public fun requestLogin(reason: String?): Boolean {
+        if (PluginRuntimePermission.LOGIN_PROMPT !in environment.runtimePermissions) return false
+        return submitLegacyLoginCompatibility(environment, supportsLogin, reason)
+    }
+
+    /** Single bounded native transport for every negotiated system-v1 message. */
+    public fun requestHostEvent(envelope: String): String {
+        val sink = environment.systemEventSink
+        val boundScope = environment.boundPluginScope
+        val receipt = if (sink == null || boundScope == null) {
+            PluginEventReceipt(
+                messageId = "",
+                disposition = PluginEventDisposition.UNSUPPORTED,
+            )
+        } else {
+            try {
+                sink.submit(boundScope, envelope.encodeToByteArray())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                PluginEventReceipt(messageId = "", disposition = PluginEventDisposition.INVALID)
+            }
+        }
+        return PluginJson.encodeToString(receipt)
+    }
+
+    /** Returns only the opaque host-issued handle for the current visible V2 invocation. */
+    public fun getHostEventContext(): String? = environment.currentSystemEventContext()
+
+    /** Returns a native JS object rather than a Java Map so Rhino cannot expose map methods. */
+    public fun getHostEventCapabilities(): Scriptable {
+        val context = Context.getCurrentContext()
+            ?: throw IllegalStateException("Host event capabilities require an active Rhino context")
+        val result = context.newObject(scopeProvider())
+        val negotiation = hostEventNegotiation()
+        ScriptableObject.putProperty(result, "enabled", negotiation?.enabled == true)
+        ScriptableObject.putProperty(result, "protocol", "dev.shinsou.system")
+        ScriptableObject.putProperty(result, "version", negotiation?.version ?: null)
+        ScriptableObject.putProperty(
+            result,
+            "grantedCapabilities",
+            context.newArray(
+                scopeProvider(),
+                rhinoObjectArray(negotiation?.grantedCapabilities.orEmpty()),
+            ),
+        )
+        val limits = context.newObject(scopeProvider())
+        negotiation?.hardLimits?.let { hardLimits ->
+            ScriptableObject.putProperty(limits, "maxEnvelopeBytes", hardLimits.maxEnvelopeBytes)
+            ScriptableObject.putProperty(limits, "maxNestingDepth", hardLimits.maxNestingDepth)
+            ScriptableObject.putProperty(limits, "maxReasonBytes", hardLimits.maxReasonBytes)
+            ScriptableObject.putProperty(limits, "maxDiagnosticBytes", hardLimits.maxDiagnosticBytes)
+            ScriptableObject.putProperty(limits, "maxMapEntries", hardLimits.maxMapEntries)
+            ScriptableObject.putProperty(limits, "maxListEntries", hardLimits.maxListEntries)
+            ScriptableObject.putProperty(limits, "maxIdentifierBytes", hardLimits.maxIdentifierBytes)
+            ScriptableObject.putProperty(limits, "maxEventNameBytes", hardLimits.maxEventNameBytes)
+            ScriptableObject.putProperty(limits, "maxPerSourcePending", hardLimits.maxPerSourcePending)
+            ScriptableObject.putProperty(limits, "maxGlobalPending", hardLimits.maxGlobalPending)
+            ScriptableObject.putProperty(limits, "tokenBurst", hardLimits.tokenBurst)
+            ScriptableObject.putProperty(limits, "tokenPerMinute", hardLimits.tokenPerMinute)
+            ScriptableObject.putProperty(limits, "ttlMillis", hardLimits.ttlMillis)
+            ScriptableObject.putProperty(limits, "loginCooldownMillis", hardLimits.loginCooldownMillis)
+            ScriptableObject.putProperty(limits, "diagnosticAggregationMillis", hardLimits.diagnosticAggregationMillis)
+            ScriptableObject.putProperty(limits, "maxDiagnosticAggregations", hardLimits.maxDiagnosticAggregations)
+        }
+        ScriptableObject.putProperty(result, "hardLimits", limits)
+        return result
+    }
+
+    private fun hostEventNegotiation(): dev.shinsou.kmp.plugin.events.PluginSystemEventNegotiation? =
+        environment.systemEventDeclaration?.let { declaration ->
+            val gateway = environment.systemEventSink as? dev.shinsou.kmp.plugin.events.PluginSystemEventGateway
+            val boundScope = environment.boundPluginScope
+            if (gateway != null && boundScope != null) gateway.negotiate(boundScope, declaration)
+            else environment.systemEventNegotiation
+        } ?: environment.systemEventNegotiation
+
+    public fun getCookie(name: String, url: String): String? = awaitBridge {
+        if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) return@awaitBridge null
+        val target = Url(url)
+        val now = Clock.System.now().toEpochMilliseconds()
+        environment.storage.getCookies(sourceId).firstOrNull { it.name == name && it.matches(target, now) }?.value
+    }
+
+    public fun getCookies(url: String): Map<String, String> = awaitBridge {
+        if (PluginRuntimePermission.COOKIE_STORAGE !in environment.runtimePermissions) return@awaitBridge emptyMap()
+        val target = Url(url)
+        val now = Clock.System.now().toEpochMilliseconds()
+        environment.storage.getCookies(sourceId).filter { it.matches(target, now) }.associate { it.name to it.value }
+    }
+
+    public fun setCookie(
+        name: String,
+        value: String,
+        domain: String,
+        path: String,
+        expirySeconds: Number,
+    ): Boolean = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
+        val seconds = expirySeconds.toLong()
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (seconds > 0 && seconds > (Long.MAX_VALUE - now) / 1_000L) {
+            failLimit("Plugin '$pluginId' supplied an overflowing cookie expiry")
+        }
+        environment.storage.setCookie(
+            sourceId,
+            PluginCookie(
+                name = name,
+                value = value,
+                domain = domain,
+                path = path.ifEmpty { "/" },
+                expiresAtEpochMillis = if (seconds > 0) now + seconds * 1_000L else null,
+            ),
+        )
+        true
+    }
+
+    public fun deleteCookie(name: String, domain: String) = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
+        environment.storage.deleteCookie(sourceId, name, domain)
+    }
+
+    public fun clearCookies() = awaitBridge {
+        environment.requireRuntimePermission(PluginRuntimePermission.COOKIE_STORAGE)
+        environment.storage.clearCookies(sourceId)
+    }
+
+    internal fun releaseAll() {
+        nodes.clear()
+        nextHandle = 0
+    }
+
+    internal fun beginInvocation(job: Job?) {
+        invocationJob = job
+        bridgeCalls = 0
+        limitFailure = null
+    }
+
+    internal fun beforeHostCall() {
+        limitFailure?.let { throw it }
+        bridgeCalls += 1
+        if (bridgeCalls > limits.maxBridgeCallsPerInvocation) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxBridgeCallsPerInvocation} bridge calls")
+        }
+    }
+
+    internal fun requireBoundedArguments(arguments: Array<Any?>) {
+        RhinoBridgeArgumentValidator(limits, pluginId).validate(arguments)
+    }
+
+    internal fun throwIfLimitExceeded() {
+        limitFailure?.let { throw it }
+    }
+
+    internal fun clearLogs() {
+        logs.clear()
+        logBytes = 0
+    }
+
+    private fun store(node: Node): Int {
+        if (nodes.size >= limits.maxDomHandles) {
+            failLimit("Plugin '$pluginId' exceeded ${limits.maxDomHandles} live DOM handles")
+        }
+        val id = ++nextHandle
+        nodes[id] = node
+        return id
+    }
+
+    private fun requireDomInput(html: String) {
+        if (pluginUtf8ByteCountAtMost(html, limits.maxDomInputBytes) == null) {
+            failLimit("Plugin '$pluginId' exceeded the ${limits.maxDomInputBytes}-byte DOM input limit")
+        }
+    }
+
+    private fun requireSelector(selector: String) {
+        if (selector.length > limits.maxSelectorChars) {
+            failLimit("Plugin '$pluginId' exceeded the ${limits.maxSelectorChars}-character selector limit")
+        }
+    }
+
+    private fun failLimit(message: String): Nothing {
+        val failure = limitFailure ?: PluginResourceLimitException(message).also { limitFailure = it }
+        throw failure
+    }
+
+    private fun safeBridgeError(error: Throwable): String =
+        error.message?.takeIf {
+            it.startsWith("Plugin runtime lacks ") && it.endsWith(" permission")
+        } ?: "Host operation failed"
+
+    private fun node(id: Number): Node? = nodes[id.toInt()]
+    private fun element(id: Number): Element? = node(id) as? Element
+}
+
+/**
+ * Native Rhino view of [RhinoPluginBridge].
+ *
+ * The Java reflection adapter must not be used here: it exposes inherited methods such as
+ * `getClass()` and lets a script turn an otherwise harmless host object into a reflection
+ * starting point.  Each function below calls the bridge directly from host code and converts
+ * collection results into native Rhino values before returning them to the script.
+ */
+private class RhinoBridgeScriptable(
+    scope: Scriptable,
+    private val bridge: RhinoPluginBridge,
+) : ScriptableObject() {
+    init {
+        setParentScope(scope)
+        setPrototype(ScriptableObject.getObjectPrototype(scope))
+
+        bind("httpGet") { _, _, args -> bridge.httpGet(stringArg(args, 0)) }
+        bind("httpGetWithHeaders") { _, _, args ->
+            bridge.httpGetWithHeaders(stringArg(args, 0), rawArg(args, 1))
+        }
+        bind("httpGetResponse") { _, _, args ->
+            bridge.httpGetResponse(stringArg(args, 0), rawArg(args, 1))
+        }
+        bind("httpPost") { _, _, args ->
+            bridge.httpPost(stringArg(args, 0), stringArg(args, 1), rawArg(args, 2))
+        }
+        bind("httpPostResponse") { _, _, args ->
+            bridge.httpPostResponse(stringArg(args, 0), stringArg(args, 1), rawArg(args, 2))
+        }
+        bind("httpPostBatch") { _, _, args ->
+            bridge.httpPostBatch(rawArg(args, 0), rawArg(args, 1), rawArg(args, 2))
+        }
+        bind("browserSessionRequest") { _, _, args ->
+            bridge.browserSessionRequest(
+                stringArg(args, 0),
+                stringArg(args, 1),
+                stringArg(args, 2),
+                rawArg(args, 3),
+            )
+        }
+
+        bind("htmlParse") { _, _, args -> bridge.htmlParse(stringArg(args, 0)) }
+        bind("htmlParseFragment") { _, _, args ->
+            bridge.htmlParseFragment(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("parseHtml") { _, _, args ->
+            bridge.parseHtml(stringArg(args, 0), stringArg(args, 1))
+        }
+
+        bind("domSelect") { _, _, args -> bridge.domSelect(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domFirst") { _, _, args -> bridge.domFirst(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domText") { _, _, args -> bridge.domText(numberArg(args, 0)) }
+        bind("domOwnText") { _, _, args -> bridge.domOwnText(numberArg(args, 0)) }
+        bind("domHtml") { _, _, args -> bridge.domHtml(numberArg(args, 0)) }
+        bind("domOuterHtml") { _, _, args -> bridge.domOuterHtml(numberArg(args, 0)) }
+        bind("domAttr") { _, _, args -> bridge.domAttr(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domHasAttr") { _, _, args -> bridge.domHasAttr(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domAbsUrl") { _, _, args -> bridge.domAbsUrl(numberArg(args, 0), stringArg(args, 1)) }
+        bind("domTagName") { _, _, args -> bridge.domTagName(numberArg(args, 0)) }
+        bind("domClassName") { _, _, args -> bridge.domClassName(numberArg(args, 0)) }
+        bind("domId") { _, _, args -> bridge.domId(numberArg(args, 0)) }
+        bind("domChildren") { _, _, args -> bridge.domChildren(numberArg(args, 0)) }
+        bind("domParent") { _, _, args -> bridge.domParent(numberArg(args, 0)) }
+        bind("domNextSibling") { _, _, args -> bridge.domNextSibling(numberArg(args, 0)) }
+        bind("domPrevSibling") { _, _, args -> bridge.domPrevSibling(numberArg(args, 0)) }
+        bind("domRemove") { _, _, args -> bridge.domRemove(numberArg(args, 0)) }
+        bind("domRelease") { _, _, args -> bridge.domRelease(numberArg(args, 0)) }
+        bind("domReleaseAll") { _, _, _ -> bridge.domReleaseAll() }
+
+        bind("log") { _, _, args ->
+            if (args.size >= 2) bridge.log(stringArg(args, 0), rawArg(args, 1))
+            else bridge.log(stringArg(args, 0))
+        }
+        bind("getPreference") { _, _, args -> bridge.getPreference(stringArg(args, 0)) }
+        bind("setPreference") { _, _, args ->
+            bridge.setPreference(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("getCredentialUsername") { _, _, _ -> bridge.getCredentialUsername() }
+        bind("getCredentialPassword") { _, _, _ -> bridge.getCredentialPassword() }
+        bind("setCredential") { _, _, args ->
+            bridge.setCredential(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("clearCredential") { _, _, _ -> bridge.clearCredential() }
+        bind("hasCredential") { _, _, _ -> bridge.hasCredential() }
+        bind("requestLogin") { _, _, args ->
+            if (args.isEmpty()) bridge.requestLogin() else bridge.requestLogin(nullableStringArg(args, 0))
+        }
+
+        bind("requestHostEvent") { _, _, args -> bridge.requestHostEvent(stringArg(args, 0)) }
+        bind("getHostEventContext") { _, _, _ -> bridge.getHostEventContext() }
+        bind("getHostEventCapabilities") { _, _, _ -> bridge.getHostEventCapabilities() }
+
+        bind("getCookie") { _, _, args ->
+            bridge.getCookie(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("getCookies") { _, _, args -> bridge.getCookies(stringArg(args, 0)) }
+        bind("setCookie") { _, _, args ->
+            bridge.setCookie(
+                name = stringArg(args, 0),
+                value = stringArg(args, 1),
+                domain = stringArg(args, 2),
+                path = stringArg(args, 3),
+                expirySeconds = numberArg(args, 4),
+            )
+        }
+        bind("deleteCookie") { _, _, args ->
+            bridge.deleteCookie(stringArg(args, 0), stringArg(args, 1))
+        }
+        bind("clearCookies") { _, _, _ -> bridge.clearCookies() }
+    }
+
+    override fun getClassName(): String = "ShinsouBridge"
+
+    private fun bind(
+        name: String,
+        handler: (Context, Scriptable, Array<Any?>) -> Any?,
+    ) {
+        val fn = BridgeFunction(bridge, handler).also {
+            val parent = getParentScope() ?: this
+            it.setParentScope(parent)
+            it.setPrototype(ScriptableObject.getFunctionPrototype(parent))
+        }
+        ScriptableObject.putProperty(this, name, fn)
+    }
+
+    private class BridgeFunction(
+        private val bridge: RhinoPluginBridge,
+        private val handler: (Context, Scriptable, Array<Any?>) -> Any?,
+    ) : BaseFunction() {
+        override fun call(
+            context: Context,
+            scope: Scriptable,
+            thisObj: Scriptable,
+            args: Array<Any?>,
+        ): Any? {
+            bridge.beforeHostCall()
+            bridge.requireBoundedArguments(args)
+            return bridgeResult(context, scope, handler(context, scope, args))
+        }
+    }
+}
+
+private class RhinoBridgeArgumentValidator(
+    private val limits: PluginExecutionLimits,
+    private val pluginId: String,
+) {
+    private val visited = java.util.Collections.newSetFromMap(IdentityHashMap<Scriptable, Boolean>())
+    private var elements = 0
+    private var bytes = 0L
+
+    fun validate(arguments: Array<Any?>) {
+        arguments.forEach { visit(it, 0) }
+    }
+
+    private fun visit(value: Any?, depth: Int) {
+        requireLimit(depth <= limits.maxResultDepth) { "bridge argument nesting depth" }
+        elements += 1
+        requireLimit(elements <= limits.maxResultTotalElements) { "bridge argument elements" }
+        when (value) {
+            null, is Undefined -> countBytes(4)
+            is CharSequence -> countString(value.toString())
+            is Number, is Boolean, is Function -> countBytes(32)
+            is NativeArray -> {
+                if (!visited.add(value)) return
+                requireLimit(value.length <= limits.maxResultArrayElements.toLong()) { "bridge argument array elements" }
+                countBytes(2)
+                for (index in 0 until value.length.toInt()) visit(value.get(index, value), depth + 1)
+            }
+            is Scriptable -> {
+                if (!visited.add(value)) return
+                val ids = value.ids
+                requireLimit(ids.size <= limits.maxResultObjectEntries) { "bridge argument object entries" }
+                countBytes(2)
+                ids.forEach { id ->
+                    val key = id.toString()
+                    countString(key)
+                    visit(if (id is Int) value.get(id, value) else value.get(key, value), depth + 1)
+                }
+            }
+            else -> countString(value.toString())
+        }
+    }
+
+    private fun countString(value: String) {
+        val remaining = (limits.maxBridgeArgumentBytes.toLong() - bytes).coerceAtMost(Int.MAX_VALUE.toLong())
+        requireLimit(remaining >= 0 && pluginUtf8ByteCountAtMost(value, remaining.toInt()) != null) {
+            "bridge argument bytes"
+        }
+        countBytes(pluginUtf8ByteCountAtMost(value, remaining.toInt())!!.toLong())
+    }
+
+    private fun countBytes(count: Long) {
+        bytes += count
+        requireLimit(bytes <= limits.maxBridgeArgumentBytes.toLong()) { "bridge argument bytes" }
+    }
+
+    private inline fun requireLimit(condition: Boolean, kind: () -> String) {
+        if (!condition) {
+            throw PluginResourceLimitException(
+                "Plugin '$pluginId' exceeded the ${limits.maxBridgeArgumentBytes}-byte ${kind()} limit",
+            )
+        }
+    }
+}
+
+private class SandboxedRhinoContextFactory(
+    private val limits: PluginExecutionLimits,
+) : ContextFactory() {
+    private var budget: RhinoInvocationBudget? = null
+    private var limitFailure: PluginResourceLimitException? = null
+
+    override fun makeContext(): Context = super.makeContext().apply {
+        optimizationLevel = -1
+        languageVersion = Context.VERSION_ES6
+        instructionObserverThreshold = limits.instructionObserverThreshold
+        maximumInterpreterStackDepth = limits.maximumInterpreterStackDepth
+        setClassShutter(ClassShutter { false })
+    }
+
+    fun beginInvocation(initialization: Boolean, job: Job?) {
+        check(budget == null) { "Nested Rhino invocation budget" }
+        limitFailure = null
+        budget = RhinoInvocationBudget(
+            startedNanos = System.nanoTime(),
+            wallTimeMillis = if (initialization) {
+                limits.initializationWallTimeMillis
+            } else {
+                limits.invocationWallTimeMillis
+            },
+            maximumInstructions = if (initialization) {
+                limits.initializationInstructionCount
+            } else {
+                limits.invocationInstructionCount
+            },
+            job = job,
+        )
+    }
+
+    fun endInvocation() {
+        budget = null
+        limitFailure = null
+    }
+
+    fun throwIfLimitExceeded() {
+        limitFailure?.let { throw it }
+    }
+
+    override fun observeInstructionCount(context: Context, instructionCount: Int) {
+        val current = budget ?: throw PluginResourceLimitException("Rhino executed outside a host budget")
+        if (current.job?.isActive == false) {
+            throw CancellationException("Plugin JavaScript invocation was cancelled")
+        }
+        current.instructions += instructionCount.toLong().coerceAtLeast(0)
+        if (current.instructions > current.maximumInstructions) {
+            failLimit(
+                "Plugin JavaScript exceeded ${current.maximumInstructions} interpreted instructions",
+            )
+        }
+        val elapsed = System.nanoTime() - current.startedNanos
+        val maximumNanos = current.wallTimeMillis.coerceAtMost(Long.MAX_VALUE / 1_000_000) * 1_000_000
+        if (elapsed >= maximumNanos) {
+            failLimit(
+                "Plugin JavaScript exceeded the ${current.wallTimeMillis}ms execution deadline",
+            )
+        }
+    }
+
+    private fun failLimit(message: String): Nothing {
+        val failure = limitFailure ?: PluginResourceLimitException(message).also { limitFailure = it }
+        throw failure
+    }
+}
+
+private data class RhinoInvocationBudget(
+    val startedNanos: Long,
+    val wallTimeMillis: Long,
+    val maximumInstructions: Long,
+    val job: Job?,
+    var instructions: Long = 0,
+)
+
+private fun rawArg(args: Array<Any?>, index: Int): Any? = args.getOrNull(index)
+
+private fun stringArg(args: Array<Any?>, index: Int): String =
+    Context.toString(rawArg(args, index) ?: "")
+
+private fun nullableStringArg(args: Array<Any?>, index: Int): String? =
+    rawArg(args, index)?.takeUnless { it === Undefined.instance }?.let(Context::toString)
+
+private fun numberArg(args: Array<Any?>, index: Int): Number = when (val value = rawArg(args, index)) {
+    is Number -> value
+    null, Undefined.instance -> 0
+    else -> Context.toNumber(value)
+}
+
+private fun bridgeResult(context: Context, scope: Scriptable, value: Any?): Any? = when (value) {
+    null -> null
+    is Unit -> Undefined.instance
+    is Undefined, is Scriptable -> value
+    is Map<*, *> -> context.newObject(scope).also { objectValue ->
+        value.forEach { (key, nested) ->
+            if (key != null) {
+                ScriptableObject.putProperty(objectValue, key.toString(), bridgeResult(context, scope, nested))
+            }
+        }
+    }
+    is Iterable<*> -> context.newArray(
+        scope,
+        rhinoObjectArray(value.map { nested -> bridgeResult(context, scope, nested) }),
+    )
+    is Array<*> -> context.newArray(
+        scope,
+        rhinoObjectArray(value.map { nested -> bridgeResult(context, scope, nested) }),
+    )
+    is IntArray -> context.newArray(scope, rhinoObjectArray(value.map(Int::toDouble)))
+    is LongArray -> context.newArray(scope, rhinoObjectArray(value.map(Long::toDouble)))
+    is DoubleArray -> context.newArray(scope, rhinoObjectArray(value.asIterable()))
+    is FloatArray -> context.newArray(scope, rhinoObjectArray(value.map(Float::toDouble)))
+    is Boolean, is Number, is String -> value
+    // Never return an arbitrary host object through the facade.  The bridge methods above only
+    // use the explicitly handled shapes; stringify an unexpected value instead of creating a
+    // new Java reflection surface.
+    else -> Context.toString(value)
+}
+
+private const val RHINO_SYSTEM_EVENT_BOOTSTRAP: String = """
+(function(){
+  function submit(name,kind,payload,options){
+    options=options||{};
+    var envelope={protocol:'dev.shinsou.system',version:1,kind:String(kind),name:String(name),
+      id:String(options.id||('event-'+Date.now())),payloadVersion:1,payload:payload||{}};
+    if(options.idempotencyKey!=null)envelope.idempotencyKey=String(options.idempotencyKey);
+    if(options.contextRef!=null)envelope.contextRef=String(options.contextRef);
+    var receipt=bridge.requestHostEvent(JSON.stringify(envelope));
+    try{return JSON.parse(String(receipt));}catch(e){return null;}
+  }
+  bridge.system={
+    submit:submit,
+    requestLogin:function(reason){return submit('auth.login.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    requestRefresh:function(scope,contextRef){scope=String(scope||'SELF');if(scope==='ACTIVE_CONTEXT'&&contextRef==null)contextRef=bridge.getHostEventContext();return submit('source.refresh.request','command',{scope:scope,reasonCode:null},{contextRef:contextRef});},
+    requestLogout:function(reason){return submit('auth.logout.request','command',{reasonCode:null,fallbackMessage:reason==null?null:String(reason)});},
+    reportMessage:function(message){return submit('diagnostic.message.report','event',message||{});}
+  };
+})();
+"""
+
+private fun Scriptable.property(name: String): Any? = ScriptableObject.getProperty(this, name)
+    .takeUnless { it === Scriptable.NOT_FOUND || it is Undefined }
+
+private fun Scriptable.stringProperty(name: String): String? = property(name)?.let(Context::toString)
+private fun Scriptable.booleanProperty(name: String): Boolean? = property(name)?.let(Context::toBoolean)
+
+private fun Any?.toRhino(context: Context, scope: Scriptable): Any? = when (this) {
+    null -> null
+    is String, is Boolean -> this
+    is Number -> Context.javaToJS(this, scope).let { converted ->
+        // Rhino converts numeric primitives to a script number; reject a future adapter change
+        // rather than exposing a boxed JVM object with reflective methods.
+        if (converted is NativeJavaObject || converted is Wrapper) toDouble() else converted
+    }
+    is Map<*, *> -> context.newObject(scope).also { objectValue ->
+        forEach { (key, value) ->
+            if (key != null) ScriptableObject.putProperty(objectValue, key.toString(), value.toRhino(context, scope))
+        }
+    }
+    is Iterable<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
+    is Array<*> -> context.newArray(scope, rhinoObjectArray(map { it.toRhino(context, scope) }))
+    else -> throw IllegalArgumentException("Unsupported plugin invocation argument type")
+}
+
+/** Rhino's Object[] overload rejects arrays retaining a Kotlin/JVM component type. */
+private fun rhinoObjectArray(values: Iterable<*>): Array<Any?> = values.map { it }.toTypedArray()
+
+private fun Any?.fromRhino(
+    limits: PluginExecutionLimits = PluginExecutionLimits(),
+    pluginId: String = "unknown",
+): Any? = RhinoResultDecoder(limits, pluginId).decode(this)
+
+private class RhinoResultDecoder(
+    private val limits: PluginExecutionLimits,
+    private val pluginId: String,
+) {
+    private var elements = 0
+    private var estimatedBytes = 0L
+
+    fun decode(value: Any?): Any? = decodeValue(value, 0)
+
+    private fun decodeValue(value: Any?, depth: Int): Any? {
+        requireLimit(depth <= limits.maxResultDepth) {
+            "Plugin '$pluginId' exceeded result nesting depth ${limits.maxResultDepth}"
+        }
+        countElement()
+        return when (value) {
+            null, is Undefined -> null
+            is NativeJavaObject -> decodeValue(value.unwrap(), depth + 1)
+            is Wrapper -> decodeValue(value.unwrap(), depth + 1)
+            is CharSequence -> value.toString().also(::countString)
+            is Number -> value.also { countBytes(32) }
+            is Boolean -> value.also { countBytes(5) }
+            is NativeArray -> {
+                requireLimit(value.length <= limits.maxResultArrayElements.toLong()) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultArrayElements} result array elements"
+                }
+                countBytes(2)
+                (0 until value.length.toInt()).map { index -> decodeValue(value.get(index, value), depth + 1) }
+            }
+            is Scriptable -> {
+                requireLimit(value.ids.size <= limits.maxResultObjectEntries) {
+                    "Plugin '$pluginId' exceeded ${limits.maxResultObjectEntries} result object entries"
+                }
+                countBytes(2)
+                value.ids.associate { id ->
+                    val key = id.toString().also(::countString)
+                    countBytes(2)
+                    val child = when (id) {
+                        is Int -> value.get(id, value)
+                        else -> value.get(key, value)
+                    }
+                    key to decodeValue(child, depth + 1)
+                }
+            }
+            else -> value.also { countString(it.toString()) }
+        }
+    }
+
+    private fun countElement() {
+        elements += 1
+        requireLimit(elements <= limits.maxResultTotalElements) {
+            "Plugin '$pluginId' exceeded ${limits.maxResultTotalElements} total result elements"
+        }
+    }
+
+    private fun countString(value: String) {
+        val bytes = pluginUtf8ByteCountAtMost(value, limits.maxResultStringBytes)
+        requireLimit(bytes != null) {
+            "Plugin '$pluginId' exceeded the ${limits.maxResultStringBytes}-byte result string limit"
+        }
+        countBytes(bytes!! + 2)
+    }
+
+    private fun countBytes(bytes: Int) {
+        estimatedBytes += bytes.toLong()
+        requireLimit(estimatedBytes <= limits.maxResultBytes.toLong()) {
+            "Plugin '$pluginId' exceeded the ${limits.maxResultBytes}-byte result limit"
+        }
+    }
+
+    private inline fun requireLimit(condition: Boolean, message: () -> String) {
+        if (!condition) throw PluginResourceLimitException(message())
+    }
+}
+
+private fun requireBoundedRhinoInvocationInput(
+    arguments: List<Any?>,
+    limits: PluginExecutionLimits,
+    pluginId: String,
+) {
+    val encoded = PluginJson.encodeToString(arguments.toSafeJsonElement())
+    if (pluginUtf8ByteCountAtMost(encoded, limits.maxInvocationInputBytes) == null) {
+        throw PluginResourceLimitException(
+            "Plugin '$pluginId' exceeded the ${limits.maxInvocationInputBytes}-byte invocation input limit",
+        )
+    }
+}
+
+private fun Any?.toSafeJsonElement(depth: Int = 0): kotlinx.serialization.json.JsonElement {
+    if (depth > 64) return kotlinx.serialization.json.JsonNull
+    return when (this) {
+        null -> kotlinx.serialization.json.JsonNull
+        is Boolean -> JsonPrimitive(this)
+        is Number -> JsonPrimitive(this)
+        is String -> JsonPrimitive(this)
+        is Map<*, *> -> kotlinx.serialization.json.JsonObject(entries.associate { (key, value) ->
+            key.toString() to value.toSafeJsonElement(depth + 1)
+        })
+        is Iterable<*> -> JsonArray(map { it.toSafeJsonElement(depth + 1) })
+        is Array<*> -> JsonArray(map { it.toSafeJsonElement(depth + 1) })
+        else -> JsonPrimitive(toString())
+    }
+}
+
+private fun Any?.toStringMap(): Map<String, String> = when (val value = this) {
+    null, is Undefined -> emptyMap()
+    is NativeJavaObject -> value.unwrap().toStringMap()
+    is Wrapper -> value.unwrap().toStringMap()
+    is Scriptable -> value.ids.associateNotNull { id ->
+        val key = id.toString()
+        val raw = if (id is Int) value.get(id, value) else value.get(key, value)
+        if (raw == null || raw is Undefined || raw === Scriptable.NOT_FOUND) null else key to Context.toString(raw)
+    }
+    is Map<*, *> -> value.entries.mapNotNull { (key, raw) ->
+        if (key == null || raw == null) null else key.toString() to raw.toString()
+    }.toMap()
+    else -> emptyMap()
+}
+
+private fun Any?.toStringSet(): Set<String> = when (val value = this) {
+    null, is Undefined -> emptySet()
+    is NativeJavaObject -> value.unwrap().toStringSet()
+    is Wrapper -> value.unwrap().toStringSet()
+    is NativeArray -> (0 until value.length.toInt()).mapNotNullTo(linkedSetOf()) { index ->
+        value.get(index, value)
+            .takeUnless { it === Scriptable.NOT_FOUND || it is Undefined }
+            ?.let(Context::toString)
+    }
+    is Iterable<*> -> value.mapNotNullTo(linkedSetOf()) { it?.toString() }
+    else -> emptySet()
+}
+
+private inline fun <T, K, V> Array<T>.associateNotNull(transform: (T) -> Pair<K, V>?): Map<K, V> =
+    buildMap { for (item in this@associateNotNull) transform(item)?.let { put(it.first, it.second) } }
+
+private fun Map<String, String>.header(name: String): String? =
+    entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
+private fun Any?.toStringAnyMap(): Map<String, Any?>? = when (this) {
+    is Map<*, *> -> entries.associate { it.key.toString() to it.value }
+    else -> null
+}
+
+private fun Any?.toAnyList(): List<Any?> = when (this) {
+    is List<*> -> this
+    is Array<*> -> toList()
+    // Native arrays are converted at the invocation boundary before domain mapping.
+    is NativeArray -> emptyList()
+    else -> emptyList()
+}
+
+private fun Any?.toBooleanValue(): Boolean = when (this) {
+    is Boolean -> this
+    is Number -> toInt() != 0
+    is String -> equals("true", ignoreCase = true) || this == "1"
+    else -> false
+}
+
+private fun Any?.toLoginAttemptResult(): LoginAttemptResult {
+    val result = toStringAnyMap()
+    if (result != null) {
+        return LoginAttemptResult(
+            loggedIn = result["loggedIn"].toBooleanValue(),
+            errorMessage = result["errorMessage"].toSafeLoginError(),
+        )
+    }
+    // Older scripts returned a bare Boolean. Keep accepting that shape while new scripts may
+    // return { loggedIn, errorMessage }.
+    return LoginAttemptResult(loggedIn = toBooleanValue())
+}
+
+private fun Any?.toSafeLoginError(): String? = (this as? String)
+    ?.filterNot(Char::isISOControl)
+    ?.trim()
+    ?.take(512)
+    ?.takeIf(String::isNotBlank)
+
+private fun Any?.toIntValue(default: Int = 0): Int = when (this) {
+    is Number -> toInt()
+    is String -> toDoubleOrNull()?.toInt() ?: default
+    else -> default
+}
+
+private fun Any?.toLongValue(default: Long = 0): Long = when (this) {
+    is Number -> toLong()
+    is String -> toDoubleOrNull()?.toLong() ?: default
+    else -> default
+}
+
+private fun Any?.toDoubleValue(default: Double = -1.0): Double = when (this) {
+    is Number -> toDouble()
+    is String -> toDoubleOrNull() ?: default
+    else -> default
+}
+
+private fun Any?.toStringList(): List<String> = toAnyList().mapNotNull { it?.toString() }
+
+private fun SManga.toMap(): Map<String, Any?> = mapOf(
+    "url" to url,
+    "title" to title,
+    "artist" to artist,
+    "author" to author,
+    "description" to description,
+    "genre" to genre,
+    "status" to status.value,
+    "thumbnailUrl" to thumbnailUrl,
+    "initialized" to initialized,
+)
+
+private fun Map<String, Any?>.toManga(): SManga = SManga(
+    url = this["url"]?.toString().orEmpty(),
+    title = this["title"]?.toString().orEmpty(),
+    artist = this["artist"]?.toString(),
+    author = this["author"]?.toString(),
+    description = this["description"]?.toString(),
+    genre = this["genre"]?.toStringList()?.takeIf { it.isNotEmpty() },
+    status = MangaStatus.fromValue(this["status"].toIntValue()),
+    thumbnailUrl = (this["thumbnailUrl"] ?: this["thumbnail_url"])?.toString(),
+    initialized = this["initialized"].toBooleanValue(),
+)
+
+private fun Map<String, Any?>.toChapter(): SChapter = SChapter(
+    url = this["url"]?.toString().orEmpty(),
+    name = this["name"]?.toString().orEmpty(),
+    scanlator = this["scanlator"]?.toString(),
+    dateUpload = this["dateUpload"].toLongValue(),
+    chapterNumber = this["chapterNumber"].toDoubleValue(),
+)
+
+private fun Map<String, Any?>.toPage(fallbackIndex: Int): Page = Page(
+    index = this["index"].toIntValue(fallbackIndex),
+    url = this["url"]?.toString().orEmpty(),
+    imageUrl = this["imageUrl"]?.toString(),
+)
+
+private fun filterToMap(filter: Filter): Map<String, Any?> = when (filter) {
+    is Filter.Header -> mapOf("type" to "header", "name" to filter.name)
+    Filter.Separator -> mapOf("type" to "separator", "name" to "")
+    is Filter.Select -> mapOf("type" to "select", "name" to filter.name, "values" to filter.values, "state" to filter.state)
+    is Filter.Text -> mapOf("type" to "text", "name" to filter.name, "state" to filter.state)
+    is Filter.CheckBox -> mapOf("type" to "checkBox", "name" to filter.name, "state" to filter.state)
+    is Filter.TriState -> mapOf("type" to "triState", "name" to filter.name, "state" to filter.state.value)
+    is Filter.Group -> mapOf("type" to "group", "name" to filter.name, "filters" to filter.filters.map(::filterToMap))
+    is Filter.Sort -> mapOf(
+        "type" to "sort",
+        "name" to filter.name,
+        "values" to filter.values,
+        "selection" to filter.selection?.let { mapOf("index" to it.index, "ascending" to it.ascending) },
+    )
+}
+
+private fun Map<String, Any?>.toFilter(): Filter? {
+    val type = this["type"]?.toString() ?: return null
+    val name = this["name"]?.toString().orEmpty()
+    return when (type) {
+        "header" -> Filter.Header(name)
+        "separator" -> Filter.Separator
+        "select" -> Filter.Select(name, this["values"].toStringList(), this["state"].toIntValue())
+        "text" -> Filter.Text(name, this["state"]?.toString().orEmpty())
+        "checkBox" -> Filter.CheckBox(name, this["state"].toBooleanValue())
+        "triState" -> Filter.TriState(name, TriStateValue.fromValue(this["state"].toIntValue()))
+        "group" -> Filter.Group(name, this["filters"].toAnyList().mapNotNull { it.toStringAnyMap()?.toFilter() })
+        "sort" -> {
+            val selectionMap = this["selection"].toStringAnyMap()
+            Filter.Sort(
+                name,
+                this["values"].toStringList(),
+                selectionMap?.let { SortSelection(it["index"].toIntValue(), it["ascending"].toBooleanValue()) },
+            )
+        }
+        else -> null
+    }
+}
+
+private fun Map<String, Any?>.toSourcePreference(): SourcePreference? {
+    val type = this["type"]?.toString()?.lowercase() ?: return null
+    val key = this["key"]?.toString()?.takeIf { it.isNotBlank() } ?: return null
+    val title = this["title"]?.toString()?.takeIf { it.isNotBlank() } ?: key
+    val summary = this["summary"]?.toString().orEmpty()
+    return when (type) {
+        "text", "textfield", "text_field" -> SourcePreference.TextField(
+            key,
+            title,
+            summary,
+            this["defaultValue"]?.toString().orEmpty(),
+        )
+        "toggle", "switch" -> SourcePreference.Toggle(
+            key,
+            title,
+            summary,
+            this["defaultValue"].toBooleanValue(),
+        )
+        "select", "choice" -> {
+            val entries = this["entries"].toStringList().ifEmpty { this["values"].toStringList() }
+            val entryValues = this["entryValues"].toStringList().ifEmpty { entries }
+            SourcePreference.Select(
+                key,
+                title,
+                entries,
+                entryValues,
+                this["defaultValue"]?.toString().orEmpty(),
+            )
+        }
+        "multiselect", "multi_select", "multichoice" -> {
+            val entries = this["entries"].toStringList().ifEmpty { this["values"].toStringList() }
+            val entryValues = this["entryValues"].toStringList().ifEmpty { entries }
+            SourcePreference.MultiSelect(
+                key,
+                title,
+                entries,
+                entryValues,
+                this["defaultValues"].toStringList().toSet(),
+            )
+        }
+        else -> null
+    }
+}
+
+private const val RHINO_DOM_BOOTSTRAP: String = """
+var Jsoup={parse:function(html,baseUri){var h=baseUri?bridge.htmlParseFragment(String(html),String(baseUri)):bridge.htmlParse(String(html));return h<0?null:new Document(h);}};
+function Element(h){this._hid=h;}
+function Document(h){this._hid=h;} Document.prototype=Object.create(Element.prototype); Document.prototype.constructor=Document;
+Element.prototype.select=function(css){var ids=bridge.domSelect(this._hid,String(css));var a=[];if(ids)for(var i=0;i<ids.length;i++)a.push(new Element(ids[i]));return new Elements(a);};
+Element.prototype.selectFirst=function(css){var h=bridge.domFirst(this._hid,String(css));return h<0?null:new Element(h);};
+Element.prototype.text=function(){return String(bridge.domText(this._hid));};
+Element.prototype.ownText=function(){return String(bridge.domOwnText(this._hid));};
+Element.prototype.html=function(){return String(bridge.domHtml(this._hid));};
+Element.prototype.outerHtml=function(){return String(bridge.domOuterHtml(this._hid));};
+Element.prototype.attr=function(n){return String(bridge.domAttr(this._hid,String(n)));};
+Element.prototype.hasAttr=function(n){return !!bridge.domHasAttr(this._hid,String(n));};
+Element.prototype.absUrl=function(n){return String(bridge.domAbsUrl(this._hid,String(n)));};
+Element.prototype.tagName=function(){return String(bridge.domTagName(this._hid));};
+Element.prototype.className=function(){return String(bridge.domClassName(this._hid));};
+Element.prototype.id=function(){return String(bridge.domId(this._hid));};
+Element.prototype.children=function(){var ids=bridge.domChildren(this._hid);var a=[];if(ids)for(var i=0;i<ids.length;i++)a.push(new Element(ids[i]));return new Elements(a);};
+Element.prototype.parent=function(){var h=bridge.domParent(this._hid);return h<0?null:new Element(h);};
+Element.prototype.nextElementSibling=function(){var h=bridge.domNextSibling(this._hid);return h<0?null:new Element(h);};
+Element.prototype.previousElementSibling=function(){var h=bridge.domPrevSibling(this._hid);return h<0?null:new Element(h);};
+Element.prototype.remove=function(){bridge.domRemove(this._hid);}; Element.prototype.release=function(){bridge.domRelease(this._hid);};
+Element.prototype.getElementsByTag=function(t){return this.select(t);}; Element.prototype.getElementsByClass=function(c){return this.select('.'+c);}; Element.prototype.getElementById=function(i){return this.selectFirst('#'+i);}; Element.prototype.toString=function(){return this.outerHtml();};
+function Elements(a){this._arr=a||[];this.length=this._arr.length;for(var i=0;i<this.length;i++)this[i]=this._arr[i];}
+Elements.prototype.get=function(i){return this._arr[i]||null;}; Elements.prototype.first=function(){return this.get(0);}; Elements.prototype.last=function(){return this.length?this._arr[this.length-1]:null;}; Elements.prototype.size=function(){return this.length;}; Elements.prototype.isEmpty=function(){return this.length===0;};
+Elements.prototype.text=function(){var a=[];for(var i=0;i<this.length;i++){var t=this._arr[i].text();if(t)a.push(t);}return a.join(' ');}; Elements.prototype.attr=function(n){return this.length?this._arr[0].attr(n):'';}; Elements.prototype.hasAttr=function(n){return this.length?this._arr[0].hasAttr(n):false;}; Elements.prototype.html=function(){return this.length?this._arr[0].html():'';};
+Elements.prototype.select=function(css){var a=[];for(var i=0;i<this.length;i++){var s=this._arr[i].select(css);for(var j=0;j<s.length;j++)a.push(s[j]);}return new Elements(a);};
+Elements.prototype.forEach=function(f){for(var i=0;i<this.length;i++)f(this._arr[i],i);}; Elements.prototype.map=function(f){var a=[];for(var i=0;i<this.length;i++)a.push(f(this._arr[i],i));return a;}; Elements.prototype.filter=function(f){var a=[];for(var i=0;i<this.length;i++)if(f(this._arr[i],i))a.push(this._arr[i]);return new Elements(a);}; Elements.prototype.eachAttr=function(n){return this.map(function(e){return e.attr(n);});}; Elements.prototype.eachText=function(){return this.map(function(e){return e.text();});}; Elements.prototype.releaseAll=function(){for(var i=0;i<this.length;i++)this._arr[i].release();};
+function fetchAndParse(url,baseUri){var h=bridge.httpGet(String(url));return !h||h.error?null:Jsoup.parse(h,baseUri||url);}
+var SManga={create:function(){return{url:'',title:'',author:null,artist:null,description:null,genre:null,status:0,thumbnailUrl:null,initialized:false};},UNKNOWN:0,ONGOING:1,COMPLETED:2,LICENSED:3,PUBLISHING_FINISHED:4,CANCELLED:5,ON_HIATUS:6};
+var SChapter={create:function(){return{url:'',name:'',scanlator:null,dateUpload:0,chapterNumber:-1};}};
+function Page(index,url,imageUrl){this.index=index||0;this.url=url||'';this.imageUrl=imageUrl||null;} function MangasPage(mangas,hasNextPage){this.mangas=mangas||[];this.hasNextPage=!!hasNextPage;}
+if(!String.prototype.substringAfter)String.prototype.substringAfter=function(d){var i=this.indexOf(d);return i>=0?this.substring(i+d.length):String(this);};
+if(!String.prototype.substringBefore)String.prototype.substringBefore=function(d){var i=this.indexOf(d);return i>=0?this.substring(0,i):String(this);};
+if(!String.prototype.substringAfterLast)String.prototype.substringAfterLast=function(d){var i=this.lastIndexOf(d);return i>=0?this.substring(i+d.length):String(this);};
+if(!String.prototype.substringBeforeLast)String.prototype.substringBeforeLast=function(d){var i=this.lastIndexOf(d);return i>=0?this.substring(0,i):String(this);};
+function setUrlWithoutDomain(o,u){var m=String(u).match(/^https?:\/\/[^\/]+(\/[^#]*)/i);o.url=m?m[1]:String(u);}
+"""

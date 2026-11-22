@@ -18,10 +18,10 @@ import dev.shinsou.kmp.domain.model.encodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.navigation.AppNavigator
 import dev.shinsou.kmp.navigation.Destination
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseSnapshot
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import kotlinx.coroutines.CompletableDeferred

@@ -10,7 +10,7 @@ import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCSignatureOverride
 import platform.CoreGraphics.CGRectMake

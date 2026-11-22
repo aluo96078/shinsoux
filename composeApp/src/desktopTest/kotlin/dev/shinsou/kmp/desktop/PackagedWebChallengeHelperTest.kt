@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.desktop
 
-import dev.shinsou.kmp.plugin.MacOsWebChallengeHelperLocator
+import dev.shinsou.kmp.plugin.browser.MacOsWebChallengeHelperLocator
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals

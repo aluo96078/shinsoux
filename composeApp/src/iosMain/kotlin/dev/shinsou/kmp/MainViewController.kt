@@ -14,14 +14,14 @@ import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
-import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.browser.IosBrowserUserAgentProvider
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.ShinsouStartupScreen
 import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
-import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.trust.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.iosSandboxRuntimeFactory
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -342,7 +342,7 @@ internal class IosApplicationContainerCore(
         ),
         mangaPlatform = dev.shinsou.kmp.manga.IosMangaPlatform(),
         shuYueMigrationSecretStore = IosShuYueMigrationSecretStore(),
-        pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.IosPluginBrowserSessionTransport(),
+        pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.browser.IosPluginBrowserSessionTransport(),
         platformBrowserUserAgentProvider = IosBrowserUserAgentProvider(),
         syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
             defaultName = deviceName,

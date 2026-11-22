@@ -1,9 +1,9 @@
 package dev.shinsou.kmp.desktop
 
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.PluginJson
+import dev.shinsou.kmp.plugin.storage.PluginJson
 import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.isSensitivePluginKey
+import dev.shinsou.kmp.plugin.storage.isSensitivePluginKey
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files

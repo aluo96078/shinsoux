@@ -29,7 +29,7 @@ import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.logging.Log
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.CancellationException

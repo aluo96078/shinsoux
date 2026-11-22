@@ -4,9 +4,9 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.SourceKey
 import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
-import dev.shinsou.kmp.plugin.pluginJsonArrayCountsAtMost
-import dev.shinsou.kmp.plugin.pluginUtf8ByteCountAtMost
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.pluginJsonArrayCountsAtMost
+import dev.shinsou.kmp.plugin.model.pluginUtf8ByteCountAtMost
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.KSerializer

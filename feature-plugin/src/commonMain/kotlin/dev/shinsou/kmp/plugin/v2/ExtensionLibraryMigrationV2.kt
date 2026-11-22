@@ -7,6 +7,7 @@ import dev.shinsou.kmp.domain.model.extensionAcquisitionId
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.domain.model.extensionUnitKey
 import dev.shinsou.kmp.domain.model.encodeTypedLocalChapterUrl
+import dev.shinsou.kmp.plugin.browse.newestFirstSourceOrder
 
 /**
  * How one extension-backed library title moves to another exact source publication.
@@ -66,7 +67,7 @@ internal fun planExtensionLibraryMigrationV2(
         moved += chapter.copy(
             url = encodeTypedLocalChapterUrl(publicationKey, acquisitionId, unitKey),
             name = match.value.title,
-            sourceOrder = dev.shinsou.kmp.plugin.newestFirstSourceOrder(match.index, units.size),
+            sourceOrder = dev.shinsou.kmp.plugin.browse.newestFirstSourceOrder(match.index, units.size),
         )
     }
     return ExtensionLibraryMigrationPlanV2(

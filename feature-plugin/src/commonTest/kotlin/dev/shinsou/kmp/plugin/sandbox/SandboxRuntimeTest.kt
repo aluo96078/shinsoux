@@ -1,24 +1,24 @@
 package dev.shinsou.kmp.plugin.sandbox
 
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
-import dev.shinsou.kmp.plugin.KeyValuePluginStorage
-import dev.shinsou.kmp.plugin.PluginCredential
-import dev.shinsou.kmp.plugin.PluginExecutionLimits
-import dev.shinsou.kmp.plugin.PluginHostResolution
-import dev.shinsou.kmp.plugin.PluginHostResolver
-import dev.shinsou.kmp.plugin.PluginHttpRequest
-import dev.shinsou.kmp.plugin.PluginHttpResponse
-import dev.shinsou.kmp.plugin.PluginHttpTransport
-import dev.shinsou.kmp.plugin.PluginManifest
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PluginNetworkPolicy
-import dev.shinsou.kmp.plugin.PluginResourceLimitException
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
-import dev.shinsou.kmp.plugin.SManga
-import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
-import dev.shinsou.kmp.plugin.ScriptPluginRuntime
-import dev.shinsou.kmp.plugin.SourceIndexEntry
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.storage.PluginCredential
+import dev.shinsou.kmp.plugin.model.PluginExecutionLimits
+import dev.shinsou.kmp.plugin.network.PluginHostResolution
+import dev.shinsou.kmp.plugin.network.PluginHostResolver
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.PluginHttpResponse
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.network.PluginNetworkPolicy
+import dev.shinsou.kmp.plugin.model.PluginResourceLimitException
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.sourceFailureMarker
 import dev.shinsou.kmp.plugin.sandbox.FakeSandbox.HookOutcome
@@ -42,6 +42,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.plugin.contracts.Filter
+import dev.shinsou.kmp.plugin.storage.PluginCookie
 
 class SandboxRuntimeTest {
     private val source = SourceIndexEntry(
@@ -133,7 +135,7 @@ class SandboxRuntimeTest {
 
     @Test
     fun cookieStorageAloneDoesNotAllowCookieRead() = runTest {
-        storage.setCookie(42, dev.shinsou.kmp.plugin.PluginCookie("sid", "v1", "www.example.test"))
+        storage.setCookie(42, dev.shinsou.kmp.plugin.storage.PluginCookie("sid", "v1", "www.example.test"))
         var read: BridgeOutcome? = null
         val cookieHook: Map<String, suspend FakeSandbox.Hook.(JsonArray) -> HookOutcome> = mapOf(
             "getPopularManga" to { read = bridge("getCookie", "[\"sid\",\"https://www.example.test/\"]"); HookOutcome.Ok("{\"mangas\":[]}") },
@@ -239,7 +241,7 @@ class SandboxRuntimeTest {
         val e = assertFailsWith<SandboxInvocationException> { s.runtime.getLatestUpdates(1) }
         assertEquals(SandboxErrorCode.SCRIPT_ERROR, e.code)
         // A failed hook does not poison the session.
-        assertEquals(listOf<dev.shinsou.kmp.plugin.Filter>(dev.shinsou.kmp.plugin.Filter.Header("H")), s.runtime.getFilterList())
+        assertEquals(listOf<dev.shinsou.kmp.plugin.contracts.Filter>(dev.shinsou.kmp.plugin.contracts.Filter.Header("H")), s.runtime.getFilterList())
         assertFalse(s.sandbox.closed)
     }
 

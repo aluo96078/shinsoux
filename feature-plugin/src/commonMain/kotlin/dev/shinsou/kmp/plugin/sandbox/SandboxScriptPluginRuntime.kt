@@ -1,26 +1,26 @@
 package dev.shinsou.kmp.plugin.sandbox
 
-import dev.shinsou.kmp.plugin.FilterList
-import dev.shinsou.kmp.plugin.LoginAttemptResult
-import dev.shinsou.kmp.plugin.MangasPage
-import dev.shinsou.kmp.plugin.Page
-import dev.shinsou.kmp.plugin.PluginCredential
-import dev.shinsou.kmp.plugin.PluginExecutionLimits
-import dev.shinsou.kmp.plugin.PluginManifest
-import dev.shinsou.kmp.plugin.PluginResourceLimitException
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
-import dev.shinsou.kmp.plugin.SChapter
-import dev.shinsou.kmp.plugin.SManga
-import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
-import dev.shinsou.kmp.plugin.ScriptPluginRuntime
-import dev.shinsou.kmp.plugin.ScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.SourceIndexEntry
-import dev.shinsou.kmp.plugin.SourcePreference
-import dev.shinsou.kmp.plugin.boundedPluginLogMessage
-import dev.shinsou.kmp.plugin.pluginUtf8ByteCountAtMost
-import dev.shinsou.kmp.plugin.requireDeclaredExecutableSource
-import dev.shinsou.kmp.plugin.requireLegacyExecutableSource
-import dev.shinsou.kmp.plugin.requireRuntimePermission
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.LoginAttemptResult
+import dev.shinsou.kmp.plugin.contracts.MangasPage
+import dev.shinsou.kmp.plugin.contracts.Page
+import dev.shinsou.kmp.plugin.storage.PluginCredential
+import dev.shinsou.kmp.plugin.model.PluginExecutionLimits
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.model.PluginResourceLimitException
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntime
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.contracts.SourcePreference
+import dev.shinsou.kmp.plugin.model.boundedPluginLogMessage
+import dev.shinsou.kmp.plugin.model.pluginUtf8ByteCountAtMost
+import dev.shinsou.kmp.plugin.runtime.requireDeclaredExecutableSource
+import dev.shinsou.kmp.plugin.runtime.requireLegacyExecutableSource
+import dev.shinsou.kmp.plugin.runtime.requireRuntimePermission
 import dev.shinsou.kmp.plugin.sandbox.SandboxScriptJson.bool
 import dev.shinsou.kmp.plugin.sandbox.SandboxScriptJson.str
 import kotlinx.coroutines.NonCancellable
@@ -36,6 +36,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlin.concurrent.Volatile
+import dev.shinsou.kmp.plugin.contracts.ChapterListPage
+import dev.shinsou.kmp.plugin.contracts.TextChapterSource
 
 /** Opens the platform sandbox for one package (isolated process, helper or WASM instance). */
 internal fun interface SandboxTransportProvider {
@@ -140,7 +142,7 @@ internal class SandboxScriptPluginRuntime(
     nowEpochMillis: () -> Long,
     private val pumpScope: kotlinx.coroutines.CoroutineScope? = null,
     private val lifecycle: SandboxLifecycle? = null,
-) : ScriptPluginRuntime, SandboxResident, dev.shinsou.kmp.plugin.TextChapterSource {
+) : ScriptPluginRuntime, SandboxResident, dev.shinsou.kmp.plugin.contracts.TextChapterSource {
     private val limits = environment.executionLimits
 
     /** Bumped by [close]: bridge calls of an older generation are refused (§5.1). */
@@ -265,13 +267,13 @@ internal class SandboxScriptPluginRuntime(
     private var supportsChapterPaging: Boolean = false
 
     /** `getChapterListPage(manga, page)` → `{ chapters, hasNextPage }`; absent in most scripts. */
-    override suspend fun getChapterListPage(manga: SManga, page: Int): dev.shinsou.kmp.plugin.ChapterListPage? {
+    override suspend fun getChapterListPage(manga: SManga, page: Int): dev.shinsou.kmp.plugin.contracts.ChapterListPage? {
         if (!supportsChapterPaging) return null
         val result = call(
             "getChapterListPage",
             JsonArray(listOf(SandboxScriptJson.mangaJson(manga), JsonPrimitive(page))),
         ) as? JsonObject ?: throw IllegalStateException("Plugin '$pluginId' returned no chapter page")
-        return dev.shinsou.kmp.plugin.ChapterListPage(
+        return dev.shinsou.kmp.plugin.contracts.ChapterListPage(
             chapters = SandboxScriptJson.chapters(result["chapters"] ?: JsonArray(emptyList())),
             hasNextPage = result["hasNextPage"].bool(),
         )

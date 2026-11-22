@@ -3,6 +3,21 @@ package dev.shinsou.kmp.plugin
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
+import dev.shinsou.kmp.plugin.network.PluginHostResolution
+import dev.shinsou.kmp.plugin.network.PluginHttpRequest
+import dev.shinsou.kmp.plugin.network.PluginHttpResponse
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.network.createPlatformPinnedPluginHttpTransport
+import dev.shinsou.kmp.plugin.network.createPlatformPluginHostResolver
+import dev.shinsou.kmp.plugin.network.pluginHeaderValues
+import dev.shinsou.kmp.plugin.runtime.RhinoScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
 
 /** Opt-in live diagnosis of bridge.httpPost for zh.shibashuwu (SHINSOU_LIVE_SHIBASHUWU=1). */
 class LiveShibashuwuSearchDesktopTest {
