@@ -5,8 +5,8 @@ package dev.shinsou.kmp.ui.browse
 import dev.shinsou.kmp.plugin.PluginTestAccess
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
 import dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2

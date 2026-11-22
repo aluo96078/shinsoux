@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import dev.shinsou.kmp.plugin.BrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseCallbacks
 import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.DEFAULT_IMPORTED_DOCUMENT_LIMITS
 import dev.shinsou.kmp.contract.ImportedDocument

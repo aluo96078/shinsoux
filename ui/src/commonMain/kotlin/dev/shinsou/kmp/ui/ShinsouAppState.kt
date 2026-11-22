@@ -6,7 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadState

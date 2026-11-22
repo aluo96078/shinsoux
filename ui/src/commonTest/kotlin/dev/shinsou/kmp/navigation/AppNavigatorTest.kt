@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.navigation
 
 import dev.shinsou.kmp.domain.model.MainSection
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.ui.library.LibrarySelectionState
 import dev.shinsou.kmp.ui.settings.MoreDestination
 import kotlin.test.Test

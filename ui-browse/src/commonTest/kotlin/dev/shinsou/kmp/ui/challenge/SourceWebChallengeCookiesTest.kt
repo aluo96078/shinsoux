@@ -3,10 +3,10 @@
 package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.plugin.PluginTestAccess
-import dev.shinsou.kmp.plugin.PluginCookie
+import dev.shinsou.kmp.plugin.storage.PluginCookie
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeCapability
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeCapability
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import io.ktor.http.Url
 import kotlin.test.Test

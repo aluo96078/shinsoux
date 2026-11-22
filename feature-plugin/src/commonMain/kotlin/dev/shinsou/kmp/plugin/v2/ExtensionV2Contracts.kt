@@ -9,6 +9,7 @@ import dev.shinsou.kmp.domain.model.SourceKey
 import io.ktor.http.Url
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import dev.shinsou.kmp.plugin.contracts.Source
 
 /** Capabilities advertised by an extension source and checked by the host before each call. */
 @Serializable

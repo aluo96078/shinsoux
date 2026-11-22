@@ -1,12 +1,12 @@
 package dev.shinsou.kmp.plugin.v2
 
 import dev.shinsou.kmp.domain.content.ContentKind
-import dev.shinsou.kmp.plugin.CatalogueSource
-import dev.shinsou.kmp.plugin.FilterList
-import dev.shinsou.kmp.plugin.MangasPage
-import dev.shinsou.kmp.plugin.Page
-import dev.shinsou.kmp.plugin.SChapter
-import dev.shinsou.kmp.plugin.SManga
+import dev.shinsou.kmp.plugin.contracts.CatalogueSource
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.MangasPage
+import dev.shinsou.kmp.plugin.contracts.Page
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

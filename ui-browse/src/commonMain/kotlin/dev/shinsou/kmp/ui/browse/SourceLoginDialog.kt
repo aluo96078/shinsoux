@@ -25,11 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.SourceAuth
-import dev.shinsou.kmp.plugin.SourceWebSession
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.SourceAuth
+import dev.shinsou.kmp.plugin.contracts.SourceWebSession
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.contract.SourceLoginRequest
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings

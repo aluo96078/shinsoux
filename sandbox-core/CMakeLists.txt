@@ -10,7 +10,7 @@ if(ANDROID)
     add_compile_options(-fvisibility=hidden -ffunction-sections -fdata-sections)
 endif()
 set(QJS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs)
-set(BOOTSTRAP_KT ${CMAKE_CURRENT_SOURCE_DIR}/../feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt)
+set(BOOTSTRAP_KT ${CMAKE_CURRENT_SOURCE_DIR}/../feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/runtime/IosJavaScriptBootstrap.kt)
 
 option(SSC_SANITIZE "Build with AddressSanitizer and UBSan" OFF)
 option(SSC_FUZZ "Build the libFuzzer targets (clang with libFuzzer; implies ASan+UBSan)" OFF)

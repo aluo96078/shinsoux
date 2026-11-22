@@ -8,8 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.ContentAcquisition
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.ContentAcquisition
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.DownloadState

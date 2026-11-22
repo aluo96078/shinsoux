@@ -1,15 +1,15 @@
 package dev.shinsou.kmp.ui.browse
 
-import dev.shinsou.kmp.plugin.BrowseRepository
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.MigrationCandidate
-import dev.shinsou.kmp.plugin.PluginContentType
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
-import dev.shinsou.kmp.plugin.BrowseFilter
-import dev.shinsou.kmp.plugin.BrowsePage
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.BrowseRepository
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.MigrationCandidate
+import dev.shinsou.kmp.plugin.model.PluginContentType
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.BrowseFilter
+import dev.shinsou.kmp.plugin.contracts.BrowsePage
+import dev.shinsou.kmp.plugin.contracts.BrowseSnapshot
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CompletableDeferred

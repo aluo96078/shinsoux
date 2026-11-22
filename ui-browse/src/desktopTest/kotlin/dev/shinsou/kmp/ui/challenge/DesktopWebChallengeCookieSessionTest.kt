@@ -4,8 +4,8 @@ package dev.shinsou.kmp.ui.challenge
 
 import dev.shinsou.kmp.plugin.PluginTestAccess
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeCapability
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeCapability
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import java.nio.file.Files
 import java.nio.file.Path
@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import dev.shinsou.kmp.plugin.webChallengeProcessCommand
+import dev.shinsou.kmp.plugin.browser.webChallengeProcessCommand
 
 class DesktopWebChallengeCookieSessionTest {
     @Test
@@ -248,7 +248,7 @@ class DesktopWebChallengeCookieSessionTest {
         ).let { local -> if (Files.isRegularFile(local)) local else Path.of("ui-browse").resolve(local) }
         // R5-1: the plugin transport is in :feature-plugin, next to this module.
         val sessionSource = Path.of(
-            "feature-plugin/src/desktopMain/kotlin/dev/shinsou/kmp/plugin/DesktopPluginBrowserSessionTransport.kt",
+            "feature-plugin/src/desktopMain/kotlin/dev/shinsou/kmp/plugin/browser/DesktopPluginBrowserSessionTransport.kt",
         ).let { fromRoot -> Path.of("..").resolve(fromRoot).takeIf(Files::isRegularFile) ?: fromRoot }
 
         listOf(Files.readString(challengeSource), Files.readString(sessionSource)).forEach { source ->

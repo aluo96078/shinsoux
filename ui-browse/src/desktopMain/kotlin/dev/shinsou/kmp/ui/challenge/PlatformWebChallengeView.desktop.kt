@@ -10,7 +10,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.contract.SourceCookie
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.contract.WebChallengeEmbeddedPolicy
 import java.io.BufferedWriter
 import java.io.IOException
@@ -25,9 +25,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import dev.shinsou.kmp.plugin.BoundedUtf8LineReader
-import dev.shinsou.kmp.plugin.MacOsWebChallengeHelperLocator
-import dev.shinsou.kmp.plugin.webChallengeProcessCommand
+import dev.shinsou.kmp.plugin.browser.BoundedUtf8LineReader
+import dev.shinsou.kmp.plugin.browser.MacOsWebChallengeHelperLocator
+import dev.shinsou.kmp.plugin.browser.webChallengeProcessCommand
 
 internal actual val platformWebChallengeMode: PlatformWebChallengeMode =
     if (System.getProperty("os.name").orEmpty().lowercase().contains("mac")) {

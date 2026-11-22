@@ -47,8 +47,8 @@ import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.DesktopAvifDecoder
 import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
-import dev.shinsou.kmp.plugin.DesktopBrowserUserAgentProvider
-import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.browser.DesktopBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.trust.SandboxOnlyScriptPluginRuntimeFactory
 import dev.shinsou.kmp.plugin.sandbox.desktopSandboxRuntimeFactory
 import dev.shinsou.kmp.tts.DesktopTextToSpeechEngine
 import dev.shinsou.kmp.ui.DeepLinkSection
@@ -269,7 +269,7 @@ private suspend fun openDesktopApp(
                 ),
                 mangaPlatform = dev.shinsou.kmp.manga.DesktopMangaPlatform.create(),
                 shuYueMigrationSecretStore = DesktopShuYueMigrationSecretStore(),
-                pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.DesktopPluginBrowserSessionTransport(),
+                pluginBrowserSessionTransport = dev.shinsou.kmp.plugin.browser.DesktopPluginBrowserSessionTransport(),
                 platformBrowserUserAgentProvider = DesktopBrowserUserAgentProvider(),
                 syncDeviceInfo = dev.shinsou.kmp.sync.v3.SyncDeviceInfo(
                     defaultName = when (desktopPlatform) {

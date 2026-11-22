@@ -6,6 +6,9 @@ import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
 import dev.shinsou.kmp.testing.TestOnlyApi
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeCapability
+import dev.shinsou.kmp.plugin.manager.PluginWebChallengeCoordinator
+import dev.shinsou.kmp.plugin.model.PluginInstallKeys
 
 /**
  * The tests of higher modules (`:ui`, the app) reach these internal declarations of :feature-plugin

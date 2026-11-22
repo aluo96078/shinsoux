@@ -40,7 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.MainSection

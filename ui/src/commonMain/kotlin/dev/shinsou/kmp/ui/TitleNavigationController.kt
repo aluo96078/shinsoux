@@ -1,9 +1,9 @@
 package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.ExtensionLibraryBindingV2
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID

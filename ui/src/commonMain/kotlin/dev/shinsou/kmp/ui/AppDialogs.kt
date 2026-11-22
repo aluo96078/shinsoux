@@ -23,7 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
-import dev.shinsou.kmp.plugin.PluginPermissionDetails
+import dev.shinsou.kmp.plugin.contracts.PluginPermissionDetails
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings

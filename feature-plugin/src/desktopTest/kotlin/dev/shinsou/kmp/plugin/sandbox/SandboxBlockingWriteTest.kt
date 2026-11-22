@@ -1,14 +1,14 @@
 package dev.shinsou.kmp.plugin.sandbox
 
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
-import dev.shinsou.kmp.plugin.KeyValuePluginStorage
-import dev.shinsou.kmp.plugin.PluginHttpResponse
-import dev.shinsou.kmp.plugin.PluginHttpTransport
-import dev.shinsou.kmp.plugin.PluginManifest
-import dev.shinsou.kmp.plugin.PluginNetworkClient
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
-import dev.shinsou.kmp.plugin.ScriptPluginEnvironment
-import dev.shinsou.kmp.plugin.SourceIndexEntry
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.KeyValuePluginStorage
+import dev.shinsou.kmp.plugin.network.PluginHttpResponse
+import dev.shinsou.kmp.plugin.network.PluginHttpTransport
+import dev.shinsou.kmp.plugin.model.PluginManifest
+import dev.shinsou.kmp.plugin.network.PluginNetworkClient
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.runtime.ScriptPluginEnvironment
+import dev.shinsou.kmp.plugin.model.SourceIndexEntry
 import dev.shinsou.kmp.plugin.sandbox.FakeSandbox.HookOutcome
 import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.CoroutineScope

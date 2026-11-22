@@ -2,13 +2,13 @@ package dev.shinsou.kmp.ui
 
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseRepository
-import dev.shinsou.kmp.plugin.BrowseSnapshot
-import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
-import dev.shinsou.kmp.plugin.PackageSecuritySnapshot
-import dev.shinsou.kmp.plugin.PluginDeveloperModeSettings
-import dev.shinsou.kmp.plugin.RepositoryTrustPrompt
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseRepository
+import dev.shinsou.kmp.plugin.contracts.BrowseSnapshot
+import dev.shinsou.kmp.plugin.contracts.EmptyBrowseCallbacks
+import dev.shinsou.kmp.plugin.contracts.PackageSecuritySnapshot
+import dev.shinsou.kmp.plugin.contracts.PluginDeveloperModeSettings
+import dev.shinsou.kmp.plugin.contracts.RepositoryTrustPrompt
 import dev.shinsou.kmp.plugin.events.PluginEventGrantReview
 import dev.shinsou.kmp.plugin.events.PluginGrantSelection
 import dev.shinsou.kmp.plugin.events.PluginHostPermission

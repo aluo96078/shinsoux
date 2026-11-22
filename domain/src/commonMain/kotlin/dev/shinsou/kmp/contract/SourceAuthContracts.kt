@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.contract
 
 // R4-1 (docs/architecture/0006): source login, secret and web-challenge contracts. The web-challenge
-// capability and request live in :feature-plugin (dev.shinsou.kmp.plugin), next to the only code that
+// capability and request live in :feature-plugin (dev.shinsou.kmp.plugin.contracts), next to the only code that
 // may mint a capability.
 
 /** A non-blocking login prompt requested by an executable source. */

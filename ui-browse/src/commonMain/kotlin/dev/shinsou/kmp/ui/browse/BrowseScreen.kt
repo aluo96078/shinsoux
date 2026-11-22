@@ -60,25 +60,25 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.ContentAcquisition
-import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
-import dev.shinsou.kmp.plugin.ExtensionManagement
-import dev.shinsou.kmp.plugin.ExtensionTrust
-import dev.shinsou.kmp.plugin.SourceAuth
-import dev.shinsou.kmp.plugin.SourceSettings
-import dev.shinsou.kmp.plugin.SourceWebSession
-import dev.shinsou.kmp.plugin.BrowseExtension
-import dev.shinsou.kmp.plugin.BrowseFilter
-import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowsePage
-import dev.shinsou.kmp.plugin.BrowseSource
-import dev.shinsou.kmp.plugin.ExtensionArtifactNotReviewedException
+import dev.shinsou.kmp.plugin.contracts.ContentAcquisition
+import dev.shinsou.kmp.plugin.contracts.ExtensionLibraryBinding
+import dev.shinsou.kmp.plugin.contracts.ExtensionManagement
+import dev.shinsou.kmp.plugin.contracts.ExtensionTrust
+import dev.shinsou.kmp.plugin.contracts.SourceAuth
+import dev.shinsou.kmp.plugin.contracts.SourceSettings
+import dev.shinsou.kmp.plugin.contracts.SourceWebSession
+import dev.shinsou.kmp.plugin.contracts.BrowseExtension
+import dev.shinsou.kmp.plugin.contracts.BrowseFilter
+import dev.shinsou.kmp.plugin.contracts.BrowseManga
+import dev.shinsou.kmp.plugin.contracts.BrowsePage
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
+import dev.shinsou.kmp.plugin.runtime.ExtensionArtifactNotReviewedException
 import dev.shinsou.kmp.domain.model.sourceFailureMarker
-import dev.shinsou.kmp.plugin.toBrowseFilterV2
-import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
+import dev.shinsou.kmp.plugin.contracts.toBrowseFilterV2
+import dev.shinsou.kmp.plugin.contracts.ExtensionPublicationCatalog
 import dev.shinsou.kmp.contract.ImportedDocument
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
+import dev.shinsou.kmp.plugin.contracts.SourceCatalog
+import dev.shinsou.kmp.plugin.contracts.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.browse.ExtensionFavoriteDestination
 import dev.shinsou.kmp.ui.browse.extensionFavoriteDestination
 import dev.shinsou.kmp.domain.model.ReaderSettings
@@ -274,7 +274,7 @@ fun <B, S> BrowseScreen(
 private fun BrowseHeader(
     state: BrowseScreenState,
     holders: BrowseHolders,
-    snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
+    snapshot: dev.shinsou.kmp.plugin.contracts.BrowseSnapshot,
     callbacks: SourceCatalog,
 ) {
     val strings = LocalShinsouStrings.current
@@ -332,7 +332,7 @@ private fun BrowseHeader(
 @Composable
 private fun <B> BrowseSourcesPage(
     holders: BrowseHolders,
-    snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
+    snapshot: dev.shinsou.kmp.plugin.contracts.BrowseSnapshot,
     filters: BrowseSourceFilters,
     callbacks: B,
     host: BrowseHost,
@@ -373,7 +373,7 @@ private fun <B> BrowseSourcesPage(
 private fun BrowseExtensionsPage(
     state: BrowseScreenState,
     extensions: ExtensionManagementState,
-    snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
+    snapshot: dev.shinsou.kmp.plugin.contracts.BrowseSnapshot,
     filters: BrowseSourceFilters,
     sync: dev.shinsou.kmp.sync.v3.SyncStatus?,
 ) {
@@ -405,7 +405,7 @@ private fun BrowseExtensionsPage(
 @Composable
 private fun <B, S> BrowseOverlays(
     holders: BrowseHolders,
-    snapshot: dev.shinsou.kmp.plugin.BrowseSnapshot,
+    snapshot: dev.shinsou.kmp.plugin.contracts.BrowseSnapshot,
     filters: BrowseSourceFilters,
     callbacks: B,
     host: BrowseHost,
@@ -591,7 +591,7 @@ private fun ExtensionDialogs(extensions: ExtensionManagementState) {
         )
     }
     extensions.pendingGrant?.let { pending ->
-        var details by remember(pending) { mutableStateOf<dev.shinsou.kmp.plugin.PluginPermissionDetails?>(null) }
+        var details by remember(pending) { mutableStateOf<dev.shinsou.kmp.plugin.contracts.PluginPermissionDetails?>(null) }
         LaunchedEffect(pending) { details = extensions.permissionDetails(pending) }
         PluginPermissionReviewDialog(
             review = pending.review,
@@ -632,7 +632,7 @@ private fun Throwable.diagnosticMessage(): String {
 internal fun Throwable.localizedDiagnosticMessage(strings: ShinsouStrings): String {
     localizedSourceFailure(strings)?.let { return it }
     // A repository that switched to signed publishing: its card already offers "Confirm publisher".
-    if (generateSequence(this) { it.cause }.any { it is dev.shinsou.kmp.plugin.RepositoryTrustException.UntrustedRepository }) {
+    if (generateSequence(this) { it.cause }.any { it is dev.shinsou.kmp.plugin.trust.RepositoryTrustException.UntrustedRepository }) {
         return strings.text(StringKey.NOW_SIGNED_BY_ITS_PUBLISHER_CONFIRM_THE)
     }
     if (generateSequence(this) { it.cause }.any { it is ExtensionArtifactNotReviewedException }) {

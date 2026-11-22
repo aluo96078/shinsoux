@@ -5,11 +5,11 @@ import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.logging.Log
-import dev.shinsou.kmp.plugin.PluginJson
+import dev.shinsou.kmp.plugin.storage.PluginJson
 import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.allowsIosKeychainPlaintextFallback
-import dev.shinsou.kmp.plugin.isSensitivePluginKey
-import dev.shinsou.kmp.plugin.migrateLegacySensitivePluginValues
+import dev.shinsou.kmp.plugin.storage.allowsIosKeychainPlaintextFallback
+import dev.shinsou.kmp.plugin.storage.isSensitivePluginKey
+import dev.shinsou.kmp.plugin.storage.migrateLegacySensitivePluginValues
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.ExperimentalForeignApi

@@ -2,19 +2,20 @@ package dev.shinsou.kmp.plugin.v2
 
 import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.CatalogueSource
-import dev.shinsou.kmp.plugin.FilterList
-import dev.shinsou.kmp.plugin.MangasPage
-import dev.shinsou.kmp.plugin.Page
-import dev.shinsou.kmp.plugin.SChapter
-import dev.shinsou.kmp.plugin.SManga
-import dev.shinsou.kmp.plugin.TextChapterSource
+import dev.shinsou.kmp.plugin.contracts.CatalogueSource
+import dev.shinsou.kmp.plugin.contracts.FilterList
+import dev.shinsou.kmp.plugin.contracts.MangasPage
+import dev.shinsou.kmp.plugin.contracts.Page
+import dev.shinsou.kmp.plugin.contracts.SChapter
+import dev.shinsou.kmp.plugin.contracts.SManga
+import dev.shinsou.kmp.plugin.contracts.TextChapterSource
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import dev.shinsou.kmp.plugin.contracts.Source
 
 /** ADR-0002 A5: third-party script packages can publish novel and mixed sources. */
 @OptIn(ExtensionImplementationApi::class)

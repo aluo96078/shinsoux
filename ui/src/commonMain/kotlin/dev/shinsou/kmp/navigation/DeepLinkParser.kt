@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.navigation
 
-import dev.shinsou.kmp.plugin.AddRepositoryLink
+import dev.shinsou.kmp.plugin.trust.AddRepositoryLink
 
 import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.ShinsouDeepLink

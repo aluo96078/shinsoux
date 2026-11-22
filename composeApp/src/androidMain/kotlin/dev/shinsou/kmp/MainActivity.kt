@@ -29,9 +29,9 @@ import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.network.createPlatformHttpClient
-import dev.shinsou.kmp.plugin.SandboxOnlyScriptPluginRuntimeFactory
-import dev.shinsou.kmp.plugin.AndroidBrowserUserAgentProvider
-import dev.shinsou.kmp.plugin.AndroidPluginBrowserSessionTransport
+import dev.shinsou.kmp.plugin.trust.SandboxOnlyScriptPluginRuntimeFactory
+import dev.shinsou.kmp.plugin.browser.AndroidBrowserUserAgentProvider
+import dev.shinsou.kmp.plugin.browser.AndroidPluginBrowserSessionTransport
 import dev.shinsou.kmp.tts.AndroidTextToSpeechEngine
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits

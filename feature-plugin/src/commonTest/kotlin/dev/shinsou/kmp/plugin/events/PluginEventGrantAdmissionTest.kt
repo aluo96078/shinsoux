@@ -2,9 +2,9 @@ package dev.shinsou.kmp.plugin.events
 
 import dev.shinsou.kmp.domain.model.PluginArtifactIdentity
 import dev.shinsou.kmp.domain.model.SourceKey
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
 import dev.shinsou.kmp.files.KeyValueStore
-import dev.shinsou.kmp.plugin.PluginRuntimePermission
+import dev.shinsou.kmp.plugin.model.PluginRuntimePermission
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -339,9 +339,9 @@ class PluginEventGrantAdmissionTest {
         val admission = KeyValuePluginEventGrantAdmission(store, authorizer)
         val review = review().copy(
             requestedRuntimePermissions = setOf(
-                dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT,
-                dev.shinsou.kmp.plugin.PluginRuntimePermission.NETWORK,
-                dev.shinsou.kmp.plugin.PluginRuntimePermission.COOKIE_READ,
+                dev.shinsou.kmp.plugin.model.PluginRuntimePermission.EXECUTE_SCRIPT,
+                dev.shinsou.kmp.plugin.model.PluginRuntimePermission.NETWORK,
+                dev.shinsou.kmp.plugin.model.PluginRuntimePermission.COOKIE_READ,
             ),
             requestedContentHostSuffixes = setOf("cdn.example.com"),
         )
@@ -350,14 +350,14 @@ class PluginEventGrantAdmissionTest {
         assertFailsWith<IllegalArgumentException> {
             admission.approve(
                 review.artifact, emptySet(),
-                PluginGrantSelection(emptySet(), setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.CREDENTIAL_ACCESS), emptySet()),
+                PluginGrantSelection(emptySet(), setOf(dev.shinsou.kmp.plugin.model.PluginRuntimePermission.CREDENTIAL_ACCESS), emptySet()),
             )
         }
         val partial = PluginGrantSelection(
             hostPermissions = emptySet(),
             runtimePermissions = setOf(
-                dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT,
-                dev.shinsou.kmp.plugin.PluginRuntimePermission.NETWORK,
+                dev.shinsou.kmp.plugin.model.PluginRuntimePermission.EXECUTE_SCRIPT,
+                dev.shinsou.kmp.plugin.model.PluginRuntimePermission.NETWORK,
             ),
             contentHostSuffixes = emptySet(),
         )
@@ -376,7 +376,7 @@ class PluginEventGrantAdmissionTest {
         assertFailsWith<IllegalArgumentException> {
             restarted.narrow(
                 review.artifact,
-                partial.copy(runtimePermissions = partial.runtimePermissions + dev.shinsou.kmp.plugin.PluginRuntimePermission.CREDENTIAL_ACCESS),
+                partial.copy(runtimePermissions = partial.runtimePermissions + dev.shinsou.kmp.plugin.model.PluginRuntimePermission.CREDENTIAL_ACCESS),
             )
         }
         assertFailsWith<IllegalArgumentException> {
@@ -387,7 +387,7 @@ class PluginEventGrantAdmissionTest {
         restarted.narrow(review.artifact, withFamily)
         assertEquals(withFamily, restarted.grantedSelection(review.artifact))
         val narrower = withFamily.copy(
-            runtimePermissions = setOf(dev.shinsou.kmp.plugin.PluginRuntimePermission.EXECUTE_SCRIPT),
+            runtimePermissions = setOf(dev.shinsou.kmp.plugin.model.PluginRuntimePermission.EXECUTE_SCRIPT),
             contentHostSuffixes = emptySet(),
         )
         restarted.narrow(review.artifact, narrower)

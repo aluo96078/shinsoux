@@ -42,11 +42,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.SourceAuth
-import dev.shinsou.kmp.plugin.SourceSettings
-import dev.shinsou.kmp.plugin.SourceWebSession
-import dev.shinsou.kmp.plugin.BrowseRepository
-import dev.shinsou.kmp.plugin.BrowseSource
+import dev.shinsou.kmp.plugin.contracts.SourceAuth
+import dev.shinsou.kmp.plugin.contracts.SourceSettings
+import dev.shinsou.kmp.plugin.contracts.SourceWebSession
+import dev.shinsou.kmp.plugin.contracts.BrowseRepository
+import dev.shinsou.kmp.plugin.contracts.BrowseSource
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings

@@ -24,11 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.plugin.PackagePublisher
-import dev.shinsou.kmp.plugin.PackageSecuritySnapshot
-import dev.shinsou.kmp.plugin.PluginDeveloperModeSettings
-import dev.shinsou.kmp.plugin.PublisherTrustState
-import dev.shinsou.kmp.plugin.RepositoryTrustPrompt
+import dev.shinsou.kmp.plugin.contracts.PackagePublisher
+import dev.shinsou.kmp.plugin.contracts.PackageSecuritySnapshot
+import dev.shinsou.kmp.plugin.contracts.PluginDeveloperModeSettings
+import dev.shinsou.kmp.plugin.contracts.PublisherTrustState
+import dev.shinsou.kmp.plugin.contracts.RepositoryTrustPrompt
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text

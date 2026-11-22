@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.tracking
 
-import dev.shinsou.kmp.plugin.InMemoryPluginKeyValueStore
+import dev.shinsou.kmp.plugin.storage.InMemoryPluginKeyValueStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

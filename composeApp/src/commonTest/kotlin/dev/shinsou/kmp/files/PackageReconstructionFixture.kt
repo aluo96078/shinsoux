@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.files
 
-import dev.shinsou.kmp.plugin.FilePluginPackageStore
-import dev.shinsou.kmp.plugin.InstalledPluginMetadata
-import dev.shinsou.kmp.plugin.PluginManifest
+import dev.shinsou.kmp.plugin.storage.FilePluginPackageStore
+import dev.shinsou.kmp.plugin.model.InstalledPluginMetadata
+import dev.shinsou.kmp.plugin.model.PluginManifest
 import dev.shinsou.kmp.crypto.Sha256
-import dev.shinsou.kmp.plugin.StoredPlugin
+import dev.shinsou.kmp.plugin.model.StoredPlugin
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
