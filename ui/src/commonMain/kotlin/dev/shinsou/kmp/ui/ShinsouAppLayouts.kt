@@ -218,7 +218,7 @@ internal fun WideShell(
             DesktopSidebar(
                 selected = nav.section,
                 onSelect = app::selectSection,
-                downloadCount = pendingDownloadCount(snapshot.downloadQueue, app.appServices.browse),
+                downloadCount = pendingDownloadCount(app.repository, app.appServices.browse),
                 modifier = Modifier.width(228.dp).fillMaxHeight(),
             )
             VerticalDivider(Modifier.fillMaxHeight().width(1.dp))

@@ -18,7 +18,6 @@ import dev.shinsou.kmp.contract.ReaderChapter
 import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Chapter
-import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.manga.MangaChapterTranslation
@@ -81,10 +80,7 @@ private fun ReaderSessionContent(
         currentChapterId = chapter.id,
         manga = manga,
         settings = snapshot.settings.reader,
-        downloadedChapterIds = snapshot.downloadQueue
-            .asSequence()
-            .filter { it.state == DownloadState.DOWNLOADED }
-            .mapTo(mutableSetOf()) { it.chapterId },
+        downloadedChapterIds = rememberDownloadQueueValue(app.repository, ::downloadedChapterIds),
     )
     LaunchedEffect(session) { app.reader.markPositionInitialized(session) }
     var mangaTranslationOpen by remember(session) { mutableStateOf(false) }

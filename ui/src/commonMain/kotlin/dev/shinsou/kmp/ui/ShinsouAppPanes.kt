@@ -242,7 +242,10 @@ internal fun SectionPane(
                         .filter { it.sourceKey == null }
                         .associate { it.id to it.contentType }
                 }
-                val libraryItems = remember(snapshot.revision) {
+                // Their download counts: a download finishing or going leaves the shell's snapshot
+                // as it was (DownloadQueueObservation).
+                val downloadedItems = rememberDownloadQueueValue(repository, ::downloadedItemIds)
+                val libraryItems = remember(snapshot.revision, downloadedItems) {
                     repository.libraryItems().let { items ->
                         if (snapshot.settings.library.downloadOnly) items.filter { it.downloadCount > 0 } else items
                     }
@@ -349,7 +352,7 @@ internal fun SectionPane(
                         actions.inStores {
                             removeDownloadsForMangas(
                                 content = appServices.content,
-                                queue = snapshot.downloadQueue,
+                                queue = repository.currentSnapshot.downloadQueue,
                                 mangaIds = ids,
                             )
                             withContext(workDispatcher) {
@@ -389,7 +392,7 @@ internal fun SectionPane(
                 },
                 onDeleteChapterDownloads = { chapterIds ->
                     actions.inStores {
-                        snapshot.downloadQueue.filter { it.chapterId in chapterIds }.forEach { item ->
+                        repository.currentSnapshot.downloadQueue.filter { it.chapterId in chapterIds }.forEach { item ->
                             appServices.content.removeDownload(item.id)
                         }
                     }
@@ -474,7 +477,7 @@ internal fun SectionPane(
                 navigation = browse.navigation,
             )
             MainSection.MORE -> MoreScreen(
-                downloadCount = pendingDownloadCount(snapshot.downloadQueue, appServices.browse),
+                downloadCount = pendingDownloadCount(repository, appServices.browse),
                 lastBackupLabel = snapshot.backupState.lastFileName,
                 syncLabel = syncSummary(appServices.sync),
                 incognitoMode = snapshot.settings.security.incognitoMode,
@@ -614,7 +617,7 @@ internal fun DetailPane(
         return
     }
     val chapters = snapshot.chapters.filter { it.mangaId == mangaId }
-    val downloads = snapshot.downloadQueue.filter { it.mangaId == mangaId }
+    val downloads = rememberDownloadQueue(repository).value.filter { it.mangaId == mangaId }
     val coverBinding = rememberExtensionBinding(manga.url, appServices.browse, workDispatcher)
     var refreshingFromSource by remember(mangaId) {
         mutableStateOf(!manga.initialized || chapters.isEmpty())
@@ -741,7 +744,7 @@ internal fun DetailPane(
                     actions.stores {
                         removeDownloadsForMangas(
                             content = appServices.content,
-                            queue = snapshot.downloadQueue,
+                            queue = repository.currentSnapshot.downloadQueue,
                             mangaIds = setOf(manga.id),
                         )
                     }
@@ -792,7 +795,7 @@ internal fun DetailPane(
         },
         onDeleteChapters = { ids ->
             actions.inStores {
-                snapshot.downloadQueue.filter { it.chapterId in ids }.forEach {
+                repository.currentSnapshot.downloadQueue.filter { it.chapterId in ids }.forEach {
                     appServices.content.removeDownload(it.id)
                 }
             }
@@ -851,7 +854,7 @@ private suspend fun markChaptersRead(
     chapterIds.forEach { chapterId -> repository.patchChapter(chapterId, ChapterPatch(read = read)) }
     downloadIdsToRemoveAfterMarkedRead(
         settings = snapshot.settings.downloads,
-        queue = snapshot.downloadQueue,
+        queue = repository.currentSnapshot.downloadQueue,
         chapterIds = chapterIds,
         markedRead = read,
     ).forEach { downloadId -> content.removeDownload(downloadId) }
@@ -938,6 +941,8 @@ internal fun MoreDestinationPane(
     }
 
     val extensionDownloads by appServices.browse.extensionDownloadsV2.collectAsState()
+    // Read only by the Downloads page: the other pages do not recompose on its ticks.
+    val downloadQueue = rememberDownloadQueue(repository)
     var backgroundDownloadsRestricted by remember(destination) { mutableStateOf(false) }
     if (destination == MoreDestination.Downloads) {
         // Re-checked while the screen is open, so returning from the system setting updates it.
@@ -950,7 +955,7 @@ internal fun MoreDestinationPane(
     }
     when (destination) {
         MoreDestination.Downloads -> DownloadsScreen(
-            queue = snapshot.downloadQueue.filter { it.visibleInQueue },
+            queue = downloadQueue.value.filter { it.visibleInQueue },
             extensionQueue = extensionDownloads,
             openedWorkKey = openedDownloadWork,
             onOpenWork = { openedDownloadWork = it },
@@ -975,7 +980,7 @@ internal fun MoreDestinationPane(
             onRemove = { actions.inStores { appServices.content.removeDownload(it) } },
             onRemoveUnfinished = { actions.inStores { appServices.content.removeUnfinishedDownload(it) } },
             onMove = { id, delta ->
-                val ordered = snapshot.downloadQueue
+                val ordered = repository.currentSnapshot.downloadQueue
                     .filter { it.visibleInQueue }
                     .sortedBy { it.position }
                     .map { it.id }
@@ -996,7 +1001,9 @@ internal fun MoreDestinationPane(
             },
         )
         MoreDestination.Statistics -> StatisticsScreen(
-            library = remember(snapshot.revision) { repository.libraryItems() },
+            library = rememberDownloadQueueValue(repository, ::downloadedItemIds).let { downloadedItems ->
+                remember(snapshot.revision, downloadedItems) { repository.libraryItems() }
+            },
             chapters = snapshot.chapters,
             tracks = snapshot.tracks,
             categories = snapshot.categories,
