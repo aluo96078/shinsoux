@@ -6,6 +6,8 @@ import dev.shinsou.kmp.content.hotstate.SqlHotStateStore
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.data.SnapshotFile
+import dev.shinsou.kmp.data.openSnapshotPersistence
 import dev.shinsou.kmp.data.coldChanged
 import dev.shinsou.kmp.data.hotDelta
 import dev.shinsou.kmp.domain.model.Category
@@ -92,6 +94,33 @@ class SnapshotPersistenceBenchmark {
             line("SQL, first write of every hot row (${everything.progress.size} progress rows): ${measure(runs = 3) { store.apply(everything) }}")
             line("SQL, page turn delta: ${measure(runs = 31) { store.apply(delta) }}")
             line("SQL, load every hot row: ${measure(runs = 5) { store.load() }}")
+        }
+
+        // C3-3: the repository as the app now runs it, the JSON and the hot rows on disk.
+        JdbcSqliteDriver("jdbc:sqlite:${directory.resolve("app.db")}").use { driver ->
+            driver.executeQuery(null, "PRAGMA journal_mode = WAL", { QueryResult.Value(it.next().value) }, 0)
+            driver.execute(null, "PRAGMA synchronous = FULL", 0).value
+            val file = object : SnapshotFile {
+                override fun save(json: String) = writeAtomically(directory, json)
+                override fun keepCopyBeforeHotState(): Boolean = true
+            }
+            val start = System.nanoTime()
+            val opened = openSnapshotPersistence(library, file, SqlHotStateStore(driver))
+            line("C3-3 first start (rows written, JSON marked and written): %.0f ms".format((System.nanoTime() - start) / 1e6))
+            val split = ShinsouRepository(opened.snapshot, opened.storage)
+            var turn = 0
+            line(
+                "C3-3 page turn persisted (markChapterProgress + flush, hot rows only): " +
+                    measure(runs = 31) { runBlocking { markChapterProgress(split, ++turn); split.flushPersistence() } },
+            )
+            line(
+                "C3-3 lifecycle flush after a page turn (whole JSON): " +
+                    measure(runs = 5) { runBlocking { markChapterProgress(split, ++turn); split.flushPersistence(wholeSnapshot = true) } },
+            )
+            val restart = System.nanoTime()
+            openSnapshotPersistence(AppSnapshotJson.decode(Files.readString(directory.resolve("shinsou-state.json"))), file, SqlHotStateStore(driver))
+            line("C3-3 later start (decode + rows applied): %.0f ms".format((System.nanoTime() - restart) / 1e6))
+            runBlocking { split.closePersistence() }
         }
         val reports = Path.of("build/reports").also(Files::createDirectories)
         Files.writeString(reports.resolve("c3-benchmark.txt"), report)

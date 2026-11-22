@@ -577,9 +577,13 @@ public class ShinsouComposition(
         }
     }
 
-    /** Flushes the snapshot, then schedules background-only maintenance. */
+    /**
+     * Flushes the snapshot, then schedules background-only maintenance. The flush writes the whole
+     * JSON, hot fields included (C3): the copy an older version, or a backup of the app's files,
+     * would read is then the state the app was left in.
+     */
     public suspend fun onBackground() {
-        repository.flushPersistence()
+        repository.flushPersistence(wholeSnapshot = true)
         try {
             // Pushes what is pending and closes the realtime stream.
             sync?.onBackground()

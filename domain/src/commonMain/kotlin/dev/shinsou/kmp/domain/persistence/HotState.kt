@@ -90,13 +90,14 @@ public data class HotDelta(
 
 /**
  * The rows the app snapshot keeps hot, outside its JSON. The SQL implementation is in
- * `:data-content`; the repository only sees this port.
+ * `:data-content`; the repository only sees this port. Every call is one transaction, or a part of
+ * the caller's when one is open.
  */
 public interface HotStateStore {
     /** Every row, the lists in their order. */
     public fun load(): HotState
 
-    /** Writes [delta] in one transaction (joining the caller's, when there is one). Idempotent. */
+    /** Writes [delta] (computed against the rows there). Idempotent. */
     public fun apply(delta: HotDelta)
 
     /** Deletes every row and the [pairing]. */
@@ -106,10 +107,44 @@ public interface HotStateStore {
     public fun pairing(): HotStatePairing?
 
     public fun setPairing(pairing: HotStatePairing?)
+
+    /** In one transaction: brings the rows up to date with [rows] ([writeRows]), then records [pairing]. */
+    public fun commit(rows: HotRows, pairing: HotStatePairing)
 }
 
-/** The snapshot JSON the hot rows go with: the last revision written as JSON, and a random token. */
-public data class HotStatePairing(val jsonRevision: Long, val token: String)
+/** Brings the rows up to date with [rows]: the body of a [HotStateStore.commit], inside its transaction. */
+public fun HotStateStore.writeRows(rows: HotRows) {
+    when (rows) {
+        HotRows.Unchanged -> Unit
+        is HotRows.Changed -> apply(rows.delta)
+        is HotRows.All -> {
+            clear()
+            apply(rows.state.asDelta())
+        }
+    }
+}
+
+/**
+ * The snapshot JSON the hot rows go with (§6.3.6).
+ *
+ * [jsonRevision] is the revision of the JSON on disk when the rows were last written and [token]
+ * the random value that JSON carries in its marker. [pendingJsonRevision] is set while a JSON of
+ * that revision is being written, before the rows of that revision are: a JSON on disk at it is
+ * newer than the rows. [hotRevision] is the revision the rows were last written at.
+ */
+public data class HotStatePairing(
+    val jsonRevision: Long,
+    val token: String,
+    val pendingJsonRevision: Long? = null,
+    val hotRevision: Long? = null,
+)
+
+/** The delta that writes every row of this state onto empty tables. */
+public fun HotState.asDelta(): HotDelta = HotDelta(
+    progress = chapterProgress,
+    histories = histories.mapIndexed(::Ordered),
+    downloads = downloads.mapIndexed(::Ordered),
+)
 
 private fun <T, K> List<T>.applying(written: List<Ordered<T>>, removed: Set<K>, key: (T) -> K): List<T> {
     if (written.isEmpty() && removed.isEmpty()) return this

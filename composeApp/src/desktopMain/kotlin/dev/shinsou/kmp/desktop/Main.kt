@@ -30,11 +30,11 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.awaitApplication
 import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
-import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.ui.shinsouIconPainter
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.app.checkBeforeOpening
+import dev.shinsou.kmp.app.openShinsouRepository
 import dev.shinsou.kmp.backup.ForegroundAutoBackupScheduler
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshot
@@ -235,12 +235,18 @@ private suspend fun openDesktopApp(
     sandboxScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): DesktopOpened = withContext(ioDispatcher) {
-    val repository = ShinsouRepository(DesktopPersistence.loadSnapshot(), WholeJsonSnapshotStorage(DesktopPersistence::saveState))
     val contentInfrastructure = DesktopContentInfrastructure()
     val tooNew = contentInfrastructure.checkBeforeOpening()
     if (tooNew != null) {
         DesktopOpened.TooNew(tooNew)
     } else {
+        // C3: the snapshot JSON with its hot rows from the content database, on this I/O thread.
+        val repository = openShinsouRepository(
+            loaded = DesktopPersistence.loadSnapshot(),
+            file = DesktopPersistence,
+            contentInfrastructure = contentInfrastructure,
+            hotStateEnabled = !DesktopPersistence.wholeJsonRequested(),
+        )
         DesktopOpened.Ready(
             repository = repository,
             composition = ShinsouComposition(

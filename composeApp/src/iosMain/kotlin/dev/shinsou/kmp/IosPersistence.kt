@@ -1,7 +1,10 @@
 package dev.shinsou.kmp
 
 import dev.shinsou.kmp.data.AppSnapshot
+import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.data.SnapshotFile
+import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.PluginJson
 import dev.shinsou.kmp.files.KeyValueStore
@@ -68,7 +71,7 @@ import kotlin.native.Platform
 
 /** Durable iOS snapshot storage. Foundation's atomic write replaces the file as one transaction. */
 @OptIn(ExperimentalForeignApi::class)
-internal object IosSnapshotPersistence {
+internal object IosSnapshotPersistence : SnapshotFile {
     private const val FILE_NAME = "shinsou-state.json"
 
     fun load(): AppSnapshot {
@@ -90,9 +93,34 @@ internal object IosSnapshotPersistence {
         }
     }
 
-    fun save(encoded: String) {
-        writeUtf8(IosApplicationPaths.file(FILE_NAME), encoded)
+    override fun save(json: String) {
+        writeUtf8(IosApplicationPaths.file(FILE_NAME), json)
     }
+
+    /**
+     * C3 (docs/architecture/0007 §6.3.5): `shinsou-state.json.before-hot-state`, taken once and left
+     * out of device backups. Foundation's atomic write goes through a temporary file, so a copy cut
+     * short is never there under its name.
+     */
+    override fun keepCopyBeforeHotState(): Boolean {
+        val source = IosApplicationPaths.file(FILE_NAME)
+        val copy = IosApplicationPaths.file(FILE_NAME + BEFORE_HOT_STATE_SUFFIX)
+        val manager = NSFileManager.defaultManager
+        if (manager.fileExistsAtPath(copy) || !manager.fileExistsAtPath(source)) return true
+        val data = NSData.dataWithContentsOfFile(source)
+        val copied = data != null && data.writeToFile(copy, atomically = true)
+        if (copied) {
+            platform.Foundation.NSURL.fileURLWithPath(copy)
+                .setResourceValue(true, forKey = platform.Foundation.NSURLIsExcludedFromBackupKey, error = null)
+        } else {
+            Log.warn("Storage") { "Copying the app state before moving its hot rows failed" }
+        }
+        return copied
+    }
+
+    /** The C3 off-switch: a file named [WHOLE_JSON_SWITCH_FILE] beside the state file. */
+    fun wholeJsonRequested(): Boolean =
+        NSFileManager.defaultManager.fileExistsAtPath(IosApplicationPaths.file(WHOLE_JSON_SWITCH_FILE))
 
     private fun quarantineCorruptSnapshot() {
         quarantineCorruptFile(

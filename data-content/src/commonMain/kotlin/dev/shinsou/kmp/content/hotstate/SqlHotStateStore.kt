@@ -20,13 +20,16 @@ import dev.shinsou.kmp.domain.persistence.HotDelta
 import dev.shinsou.kmp.domain.persistence.HotState
 import dev.shinsou.kmp.domain.persistence.HotStatePairing
 import dev.shinsou.kmp.domain.persistence.HotStateStore
+import dev.shinsou.kmp.domain.persistence.HotRows
+import dev.shinsou.kmp.domain.persistence.writeRows
 import kotlinx.serialization.json.Json
 
 /**
  * C3-2 (docs/architecture/0007 §6.3.2): the hot rows of the app snapshot in the content database
  * (the `legacy_hot_state` table group), beside `sync3_dirty`, so a later step can write both in one
  * transaction. Each call is one transaction, or a part of the caller's when one is open on the
- * driver; never on the UI thread ([ContentSqlThreadGuard]).
+ * driver (C3-5: a content-backup v2 restore writes the restored rows inside its own); never on the
+ * UI thread ([ContentSqlThreadGuard]).
  */
 class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
     private val transactions = object : TransacterImpl(driver) {}
@@ -126,9 +129,13 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
     }
 
     override fun pairing(): HotStatePairing? = sql {
-        val revision = queries.meta(META_PAIRED_JSON_REVISION).executeAsOneOrNull()?.toLongOrNull()
+        val revision = metaLong(META_PAIRED_JSON_REVISION)
         val token = queries.meta(META_TOKEN).executeAsOneOrNull()
-        if (revision != null && token != null) HotStatePairing(revision, token) else null
+        if (revision != null && token != null) {
+            HotStatePairing(revision, token, metaLong(META_PENDING_JSON_REVISION), metaLong(META_HOT_REVISION))
+        } else {
+            null
+        }
     }
 
     override fun setPairing(pairing: HotStatePairing?): Unit = sql {
@@ -136,8 +143,17 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
         if (pairing != null) {
             queries.putMeta(META_PAIRED_JSON_REVISION, pairing.jsonRevision.toString()).value
             queries.putMeta(META_TOKEN, pairing.token).value
+            pairing.pendingJsonRevision?.let { queries.putMeta(META_PENDING_JSON_REVISION, it.toString()).value }
+            pairing.hotRevision?.let { queries.putMeta(META_HOT_REVISION, it.toString()).value }
         }
     }
+
+    override fun commit(rows: HotRows, pairing: HotStatePairing): Unit = sql {
+        writeRows(rows)
+        setPairing(pairing)
+    }
+
+    private fun metaLong(key: String): Long? = queries.meta(key).executeAsOneOrNull()?.toLongOrNull()
 
     private inline fun <T> sql(crossinline block: () -> T): T {
         ContentSqlThreadGuard.check()
@@ -147,6 +163,8 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
     private companion object {
         const val META_PAIRED_JSON_REVISION = "paired_json_revision"
         const val META_TOKEN = "token"
+        const val META_PENDING_JSON_REVISION = "pending_json_revision"
+        const val META_HOT_REVISION = "hot_revision"
 
         val LocatorJson = Json {
             encodeDefaults = true

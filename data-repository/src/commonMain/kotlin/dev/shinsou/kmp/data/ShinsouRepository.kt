@@ -22,6 +22,7 @@ import dev.shinsou.kmp.domain.model.UpdateItem
 import dev.shinsou.kmp.domain.model.applying
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
 import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.persistence.HotRows
 import dev.shinsou.kmp.domain.persistence.SnapshotStorage
 import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import kotlinx.coroutines.CancellationException
@@ -227,12 +228,17 @@ class ShinsouRepository(
      * Persist the latest state before returning. This bypasses the debounce and propagates a disk
      * failure to the caller. Mutations that begin after this method captures the state belong to a
      * subsequent flush.
+     *
+     * When the storage keeps the hot rows apart (C3), a flush writes them and, only if the cold
+     * part changed, the JSON; [wholeSnapshot] (the lifecycle flush on going to the background)
+     * also rewrites the JSON with every hot field, which is what an older version or Android's
+     * backup of the file would read.
      */
-    suspend fun flushPersistence() {
-        persistence?.flush(mutableSnapshot.value)
+    suspend fun flushPersistence(wholeSnapshot: Boolean = false) {
+        persistence?.flush(mutableSnapshot.value, wholeSnapshot)
     }
 
-    /** Flush the latest state and stop this repository's background writer. */
+    /** Flush the latest state, the whole JSON included, and stop this repository's background writer. */
     suspend fun closePersistence(): Unit = withContext(NonCancellable) {
         mutex.withLock {
             if (persistenceClosed) return@withLock
@@ -951,10 +957,15 @@ class ShinsouRepository(
             .validate()
         var journalCommitted = false
         val result = try {
-            hostCommit(previous, next) {
-                check(!journalCommitted) { "The sync journal callback may be committed only once" }
-                mutationObserver?.beforeAtomicHostCommit(previous, next)
-                journalCommitted = true
+            // C3-5 (docs/architecture/0007 §6.3.4): the hot rows are written inside the host's
+            // transaction too, so a restore that fails later rolls them back with everything else.
+            joinHostTransaction(persistence) { writeHotRows ->
+                hostCommit(previous, next) {
+                    check(!journalCommitted) { "The sync journal callback may be committed only once" }
+                    mutationObserver?.beforeAtomicHostCommit(previous, next)
+                    writeHotRows(next)
+                    journalCommitted = true
+                }
             }
         } catch (failure: Throwable) {
             if (journalCommitted) {
@@ -1116,11 +1127,21 @@ fun interface SnapshotReplacementGuard {
 
 private val NO_PERSISTENCE_FAILURE: StateFlow<Throwable?> = MutableStateFlow(null).asStateFlow()
 
+private suspend fun <T> joinHostTransaction(
+    persistence: SnapshotPersistenceWorker?,
+    block: suspend (writeHotRows: (AppSnapshot) -> Unit) -> T,
+): T = persistence?.joiningHostTransaction(block) ?: block {}
+
 /**
  * Latest-wins persistence worker. The conflated channel prevents a burst of reader/download
  * progress updates from retaining multiple multi-megabyte snapshots. Disk writes are serialized
  * with explicit flushes, and revision checks prevent an older delayed write from overwriting a
  * newer flushed state.
+ *
+ * C3-3 (docs/architecture/0007 §6.3.3): when the storage keeps the hot rows apart, a change of hot
+ * rows only (a page turn, a downloaded page) writes just those rows; the JSON is encoded and
+ * written, after a whole validate(), only when the cold part changed, on a whole flush, or when the
+ * storage asks for a refresh.
  */
 private class SnapshotPersistenceWorker(
     initial: AppSnapshot,
@@ -1132,9 +1153,19 @@ private class SnapshotPersistenceWorker(
     private val scope = CoroutineScope(scopeJob + dispatcher)
     private val updates = Channel<AppSnapshot>(Channel.CONFLATED)
     private val writeMutex = Mutex()
-    /** The snapshot last written; the hot rows of the next write are computed against it. */
-    private var lastPersisted = initial
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
+
+    /** The revision written last, as far as it needed writing. */
+    private var writtenRevision = initial.revision
+
+    /** The snapshot whose rows the storage keeps apart; null when unknown (a write failed half-way). */
+    private var hotRows: AppSnapshot? = initial
+
+    /** A snapshot whose cold part is that of the JSON on disk. */
+    private var jsonCold: AppSnapshot = initial
+
+    /** The revision of the snapshot whose JSON, hot fields included, is on disk. */
+    private var jsonRevision: Long = storage.revisionOnDisk ?: initial.revision
 
     val failure: StateFlow<Throwable?> = mutableFailure.asStateFlow()
 
@@ -1146,9 +1177,9 @@ private class SnapshotPersistenceWorker(
         updates.trySend(snapshot).getOrThrow()
     }
 
-    suspend fun flush(snapshot: AppSnapshot) {
+    suspend fun flush(snapshot: AppSnapshot, wholeSnapshot: Boolean) {
         try {
-            persistIfNewer(snapshot)
+            persistIfNewer(snapshot, wholeSnapshot)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1162,7 +1193,7 @@ private class SnapshotPersistenceWorker(
         // cancellation must not cancel the flush and then terminate the only retrying writer.
         withContext(NonCancellable) {
             try {
-                flush(snapshot)
+                flush(snapshot, wholeSnapshot = true)
             } finally {
                 updates.close()
                 scopeJob.cancelAndJoin()
@@ -1170,12 +1201,34 @@ private class SnapshotPersistenceWorker(
         }
     }
 
+    /**
+     * C3-5: runs [block] with the writer held, handing it a function that writes a snapshot's hot
+     * rows on the caller's thread, inside the SQL transaction the caller has open. Those rows are
+     * taken as written only once [block] returns; when it throws, its transaction rolled back.
+     */
+    suspend fun <T> joiningHostTransaction(block: suspend (writeHotRows: (AppSnapshot) -> Unit) -> T): T =
+        writeMutex.withLock {
+            if (!storage.keepsHotApart) return@withLock block {}
+            var joined: AppSnapshot? = null
+            var committed = false
+            try {
+                block { next ->
+                    storage.write(next.revision, json = null, hot = hotRowsFor(next))
+                    joined = next
+                }.also { committed = true }
+            } finally {
+                // When the host failed, its transaction rolled back as far as anyone knows: the
+                // next write puts every row in place rather than trusting either state.
+                if (joined != null) hotRows = if (committed) joined else null
+            }
+        }
+
     private fun launchPersistenceLoop() {
         scope.launch {
             for (first in updates) {
                 val latest = awaitDebouncedSnapshot(first, updates)
                 try {
-                    persistIfNewer(latest)
+                    persistIfNewer(latest, wholeSnapshot = false)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Throwable) {
@@ -1187,19 +1240,54 @@ private class SnapshotPersistenceWorker(
         }
     }
 
-    private suspend fun persistIfNewer(snapshot: AppSnapshot) = withContext(dispatcher) {
+    private suspend fun persistIfNewer(snapshot: AppSnapshot, wholeSnapshot: Boolean) = withContext(dispatcher) {
         writeMutex.withLock {
-            if (snapshot.revision <= lastPersisted.revision) return@withLock
-            val encoded = AppSnapshotJson.encode(snapshot.validate())
-            // C3-1 (docs/architecture/0007 §6.3.3): the hot rows first, then the JSON. The JSON is
-            // still written whole every time (C3-3 writes it only for cold changes and flushes); a
-            // failed write leaves lastPersisted, so the retry's delta covers this one's rows too.
-            val hot = hotDelta(lastPersisted, snapshot)
-            if (!hot.isEmpty) storage.writeHot(hot)
-            storage.writeCold(encoded, snapshot.revision)
-            lastPersisted = snapshot
+            if (alreadyWritten(snapshot, wholeSnapshot)) return@withLock
+            val split = storage.keepsHotApart
+            val writeJson = !split || wholeSnapshot || coldChanged(jsonCold, snapshot) || storage.jsonRefreshDue()
+            // Written even when only the revision moved: it is recorded with the rows, so a restart
+            // never hands out a revision again.
+            write(snapshot, writeJson, if (split) hotRowsFor(snapshot) else HotRows.Unchanged)
+            writtenRevision = snapshot.revision
             mutableFailure.value = null
         }
+    }
+
+    /** Whether [snapshot] has nothing left to write (a [wholeSnapshot] flush still wants its JSON). */
+    private fun alreadyWritten(snapshot: AppSnapshot, wholeSnapshot: Boolean): Boolean {
+        // Older than the rows a host transaction already wrote (C3-5): its snapshot is queued next.
+        val behindRows = (hotRows?.revision ?: 0L) > snapshot.revision
+        val jsonBehind = wholeSnapshot && jsonRevision != snapshot.revision
+        return when {
+            behindRows || snapshot.revision < writtenRevision -> true
+            snapshot.revision == writtenRevision -> !jsonBehind
+            else -> false
+        }
+    }
+
+    private fun write(snapshot: AppSnapshot, writeJson: Boolean, hot: HotRows) {
+        // validate() runs on the whole snapshot only when it is written whole; the hot rows were
+        // checked one by one when they were changed.
+        val json = if (writeJson) AppSnapshotJson.encode(snapshot.withHotStateMarker(storage.jsonMarker).validate()) else null
+        var written = false
+        try {
+            storage.write(snapshot.revision, json, hot)
+            written = true
+        } finally {
+            // A write that failed may have failed half-way: the next one puts every row in place.
+            if (storage.keepsHotApart) hotRows = if (written) snapshot else null
+        }
+        if (json != null) {
+            jsonCold = snapshot
+            jsonRevision = snapshot.revision
+        }
+    }
+
+    /** The rows to write so the storage holds [snapshot]'s. */
+    private fun hotRowsFor(snapshot: AppSnapshot): HotRows {
+        val written = hotRows ?: return HotRows.All(snapshot.hotState())
+        val delta = hotDelta(written, snapshot)
+        return if (delta.isEmpty) HotRows.Unchanged else HotRows.Changed(delta)
     }
 }
 

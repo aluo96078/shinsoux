@@ -9,10 +9,8 @@ import dev.shinsou.kmp.domain.model.LibraryUpdate
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.persistence.ChapterProgress
 import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.HotState
-import dev.shinsou.kmp.domain.persistence.SnapshotStorage
+import dev.shinsou.kmp.domain.persistence.HotRows
 import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
-import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -118,58 +116,11 @@ class SnapshotHotStateTest {
     fun theWholeJsonStorageKeepsNothingApart() {
         val written = mutableListOf<String>()
         val storage = WholeJsonSnapshotStorage(written::add)
-        storage.writeHot(HotDelta(removedProgress = setOf(1)))
-        storage.writeCold("{}", revision = 1)
+        storage.write(revision = 1, json = "{}", hot = HotRows.Changed(HotDelta(removedProgress = setOf(1))))
         assertEquals(listOf("{}"), written)
-        assertNull(storage.loadHot())
-        assertNull(storage.pairedRevision)
-    }
-
-    /** The repository still writes the whole JSON each time, and its deltas add up to the hot state. */
-    @Test
-    fun theRepositoryWritesTheHotRowsThenTheWholeJson() = runTest {
-        val storage = RecordingStorage()
-        val repository = ShinsouRepository(storage = storage)
-        val manga = repository.upsertManga(Manga(source = 1, url = "/m", title = "M", favorite = true))
-        val chapters = (1..3).map { repository.upsertChapter(Chapter(mangaId = manga.id, url = "/c$it", name = "C$it")) }
-        repository.flushPersistence()
-        repository.markChapterProgress(chapters[1].id, lastPageRead = 4, read = false, readAt = 10)
-        repository.upsertDownload(DownloadQueueItem(DownloadQueueItem.id(manga.id, chapters[2].id), manga.id, chapters[2].id))
-        repository.flushPersistence()
-        repository.renameManga(manga.id)
-        repository.closePersistence()
-
-        // Every write ends with the whole JSON; the hot rows, when any changed, come just before it.
-        val kinds = storage.calls.map { it.first }
-        assertTrue(kinds.contains("hot"))
-        kinds.forEachIndexed { index, kind -> if (kind == "hot") assertEquals("cold", kinds.getOrNull(index + 1), "$kinds") }
-        assertEquals(repository.currentSnapshot.hotState(), storage.hot)
-        assertEquals(repository.currentSnapshot, ShinsouRepository.decodeSnapshot(storage.json))
-        assertEquals(repository.currentSnapshot.revision, storage.calls.last().second)
-    }
-
-    private suspend fun ShinsouRepository.renameManga(id: Long) {
-        upsertManga(currentSnapshot.mangas.single { it.id == id }.copy(title = "Renamed"))
-    }
-
-    private class RecordingStorage : SnapshotStorage {
-        val calls = mutableListOf<Pair<String, Long>>()
-        var hot = HotState.EMPTY
-        var json = ""
-
-        override fun writeCold(json: String, revision: Long) {
-            calls += "cold" to revision
-            this.json = json
-        }
-
-        override fun writeHot(delta: HotDelta) {
-            calls += "hot" to -1L
-            hot = hot.applying(delta)
-        }
-
-        override fun loadHot(): HotState = hot
-
-        override val pairedRevision: Long? get() = null
+        assertFalse(storage.keepsHotApart)
+        assertNull(storage.jsonMarker)
+        assertNull(storage.revisionOnDisk)
     }
 
     private fun Chapter.progress(): ChapterProgress = ChapterProgress(read, bookmark, lastPageRead)

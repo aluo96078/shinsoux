@@ -7,9 +7,9 @@ import androidx.compose.ui.window.ComposeUIViewController
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.app.checkBeforeOpening
+import dev.shinsou.kmp.app.openShinsouRepository
 import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
-import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
@@ -310,9 +310,12 @@ internal class IosApplicationContainerCore(
     /** UIDevice's name, read on the main thread: this is made on a background one. */
     deviceName: String,
 ) {
-    val repository = ShinsouRepository(
-        initial = IosSnapshotPersistence.load(),
-        storage = WholeJsonSnapshotStorage(IosSnapshotPersistence::save),
+    /** C3: the snapshot JSON with its hot rows from the content database (on this background thread). */
+    val repository: ShinsouRepository = openShinsouRepository(
+        loaded = IosSnapshotPersistence.load(),
+        file = IosSnapshotPersistence,
+        contentInfrastructure = contentInfrastructure,
+        hotStateEnabled = !IosSnapshotPersistence.wholeJsonRequested(),
     )
 
     private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)

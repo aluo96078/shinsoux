@@ -3,6 +3,9 @@ package dev.shinsou.kmp.desktop
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
+import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
+import dev.shinsou.kmp.data.SnapshotFile
+import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.sync.v3.SyncV3Service
 import dev.shinsou.kmp.ui.ContentFeatures
 import dev.shinsou.kmp.ui.ShellStateStore
@@ -362,9 +365,36 @@ internal fun writeBinaryDocument(
     true
 }.onFailure { Log.warn("Desktop", it) { "Exporting a binary document failed" } }.getOrDefault(false)
 
-internal object DesktopPersistence {
+internal object DesktopPersistence : SnapshotFile {
     private val directory: Path by lazy { DesktopAppDirectories.dataRoot }
     private val stateFile: Path get() = directory.resolve("shinsou-state.json")
+
+    override fun save(json: String) = saveState(json)
+
+    override fun keepCopyBeforeHotState(): Boolean = keepCopyBeforeHotState(stateFile)
+
+    /**
+     * The C3 off-switch: a file named [WHOLE_JSON_SWITCH_FILE] beside the state file, or the
+     * `shinsou.wholeJsonSnapshot` system property set to true.
+     */
+    fun wholeJsonRequested(): Boolean =
+        System.getProperty("shinsou.wholeJsonSnapshot").toBoolean() || Files.exists(directory.resolve(WHOLE_JSON_SWITCH_FILE))
+
+    /** C3 (docs/architecture/0007 §6.3.5): `<file>.before-hot-state`, taken once. */
+    internal fun keepCopyBeforeHotState(file: Path): Boolean {
+        val copy = file.resolveSibling(file.fileName.toString() + BEFORE_HOT_STATE_SUFFIX)
+        if (Files.exists(copy) || !Files.exists(file)) return true
+        val partial = copy.resolveSibling(copy.fileName.toString() + ".partial")
+        return try {
+            Files.copy(file, partial, StandardCopyOption.REPLACE_EXISTING)
+            java.nio.channels.FileChannel.open(partial, java.nio.file.StandardOpenOption.WRITE).use { it.force(true) }
+            Files.move(partial, copy, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            true
+        } catch (logged: java.io.IOException) {
+            Log.warn("Desktop", logged) { "Copying the app state before moving its hot rows failed" }
+            false
+        }
+    }
 
     /**
      * The saved state, or a fresh one when there is none. A file that exists but cannot be read

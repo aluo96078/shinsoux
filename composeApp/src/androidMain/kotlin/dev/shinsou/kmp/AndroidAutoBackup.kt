@@ -7,12 +7,12 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.shinsou.kmp.app.checkBeforeOpening
+import dev.shinsou.kmp.app.openShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupRunResult
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.nextAutoBackupAt
 import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
-import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.files.AndroidAppFileSystem
@@ -24,27 +24,36 @@ import kotlinx.coroutines.CancellationException
  *
  * Sharing one repository avoids a background worker persisting a stale full snapshot over changes
  * made by a foreground Activity in the same application process.
+ *
+ * Made off the main thread (every caller is on an I/O or worker dispatcher): it checks the content
+ * database and reads the snapshot with its hot rows from it (C3, docs/architecture/0007 §6.3).
  */
 internal class AndroidSharedState private constructor(context: Context) {
     private val applicationContext = context.applicationContext
     private val persistence = AndroidSnapshotPersistence(applicationContext)
 
-    val repository: ShinsouRepository = ShinsouRepository(persistence.load(), WholeJsonSnapshotStorage(persistence::save))
+    /** One content database for the Activity and the backup worker alike. */
+    val contentInfrastructure: AndroidContentInfrastructure = AndroidContentInfrastructure(applicationContext)
+
+    /**
+     * Set when a newer Shinsou X wrote the content database (R3-1): the Activity asks for the
+     * update and no worker opens the stores, so the newer data is left as it was. The repository
+     * then keeps to the JSON alone.
+     */
+    val schemaTooNew: SchemaTooNewException? = contentInfrastructure.checkBeforeOpening()
+
+    val repository: ShinsouRepository = openShinsouRepository(
+        loaded = persistence.load(),
+        file = persistence,
+        contentInfrastructure = contentInfrastructure.takeIf { schemaTooNew == null },
+        hotStateEnabled = !persistence.wholeJsonRequested(),
+    )
     val fileSystem: AndroidAppFileSystem = AndroidAppFileSystem(applicationContext)
     val autoBackups: AutoBackupService = AutoBackupService(
         repository = repository,
         fileSystem = fileSystem,
         appVersion = ANDROID_APP_VERSION,
     )
-
-    /** One content database for the Activity and the backup worker alike. */
-    val contentInfrastructure: AndroidContentInfrastructure by lazy { AndroidContentInfrastructure(applicationContext) }
-
-    /**
-     * Set when a newer Shinsou X wrote the content database (R3-1): the Activity asks for the
-     * update and no worker opens the stores, so the newer data is left as it was.
-     */
-    val schemaTooNew: SchemaTooNewException? by lazy { contentInfrastructure.checkBeforeOpening() }
 
     /**
      * A worker started in a fresh process has no app composition to bind translations to the

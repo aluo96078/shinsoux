@@ -12,6 +12,7 @@ import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.domain.persistence.ChapterProgress
 import dev.shinsou.kmp.domain.persistence.HotDelta
+import dev.shinsou.kmp.domain.persistence.HotRows
 import dev.shinsou.kmp.domain.persistence.HotState
 import dev.shinsou.kmp.domain.persistence.HotStatePairing
 import dev.shinsou.kmp.domain.persistence.Ordered
@@ -111,6 +112,34 @@ class SqlHotStateStoreTest {
         store.setPairing(HotStatePairing(1, "u"))
         store.setPairing(null)
         assertNull(store.pairing())
+    }
+
+    /** C3-3: the rows and the pairing in one transaction; every row at once after a failed write. */
+    @Test
+    fun aCommitWritesTheRowsAndThePairingTogether() {
+        val first = sample()
+        val pairing = HotStatePairing(jsonRevision = 4, token = "t", pendingJsonRevision = 6, hotRevision = 5)
+        store.commit(HotRows.All(first), pairing)
+        assertEquals(first, store.load())
+        assertEquals(pairing, store.pairing())
+
+        val second = mutate(Random(3), first)
+        val host = object : TransacterImpl(driver) {}
+        assertFailsWith<IllegalStateException> {
+            host.transaction {
+                store.commit(HotRows.Changed(orderedDelta(first, second)), pairing.copy(pendingJsonRevision = null, hotRevision = 9))
+                error("the host's own write failed")
+            }
+        }
+        assertEquals(first, store.load())
+        assertEquals(pairing, store.pairing())
+
+        store.commit(HotRows.All(second), pairing.copy(pendingJsonRevision = null))
+        assertEquals(second, store.load())
+        assertEquals(HotStatePairing(jsonRevision = 4, token = "t", hotRevision = 5), store.pairing())
+        store.commit(HotRows.Unchanged, pairing.copy(hotRevision = 10))
+        assertEquals(second, store.load())
+        assertEquals(10, store.pairing()?.hotRevision)
     }
 
     @Test

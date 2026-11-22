@@ -3,16 +3,21 @@ package dev.shinsou.kmp
 import android.content.Context
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
+import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
+import dev.shinsou.kmp.data.SnapshotFile
+import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.logging.Log
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 /** File-backed app state with one-time migration from the original SharedPreferences value. */
-internal class AndroidSnapshotPersistence(context: Context) {
+internal class AndroidSnapshotPersistence(context: Context) : SnapshotFile {
     private val applicationContext = context.applicationContext
     private val stateFile = File(applicationContext.filesDir, STATE_FILE_NAME)
     private val lock = Any()
@@ -39,9 +44,36 @@ internal class AndroidSnapshotPersistence(context: Context) {
         migrated
     }
 
-    fun save(payload: String) = synchronized(lock) {
-        saveLocked(payload)
+    override fun save(json: String) = synchronized(lock) {
+        saveLocked(json)
     }
+
+    /** C3 (docs/architecture/0007 §6.3.5): the copy left out of Android's backups (backup_rules.xml). */
+    override fun keepCopyBeforeHotState(): Boolean = synchronized(lock) {
+        val copy = File(stateFile.parentFile, "$STATE_FILE_NAME$BEFORE_HOT_STATE_SUFFIX")
+        if (copy.isFile || !stateFile.isFile) return@synchronized true
+        val partial = File(stateFile.parentFile, "${copy.name}.partial")
+        try {
+            FileInputStream(stateFile).use { input ->
+                FileOutputStream(partial, false).use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                    output.fd.sync()
+                }
+            }
+            Files.move(partial.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            true
+        } catch (logged: IOException) {
+            Log.warn("Storage", logged) { "Copying the app state before moving its hot rows failed" }
+            false
+        }
+    }
+
+    /**
+     * The C3 off-switch: a file named [WHOLE_JSON_SWITCH_FILE] in the app's files directory
+     * (`adb shell run-as <package> touch files/shinsou-state.whole-json` on a debuggable build).
+     */
+    fun wholeJsonRequested(): Boolean = File(stateFile.parentFile, WHOLE_JSON_SWITCH_FILE).exists()
 
     private fun loadStateFile(): AppSnapshot? {
         if (!stateFile.isFile) return null

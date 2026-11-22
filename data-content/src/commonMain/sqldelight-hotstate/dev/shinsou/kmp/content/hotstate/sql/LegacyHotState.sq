@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS legacy_download_queue(
   visible INTEGER NOT NULL
 ) WITHOUT ROWID;
 
--- paired_json_revision, token (§6.3.5).
+-- paired_json_revision, token, pending_json_revision, hot_revision (§6.3.5-6.3.6, HotStatePairing).
 CREATE TABLE IF NOT EXISTS legacy_hot_state_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID;
 
 -- ---- chapter progress -----------------------------------------------------------------------

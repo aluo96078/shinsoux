@@ -12,4 +12,6 @@
     <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.partial" />
     <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade-wal.partial" />
     <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.of" />
+    <exclude domain="file" path="shinsou-state.json.before-hot-state" />
+    <exclude domain="file" path="shinsou-state.json.before-hot-state.partial" />
 </full-backup-content>

@@ -26,13 +26,20 @@ import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.PendingContentBodyStoreRequest
+import dev.shinsou.kmp.content.hotstate.SqlHotStateStore
 import dev.shinsou.kmp.data.AppSnapshot
+import dev.shinsou.kmp.data.AppSnapshotJson
+import dev.shinsou.kmp.data.HotStateOpening
+import dev.shinsou.kmp.data.SnapshotFile
+import dev.shinsou.kmp.data.hotState
+import dev.shinsou.kmp.data.openSnapshotPersistence
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.SnapshotMutationObserver
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.AcquisitionAvailability
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.Chapter
+import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
@@ -434,6 +441,65 @@ class PortableContentBackupV2RestoreCoordinatorTest {
                 )
             }
         }
+    }
+
+    /** C3-5 (docs/architecture/0007 §6.3.4): the snapshot's hot rows join the restore's transaction. */
+    @Test
+    fun aFailedRestoreRollsTheHotRowsBackWithEverythingElse() = runTest {
+        val archive = archiveFixture()
+        FAILURE_TRIGGERS.forEach { failure ->
+            withRuntime("backup-v2-hot-${failure.name}") { driver, foundation ->
+                val store = SqlHotStateStore(driver)
+                val file = MemorySnapshotFile()
+                val local = AppSnapshot(
+                    mangas = listOf(Manga(id = 1, source = 1, url = "/local", title = "Local")),
+                    chapters = listOf(Chapter(id = 1, mangaId = 1, url = "/local/1", name = "1", read = true, lastPageRead = 3)),
+                    histories = listOf(History(id = 1, chapterId = 1, lastRead = 5, timeRead = 9)),
+                )
+                val opened = openSnapshotPersistence(local, file, store)
+                assertEquals(HotStateOpening.MIGRATED, opened.opening, failure.name)
+                val repository = ShinsouRepository(opened.snapshot, opened.storage)
+                val before = repository.currentSnapshot
+                createJournalTable(driver)
+                repository.configureSyncMutationBoundary(
+                    observer = journalObserver(driver, archive.inspection.envelope.manifestSha256),
+                    guard = null,
+                )
+                val coordinator = PortableContentBackupV2RestoreCoordinator(
+                    repository = repository,
+                    foundation = foundation,
+                    offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
+                )
+                driver.execute(null, failure.createSql, 0).value
+
+                assertFailsWith<Throwable> { coordinator.restore(archive.inspection, archive.encoded) }
+
+                assertEquals(before, repository.currentSnapshot, failure.name)
+                assertEquals(before.hotState(), store.load(), failure.name)
+
+                driver.execute(null, "DROP TRIGGER ${failure.triggerName}", 0).value
+                coordinator.restore(archive.inspection, archive.encoded)
+
+                // Written in the restore's own transaction, before the snapshot writer ran.
+                val restored = repository.currentSnapshot
+                assertEquals(archive.state.legacySnapshot.mangas, restored.mangas, failure.name)
+                assertEquals(restored.hotState(), store.load(), failure.name)
+                repository.closePersistence()
+                val reopened = openSnapshotPersistence(AppSnapshotJson.decode(checkNotNull(file.json)), file, store)
+                assertEquals(HotStateOpening.SQL_CURRENT, reopened.opening, failure.name)
+                assertEquals(restored, reopened.snapshot, failure.name)
+            }
+        }
+    }
+
+    private class MemorySnapshotFile : SnapshotFile {
+        var json: String? = null
+
+        override fun save(json: String) {
+            this.json = json
+        }
+
+        override fun keepCopyBeforeHotState(): Boolean = true
     }
 
     @Test
