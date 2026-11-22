@@ -37,10 +37,22 @@ import kotlin.time.TimeSource
  * and it) pairs with nothing: it wins, and loses nothing. The pairing advances in memory only once
  * its commit succeeded.
  *
+ * The file left by such a write carries a token the rows do not record, which is what tells it
+ * from the file before it (the pending revision is only logged): a file whose token and revision
+ * are the pairing's was not replaced, and its rows are current.
+ *
+ * A restore (C3-5) journals its whole JSON beside its rows; until a whole write pairs, that JSON is
+ * the newest cold part there is, and it goes in place of the file's (missing, the paired one, or
+ * one whose pairing commit was cut short before the restore) unless the file's revision is at
+ * least the journal's: only a whole write after the restore, which carries it, gets there.
+ *
  * The rows are never cleared on behalf of a JSON that is not there: when the JSON is missing or
  * unreadable (quarantined), or the rows do not fit it, they are kept as they are for that JSON to
  * come back (a copy put back, a backup restored), and the app writes its JSON whole, marked
- * `hot-state-sql:kept:<token>` so that the next start keeps them too.
+ * `hot-state-sql:kept:<token>` so that the next start keeps them too (a JSON that pairs, or a
+ * journal, still goes first). A paired JSON its rows do not fit is copied aside before the first
+ * such write replaces it ([HOT_STATE_KEPT_SUFFIX]); the quarantined file and the `.before-hot-state`
+ * copy are never written.
  */
 
 /** The prefix of the marker the JSON carries in [AppSnapshot.contentAuthorityProjectionMarkers]. */
@@ -55,6 +67,13 @@ private const val HOT_STATE_MARKER_KEPT: String = "${HOT_STATE_MARKER_PREFIX}kep
 const val BEFORE_HOT_STATE_SUFFIX: String = ".before-hot-state"
 
 /**
+ * Beside `shinsou-state.json`: its copy taken as the hot rows it is paired with were found not to
+ * fit it and were kept apart, before the first JSON marked kept replaced it (the only JSON those
+ * rows go with, for a later version that can repair them).
+ */
+const val HOT_STATE_KEPT_SUFFIX: String = ".hot-state-kept"
+
+/**
  * The emergency off-switch of C3, beside `shinsou-state.json` on every platform: while a file of
  * this name exists, the repository writes the whole JSON every time, as before C3, and never
  * writes the hot rows (it still reads them once, when they are current). Removing it switches back.
@@ -67,12 +86,13 @@ interface SnapshotFile {
     fun save(json: String)
 
     /**
-     * Copies the file to `shinsou-state.json.before-hot-state` unless that copy is already there,
-     * through a temporary file so that a copy cut short is never taken for it (§6.3.5 step 1).
-     * True when the copy is there afterwards, or there is no file to copy (a fresh install: a JSON
-     * missing beside a pairing never gets as far as the migration).
+     * Copies the file to `shinsou-state.json<suffix>` ([BEFORE_HOT_STATE_SUFFIX], §6.3.5 step 1, or
+     * [HOT_STATE_KEPT_SUFFIX]) through a temporary file, so that a copy cut short is never taken for
+     * it; a copy already there is left as it is unless [replace]. True when the copy is there
+     * afterwards, or there is no file to copy (a fresh install: a JSON missing beside a pairing never
+     * gets as far as the migration).
      */
-    fun keepCopyBeforeHotState(): Boolean
+    fun keepCopy(suffix: String, replace: Boolean): Boolean
 }
 
 /** How [openSnapshotPersistence] found the two halves and what the repository writes from now on. */
@@ -133,15 +153,42 @@ fun openSnapshotPersistence(
     if (store == null || read == null) return wholeJson(json, file, HotStateOpening.STORE_UNAVAILABLE, keptToken)
     val pairing = read.pairing
     val token = loaded?.markerToken(HOT_STATE_MARKER_V1)
-    val paired = pairing != null && pairing.token == token && pairing.jsonRevision == json.revision
+    val paired = pairing?.pairsWith(token, json) == true
+    val current = pairing?.takeIf { paired || it.journalGoesFirst(loaded, json) }
+    // The rows need not fit the file when the JSON a restore journaled goes in place of it.
+    val pairedFile = paired && current?.journaledJsonRevision == null
     return when {
-        // A fresh install has neither a JSON nor a pairing; a pairing without its JSON is a JSON lost.
-        pairing != null && (loaded == null || keptToken == pairing.token) -> keepRows(json, file, pairing, missing = loaded == null)
-        !hotStateEnabled -> openWithOffSwitch(json, file, store, pairing.takeIf { paired })
-        paired -> withCurrentRows(json, file, store, checkNotNull(pairing), newToken)
-        else -> migrate(json, file, store, first = token == null, newToken)
+        current == null && pairing.waitsForItsJson(loaded, keptToken) ->
+            keepRows(json, file, checkNotNull(pairing), missing = loaded == null)
+        !hotStateEnabled -> openWithOffSwitch(json, file, store, current, pairedFile)
+        current != null -> withCurrentRows(json, file, store, current, newToken)
+            ?: keepRows(json, file, current, missing = false, pairedFile = pairedFile)
+        else -> {
+            if (token != null && pairing?.pendingJsonRevision == json.revision) {
+                Log.info(LOG_TAG) { "A whole write of revision ${json.revision} was cut short after its file: the file wins" }
+            }
+            migrate(json, file, store, first = token == null, newToken)
+        }
     }
 }
+
+/** Whether the file, carrying [token] and decoded as [json], is the JSON these rows go with. */
+private fun HotStatePairing.pairsWith(token: String?, json: AppSnapshot): Boolean = this.token == token && jsonRevision == json.revision
+
+/**
+ * Whether these rows (none on a fresh install) wait for their JSON: a pairing without its JSON is a
+ * JSON lost, and a JSON marked kept ([keptToken]) was written beside these rows while they waited.
+ */
+private fun HotStatePairing?.waitsForItsJson(loaded: AppSnapshot?, keptToken: String?): Boolean =
+    this != null && (loaded == null || keptToken == token)
+
+/**
+ * Whether the JSON this pairing journaled (a restore) goes in place of the file's: it is the newest
+ * cold part there is unless the file ([loaded], decoded as [json]) is at least as new, which only a
+ * whole write after the restore (its commit cut short) gets to.
+ */
+private fun HotStatePairing.journalGoesFirst(loaded: AppSnapshot?, json: AppSnapshot): Boolean =
+    journaledJsonRevision?.let { journal -> loaded == null || json.revision < journal } == true
 
 /** The pairing [store] holds (null inside when none); null when the store cannot be read. */
 private class PairingRead(val pairing: HotStatePairing?)
@@ -189,23 +236,43 @@ private fun wholeJson(
 
 /**
  * No JSON goes with the rows of [pairing] (it is [missing], or the rows do not fit it): the rows
- * stay as they are, never cleared here, for the JSON of that pairing to come back to.
+ * stay as they are, never cleared here, for the JSON of that pairing to come back to. When the file
+ * is that JSON ([pairedFile]: its rows do not fit it), it is copied aside first
+ * ([HOT_STATE_KEPT_SUFFIX]), since the JSON written meanwhile, marked kept, replaces it.
  */
-private fun keepRows(json: AppSnapshot, file: SnapshotFile, pairing: HotStatePairing, missing: Boolean): OpenedSnapshot {
+private fun keepRows(
+    json: AppSnapshot,
+    file: SnapshotFile,
+    pairing: HotStatePairing,
+    missing: Boolean,
+    pairedFile: Boolean = false,
+): OpenedSnapshot {
     Log.warn(LOG_TAG) {
         val reason = if (missing) "No readable snapshot goes with" else "The snapshot does not fit"
         "$reason the hot state of revision ${pairing.hotRevision ?: pairing.jsonRevision}; keeping it apart, unused"
     }
+    if (pairedFile && !file.keepCopy(HOT_STATE_KEPT_SUFFIX, replace = true)) {
+        Log.warn(LOG_TAG) { "The snapshot its hot state does not fit could not be copied aside" }
+    }
     return wholeJson(json, file, HotStateOpening.ROWS_KEPT, pairing.token)
 }
 
-/** The rows are read when they are current, never written; every write is the whole JSON. */
-private fun openWithOffSwitch(json: AppSnapshot, file: SnapshotFile, store: HotStateStore, current: HotStatePairing?): OpenedSnapshot {
+/**
+ * The rows are read when they are [current], never written; every write is the whole JSON.
+ * [pairedFile]: the file is the JSON of [current] (not one a restore journaled).
+ */
+private fun openWithOffSwitch(
+    json: AppSnapshot,
+    file: SnapshotFile,
+    store: HotStateStore,
+    current: HotStatePairing?,
+    pairedFile: Boolean,
+): OpenedSnapshot {
     Log.info(LOG_TAG) { "The hot state is switched off; writing the whole snapshot" }
     val combined = current?.let { combine(json, store, it) }
     return when {
         current == null -> wholeJson(json, file, HotStateOpening.OFF_SWITCH, keptToken = null)
-        combined == null -> keepRows(json, file, current, missing = false)
+        combined == null -> keepRows(json, file, current, missing = false, pairedFile = pairedFile)
         else -> wholeJson(json, file, HotStateOpening.OFF_SWITCH, keptToken = null, snapshot = combined.snapshot)
     }
 }
@@ -229,7 +296,8 @@ private fun combine(json: AppSnapshot, store: HotStateStore, pairing: HotStatePa
 
 /**
  * The JSON with the current rows applied, the rows of deleted chapters pruned; a JSON a restore
- * journaled is written to the file first. Rows that do not fit are kept, unused.
+ * journaled goes in place of the file's and is written to the file first. Null when the rows do
+ * not fit (they are then kept, unused).
  */
 private fun withCurrentRows(
     json: AppSnapshot,
@@ -237,8 +305,8 @@ private fun withCurrentRows(
     store: HotStateStore,
     pairing: HotStatePairing,
     newToken: () -> String,
-): OpenedSnapshot {
-    val combined = combine(json, store, pairing) ?: return keepRows(json, file, pairing, missing = false)
+): OpenedSnapshot? {
+    val combined = combine(json, store, pairing) ?: return null
     val snapshot = combined.snapshot
     return try {
         val current = pairing.copy(pendingJsonRevision = null, hotRevision = snapshot.revision)
@@ -323,7 +391,7 @@ private fun migrate(
     first: Boolean,
     newToken: () -> String,
 ): OpenedSnapshot {
-    if (first && !file.keepCopyBeforeHotState()) {
+    if (first && !file.keepCopy(BEFORE_HOT_STATE_SUFFIX, replace = false)) {
         Log.warn(LOG_TAG) { "The snapshot could not be copied before its hot state moved; writing it whole for now" }
         return wholeJson(json, file, HotStateOpening.MIGRATION_FAILED, keptToken = null)
     }

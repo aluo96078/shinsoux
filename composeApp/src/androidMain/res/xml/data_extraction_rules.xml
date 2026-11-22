@@ -13,6 +13,8 @@
         <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.of" />
         <exclude domain="file" path="shinsou-state.json.before-hot-state" />
         <exclude domain="file" path="shinsou-state.json.before-hot-state.partial" />
+        <exclude domain="file" path="shinsou-state.json.hot-state-kept" />
+        <exclude domain="file" path="shinsou-state.json.hot-state-kept.partial" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="shinsou-plugin-state.xml" />
@@ -27,5 +29,7 @@
         <exclude domain="database" path="shinsou-sync-v2.db.before-upgrade.of" />
         <exclude domain="file" path="shinsou-state.json.before-hot-state" />
         <exclude domain="file" path="shinsou-state.json.before-hot-state.partial" />
+        <exclude domain="file" path="shinsou-state.json.hot-state-kept" />
+        <exclude domain="file" path="shinsou-state.json.hot-state-kept.partial" />
     </device-transfer>
 </data-extraction-rules>

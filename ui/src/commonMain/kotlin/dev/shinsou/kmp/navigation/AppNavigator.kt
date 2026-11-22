@@ -272,10 +272,14 @@ internal class AppNavigator(
      * from (the platform then leaves the app).
      */
     fun back(): Boolean {
-        val current = mutableState.value
-        val next = backTransition(current) ?: return selection.clearLibraryTitles()
-        transition { next }
-        return true
+        // Computed from the state the transition replaces, so a concurrent change is not lost.
+        var handled = false
+        transition { current ->
+            val next = backTransition(current)
+            handled = next != null
+            next ?: current
+        }
+        return handled || selection.clearLibraryTitles()
     }
 
     /**

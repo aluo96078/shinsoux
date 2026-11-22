@@ -167,7 +167,7 @@ class HotStateDesktopStartupTest {
             Files.move(temporary, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
         }
 
-        override fun keepCopyBeforeHotState(): Boolean = DesktopPersistence.keepCopyBeforeHotState(path)
+        override fun keepCopy(suffix: String, replace: Boolean): Boolean = DesktopPersistence.keepCopy(path, suffix, replace)
     }
 
     /** [delegate], with the process dying at its call number [at] (each call is one transaction). */

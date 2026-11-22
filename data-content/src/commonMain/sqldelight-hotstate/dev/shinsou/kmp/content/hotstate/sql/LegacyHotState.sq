@@ -109,3 +109,10 @@ DELETE FROM legacy_hot_state_meta WHERE k = ?;
 
 deleteAllMeta:
 DELETE FROM legacy_hot_state_meta;
+
+-- The rows whose key lies in [?, ?): one value split over several rows, in key order.
+metaRange:
+SELECT v FROM legacy_hot_state_meta WHERE k >= ? AND k < ? ORDER BY k;
+
+deleteMetaRange:
+DELETE FROM legacy_hot_state_meta WHERE k >= ? AND k < ?;

@@ -555,7 +555,7 @@ class PortableContentBackupV2RestoreCoordinatorTest {
             this.json = json
         }
 
-        override fun keepCopyBeforeHotState(): Boolean = true
+        override fun keepCopy(suffix: String, replace: Boolean): Boolean = true
     }
 
     @Test

@@ -99,6 +99,9 @@ internal class FakeHotStateStore(private val crashes: Crashes = Crashes()) : Hot
     private fun Tables.withPairing(pairing: HotStatePairing?): Tables =
         copy(meta = pairing, journal = journal.takeIf { pairing?.journaledJsonRevision != null })
 
+    /** What another process would find in these tables now: a store of its own, with no crashes. */
+    fun copyOf(): FakeHotStateStore = FakeHotStateStore().also { it.tables = tables }
+
     /** Runs [block] as a host transaction: its writes land only when it returns. */
     suspend fun <T> hostTransaction(block: suspend () -> T): T {
         host = tables
@@ -118,9 +121,12 @@ internal class FakeHotStateStore(private val crashes: Crashes = Crashes()) : Hot
     }
 }
 
-/** `shinsou-state.json` and its `.before-hot-state` copy. */
+/** `shinsou-state.json` and its copies beside it (`.before-hot-state`, `.hot-state-kept`), by suffix. */
 internal class FakeSnapshotFile(var json: String? = null, private val crashes: Crashes = Crashes()) : SnapshotFile {
-    var copy: String? = null
+    val copies = mutableMapOf<String, String>()
+
+    /** The `.before-hot-state` copy. */
+    val copy: String? get() = copies[BEFORE_HOT_STATE_SUFFIX]
     var saves = 0
         private set
     var copyFails = false
@@ -131,10 +137,11 @@ internal class FakeSnapshotFile(var json: String? = null, private val crashes: C
         saves++
     }
 
-    override fun keepCopyBeforeHotState(): Boolean {
-        if (copy != null || json == null) return true
+    override fun keepCopy(suffix: String, replace: Boolean): Boolean {
+        val source = json
+        if ((!replace && suffix in copies) || source == null) return true
         crashes.step()
-        if (!copyFails) copy = json
+        if (!copyFails) copies[suffix] = source
         return !copyFails
     }
 

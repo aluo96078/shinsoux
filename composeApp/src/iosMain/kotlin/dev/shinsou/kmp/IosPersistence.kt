@@ -1,7 +1,6 @@
 package dev.shinsou.kmp
 
 import dev.shinsou.kmp.data.AppSnapshot
-import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
@@ -102,22 +101,22 @@ internal object IosSnapshotPersistence : SnapshotFile {
     }
 
     /**
-     * C3 (docs/architecture/0007 §6.3.5): `shinsou-state.json.before-hot-state`, taken once and left
-     * out of device backups. Foundation's atomic write goes through a temporary file, so a copy cut
-     * short is never there under its name.
+     * C3 (docs/architecture/0007 §6.3.5): `shinsou-state.json<suffix>`, left out of device backups.
+     * Foundation's atomic write goes through a temporary file, so a copy cut short is never there
+     * under its name.
      */
-    override fun keepCopyBeforeHotState(): Boolean {
+    override fun keepCopy(suffix: String, replace: Boolean): Boolean {
         val source = IosApplicationPaths.file(FILE_NAME)
-        val copy = IosApplicationPaths.file(FILE_NAME + BEFORE_HOT_STATE_SUFFIX)
+        val copy = IosApplicationPaths.file(FILE_NAME + suffix)
         val manager = NSFileManager.defaultManager
-        if (manager.fileExistsAtPath(copy) || !manager.fileExistsAtPath(source)) return true
+        if ((!replace && manager.fileExistsAtPath(copy)) || !manager.fileExistsAtPath(source)) return true
         val data = NSData.dataWithContentsOfFile(source)
         val copied = data != null && data.writeToFile(copy, atomically = true)
         if (copied) {
             platform.Foundation.NSURL.fileURLWithPath(copy)
                 .setResourceValue(true, forKey = platform.Foundation.NSURLIsExcludedFromBackupKey, error = null)
         } else {
-            Log.warn("Storage") { "Copying the app state before moving its hot rows failed" }
+            Log.warn("Storage") { "Copying the app state to $FILE_NAME$suffix failed" }
         }
         return copied
     }

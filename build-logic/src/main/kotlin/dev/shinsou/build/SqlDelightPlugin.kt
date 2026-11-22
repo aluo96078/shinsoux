@@ -57,7 +57,11 @@ private fun Project.registerIdentifierCheck(): String {
     tasks.register(CHECK_TASK, CheckSqlStatementIdentifiers::class.java) {
         group = "verification"
         description = "Fails when a SQLDelight statement identifier collides with another or with the registry's range."
-        val modules = rootProject.subprojects.filter { File(it.projectDir, SQ_SOURCES).isDirectory }
+        // Every module with .sq sources, including databases kept in their own folder (sqldelight-hotstate).
+        val modules = rootProject.subprojects.filter { project ->
+            File(project.projectDir, SQ_SOURCES).parentFile.listFiles().orEmpty()
+                .any { it.isDirectory && it.name.startsWith(File(SQ_SOURCES).name) }
+        }
         modules.forEach { module ->
             generatedSources.from(File(module.projectDir, GENERATED_SOURCES))
             dependsOn("${module.path}:generateSqlDelightInterface")

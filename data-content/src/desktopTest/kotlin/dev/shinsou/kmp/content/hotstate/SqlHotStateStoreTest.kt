@@ -142,6 +142,27 @@ class SqlHotStateStoreTest {
         assertEquals(10, store.pairing()?.hotRevision)
     }
 
+    /** A whole library's journal is read back in rows small enough for Android's 2 MiB cursor window. */
+    @Test
+    fun aLargeJournalIsKeptInRowsThatFitACursorWindow() {
+        // CJK text is 3 bytes a character in UTF-8: the worst case for a chunk's size.
+        val journal = buildString { while (length < 3 * 131_072 + 17) append("{\"題名\":\"章節\"},") }
+        store.setJournaledJson(journal)
+        assertEquals(journal, SqlHotStateStore(driver).journaledJson())
+        val largest = driver.executeQuery(
+            null,
+            "SELECT max(length(CAST(v AS BLOB))), count(*) FROM legacy_hot_state_meta WHERE k LIKE 'journaled_json#%'",
+            { cursor -> cursor.next(); app.cash.sqldelight.db.QueryResult.Value(cursor.getLong(0)!! to cursor.getLong(1)!!) },
+            0,
+        ).value
+        assertEquals(4L, largest.second)
+        assertTrue(largest.first <= 512L * 1024, "a chunk of ${largest.first} bytes")
+        store.setJournaledJson("{}")
+        assertEquals("{}", store.journaledJson())
+        store.setJournaledJson(null)
+        assertNull(store.journaledJson())
+    }
+
     /** C3-5: the JSON a restore journals goes with the rows, and only while the pairing names it. */
     @Test
     fun aJournaledJsonLastsAsLongAsThePairingNamesIt() {

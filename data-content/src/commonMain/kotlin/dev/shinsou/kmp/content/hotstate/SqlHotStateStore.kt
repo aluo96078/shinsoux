@@ -146,7 +146,7 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
 
     override fun setPairing(pairing: HotStatePairing?): Unit = sql {
         PAIRING_KEYS.forEach { queries.deleteMeta(it).value }
-        if (pairing?.journaledJsonRevision == null) queries.deleteMeta(META_JOURNALED_JSON).value
+        if (pairing?.journaledJsonRevision == null) deleteJournal()
         if (pairing != null) {
             queries.putMeta(META_PAIRED_JSON_REVISION, pairing.jsonRevision.toString()).value
             queries.putMeta(META_TOKEN, pairing.token).value
@@ -156,10 +156,27 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
         }
     }
 
-    override fun journaledJson(): String? = sql { queries.meta(META_JOURNALED_JSON).executeAsOneOrNull() }
+    /**
+     * The journal is kept in chunks of at most [JOURNAL_CHUNK_CHARS] characters, one row each:
+     * a whole library's JSON (tens of MiB) in one value cannot be read back on Android, whose
+     * cursor window holds a row of at most 2 MiB.
+     */
+    override fun journaledJson(): String? = sql {
+        queries.metaRange(JOURNAL_FIRST_KEY, JOURNAL_END_KEY).executeAsList()
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString("")
+    }
 
     override fun setJournaledJson(json: String?): Unit = sql {
-        if (json == null) queries.deleteMeta(META_JOURNALED_JSON).value else queries.putMeta(META_JOURNALED_JSON, json).value
+        deleteJournal()
+        json?.chunked(JOURNAL_CHUNK_CHARS)?.forEachIndexed { index, chunk ->
+            queries.putMeta(journalKey(index), chunk).value
+        }
+    }
+
+    private fun deleteJournal() {
+        queries.deleteMeta(META_JOURNALED_JSON).value
+        queries.deleteMetaRange(JOURNAL_FIRST_KEY, JOURNAL_END_KEY).value
     }
 
     override fun commit(rows: HotRows, pairing: HotStatePairing): Unit = sql {
@@ -183,6 +200,15 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
 
         /** The whole snapshot JSON a restore committed with its rows (C3-5), until a whole write pairs one. */
         const val META_JOURNALED_JSON = "journaled_json"
+
+        /** At most 512 KiB of UTF-8 per row, well inside Android's 2 MiB cursor window. */
+        const val JOURNAL_CHUNK_CHARS = 131_072
+
+        /** Chunk keys sort in chunk order: `journaled_json#000000`, `#000001`, ... below `journaled_json$`. */
+        const val JOURNAL_FIRST_KEY = "journaled_json#"
+        const val JOURNAL_END_KEY = "journaled_json$"
+
+        fun journalKey(index: Int): String = JOURNAL_FIRST_KEY + index.toString().padStart(6, '0')
 
         val PAIRING_KEYS = listOf(
             META_PAIRED_JSON_REVISION,

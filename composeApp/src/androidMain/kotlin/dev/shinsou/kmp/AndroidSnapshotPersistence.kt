@@ -3,7 +3,6 @@ package dev.shinsou.kmp
 import android.content.Context
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
-import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.logging.Log
@@ -52,10 +51,10 @@ internal class AndroidSnapshotPersistence(context: Context) : SnapshotFile {
         saveLocked(json)
     }
 
-    /** C3 (docs/architecture/0007 §6.3.5): the copy left out of Android's backups (backup_rules.xml). */
-    override fun keepCopyBeforeHotState(): Boolean = synchronized(lock) {
-        val copy = File(stateFile.parentFile, "$STATE_FILE_NAME$BEFORE_HOT_STATE_SUFFIX")
-        if (copy.isFile || !stateFile.isFile) return@synchronized true
+    /** C3 (docs/architecture/0007 §6.3.5): copies left out of Android's backups (backup_rules.xml). */
+    override fun keepCopy(suffix: String, replace: Boolean): Boolean = synchronized(lock) {
+        val copy = File(stateFile.parentFile, "$STATE_FILE_NAME$suffix")
+        if ((!replace && copy.isFile) || !stateFile.isFile) return@synchronized true
         val partial = File(stateFile.parentFile, "${copy.name}.partial")
         try {
             FileInputStream(stateFile).use { input ->
@@ -68,7 +67,7 @@ internal class AndroidSnapshotPersistence(context: Context) : SnapshotFile {
             Files.move(partial.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             true
         } catch (logged: IOException) {
-            Log.warn("Storage", logged) { "Copying the app state before moving its hot rows failed" }
+            Log.warn("Storage", logged) { "Copying the app state to ${copy.name} failed" }
             false
         }
     }

@@ -3,7 +3,6 @@ package dev.shinsou.kmp.desktop
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.AppSnapshotJson
-import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.sync.v3.SyncV3Service
@@ -371,7 +370,7 @@ internal object DesktopPersistence : SnapshotFile {
 
     override fun save(json: String) = saveState(json)
 
-    override fun keepCopyBeforeHotState(): Boolean = keepCopyBeforeHotState(stateFile)
+    override fun keepCopy(suffix: String, replace: Boolean): Boolean = keepCopy(stateFile, suffix, replace)
 
     /**
      * The C3 off-switch: a file named [WHOLE_JSON_SWITCH_FILE] beside the state file, or the
@@ -380,10 +379,10 @@ internal object DesktopPersistence : SnapshotFile {
     fun wholeJsonRequested(): Boolean =
         System.getProperty("shinsou.wholeJsonSnapshot").toBoolean() || Files.exists(directory.resolve(WHOLE_JSON_SWITCH_FILE))
 
-    /** C3 (docs/architecture/0007 §6.3.5): `<file>.before-hot-state`, taken once. */
-    internal fun keepCopyBeforeHotState(file: Path): Boolean {
-        val copy = file.resolveSibling(file.fileName.toString() + BEFORE_HOT_STATE_SUFFIX)
-        if (Files.exists(copy) || !Files.exists(file)) return true
+    /** C3 (docs/architecture/0007 §6.3.5): `<file><suffix>`, kept when already there unless [replace]. */
+    internal fun keepCopy(file: Path, suffix: String, replace: Boolean): Boolean {
+        val copy = file.resolveSibling(file.fileName.toString() + suffix)
+        if ((!replace && Files.exists(copy)) || !Files.exists(file)) return true
         val partial = copy.resolveSibling(copy.fileName.toString() + ".partial")
         return try {
             Files.copy(file, partial, StandardCopyOption.REPLACE_EXISTING)
@@ -391,7 +390,7 @@ internal object DesktopPersistence : SnapshotFile {
             Files.move(partial, copy, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             true
         } catch (logged: java.io.IOException) {
-            Log.warn("Desktop", logged) { "Copying the app state before moving its hot rows failed" }
+            Log.warn("Desktop", logged) { "Copying the app state to $copy failed" }
             false
         }
     }

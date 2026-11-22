@@ -102,7 +102,7 @@ class SnapshotPersistenceBenchmark {
             driver.execute(null, "PRAGMA synchronous = FULL", 0).value
             val file = object : SnapshotFile {
                 override fun save(json: String) = writeAtomically(directory, json)
-                override fun keepCopyBeforeHotState(): Boolean = true
+                override fun keepCopy(suffix: String, replace: Boolean): Boolean = true
             }
             val start = System.nanoTime()
             val opened = openSnapshotPersistence(library, file, SqlHotStateStore(driver))
