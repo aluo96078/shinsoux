@@ -1,12 +1,14 @@
 package dev.shinsou.build
 
 import app.cash.sqldelight.gradle.SqlDelightExtension
+import app.cash.sqldelight.gradle.SqlDelightTask
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputFile
@@ -31,10 +33,28 @@ import java.io.File
  * silently turn the prepared-statement cache off: statements take their identifier from the
  * registry (`executeStatement` / `queryStatement`), and `executeUncached` / `queryUncached` are the
  * explicit, greppable exemption for DDL, PRAGMA and statements with unbounded text.
+ *
+ * SQLDelight 2.1 writes every generated top-level declaration `public` and has no setting for its
+ * visibility. A module whose public API reaches another module's headers (the iOS framework
+ * exports `:feature-translation`) can set `shinsouSqlDelight { internalGeneratedCode.set(true) }`:
+ * the generator task then rewrites the top-level `public` of its output to `internal`
+ * ([ShinsouSqlDelightExtension]), and the module wraps what others need.
  */
 public class SqlDelightPlugin : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
         pluginManager.apply("app.cash.sqldelight")
+        val settings = extensions.create("shinsouSqlDelight", ShinsouSqlDelightExtension::class.java)
+        settings.internalGeneratedCode.convention(false)
+        val internalize = settings.internalGeneratedCode
+        tasks.withType(SqlDelightTask::class.java).configureEach {
+            doLast {
+                if (internalize.get()) {
+                    outputs.files.asFileTree.matching { include("**/*.kt") }.forEach { file ->
+                        file.writeText(file.readText().replace(TOP_LEVEL_PUBLIC, "internal "))
+                    }
+                }
+            }
+        }
         val sqldelightVersion = catalogVersion("sqldelight")
         extensions.getByType(SqlDelightExtension::class.java).apply {
             // KmpPlugin links every native binary with -lsqlite3 already.
@@ -52,6 +72,15 @@ public class SqlDelightPlugin : Plugin<Project> {
         tasks.matching { it.name == "check" || it.name == "desktopTest" }.configureEach { dependsOn(check) }
     }
 }
+
+/** `shinsouSqlDelight { ... }` of a module with SQLDelight sources. */
+public abstract class ShinsouSqlDelightExtension {
+    /** Whether the generated top-level declarations are `internal` (SQLDelight writes them `public`). */
+    public abstract val internalGeneratedCode: Property<Boolean>
+}
+
+/** `public ` at the start of a line: the top-level declarations (members are indented). */
+private val TOP_LEVEL_PUBLIC = Regex("""^public """, RegexOption.MULTILINE)
 
 /** The check, in the module that owns the registry; every SQLDelight module depends on it. */
 private fun Project.registerIdentifierCheck(): String {

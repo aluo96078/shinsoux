@@ -11,8 +11,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.okio.encodeToBufferedSink
 import okio.BufferedSink
 
-object SnapshotBackupService {
-    fun create(
+public object SnapshotBackupService {
+    public fun create(
         snapshot: AppSnapshot,
         createdAt: Long,
         appVersion: String = "",
@@ -24,7 +24,7 @@ object SnapshotBackupService {
         snapshot = snapshot.validate().withoutPortableSecrets(),
     )
 
-    fun encode(envelope: BackupEnvelope): String {
+    public fun encode(envelope: BackupEnvelope): String {
         val validated = envelope.validate()
         return AppSnapshotJson.format.encodeToString(
             validated.copy(snapshot = validated.snapshot.withoutPortableSecrets()),
@@ -32,12 +32,12 @@ object SnapshotBackupService {
     }
 
     /** [encode] as UTF-8 bytes, without the whole library as a `String` in between (R3-5). */
-    fun encodeToBytes(envelope: BackupEnvelope): ByteArray =
+    internal fun encodeToBytes(envelope: BackupEnvelope): ByteArray =
         AppSnapshotJson.format.encodeToUtf8(BackupEnvelope.serializer(), exported(envelope))
 
     /** [encodeToBytes] written straight into [sink], byte for byte the same (R3-5). */
     @OptIn(ExperimentalSerializationApi::class)
-    fun encodeTo(envelope: BackupEnvelope, sink: BufferedSink) {
+    public fun encodeTo(envelope: BackupEnvelope, sink: BufferedSink) {
         AppSnapshotJson.format.encodeToBufferedSink(BackupEnvelope.serializer(), exported(envelope), sink)
     }
 
@@ -46,16 +46,16 @@ object SnapshotBackupService {
         return validated.copy(snapshot = validated.snapshot.withoutPortableSecrets())
     }
 
-    fun decode(encoded: String): BackupEnvelope = AppSnapshotJson.format.decodeFromString<BackupEnvelope>(encoded).validate()
+    public fun decode(encoded: String): BackupEnvelope = AppSnapshotJson.format.decodeFromString<BackupEnvelope>(encoded).validate()
 
-    fun decode(encoded: ByteArray): BackupEnvelope =
+    public fun decode(encoded: ByteArray): BackupEnvelope =
         AppSnapshotJson.format.decodeFromUtf8(BackupEnvelope.serializer(), encoded).validate()
 
     /**
      * Applies selected backup domains with replace semantics while preserving unselected domains.
      * Dependent records that cannot refer to an existing selected parent are skipped and reported.
      */
-    fun restore(
+    public fun restore(
         current: AppSnapshot,
         envelope: BackupEnvelope,
         selection: RestoreSelection = RestoreSelection.All,
@@ -133,13 +133,13 @@ object SnapshotBackupService {
     }
 }
 
-fun ShinsouRepository.createBackupEnvelope(
+public fun ShinsouRepository.createBackupEnvelope(
     createdAt: Long,
     appVersion: String = "",
     deviceId: String? = null,
 ): BackupEnvelope = SnapshotBackupService.create(currentSnapshot, createdAt, appVersion, deviceId)
 
-suspend fun ShinsouRepository.restoreBackup(
+public suspend fun ShinsouRepository.restoreBackup(
     envelope: BackupEnvelope,
     selection: RestoreSelection = RestoreSelection.All,
     restoredAt: Long = envelope.createdAt,

@@ -24,7 +24,7 @@
     <ID>LongParameterList:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
     <ID>LongParameterList:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service</ID>
-    <ID>LongParameterList:SyncV3Service.kt:SyncV3Service.Companion$fun create: SyncV3Service</ID>
+    <ID>LongParameterList:SyncV3Service.kt:SyncV3Service.Companion$public fun create: SyncV3Service</ID>
     <ID>LoopWithTooManyJumpStatements:SyncDiff.kt:SyncDiff$for</ID>
     <ID>LoopWithTooManyJumpStatements:SyncPromoter.kt:SyncPromoter$for</ID>
     <ID>LoopWithTooManyJumpStatements:SyncPusher.kt:SyncPusher$for</ID>

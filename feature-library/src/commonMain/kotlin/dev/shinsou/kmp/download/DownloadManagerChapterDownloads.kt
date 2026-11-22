@@ -10,7 +10,7 @@ import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.network.encodedImageHeight
 
 /** [DownloadManager] and the chapters it finished, as the source bridge uses them. */
-class DownloadManagerChapterDownloads(
+public class DownloadManagerChapterDownloads(
     private val manager: DownloadManager,
     private val repository: ShinsouRepository,
     private val fileSystem: AppFileSystem,

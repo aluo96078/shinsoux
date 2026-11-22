@@ -23,7 +23,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /** Counts only rows/fields actually inserted by one successful compatibility CAS. */
-data class ShuYueCompatibilityProjectionRepairResult(
+public data class ShuYueCompatibilityProjectionRepairResult(
     val mangasCreated: Int = 0,
     val chaptersCreated: Int = 0,
     val categoriesCreated: Int = 0,
@@ -54,13 +54,13 @@ internal class ShuYueCompatibilityProjectionConflictException(
  * removal/rename, reader progress and every other user edit win over a later repair. Missing rows
  * are published together through the repository's observer-free content-authority CAS.
  */
-class ShuYueCompatibilityProjectionCoordinator(
+public class ShuYueCompatibilityProjectionCoordinator(
     private val repository: ShinsouRepository,
     private val auxiliaryState: () -> ContentPortableAuxiliaryState,
     /** Reads just the publications with these ids (ShuYue's book aliases). */
     private val publicationsWithIds: (Set<String>) -> List<Publication>,
 ) {
-    constructor(
+    public constructor(
         repository: ShinsouRepository,
         publications: () -> List<Publication>,
         auxiliaryState: () -> ContentPortableAuxiliaryState,
@@ -70,7 +70,7 @@ class ShuYueCompatibilityProjectionCoordinator(
         publicationsWithIds = { ids -> publications().filter { it.key.value in ids } },
     )
 
-    constructor(
+    public constructor(
         repository: ShinsouRepository,
         foundation: ContentFoundationRuntime,
     ) : this(
@@ -81,7 +81,7 @@ class ShuYueCompatibilityProjectionCoordinator(
         publicationsWithIds = { ids -> ids.mapNotNull { foundation.publications.find(PublicationKey(it)) } },
     )
 
-    suspend fun repair(): ShuYueCompatibilityProjectionRepairResult {
+    public suspend fun repair(): ShuYueCompatibilityProjectionRepairResult {
         val authority = parseAuthority(publicationsWithIds, auxiliaryState().validate())
         if (authority.publications.isEmpty() && authority.settings.isEmpty()) {
             return ShuYueCompatibilityProjectionRepairResult()

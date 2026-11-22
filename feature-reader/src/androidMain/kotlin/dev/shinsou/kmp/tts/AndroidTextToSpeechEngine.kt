@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Serialized Android TextToSpeech adapter; each service segment is one flushed native utterance. */
-class AndroidTextToSpeechEngine(
+public class AndroidTextToSpeechEngine(
     context: Context,
 ) : PlatformTextToSpeechEngine {
     private val ready = CompletableDeferred<TextToSpeech?>()

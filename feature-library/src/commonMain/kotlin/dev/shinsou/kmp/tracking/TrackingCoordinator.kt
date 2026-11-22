@@ -7,23 +7,23 @@ import dev.shinsou.kmp.domain.model.TrackerAccountState
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class TrackingProvider(
+public data class TrackingProvider(
     val descriptor: TrackerDescriptor,
     val configured: Boolean = true,
     val configurationMessage: String? = null,
 )
 
 /** Small seam that keeps the UI-facing coordinator independently testable. */
-interface TrackingManagerGateway {
-    val descriptors: List<TrackerDescriptor>
+public interface TrackingManagerGateway {
+    public val descriptors: List<TrackerDescriptor>
 
-    suspend fun isAuthenticated(trackerId: Int): Boolean
-    suspend fun refreshAuthenticationState(trackerId: Int): TrackerAccountState
-    suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch>
-    suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track
-    suspend fun refresh(mangaId: Long, trackerId: Int): Track
-    suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track
-    suspend fun remove(mangaId: Long, trackerId: Int)
+    public suspend fun isAuthenticated(trackerId: Int): Boolean
+    public suspend fun refreshAuthenticationState(trackerId: Int): TrackerAccountState
+    public suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch>
+    public suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track
+    public suspend fun refresh(mangaId: Long, trackerId: Int): Track
+    public suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track
+    public suspend fun remove(mangaId: Long, trackerId: Int)
 }
 
 /** Adapts the existing queue-aware [TrackerManager] and repository to coordinator operations. */
@@ -52,37 +52,37 @@ internal class TrackerManagerAdapter(
     override suspend fun remove(mangaId: Long, trackerId: Int) = repository.deleteTrack(mangaId, trackerId)
 }
 
-interface TrackerAuthenticator {
-    val trackerId: Int
-    fun authorizationUrl(): String
-    suspend fun complete(pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken
-    suspend fun logout()
+public interface TrackerAuthenticator {
+    public val trackerId: Int
+    public fun authorizationUrl(): String
+    public suspend fun complete(pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken
+    public suspend fun logout()
 }
 
 /**
  * What the app's screens use of [TrackingCoordinator] (0007 B4): the providers, signing in and
  * out, and binding, refreshing, updating and removing a title's tracks.
  */
-interface TrackingService {
-    val providers: List<TrackingProvider>
+public interface TrackingService {
+    public val providers: List<TrackingProvider>
 
-    fun authorizationUrl(trackerId: Int): String?
+    public fun authorizationUrl(trackerId: Int): String?
 
-    suspend fun isAuthenticated(trackerId: Int): Boolean
+    public suspend fun isAuthenticated(trackerId: Int): Boolean
 
-    suspend fun completeAuthentication(trackerId: Int, pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken
+    public suspend fun completeAuthentication(trackerId: Int, pastedCallbackOrToken: String, nowEpochMillis: Long): OAuthToken
 
-    suspend fun logout(trackerId: Int)
+    public suspend fun logout(trackerId: Int)
 
-    suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch>
+    public suspend fun search(trackerId: Int, query: String, limit: Int = 20): List<TrackSearch>
 
-    suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track
+    public suspend fun bind(mangaId: Long, trackerId: Int, remote: TrackSearch): Track
 
-    suspend fun refresh(mangaId: Long, trackerId: Int): Track
+    public suspend fun refresh(mangaId: Long, trackerId: Int): Track
 
-    suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track
+    public suspend fun update(mangaId: Long, trackerId: Int, update: TrackUpdate): Track
 
-    suspend fun remove(mangaId: Long, trackerId: Int)
+    public suspend fun remove(mangaId: Long, trackerId: Int)
 }
 
 /**
@@ -91,7 +91,7 @@ interface TrackingService {
  * Configured providers are backed by [TrackerManager]; unavailable providers remain visible so
  * clients can explain missing app credentials instead of presenting a login flow that cannot work.
  */
-class TrackingCoordinator(
+public class TrackingCoordinator(
     private val manager: TrackingManagerGateway,
     providers: List<TrackingProvider>,
     authenticators: List<TrackerAuthenticator>,
@@ -144,7 +144,7 @@ class TrackingCoordinator(
         manager.refreshAuthenticationState(trackerId)
     }
 
-    suspend fun refreshAuthenticationState(trackerId: Int): TrackerAccountState {
+    internal suspend fun refreshAuthenticationState(trackerId: Int): TrackerAccountState {
         requireConfigured(trackerId)
         return manager.refreshAuthenticationState(trackerId)
     }

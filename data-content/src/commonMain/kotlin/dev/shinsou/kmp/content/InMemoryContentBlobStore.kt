@@ -380,7 +380,7 @@ public class InMemoryContentBlobStore(
     }
 
     /** Models a process death after immutable publish but before the shared transaction. */
-    public fun simulateProcessCrashAndRecover() = withStateLock {
+    public fun simulateProcessCrashAndRecover(): Unit = withStateLock {
         liveStages.clear()
         activeReaders.toList().forEach(StateReader::forceCloseLocked)
         activeReaders.clear()

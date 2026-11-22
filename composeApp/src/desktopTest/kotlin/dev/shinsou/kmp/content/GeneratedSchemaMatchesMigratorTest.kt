@@ -1,3 +1,5 @@
+@file:OptIn(TestOnlyApi::class)
+
 package dev.shinsou.kmp.content
 
 import app.cash.sqldelight.db.QueryResult
@@ -9,9 +11,10 @@ import dev.shinsou.kmp.content.hotstate.LegacyHotStateSchema
 import dev.shinsou.kmp.content.hotstate.sql.LegacyHotStateDatabase
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.sync.v3.sql.SyncV3Database
+import dev.shinsou.kmp.testing.TestOnlyApi
 import dev.shinsou.kmp.translation.TranslationMemorySchema
 import dev.shinsou.kmp.translation.TranslationMemoryStore
-import dev.shinsou.kmp.translation.sql.TranslationMemoryDatabase
+import dev.shinsou.kmp.translation.TranslationTestAccess
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -53,7 +56,7 @@ class GeneratedSchemaMatchesMigratorTest {
 
     @Test
     fun translationMemoryOfEveryShippedFormatMatchesTheGeneratedTables() {
-        val generated = generated(TABLE_PREFIX_TM) { TranslationMemoryDatabase.Schema.create(it).value }
+        val generated = generated(TABLE_PREFIX_TM) { TranslationTestAccess.createGeneratedTranslationMemorySchema(it) }
         val formats = buildList<Pair<String, (SqlDriver) -> Unit>> {
             add("empty" to { _ -> })
             for (format in 1..TranslationMemorySchema.VERSION.toInt()) {
@@ -75,7 +78,7 @@ class GeneratedSchemaMatchesMigratorTest {
 
     @Test
     fun theComparisonSeesAColumnThatIsMissing() {
-        val generated = generated(TABLE_PREFIX_TM) { TranslationMemoryDatabase.Schema.create(it).value }
+        val generated = generated(TABLE_PREFIX_TM) { TranslationTestAccess.createGeneratedTranslationMemorySchema(it) }
         val older = describe(TABLE_PREFIX_TM) { writeTranslationMemory(it, format = 3) }
         assertTrue(generated != older, "format 3 lacks tm_work.from_picked")
     }

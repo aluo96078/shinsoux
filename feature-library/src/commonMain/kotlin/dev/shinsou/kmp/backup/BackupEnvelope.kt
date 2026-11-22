@@ -3,12 +3,12 @@ package dev.shinsou.kmp.backup
 import dev.shinsou.kmp.data.AppSnapshot
 import kotlinx.serialization.Serializable
 
-const val SHINSOU_BACKUP_FORMAT: String = "dev.shinsou.kmp.snapshot"
-const val SHINSOU_BACKUP_FORMAT_VERSION: Int = 1
+internal const val SHINSOU_BACKUP_FORMAT: String = "dev.shinsou.kmp.snapshot"
+internal const val SHINSOU_BACKUP_FORMAT_VERSION: Int = 1
 
 /** Versioned JSON envelope for `.shinsoubackup` exports. */
 @Serializable
-data class BackupEnvelope(
+public data class BackupEnvelope(
     val format: String = SHINSOU_BACKUP_FORMAT,
     val formatVersion: Int = SHINSOU_BACKUP_FORMAT_VERSION,
     val createdAt: Long,
@@ -18,7 +18,7 @@ data class BackupEnvelope(
     /** Glossaries, per-work translation settings and, by choice, stored translations (ADR-0004). */
     val translations: dev.shinsou.kmp.domain.model.TranslationBackup? = null,
 ) {
-    fun validate(): BackupEnvelope {
+    public fun validate(): BackupEnvelope {
         if (format != SHINSOU_BACKUP_FORMAT) {
             throw BackupFormatException("Not a Shinsou X backup: $format")
         }
@@ -37,7 +37,7 @@ data class BackupEnvelope(
 }
 
 /** Controls which independent domains are restored from a complete backup envelope. */
-data class RestoreSelection(
+public data class RestoreSelection(
     val library: Boolean = true,
     val categories: Boolean = true,
     val chapters: Boolean = true,
@@ -46,9 +46,9 @@ data class RestoreSelection(
     val settings: Boolean = true,
     val repositories: Boolean = true,
 ) {
-    companion object {
-        val All = RestoreSelection()
-        val LibraryOnly = RestoreSelection(
+    public companion object {
+        public val All: RestoreSelection = RestoreSelection()
+        internal val LibraryOnly: RestoreSelection = RestoreSelection(
             categories = false,
             chapters = false,
             history = false,
@@ -59,7 +59,7 @@ data class RestoreSelection(
     }
 }
 
-data class RestoreCounts(
+public data class RestoreCounts(
     val mangas: Int = 0,
     val categories: Int = 0,
     val categoryLinks: Int = 0,
@@ -73,10 +73,10 @@ data class RestoreCounts(
     val skippedCategoryLinks: Int = 0,
 )
 
-data class RestoreResult(
+public data class RestoreResult(
     val snapshot: AppSnapshot,
     val selection: RestoreSelection,
     val counts: RestoreCounts,
 )
 
-class BackupFormatException(message: String) : IllegalArgumentException(message)
+public class BackupFormatException(message: String) : IllegalArgumentException(message)

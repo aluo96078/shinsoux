@@ -11,17 +11,17 @@ import app.cash.sqldelight.db.SqlCursor
  * an integer column with `getLong` and every other one with `getString`; reading a column with the
  * accessor of another type fails instead of converting it.
  */
-class ContentRow(private val columns: Map<String, Int>, private val values: List<Any?>) {
-    fun stringOrNull(column: String): String? = typed<String>(column, "text")
+public class ContentRow(private val columns: Map<String, Int>, private val values: List<Any?>) {
+    public fun stringOrNull(column: String): String? = typed<String>(column, "text")
 
-    fun string(column: String): String = requireNotNull(stringOrNull(column)) { "Column $column is null" }
+    public fun string(column: String): String = requireNotNull(stringOrNull(column)) { "Column $column is null" }
 
-    fun longOrNull(column: String): Long? = typed<Long>(column, "integer")
+    public fun longOrNull(column: String): Long? = typed<Long>(column, "integer")
 
-    fun long(column: String): Long = requireNotNull(longOrNull(column)) { "Column $column is null" }
+    public fun long(column: String): Long = requireNotNull(longOrNull(column)) { "Column $column is null" }
 
     /** A 0/1 flag column; NULL reads as false, as any value other than 1 does. */
-    fun flag(column: String): Boolean = longOrNull(column) == 1L
+    public fun flag(column: String): Boolean = longOrNull(column) == 1L
 
     private inline fun <reified T> typed(column: String, kind: String): T? {
         val value = values[index(column)]
@@ -31,12 +31,12 @@ class ContentRow(private val columns: Map<String, Int>, private val values: List
 
     private fun index(column: String): Int = requireNotNull(columns[column]) { "Column $column is not selected" }
 
-    companion object {
+    public companion object {
         /**
          * Copies the cursor's current row: the columns named in [integerColumns] with `getLong`,
          * every other one with `getString`.
          */
-        fun read(cursor: SqlCursor, columns: Map<String, Int>, integerColumns: Set<String>): ContentRow {
+        public fun read(cursor: SqlCursor, columns: Map<String, Int>, integerColumns: Set<String>): ContentRow {
             val values = arrayOfNulls<Any>(columns.size)
             columns.forEach { (name, index) ->
                 values[index] = if (name in integerColumns) cursor.getLong(index) else cursor.getString(index)
@@ -50,7 +50,7 @@ class ContentRow(private val columns: Map<String, Int>, private val values: List
          * `substr(a, 1, 2)`) or inside a quoted literal does not start a new column; an expression
          * must be aliased.
          */
-        fun columns(projection: String): Map<String, Int> {
+        public fun columns(projection: String): Map<String, Int> {
             val items = splitProjection(projection)
             return items.withIndex().associate { (index, item) ->
                 val segment = item.trim()
@@ -69,7 +69,7 @@ class ContentRow(private val columns: Map<String, Int>, private val values: List
          * at the first `FROM` outside parentheses and quotes; a subquery in the `FROM` clause is
          * not looked into.
          */
-        fun selectColumns(sql: String): Map<String, Int> {
+        public fun selectColumns(sql: String): Map<String, Int> {
             val text = sql.trim()
             require(text.regionMatches(0, SELECT, 0, SELECT.length, ignoreCase = true)) {
                 "Not a SELECT statement"
@@ -156,25 +156,25 @@ private class SqlScanner {
  * One row of [table] read by column name straight from the cursor, while it is on that row; each
  * accessor uses the cursor getter of its type. For stores that map each row as it is read.
  */
-class ContentCursorRow(
+public class ContentCursorRow(
     private val cursor: SqlCursor,
     private val table: String,
     private val columns: Map<String, Int>,
 ) {
-    fun stringOrNull(column: String): String? = cursor.getString(index(column))
+    public fun stringOrNull(column: String): String? = cursor.getString(index(column))
 
-    fun string(column: String): String = requireNotNull(stringOrNull(column)) { "$table.$column is null" }
+    public fun string(column: String): String = requireNotNull(stringOrNull(column)) { "$table.$column is null" }
 
-    fun longOrNull(column: String): Long? = cursor.getLong(index(column))
+    public fun longOrNull(column: String): Long? = cursor.getLong(index(column))
 
-    fun long(column: String): Long = requireNotNull(longOrNull(column)) { "$table.$column is null" }
+    public fun long(column: String): Long = requireNotNull(longOrNull(column)) { "$table.$column is null" }
 
     /** A 0/1 flag column; NULL reads as false, as any value other than 1 does. */
-    fun flag(column: String): Boolean = longOrNull(column) == 1L
+    public fun flag(column: String): Boolean = longOrNull(column) == 1L
 
-    fun doubleOrNull(column: String): Double? = cursor.getDouble(index(column))
+    public fun doubleOrNull(column: String): Double? = cursor.getDouble(index(column))
 
-    fun bytesOrNull(column: String): ByteArray? = cursor.getBytes(index(column))
+    internal fun bytesOrNull(column: String): ByteArray? = cursor.getBytes(index(column))
 
     private fun index(column: String): Int = requireNotNull(columns[column]) { "$table.$column is not selected" }
 }

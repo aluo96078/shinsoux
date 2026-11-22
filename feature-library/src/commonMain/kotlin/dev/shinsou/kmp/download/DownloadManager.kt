@@ -32,7 +32,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlin.time.Clock
 
 /** Persistent, resumable chapter queue shared by all targets. */
-class DownloadManager(
+public class DownloadManager(
     private val repository: ShinsouRepository,
     private val fileSystem: AppFileSystem,
     private val pageProvider: ChapterPageProvider,
@@ -49,7 +49,7 @@ class DownloadManager(
     private val removing = linkedMapOf<String, CompletableDeferred<Unit>>()
     private var globallyPaused = false
 
-    suspend fun restoreQueue() {
+    public suspend fun restoreQueue() {
         try {
             repository.currentSnapshot.downloadQueue.forEach { item ->
                 try {
@@ -112,7 +112,7 @@ class DownloadManager(
         }
     }
 
-    suspend fun enqueue(mangaId: Long, chapterId: Long): DownloadQueueItem {
+    public suspend fun enqueue(mangaId: Long, chapterId: Long): DownloadQueueItem {
         val item = repository.enqueueDownload(mangaId, chapterId, queuedAt = now())
         if (item.state == DownloadState.ERROR || item.state == DownloadState.PAUSED) {
             repository.setDownloadState(item.id, DownloadState.QUEUED, updatedAt = now())
@@ -121,7 +121,7 @@ class DownloadManager(
         return repository.currentSnapshot.downloadQueue.first { it.id == item.id }
     }
 
-    suspend fun retry(itemId: String) {
+    public suspend fun retry(itemId: String) {
         repository.setDownloadState(
             itemId,
             DownloadState.QUEUED,
@@ -133,7 +133,7 @@ class DownloadManager(
         schedule()
     }
 
-    suspend fun pause(itemId: String) {
+    public suspend fun pause(itemId: String) {
         // Workers stay in [active] until they have stopped (they remove themselves), so a
         // concurrent removal always finds and waits for them.
         schedulerMutex.withLock { active[itemId] }?.cancelAndJoin()
@@ -141,12 +141,12 @@ class DownloadManager(
         schedule()
     }
 
-    suspend fun resume(itemId: String) {
+    public suspend fun resume(itemId: String) {
         repository.setDownloadState(itemId, DownloadState.QUEUED, updatedAt = now())
         schedule()
     }
 
-    suspend fun pauseAll(paused: Boolean) {
+    public suspend fun pauseAll(paused: Boolean) {
         val running = schedulerMutex.withLock {
             globallyPaused = paused
             if (paused) active.values.toList() else emptyList()
@@ -170,7 +170,7 @@ class DownloadManager(
      * A pause the system asked for: exactly [ids] (saved by the caller beforehand) stop. The
      * global pause is left alone, so a pause the user chose is never lifted by recovery.
      */
-    suspend fun pauseForSystem(ids: Set<String>) {
+    public suspend fun pauseForSystem(ids: Set<String>) {
         // Waiting entries are paused under the scheduler lock so none of them starts meanwhile.
         val running = schedulerMutex.withLock {
             repository.currentSnapshot.downloadQueue
@@ -186,21 +186,21 @@ class DownloadManager(
     }
 
     /** Undoes [pauseForSystem] for [ids] (null: every paused entry); entries the user paused stay. */
-    suspend fun resumeAfterSystem(ids: Set<String>?) {
+    public suspend fun resumeAfterSystem(ids: Set<String>?) {
         repository.currentSnapshot.downloadQueue
             .filter { it.state == DownloadState.PAUSED && (ids == null || it.id in ids) }
             .forEach { repository.setDownloadState(it.id, DownloadState.QUEUED, updatedAt = now()) }
         schedule()
     }
 
-    suspend fun remove(itemId: String) = removeEntry(itemId, keepIfDownloaded = false)
+    public suspend fun remove(itemId: String): Unit = removeEntry(itemId, keepIfDownloaded = false)
 
     /**
      * Bulk removal of waiting or failed chapters. The running download is stopped first, and its
      * state is read only after it has fully stopped, so a chapter that finished in the meantime
      * keeps its files and queue entry.
      */
-    suspend fun removeUnfinished(itemId: String) = removeEntry(itemId, keepIfDownloaded = true)
+    public suspend fun removeUnfinished(itemId: String): Unit = removeEntry(itemId, keepIfDownloaded = true)
 
     private suspend fun removeEntry(itemId: String, keepIfDownloaded: Boolean) {
         val done = CompletableDeferred<Unit>()
@@ -244,7 +244,7 @@ class DownloadManager(
      * chapter is opened. The entry must not keep claiming the chapter is available offline (it
      * could then never be downloaded again without deleting it by hand): download it again.
      */
-    suspend fun requeueBrokenDownload(mangaId: Long, chapterId: Long) {
+    internal suspend fun requeueBrokenDownload(mangaId: Long, chapterId: Long) {
         val item = repository.currentSnapshot.downloadQueue.firstOrNull {
             it.mangaId == mangaId && it.chapterId == chapterId && it.state == DownloadState.DOWNLOADED
         } ?: return
@@ -262,7 +262,7 @@ class DownloadManager(
         schedule()
     }
 
-    suspend fun downloadedPages(mangaId: Long, chapterId: Long): List<String> =
+    public suspend fun downloadedPages(mangaId: Long, chapterId: Long): List<String> =
         DownloadCompletionManifests.readValid(fileSystem, mangaId, chapterId)
             ?.pages
             ?.sortedBy { it.index }
@@ -273,7 +273,7 @@ class DownloadManager(
      * Suspends until every currently queued download has reached a terminal or paused state.
      * This is also useful for platform shutdown and deterministic background-work tests.
      */
-    suspend fun awaitIdle() {
+    public suspend fun awaitIdle() {
         while (true) {
             val jobs = schedulerMutex.withLock { active.values.toList() }
             if (jobs.isNotEmpty()) {
@@ -291,7 +291,7 @@ class DownloadManager(
         }
     }
 
-    suspend fun close() = scopeJob.cancelAndJoin()
+    public suspend fun close(): Unit = scopeJob.cancelAndJoin()
 
     private suspend fun schedule(): Unit {
         schedulerMutex.withLock {

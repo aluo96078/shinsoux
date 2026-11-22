@@ -70,7 +70,7 @@ public class DerivedLocalFullTextIndex(
     private var removals: Long = 0L
 
     /** Advances whenever indexed rows are removed (purge, cleanup, clear); read under the index lock. */
-    val removalRevision: Long get() = withIndexLock { removals }
+    public val removalRevision: Long get() = withIndexLock { removals }
 
     init {
         LocalFullTextIndexSchema.create(driver).value
@@ -291,7 +291,7 @@ public class DerivedLocalFullTextIndex(
     }
 
     /** Metadata-only reconciliation probe; it never selects or hydrates persisted body text. */
-    suspend fun isCurrent(
+    public suspend fun isCurrent(
         documentId: String,
         scope: ReadingScope,
         resourceId: String,
@@ -398,7 +398,7 @@ public class DerivedLocalFullTextIndex(
      * pages. Callers must run this only from the app's cancellable background actor; reader entry
      * continues to use [purgeUnauthorizedForeground] and never walks the complete library.
      */
-    suspend fun purgeUnauthorizedInBackground(
+    public suspend fun purgeUnauthorizedInBackground(
         target: DerivedRightsCleanupTarget,
         pageSize: Int = BACKGROUND_RIGHTS_CLEANUP_PAGE_SIZE,
     ): DerivedSearchCleanupResult {

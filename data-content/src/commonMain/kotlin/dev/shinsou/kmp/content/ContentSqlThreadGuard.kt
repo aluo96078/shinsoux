@@ -15,19 +15,19 @@ import kotlin.concurrent.Volatile
  * reports, so that a future caller opening a store on the UI thread is noticed without the app
  * failing to start.
  */
-object ContentSqlThreadGuard {
+public object ContentSqlThreadGuard {
     /**
      * Whether main-thread use fails. Defaults to [contentDebugBuild]; Android, which can only tell
      * a debuggable app from its context, sets it when it opens the database. Tests set it directly.
      */
     @Volatile
-    var failOnMainThread: Boolean = contentDebugBuild()
+    public var failOnMainThread: Boolean = contentDebugBuild()
 
     @Volatile
     private var reported = false
 
     /** Fails (debug) or reports once (release) when called on the main thread. */
-    fun check() {
+    public fun check() {
         if (!isMainThread()) return
         val error = MainThreadContentSqlException()
         if (failOnMainThread) throw error
@@ -35,7 +35,7 @@ object ContentSqlThreadGuard {
     }
 
     /** [check] for the reads made while the stores are opened: reported, never failed. */
-    fun checkWhileOpening() {
+    internal fun checkWhileOpening() {
         if (isMainThread()) report(MainThreadContentSqlException())
     }
 

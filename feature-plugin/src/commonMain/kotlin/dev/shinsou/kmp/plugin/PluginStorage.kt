@@ -116,8 +116,8 @@ public interface PluginStorage {
 
     /** UA captured with browser-bound anti-bot cookies; never shared across source scopes. */
     public suspend fun getWebChallengeUserAgent(sourceId: Long): String? = null
-    public suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String) = Unit
-    public suspend fun clearWebChallengeUserAgent(sourceId: Long) = Unit
+    public suspend fun setWebChallengeUserAgent(sourceId: Long, userAgent: String): Unit = Unit
+    public suspend fun clearWebChallengeUserAgent(sourceId: Long): Unit = Unit
 }
 
 /** Internal capability implemented by stores which can address state by an exact V2 source key. */

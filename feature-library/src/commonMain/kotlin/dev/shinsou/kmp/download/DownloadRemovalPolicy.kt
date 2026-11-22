@@ -5,7 +5,7 @@ import dev.shinsou.kmp.domain.model.DownloadSettings
 import dev.shinsou.kmp.domain.model.DownloadState
 
 /** Download ids removed when chapters are marked read outside the reader. */
-fun downloadIdsToRemoveAfterMarkedRead(
+public fun downloadIdsToRemoveAfterMarkedRead(
     settings: DownloadSettings,
     queue: List<DownloadQueueItem>,
     chapterIds: Set<Long>,

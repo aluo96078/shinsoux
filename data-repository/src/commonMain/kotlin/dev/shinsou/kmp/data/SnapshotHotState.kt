@@ -16,7 +16,7 @@ import dev.shinsou.kmp.persistence.progress
  */
 
 /** The hot part of this snapshot. */
-fun AppSnapshot.hotState(): HotState = HotState(
+public fun AppSnapshot.hotState(): HotState = HotState(
     chapterProgress = buildMap {
         chapters.forEach { chapter -> chapter.progress.takeUnless { it.isDefault }?.let { put(chapter.id, it) } }
     },
@@ -25,7 +25,7 @@ fun AppSnapshot.hotState(): HotState = HotState(
 )
 
 /** The hot rows to write so the rows of [previous] become those of [next]. */
-fun hotDelta(previous: AppSnapshot, next: AppSnapshot): HotDelta {
+public fun hotDelta(previous: AppSnapshot, next: AppSnapshot): HotDelta {
     if (previous === next) return HotDelta.EMPTY
     val (progress, removedProgress) = progressDelta(previous.chapters, next.chapters)
     val (histories, removedHistories) = orderedDelta(previous.histories, next.histories) { it.id }
@@ -37,7 +37,7 @@ fun hotDelta(previous: AppSnapshot, next: AppSnapshot): HotDelta {
  * Whether anything but the hot part (and the revision, which every mutation moves) differs:
  * what decides whether the snapshot JSON has to be written again.
  */
-fun coldChanged(previous: AppSnapshot, next: AppSnapshot): Boolean =
+public fun coldChanged(previous: AppSnapshot, next: AppSnapshot): Boolean =
     // Data class equality: each unchanged list is the same reference and compares at once.
     previous !== next &&
         (previous.withoutHotLists() != next.withoutHotLists() || chaptersColdChanged(previous.chapters, next.chapters))

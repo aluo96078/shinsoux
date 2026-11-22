@@ -684,7 +684,7 @@ public class SyncV3Service internal constructor(
     }
 
     /** Public for the app module (R5-1): [create]; the rest stays internal to :feature-sync. */
-    companion object {
+    public companion object {
         internal const val META_SERVER_URL = "server_url"
         internal const val META_INSECURE_LAN = "insecure_lan"
         internal const val META_USER_ID = "user_id"
@@ -751,7 +751,7 @@ public class SyncV3Service internal constructor(
         internal const val FAILURE_BACKOFF_MAX_MILLIS = 15 * 60_000L
 
         /** Builds the service on the shared content database; null-safe pieces come from the composition. */
-        fun create(
+        public fun create(
             repository: ShinsouRepository,
             driver: SqlDriver,
             keyValues: KeyValueStore,

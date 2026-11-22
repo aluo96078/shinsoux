@@ -74,7 +74,7 @@ internal fun ReaderImageTransform.toCoilTransformation(naturalHeight: Int? = nul
  * Applies [transform] to a reader image request decoded at the view's size. [naturalHeight] is
  * the encoded image height; transformed pages must never be decoded at full size just to learn it.
  */
-fun ImageRequest.Builder.readerImageTransform(
+public fun ImageRequest.Builder.readerImageTransform(
     transform: ReaderImageTransform?,
     naturalHeight: Int?,
 ): ImageRequest.Builder = apply {

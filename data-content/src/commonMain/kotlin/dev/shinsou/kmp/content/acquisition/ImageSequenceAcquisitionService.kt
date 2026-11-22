@@ -42,7 +42,7 @@ public class LocalImagePageSource(
     internal fun copyBytes(cancellationCheckpoint: () -> Unit): ByteArray =
         body.copyWithCancellationCheckpoints(cancellationCheckpoint)
 
-    fun sha256Hex(cancellationCheckpoint: () -> Unit): String {
+    public fun sha256Hex(cancellationCheckpoint: () -> Unit): String {
         val hashing = HashingSink.sha256(blackholeSink())
         val buffer = Buffer()
         return try {

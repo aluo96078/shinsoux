@@ -6,7 +6,7 @@ import dev.shinsou.kmp.domain.model.TrackStatus
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class TrackerScoreFormat {
+public enum class TrackerScoreFormat {
     POINT_10,
     POINT_100,
     POINT_5,
@@ -15,7 +15,7 @@ enum class TrackerScoreFormat {
 }
 
 @Serializable
-data class TrackerDescriptor(
+public data class TrackerDescriptor(
     val id: Int,
     val name: String,
     val scoreFormat: TrackerScoreFormat = TrackerScoreFormat.POINT_10,
@@ -25,7 +25,7 @@ data class TrackerDescriptor(
 
 /** Latest values win when multiple updates are coalesced by [TrackingUpdateQueue]. */
 @Serializable
-data class TrackUpdate(
+public data class TrackUpdate(
     val progress: Double? = null,
     val status: TrackStatus? = null,
     val score: Double? = null,
@@ -35,7 +35,7 @@ data class TrackUpdate(
     val isEmpty: Boolean
         get() = progress == null && status == null && score == null && startDate == null && finishDate == null
 
-    fun merge(newer: TrackUpdate): TrackUpdate = TrackUpdate(
+    public fun merge(newer: TrackUpdate): TrackUpdate = TrackUpdate(
         progress = newer.progress ?: progress,
         status = newer.status ?: status,
         score = newer.score ?: score,
@@ -43,7 +43,7 @@ data class TrackUpdate(
         finishDate = newer.finishDate ?: finishDate,
     )
 
-    fun applyTo(track: Track): Track = track.copy(
+    internal fun applyTo(track: Track): Track = track.copy(
         lastChapterRead = progress ?: track.lastChapterRead,
         status = status?.rawValue ?: track.status,
         score = score ?: track.score,
@@ -52,7 +52,7 @@ data class TrackUpdate(
     )
 }
 
-interface TrackerAdapter {
+internal interface TrackerAdapter {
     val descriptor: TrackerDescriptor
 
     suspend fun isAuthenticated(): Boolean
@@ -67,11 +67,11 @@ interface TrackerAdapter {
     suspend fun update(track: Track, update: TrackUpdate): Track
 }
 
-class TrackerNotFoundException(trackerId: Int) : IllegalArgumentException("Tracker $trackerId is not registered")
+internal class TrackerNotFoundException(trackerId: Int) : IllegalArgumentException("Tracker $trackerId is not registered")
 
-class TrackerAuthenticationException(message: String) : IllegalStateException(message)
+internal class TrackerAuthenticationException(message: String) : IllegalStateException(message)
 
-class TrackerHttpException(
+internal class TrackerHttpException(
     val statusCode: Int,
     val responseBody: String,
 ) : IllegalStateException("Tracker request failed with HTTP $statusCode: $responseBody")

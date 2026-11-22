@@ -10,7 +10,7 @@
     <ID>CyclomaticComplexMethod:DownloadCompletionManifest.kt:DownloadCompletionManifests$private fun isStructurallyValid: Boolean</ID>
     <ID>CyclomaticComplexMethod:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun decodeJsonMemberName: String</ID>
     <ID>CyclomaticComplexMethod:ShuYueBackupV1Codec.kt:ShuYueBackupV1Codec$private fun validateJsonGuards</ID>
-    <ID>CyclomaticComplexMethod:SnapshotBackupService.kt:SnapshotBackupService$fun restore: RestoreResult</ID>
+    <ID>CyclomaticComplexMethod:SnapshotBackupService.kt:SnapshotBackupService$public fun restore: RestoreResult</ID>
     <ID>DestructuringDeclarationWithTooManyEntries:AppUpdates.kt:AppVersion.Companion$(a, b, c, beta)</ID>
     <ID>InstanceOfCheckForException:AutoBackupService.kt:AutoBackupService$error is AutoBackupException</ID>
     <ID>LargeClass:ShuYueBackupV1Validation.kt:ShuYueBackupV1Validator</ID>
@@ -31,7 +31,7 @@
     <ID>ReturnCount:MyAnimeListTracker.kt:MyAnimeListTracker$private fun parseSearch: TrackSearch?</ID>
     <ID>ReturnCount:PortableContentBackupV2.kt:PortableContentBackupV2Service$private fun annotationExportRequests: List&lt;ContentAccessRequest&gt;</ID>
     <ID>ReturnCount:ShuYueBackupV1Validation.kt:private fun hasMalformedSurrogate: Boolean</ID>
-    <ID>ReturnCount:ShuYueCompatibilityProjectionCoordinator.kt:ShuYueCompatibilityProjectionCoordinator$suspend fun repair: ShuYueCompatibilityProjectionRepairResult</ID>
+    <ID>ReturnCount:ShuYueCompatibilityProjectionCoordinator.kt:ShuYueCompatibilityProjectionCoordinator$public suspend fun repair: ShuYueCompatibilityProjectionRepairResult</ID>
     <ID>ReturnCount:ShuYueMigrationPreview.kt:ShuYueReadingLocatorMapper$private fun buildQuote: TextQuote?</ID>
     <ID>ReturnCount:ShuYuePreparedImport.kt:private fun isWellFormedSecret: Boolean</ID>
     <ID>SwallowedException:BackupEnvelope.kt:BackupEnvelope$error: IllegalArgumentException</ID>
@@ -41,7 +41,7 @@
     <ID>SwallowedException:PortableContentBackupV2.kt:PortableContentBackupV2Service$error: Throwable</ID>
     <ID>SwallowedException:PortableContentBackupV2.kt:error: Throwable</ID>
     <ID>ThrowsCount:AutoBackupService.kt:AutoBackupService$@Suppress("SuspendFunSwallowedCancellation") private suspend fun restoreLocked: RestoreResult</ID>
-    <ID>ThrowsCount:BackupEnvelope.kt:BackupEnvelope$fun validate: BackupEnvelope</ID>
+    <ID>ThrowsCount:BackupEnvelope.kt:BackupEnvelope$public fun validate: BackupEnvelope</ID>
     <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$private fun writeEncoded: Long</ID>
     <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$public fun decodeInspected: InspectedBackupV2Archive</ID>
     <ID>ThrowsCount:PortableContentBackupV2.kt:BackupV2BinaryCodec$public fun encode: ByteArray</ID>

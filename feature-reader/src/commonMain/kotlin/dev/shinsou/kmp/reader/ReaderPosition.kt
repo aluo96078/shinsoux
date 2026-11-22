@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 
 /** Where a reader stands inside one chapter: a page, plus how far down it in continuous modes. */
 @Serializable
-data class ReaderPosition(
+public data class ReaderPosition(
     val readingMode: ReadingMode,
     val pageIndex: Int,
     val normalizedOffsetFraction: Double = 0.0,
@@ -26,7 +26,7 @@ data class ReaderPosition(
 
 /** A [ReaderPosition] with the time and reading session that produced it. */
 @Serializable
-data class ReadingPositionRegister(
+public data class ReadingPositionRegister(
     val position: ReaderPosition,
     val hlc: HlcTimestamp,
     val sessionId: String,

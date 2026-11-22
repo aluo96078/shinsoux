@@ -56,7 +56,7 @@ import kotlin.time.TimeSource
  */
 
 /** The prefix of the marker the JSON carries in [AppSnapshot.contentAuthorityProjectionMarkers]. */
-const val HOT_STATE_MARKER_PREFIX: String = "hot-state-sql:"
+internal const val HOT_STATE_MARKER_PREFIX: String = "hot-state-sql:"
 
 private const val HOT_STATE_MARKER_V1: String = "${HOT_STATE_MARKER_PREFIX}v1:"
 
@@ -64,26 +64,26 @@ private const val HOT_STATE_MARKER_V1: String = "${HOT_STATE_MARKER_PREFIX}v1:"
 private const val HOT_STATE_MARKER_KEPT: String = "${HOT_STATE_MARKER_PREFIX}kept:"
 
 /** Beside `shinsou-state.json`: its copy taken once, before its hot rows first moved into SQL. */
-const val BEFORE_HOT_STATE_SUFFIX: String = ".before-hot-state"
+public const val BEFORE_HOT_STATE_SUFFIX: String = ".before-hot-state"
 
 /**
  * Beside `shinsou-state.json`: its copy taken as the hot rows it is paired with were found not to
  * fit it and were kept apart, before the first JSON marked kept replaced it (the only JSON those
  * rows go with, for a later version that can repair them).
  */
-const val HOT_STATE_KEPT_SUFFIX: String = ".hot-state-kept"
+internal const val HOT_STATE_KEPT_SUFFIX: String = ".hot-state-kept"
 
 /**
  * The emergency off-switch of C3, beside `shinsou-state.json` on every platform: while a file of
  * this name exists, the repository writes the whole JSON every time, as before C3, and never
  * writes the hot rows (it still reads them once, when they are current). Removing it switches back.
  */
-const val WHOLE_JSON_SWITCH_FILE: String = "shinsou-state.whole-json"
+public const val WHOLE_JSON_SWITCH_FILE: String = "shinsou-state.whole-json"
 
 /** The platform's snapshot JSON file (`shinsou-state.json`). */
-interface SnapshotFile {
+public interface SnapshotFile {
     /** Replaces the file with [json], atomically. */
-    fun save(json: String)
+    public fun save(json: String)
 
     /**
      * Copies the file to `shinsou-state.json<suffix>` ([BEFORE_HOT_STATE_SUFFIX], §6.3.5 step 1, or
@@ -92,11 +92,11 @@ interface SnapshotFile {
      * afterwards, or there is no file to copy (a fresh install: a JSON missing beside a pairing never
      * gets as far as the migration).
      */
-    fun keepCopy(suffix: String, replace: Boolean): Boolean
+    public fun keepCopy(suffix: String, replace: Boolean): Boolean
 }
 
 /** How [openSnapshotPersistence] found the two halves and what the repository writes from now on. */
-enum class HotStateOpening(val keepsHotApart: Boolean) {
+public enum class HotStateOpening(public val keepsHotApart: Boolean) {
     /** The rows were current and are applied over the JSON. */
     SQL_CURRENT(true),
 
@@ -126,10 +126,10 @@ enum class HotStateOpening(val keepsHotApart: Boolean) {
 }
 
 /** The snapshot to start from and where to write it. */
-class OpenedSnapshot(
-    val snapshot: AppSnapshot,
-    val storage: SnapshotStorage,
-    val opening: HotStateOpening,
+public class OpenedSnapshot(
+    public val snapshot: AppSnapshot,
+    public val storage: SnapshotStorage,
+    public val opening: HotStateOpening,
 )
 
 /**
@@ -140,7 +140,7 @@ class OpenedSnapshot(
  * thread. With [hotStateEnabled] false (the off-switch), nothing is written to the store and every
  * later write is the whole JSON.
  */
-fun openSnapshotPersistence(
+public fun openSnapshotPersistence(
     loaded: AppSnapshot?,
     file: SnapshotFile,
     store: HotStateStore?,
@@ -201,7 +201,7 @@ private fun readPairing(store: HotStateStore): PairingRead? = try {
 }
 
 /** A random token for a pairing: 128 bits as hex. */
-fun randomHotStateToken(): String =
+internal fun randomHotStateToken(): String =
     Random.nextBytes(16).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
 /** This snapshot with [marker] as its only hot-state marker (none when null). */
@@ -419,7 +419,7 @@ private fun migrate(
  * hot rows keep changing (so the JSON an older version, or a backup of the app's files, would read
  * stays recent); the writer also schedules such a write on its own ([jsonCheckpointDelay]).
  */
-class HotStateSnapshotStorage internal constructor(
+internal class HotStateSnapshotStorage internal constructor(
     private val file: SnapshotFile,
     private val store: HotStateStore,
     /** The pairing as the store holds it: advanced only once a commit of it succeeded. */

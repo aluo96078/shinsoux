@@ -54,14 +54,14 @@ import kotlin.time.Clock
  * Intermediate states are deliberately coalesced, while [flushPersistence] provides an explicit
  * durability boundary for lifecycle transitions and orderly shutdown.
  */
-class ShinsouRepository(
+public class ShinsouRepository(
     initial: AppSnapshot = AppSnapshot(),
     storage: SnapshotStorage? = null,
     /** Where the background writer encodes and writes snapshots (a test's dispatcher in tests). */
     persistenceDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     /** Every write replaces the whole snapshot JSON through [persist] ([WholeJsonSnapshotStorage]). */
-    constructor(
+    public constructor(
         initial: AppSnapshot = AppSnapshot(),
         persist: ((String) -> Unit)?,
     ) : this(initial, persist?.let(::WholeJsonSnapshotStorage))
@@ -80,22 +80,22 @@ class ShinsouRepository(
         )
     }
 
-    val snapshot: StateFlow<AppSnapshot> = mutableSnapshot.asStateFlow()
-    val currentSnapshot: AppSnapshot get() = snapshot.value
+    public val snapshot: StateFlow<AppSnapshot> = mutableSnapshot.asStateFlow()
+    public val currentSnapshot: AppSnapshot get() = snapshot.value
 
     /** Most recent asynchronous persistence error. A successful write clears it. */
-    val persistenceFailure: StateFlow<Throwable?>
+    public val persistenceFailure: StateFlow<Throwable?>
         get() = persistence?.failure ?: NO_PERSISTENCE_FAILURE
 
-    fun exportSnapshot(): String = AppSnapshotJson.encode(snapshot.value)
+    public fun exportSnapshot(): String = AppSnapshotJson.encode(snapshot.value)
 
-    suspend fun importSnapshot(encoded: String): AppSnapshot = replaceSnapshot(decodeSnapshot(encoded))
+    public suspend fun importSnapshot(encoded: String): AppSnapshot = replaceSnapshot(decodeSnapshot(encoded))
 
     /** Explicit bulk replacement whose synced portion must be published to every v2 device. */
-    suspend fun importSnapshotAcrossSyncedDevices(encoded: String): AppSnapshot =
+    internal suspend fun importSnapshotAcrossSyncedDevices(encoded: String): AppSnapshot =
         replaceSnapshotAcrossSyncedDevices(decodeSnapshot(encoded))
 
-    suspend fun replaceSnapshot(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+    public suspend fun replaceSnapshot(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
         imported = imported,
         notifyMutationObserver = true,
         origin = SnapshotReplacementOrigin.DIRECT,
@@ -105,7 +105,7 @@ class ShinsouRepository(
      * Explicit restore/reset path for Cloudflare v2. The observer first commits a selection-aware
      * mutation/tombstone diff and durable drafts; only then may the replacement become visible.
      */
-    suspend fun replaceSnapshotAcrossSyncedDevices(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+    internal suspend fun replaceSnapshotAcrossSyncedDevices(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
         imported = imported,
         notifyMutationObserver = true,
         origin = SnapshotReplacementOrigin.SYNCHRONIZED_BULK,
@@ -116,21 +116,21 @@ class ShinsouRepository(
      * mutex is held and before a new projection becomes visible or is queued for persistence.
      * Consequently, a failed replica/outbox commit cannot leave an unsynchronised domain write.
      */
-    suspend fun setMutationObserver(observer: SnapshotMutationObserver?) = mutex.withLock {
+    public suspend fun setMutationObserver(observer: SnapshotMutationObserver?): Unit = mutex.withLock {
         ensurePersistenceOpen()
         mutationObserver = observer
     }
 
-    suspend fun setSnapshotReplacementGuard(guard: SnapshotReplacementGuard?) = mutex.withLock {
+    public suspend fun setSnapshotReplacementGuard(guard: SnapshotReplacementGuard?): Unit = mutex.withLock {
         ensurePersistenceOpen()
         replacementGuard = guard
     }
 
     /** Installs/removes both halves without exposing a window where bulk replacement can bypass sync. */
-    suspend fun configureSyncMutationBoundary(
+    public suspend fun configureSyncMutationBoundary(
         observer: SnapshotMutationObserver?,
         guard: SnapshotReplacementGuard?,
-    ) = mutex.withLock {
+    ): Unit = mutex.withLock {
         ensurePersistenceOpen()
         mutationObserver = observer
         replacementGuard = guard
@@ -141,7 +141,7 @@ class ShinsouRepository(
      * local mutation/outbox path. This is the only replacement entry point remote catch-up and
      * checkpoint installation should use.
      */
-    suspend fun replaceSnapshotFromSync(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
+    internal suspend fun replaceSnapshotFromSync(imported: AppSnapshot): AppSnapshot = replaceSnapshot(
         imported = imported,
         notifyMutationObserver = false,
         origin = SnapshotReplacementOrigin.SYNC_MATERIALIZER,
@@ -168,7 +168,7 @@ class ShinsouRepository(
     }
 
     /** Optimistic replacement used by sync so a concurrent local edit is never overwritten. */
-    suspend fun replaceSnapshotIfRevision(expectedRevision: Long, imported: AppSnapshot): AppSnapshot? =
+    public suspend fun replaceSnapshotIfRevision(expectedRevision: Long, imported: AppSnapshot): AppSnapshot? =
         replaceSnapshotIfRevision(
             expectedRevision,
             imported,
@@ -177,7 +177,7 @@ class ShinsouRepository(
         )
 
     /** Remote replica projection CAS that cannot feed materialized fields back into the outbox. */
-    suspend fun replaceSnapshotFromSyncIfRevision(
+    public suspend fun replaceSnapshotFromSyncIfRevision(
         expectedRevision: Long,
         imported: AppSnapshot,
     ): AppSnapshot? = replaceSnapshotIfRevision(
@@ -193,7 +193,7 @@ class ShinsouRepository(
      * portable graph) already owns the corresponding sync events, so observing this compatibility
      * projection would emit a second, lossy Manga/Chapter mutation stream.
      */
-    suspend fun materializeContentAuthorityProjectionIfRevision(
+    public suspend fun materializeContentAuthorityProjectionIfRevision(
         expectedRevision: Long,
         requested: AppSnapshot,
     ): AppSnapshot? = replaceSnapshotIfRevision(
@@ -225,9 +225,9 @@ class ShinsouRepository(
         next
     }
 
-    suspend fun reset(): AppSnapshot = replaceSnapshot(AppSnapshot())
+    public suspend fun reset(): AppSnapshot = replaceSnapshot(AppSnapshot())
 
-    suspend fun resetAcrossSyncedDevices(): AppSnapshot = replaceSnapshotAcrossSyncedDevices(AppSnapshot())
+    internal suspend fun resetAcrossSyncedDevices(): AppSnapshot = replaceSnapshotAcrossSyncedDevices(AppSnapshot())
 
     /**
      * Persist the latest state before returning. This bypasses the debounce and propagates a disk
@@ -239,12 +239,12 @@ class ShinsouRepository(
      * also rewrites the JSON with every hot field, which is what an older version or Android's
      * backup of the file would read.
      */
-    suspend fun flushPersistence(wholeSnapshot: Boolean = false) {
+    public suspend fun flushPersistence(wholeSnapshot: Boolean = false) {
         persistence?.flush(mutableSnapshot.value, wholeSnapshot)
     }
 
     /** Flush the latest state, the whole JSON included, and stop this repository's background writer. */
-    suspend fun closePersistence(): Unit = withContext(NonCancellable) {
+    public suspend fun closePersistence(): Unit = withContext(NonCancellable) {
         mutex.withLock {
             if (persistenceClosed) return@withLock
             // Keep mutation publication, the final snapshot capture, and channel closure in one
@@ -258,7 +258,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun upsertManga(manga: Manga): Manga = mutate { state ->
+    public suspend fun upsertManga(manga: Manga): Manga = mutate { state ->
         val existingIndex = when {
             manga.id > 0 -> state.mangas.indexOfFirst { it.id == manga.id }
             manga.url.isNotBlank() -> state.mangas.indexOfFirst { it.source == manga.source && it.url == manga.url }
@@ -283,7 +283,7 @@ class ShinsouRepository(
         Mutation(state.copy(mangas = mangas, mangaCategories = links), resolved)
     }
 
-    suspend fun patchManga(
+    public suspend fun patchManga(
         mangaId: Long,
         patch: MangaPatch,
         modifiedAt: Long = Clock.System.now().toEpochMilliseconds(),
@@ -301,7 +301,7 @@ class ShinsouRepository(
     }
 
     /** Apply a read-modify-write manga update while holding the repository mutex. */
-    suspend fun updateManga(mangaId: Long, transform: (Manga) -> Manga): Manga = mutate { state ->
+    public suspend fun updateManga(mangaId: Long, transform: (Manga) -> Manga): Manga = mutate { state ->
         val index = state.mangas.indexOfFirst { it.id == mangaId }
         if (index < 0) missing("Manga", mangaId)
         val current = state.mangas[index]
@@ -312,7 +312,7 @@ class ShinsouRepository(
      * Toggle library membership atomically so rapid input and an in-flight source refresh cannot
      * both decide from the same stale UI snapshot. Conflict metadata changes in the same commit.
      */
-    suspend fun toggleMangaFavorite(
+    public suspend fun toggleMangaFavorite(
         mangaId: Long,
         modifiedAt: Long = Clock.System.now().toEpochMilliseconds(),
     ): Manga = mutate { state ->
@@ -324,7 +324,7 @@ class ShinsouRepository(
         replaceMangaAt(state, index, updated)
     }
 
-    suspend fun deleteManga(mangaId: Long) {
+    public suspend fun deleteManga(mangaId: Long) {
         mutate { state ->
             if (state.mangas.none { it.id == mangaId }) missing("Manga", mangaId)
             val chapterIds = state.chapters.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.id }
@@ -343,7 +343,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun upsertChapter(chapter: Chapter): Chapter = mutate { state ->
+    public suspend fun upsertChapter(chapter: Chapter): Chapter = mutate { state ->
         requireManga(state, chapter.mangaId)
         validateChapter(chapter)
         val existingIndex = when {
@@ -365,7 +365,7 @@ class ShinsouRepository(
         Mutation(state.copy(chapters = chapters, histories = histories), resolved)
     }
 
-    suspend fun upsertChapters(chapters: List<Chapter>): List<Chapter> = mutate { state ->
+    public suspend fun upsertChapters(chapters: List<Chapter>): List<Chapter> = mutate { state ->
         val mangaIds = state.mangas.mapTo(mutableSetOf()) { it.id }
         chapters.forEach {
             if (it.mangaId !in mangaIds) missing("Manga", it.mangaId)
@@ -393,7 +393,7 @@ class ShinsouRepository(
         Mutation(state.copy(chapters = mutable, histories = histories), resolved)
     }
 
-    suspend fun patchChapter(chapterId: Long, patch: ChapterPatch): Chapter = mutate { state ->
+    public suspend fun patchChapter(chapterId: Long, patch: ChapterPatch): Chapter = mutate { state ->
         val index = state.chapters.indexOfFirst { it.id == chapterId }
         if (index < 0) missing("Chapter", chapterId)
         val updated = state.chapters[index].applying(patch)
@@ -407,7 +407,7 @@ class ShinsouRepository(
         )
     }
 
-    suspend fun deleteChapter(chapterId: Long) {
+    public suspend fun deleteChapter(chapterId: Long) {
         mutate { state ->
             if (state.chapters.none { it.id == chapterId }) missing("Chapter", chapterId)
             Mutation(
@@ -423,7 +423,7 @@ class ShinsouRepository(
     }
 
     /** Create a custom category with an atomically assigned ID and display order. */
-    suspend fun createCategory(name: String): Category = mutate { state ->
+    public suspend fun createCategory(name: String): Category = mutate { state ->
         val normalizedName = name.trim()
         if (normalizedName.isEmpty()) throw RepositoryConstraintException("Category name cannot be blank")
         if (state.categories.any { it.name.trim().equals(normalizedName, ignoreCase = true) }) {
@@ -438,7 +438,7 @@ class ShinsouRepository(
         Mutation(state.copy(categories = state.categories + resolved), resolved)
     }
 
-    suspend fun upsertCategory(category: Category): Category = mutate { state ->
+    public suspend fun upsertCategory(category: Category): Category = mutate { state ->
         val normalizedName = category.name.trim()
         if (normalizedName.isEmpty()) throw RepositoryConstraintException("Category name cannot be blank")
         if (category.id < Category.Default.id) {
@@ -478,7 +478,7 @@ class ShinsouRepository(
     }
 
     /** Rename an existing custom category without changing its order, flags, or identity. */
-    suspend fun renameCategory(categoryId: Long, name: String): Category = mutate { state ->
+    public suspend fun renameCategory(categoryId: Long, name: String): Category = mutate { state ->
         if (categoryId == Category.Default.id) {
             throw RepositoryConstraintException("The default category cannot be renamed")
         }
@@ -498,7 +498,7 @@ class ShinsouRepository(
         Mutation(state.copy(categories = categories), renamed)
     }
 
-    suspend fun deleteCategory(categoryId: Long) {
+    public suspend fun deleteCategory(categoryId: Long) {
         if (categoryId == Category.Default.id) throw RepositoryConstraintException("The default category cannot be deleted")
         mutate { state ->
             if (state.categories.none { it.id == categoryId }) missing("Category", categoryId)
@@ -522,7 +522,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun reorderCategories(categoryIds: List<Long>) {
+    public suspend fun reorderCategories(categoryIds: List<Long>) {
         mutate { state ->
             val existingIds = state.categories.mapTo(mutableSetOf()) { it.id }
             if (!existingIds.containsAll(categoryIds)) throw RepositoryConstraintException("Cannot reorder unknown categories")
@@ -532,7 +532,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun setMangaCategories(mangaId: Long, categoryIds: Collection<Long>) {
+    public suspend fun setMangaCategories(mangaId: Long, categoryIds: Collection<Long>) {
         mutate { state ->
             requireManga(state, mangaId)
             val normalizedIds = normalizeMangaCategorySelection(categoryIds)
@@ -551,7 +551,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun recordHistory(chapterId: Long, lastRead: Long, timeRead: Long = 0): History = mutate { state ->
+    public suspend fun recordHistory(chapterId: Long, lastRead: Long, timeRead: Long = 0): History = mutate { state ->
         requireChapter(state, chapterId)
         if (timeRead < 0) throw RepositoryConstraintException("Reading time cannot be negative")
         val index = state.histories.indexOfFirst { it.chapterId == chapterId }
@@ -569,7 +569,7 @@ class ShinsouRepository(
         Mutation(state.copy(histories = histories), resolved)
     }
 
-    suspend fun markChapterProgress(
+    public suspend fun markChapterProgress(
         chapterId: Long,
         lastPageRead: Int,
         read: Boolean,
@@ -639,7 +639,7 @@ class ShinsouRepository(
         )
     }
 
-    suspend fun deleteHistoryByManga(mangaId: Long) {
+    internal suspend fun deleteHistoryByManga(mangaId: Long) {
         mutate { state ->
             requireManga(state, mangaId)
             val chapterIds = state.chapters.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.id }
@@ -647,17 +647,17 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun deleteHistory(chapterId: Long) {
+    public suspend fun deleteHistory(chapterId: Long) {
         mutate { state ->
             Mutation(state.copy(histories = state.histories.filterNot { it.chapterId == chapterId }), Unit)
         }
     }
 
-    suspend fun clearHistory() {
+    public suspend fun clearHistory() {
         mutate { state -> Mutation(state.copy(histories = emptyList()), Unit) }
     }
 
-    suspend fun upsertUpdate(update: LibraryUpdate): LibraryUpdate = mutate { state ->
+    public suspend fun upsertUpdate(update: LibraryUpdate): LibraryUpdate = mutate { state ->
         val chapter = requireChapter(state, update.chapterId)
         if (chapter.mangaId != update.mangaId) throw RepositoryConstraintException("Update manga/chapter relationship does not match")
         val index = state.updates.indexOfFirst { it.chapterId == update.chapterId }
@@ -667,11 +667,11 @@ class ShinsouRepository(
         Mutation(state.copy(updates = updates), update)
     }
 
-    suspend fun removeUpdate(chapterId: Long) {
+    internal suspend fun removeUpdate(chapterId: Long) {
         mutate { state -> Mutation(state.copy(updates = state.updates.filterNot { it.chapterId == chapterId }), Unit) }
     }
 
-    suspend fun enqueueDownload(mangaId: Long, chapterId: Long, queuedAt: Long = 0): DownloadQueueItem = mutate { state ->
+    public suspend fun enqueueDownload(mangaId: Long, chapterId: Long, queuedAt: Long = 0): DownloadQueueItem = mutate { state ->
         requireManga(state, mangaId)
         val chapter = requireChapter(state, chapterId)
         if (chapter.mangaId != mangaId) throw RepositoryConstraintException("Download manga/chapter relationship does not match")
@@ -703,7 +703,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun upsertDownload(item: DownloadQueueItem): DownloadQueueItem = mutate { state ->
+    internal suspend fun upsertDownload(item: DownloadQueueItem): DownloadQueueItem = mutate { state ->
         requireManga(state, item.mangaId)
         val chapter = requireChapter(state, item.chapterId)
         if (chapter.mangaId != item.mangaId) throw RepositoryConstraintException("Download manga/chapter relationship does not match")
@@ -718,7 +718,7 @@ class ShinsouRepository(
         Mutation(state.copy(downloadQueue = downloads), item)
     }
 
-    suspend fun setDownloadState(
+    public suspend fun setDownloadState(
         id: String,
         state: DownloadState,
         progress: Double? = null,
@@ -742,11 +742,11 @@ class ShinsouRepository(
         Mutation(snapshot.copy(downloadQueue = snapshot.downloadQueue.toMutableList().apply { this[index] = updated }), updated)
     }
 
-    suspend fun removeDownload(id: String) {
+    public suspend fun removeDownload(id: String) {
         mutate { state -> Mutation(state.copy(downloadQueue = state.downloadQueue.filterNot { it.id == id }), Unit) }
     }
 
-    suspend fun reorderDownloads(orderedIds: List<String>) {
+    public suspend fun reorderDownloads(orderedIds: List<String>) {
         mutate { state ->
             val known = state.downloadQueue.mapTo(mutableSetOf()) { it.id }
             if (orderedIds.any { it !in known }) throw RepositoryConstraintException("Cannot reorder unknown downloads")
@@ -756,7 +756,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun clearCompletedDownloads() {
+    public suspend fun clearCompletedDownloads() {
         mutate { state ->
             Mutation(
                 state.copy(
@@ -769,7 +769,7 @@ class ShinsouRepository(
         }
     }
 
-    suspend fun upsertTrack(track: Track): Track = mutate { state ->
+    public suspend fun upsertTrack(track: Track): Track = mutate { state ->
         requireManga(state, track.mangaId)
         val index = when {
             track.id > 0 -> state.tracks.indexOfFirst { it.id == track.id }
@@ -792,13 +792,13 @@ class ShinsouRepository(
         Mutation(state.copy(tracks = tracks), resolved)
     }
 
-    suspend fun deleteTrack(mangaId: Long, trackerId: Int) {
+    public suspend fun deleteTrack(mangaId: Long, trackerId: Int) {
         mutate { state ->
             Mutation(state.copy(tracks = state.tracks.filterNot { it.mangaId == mangaId && it.trackerId == trackerId }), Unit)
         }
     }
 
-    suspend fun upsertTrackerAccount(account: TrackerAccountState): TrackerAccountState = mutate { state ->
+    public suspend fun upsertTrackerAccount(account: TrackerAccountState): TrackerAccountState = mutate { state ->
         val index = state.trackerAccounts.indexOfFirst { it.trackerId == account.trackerId }
         val accounts = state.trackerAccounts.toMutableList().apply {
             if (index >= 0) this[index] = account else add(account)
@@ -806,13 +806,13 @@ class ShinsouRepository(
         Mutation(state.copy(trackerAccounts = accounts), account)
     }
 
-    suspend fun deleteTrackerAccount(trackerId: Int) {
+    internal suspend fun deleteTrackerAccount(trackerId: Int) {
         mutate { state ->
             Mutation(state.copy(trackerAccounts = state.trackerAccounts.filterNot { it.trackerId == trackerId }), Unit)
         }
     }
 
-    suspend fun upsertExtensionRepository(repository: ExtensionRepo): ExtensionRepo = mutate { state ->
+    public suspend fun upsertExtensionRepository(repository: ExtensionRepo): ExtensionRepo = mutate { state ->
         val index = state.extensionRepositories.indexOfFirst { it.baseUrl == repository.baseUrl }
         val repositories = state.extensionRepositories.toMutableList().apply {
             if (index >= 0) this[index] = repository else add(repository)
@@ -820,57 +820,57 @@ class ShinsouRepository(
         Mutation(state.copy(extensionRepositories = repositories), repository)
     }
 
-    suspend fun deleteExtensionRepository(baseUrl: String) {
+    public suspend fun deleteExtensionRepository(baseUrl: String) {
         mutate { state ->
             Mutation(state.copy(extensionRepositories = state.extensionRepositories.filterNot { it.baseUrl == baseUrl }), Unit)
         }
     }
 
-    suspend fun setSettings(settings: AppSettings): AppSettings = mutate { state ->
+    internal suspend fun setSettings(settings: AppSettings): AppSettings = mutate { state ->
         validateSettings(settings)
         Mutation(state.copy(settings = settings), settings)
     }
 
-    suspend fun updateSettings(transform: (AppSettings) -> AppSettings): AppSettings = mutate { state ->
+    public suspend fun updateSettings(transform: (AppSettings) -> AppSettings): AppSettings = mutate { state ->
         val updated = transform(state.settings)
         validateSettings(updated)
         Mutation(state.copy(settings = updated), updated)
     }
 
-    suspend fun setBackupState(backupState: BackupState): BackupState = mutate { state ->
+    public suspend fun setBackupState(backupState: BackupState): BackupState = mutate { state ->
         validateBackupState(backupState)
         Mutation(state.copy(backupState = backupState), backupState)
     }
 
     /** Read-modify-write of the backup state under the repository lock: a field edit keeps the others current. */
-    suspend fun updateBackupState(transform: (BackupState) -> BackupState): BackupState = mutate { state ->
+    public suspend fun updateBackupState(transform: (BackupState) -> BackupState): BackupState = mutate { state ->
         val updated = transform(state.backupState)
         validateBackupState(updated)
         Mutation(state.copy(backupState = updated), updated)
     }
 
-    fun manga(mangaId: Long): Manga? = snapshot.value.mangas.firstOrNull { it.id == mangaId }
+    public fun manga(mangaId: Long): Manga? = snapshot.value.mangas.firstOrNull { it.id == mangaId }
 
-    fun manga(sourceId: Long, url: String): Manga? = snapshot.value.mangas.firstOrNull { it.source == sourceId && it.url == url }
+    public fun manga(sourceId: Long, url: String): Manga? = snapshot.value.mangas.firstOrNull { it.source == sourceId && it.url == url }
 
-    fun chapter(chapterId: Long): Chapter? = snapshot.value.chapters.firstOrNull { it.id == chapterId }
+    public fun chapter(chapterId: Long): Chapter? = snapshot.value.chapters.firstOrNull { it.id == chapterId }
 
-    fun chaptersForManga(mangaId: Long): List<Chapter> = snapshot.value.chapters.filter { it.mangaId == mangaId }
+    internal fun chaptersForManga(mangaId: Long): List<Chapter> = snapshot.value.chapters.filter { it.mangaId == mangaId }
 
-    fun categoriesForManga(mangaId: Long): List<Category> {
+    public fun categoriesForManga(mangaId: Long): List<Category> {
         val state = snapshot.value
         val ids = state.mangaCategories.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.categoryId }
             .ifEmpty { mutableSetOf(Category.Default.id) }
         return state.categories.filter { it.id in ids }.sortedBy { it.sort }
     }
 
-    fun tracksForManga(mangaId: Long): List<Track> = snapshot.value.tracks.filter { it.mangaId == mangaId }
+    public fun tracksForManga(mangaId: Long): List<Track> = snapshot.value.tracks.filter { it.mangaId == mangaId }
 
-    fun downloadsForManga(mangaId: Long): List<DownloadQueueItem> = snapshot.value.downloadQueue
+    internal fun downloadsForManga(mangaId: Long): List<DownloadQueueItem> = snapshot.value.downloadQueue
         .filter { it.mangaId == mangaId }
         .sortedBy { it.position }
 
-    fun library(): List<LibraryManga> {
+    public fun library(): List<LibraryManga> {
         val state = snapshot.value
         return state.mangas.asSequence().filter { it.favorite }.flatMap { manga ->
             val chapters = state.chapters.filter { it.mangaId == manga.id }
@@ -892,7 +892,7 @@ class ShinsouRepository(
         }.toList()
     }
 
-    fun libraryItems(): List<LibraryItem> {
+    public fun libraryItems(): List<LibraryItem> {
         val state = snapshot.value
         val downloads = state.downloadQueue.filter { it.state == DownloadState.DOWNLOADED }.groupingBy { it.mangaId }.eachCount()
         val trackers = state.tracks.groupBy { it.mangaId }
@@ -906,7 +906,7 @@ class ShinsouRepository(
         }
     }
 
-    fun history(query: String = ""): List<HistoryItem> {
+    public fun history(query: String = ""): List<HistoryItem> {
         val state = snapshot.value
         val normalized = query.trim().lowercase()
         val mangaById = state.mangas.associateBy { it.id }
@@ -923,7 +923,7 @@ class ShinsouRepository(
         }.sortedByDescending { it.lastRead }
     }
 
-    fun recentUpdates(limit: Int = Int.MAX_VALUE): List<UpdateItem> {
+    public fun recentUpdates(limit: Int = Int.MAX_VALUE): List<UpdateItem> {
         if (limit <= 0) return emptyList()
         val state = snapshot.value
         val mangaById = state.mangas.associateBy { it.id }
@@ -935,9 +935,9 @@ class ShinsouRepository(
         }.take(limit).toList()
     }
 
-    companion object {
-        fun decodeSnapshot(encoded: String): AppSnapshot = AppSnapshotJson.decode(encoded)
-        fun encodeSnapshot(snapshot: AppSnapshot): String = AppSnapshotJson.encode(snapshot.withRequiredDefaults().validate())
+    public companion object {
+        public fun decodeSnapshot(encoded: String): AppSnapshot = AppSnapshotJson.decode(encoded)
+        internal fun encodeSnapshot(snapshot: AppSnapshot): String = AppSnapshotJson.encode(snapshot.withRequiredDefaults().validate())
     }
 
     /**
@@ -950,7 +950,7 @@ class ShinsouRepository(
      * failed body/annotation/content-outbox write cannot expose a partially restored AppSnapshot.
      * The callback must not perform network I/O while its durable transaction is open.
      */
-    suspend fun <T> commitSnapshotMutationAtomically(
+    public suspend fun <T> commitSnapshotMutationAtomically(
         requested: AppSnapshot,
         origin: SnapshotReplacementOrigin,
         hostCommit: suspend (
@@ -1005,7 +1005,7 @@ class ShinsouRepository(
      * changed since ([expectedUrl], and [rewrittenChapters] plus [removedChapterIds] must be
      * exactly the title's chapters).
      */
-    suspend fun rebindLibraryTitle(
+    public suspend fun rebindLibraryTitle(
         mangaId: Long,
         expectedUrl: String,
         transform: (Manga) -> Manga,
@@ -1090,7 +1090,7 @@ class ShinsouRepository(
     }
 }
 
-data class AtomicSnapshotMutationResult<T>(
+public data class AtomicSnapshotMutationResult<T>(
     val snapshot: AppSnapshot,
     val result: T,
 )
@@ -1100,14 +1100,14 @@ data class AtomicSnapshotMutationResult<T>(
  * atomically with a local [AppSnapshot] change, before the new snapshot is published. Implementations must be idempotent and
  * must not call back into this repository while [beforeCommit] is running.
  */
-fun interface SnapshotMutationObserver {
-    suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot)
+public fun interface SnapshotMutationObserver {
+    public suspend fun beforeCommit(previous: AppSnapshot, next: AppSnapshot)
 
     /**
      * Joins a host-owned durable transaction. Implementations that normally switch dispatchers
      * must override this callback and remain on the enclosing SQLDelight transaction context.
      */
-    suspend fun beforeAtomicHostCommit(previous: AppSnapshot, next: AppSnapshot): Unit =
+    public suspend fun beforeAtomicHostCommit(previous: AppSnapshot, next: AppSnapshot): Unit =
         beforeCommit(previous, next)
 
     /**
@@ -1115,11 +1115,11 @@ fun interface SnapshotMutationObserver {
      * transaction that subsequently rolled back. Ordinary repository mutations never need this
      * callback.
      */
-    suspend fun afterAtomicHostRollback(previous: AppSnapshot, next: AppSnapshot): Unit = Unit
+    public suspend fun afterAtomicHostRollback(previous: AppSnapshot, next: AppSnapshot): Unit = Unit
 }
 
 /** Identifies the only replacement paths that may cross the v2 synchronization boundary. */
-enum class SnapshotReplacementOrigin {
+public enum class SnapshotReplacementOrigin {
     /** Legacy import/restore/reset. A Cloudflare-ready guard must reject this path. */
     DIRECT,
 
@@ -1133,8 +1133,8 @@ enum class SnapshotReplacementOrigin {
     CONTENT_AUTHORITY_MATERIALIZER,
 }
 
-fun interface SnapshotReplacementGuard {
-    suspend fun beforeReplace(
+public fun interface SnapshotReplacementGuard {
+    public suspend fun beforeReplace(
         origin: SnapshotReplacementOrigin,
         previous: AppSnapshot,
         requested: AppSnapshot,
@@ -1394,7 +1394,7 @@ private fun Manga.withFavoriteMutationMetadata(previous: Manga, modifiedAt: Long
     )
 }
 
-class RepositoryConstraintException(message: String) : IllegalArgumentException(message)
+internal class RepositoryConstraintException(message: String) : IllegalArgumentException(message)
 
 private fun AppSnapshot.defaultFavoriteCategoryId(): Long {
     val configured = settings.library.defaultCategoryId

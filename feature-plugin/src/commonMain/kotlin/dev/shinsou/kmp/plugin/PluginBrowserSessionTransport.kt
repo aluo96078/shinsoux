@@ -45,7 +45,7 @@ public interface PluginBrowserSessionTransport {
         "Browser-session transport cannot bind the request to its validated DNS answers",
     )
 
-    public suspend fun close() = Unit
+    public suspend fun close(): Unit = Unit
 
     public companion object {
         public val Unavailable: PluginBrowserSessionTransport = object : PluginBrowserSessionTransport {

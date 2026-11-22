@@ -23,6 +23,12 @@ sqldelight {
     }
 }
 
+// The iOS framework exports this module, so its public API is the Swift header: the generated
+// TranslationMemory* types stay internal here (0007 §7 follow-up 4).
+shinsouSqlDelight {
+    internalGeneratedCode.set(true)
+}
+
 compose.resources {
     packageOfResClass = "dev.aluo.shinsoux.translation.generated.resources"
 }
