@@ -87,13 +87,8 @@ internal class ContentOutboxTable<D : Any>(
         drafts.forEach { draft ->
             val id = outboxAdapter.id(draft)
             val payload = outboxAdapter.encode(draft)
-            execute(
-                "INSERT INTO $TABLE_OUTBOX(draft_id, payload) VALUES (?, ?) ON CONFLICT(draft_id) DO NOTHING",
-                2,
-            ) {
-                bindString(0, id)
-                bindString(1, payload)
-            }
+            // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO NOTHING`.
+            outboxInsert.run(listOf(id, payload), ::execute)
             maybeFail(ContentTransactionFailurePoint.AFTER_OUTBOX_WRITE)
             maybeFail(ContentTransactionFailurePoint.AFTER_EACH_OUTBOX_WRITE)
         }
@@ -101,3 +96,5 @@ internal class ContentOutboxTable<D : Any>(
 }
 
 private const val MAX_OUTBOX_PAGE = 1_024
+
+private val outboxInsert = SqliteUpsert(TABLE_OUTBOX, listOf("draft_id", "payload"), keyCount = 1, updated = emptyList())

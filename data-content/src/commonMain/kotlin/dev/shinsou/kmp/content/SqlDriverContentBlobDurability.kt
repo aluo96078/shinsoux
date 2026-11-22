@@ -311,35 +311,20 @@ internal class SqlDriverContentBlobDurability(
     }
 
     private fun upsertRow(snapshot: DurableContentBlob, sqlitePayload: ByteArray, opaqueName: String?) {
-        driver.execute(
-            identifier = null,
-            sql = """
-                INSERT INTO $TABLE_BLOBS(
-                  blob_id, reference_json, payload, opaque_name, incarnation, generation,
-                  published_at_epoch_millis, lifecycle_state, discovered_at_epoch_millis
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(blob_id) DO UPDATE SET
-                  reference_json = excluded.reference_json,
-                  payload = excluded.payload,
-                  opaque_name = excluded.opaque_name,
-                  incarnation = excluded.incarnation,
-                  generation = excluded.generation,
-                  published_at_epoch_millis = excluded.published_at_epoch_millis,
-                  lifecycle_state = excluded.lifecycle_state,
-                  discovered_at_epoch_millis = excluded.discovered_at_epoch_millis
-            """.trimIndent(),
-            parameters = 9,
-        ) {
-            bindString(0, snapshot.reference.blobId)
-            bindString(1, codec.encodeToString(snapshot.reference))
-            bindBytes(2, sqlitePayload)
-            bindString(3, opaqueName)
-            bindLong(4, snapshot.incarnation)
-            bindLong(5, snapshot.generation)
-            bindLong(6, snapshot.publishedAtEpochMillis)
-            bindString(7, snapshot.lifecycleState.name)
-            bindLong(8, snapshot.discoveredAtEpochMillis)
-        }.value
+        // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO UPDATE`.
+        blobUpsert.run(
+            listOf(
+                snapshot.reference.blobId,
+                codec.encodeToString(snapshot.reference),
+                sqlitePayload,
+                opaqueName,
+                snapshot.incarnation,
+                snapshot.generation,
+                snapshot.publishedAtEpochMillis,
+                snapshot.lifecycleState.name,
+                snapshot.discoveredAtEpochMillis,
+            ),
+        ) { sql, parameters, bind -> driver.execute(identifier = null, sql = sql, parameters = parameters, binders = bind).value }
     }
 
     override fun delete(blob: DurableContentBlob) {
@@ -908,26 +893,10 @@ internal class SqlDriverContentBlobDurability(
     ).value
 
     private fun upsertCrashFileObservation(file: ContentBlobCrashFile, discoveredAt: Long) {
-        driver.execute(
-            identifier = null,
-            sql = """
-                INSERT INTO $TABLE_BLOB_FILE_ORPHANS(
-                  file_kind, opaque_name, byte_size, modified_at_epoch_millis,
-                  discovered_at_epoch_millis
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(file_kind, opaque_name) DO UPDATE SET
-                  byte_size = excluded.byte_size,
-                  modified_at_epoch_millis = excluded.modified_at_epoch_millis,
-                  discovered_at_epoch_millis = excluded.discovered_at_epoch_millis
-            """.trimIndent(),
-            parameters = 5,
-        ) {
-            bindString(0, file.kind.name)
-            bindString(1, file.opaqueName)
-            bindLong(2, file.byteSize)
-            bindLong(3, file.modifiedAtEpochMillis)
-            bindLong(4, discoveredAt)
-        }.value
+        // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO UPDATE`.
+        crashFileUpsert.run(
+            listOf(file.kind.name, file.opaqueName, file.byteSize, file.modifiedAtEpochMillis, discoveredAt),
+        ) { sql, parameters, bind -> driver.execute(identifier = null, sql = sql, parameters = parameters, binders = bind).value }
     }
 
     private fun deleteCrashFileObservation(kind: ContentBlobCrashFileKind, opaqueName: String) {
@@ -1127,3 +1096,18 @@ private val ContentBlobPersistenceJson = Json {
     explicitNulls = true
     ignoreUnknownKeys = false
 }
+
+private val blobUpsert = SqliteUpsert(
+    TABLE_BLOBS,
+    listOf(
+        "blob_id", "reference_json", "payload", "opaque_name", "incarnation", "generation",
+        "published_at_epoch_millis", "lifecycle_state", "discovered_at_epoch_millis",
+    ),
+    keyCount = 1,
+)
+
+private val crashFileUpsert = SqliteUpsert(
+    TABLE_BLOB_FILE_ORPHANS,
+    listOf("file_kind", "opaque_name", "byte_size", "modified_at_epoch_millis", "discovered_at_epoch_millis"),
+    keyCount = 2,
+)

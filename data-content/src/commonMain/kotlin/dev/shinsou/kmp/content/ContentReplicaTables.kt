@@ -4,6 +4,15 @@ import dev.shinsou.kmp.domain.model.PublicationKey
 
 /** Publication replica cursors and the blob removal intents they leave behind. */
 internal class ContentReplicaTables(sql: ContentSqlOps) : ContentSqlOps by sql {
+    private val replicaCursorUpsert = SqliteUpsert(
+        TABLE_PUBLICATION_REPLICA_CURSORS,
+        listOf(
+            "publication_id", "instance_id", "workspace_id", "through_workspace_seq",
+            "present", "graph_fingerprint", "cursor_json",
+        ),
+        keyCount = 1,
+    )
+
     fun findPublicationReplicaCursor(
         publicationKey: PublicationKey,
     ): ContentPublicationReplicaCursor? {
@@ -52,30 +61,19 @@ internal class ContentReplicaTables(sql: ContentSqlOps) : ContentSqlOps by sql {
     }
 
     fun writePublicationReplicaCursor(cursor: ContentPublicationReplicaCursor) {
-        execute(
-            """
-                INSERT INTO $TABLE_PUBLICATION_REPLICA_CURSORS(
-                  publication_id, instance_id, workspace_id, through_workspace_seq,
-                  present, graph_fingerprint, cursor_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(publication_id) DO UPDATE SET
-                  instance_id = excluded.instance_id,
-                  workspace_id = excluded.workspace_id,
-                  through_workspace_seq = excluded.through_workspace_seq,
-                  present = excluded.present,
-                  graph_fingerprint = excluded.graph_fingerprint,
-                  cursor_json = excluded.cursor_json
-            """.trimIndent(),
-            7,
-        ) {
-            bindString(0, cursor.publicationKey.value)
-            bindString(1, cursor.instanceId)
-            bindString(2, cursor.workspaceId)
-            bindLong(3, cursor.throughWorkspaceSeq)
-            bindLong(4, if (cursor.present) 1L else 0L)
-            bindString(5, cursor.graphFingerprintSha256)
-            bindString(6, encodeJson(ContentPublicationReplicaCursor.serializer(), cursor))
-        }
+        // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO UPDATE`.
+        replicaCursorUpsert.run(
+            listOf(
+                cursor.publicationKey.value,
+                cursor.instanceId,
+                cursor.workspaceId,
+                cursor.throughWorkspaceSeq,
+                if (cursor.present) 1L else 0L,
+                cursor.graphFingerprintSha256,
+                encodeJson(ContentPublicationReplicaCursor.serializer(), cursor),
+            ),
+            ::execute,
+        )
     }
 
     fun writeBlobRemovalIntent(intent: ContentBlobRemovalIntent) {

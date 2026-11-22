@@ -2,6 +2,16 @@ package dev.shinsou.kmp.content
 
 /** Metadata, alias and migration-ledger rows. */
 internal class ContentLedgerTables(sql: ContentSqlOps) : ContentSqlOps by sql {
+    // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO UPDATE`.
+    private val metadataUpsert = SqliteUpsert(TABLE_METADATA, listOf("key", "value"), keyCount = 1)
+    private val aliasUpsert = SqliteUpsert(TABLE_ALIASES, listOf("alias", "target"), keyCount = 1)
+    private val migrationInsert = SqliteUpsert(
+        TABLE_MIGRATIONS,
+        listOf("migration_key", "namespace", "source_digest", "result_fingerprint", "commit_id", "mutation_json"),
+        keyCount = 1,
+        updated = emptyList(),
+    )
+
     /** Reads and verifies one migration row, including every denormalized SQL column. */
     fun findMigration(migrationKey: String): ContentMigrationLedgerMutation? {
         val row = queryRows(
@@ -80,13 +90,7 @@ internal class ContentLedgerTables(sql: ContentSqlOps) : ContentSqlOps by sql {
 
     fun writeMetadata(mutations: List<ContentMetadataMutation>) {
         mutations.forEach { mutation ->
-            execute(
-                "INSERT INTO $TABLE_METADATA(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                2,
-            ) {
-                bindString(0, mutation.key)
-                bindString(1, mutation.value)
-            }
+            metadataUpsert.run(listOf(mutation.key, mutation.value), ::execute)
             maybeFail(ContentTransactionFailurePoint.AFTER_METADATA_WRITE)
             maybeFail(ContentTransactionFailurePoint.AFTER_EACH_METADATA_WRITE)
         }
@@ -94,13 +98,7 @@ internal class ContentLedgerTables(sql: ContentSqlOps) : ContentSqlOps by sql {
 
     fun writeAliases(mutations: List<ContentAliasMutation>) {
         mutations.forEach { mutation ->
-            execute(
-                "INSERT INTO $TABLE_ALIASES(alias, target) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET target = excluded.target",
-                2,
-            ) {
-                bindString(0, mutation.alias)
-                bindString(1, mutation.target)
-            }
+            aliasUpsert.run(listOf(mutation.alias, mutation.target), ::execute)
             maybeFail(ContentTransactionFailurePoint.AFTER_ALIAS_WRITE)
             maybeFail(ContentTransactionFailurePoint.AFTER_EACH_ALIAS_WRITE)
         }
@@ -108,21 +106,17 @@ internal class ContentLedgerTables(sql: ContentSqlOps) : ContentSqlOps by sql {
 
     fun writeMigrations(mutations: List<ContentMigrationLedgerMutation>) {
         mutations.forEach { mutation ->
-            execute(
-                """
-                    INSERT INTO $TABLE_MIGRATIONS(
-                      migration_key, namespace, source_digest, result_fingerprint, commit_id, mutation_json
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                """.trimIndent() + " ON CONFLICT(migration_key) DO NOTHING",
-                6,
-            ) {
-                bindString(0, mutation.migrationKey)
-                bindString(1, mutation.namespace)
-                bindString(2, mutation.sourceDigestSha256)
-                bindString(3, mutation.resultFingerprintSha256)
-                bindString(4, mutation.commitId)
-                bindString(5, encodeJson(ContentMigrationLedgerMutation.serializer(), mutation))
-            }
+            migrationInsert.run(
+                listOf(
+                    mutation.migrationKey,
+                    mutation.namespace,
+                    mutation.sourceDigestSha256,
+                    mutation.resultFingerprintSha256,
+                    mutation.commitId,
+                    encodeJson(ContentMigrationLedgerMutation.serializer(), mutation),
+                ),
+                ::execute,
+            )
             maybeFail(ContentTransactionFailurePoint.AFTER_MIGRATION_WRITE)
             maybeFail(ContentTransactionFailurePoint.AFTER_EACH_MIGRATION_WRITE)
         }
