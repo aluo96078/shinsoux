@@ -257,3 +257,5 @@ Gemini 4 Neon 列出、這一輪不處理的架構後續（依其優先順序）
    - 現在：Back 處理順序與顯示順序相同（`RECOVERING → LOCAL_EXTENSION → PENDING → DETAIL → MORE`）。沒有刻意保留的例外：`RECOVERING` 一直都可被 Back 取消，之前的順序只是沿用，並無 UX 理由。寬版在 More 開啟時也會把 `PENDING`／`RECOVERING` 蓋在 More 上，而不是藏起來。
    - 測試：`PageLayerOrderTest` 逐一涵蓋每一對層（以及全部 31 種組合）的 Back 作用層、手機顯示、寬版（有／無側欄空間、閱讀器開啟）前景與返回手勢。
 8. 未上機驗證：C2 的返回手勢與寬版多層、C3 在中階 Android 與 iOS 上的遷移耗時與背景寫入、降版再升版、Android 雲端還原；C1／C5 的 UI 未手動操作。
+   - 0008 在 Android 10 模擬器（api29）驗證 `c75f4e4`：984a380 → HEAD 升級遷移（熱資料表列數、token 與 JSON 標記、`.before-hot-state` 皆正確，重啟兩次不變；300 部／15,000 章／1,840 筆歷史的資料集首次啟動 1.97 s，舊版 1.71 s，模擬器上在雜訊內）、降版再升版（舊版讀到 HEAD 的變更；舊版的變更在升回後以「JSON 較新 → 重建」保留）、localtransport 雲端還原（只還原 `shinsou-state.json`，以 JSON 重建熱資料表）、窄版返回順序與返回手勢，皆通過。未驗證：中階實機耗時、iOS 遷移、`PENDING`／`LOCAL_EXTENSION`／`RECOVERING` 層（需網路來源）、iPad 寬版返回（模擬器工具注入不了邊緣手勢與 Esc）。
+   - 觀察：遷移日誌是 INFO（tag `Storage`），Android 預設只輸出 WARN 以上，事後只能從資料庫與檔案判斷；沒有變更時背景化不重寫 JSON（只有有變更時才整份寫）。
