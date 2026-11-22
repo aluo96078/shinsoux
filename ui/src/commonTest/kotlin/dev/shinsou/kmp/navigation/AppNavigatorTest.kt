@@ -2,8 +2,8 @@ package dev.shinsou.kmp.navigation
 
 import dev.shinsou.kmp.domain.model.MainSection
 import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.ui.LibrarySelectionState
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.library.LibrarySelectionState
+import dev.shinsou.kmp.ui.settings.MoreDestination
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

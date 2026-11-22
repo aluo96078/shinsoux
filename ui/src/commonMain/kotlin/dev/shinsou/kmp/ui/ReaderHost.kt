@@ -29,7 +29,7 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
+import dev.shinsou.kmp.ui.library.CategoryPickerDialog
 import dev.shinsou.kmp.ui.reader.MangaReaderTranslationState
 import dev.shinsou.kmp.ui.reader.MangaTranslationNotice
 import dev.shinsou.kmp.ui.reader.MangaTranslationSheet

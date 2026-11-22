@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.ui.settings.SecurityFeatureCapability
+import dev.shinsou.kmp.ui.settings.mobileSecurityCapabilities
 
 class PlatformSecurityCapabilitiesTest {
     @Test

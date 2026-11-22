@@ -84,6 +84,11 @@ import dev.shinsou.kmp.ui.core.LocalMobileKeyboardDismissEnabled
 import dev.shinsou.kmp.ui.core.PluginImageLoader
 import dev.shinsou.kmp.ui.core.onUnconsumedBlankTap
 import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeyMonitoringEnabled
+import dev.shinsou.kmp.ui.browse.SourceCatalogImages
+import dev.shinsou.kmp.ui.core.LocalAppUnlocked
+import dev.shinsou.kmp.ui.settings.AppUpdateHost
+import dev.shinsou.kmp.ui.settings.AppUpdateState
+import dev.shinsou.kmp.ui.settings.LocalAppUpdates
 
 /** Primary, platform-neutral composition entry point. */
 @Composable

@@ -13,8 +13,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dev.shinsou.kmp.domain.model.UpdateSettings
-import dev.shinsou.kmp.ui.AppUpdateHost
-import dev.shinsou.kmp.ui.AppUpdateState
+import dev.shinsou.kmp.ui.settings.AppUpdateHost
+import dev.shinsou.kmp.ui.settings.AppUpdateState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import io.ktor.client.HttpClient

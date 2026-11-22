@@ -1,8 +1,8 @@
 package dev.shinsou.kmp.update
 
 import dev.shinsou.kmp.domain.model.UpdateSettings
-import dev.shinsou.kmp.ui.AppUpdateState
-import dev.shinsou.kmp.ui.UpdateCheckResult
+import dev.shinsou.kmp.ui.settings.AppUpdateState
+import dev.shinsou.kmp.ui.settings.UpdateCheckResult
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond

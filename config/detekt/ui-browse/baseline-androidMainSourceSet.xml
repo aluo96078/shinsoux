@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldInterceptRequest: WebResourceResponse?</ID>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
+    <ID>ReturnCount:PlatformWebChallengeView.android.kt:AndroidChallengeState$private fun openPendingUrlIfMeasured</ID>
+    <ID>SwallowedException:PlatformWebChallengeView.android.kt:AndroidChallengeState$cancelled: CancellationException</ID>
+    <ID>TooGenericExceptionCaught:PlatformWebChallengeView.android.kt:AndroidChallengeState$failure: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

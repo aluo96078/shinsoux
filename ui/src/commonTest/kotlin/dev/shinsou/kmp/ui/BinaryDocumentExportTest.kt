@@ -7,6 +7,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import dev.shinsou.kmp.ui.settings.ByteArrayBinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.DEFAULT_BINARY_DOCUMENT_BYTE_ARRAY_COMPATIBILITY_BYTES
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.settings.writeCheckedTo
+import dev.shinsou.kmp.ui.settings.writeBinaryDocumentWithFailureCleanup
 
 class BinaryDocumentExportTest {
     @Test

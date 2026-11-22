@@ -37,9 +37,9 @@ import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits
 import dev.shinsou.kmp.contract.ImportedDocumentReadException
 import dev.shinsou.kmp.contract.ImportedDocumentSource
-import dev.shinsou.kmp.ui.BinaryDocumentExportSink
-import dev.shinsou.kmp.ui.BinaryDocumentExportSource
-import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.ByteArrayBinaryDocumentExportSource
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyPressTracker
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
@@ -49,8 +49,8 @@ import dev.shinsou.kmp.contract.requireImportedDocumentSize
 import dev.shinsou.kmp.ui.ShinsouStartupScreen
 import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
 import dev.shinsou.kmp.content.SchemaTooNewException
-import dev.shinsou.kmp.ui.writeBinaryDocumentWithFailureCleanup
-import dev.shinsou.kmp.ui.writeCheckedTo
+import dev.shinsou.kmp.ui.settings.writeBinaryDocumentWithFailureCleanup
+import dev.shinsou.kmp.ui.settings.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import java.util.Locale
 import java.nio.ByteBuffer

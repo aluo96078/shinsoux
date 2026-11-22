@@ -7,8 +7,10 @@ import dev.shinsou.kmp.domain.model.decodeExtensionLibraryPublicationUrl
 import dev.shinsou.kmp.domain.model.decodeTypedLocalPublicationUrl
 import dev.shinsou.kmp.domain.model.MainSection
 import dev.shinsou.kmp.navigation.NavigationState
-import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.library.ALL_LIBRARY_CATEGORY_ID
+import dev.shinsou.kmp.ui.settings.MoreDestination
+import dev.shinsou.kmp.ui.browse.extensionUnitIdentity
+import dev.shinsou.kmp.ui.library.LibrarySelection
 
 /** The reader session a restored app reopens: identities and a page number only. */
 internal data class ReaderSavedSession(
@@ -468,18 +470,3 @@ internal fun restoreShellState(saved: ShellSavedState, target: ShellRestoreTarge
         }
     }
 }
-
-/**
- * A stable 64-bit identity of an extension unit id (FNV-1a over its characters), saved in place of
- * the id itself.
- */
-internal fun extensionUnitIdentity(remoteUnitId: String): Long {
-    var hash = FNV_OFFSET_BASIS
-    for (char in remoteUnitId) {
-        hash = (hash xor char.code.toLong()) * FNV_PRIME
-    }
-    return hash
-}
-
-private const val FNV_OFFSET_BASIS = -0x340d631b7bdddcdbL
-private const val FNV_PRIME = 0x100000001b3L

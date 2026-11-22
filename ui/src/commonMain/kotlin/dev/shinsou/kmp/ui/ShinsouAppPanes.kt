@@ -84,35 +84,35 @@ import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.AboutScreen
-import dev.shinsou.kmp.ui.screens.BackupScreen
-import dev.shinsou.kmp.ui.screens.BrowseBackNavigation
-import dev.shinsou.kmp.ui.screens.BrowseHost
-import dev.shinsou.kmp.ui.screens.BrowseScreen
-import dev.shinsou.kmp.ui.screens.BrowseSourceFilters
-import dev.shinsou.kmp.ui.screens.ExtensionLibraryHost
-import dev.shinsou.kmp.ui.screens.ExtensionReaderHost
-import dev.shinsou.kmp.ui.screens.ExtensionReaderProgressSink
-import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
+import dev.shinsou.kmp.ui.settings.AboutScreen
+import dev.shinsou.kmp.ui.settings.BackupScreen
+import dev.shinsou.kmp.ui.browse.BrowseBackNavigation
+import dev.shinsou.kmp.ui.browse.BrowseHost
+import dev.shinsou.kmp.ui.browse.BrowseScreen
+import dev.shinsou.kmp.ui.browse.BrowseSourceFilters
+import dev.shinsou.kmp.ui.browse.ExtensionLibraryHost
+import dev.shinsou.kmp.ui.browse.ExtensionReaderHost
+import dev.shinsou.kmp.ui.browse.ExtensionReaderProgressSink
+import dev.shinsou.kmp.ui.browse.MAX_COOKIE_FILE_BYTES
 import dev.shinsou.kmp.ui.sync.ReviewsEntry
 import dev.shinsou.kmp.ui.sync.ShareWithUserDialog
-import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
-import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
-import dev.shinsou.kmp.ui.screens.DownloadsScreen
-import dev.shinsou.kmp.ui.screens.HistoryScreen
-import dev.shinsou.kmp.ui.screens.LibraryScreen
-import dev.shinsou.kmp.ui.screens.MangaDetailScreen
-import dev.shinsou.kmp.ui.screens.MoreDestination
-import dev.shinsou.kmp.ui.screens.SyncScreen
-import dev.shinsou.kmp.ui.screens.syncSummary
-import dev.shinsou.kmp.ui.screens.MoreScreen
-import dev.shinsou.kmp.ui.screens.SettingsScreen
-import dev.shinsou.kmp.ui.screens.ShuYueMigrationScreen
-import dev.shinsou.kmp.ui.screens.SourceLoginDialog
-import dev.shinsou.kmp.ui.screens.StatisticsScreen
+import dev.shinsou.kmp.ui.library.CategoryPickerDialog
+import dev.shinsou.kmp.ui.settings.ContentBackupV2Screen
+import dev.shinsou.kmp.ui.settings.DownloadsScreen
+import dev.shinsou.kmp.ui.library.HistoryScreen
+import dev.shinsou.kmp.ui.library.LibraryScreen
+import dev.shinsou.kmp.ui.library.MangaDetailScreen
+import dev.shinsou.kmp.ui.settings.MoreDestination
+import dev.shinsou.kmp.ui.settings.SyncScreen
+import dev.shinsou.kmp.ui.settings.syncSummary
+import dev.shinsou.kmp.ui.settings.MoreScreen
+import dev.shinsou.kmp.ui.settings.SettingsScreen
+import dev.shinsou.kmp.ui.settings.ShuYueMigrationScreen
+import dev.shinsou.kmp.ui.browse.SourceLoginDialog
+import dev.shinsou.kmp.ui.settings.StatisticsScreen
 import dev.shinsou.kmp.ui.translation.TranslationScreen
-import dev.shinsou.kmp.ui.screens.TrackingSheet
-import dev.shinsou.kmp.ui.screens.UpdatesScreen
+import dev.shinsou.kmp.ui.library.TrackingSheet
+import dev.shinsou.kmp.ui.library.UpdatesScreen
 import dev.aluo.shinsoux.generated.resources.Res
 import dev.aluo.shinsoux.generated.resources.shinsou_icon
 import kotlin.time.Clock
@@ -130,6 +130,12 @@ import dev.shinsou.kmp.plugin.SourceCatalog
 import dev.shinsou.kmp.contract.SourceLoginRequest
 import dev.shinsou.kmp.plugin.SourceWebSession
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
+import dev.shinsou.kmp.ui.library.continueChapter
+import dev.shinsou.kmp.ui.library.continueReadingOf
+import dev.shinsou.kmp.ui.library.extensionBindingOf
+import dev.shinsou.kmp.ui.library.libraryContentType
+import dev.shinsou.kmp.ui.library.rememberLibraryContinueReading
+import dev.shinsou.kmp.ui.settings.PlatformSecurityCapabilities
 
 // R4-4 (docs/architecture/0006): moved out of ShinsouApp.kt without changing it.
 
@@ -1236,7 +1242,7 @@ internal fun MoreDestinationPane(
                 actions.editSettings(repository) { it.copy(sync = it.sync.copy(kinds = edit(it.sync.kinds))) }
             },
         )
-        MoreDestination.About -> AboutScreen(onBack, appServices::openExternalUrl)
+        MoreDestination.About -> AboutScreen(shinsouIconPainter(), onBack, appServices::openExternalUrl)
     }
 }
 

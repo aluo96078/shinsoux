@@ -1,6 +1,6 @@
 // C1 (docs/architecture/0007): the translation settings screens: services and keys, offline models,
 // the manga translation's resources and accelerators. Depends on :ui-core and the layers below,
-// never on another UI module; :ui (More, the panes) opens it.
+// never on another UI module; :ui (More, the panes) and :ui-browse (the publication page) open it.
 plugins {
     id("shinsou.kmp-library")
     id("shinsou.testing")

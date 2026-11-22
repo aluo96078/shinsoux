@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.desktop
 
-import dev.shinsou.kmp.ui.BinaryDocumentExportSink
-import dev.shinsou.kmp.ui.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSink
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertContentEquals

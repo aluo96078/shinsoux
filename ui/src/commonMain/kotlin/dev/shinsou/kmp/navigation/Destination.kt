@@ -2,7 +2,7 @@ package dev.shinsou.kmp.navigation
 
 import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.domain.model.MainSection
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.settings.MoreDestination
 
 /**
  * R4-3 (docs/architecture/0006): what a page of the app shell shows, by identity only. It is what

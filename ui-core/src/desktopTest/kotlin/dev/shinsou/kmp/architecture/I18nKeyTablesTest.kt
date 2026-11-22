@@ -76,6 +76,6 @@ class I18nKeyTablesTest {
     private fun placeholders(text: String): Set<String> = placeholder.findAll(text).map { it.groupValues[1] }.toSet()
 
     private companion object {
-        val USING_MODULES = listOf("ui-core", "ui-reader", "ui-translation", "ui-sync", "ui", "composeApp")
+        val USING_MODULES = listOf("ui-core", "ui-reader", "ui-translation", "ui-sync", "ui-browse", "ui-library", "ui-settings", "ui", "composeApp")
     }
 }

@@ -22,6 +22,8 @@ import kotlin.test.fail
  * C1 (0007): the UI is split into :ui-core, the feature UI modules and :ui, all under `ui.`; a
  * package belongs to the module of the longest [MODULES] key it starts with (`ui.reader.x` is
  * :ui-reader's, `ui.screens` falls back to `ui`, the shell's), so a package moves with its module.
+ * 0008 §7-5: the section UI modules (:ui-browse, :ui-library, :ui-settings) are between the feature
+ * UI modules and the shell.
  */
 class DependencyDirectionTest {
     private val sourceSets = listOf("commonMain", "jvmCommonMain", "desktopMain", "androidMain", "iosMain")
@@ -218,8 +220,14 @@ class DependencyDirectionTest {
             module("ui-reader", 6, "ui.reader")
             module("ui-translation", 6, "ui.translation")
             module("ui-sync", 6, "ui.sync")
-            module("ui", 7, "ui", "navigation")
-            module("app", 8, "app", "desktop", ROOT)
+            // 0008 §7-5: the section UI modules, one per tab of the shell. They embed the feature UI
+            // modules (the publication page opens the reader, its reviews and sharing; More opens the
+            // sync settings), so they sit a layer above them, and never use each other or the shell.
+            module("ui-browse", 7, "ui.browse", "ui.challenge")
+            module("ui-library", 7, "ui.library")
+            module("ui-settings", 7, "ui.settings", "ui.portability")
+            module("ui", 8, "ui", "navigation")
+            module("app", 9, "app", "desktop", ROOT)
         }
     }
 }

@@ -11,8 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 # R5-1: the modules whose code calls the i18n lookup; the first owns the i18n package (C1, 0007:
-# :ui-core, below the feature UI modules and the :ui shell).
-SRCS = [ROOT / m / "src" for m in ("ui-core", "ui-reader", "ui-translation", "ui-sync", "ui", "composeApp")]
+# :ui-core, below the feature and section UI modules and the :ui shell).
+SRCS = [ROOT / m / "src" for m in ("ui-core", "ui-reader", "ui-translation", "ui-sync", "ui-browse", "ui-library", "ui-settings", "ui", "composeApp")]
 SRC = SRCS[0]
 MAIN_SETS = ["commonMain", "jvmCommonMain", "androidMain", "desktopMain", "iosMain"]
 I18N_DIR = "dev/shinsou/kmp/ui/i18n/"

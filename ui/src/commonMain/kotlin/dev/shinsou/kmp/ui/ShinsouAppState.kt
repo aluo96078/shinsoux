@@ -20,7 +20,7 @@ import dev.shinsou.kmp.reader.readerTrackingProgress
 import dev.shinsou.kmp.tracking.TrackUpdate
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.settings.MoreDestination
 import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlin.coroutines.resume
@@ -30,6 +30,8 @@ import kotlinx.coroutines.withContext
 import dev.shinsou.kmp.ui.reader.ReaderProgressObservationClock
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyPressTracker
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
+import dev.shinsou.kmp.ui.browse.extensionUnitIdentity
+import dev.shinsou.kmp.ui.library.LibrarySelectionState
 
 /** How the shell starts: its first section and what the platform says at launch. */
 internal class ShellStart(

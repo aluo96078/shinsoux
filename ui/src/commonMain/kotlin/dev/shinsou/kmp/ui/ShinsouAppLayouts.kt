@@ -51,16 +51,17 @@ import dev.shinsou.kmp.navigation.PageEntry
 import dev.shinsou.kmp.navigation.WideArrangement
 import dev.shinsou.kmp.navigation.wideArrangement
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.screens.BrowseBackNavigation
-import dev.shinsou.kmp.ui.screens.ExtensionLibraryHost
-import dev.shinsou.kmp.ui.screens.ExtensionPublicationServices
-import dev.shinsou.kmp.ui.screens.ExtensionReaderHost
-import dev.shinsou.kmp.ui.screens.ExtensionV2PublicationPane
-import dev.shinsou.kmp.ui.screens.PublicationFavorites
-import dev.shinsou.kmp.ui.screens.PublicationPaneNavigation
-import dev.shinsou.kmp.ui.screens.PublicationReaderEvents
-import dev.shinsou.kmp.ui.screens.PublicationReaderReopen
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.browse.BrowseBackNavigation
+import dev.shinsou.kmp.ui.browse.ExtensionLibraryHost
+import dev.shinsou.kmp.ui.browse.ExtensionPublicationServices
+import dev.shinsou.kmp.ui.browse.ExtensionReaderHost
+import dev.shinsou.kmp.ui.browse.ExtensionV2PublicationPane
+import dev.shinsou.kmp.ui.browse.PublicationFavorites
+import dev.shinsou.kmp.ui.browse.PublicationPaneNavigation
+import dev.shinsou.kmp.ui.browse.PublicationReaderEvents
+import dev.shinsou.kmp.ui.browse.PublicationReaderReopen
+import dev.shinsou.kmp.ui.settings.MoreDestination
+import dev.shinsou.kmp.ui.browse.ExtensionFavoriteDestination
 
 /** Back-swipe progress of the visible page, shared by the layouts. */
 internal typealias BackSwipeProgress = Animatable<Float, AnimationVector1D>

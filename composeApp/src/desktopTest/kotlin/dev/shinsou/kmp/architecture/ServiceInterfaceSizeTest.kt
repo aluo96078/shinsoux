@@ -116,8 +116,6 @@ class ServiceInterfaceSizeTest {
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouApp.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouAppPanes.kt",
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/ShinsouAppState.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/screens/BrowseScreen.kt",
-            "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/screens/ExtensionV2PublicationPane.kt",
         )
     }
 }

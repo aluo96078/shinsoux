@@ -2,7 +2,8 @@
 // controls), the unified content reader (EPUB, image sequences, novels), the extension novel reader
 // shell, the reader translation panels and manga prefetch, and what the shell hands them
 // (ContentFeatures, the volume-key router, the platform reader capabilities). Depends on :ui-core and
-// the layers below, never on another UI module; :ui (the shell and the browse screens) opens it.
+// the layers below, never on another UI module; :ui (the shell), :ui-browse (the
+// publication page), :ui-library and :ui-settings open it.
 plugins {
     id("shinsou.kmp-library")
     id("shinsou.testing")

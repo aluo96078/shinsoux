@@ -2,129 +2,17 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ComplexCondition:PlatformWebChallengeView.desktop.kt:line.contains('{') || line.contains('}') || line.contains("http://") || line.contains("https://")</ID>
-    <ID>ComplexCondition:SourceCatalogueScreen.kt:nearEnd &amp;&amp; latestPage.value.hasNextPage &amp;&amp; latestError.value == null &amp;&amp; !latestLoading.value &amp;&amp; !latestLoadingMore.value</ID>
-    <ID>CyclomaticComplexMethod:ActivityScreens.kt:@OptIn(ExperimentalFoundationApi::class) @Composable fun UpdatesScreen</ID>
-    <ID>CyclomaticComplexMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
     <ID>CyclomaticComplexMethod:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
-    <ID>CyclomaticComplexMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterHeader</ID>
-    <ID>CyclomaticComplexMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterRow</ID>
-    <ID>CyclomaticComplexMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
-    <ID>CyclomaticComplexMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
-    <ID>CyclomaticComplexMethod:LibraryScreen.kt:@Composable fun LibraryScreen</ID>
-    <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable fun MangaDetailScreen</ID>
-    <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable private fun MangaInfoPane</ID>
-    <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable private fun ChapterPane</ID>
-    <ID>CyclomaticComplexMethod:MigrationPane.kt:@Composable private fun MigrationCandidateCard</ID>
-    <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
-    <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
-    <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:MacOsWebChallengeState$private fun readEvents</ID>
-    <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$fun isValidCapturedCookie: Boolean</ID>
-    <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:private fun NativeHelperEvent.isValidForChallenge: Boolean</ID>
-    <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable internal fun PluginPermissionReviewDialog</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
-    <ID>CyclomaticComplexMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
-    <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable internal fun SourceLoginDialog</ID>
-    <ID>CyclomaticComplexMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
-    <ID>CyclomaticComplexMethod:SourceWebChallengeCookies.kt:internal fun normalizeWebChallengeCookies: List&lt;SourceCookie&gt;</ID>
-    <ID>CyclomaticComplexMethod:TrackingSheet.kt:@Composable private fun BoundTrackEditor</ID>
-    <ID>CyclomaticComplexMethod:TrackingSheet.kt:@Composable private fun TrackerProviderCard</ID>
-    <ID>LongMethod:ActivityScreens.kt:@OptIn(ExperimentalFoundationApi::class) @Composable fun UpdatesScreen</ID>
-    <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ContentBackupV2Screen</ID>
-    <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
-    <ID>LongMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterHeader</ID>
-    <ID>LongMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
-    <ID>LongMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
-    <ID>LongMethod:LibraryScreen.kt:@Composable fun LibraryScreen</ID>
-    <ID>LongMethod:LibraryScreen.kt:@Composable private fun CategoryManagementDialog</ID>
-    <ID>LongMethod:MangaDetailScreen.kt:@Composable fun MangaDetailScreen</ID>
-    <ID>LongMethod:MangaDetailScreen.kt:@Composable private fun MangaInfoPane</ID>
-    <ID>LongMethod:MangaDetailScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable private fun ChapterPane</ID>
-    <ID>LongMethod:MigrationPane.kt:@Composable private fun MigrationCandidateCard</ID>
-    <ID>LongMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
-    <ID>LongMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
-    <ID>LongMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
-    <ID>LongMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
-    <ID>LongMethod:TrackingSheet.kt:@Composable private fun TrackerProviderCard</ID>
-    <ID>LongParameterList:ExtensionV2ChapterPane.kt:ExtensionV2ChapterPaneModel</ID>
-    <ID>MatchingDeclarationName:ChapterPresentation.kt:ChapterPresentationItem</ID>
-    <ID>MatchingDeclarationName:ExtensionV2ChapterPane.kt:ExtensionV2ChapterPaneModel</ID>
-    <ID>MatchingDeclarationName:PlatformWebChallengeView.kt:WebChallengeCapture</ID>
-    <ID>MatchingDeclarationName:UpcomingSchedule.kt:UpcomingPrediction</ID>
-    <ID>ReturnCount:BrowseScreen.kt:internal fun Throwable.localizedDiagnosticMessage: String</ID>
-    <ID>ReturnCount:BrowseSearch.kt:private fun levenshteinDistance: Int</ID>
-    <ID>ReturnCount:BrowseSearch.kt:private fun normalizedTitleSimilarity: Double</ID>
-    <ID>ReturnCount:CookieFileParser.kt:CookieFileParser$fun parse: List&lt;SourceCookie&gt;</ID>
-    <ID>ReturnCount:CookieFileParser.kt:CookieFileParser$private fun jsonCookie: SourceCookie?</ID>
-    <ID>ReturnCount:CookieFileParser.kt:CookieFileParser$private fun normalize: SourceCookie?</ID>
-    <ID>ReturnCount:CookieFileParser.kt:CookieFileParser$private fun parseJson: List&lt;SourceCookie&gt;</ID>
     <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
     <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$private fun parseDevRepositoryLink: ShinsouDeepLink?</ID>
-    <ID>ReturnCount:LibraryContentType.kt:internal fun libraryContentType: LibraryContentType</ID>
-    <ID>ReturnCount:LocalLibraryExtensionRouting.kt:internal fun localLibraryExtensionRoute: LocalLibraryExtensionRoute</ID>
-    <ID>ReturnCount:PlatformWebChallengeView.desktop.kt:MacOsWebChallengeState$private fun launch</ID>
-    <ID>ReturnCount:PlatformWebChallengeView.desktop.kt:private fun NativeHelperEvent.isValidForChallenge: Boolean</ID>
-    <ID>ReturnCount:PlatformWebChallengeView.desktop.kt:private fun sanitizeDiagnosticLine: String?</ID>
-    <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun automaticWebChallengeLoginScript: String?</ID>
-    <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun decodeWebChallengeLocalStorageCapture: WebChallengeLocalStorageCapture</ID>
-    <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun parseWebViewCookieHeader: List&lt;SourceCookie&gt;</ID>
-    <ID>SwallowedException:ShuYueMigrationUiController.kt:DefaultShuYueMigrationUiController$conflict: ShuYueMigrationConflictException</ID>
-    <ID>TooGenericExceptionCaught:ExtensionOperationRunner.kt:ExtensionOperationRunner$error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:MigrationPane.kt:error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:PlatformWebChallengeView.desktop.kt:MacOsWebChallengeState$error: Throwable</ID>
+    <ID>ReturnCount:LocalLibraryExtensionRoute.kt:internal fun localLibraryExtensionRoute: LocalLibraryExtensionRoute</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:ReaderLocalProgressCoordinator$failure: Throwable</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:V2ReaderProgressCoordinator$failure: Throwable</ID>
-    <ID>TooGenericExceptionCaught:SourceSearch.kt:error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:TrackingSheet.kt:error: Throwable</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$domain.utf8ByteCountAtMost(255)!!</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$name.utf8ByteCountAtMost(256)!!</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$path.utf8ByteCountAtMost(2_048)!!</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$value.utf8ByteCountAtMost(8_192)!!</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:key.utf8ByteCountAtMost(64)!!</ID>
-    <ID>UnsafeCallOnNullableType:PlatformWebChallengeView.desktop.kt:value.utf8ByteCountAtMost(WEB_CHALLENGE_STORAGE_VALUE_MAX_BYTES)!!</ID>
-    <ID>UnusedParameter:ActivityScreens.kt:timestamp: Long</ID>
-    <ID>UnusedParameter:MangaDetailScreen.kt:manga: Manga</ID>
-    <ID>UnusedParameter:SettingsScreen.kt:steps: Int</ID>
-    <ID>UnusedPrivateFunction:SourcesPane.kt:@Composable private fun SourceSectionHeader</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val bookmarkedUnitIds = model.bookmarkedUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val busyUnitId = model.busyUnitId</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val chapterFilter = model.chapterFilter</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val downloadedUnitIds = model.downloadedUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val hasNextPage = model.hasNextPage</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val inProgressUnits = model.inProgressUnits</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val loadError = model.loadError</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val loading = model.loading</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val loadingMore = model.loadingMore</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onBookmarkStateChange = model.onBookmarkStateChange</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onDeleteDownloads = model.onDeleteDownloads</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onDownloadUnits = model.onDownloadUnits</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onFilterChange = model.onFilterChange</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onLoadMore = model.onLoadMore</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onReadStateChange = model.onReadStateChange</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onReadUnit = model.onReadUnit</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onRetry = model.onRetry</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onSelectionChange = model.onSelectionChange</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onToggleWebsiteOrder = model.onToggleWebsiteOrder</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val onTranslateUnits = model.onTranslateUnits</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val openingReaderUnitId = model.openingReaderUnitId</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val operationFailed = model.operationFailed</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val operationMessage = model.operationMessage</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val prefetchByUnit = model.prefetchByUnit</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val queuedUnitIds = model.queuedUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val readUnitIds = model.readUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val reverseWebsiteOrder = model.reverseWebsiteOrder</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val selectedUnitIds = model.selectedUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val translatedUnitIds = model.translatedUnitIds</ID>
-    <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val units = model.units</ID>
-    <ID>UseCheckNotNull:PlatformWebChallengeView.desktop.kt:check(line.utf8ByteCountAtMost(WEB_CHALLENGE_LAUNCH_MAX_BYTES) != null) { "Native browser launch request is too large" }</ID>
-    <ID>UseCheckOrError:BinaryDocumentExport.kt:throw IllegalStateException("Binary document source exceeded its declared size")</ID>
-    <ID>UseOrEmpty:PluginPermissionReview.kt:current?.contentHostSuffixes ?: emptySet()</ID>
-    <ID>UseOrEmpty:PluginPermissionReview.kt:current?.hostPermissions ?: emptySet()</ID>
-    <ID>UseOrEmpty:PluginPermissionReview.kt:current?.runtimePermissions ?: emptySet()</ID>
   </CurrentIssues>
 </SmellBaseline>
