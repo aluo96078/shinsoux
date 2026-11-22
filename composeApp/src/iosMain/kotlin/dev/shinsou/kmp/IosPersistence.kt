@@ -74,14 +74,18 @@ import kotlin.native.Platform
 internal object IosSnapshotPersistence : SnapshotFile {
     private const val FILE_NAME = "shinsou-state.json"
 
-    fun load(): AppSnapshot {
+    /**
+     * The saved state; null when there is none, or it could not be decoded and was quarantined:
+     * the caller tells a fresh install from a lost JSON by the hot state it finds (C3).
+     */
+    fun load(): AppSnapshot? {
         val encoded = try {
-            readUtf8(IosApplicationPaths.file(FILE_NAME)) ?: return AppSnapshot()
+            readUtf8(IosApplicationPaths.file(FILE_NAME))
         } catch (error: InvalidPersistedUtf8Exception) {
             Log.warnKindOnly("Storage", error) { "Saved app state was not valid UTF-8; quarantining it and starting empty" }
             quarantineCorruptSnapshot()
-            return AppSnapshot()
-        }
+            null
+        } ?: return null
         return try {
             ShinsouRepository.decodeSnapshot(encoded)
         } catch (logged: Exception) {
@@ -89,7 +93,7 @@ internal object IosSnapshotPersistence : SnapshotFile {
             // VM/runtime failures (for example OOM) as corruption and move valid user data away.
             Log.warn("Storage", logged) { "Saved app state could not be decoded; quarantining it and starting empty" }
             quarantineCorruptSnapshot()
-            AppSnapshot()
+            null
         }
     }
 

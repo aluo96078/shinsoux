@@ -18,6 +18,8 @@ import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.files.AndroidAppFileSystem
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Process-wide state shared by the Activity and WorkManager worker.
@@ -59,6 +61,21 @@ internal class AndroidSharedState private constructor(context: Context) {
      * A worker started in a fresh process has no app composition to bind translations to the
      * backup: without this its backups would silently leave glossaries and translations out.
      */
+    /**
+     * Writes the whole snapshot JSON once a piece of background work is over (C3): Android's cloud
+     * backup and device transfer carry the JSON without the content database, so hot rows the
+     * work wrote must not wait for the next foreground session to reach it. Never throws.
+     */
+    suspend fun checkpointSnapshot() {
+        try {
+            withContext(NonCancellable) { repository.flushPersistence(wholeSnapshot = true) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (logged: Exception) {
+            Log.warn("Storage", logged) { "Writing the snapshot after background work failed" }
+        }
+    }
+
     fun bindTranslationBackups() {
         if (autoBackups.translations != null) return
         autoBackups.translations = dev.shinsou.kmp.translation.TranslationMemoryBackups(
@@ -116,13 +133,15 @@ internal class AndroidAutoBackupWorker(
             val state = AndroidSharedState.get(applicationContext)
             if (state.schemaTooNew != null) return Result.failure()
             state.bindTranslationBackups()
-            when (state.autoBackups.runIfDue()) {
+            val result = when (state.autoBackups.runIfDue()) {
                 is AutoBackupRunResult.Failed -> Result.retry()
                 AutoBackupRunResult.Disabled,
                 is AutoBackupRunResult.NotDue,
                 is AutoBackupRunResult.Created,
                 -> Result.success()
             }
+            state.checkpointSnapshot()
+            result
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (logged: Throwable) {

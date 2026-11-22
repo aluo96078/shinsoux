@@ -242,7 +242,7 @@ private suspend fun openDesktopApp(
     } else {
         // C3: the snapshot JSON with its hot rows from the content database, on this I/O thread.
         val repository = openShinsouRepository(
-            loaded = DesktopPersistence.loadSnapshot(),
+            loaded = DesktopPersistence.readSnapshot(),
             file = DesktopPersistence,
             contentInfrastructure = contentInfrastructure,
             hotStateEnabled = !DesktopPersistence.wholeJsonRequested(),

@@ -132,20 +132,34 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
         val revision = metaLong(META_PAIRED_JSON_REVISION)
         val token = queries.meta(META_TOKEN).executeAsOneOrNull()
         if (revision != null && token != null) {
-            HotStatePairing(revision, token, metaLong(META_PENDING_JSON_REVISION), metaLong(META_HOT_REVISION))
+            HotStatePairing(
+                jsonRevision = revision,
+                token = token,
+                pendingJsonRevision = metaLong(META_PENDING_JSON_REVISION),
+                hotRevision = metaLong(META_HOT_REVISION),
+                journaledJsonRevision = metaLong(META_JOURNALED_JSON_REVISION),
+            )
         } else {
             null
         }
     }
 
     override fun setPairing(pairing: HotStatePairing?): Unit = sql {
-        queries.deleteAllMeta().value
+        PAIRING_KEYS.forEach { queries.deleteMeta(it).value }
+        if (pairing?.journaledJsonRevision == null) queries.deleteMeta(META_JOURNALED_JSON).value
         if (pairing != null) {
             queries.putMeta(META_PAIRED_JSON_REVISION, pairing.jsonRevision.toString()).value
             queries.putMeta(META_TOKEN, pairing.token).value
             pairing.pendingJsonRevision?.let { queries.putMeta(META_PENDING_JSON_REVISION, it.toString()).value }
             pairing.hotRevision?.let { queries.putMeta(META_HOT_REVISION, it.toString()).value }
+            pairing.journaledJsonRevision?.let { queries.putMeta(META_JOURNALED_JSON_REVISION, it.toString()).value }
         }
+    }
+
+    override fun journaledJson(): String? = sql { queries.meta(META_JOURNALED_JSON).executeAsOneOrNull() }
+
+    override fun setJournaledJson(json: String?): Unit = sql {
+        if (json == null) queries.deleteMeta(META_JOURNALED_JSON).value else queries.putMeta(META_JOURNALED_JSON, json).value
     }
 
     override fun commit(rows: HotRows, pairing: HotStatePairing): Unit = sql {
@@ -165,6 +179,18 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
         const val META_TOKEN = "token"
         const val META_PENDING_JSON_REVISION = "pending_json_revision"
         const val META_HOT_REVISION = "hot_revision"
+        const val META_JOURNALED_JSON_REVISION = "journaled_json_revision"
+
+        /** The whole snapshot JSON a restore committed with its rows (C3-5), until a whole write pairs one. */
+        const val META_JOURNALED_JSON = "journaled_json"
+
+        val PAIRING_KEYS = listOf(
+            META_PAIRED_JSON_REVISION,
+            META_TOKEN,
+            META_PENDING_JSON_REVISION,
+            META_HOT_REVISION,
+            META_JOURNALED_JSON_REVISION,
+        )
 
         val LocatorJson = Json {
             encodeDefaults = true

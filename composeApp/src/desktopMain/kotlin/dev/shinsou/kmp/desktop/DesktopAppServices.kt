@@ -397,14 +397,18 @@ internal object DesktopPersistence : SnapshotFile {
     }
 
     /**
-     * The saved state, or a fresh one when there is none. A file that exists but cannot be read
-     * fails the start instead: starting empty would let the next save replace the user's library.
-     * A file that reads but does not decode is moved aside (kept recoverable) before starting fresh.
+     * The saved state; null when there is none, or it could not be decoded: the caller tells a
+     * fresh install from a lost JSON by the hot state it finds (C3). A file that exists but cannot
+     * be read fails the start instead: starting empty would let the next save replace the user's
+     * library. A file that reads but does not decode is moved aside (kept recoverable).
      */
-    fun loadSnapshot(): AppSnapshot = loadSnapshot(stateFile)
+    fun readSnapshot(): AppSnapshot? = readSnapshot(stateFile)
 
-    internal fun loadSnapshot(file: Path): AppSnapshot {
-        if (!Files.exists(file)) return AppSnapshot()
+    /** [readSnapshot] of [file], or a fresh state when there is none. */
+    internal fun loadSnapshot(file: Path): AppSnapshot = readSnapshot(file) ?: AppSnapshot()
+
+    internal fun readSnapshot(file: Path): AppSnapshot? {
+        if (!Files.exists(file)) return null
         val payload = try {
             String(Files.readAllBytes(file), StandardCharsets.UTF_8)
         } catch (error: java.io.IOException) {
@@ -417,7 +421,7 @@ internal object DesktopPersistence : SnapshotFile {
             Log.warn("Desktop", logged) { "Saved app state could not be decoded; quarantining it and starting empty" }
             val quarantine = file.resolveSibling("shinsou-state.corrupt-${System.currentTimeMillis()}.json")
             Files.move(file, quarantine, StandardCopyOption.REPLACE_EXISTING)
-            AppSnapshot()
+            null
         }
     }
 

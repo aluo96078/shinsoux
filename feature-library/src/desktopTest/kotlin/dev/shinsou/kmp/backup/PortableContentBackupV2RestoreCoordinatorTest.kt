@@ -68,7 +68,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 
@@ -492,10 +496,62 @@ class PortableContentBackupV2RestoreCoordinatorTest {
         }
     }
 
+    /** C3 fix 1: a process death after the restore's transaction, before its JSON was written. */
+    @Test
+    fun aRestoreCutShortBeforeItsJsonIsWrittenIsReplayedOnTheNextStart() = runTest {
+        val archive = archiveFixture()
+        withRuntime("backup-v2-hot-replay") { driver, foundation ->
+            val store = SqlHotStateStore(driver)
+            val file = MemorySnapshotFile()
+            val local = AppSnapshot(
+                mangas = listOf(Manga(id = 1, source = 1, url = "/local", title = "Local")),
+                chapters = listOf(Chapter(id = 1, mangaId = 1, url = "/local/1", name = "1", read = true, lastPageRead = 3)),
+                histories = listOf(History(id = 1, chapterId = 1, lastRead = 5, timeRead = 9)),
+            )
+            val opened = openSnapshotPersistence(local, file, store)
+            val repository = ShinsouRepository(opened.snapshot, opened.storage)
+            createJournalTable(driver)
+            repository.configureSyncMutationBoundary(
+                observer = journalObserver(driver, archive.inspection.envelope.manifestSha256),
+                guard = null,
+            )
+            val coordinator = PortableContentBackupV2RestoreCoordinator(
+                repository = repository,
+                foundation = foundation,
+                offlineStoreAuthorizer = offlineStoreAuthorizer(foundation),
+            )
+            val before = checkNotNull(file.json)
+            // From here on the file is never written: the process is as good as dead.
+            file.savesFail = true
+
+            coordinator.restore(archive.inspection, archive.encoded)
+            val restored = repository.currentSnapshot
+            // The writer tried the JSON and failed: nothing of it reached the file.
+            withContext(Dispatchers.Default) { withTimeout(10_000) { repository.persistenceFailure.first { it != null } } }
+            assertEquals(before, file.json)
+
+            file.savesFail = false
+            val reopened = openSnapshotPersistence(AppSnapshotJson.decode(before), file, store)
+            assertEquals(HotStateOpening.RESTORE_REPLAYED, reopened.opening)
+            assertEquals(restored.mangas, reopened.snapshot.mangas)
+            assertEquals(restored.chapters, reopened.snapshot.chapters)
+            assertEquals(restored.histories, reopened.snapshot.histories)
+            assertEquals(restored.hotState(), store.load())
+            assertNull(store.journaledJson())
+            val again = openSnapshotPersistence(AppSnapshotJson.decode(checkNotNull(file.json)), file, store)
+            assertEquals(HotStateOpening.SQL_CURRENT, again.opening)
+            assertEquals(reopened.snapshot, again.snapshot)
+        }
+    }
+
     private class MemorySnapshotFile : SnapshotFile {
         var json: String? = null
 
+        /** Set: every save fails, as a dead process writes nothing. */
+        var savesFail = false
+
         override fun save(json: String) {
+            check(!savesFail) { "the process is gone" }
             this.json = json
         }
 

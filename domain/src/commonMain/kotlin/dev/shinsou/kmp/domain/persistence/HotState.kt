@@ -100,13 +100,23 @@ public interface HotStateStore {
     /** Writes [delta] (computed against the rows there). Idempotent. */
     public fun apply(delta: HotDelta)
 
-    /** Deletes every row and the [pairing]. */
+    /** Deletes every row, the [pairing] and the [journaledJson]. */
     public fun clear()
 
     /** Which JSON the rows belong to (§6.3.5–6.3.6); null before the first one was paired. */
     public fun pairing(): HotStatePairing?
 
+    /**
+     * Records [pairing]. The [journaledJson] stays while the pairing still names it
+     * ([HotStatePairing.journaledJsonRevision] not null) and is deleted otherwise.
+     */
     public fun setPairing(pairing: HotStatePairing?)
+
+    /** The whole JSON a host transaction recorded with its rows (C3-5); null when there is none. */
+    public fun journaledJson(): String?
+
+    /** Records [json] as the [journaledJson] (deletes it when null); the pairing must name it. */
+    public fun setJournaledJson(json: String?)
 
     /** In one transaction: brings the rows up to date with [rows] ([writeRows]), then records [pairing]. */
     public fun commit(rows: HotRows, pairing: HotStatePairing)
@@ -131,12 +141,17 @@ public fun HotStateStore.writeRows(rows: HotRows) {
  * the random value that JSON carries in its marker. [pendingJsonRevision] is set while a JSON of
  * that revision is being written, before the rows of that revision are: a JSON on disk at it is
  * newer than the rows. [hotRevision] is the revision the rows were last written at.
+ *
+ * [journaledJsonRevision] is set when a host transaction (a content-backup v2 restore) committed
+ * rows whose cold part the JSON on disk does not have yet: the store then holds that whole JSON
+ * ([HotStateStore.journaledJson]), which goes in place of the file's until a whole write pairs one.
  */
 public data class HotStatePairing(
     val jsonRevision: Long,
     val token: String,
     val pendingJsonRevision: Long? = null,
     val hotRevision: Long? = null,
+    val journaledJsonRevision: Long? = null,
 )
 
 /** The delta that writes every row of this state onto empty tables. */

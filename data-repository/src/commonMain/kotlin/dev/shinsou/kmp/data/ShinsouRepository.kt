@@ -33,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +57,8 @@ import kotlin.time.Clock
 class ShinsouRepository(
     initial: AppSnapshot = AppSnapshot(),
     storage: SnapshotStorage? = null,
+    /** Where the background writer encodes and writes snapshots (a test's dispatcher in tests). */
+    persistenceDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     /** Every write replaces the whole snapshot JSON through [persist] ([WholeJsonSnapshotStorage]). */
     constructor(
@@ -72,6 +75,8 @@ class ShinsouRepository(
         SnapshotPersistenceWorker(
             initial = mutableSnapshot.value,
             storage = it,
+            current = { mutableSnapshot.value },
+            dispatcher = persistenceDispatcher,
         )
     }
 
@@ -356,7 +361,8 @@ class ShinsouRepository(
         val chapters = state.chapters.toMutableList().apply {
             if (existingIndex >= 0) this[existingIndex] = resolved else add(resolved)
         }
-        Mutation(state.copy(chapters = chapters), resolved)
+        val histories = state.histories.fittingPages(mapOf(resolved.id to resolved.lastPageRead))
+        Mutation(state.copy(chapters = chapters, histories = histories), resolved)
     }
 
     suspend fun upsertChapters(chapters: List<Chapter>): List<Chapter> = mutate { state ->
@@ -383,7 +389,8 @@ class ShinsouRepository(
             if (index >= 0) mutable[index] = item else mutable += item
             item
         }
-        Mutation(state.copy(chapters = mutable), resolved)
+        val histories = state.histories.fittingPages(resolved.associate { it.id to it.lastPageRead })
+        Mutation(state.copy(chapters = mutable, histories = histories), resolved)
     }
 
     suspend fun patchChapter(chapterId: Long, patch: ChapterPatch): Chapter = mutate { state ->
@@ -391,7 +398,13 @@ class ShinsouRepository(
         if (index < 0) missing("Chapter", chapterId)
         val updated = state.chapters[index].applying(patch)
         validateChapter(updated)
-        Mutation(state.copy(chapters = state.chapters.toMutableList().apply { this[index] = updated }), updated)
+        Mutation(
+            state.copy(
+                chapters = state.chapters.toMutableList().apply { this[index] = updated },
+                histories = state.histories.fittingPages(mapOf(chapterId to updated.lastPageRead)),
+            ),
+            updated,
+        )
     }
 
     suspend fun deleteChapter(chapterId: Long) {
@@ -612,9 +625,11 @@ class ShinsouRepository(
                 lastPageCount = lastPageCount,
             )
         }
+        // Every other history of the chapter (there may be several) keeps a page count that holds
+        // the new page, or none: a hot write is not validated whole (C3).
         val histories = state.histories.toMutableList().apply {
             if (historyIndex >= 0) this[historyIndex] = history else add(history)
-        }
+        }.fittingPages(mapOf(chapterId to updatedChapter.lastPageRead))
         Mutation(
             state.copy(
                 chapters = state.chapters.toMutableList().apply { this[chapterIndex] = updatedChapter },
@@ -1030,7 +1045,8 @@ class ShinsouRepository(
         Mutation(
             rebound.snapshot.copy(
                 chapters = chapters,
-                histories = rebound.snapshot.histories.filterNot { it.chapterId in removed },
+                histories = rebound.snapshot.histories.filterNot { it.chapterId in removed }
+                    .fittingPages(rewrittenChapters.associate { it.id to it.lastPageRead }),
                 updates = rebound.snapshot.updates.filterNot { it.chapterId in removed },
                 downloadQueue = rebound.snapshot.downloadQueue.filterNot { it.chapterId in removed },
             ),
@@ -1146,8 +1162,10 @@ private suspend fun <T> joinHostTransaction(
 private class SnapshotPersistenceWorker(
     initial: AppSnapshot,
     private val storage: SnapshotStorage,
+    /** The repository's latest snapshot, for a checkpoint the writer starts on its own. */
+    private val current: () -> AppSnapshot,
     /** Where snapshots are encoded and written. */
-    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val dispatcher: CoroutineDispatcher,
 ) {
     private val scopeJob: Job = SupervisorJob()
     private val scope = CoroutineScope(scopeJob + dispatcher)
@@ -1161,16 +1179,25 @@ private class SnapshotPersistenceWorker(
     /** The snapshot whose rows the storage keeps apart; null when unknown (a write failed half-way). */
     private var hotRows: AppSnapshot? = initial
 
-    /** A snapshot whose cold part is that of the JSON on disk. */
-    private var jsonCold: AppSnapshot = initial
+    /**
+     * A snapshot whose cold part is that of the JSON on disk; null when unknown (a write failed
+     * half-way): the next write is then the whole JSON with every row, a consistent baseline.
+     */
+    private var jsonCold: AppSnapshot? = initial
 
     /** The revision of the snapshot whose JSON, hot fields included, is on disk. */
     private var jsonRevision: Long = storage.revisionOnDisk ?: initial.revision
+
+    /** The whole write the writer scheduled on its own while the JSON is behind the rows. */
+    private var checkpoint: Job? = null
 
     val failure: StateFlow<Throwable?> = mutableFailure.asStateFlow()
 
     init {
         launchPersistenceLoop()
+        // Hot rows written in an earlier run that no JSON has yet (C3): an Android backup or an
+        // older version reads the JSON alone, so it is written whole soon, not at the next change.
+        if (storage.keepsHotApart && jsonRevision < initial.revision) scheduleCheckpoint(atOpen = true)
     }
 
     fun enqueue(snapshot: AppSnapshot) {
@@ -1213,10 +1240,16 @@ private class SnapshotPersistenceWorker(
             var committed = false
             try {
                 block { next ->
-                    storage.write(next.revision, json = null, hot = hotRowsFor(next))
+                    // A cold part the JSON on disk does not have (a restore) is recorded with the
+                    // rows: a process death before the next whole write must not pair the rows with
+                    // the older JSON.
+                    val cold = jsonCold
+                    val json = if (cold == null || coldChanged(cold, next)) encodeJson(next) else null
+                    storage.writeInHostTransaction(next.revision, json, hotRowsFor(next))
                     joined = next
                 }.also { committed = true }
             } finally {
+                storage.hostTransactionEnded(committed && joined != null)
                 // When the host failed, its transaction rolled back as far as anyone knows: the
                 // next write puts every row in place rather than trusting either state.
                 if (joined != null) hotRows = if (committed) joined else null
@@ -1244,12 +1277,34 @@ private class SnapshotPersistenceWorker(
         writeMutex.withLock {
             if (alreadyWritten(snapshot, wholeSnapshot)) return@withLock
             val split = storage.keepsHotApart
-            val writeJson = !split || wholeSnapshot || coldChanged(jsonCold, snapshot) || storage.jsonRefreshDue()
+            val cold = jsonCold
+            val writeJson = !split || wholeSnapshot || cold == null || coldChanged(cold, snapshot) || storage.jsonRefreshDue()
             // Written even when only the revision moved: it is recorded with the rows, so a restart
             // never hands out a revision again.
             write(snapshot, writeJson, if (split) hotRowsFor(snapshot) else HotRows.Unchanged)
             writtenRevision = snapshot.revision
             mutableFailure.value = null
+            if (split && jsonRevision < snapshot.revision) scheduleCheckpoint(atOpen = false)
+        }
+    }
+
+    /**
+     * Writes the whole JSON after the storage's delay unless one is scheduled already: hot rows are
+     * then never more than that delay ahead of the JSON, even when no change follows them.
+     */
+    private fun scheduleCheckpoint(atOpen: Boolean) {
+        if (checkpoint?.isActive == true) return
+        val after = storage.jsonCheckpointDelay(atOpen) ?: return
+        checkpoint = scope.launch {
+            delay(after)
+            try {
+                persistIfNewer(current(), wholeSnapshot = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // As the loop does: the next write or flush retries, the failure is exposed.
+                mutableFailure.value = error
+            }
         }
     }
 
@@ -1268,20 +1323,28 @@ private class SnapshotPersistenceWorker(
     private fun write(snapshot: AppSnapshot, writeJson: Boolean, hot: HotRows) {
         // validate() runs on the whole snapshot only when it is written whole; the hot rows were
         // checked one by one when they were changed.
-        val json = if (writeJson) AppSnapshotJson.encode(snapshot.withHotStateMarker(storage.jsonMarker).validate()) else null
+        val json = if (writeJson) encodeJson(snapshot) else null
         var written = false
         try {
             storage.write(snapshot.revision, json, hot)
             written = true
         } finally {
-            // A write that failed may have failed half-way: the next one puts every row in place.
-            if (storage.keepsHotApart) hotRows = if (written) snapshot else null
+            // A write that failed may have failed half-way (the JSON written, its commit not): the
+            // next one writes the whole JSON and puts every row in place, under a new pairing.
+            if (storage.keepsHotApart) {
+                hotRows = if (written) snapshot else null
+                if (!written) jsonCold = null
+            }
         }
         if (json != null) {
             jsonCold = snapshot
             jsonRevision = snapshot.revision
         }
     }
+
+    /** [snapshot] encoded whole, after a whole validate(), with the marker of the storage's next JSON. */
+    private fun encodeJson(snapshot: AppSnapshot): String =
+        AppSnapshotJson.encode(snapshot.withHotStateMarker(storage.jsonMarker).validate())
 
     /** The rows to write so the storage holds [snapshot]'s. */
     private fun hotRowsFor(snapshot: AppSnapshot): HotRows {

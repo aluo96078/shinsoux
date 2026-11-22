@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.data
 
+import dev.shinsou.kmp.domain.model.History
+import dev.shinsou.kmp.domain.model.validate
 import dev.shinsou.kmp.domain.persistence.ChapterProgress
 import dev.shinsou.kmp.domain.persistence.HotDelta
 import dev.shinsou.kmp.domain.persistence.HotRows
@@ -14,6 +16,7 @@ import dev.shinsou.kmp.logging.Log
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /*
@@ -25,18 +28,28 @@ import kotlin.time.TimeSource
  * current is told by the pairing the rows record: the JSON on disk carries the marker
  * `hot-state-sql:v1:<token>` and the rows go with it when they record the same token and the JSON's
  * revision as theirs. Anything else (an older version wrote the JSON after this one, the database
- * is new or lost, a JSON from elsewhere) and the JSON wins: the rows are rebuilt from it.
+ * is new, a JSON from elsewhere) and the JSON wins: the rows are rebuilt from it.
  *
- * Every write that carries the JSON goes: record its revision as pending, write the file, then in
- * one transaction the rows and the pairing with the new revision. A JSON on disk at the pending
- * revision is therefore newer than the rows (a crash came between the file and the transaction):
- * it wins, and loses nothing.
+ * Every write that carries the JSON goes: record its revision as pending, write the file under a
+ * token of its own (a new one for every JSON written, so two copies of one library never share
+ * one), then in one transaction the rows and the pairing with the new revision and token. A JSON
+ * on disk that this transaction did not follow (a crash or a failed commit came between the file
+ * and it) pairs with nothing: it wins, and loses nothing. The pairing advances in memory only once
+ * its commit succeeded.
+ *
+ * The rows are never cleared on behalf of a JSON that is not there: when the JSON is missing or
+ * unreadable (quarantined), or the rows do not fit it, they are kept as they are for that JSON to
+ * come back (a copy put back, a backup restored), and the app writes its JSON whole, marked
+ * `hot-state-sql:kept:<token>` so that the next start keeps them too.
  */
 
 /** The prefix of the marker the JSON carries in [AppSnapshot.contentAuthorityProjectionMarkers]. */
 const val HOT_STATE_MARKER_PREFIX: String = "hot-state-sql:"
 
 private const val HOT_STATE_MARKER_V1: String = "${HOT_STATE_MARKER_PREFIX}v1:"
+
+/** The marker of a JSON written while the rows of the pairing with its token were kept, unused. */
+private const val HOT_STATE_MARKER_KEPT: String = "${HOT_STATE_MARKER_PREFIX}kept:"
 
 /** Beside `shinsou-state.json`: its copy taken once, before its hot rows first moved into SQL. */
 const val BEFORE_HOT_STATE_SUFFIX: String = ".before-hot-state"
@@ -56,7 +69,8 @@ interface SnapshotFile {
     /**
      * Copies the file to `shinsou-state.json.before-hot-state` unless that copy is already there,
      * through a temporary file so that a copy cut short is never taken for it (§6.3.5 step 1).
-     * True when the copy is there afterwards, or there is no file to copy.
+     * True when the copy is there afterwards, or there is no file to copy (a fresh install: a JSON
+     * missing beside a pairing never gets as far as the migration).
      */
     fun keepCopyBeforeHotState(): Boolean
 }
@@ -66,11 +80,20 @@ enum class HotStateOpening(val keepsHotApart: Boolean) {
     /** The rows were current and are applied over the JSON. */
     SQL_CURRENT(true),
 
+    /** A restore had committed its rows and its JSON to the database, not yet to the file: written now. */
+    RESTORE_REPLAYED(true),
+
     /** First start with hot rows: the JSON was copied, its rows written and the JSON marked. */
     MIGRATED(true),
 
     /** The JSON was newer than the rows, or the rows were not this JSON's: rebuilt from it. */
     REBUILT_FROM_JSON(true),
+
+    /**
+     * The JSON the rows go with is missing or unreadable, or the rows do not fit it: the rows are
+     * kept, untouched, for that JSON to come back; whole JSON meanwhile, marked as written beside them.
+     */
+    ROWS_KEPT(false),
 
     /** The off-switch is set: the rows are read (when current) but never written. */
     OFF_SWITCH(false),
@@ -78,7 +101,7 @@ enum class HotStateOpening(val keepsHotApart: Boolean) {
     /** No hot store could be opened or read: whole JSON, as before C3. */
     STORE_UNAVAILABLE(false),
 
-    /** The copy or the migration failed: whole JSON for this run; the next start tries again. */
+    /** The copy, the migration or a write at opening failed: whole JSON for this run; the next start tries again. */
     MIGRATION_FAILED(false),
 }
 
@@ -90,34 +113,44 @@ class OpenedSnapshot(
 )
 
 /**
- * Pairs [loaded], the decoded snapshot JSON, with the hot rows of [store] (null when the store could
- * not be opened) and returns the snapshot to start from. Runs the one-time migration (§6.3.5), each
- * of whose steps is safe to repeat after a crash before the next. Blocking SQL and file work: never
- * on the main thread. With [hotStateEnabled] false (the off-switch), nothing is written to the
- * store and every later write is the whole JSON.
+ * Pairs [loaded], the decoded snapshot JSON (null when there is none, or it could not be read and
+ * was quarantined), with the hot rows of [store] (null when the store could not be opened) and
+ * returns the snapshot to start from. Runs the one-time migration (§6.3.5), each of whose steps is
+ * safe to repeat after a crash before the next. Blocking SQL and file work: never on the main
+ * thread. With [hotStateEnabled] false (the off-switch), nothing is written to the store and every
+ * later write is the whole JSON.
  */
 fun openSnapshotPersistence(
-    loaded: AppSnapshot,
+    loaded: AppSnapshot?,
     file: SnapshotFile,
     store: HotStateStore?,
     hotStateEnabled: Boolean = true,
     newToken: () -> String = ::randomHotStateToken,
 ): OpenedSnapshot {
-    val json = loaded.withHotStateMarker(null)
-    val pairing = try {
-        store?.pairing()
-    } catch (logged: Exception) {
-        Log.warn(LOG_TAG, logged) { "The hot state could not be read; writing the whole snapshot" }
-        return OpenedSnapshot(json, WholeJsonSnapshotStorage(file::save), HotStateOpening.STORE_UNAVAILABLE)
-    }
-    val token = loaded.hotStateToken()
-    val paired = pairing != null && pairing.token == token && pairing.jsonRevision == loaded.revision
+    val json = (loaded ?: AppSnapshot()).withHotStateMarker(null)
+    val keptToken = loaded?.markerToken(HOT_STATE_MARKER_KEPT)
+    val read = store?.let(::readPairing)
+    if (store == null || read == null) return wholeJson(json, file, HotStateOpening.STORE_UNAVAILABLE, keptToken)
+    val pairing = read.pairing
+    val token = loaded?.markerToken(HOT_STATE_MARKER_V1)
+    val paired = pairing != null && pairing.token == token && pairing.jsonRevision == json.revision
     return when {
-        store == null -> OpenedSnapshot(json, WholeJsonSnapshotStorage(file::save), HotStateOpening.STORE_UNAVAILABLE)
+        // A fresh install has neither a JSON nor a pairing; a pairing without its JSON is a JSON lost.
+        pairing != null && (loaded == null || keptToken == pairing.token) -> keepRows(json, file, pairing, missing = loaded == null)
         !hotStateEnabled -> openWithOffSwitch(json, file, store, pairing.takeIf { paired })
-        else -> (if (paired) withCurrentRows(json, file, store, checkNotNull(pairing)) else null)
-            ?: migrate(json, file, store, token, newToken)
+        paired -> withCurrentRows(json, file, store, checkNotNull(pairing), newToken)
+        else -> migrate(json, file, store, first = token == null, newToken)
     }
+}
+
+/** The pairing [store] holds (null inside when none); null when the store cannot be read. */
+private class PairingRead(val pairing: HotStatePairing?)
+
+private fun readPairing(store: HotStateStore): PairingRead? = try {
+    PairingRead(store.pairing())
+} catch (logged: Exception) {
+    Log.warn(LOG_TAG, logged) { "The hot state could not be read; writing the whole snapshot" }
+    null
 }
 
 /** A random token for a pairing: 128 bits as hex. */
@@ -131,50 +164,116 @@ internal fun AppSnapshot.withHotStateMarker(marker: String?): AppSnapshot {
     return if (markers == contentAuthorityProjectionMarkers) this else copy(contentAuthorityProjectionMarkers = markers)
 }
 
-private fun AppSnapshot.hotStateToken(): String? =
-    contentAuthorityProjectionMarkers.firstOrNull { it.startsWith(HOT_STATE_MARKER_V1) }?.removePrefix(HOT_STATE_MARKER_V1)
+private fun AppSnapshot.markerToken(prefix: String): String? =
+    contentAuthorityProjectionMarkers.firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix)
+
+/**
+ * Every write the whole JSON, as before C3, starting from [snapshot] (newer than [json] when rows
+ * were applied to it); marked as written beside kept rows when [keptToken] is set.
+ */
+private fun wholeJson(
+    json: AppSnapshot,
+    file: SnapshotFile,
+    opening: HotStateOpening,
+    keptToken: String?,
+    snapshot: AppSnapshot = json,
+): OpenedSnapshot = OpenedSnapshot(
+    snapshot = snapshot,
+    storage = WholeJsonSnapshotStorage(
+        persist = file::save,
+        revisionOnDisk = json.revision.takeIf { snapshot !== json },
+        jsonMarker = keptToken?.let { HOT_STATE_MARKER_KEPT + it },
+    ),
+    opening = opening,
+)
+
+/**
+ * No JSON goes with the rows of [pairing] (it is [missing], or the rows do not fit it): the rows
+ * stay as they are, never cleared here, for the JSON of that pairing to come back to.
+ */
+private fun keepRows(json: AppSnapshot, file: SnapshotFile, pairing: HotStatePairing, missing: Boolean): OpenedSnapshot {
+    Log.warn(LOG_TAG) {
+        val reason = if (missing) "No readable snapshot goes with" else "The snapshot does not fit"
+        "$reason the hot state of revision ${pairing.hotRevision ?: pairing.jsonRevision}; keeping it apart, unused"
+    }
+    return wholeJson(json, file, HotStateOpening.ROWS_KEPT, pairing.token)
+}
 
 /** The rows are read when they are current, never written; every write is the whole JSON. */
 private fun openWithOffSwitch(json: AppSnapshot, file: SnapshotFile, store: HotStateStore, current: HotStatePairing?): OpenedSnapshot {
-    val combined = current?.let { readCombined(json, store, it.hotRevision)?.first }
     Log.info(LOG_TAG) { "The hot state is switched off; writing the whole snapshot" }
-    return OpenedSnapshot(
-        snapshot = combined ?: json,
-        storage = WholeJsonSnapshotStorage(file::save, revisionOnDisk = json.revision),
-        opening = HotStateOpening.OFF_SWITCH,
-    )
-}
-
-/** The JSON with the current rows applied, the rows of deleted chapters pruned; null when they do not fit it. */
-private fun withCurrentRows(json: AppSnapshot, file: SnapshotFile, store: HotStateStore, pairing: HotStatePairing): OpenedSnapshot? {
-    val (snapshot, pruned) = readCombined(json, store, pairing.hotRevision) ?: return null
-    return try {
-        val revision = snapshot.revision
-        val current = pairing.copy(pendingJsonRevision = null, hotRevision = revision)
-        if (!pruned.isEmpty || current != pairing) store.commit(HotRows.Changed(pruned), current)
-        OpenedSnapshot(snapshot, HotStateSnapshotStorage(file, store, current, revisionOnDisk = json.revision), HotStateOpening.SQL_CURRENT)
-    } catch (logged: Exception) {
-        Log.warn(LOG_TAG, logged) { "Pruning the hot state failed; rebuilding it from the snapshot" }
-        null
+    val combined = current?.let { combine(json, store, it) }
+    return when {
+        current == null -> wholeJson(json, file, HotStateOpening.OFF_SWITCH, keptToken = null)
+        combined == null -> keepRows(json, file, current, missing = false)
+        else -> wholeJson(json, file, HotStateOpening.OFF_SWITCH, keptToken = null, snapshot = combined.snapshot)
     }
 }
 
-private fun readCombined(json: AppSnapshot, store: HotStateStore, hotRevision: Long?): Pair<AppSnapshot, HotDelta>? = try {
-    withRows(json, store.load(), hotRevision)
+/** The JSON (or the one a restore journaled) with the rows applied, and the rows to prune. */
+private class Combined(val snapshot: AppSnapshot, val pruned: HotDelta, val journaled: Boolean)
+
+/** [json], or the JSON [pairing] journaled, with the rows of [store]; null when they do not fit it. */
+private fun combine(json: AppSnapshot, store: HotStateStore, pairing: HotStatePairing): Combined? = try {
+    val journaled = pairing.journaledJsonRevision?.let { revision ->
+        val decoded = store.journaledJson()?.let(AppSnapshotJson::decode)?.withHotStateMarker(null)
+        checkNotNull(decoded?.takeIf { it.revision == revision }) { "The journaled snapshot of revision $revision is missing" }
+    }
+    val (snapshot, pruned) = withRows(journaled ?: json, store.load(), pairing.hotRevision)
+    Combined(snapshot, pruned, journaled != null)
 } catch (logged: Exception) {
-    // Unreadable rows, or rows that do not validate against this JSON: the JSON is used whole.
-    Log.warn(LOG_TAG, logged) { "The hot state did not fit the snapshot; using the snapshot's own" }
+    // Unreadable rows, or rows that do not validate against this JSON even once repaired.
+    Log.warn(LOG_TAG, logged) { "The hot state did not fit the snapshot" }
     null
 }
 
 /**
+ * The JSON with the current rows applied, the rows of deleted chapters pruned; a JSON a restore
+ * journaled is written to the file first. Rows that do not fit are kept, unused.
+ */
+private fun withCurrentRows(
+    json: AppSnapshot,
+    file: SnapshotFile,
+    store: HotStateStore,
+    pairing: HotStatePairing,
+    newToken: () -> String,
+): OpenedSnapshot {
+    val combined = combine(json, store, pairing) ?: return keepRows(json, file, pairing, missing = false)
+    val snapshot = combined.snapshot
+    return try {
+        val current = pairing.copy(pendingJsonRevision = null, hotRevision = snapshot.revision)
+        if (!combined.pruned.isEmpty || current != pairing) store.commit(HotRows.Changed(combined.pruned), current)
+        if (combined.journaled) {
+            val storage = HotStateSnapshotStorage(file, store, current, newToken = newToken)
+            val encoded = AppSnapshotJson.encode(snapshot.withHotStateMarker(storage.jsonMarker).validate())
+            storage.write(snapshot.revision, encoded, HotRows.Unchanged)
+            Log.info(LOG_TAG) { "Wrote the snapshot of an interrupted restore (revision ${snapshot.revision})" }
+            OpenedSnapshot(snapshot, storage, HotStateOpening.RESTORE_REPLAYED)
+        } else {
+            val storage = HotStateSnapshotStorage(file, store, current, revisionOnDisk = json.revision, newToken = newToken)
+            OpenedSnapshot(snapshot, storage, HotStateOpening.SQL_CURRENT)
+        }
+    } catch (logged: Exception) {
+        // The rows were read: the snapshot is complete. Written whole and unmarked, it is migrated
+        // again on the next start; never written, the rows still pair with the JSON there.
+        Log.warn(LOG_TAG, logged) { "Writing the hot state at opening failed; writing the whole snapshot for now" }
+        wholeJson(json, file, HotStateOpening.MIGRATION_FAILED, keptToken = null, snapshot = snapshot)
+    }
+}
+
+/**
  * [json] with [rows] in place of its hot fields, and the delta that deletes the rows of chapters
- * the JSON no longer has (C3-4: a chapter deleted while its rows were written) and renumbers the
- * lists after them.
+ * the JSON no longer has (C3-4: a chapter deleted while its rows were written), puts back the
+ * histories repaired to fit their chapter, and renumbers the lists after them.
  */
 private fun withRows(json: AppSnapshot, rows: HotState, hotRevision: Long?): Pair<AppSnapshot, HotDelta> {
     val chapterById = json.chapters.associateBy { it.id }
-    val histories = rows.histories.filter { it.chapterId in chapterById }
+    var historiesRepaired = false
+    val histories = rows.histories.mapNotNull { history ->
+        if (history.chapterId !in chapterById) return@mapNotNull null
+        val lastPageRead = (rows.chapterProgress[history.chapterId] ?: ChapterProgress.DEFAULT).lastPageRead
+        history.repairedFor(lastPageRead).also { if (it !== history) historiesRepaired = true }
+    }
     val downloads = rows.downloads.filter { chapterById[it.chapterId]?.mangaId == it.mangaId }
     val snapshot = json.copy(
         revision = maxOf(json.revision, hotRevision ?: 0L),
@@ -182,42 +281,59 @@ private fun withRows(json: AppSnapshot, rows: HotState, hotRevision: Long?): Pai
         histories = histories,
         downloadQueue = downloads,
     ).validate()
-    val historiesPruned = histories.size != rows.histories.size
+    val historiesRewritten = historiesRepaired || histories.size != rows.histories.size
     val downloadsPruned = downloads.size != rows.downloads.size
     val pruned = HotDelta(
         removedProgress = rows.chapterProgress.keys.filterTo(HashSet()) { it !in chapterById },
-        histories = if (historiesPruned) histories.mapIndexed(::Ordered) else emptyList(),
-        removedHistories = if (historiesPruned) (rows.histories - histories.toSet()).mapTo(HashSet()) { it.id } else emptySet(),
+        histories = if (historiesRewritten) histories.mapIndexed(::Ordered) else emptyList(),
+        removedHistories = if (historiesRewritten) keysNotIn(rows.histories, histories) { it.id } else emptySet(),
         downloads = if (downloadsPruned) downloads.mapIndexed(::Ordered) else emptyList(),
-        removedDownloads = if (downloadsPruned) (rows.downloads - downloads.toSet()).mapTo(HashSet()) { it.id } else emptySet(),
+        removedDownloads = if (downloadsPruned) keysNotIn(rows.downloads, downloads) { it.id } else emptySet(),
     )
     return snapshot to pruned
 }
 
+private inline fun <T, K> keysNotIn(all: List<T>, kept: List<T>, key: (T) -> K): Set<K> {
+    val keptKeys = kept.mapTo(HashSet()) { key(it) }
+    return all.mapNotNullTo(HashSet()) { value -> key(value).takeIf { it !in keptKeys } }
+}
+
 /**
- * The JSON wins (§6.3.5-6.3.6). A JSON never marked is migrated: copied once, its rows written with
- * a new token in one transaction, then marked and written whole. A marked one only has its rows
- * rebuilt, under its own token. A crash between any two steps leaves an unmarked or unpaired JSON
- * with its data, and the next start does the same again.
+ * This history as validate() takes it beside a chapter at [lastPageRead]: a reader page count that
+ * no longer holds the page, or a locator that does not validate, is dropped (both are hints the
+ * reader computes again). Rows kept apart from the JSON were not validated whole when written.
+ */
+private fun History.repairedFor(lastPageRead: Int): History {
+    val fitted = fittingPage(lastPageRead)
+    val locator = fitted.lastLocator
+    return if (locator == null || runCatching { locator.validate() }.isSuccess) fitted else fitted.copy(lastLocator = null)
+}
+
+/**
+ * The JSON wins (§6.3.5-6.3.6). A JSON never marked is migrated: copied once ([first]), its rows
+ * written in one transaction, then marked and written whole. A marked one has its rows rebuilt and
+ * is written again under a new token, so a copy of it elsewhere never pairs with these rows. A
+ * crash between any two steps leaves an unmarked or unpaired JSON with its data, and the next start
+ * does the same again.
  */
 private fun migrate(
     json: AppSnapshot,
     file: SnapshotFile,
     store: HotStateStore,
-    token: String?,
+    first: Boolean,
     newToken: () -> String,
 ): OpenedSnapshot {
-    val first = token == null
     if (first && !file.keepCopyBeforeHotState()) {
         Log.warn(LOG_TAG) { "The snapshot could not be copied before its hot state moved; writing it whole for now" }
-        return OpenedSnapshot(json, WholeJsonSnapshotStorage(file::save), HotStateOpening.MIGRATION_FAILED)
+        return wholeJson(json, file, HotStateOpening.MIGRATION_FAILED, keptToken = null)
     }
     return try {
-        val pairing = HotStatePairing(json.revision, token ?: newToken(), hotRevision = json.revision)
+        // A token no JSON carries: until the JSON below is written, the rows pair with nothing.
+        val pairing = HotStatePairing(json.revision, newToken(), hotRevision = json.revision)
         store.commit(HotRows.All(json.hotState()), pairing)
-        val storage = HotStateSnapshotStorage(file, store, pairing, revisionOnDisk = null)
+        val storage = HotStateSnapshotStorage(file, store, pairing, newToken = newToken)
+        storage.write(json.revision, AppSnapshotJson.encode(json.withHotStateMarker(storage.jsonMarker).validate()), HotRows.Unchanged)
         if (first) {
-            storage.write(json.revision, AppSnapshotJson.encode(json.withHotStateMarker(storage.jsonMarker).validate()), HotRows.Unchanged)
             Log.info(LOG_TAG) { "Moved the hot state of the snapshot (revision ${json.revision}) into the content database" }
         } else {
             Log.info(LOG_TAG) { "The snapshot (revision ${json.revision}) is newer than its hot state; rebuilt the hot state from it" }
@@ -225,47 +341,89 @@ private fun migrate(
         OpenedSnapshot(json, storage, if (first) HotStateOpening.MIGRATED else HotStateOpening.REBUILT_FROM_JSON)
     } catch (logged: Exception) {
         Log.warn(LOG_TAG, logged) { "Moving the hot state failed; writing the whole snapshot for now" }
-        OpenedSnapshot(json, WholeJsonSnapshotStorage(file::save), HotStateOpening.MIGRATION_FAILED)
+        wholeJson(json, file, HotStateOpening.MIGRATION_FAILED, keptToken = null)
     }
 }
 
 /**
  * The snapshot written in two halves: hot-only changes as rows of [store], the whole JSON to
- * [file] when the cold part changed, on a lifecycle flush, and at least every [refreshEvery] while
- * hot rows keep changing (so the JSON an older version would read stays recent).
+ * [file] when the cold part changed, on a lifecycle flush, and at least every [JsonRefresh.every] while
+ * hot rows keep changing (so the JSON an older version, or a backup of the app's files, would read
+ * stays recent); the writer also schedules such a write on its own ([jsonCheckpointDelay]).
  */
 class HotStateSnapshotStorage internal constructor(
     private val file: SnapshotFile,
     private val store: HotStateStore,
-    /** The pairing as the store holds it. */
-    private var pairing: HotStatePairing,
+    /** The pairing as the store holds it: advanced only once a commit of it succeeded. */
+    private var committed: HotStatePairing,
     override val revisionOnDisk: Long? = null,
-    private val timeSource: TimeSource = TimeSource.Monotonic,
-    private val refreshEvery: Duration = JSON_REFRESH_INTERVAL,
+    private val refresh: JsonRefresh = JsonRefresh(),
+    private val newToken: () -> String = ::randomHotStateToken,
 ) : SnapshotStorage {
+    /** How often hot changes alone rewrite the JSON, timed by [timeSource]. */
+    class JsonRefresh(val every: Duration = JSON_REFRESH_INTERVAL, val timeSource: TimeSource = TimeSource.Monotonic)
+
+    private val timeSource: TimeSource get() = refresh.timeSource
+    private val refreshEvery: Duration get() = refresh.every
+
     override val keepsHotApart: Boolean get() = true
 
-    override val jsonMarker: String = HOT_STATE_MARKER_V1 + pairing.token
+    /** The token of the next JSON written: a new one for every JSON. */
+    private var nextToken = newToken()
+
+    override val jsonMarker: String get() = HOT_STATE_MARKER_V1 + nextToken
+
+    /** The pairing a host transaction wrote, until it is known to have committed. */
+    private var joined: HotStatePairing? = null
 
     private var lastJson = timeSource.markNow()
 
     override fun jsonRefreshDue(): Boolean = lastJson.elapsedNow() >= refreshEvery
 
+    override fun jsonCheckpointDelay(atOpen: Boolean): Duration = if (atOpen) CHECKPOINT_AFTER_OPEN else refreshEvery
+
+    /** [json], when not null, carries the [jsonMarker] read just before this call. */
     override fun write(revision: Long, json: String?, hot: HotRows) {
+        var paired = committed
         if (json != null) {
+            // Whatever becomes of this write, no later JSON carries its token.
+            val token = nextToken
+            nextToken = newToken()
             // From here until the commit below, a JSON at this revision is newer than the rows.
-            store.setPairing(pairing.copy(pendingJsonRevision = revision))
+            val pending = committed.copy(pendingJsonRevision = revision)
+            store.setPairing(pending)
+            committed = pending
             file.save(json)
-            pairing = pairing.copy(jsonRevision = revision)
             lastJson = timeSource.markNow()
+            paired = pending.copy(jsonRevision = revision, token = token, journaledJsonRevision = null)
         }
-        val next = pairing.copy(pendingJsonRevision = null, hotRevision = revision)
+        val next = paired.copy(pendingJsonRevision = null, hotRevision = revision)
         store.commit(hot, next)
-        pairing = next
+        committed = next
+    }
+
+    override fun writeInHostTransaction(revision: Long, json: String?, hot: HotRows) {
+        val next = committed.copy(
+            pendingJsonRevision = null,
+            hotRevision = revision,
+            journaledJsonRevision = if (json != null) revision else committed.journaledJsonRevision,
+        )
+        store.commit(hot, next)
+        if (json != null) store.setJournaledJson(json)
+        joined = next
+    }
+
+    override fun hostTransactionEnded(committed: Boolean) {
+        val written = joined
+        joined = null
+        if (committed && written != null) this.committed = written
     }
 
     internal companion object {
         val JSON_REFRESH_INTERVAL: Duration = 10.minutes
+
+        /** Hot rows an earlier run wrote but no JSON has yet: written whole soon after the start. */
+        val CHECKPOINT_AFTER_OPEN: Duration = 30.seconds
     }
 }
 

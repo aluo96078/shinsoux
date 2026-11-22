@@ -22,7 +22,11 @@ internal class AndroidSnapshotPersistence(context: Context) : SnapshotFile {
     private val stateFile = File(applicationContext.filesDir, STATE_FILE_NAME)
     private val lock = Any()
 
-    fun load(): AppSnapshot = synchronized(lock) {
+    /**
+     * The saved state; null when there is none, or it could not be decoded and was quarantined:
+     * the caller tells a fresh install from a lost JSON by the hot state it finds (C3).
+     */
+    fun load(): AppSnapshot? = synchronized(lock) {
         loadStateFile()?.let { return@synchronized it }
 
         val legacyPreferences = applicationContext.getSharedPreferences(
@@ -30,11 +34,11 @@ internal class AndroidSnapshotPersistence(context: Context) : SnapshotFile {
             Context.MODE_PRIVATE,
         )
         val legacyPayload = legacyPreferences.getString(LEGACY_STATE_KEY, null)
-            ?: return@synchronized AppSnapshot()
+            ?: return@synchronized null
         val migrated = runCatching { AppSnapshotJson.decode(legacyPayload) }
             .onFailure { Log.warn("Storage", it) { "Legacy app state could not be decoded; starting empty" } }
             .getOrNull()
-            ?: return@synchronized AppSnapshot()
+            ?: return@synchronized null
 
         runCatching { saveLocked(legacyPayload) }
             .onFailure { Log.warn("Storage", it) { "Migrating legacy app state to its file failed; keeping the legacy copy" } }

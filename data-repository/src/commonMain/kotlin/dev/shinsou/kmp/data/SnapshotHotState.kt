@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.data
 
 import dev.shinsou.kmp.domain.model.Chapter
+import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.persistence.ChapterProgress
 import dev.shinsou.kmp.domain.persistence.HotDelta
 import dev.shinsou.kmp.domain.persistence.HotState
@@ -118,3 +119,27 @@ private fun <T, K> orderedDelta(previous: List<T>, next: List<T>, key: (T) -> K)
 }
 
 private val NO_PROGRESS_CHANGE: ProgressDelta = Pair(emptyMap(), emptySet())
+
+/**
+ * This history without its reader page count when that no longer holds a chapter at
+ * [lastPageRead] (validate() requires it to): a rendition hint the reader computes again.
+ */
+internal fun History.fittingPage(lastPageRead: Int): History {
+    val count = lastPageCount ?: return this
+    return if (count > 0 && lastPageRead < count) this else copy(lastPageCount = null)
+}
+
+/**
+ * [this] histories with every history of a chapter in [lastPageReadByChapter] fitted to its new
+ * page ([fittingPage]); the same list when none had to change. A chapter may have several
+ * histories, and a hot write is not validated whole: each of them has to stay valid.
+ */
+internal fun List<History>.fittingPages(lastPageReadByChapter: Map<Long, Int>): List<History> {
+    if (lastPageReadByChapter.isEmpty() || none { it.lastPageCount != null && it.chapterId in lastPageReadByChapter }) return this
+    var changed = false
+    val fitted = map { history ->
+        val lastPageRead = lastPageReadByChapter[history.chapterId] ?: return@map history
+        history.fittingPage(lastPageRead).also { if (it !== history) changed = true }
+    }
+    return if (changed) fitted else this
+}

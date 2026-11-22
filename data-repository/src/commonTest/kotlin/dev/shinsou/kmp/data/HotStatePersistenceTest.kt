@@ -176,8 +176,12 @@ class HotStatePersistenceTest {
         assertEquals(HotStateOpening.REBUILT_FROM_JSON, reopened.opening)
         assertEquals(olderWrote.withHotStateMarker(null), reopened.snapshot)
         assertEquals(olderWrote.hotState(), store.rows)
-        assertEquals(HotStatePairing(olderWrote.revision, token, hotRevision = olderWrote.revision), store.meta)
-        // Paired again: the next start takes the rows.
+        // Paired again under a new token, the JSON written with it (C3 fix 6: a new pairing
+        // generation on every rebuild): the next start takes the rows.
+        val rebuilt = checkNotNull(store.meta)
+        assertTrue(rebuilt.token != token)
+        assertEquals(HotStatePairing(olderWrote.revision, rebuilt.token, hotRevision = olderWrote.revision), rebuilt)
+        assertEquals(setOf(HOT_STATE_MARKER_PREFIX + "v1:" + rebuilt.token), file.load().contentAuthorityProjectionMarkers)
         assertEquals(HotStateOpening.SQL_CURRENT, open(file, store).opening)
         repository.closePersistence()
     }
@@ -323,7 +327,7 @@ class HotStatePersistenceTest {
         val time = TestTimeSource()
         val library = hotLibrary()
         store.commit(HotRows.All(library.hotState()), HotStatePairing(library.revision, "t"))
-        val storage = HotStateSnapshotStorage(file, store, HotStatePairing(library.revision, "t"), timeSource = time, refreshEvery = 10.minutes)
+        val storage = HotStateSnapshotStorage(file, store, HotStatePairing(library.revision, "t"), refresh = HotStateSnapshotStorage.JsonRefresh(10.minutes, time))
         val repository = ShinsouRepository(library, storage)
 
         repository.markChapterProgress(4, lastPageRead = 3, read = false, readAt = 5_000L)
@@ -381,7 +385,7 @@ class HotStatePersistenceTest {
     }
 
     private fun open(file: FakeSnapshotFile, store: FakeHotStateStore): OpenedSnapshot =
-        openSnapshotPersistence(file.load(), file, store, newToken = { "token-${tokens++}" })
+        openSnapshotPersistence(file.read(), file, store, newToken = { "token-${tokens++}" })
 
     private var tokens = 0
 

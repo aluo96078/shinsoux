@@ -104,8 +104,43 @@ class HotStateDesktopStartupTest {
         directory.toFile().deleteRecursively()
     }
 
+    /** C3 fix 2: a state file that no longer decodes is quarantined; the rows outlive it. */
+    @Test
+    fun aQuarantinedStateFileLeavesTheRowsForItsCopyToComeBack() = runTest {
+        val directory = Files.createTempDirectory("hot-state-quarantine")
+        val state = directory.resolve("shinsou-state.json").apply { writeText(AppSnapshotJson.encode(library())) }
+        val database = directory.resolve("content.db")
+        val (read, paired) = withStore(database) { store ->
+            val opened = start(state, store)
+            val repository = ShinsouRepository(opened.snapshot, opened.storage)
+            repository.markChapterProgress(2, lastPageRead = 7, read = false, readAt = 500L)
+            repository.flushPersistence()
+            repository.currentSnapshot to state.readText()
+        }
+        state.writeText("{ torn")
+
+        val rows = withStore(database) { store ->
+            val restarted = start(state, store)
+            assertEquals(HotStateOpening.ROWS_KEPT, restarted.opening)
+            assertEquals(AppSnapshot(), restarted.snapshot)
+            store.load()
+        }
+        assertEquals(read.hotState(), rows)
+        val quarantined = Files.list(directory).use { files -> files.filter { it.fileName.toString().startsWith("shinsou-state.corrupt-") }.toList() }
+        assertEquals(1, quarantined.size)
+
+        // The good copy put back: the progress since its last whole write is there again.
+        state.writeText(paired)
+        withStore(database) { store ->
+            val restarted = start(state, store)
+            assertEquals(HotStateOpening.SQL_CURRENT, restarted.opening)
+            assertEquals(read, restarted.snapshot)
+        }
+        directory.toFile().deleteRecursively()
+    }
+
     private fun start(state: Path, store: HotStateStore): OpenedSnapshot =
-        openSnapshotPersistence(DesktopPersistence.loadSnapshot(state), PathSnapshotFile(state), store)
+        openSnapshotPersistence(DesktopPersistence.readSnapshot(state), PathSnapshotFile(state), store)
 
     private inline fun <T> withStore(database: Path, block: (SqlHotStateStore) -> T): T =
         JdbcSqliteDriver("jdbc:sqlite:$database").use { driver -> block(SqlHotStateStore(driver)) }
@@ -153,6 +188,10 @@ class HotStateDesktopStartupTest {
         override fun pairing(): HotStatePairing? = call(delegate::pairing)
 
         override fun setPairing(pairing: HotStatePairing?) = call { delegate.setPairing(pairing) }
+
+        override fun journaledJson(): String? = call(delegate::journaledJson)
+
+        override fun setJournaledJson(json: String?) = call { delegate.setJournaledJson(json) }
 
         override fun commit(rows: HotRows, pairing: HotStatePairing) = call { delegate.commit(rows, pairing) }
     }

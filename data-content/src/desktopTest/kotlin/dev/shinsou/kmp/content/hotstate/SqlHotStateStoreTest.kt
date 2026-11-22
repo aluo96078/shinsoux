@@ -142,6 +142,48 @@ class SqlHotStateStoreTest {
         assertEquals(10, store.pairing()?.hotRevision)
     }
 
+    /** C3-5: the JSON a restore journals goes with the rows, and only while the pairing names it. */
+    @Test
+    fun aJournaledJsonLastsAsLongAsThePairingNamesIt() {
+        val journal = "{\"revision\":9}".repeat(1_000)
+        val pairing = HotStatePairing(jsonRevision = 4, token = "t", hotRevision = 9, journaledJsonRevision = 9)
+        val host = object : TransacterImpl(driver) {}
+        assertFailsWith<IllegalStateException> {
+            host.transaction {
+                store.commit(HotRows.All(sample()), pairing)
+                store.setJournaledJson(journal)
+                error("the host's own write failed")
+            }
+        }
+        assertNull(store.journaledJson())
+        assertNull(store.pairing())
+
+        host.transaction {
+            store.commit(HotRows.All(sample()), pairing)
+            store.setJournaledJson(journal)
+        }
+        assertEquals(pairing, store.pairing())
+        assertEquals(journal, SqlHotStateStore(driver).journaledJson())
+
+        // Hot writes that keep naming it keep it; the pairing of a whole write drops it.
+        store.commit(HotRows.Unchanged, pairing.copy(hotRevision = 10))
+        store.setPairing(pairing.copy(hotRevision = 10, pendingJsonRevision = 11))
+        assertEquals(journal, store.journaledJson())
+        assertEquals(pairing.copy(hotRevision = 10, pendingJsonRevision = 11), store.pairing())
+        store.commit(HotRows.Unchanged, HotStatePairing(jsonRevision = 11, token = "u", hotRevision = 11))
+        assertNull(store.journaledJson())
+        assertEquals(HotStatePairing(jsonRevision = 11, token = "u", hotRevision = 11), store.pairing())
+
+        store.setPairing(pairing)
+        store.setJournaledJson(journal)
+        store.clear()
+        assertNull(store.journaledJson())
+        store.setPairing(pairing)
+        store.setJournaledJson(journal)
+        store.commit(HotRows.All(sample()), pairing)
+        assertNull(store.journaledJson(), "every row in place: no journal of an earlier write")
+    }
+
     @Test
     fun aDefaultProgressIsNotKept() {
         store.apply(HotDelta(progress = mapOf(1L to ChapterProgress(read = true), 2L to ChapterProgress.DEFAULT)))

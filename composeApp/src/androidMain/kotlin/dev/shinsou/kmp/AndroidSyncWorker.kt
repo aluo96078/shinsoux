@@ -42,7 +42,17 @@ internal class AndroidSyncWorker(
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
-        if (AndroidSharedState.get(applicationContext).schemaTooNew != null) return Result.failure()
+        val shared = AndroidSharedState.get(applicationContext)
+        if (shared.schemaTooNew != null) return Result.failure()
+        return try {
+            sync()
+        } finally {
+            // Hot rows the sync wrote reach the JSON Android backs up (C3).
+            shared.checkpointSnapshot()
+        }
+    }
+
+    private suspend fun sync(): Result {
         return try {
             val runtime = AndroidAppRuntime.get(applicationContext)
             // Installs the dirty tracker and restores the session when the process was started

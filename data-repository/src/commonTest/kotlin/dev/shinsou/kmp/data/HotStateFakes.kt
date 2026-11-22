@@ -28,16 +28,36 @@ internal class Crashes(var at: Int? = null) {
 
 /** The hot tables, each call durable (or not at all) like one SQL transaction. */
 internal class FakeHotStateStore(private val crashes: Crashes = Crashes()) : HotStateStore {
-    var rows: HotState = HotState.EMPTY
-    var meta: HotStatePairing? = null
+    /** What the tables hold: the rows, the pairing and the journaled JSON. */
+    private data class Tables(val rows: HotState, val meta: HotStatePairing?, val journal: String?)
+
+    private var tables = Tables(HotState.EMPTY, null, null)
+
+    var rows: HotState
+        get() = tables.rows
+        set(value) {
+            tables = tables.copy(rows = value)
+        }
+
+    var meta: HotStatePairing?
+        get() = tables.meta
+        set(value) {
+            tables = tables.copy(meta = value)
+        }
+
+    val journal: String? get() = tables.journal
+
     var calls = 0
         private set
 
     /** Thrown by every call while set: an unreadable database. */
     var failure: Exception? = null
 
-    /** A host transaction open on the store: its writes, kept apart until [commitHost]. */
-    private var host: Pair<HotState, HotStatePairing?>? = null
+    /** Thrown by the next [commit] only, once: a transaction that fails while the process lives. */
+    var failNextCommit: Exception? = null
+
+    /** A host transaction open on the store: its writes, kept apart until [hostTransaction] returns. */
+    private var host: Tables? = null
 
     private fun step() {
         failure?.let { throw it }
@@ -45,49 +65,56 @@ internal class FakeHotStateStore(private val crashes: Crashes = Crashes()) : Hot
         if (host == null) crashes.step()
     }
 
-    override fun load(): HotState = step().let { host?.first ?: rows }
+    private val current: Tables get() = host ?: tables
 
-    override fun apply(delta: HotDelta) = write { state, pairing -> state.applying(delta) to pairing }
+    override fun load(): HotState = step().let { current.rows }
 
-    override fun clear() = write { _, _ -> HotState.EMPTY to null }
+    override fun apply(delta: HotDelta) = write { it.copy(rows = it.rows.applying(delta)) }
 
-    override fun pairing(): HotStatePairing? = step().let { host?.second ?: meta }
+    override fun clear() = write { Tables(HotState.EMPTY, null, null) }
 
-    override fun setPairing(pairing: HotStatePairing?) = write { state, _ -> state to pairing }
+    override fun pairing(): HotStatePairing? = step().let { current.meta }
 
-    override fun commit(rows: HotRows, pairing: HotStatePairing) = write { state, _ ->
-        val next = when (rows) {
-            HotRows.Unchanged -> state
-            is HotRows.Changed -> state.applying(rows.delta)
-            is HotRows.All -> HotState.EMPTY.applying(rows.state.asDelta())
+    override fun setPairing(pairing: HotStatePairing?) = write { it.withPairing(pairing) }
+
+    override fun journaledJson(): String? = step().let { current.journal }
+
+    override fun setJournaledJson(json: String?) = write { it.copy(journal = json) }
+
+    override fun commit(rows: HotRows, pairing: HotStatePairing) {
+        failNextCommit?.let {
+            failNextCommit = null
+            throw it
         }
-        next to pairing
+        write { tables ->
+            val next = when (rows) {
+                HotRows.Unchanged -> tables.rows
+                is HotRows.Changed -> tables.rows.applying(rows.delta)
+                is HotRows.All -> HotState.EMPTY.applying(rows.state.asDelta())
+            }
+            (if (rows is HotRows.All) Tables(next, null, null) else tables.copy(rows = next)).withPairing(pairing)
+        }
     }
+
+    private fun Tables.withPairing(pairing: HotStatePairing?): Tables =
+        copy(meta = pairing, journal = journal.takeIf { pairing?.journaledJsonRevision != null })
 
     /** Runs [block] as a host transaction: its writes land only when it returns. */
     suspend fun <T> hostTransaction(block: suspend () -> T): T {
-        host = rows to meta
+        host = tables
         try {
             val result = block()
-            val (state, pairing) = checkNotNull(host)
-            rows = state
-            meta = pairing
+            tables = checkNotNull(host)
             return result
         } finally {
             host = null
         }
     }
 
-    private fun write(change: (HotState, HotStatePairing?) -> Pair<HotState, HotStatePairing?>) {
+    private fun write(change: (Tables) -> Tables) {
         step()
         val open = host
-        if (open != null) {
-            host = change(open.first, open.second)
-        } else {
-            val (state, pairing) = change(rows, meta)
-            rows = state
-            meta = pairing
-        }
+        if (open != null) host = change(open) else tables = change(tables)
     }
 }
 
@@ -111,8 +138,11 @@ internal class FakeSnapshotFile(var json: String? = null, private val crashes: C
         return !copyFails
     }
 
-    /** What a platform's load() gives: the decoded file, or a fresh state when there is none. */
-    fun load(): AppSnapshot = json?.let(AppSnapshotJson::decode) ?: AppSnapshot()
+    /** What a platform's load() gives: the decoded file, or null when there is none. */
+    fun read(): AppSnapshot? = json?.let(AppSnapshotJson::decode)
+
+    /** The decoded file, which must be there. */
+    fun load(): AppSnapshot = checkNotNull(read()) { "No snapshot file" }
 }
 
 /** A small library whose every hot collection has rows. */

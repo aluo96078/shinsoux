@@ -11,13 +11,13 @@ import dev.shinsou.kmp.logging.Log
 
 /**
  * C3-3 (docs/architecture/0007 §6.3): the repository every platform starts with, its snapshot JSON
- * ([loaded], read from [file]) paired with the hot rows in the content database. Call on an I/O
+ * ([loaded], read from [file]; null when there is none or it was quarantined) paired with the hot rows in the content database. Call on an I/O
  * thread, after [checkBeforeOpening] found the database usable; [contentInfrastructure] null (a
  * newer version wrote the database) writes the whole JSON, as before C3. [hotStateEnabled] false is
  * the off-switch ([dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE]).
  */
 fun openShinsouRepository(
-    loaded: AppSnapshot,
+    loaded: AppSnapshot?,
     file: SnapshotFile,
     contentInfrastructure: PlatformContentInfrastructure?,
     hotStateEnabled: Boolean,
