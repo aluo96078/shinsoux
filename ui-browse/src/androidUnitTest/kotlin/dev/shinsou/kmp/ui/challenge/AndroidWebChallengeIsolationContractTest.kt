@@ -75,10 +75,10 @@ class AndroidWebChallengeIsolationContractTest {
 
     private companion object {
         const val ANDROID_SOURCE =
-            "ui/src/androidMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
+            "ui-browse/src/androidMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
                 "PlatformWebChallengeView.android.kt"
         const val IOS_SOURCE =
-            "ui/src/iosMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
+            "ui-browse/src/iosMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
                 "PlatformWebChallengeView.ios.kt"
     }
 }
