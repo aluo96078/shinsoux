@@ -9,6 +9,7 @@ import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.app.checkBeforeOpening
 import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser
 import dev.shinsou.kmp.network.createPlatformHttpClient
@@ -311,7 +312,7 @@ internal class IosApplicationContainerCore(
 ) {
     val repository = ShinsouRepository(
         initial = IosSnapshotPersistence.load(),
-        persist = IosSnapshotPersistence::save,
+        storage = WholeJsonSnapshotStorage(IosSnapshotPersistence::save),
     )
 
     private val httpClient = createPlatformHttpClient().also(::installConfiguredImageLoader)

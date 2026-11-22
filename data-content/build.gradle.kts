@@ -12,6 +12,11 @@ sqldelight {
         create("ContentAnnotationDatabase") {
             packageName.set("dev.shinsou.kmp.annotation.sql")
         }
+        // C3: a second table group of this module, so its .sq files are in a folder of their own.
+        create("LegacyHotStateDatabase") {
+            packageName.set("dev.shinsou.kmp.content.hotstate.sql")
+            srcDirs("src/commonMain/sqldelight-hotstate")
+        }
     }
 }
 

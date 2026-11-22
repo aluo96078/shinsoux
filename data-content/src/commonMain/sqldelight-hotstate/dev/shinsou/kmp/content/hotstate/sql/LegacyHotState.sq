@@ -1,0 +1,107 @@
+-- The legacy_hot_state table group (C3 of docs/architecture/0007 §6.3.2): the hot rows of the app
+-- snapshot, kept apart from its JSON. Its format version (1) stays with LegacyHotStateSchema's
+-- SchemaComponent; this DDL is its create step and must stay safe to run on tables that are
+-- already there. No foreign keys: the mangas and chapters are in the JSON. Every write puts a row
+-- in place of the one with its key (INSERT OR REPLACE; no table has another unique constraint).
+
+-- Chapter.read / bookmark / lastPageRead, only for chapters where they are not all the default.
+CREATE TABLE IF NOT EXISTS legacy_chapter_progress(
+  chapter_id INTEGER NOT NULL PRIMARY KEY,
+  read INTEGER NOT NULL,
+  bookmark INTEGER NOT NULL,
+  last_page_read INTEGER NOT NULL
+);
+
+-- AppSnapshot.histories; ordinal is the index in the list.
+CREATE TABLE IF NOT EXISTS legacy_history(
+  history_id INTEGER NOT NULL PRIMARY KEY,
+  ordinal INTEGER NOT NULL,
+  chapter_id INTEGER NOT NULL,
+  last_read INTEGER NOT NULL,
+  time_read INTEGER NOT NULL,
+  last_locator_json TEXT,
+  last_page_count INTEGER
+);
+
+-- AppSnapshot.downloadQueue; ordinal is the index in the list (position is the queue order the
+-- user sees, a field of its own).
+CREATE TABLE IF NOT EXISTS legacy_download_queue(
+  id TEXT NOT NULL PRIMARY KEY,
+  ordinal INTEGER NOT NULL,
+  manga_id INTEGER NOT NULL,
+  chapter_id INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  progress REAL NOT NULL,
+  downloaded_pages INTEGER NOT NULL,
+  total_pages INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  queued_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  destination_path TEXT,
+  error_message TEXT,
+  visible INTEGER NOT NULL
+) WITHOUT ROWID;
+
+-- paired_json_revision, token (§6.3.5).
+CREATE TABLE IF NOT EXISTS legacy_hot_state_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID;
+
+-- ---- chapter progress -----------------------------------------------------------------------
+
+putProgress:
+INSERT OR REPLACE INTO legacy_chapter_progress(chapter_id, read, bookmark, last_page_read) VALUES (?, ?, ?, ?);
+
+deleteProgress:
+DELETE FROM legacy_chapter_progress WHERE chapter_id = ?;
+
+allProgress:
+SELECT chapter_id, read, bookmark, last_page_read FROM legacy_chapter_progress ORDER BY chapter_id;
+
+deleteAllProgress:
+DELETE FROM legacy_chapter_progress;
+
+-- ---- histories ------------------------------------------------------------------------------
+
+putHistory:
+INSERT OR REPLACE INTO legacy_history(
+  history_id, ordinal, chapter_id, last_read, time_read, last_locator_json, last_page_count
+) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteHistory:
+DELETE FROM legacy_history WHERE history_id = ?;
+
+allHistories:
+SELECT history_id, ordinal, chapter_id, last_read, time_read, last_locator_json, last_page_count
+FROM legacy_history ORDER BY ordinal, history_id;
+
+deleteAllHistories:
+DELETE FROM legacy_history;
+
+-- ---- download queue -------------------------------------------------------------------------
+
+putDownload:
+INSERT OR REPLACE INTO legacy_download_queue(
+  id, ordinal, manga_id, chapter_id, state, progress, downloaded_pages, total_pages, position,
+  queued_at, updated_at, destination_path, error_message, visible
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteDownload:
+DELETE FROM legacy_download_queue WHERE id = ?;
+
+allDownloads:
+SELECT id, ordinal, manga_id, chapter_id, state, progress, downloaded_pages, total_pages, position,
+       queued_at, updated_at, destination_path, error_message, visible
+FROM legacy_download_queue ORDER BY ordinal, id;
+
+deleteAllDownloads:
+DELETE FROM legacy_download_queue;
+
+-- ---- meta -----------------------------------------------------------------------------------
+
+meta:
+SELECT v FROM legacy_hot_state_meta WHERE k = ?;
+
+putMeta:
+INSERT OR REPLACE INTO legacy_hot_state_meta(k, v) VALUES (?, ?);
+
+deleteAllMeta:
+DELETE FROM legacy_hot_state_meta;

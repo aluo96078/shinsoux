@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import dev.shinsou.kmp.annotation.ContentAnnotationSchema
+import dev.shinsou.kmp.content.hotstate.LegacyHotStateSchema
 import dev.shinsou.kmp.domain.content.BlobRef
 
 /**
@@ -50,13 +51,15 @@ fun PlatformContentInfrastructure.checkBeforeOpening(components: List<SchemaComp
     }
 
 /**
- * The content foundation's own table groups (with the annotations stored beside it). The features
- * that keep tables in the same database add theirs where the app is composed.
+ * The content foundation's own table groups (with the annotations and the snapshot's hot rows
+ * stored beside it). The features that keep tables in the same database add theirs where the app
+ * is composed.
  */
 fun contentFoundationSchemaComponents(): List<SchemaComponent> = listOf(
     ContentTransactionSchema.component,
     ContentBlobPersistenceSchema.component,
     ContentAnnotationSchema.component,
+    LegacyHotStateSchema.component,
 )
 
 /**

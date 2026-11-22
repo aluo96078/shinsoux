@@ -30,6 +30,7 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.awaitApplication
 import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
+import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.ui.shinsouIconPainter
 import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
@@ -234,7 +235,7 @@ private suspend fun openDesktopApp(
     sandboxScope: CoroutineScope,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): DesktopOpened = withContext(ioDispatcher) {
-    val repository = ShinsouRepository(DesktopPersistence.loadSnapshot(), DesktopPersistence::saveState)
+    val repository = ShinsouRepository(DesktopPersistence.loadSnapshot(), WholeJsonSnapshotStorage(DesktopPersistence::saveState))
     val contentInfrastructure = DesktopContentInfrastructure()
     val tooNew = contentInfrastructure.checkBeforeOpening()
     if (tooNew != null) {

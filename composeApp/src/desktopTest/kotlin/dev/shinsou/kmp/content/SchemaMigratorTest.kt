@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotationSchema
 import dev.shinsou.kmp.app.contentSchemaComponents
+import dev.shinsou.kmp.content.hotstate.LegacyHotStateSchema
 import dev.shinsou.kmp.search.LocalFullTextIndexSchema
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.translation.TranslationMemorySchema
@@ -31,6 +32,7 @@ class SchemaMigratorTest {
         assertEquals(2, shared("content_blobs"))
         assertEquals(1, shared("content_annotations"))
         assertEquals(1, shared("sync_v3"))
+        assertEquals(1, shared("legacy_hot_state"))
         assertEquals(TranslationMemorySchema.VERSION, shared("translation_memory"))
         assertEquals(2, singleton("content_search_v2_schema"))
         assertTrue(columnExists(driver, "tm_work", "from_picked"))
@@ -133,6 +135,7 @@ class SchemaMigratorTest {
         ContentTransactionSchema.create(driver)
         ContentAnnotationSchema.create(driver)
         SyncV3Schema.create(driver)
+        LegacyHotStateSchema.create(driver)
         LocalFullTextIndexSchema.create(driver)
         TranslationMemoryStore(driver)
     }

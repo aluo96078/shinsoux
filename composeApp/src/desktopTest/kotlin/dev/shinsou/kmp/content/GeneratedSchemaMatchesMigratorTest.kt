@@ -5,6 +5,8 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotationSchema
 import dev.shinsou.kmp.annotation.sql.ContentAnnotationDatabase
+import dev.shinsou.kmp.content.hotstate.LegacyHotStateSchema
+import dev.shinsou.kmp.content.hotstate.sql.LegacyHotStateDatabase
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.sync.v3.sql.SyncV3Database
 import dev.shinsou.kmp.translation.TranslationMemorySchema
@@ -36,6 +38,16 @@ class GeneratedSchemaMatchesMigratorTest {
         val generated = generated(TABLE_PREFIX_SYNC) { SyncV3Database.Schema.create(it).value }
         fixtures(SYNC_V1, component = "sync_v3", version = 1).forEach { (name, fixture) ->
             assertMigratesTo(generated, TABLE_PREFIX_SYNC, name, fixture) { SyncV3Schema.create(it).value }
+        }
+    }
+
+    /** C3-2: format 1 is the first; a change to the .sq file needs a step and a fixture here. */
+    @Test
+    fun legacyHotStateOfEveryShippedFormatMatchesTheGeneratedTables() {
+        val generated = generated(TABLE_PREFIX_HOT_STATE) { LegacyHotStateDatabase.Schema.create(it).value }
+        assertEquals(HOT_STATE_TABLES, generated.tables.keys)
+        fixtures(HOT_STATE_V1, component = "legacy_hot_state", version = 1).forEach { (name, fixture) ->
+            assertMigratesTo(generated, TABLE_PREFIX_HOT_STATE, name, fixture) { LegacyHotStateSchema.create(it).value }
         }
     }
 
@@ -197,6 +209,24 @@ class GeneratedSchemaMatchesMigratorTest {
         const val TABLE_PREFIX_ANNOTATIONS = "content_annotations"
         const val TABLE_PREFIX_SYNC = "sync3_"
         const val TABLE_PREFIX_TM = "tm_"
+        const val TABLE_PREFIX_HOT_STATE = "legacy_"
+
+        val HOT_STATE_TABLES = setOf("legacy_chapter_progress", "legacy_download_queue", "legacy_history", "legacy_hot_state_meta")
+
+        /** legacy_hot_state format 1, as it first shipped (LegacyHotState.sq of C3-2). */
+        val HOT_STATE_V1 = listOf(
+            "CREATE TABLE IF NOT EXISTS legacy_chapter_progress(chapter_id INTEGER NOT NULL PRIMARY KEY, " +
+                "read INTEGER NOT NULL, bookmark INTEGER NOT NULL, last_page_read INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS legacy_history(history_id INTEGER NOT NULL PRIMARY KEY, ordinal INTEGER NOT NULL, " +
+                "chapter_id INTEGER NOT NULL, last_read INTEGER NOT NULL, time_read INTEGER NOT NULL, " +
+                "last_locator_json TEXT, last_page_count INTEGER)",
+            "CREATE TABLE IF NOT EXISTS legacy_download_queue(id TEXT NOT NULL PRIMARY KEY, ordinal INTEGER NOT NULL, " +
+                "manga_id INTEGER NOT NULL, chapter_id INTEGER NOT NULL, state TEXT NOT NULL, progress REAL NOT NULL, " +
+                "downloaded_pages INTEGER NOT NULL, total_pages INTEGER NOT NULL, position INTEGER NOT NULL, " +
+                "queued_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, destination_path TEXT, error_message TEXT, " +
+                "visible INTEGER NOT NULL) WITHOUT ROWID",
+            "CREATE TABLE IF NOT EXISTS legacy_hot_state_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
+        )
 
         /** content_annotations format 1, as SqlDriverContentAnnotationStore wrote it before C4. */
         val ANNOTATIONS_V1 = listOf(

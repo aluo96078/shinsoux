@@ -22,6 +22,8 @@ import dev.shinsou.kmp.domain.model.UpdateItem
 import dev.shinsou.kmp.domain.model.applying
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
 import dev.shinsou.kmp.domain.model.ReadingLocator
+import dev.shinsou.kmp.domain.persistence.SnapshotStorage
+import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -45,24 +47,30 @@ import kotlin.time.Clock
 /**
  * Shared state repository used by every platform.
  *
- * Mutations commit to [snapshot] immediately. When [persist] is present, a single background
- * writer validates and encodes the latest state after a short coalescing window. Intermediate
- * states are deliberately coalesced, while [flushPersistence] provides an explicit durability
- * boundary for lifecycle transitions and orderly shutdown.
+ * Mutations commit to [snapshot] immediately. When a [SnapshotStorage] is present, a single
+ * background writer validates and encodes the latest state after a short coalescing window.
+ * Intermediate states are deliberately coalesced, while [flushPersistence] provides an explicit
+ * durability boundary for lifecycle transitions and orderly shutdown.
  */
 class ShinsouRepository(
     initial: AppSnapshot = AppSnapshot(),
-    persist: ((String) -> Unit)? = null,
+    storage: SnapshotStorage? = null,
 ) {
+    /** Every write replaces the whole snapshot JSON through [persist] ([WholeJsonSnapshotStorage]). */
+    constructor(
+        initial: AppSnapshot = AppSnapshot(),
+        persist: ((String) -> Unit)?,
+    ) : this(initial, persist?.let(::WholeJsonSnapshotStorage))
+
     private val mutex = Mutex()
     private val mutableSnapshot = MutableStateFlow(initial.withRequiredDefaults().validate())
     private var persistenceClosed = false
     private var mutationObserver: SnapshotMutationObserver? = null
     private var replacementGuard: SnapshotReplacementGuard? = null
-    private val persistence = persist?.let {
+    private val persistence = storage?.let {
         SnapshotPersistenceWorker(
-            initialRevision = mutableSnapshot.value.revision,
-            persist = it,
+            initial = mutableSnapshot.value,
+            storage = it,
         )
     }
 
@@ -1115,8 +1123,8 @@ private val NO_PERSISTENCE_FAILURE: StateFlow<Throwable?> = MutableStateFlow(nul
  * newer flushed state.
  */
 private class SnapshotPersistenceWorker(
-    initialRevision: Long,
-    private val persist: (String) -> Unit,
+    initial: AppSnapshot,
+    private val storage: SnapshotStorage,
     /** Where snapshots are encoded and written. */
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
@@ -1124,7 +1132,8 @@ private class SnapshotPersistenceWorker(
     private val scope = CoroutineScope(scopeJob + dispatcher)
     private val updates = Channel<AppSnapshot>(Channel.CONFLATED)
     private val writeMutex = Mutex()
-    private var lastPersistedRevision = initialRevision
+    /** The snapshot last written; the hot rows of the next write are computed against it. */
+    private var lastPersisted = initial
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
 
     val failure: StateFlow<Throwable?> = mutableFailure.asStateFlow()
@@ -1180,10 +1189,15 @@ private class SnapshotPersistenceWorker(
 
     private suspend fun persistIfNewer(snapshot: AppSnapshot) = withContext(dispatcher) {
         writeMutex.withLock {
-            if (snapshot.revision <= lastPersistedRevision) return@withLock
+            if (snapshot.revision <= lastPersisted.revision) return@withLock
             val encoded = AppSnapshotJson.encode(snapshot.validate())
-            persist(encoded)
-            lastPersistedRevision = snapshot.revision
+            // C3-1 (docs/architecture/0007 §6.3.3): the hot rows first, then the JSON. The JSON is
+            // still written whole every time (C3-3 writes it only for cold changes and flushes); a
+            // failed write leaves lastPersisted, so the retry's delta covers this one's rows too.
+            val hot = hotDelta(lastPersisted, snapshot)
+            if (!hot.isEmpty) storage.writeHot(hot)
+            storage.writeCold(encoded, snapshot.revision)
+            lastPersisted = snapshot
             mutableFailure.value = null
         }
     }

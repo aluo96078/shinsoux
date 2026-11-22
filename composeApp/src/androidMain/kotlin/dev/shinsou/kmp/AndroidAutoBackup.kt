@@ -12,6 +12,7 @@ import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.nextAutoBackupAt
 import dev.shinsou.kmp.content.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
+import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.domain.model.BackupState
 import dev.shinsou.kmp.files.AndroidAppFileSystem
@@ -28,7 +29,7 @@ internal class AndroidSharedState private constructor(context: Context) {
     private val applicationContext = context.applicationContext
     private val persistence = AndroidSnapshotPersistence(applicationContext)
 
-    val repository: ShinsouRepository = ShinsouRepository(persistence.load(), persistence::save)
+    val repository: ShinsouRepository = ShinsouRepository(persistence.load(), WholeJsonSnapshotStorage(persistence::save))
     val fileSystem: AndroidAppFileSystem = AndroidAppFileSystem(applicationContext)
     val autoBackups: AutoBackupService = AutoBackupService(
         repository = repository,
