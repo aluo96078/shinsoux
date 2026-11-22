@@ -47,6 +47,9 @@ import dev.shinsou.kmp.domain.model.MainSection
 import dev.shinsou.kmp.navigation.BackTarget
 import dev.shinsou.kmp.navigation.Destination
 import dev.shinsou.kmp.navigation.NavigationState
+import dev.shinsou.kmp.navigation.PageEntry
+import dev.shinsou.kmp.navigation.WideArrangement
+import dev.shinsou.kmp.navigation.wideArrangement
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.screens.BrowseBackNavigation
 import dev.shinsou.kmp.ui.screens.ExtensionLibraryHost
@@ -219,37 +222,26 @@ internal fun WideShell(
             )
             VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
         }
-        val publicationCoversMain = nav.localLibraryPublication != null && (nav.browseReaderOpen || !splitDetail)
-        val detailBeside = !nav.browseReaderOpen && splitDetail &&
-            (nav.selectedMangaId != null || nav.localLibraryPublication != null)
+        // 0008: what is drawn, and in front of what, comes from the same PageLayer order Back uses.
+        val arrangement = wideArrangement(nav, splitDetail)
+        val publicationCoversMain = arrangement.side != null && !arrangement.sideBeside
         val mainModifier = if (publicationCoversMain) {
             Modifier.width(0.dp).fillMaxHeight()
         } else {
-            Modifier.weight(if (detailBeside) 0.9f else 1f).fillMaxHeight()
+            Modifier.weight(if (arrangement.sideBeside && arrangement.side != null) 0.9f else 1f).fillMaxHeight()
         }
         Box(mainModifier) {
-            val moreDestination = nav.moreDestination
-            if (moreDestination != null) {
-                AppMorePane(
-                    app = app,
-                    destination = moreDestination,
-                    nav = nav,
-                    snapshot = snapshot,
-                    wideLayout = windowWidth >= 1100.dp,
-                    backGestureProgress = if (nav.moreNestedBackAvailable) backSwipe.value else 0f,
-                )
-            } else {
-                WideMainPane(app, nav, snapshot, backSwipe, splitDetail)
-            }
+            WideMainPane(app, nav, snapshot, backSwipe, arrangement, windowWidth)
         }
-        WideDetailColumn(app, nav, snapshot, splitDetail)
+        WideDetailColumn(app, nav, snapshot, arrangement)
     }
 }
 
 /**
- * The browse surface stays mounted while a source title resolves or its details are open:
- * replacing it used to reset the active catalogue, so closing a title jumped back to the
- * extension list instead of the previous results.
+ * The main area: the More page when one is open, else the section. The browse surface stays
+ * mounted while a source title resolves or its details are open: replacing it used to reset the
+ * active catalogue, so closing a title jumped back to the extension list instead of the previous
+ * results. The arrangement's cover page is drawn over either.
  */
 @Composable
 private fun WideMainPane(
@@ -257,29 +249,40 @@ private fun WideMainPane(
     nav: NavigationState,
     snapshot: AppSnapshot,
     backSwipe: BackSwipeProgress,
-    splitDetail: Boolean,
+    arrangement: WideArrangement,
+    windowWidth: Dp,
 ) {
     Box(Modifier.fillMaxSize()) {
-        AppSectionPane(
-            app = app,
-            nav = nav,
-            snapshot = snapshot,
-            compactChrome = true,
-            browseBackGestureProgress = if (nav.section == MainSection.BROWSE) backSwipe.value else 0f,
-        )
-        val pending = nav.pendingBrowseManga
-        val recovering = nav.recoveringLocalLibraryMangaId
-        val selected = nav.selectedMangaId
-        when {
-            pending != null -> OpaquePage {
-                PendingMangaDetailPane(item = pending, onBack = app.navigator::cancelPendingBrowse)
+        val moreDestination = nav.moreDestination
+        if (moreDestination != null) {
+            AppMorePane(
+                app = app,
+                destination = moreDestination,
+                nav = nav,
+                snapshot = snapshot,
+                wideLayout = windowWidth >= 1100.dp,
+                backGestureProgress = if (nav.moreNestedBackAvailable) backSwipe.value else 0f,
+            )
+        } else {
+            AppSectionPane(
+                app = app,
+                nav = nav,
+                snapshot = snapshot,
+                compactChrome = true,
+                browseBackGestureProgress = if (nav.section == MainSection.BROWSE) backSwipe.value else 0f,
+            )
+        }
+        when (val cover = arrangement.cover) {
+            is PageEntry.Pending -> OpaquePage {
+                PendingMangaDetailPane(item = cover.item, onBack = app.navigator::cancelPendingBrowse)
             }
-            recovering != null -> recoveringItem(app, recovering)?.let { item ->
+            is PageEntry.Recovering -> recoveringItem(app, cover.mangaId)?.let { item ->
                 OpaquePage { PendingMangaDetailPane(item = item, onBack = app.navigator::cancelRecovery) }
             }
-            selected != null && !splitDetail -> OpaquePage {
-                AppDetailPane(app, selected, nav, snapshot, wideLayout = true)
+            is PageEntry.Detail -> OpaquePage {
+                AppDetailPane(app, cover.mangaId, nav, snapshot, wideLayout = true)
             }
+            else -> Unit
         }
     }
 }
@@ -289,27 +292,30 @@ private fun RowScope.WideDetailColumn(
     app: ShinsouAppState,
     nav: NavigationState,
     snapshot: AppSnapshot,
-    splitDetail: Boolean,
+    arrangement: WideArrangement,
 ) {
-    val publication = nav.localLibraryPublication
-    val selected = nav.selectedMangaId
-    val besideMain = !nav.browseReaderOpen && splitDetail
-    if (publication != null && nav.moreDestination == null) {
-        if (besideMain) VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
-        Surface(
-            modifier = Modifier.weight(if (besideMain) 1.1f else 1f).fillMaxHeight(),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        ) {
-            LocalExtensionPane(app, publication, nav, snapshot)
+    val side = arrangement.side
+    val besideMain = arrangement.sideBeside
+    when (side) {
+        is PageEntry.LocalExtension -> {
+            if (besideMain) VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+            Surface(
+                modifier = Modifier.weight(if (besideMain) 1.1f else 1f).fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            ) {
+                LocalExtensionPane(app, side.item, nav, snapshot)
+            }
         }
-    } else if (besideMain && selected != null && nav.moreDestination == null) {
-        VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
-        Surface(
-            modifier = Modifier.weight(1.1f).fillMaxHeight(),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        ) {
-            AppDetailPane(app, selected, nav, snapshot, wideLayout = true)
+        is PageEntry.Detail -> {
+            VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+            Surface(
+                modifier = Modifier.weight(1.1f).fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            ) {
+                AppDetailPane(app, side.mangaId, nav, snapshot, wideLayout = true)
+            }
         }
+        else -> Unit
     }
 }
 

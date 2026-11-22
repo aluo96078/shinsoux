@@ -282,42 +282,38 @@ internal class AppNavigator(
         return handled || selection.clearLibraryTitles()
     }
 
-    /**
-     * Whether a committed back-swipe slides the visible page itself away (so the gesture
-     * finishes the pop), rather than leaving it to a page's own nested Back.
-     */
-    fun gestureMovesVisiblePage(): Boolean {
-        val current = mutableState.value
-        return when {
-            current.stack.recovering != null -> true
-            current.stack.localExtension != null && !current.browseReaderOpen -> true
-            current.stack.pending != null -> true
-            current.stack.detail != null -> !current.detailNestedBackAvailable
-            // Settings supplies its own sliding child when nested; every other More page slides
-            // the outer page.
-            current.stack.more != null -> true
-            else -> current.section == MainSection.BROWSE && current.browseBackAvailable
-        }
-    }
+    /** Whether a committed back-swipe slides the visible page away ([gestureMovesTopPage]). */
+    fun gestureMovesVisiblePage(): Boolean = gestureMovesTopPage(mutableState.value)
 }
 
 /**
- * The state after one Back press, or null when navigation itself has nothing to close. A page
- * with a nested Back of its own gets the press as a [BackRequests] change and decides itself;
- * every other page is popped. The order is the shell's long-standing one: a local-library page
- * (or its reader) first, even above a recovery started over it.
+ * Whether a committed back-swipe slides the visible page itself away (so the gesture finishes the
+ * pop), rather than leaving it to a page's own nested Back. It asks about the page Back would
+ * act on, [PageStack.top].
+ */
+internal fun gestureMovesTopPage(state: NavigationState): Boolean = when (state.stack.top?.layer) {
+    PageLayer.RECOVERING, PageLayer.PENDING -> true
+    PageLayer.LOCAL_EXTENSION -> !state.browseReaderOpen
+    PageLayer.DETAIL -> !state.detailNestedBackAvailable
+    // Settings supplies its own sliding child when nested; every other More page slides the
+    // outer page.
+    PageLayer.MORE -> true
+    null -> state.section == MainSection.BROWSE && state.browseBackAvailable
+}
+
+/**
+ * The state after one Back press, or null when navigation itself has nothing to close. Back acts
+ * on the page the user sees in front, [PageStack.top], so the order is [PageLayer]'s and nothing
+ * else's. A page with a nested Back of its own gets the press as a [BackRequests] change and
+ * decides itself; every other page is popped. With nothing pushed, Browse's own nested Back.
  */
 internal fun backTransition(state: NavigationState): NavigationState? {
     val stack = state.stack
     fun handTo(target: BackTarget) = state.copy(backRequests = state.backRequests.after(target))
-    return when {
-        stack.localExtension != null && state.browseReaderOpen -> handTo(BackTarget.LOCAL_EXTENSION_READER)
-        stack.localExtension != null -> state.copy(stack = stack.pop(PageLayer.LOCAL_EXTENSION))
-        stack.recovering != null -> state.copy(stack = stack.pop(PageLayer.RECOVERING))
-        stack.detail != null -> handTo(BackTarget.DETAIL)
-        stack.more != null -> handTo(BackTarget.MORE)
-        stack.pending != null -> state.copy(stack = stack.pop(PageLayer.PENDING))
-        state.section == MainSection.BROWSE && state.browseBackAvailable -> handTo(BackTarget.BROWSE)
-        else -> null
+    val layer = stack.top?.layer
+    if (layer == null) {
+        return if (state.section == MainSection.BROWSE && state.browseBackAvailable) handTo(BackTarget.BROWSE) else null
     }
+    val target = if (state.browseReaderOpen) layer.backTargetWhileReaderOpen else layer.backTarget
+    return if (target != null) handTo(target) else state.copy(stack = stack.pop(layer))
 }

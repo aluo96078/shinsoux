@@ -244,5 +244,8 @@ Gemini 4 Neon 列出、這一輪不處理的架構後續（依其優先順序）
 4. `explicitApi()` 只在 4 個模組；`:feature-plugin`、`:data-content`、各 UI 模組未啟用。SQLDelight 產生的 `TranslationMemory*` 經 `:feature-translation` 的 export 進入 iOS framework 標頭。
 5. `:ui` 仍有約 25.8k 行（瀏覽、擴充、書庫、設定），需先解開發佈頁對外殼的依賴再拆；`downloadQueue` 仍在 `AppSnapshot` 的重組路徑上。
 6. 仍有約 80 處 SQL 不帶語句識別碼（`SqlDriverContentBlobDurability`、`SqlDriverLocalFullTextIndex`、`MangaStorage`）；桌面 helper 的 CMake／codesign task 仍無輸入輸出宣告；套件結構仍扁平（`plugin` 85 檔、`content` 40 檔）；detekt `main` 與 `debug` 兩份 baseline 重複收錄 common 的問題。
-7. C2 的 `PageLayer` 顯示順序與 Back 處理順序不一致（沿用舊行為，刻意保留）。
+7. ~~C2 的 `PageLayer` 顯示順序與 Back 處理順序不一致~~（0008 已處理）：顯示與 Back 現在都由 `PageLayer` 的宣告順序決定（`MORE < DETAIL < PENDING < LOCAL_EXTENSION < RECOVERING`，越高越在前）。Back 一律作用在 `PageStack.top`；每層是「直接關閉」還是「交給頁面自己的 nested Back」（`PageLayer.backTarget`，`LOCAL_EXTENSION` 在閱讀器開啟時另有 `backTargetWhileReaderOpen`）也宣告在同一個 enum 上，`backTransition`、`gestureMovesTopPage`（返回手勢）與寬版配置 `wideArrangement` 都只讀這份順序；系統返回、預測返回、Esc、滑鼠返回鍵與 iOS 邊緣手勢都經 `ShinsouAppState.systemBack()` → `AppNavigator.back()`，沒有第二份順序。
+   - 之前：Back 依序處理 `LOCAL_EXTENSION → RECOVERING → DETAIL → MORE → PENDING`；手機由前到後顯示 `RECOVERING → LOCAL_EXTENSION → PENDING → DETAIL → MORE`；寬版另有第三種（`PENDING`、`RECOVERING`、DETAIL 蓋在區段上，開著 More 時其餘層都被藏起來）。兩者不同的組合共三對：`LOCAL_EXTENSION`＋`RECOVERING`（Back 先關被蓋住的書庫頁，而不是畫面最前的復原頁）、`MORE`＋`PENDING`（Back 先交給被蓋住的 More）、`DETAIL`＋`PENDING`（Back 先關被蓋住的詳情；一般轉換到不了這個組合）。其餘七對本來就一致。
+   - 現在：Back 處理順序與顯示順序相同（`RECOVERING → LOCAL_EXTENSION → PENDING → DETAIL → MORE`）。沒有刻意保留的例外：`RECOVERING` 一直都可被 Back 取消，之前的順序只是沿用，並無 UX 理由。寬版在 More 開啟時也會把 `PENDING`／`RECOVERING` 蓋在 More 上，而不是藏起來。
+   - 測試：`PageLayerOrderTest` 逐一涵蓋每一對層（以及全部 31 種組合）的 Back 作用層、手機顯示、寬版（有／無側欄空間、閱讀器開啟）前景與返回手勢。
 8. 未上機驗證：C2 的返回手勢與寬版多層、C3 在中階 Android 與 iOS 上的遷移耗時與背景寫入、降版再升版、Android 雲端還原；C1／C5 的 UI 未手動操作。

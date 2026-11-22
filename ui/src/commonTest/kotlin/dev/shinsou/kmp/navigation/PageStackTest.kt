@@ -154,14 +154,15 @@ class PageStackTest {
         assertEquals(untouched, state.backRequests)
     }
 
+    /** 0008: Back used to close the page under the recovery first; it now closes what is in front. */
     @Test
-    fun aLibraryPublicationTakesBackBeforeARecoveryStartedOverIt() {
+    fun aRecoveryStartedOverALibraryPublicationTakesBackBeforeIt() {
         navigator.openLocalExtension(item, MainSection.LIBRARY)
         navigator.beginRecovery(2L)
         assertEquals(Destination.Recovering(2L), state.destination)
         assertTrue(navigator.back())
-        assertNull(state.stack.localExtension)
-        assertEquals(Destination.Recovering(2L), state.destination)
+        assertNull(state.stack.recovering)
+        assertEquals(Destination.LocalExtension(item), state.destination, "the page under it is still open")
         assertTrue(navigator.back())
         assertEquals(Destination.Section, state.destination)
     }
