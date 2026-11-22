@@ -78,7 +78,7 @@ private class TranslationOverview(val service: String, val downloadedBytes: Long
  * a wide window shows the list beside the open page, and a phone stacks them.
  */
 @Composable
-fun TranslationScreen(
+public fun TranslationScreen(
     translation: ReaderTranslation?,
     wideLayout: Boolean,
     workDispatcher: CoroutineDispatcher = Dispatchers.Default,

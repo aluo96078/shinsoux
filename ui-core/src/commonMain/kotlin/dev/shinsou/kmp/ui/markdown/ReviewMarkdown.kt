@@ -9,28 +9,28 @@ package dev.shinsou.kmp.ui.markdown
  * Blocks are separated by blank lines (a change of kind needs none): consecutive plain lines form
  * a paragraph, `>` lines a quote, `- ` / `* ` lines a bullet list. Inline: `code`, **bold**, *italic*.
  */
-sealed interface MarkdownBlock {
+public sealed interface MarkdownBlock {
     /** Plain lines; a line break separates them. */
-    data class Paragraph(val lines: List<List<MarkdownInline>>) : MarkdownBlock
+    public data class Paragraph(val lines: List<List<MarkdownInline>>) : MarkdownBlock
 
-    data class Quote(val lines: List<List<MarkdownInline>>) : MarkdownBlock
+    public data class Quote(val lines: List<List<MarkdownInline>>) : MarkdownBlock
 
     /** One entry per bullet. */
-    data class BulletList(val items: List<List<MarkdownInline>>) : MarkdownBlock
+    public data class BulletList(val items: List<List<MarkdownInline>>) : MarkdownBlock
 }
 
 /** Inline spans. Italic cannot contain bold or italic; bold may contain italic and code. */
-sealed interface MarkdownInline {
-    data class Text(val value: String) : MarkdownInline
+public sealed interface MarkdownInline {
+    public data class Text(val value: String) : MarkdownInline
 
-    data class Code(val value: String) : MarkdownInline
+    public data class Code(val value: String) : MarkdownInline
 
-    data class Bold(val children: List<MarkdownInline>) : MarkdownInline
+    public data class Bold(val children: List<MarkdownInline>) : MarkdownInline
 
-    data class Italic(val children: List<MarkdownInline>) : MarkdownInline
+    public data class Italic(val children: List<MarkdownInline>) : MarkdownInline
 }
 
-fun parseReviewMarkdown(source: String): List<MarkdownBlock> {
+public fun parseReviewMarkdown(source: String): List<MarkdownBlock> {
     val src = source.replace("\r\n", "\n").replace("\r", "\n")
     val blocks = mutableListOf<MarkdownBlock>()
     var kind = ' ' // ' ' none, 'p' paragraph, 'q' quote, 'l' list

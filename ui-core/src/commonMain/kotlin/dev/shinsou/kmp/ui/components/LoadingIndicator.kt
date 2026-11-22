@@ -8,6 +8,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -30,23 +31,23 @@ import kotlinx.coroutines.delay
 import kotlin.time.TimeSource
 
 /** Effective developer-mode diagnostics: the sub-switches already gated by the master switch. */
-data class DeveloperDiagnostics(
+public data class DeveloperDiagnostics(
     val showLoadingElapsed: Boolean = false,
     val showImageRequests: Boolean = false,
 )
 
-fun DeveloperSettings.toDiagnostics(): DeveloperDiagnostics = DeveloperDiagnostics(
+public fun DeveloperSettings.toDiagnostics(): DeveloperDiagnostics = DeveloperDiagnostics(
     showLoadingElapsed = enabled && showLoadingElapsed,
     showImageRequests = enabled && showImageRequests,
 )
 
-val LocalDeveloperDiagnostics = compositionLocalOf { DeveloperDiagnostics() }
+public val LocalDeveloperDiagnostics: ProvidableCompositionLocal<DeveloperDiagnostics> = compositionLocalOf { DeveloperDiagnostics() }
 
 /** Minutes and a pre-formatted seconds part; minutes is 0 below one minute. */
-data class ElapsedDisplay(val minutes: Int, val seconds: String)
+internal data class ElapsedDisplay(val minutes: Int, val seconds: String)
 
 /** Seconds with one decimal below 60 s, then whole minutes plus zero-padded seconds. */
-fun elapsedDisplay(elapsedMillis: Long): ElapsedDisplay {
+internal fun elapsedDisplay(elapsedMillis: Long): ElapsedDisplay {
     val millis = elapsedMillis.coerceAtLeast(0L)
     if (millis < 60_000L) {
         val tenths = millis / 100L
@@ -62,7 +63,7 @@ fun elapsedDisplay(elapsedMillis: Long): ElapsedDisplay {
  * loads, [requestUrl]) is shown beneath it. Timing starts when this enters composition.
  */
 @Composable
-fun ShinsouLoadingIndicator(
+public fun ShinsouLoadingIndicator(
     modifier: Modifier = Modifier,
     indicatorModifier: Modifier = Modifier,
     color: Color = ProgressIndicatorDefaults.circularColor,

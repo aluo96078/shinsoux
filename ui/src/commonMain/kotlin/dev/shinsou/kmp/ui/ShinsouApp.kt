@@ -93,7 +93,7 @@ import dev.shinsou.kmp.ui.settings.LocalAppUpdates
 
 /** Primary, platform-neutral composition entry point. */
 @Composable
-fun ShinsouApp(
+public fun ShinsouApp(
     repository: ShinsouRepository,
     appServices: ShinsouAppServices = ShinsouAppServices.None,
     autoBackupService: AutoBackupService? = null,
@@ -463,7 +463,7 @@ private fun rememberQueuesPaused(repository: ShinsouRepository, appServices: Shi
 
 /** What the entry points show while the app's stores are opened, off the UI thread. */
 @Composable
-fun ShinsouStartupScreen() {
+public fun ShinsouStartupScreen() {
     ShinsouTheme {
         Box(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),

@@ -266,7 +266,7 @@ private fun BoxScope.NovelTranslationOverlay(
 
 /** Plain-text M4 surface with local body search, paragraph notes, copy, and block-aware TTS. */
 @Composable
-fun UnifiedContentReader(
+public fun UnifiedContentReader(
     session: TypedReaderContentSession,
     features: ContentFeatures,
     copyText: (label: String, text: String) -> Boolean,
@@ -369,7 +369,7 @@ fun UnifiedContentReader(
  * under a grant that allows keeping the text on the device. The reader's toolbar shows its
  * translation button on the same condition the reader itself uses.
  */
-fun readerTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatures?): Boolean {
+public fun readerTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatures?): Boolean {
     if (features?.translation == null) return false
     if (session.content.representation !is ContentRepresentation.PlainText) return false
     val text = session.canonicalText ?: return false
@@ -383,7 +383,7 @@ fun readerTranslationAvailable(session: TypedReaderContentSession, features: Con
  * reader translates it: plain text whose grant allows keeping it, with the reader's own notion
  * of which lines are not prose.
  */
-suspend fun prefetchChapter(
+public suspend fun prefetchChapter(
     session: TypedReaderContentSession,
     features: ContentFeatures,
     labels: dev.shinsou.kmp.translation.TranslationLabels?,
@@ -883,7 +883,7 @@ internal suspend fun imageSequencePageBytes(
     }.onFailure { Log.warn("Reader", it) { "Loading an image page for translation failed" } }.getOrNull()?.takeIf { it.readerTransform == null }?.bytes
 }
 
-fun mangaTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatures?): Boolean {
+public fun mangaTranslationAvailable(session: TypedReaderContentSession, features: ContentFeatures?): Boolean {
     if (features?.translation == null) return false
     val representation = session.content.representation as? ContentRepresentation.ImageSequence ?: return false
     val bytes = representation.pages.sumOf { it.resource.blob.byteSize }

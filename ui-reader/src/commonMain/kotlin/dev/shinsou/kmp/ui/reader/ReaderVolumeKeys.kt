@@ -2,14 +2,14 @@ package dev.shinsou.kmp.ui.reader
 
 import dev.shinsou.kmp.reader.ReaderTapAction
 
-enum class ReaderVolumeKeyEvent {
+public enum class ReaderVolumeKeyEvent {
     VOLUME_UP,
     VOLUME_DOWN,
 }
 
-fun interface ReaderVolumeKeyEventSink {
+public fun interface ReaderVolumeKeyEventSink {
     /** Returns true when the currently mounted reader accepted the physical press. */
-    fun dispatch(event: ReaderVolumeKeyEvent): Boolean
+    public fun dispatch(event: ReaderVolumeKeyEvent): Boolean
 }
 
 /**
@@ -20,12 +20,12 @@ fun interface ReaderVolumeKeyEventSink {
  * therefore ordered: the newest reader owns input, disposing an older registration cannot clear
  * the newer owner, and disposing the newer owner cannot reactivate an outgoing reader.
  */
-class ReaderVolumeKeyRouter : ReaderVolumeKeyEventSink {
+public class ReaderVolumeKeyRouter : ReaderVolumeKeyEventSink {
     private class Owner(
         val handler: (ReaderVolumeKeyEvent) -> Boolean,
     )
 
-    class Registration internal constructor(
+    internal class Registration internal constructor(
         private val unregisterAction: () -> Unit,
     ) {
         private var registered = true
@@ -38,7 +38,7 @@ class ReaderVolumeKeyRouter : ReaderVolumeKeyEventSink {
     }
 
     private var activeOwner: Owner? = null
-    fun register(handler: (ReaderVolumeKeyEvent) -> Boolean): Registration {
+    internal fun register(handler: (ReaderVolumeKeyEvent) -> Boolean): Registration {
         val owner = Owner(handler)
         activeOwner = owner
         return Registration {
@@ -67,22 +67,22 @@ internal class ReaderVolumeKeyHandlerSlot {
 public class ReaderVolumeKeyPressTracker {
     private val heldKeys = mutableSetOf<ReaderVolumeKeyEvent>()
 
-    fun shouldDispatchDown(event: ReaderVolumeKeyEvent, repeatCount: Int): Boolean {
+    public fun shouldDispatchDown(event: ReaderVolumeKeyEvent, repeatCount: Int): Boolean {
         if (repeatCount != 0) return false
         return heldKeys.add(event)
     }
 
-    fun release(event: ReaderVolumeKeyEvent) {
+    public fun release(event: ReaderVolumeKeyEvent) {
         heldKeys.remove(event)
     }
 
-    fun clear() {
+    public fun clear() {
         heldKeys.clear()
     }
 }
 
 /** Rejects callbacks emitted by a reader surface after its immutable session was replaced. */
-fun readerProgressSessionIsActive(
+public fun readerProgressSessionIsActive(
     activeSession: Any?,
     callbackSession: Any,
     transitionInFlight: Boolean,
@@ -92,7 +92,7 @@ fun readerProgressSessionIsActive(
  * Maps hardware buttons to logical reader movement only while the complete common gate is open.
  * Keeping this platform-neutral prevents an iOS callback from bypassing reader state or settings.
  */
-fun readerVolumeKeyAction(
+internal fun readerVolumeKeyAction(
     event: ReaderVolumeKeyEvent,
     readerOpen: Boolean,
     volumeKeysEnabled: Boolean,
@@ -108,7 +108,7 @@ fun readerVolumeKeyAction(
  * iOS applies a real system volume change unless this returns true. Consume the press whenever
  * a reader is open and volume-key paging is live, even if the current page cannot move.
  */
-fun readerVolumeKeyShouldBeConsumed(
+public fun readerVolumeKeyShouldBeConsumed(
     readerOpen: Boolean,
     volumeKeysEnabled: Boolean,
     monitoringEnabled: Boolean,

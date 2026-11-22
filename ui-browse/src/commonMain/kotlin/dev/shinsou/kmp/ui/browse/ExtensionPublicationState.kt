@@ -43,15 +43,15 @@ import dev.shinsou.kmp.ui.reader.PendingExtensionRepresentationSelection
 import dev.shinsou.kmp.ui.reader.extensionContinueUnitId
 
 /** The parts of the extension bridge a publication page uses. */
-class ExtensionPublicationServices(
-    val catalog: SourceCatalog,
-    val publications: ExtensionPublicationCatalog,
-    val library: ExtensionLibraryBinding,
-    val acquisition: ContentAcquisition,
+public class ExtensionPublicationServices(
+    internal val catalog: SourceCatalog,
+    internal val publications: ExtensionPublicationCatalog,
+    internal val library: ExtensionLibraryBinding,
+    internal val acquisition: ContentAcquisition,
 )
 
 /** Where a publication's favorite lives, and whether it is one. */
-data class PublicationFavorites(
+public data class PublicationFavorites(
     val supportsFavorite: Boolean,
     val destination: ExtensionFavoriteDestination,
     /** The page shows a title of the app's own library (offline copy, complete chapter list). */
@@ -60,26 +60,26 @@ data class PublicationFavorites(
 )
 
 /** How the publication page fits into its parent. */
-class PublicationPaneNavigation(
-    val refreshGeneration: Long,
+public class PublicationPaneNavigation(
+    internal val refreshGeneration: Long,
     /** One-shot: a change asks the open reader to go back once. */
-    val readerBackRequest: Long = 0L,
-    val onBack: () -> Unit,
-    val reader: PublicationReaderEvents,
+    internal val readerBackRequest: Long = 0L,
+    internal val onBack: () -> Unit,
+    internal val reader: PublicationReaderEvents,
     /** After a restart: the chapter to reopen once the chapter list is loaded. */
-    val reopen: PublicationReaderReopen? = null,
+    internal val reopen: PublicationReaderReopen? = null,
 )
 
 /** What the parent is told about, and asked about, the reader a publication page opens. */
-class PublicationReaderEvents(
-    val onVisibilityChanged: (Boolean) -> Unit,
+public class PublicationReaderEvents(
+    internal val onVisibilityChanged: (Boolean) -> Unit,
     /** Told the unit the reader shows (its source id), or null when the reader closes. */
-    val onUnitChanged: (String?) -> Unit = {},
+    internal val onUnitChanged: (String?) -> Unit = {},
     /**
      * Whether this title is still the page the shell shows. Read when a chapter finishes loading:
      * a page the user already left (still drawn while it animates away) opens nothing.
      */
-    val isShown: () -> Boolean = { true },
+    internal val isShown: () -> Boolean = { true },
 )
 
 /** The reader's loading screen over a publication page ([ExtensionPublicationState.readerCover]). */
@@ -92,13 +92,13 @@ internal class ReaderCover(
 )
 
 /** A chapter ([dev.shinsou.kmp.ui.browse.extensionUnitIdentity]) to reopen; [onHandled] once it was tried. */
-class PublicationReaderReopen(
-    val unit: Long,
+public class PublicationReaderReopen(
+    internal val unit: Long,
     /** The user asked for it ("continue reading"), rather than a restart restoring it. */
-    val userRequested: Boolean,
+    internal val userRequested: Boolean,
     /** False once the user opened something else (the same title again included): it is given up. */
-    val stillWanted: () -> Boolean,
-    val onHandled: () -> Unit,
+    internal val stillWanted: () -> Boolean,
+    internal val onHandled: () -> Unit,
 )
 
 /**

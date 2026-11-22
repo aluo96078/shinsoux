@@ -92,7 +92,7 @@ import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.reader.readingProgressPageLabel
 
 @Composable
-fun MangaDetailScreen(
+public fun MangaDetailScreen(
     manga: Manga,
     chapters: List<Chapter>,
     downloads: List<DownloadQueueItem>,

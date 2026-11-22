@@ -1,10 +1,12 @@
 # R2-1 (docs/architecture/0006-code-quality-refactoring-plan.md)
 # Builds on detekt's default configuration; only the deviations are listed here.
 # Findings that existed when this was introduced are in the baselines beside this file, which may
-# only shrink. detekt names them after the source set it analyses (baseline-main.xml,
-# baseline-androidMainSourceSet.xml, baseline-iosMainSourceSet.xml), from the `baseline.xml` the
-# build script gives it, under config/detekt/<module>/; run `./gradlew detektProduct`, which covers
-# every module and all three.
+# only shrink: config/detekt/<module>/baseline-<kind>.xml, each finding listed once. detekt reads
+# one baseline per task, so the build merges the kinds a task reads: detektMainDesktop reads
+# common + main, detektDebugAndroid common + debug + androidMainSourceSet, detektAndroidMainSourceSet
+# androidMainSourceSet and detektIosMainSourceSet iosMainSourceSet (build-logic DetektBaselines.kt).
+# Run `./gradlew detektProduct`, which covers every module and all four; `./gradlew
+# detektBaselineProduct` rewrites the files from what the tasks report now.
 
 complexity:
   LongMethod:

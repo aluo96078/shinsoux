@@ -2,12 +2,12 @@ package dev.shinsou.kmp.ui.browse
 
 // 0008 §7-5: from the shell's LocalLibraryExtensionRouting.kt; the publication page owns where a favorite goes.
 /** Selects the explicit favorite owner advertised by an extension source. */
-enum class ExtensionFavoriteDestination {
+public enum class ExtensionFavoriteDestination {
     LOCAL_LIBRARY,
     SOURCE_ACCOUNT,
 }
 
-fun extensionFavoriteDestination(
+public fun extensionFavoriteDestination(
     sourceSupportsFavorites: Boolean?,
 ): ExtensionFavoriteDestination = if (sourceSupportsFavorites == true) {
     ExtensionFavoriteDestination.SOURCE_ACCOUNT
@@ -16,7 +16,7 @@ fun extensionFavoriteDestination(
 }
 
 /** Executes exactly one favorite mutation boundary. */
-suspend fun mutateExtensionFavorite(
+public suspend fun mutateExtensionFavorite(
     destination: ExtensionFavoriteDestination,
     localMutation: suspend () -> Unit,
     sourceMutation: suspend () -> Unit,

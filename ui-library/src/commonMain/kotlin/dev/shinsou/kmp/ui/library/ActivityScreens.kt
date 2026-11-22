@@ -82,7 +82,7 @@ import kotlinx.datetime.toLocalDateTime
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun UpdatesScreen(
+public fun UpdatesScreen(
     updates: List<UpdateItem>,
     onRefresh: () -> Unit,
     onOpenManga: (Long) -> Unit,
@@ -518,7 +518,7 @@ private val MONTH_NAMES = listOf(
 )
 
 @Composable
-fun HistoryScreen(
+public fun HistoryScreen(
     history: List<HistoryItem>,
     onOpenManga: (Long) -> Unit,
     onResumeChapter: (Long, Long) -> Unit,

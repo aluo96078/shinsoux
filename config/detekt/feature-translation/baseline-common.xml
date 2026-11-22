@@ -1,0 +1,96 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:LlmTranslationProvider.kt:!(lower.startsWith("https://") || lower.startsWith("http://")) || trimmed.any { it.isWhitespace() || it.isISOControl() }</ID>
+    <ID>ComplexCondition:LlmTranslationProvider.kt:host == "localhost" || host.endsWith(".local") || host == "[::1]" || host == "::1"</ID>
+    <ID>ComplexCondition:MangaPipeline.kt:MangaPipeline$a.isNotEmpty() &amp;&amp; b.isNotEmpty() &amp;&amp; (latin(a.last()) || a.last() in ",.!?") &amp;&amp; latin(b.first())</ID>
+    <ID>ComplexCondition:MangaTextRecognizer.kt:nx &lt; 0 || ny &lt; 0 || nx &gt;= width || ny &gt;= height</ID>
+    <ID>ComplexCondition:ReaderTranslation.kt:DefaultReaderTranslation$kind != null &amp;&amp; kind != TranslationProviderKind.OFFLINE &amp;&amp; kind != TranslationProviderKind.SYSTEM &amp;&amp; key(kind).isNullOrBlank()</ID>
+    <ID>ComplexCondition:TranslationGlossary.kt:TranslationGlossary$end &lt; translated.length &amp;&amp; translated[end] == ' ' &amp;&amp; (after == null || TranslationText.isCjk(after))</ID>
+    <ID>ComplexCondition:TranslationGlossary.kt:TranslationGlossary$start &gt; cursor &amp;&amp; translated[start - 1] == ' ' &amp;&amp; (before == null || TranslationText.isCjk(before))</ID>
+    <ID>ComplexCondition:TranslationPrefetchQueue.kt:TranslationPrefetchQueue$settings == null || settings.from != request.from || settings.to != request.to || !settings.enabled</ID>
+    <ID>ConstructorParameterNaming:CloudTranslationProviders.kt:DeepLTranslationProvider.Request$val source_lang: String</ID>
+    <ID>ConstructorParameterNaming:CloudTranslationProviders.kt:DeepLTranslationProvider.Request$val target_lang: String</ID>
+    <ID>CyclomaticComplexMethod:CloudTranslationProviders.kt:CloudTranslationProvider$final override suspend fun translate: List&lt;String&gt;</ID>
+    <ID>CyclomaticComplexMethod:LlmTranslationProvider.kt:private fun isLocalLlmHost: Boolean</ID>
+    <ID>CyclomaticComplexMethod:MangaOcr.kt:MangaOcr$private fun decode</ID>
+    <ID>CyclomaticComplexMethod:MangaStorage.kt:MangaModelStore$private suspend fun fetch</ID>
+    <ID>CyclomaticComplexMethod:MangaTextRecognizer.kt:internal fun lineBoxes: List&lt;Box&gt;</ID>
+    <ID>CyclomaticComplexMethod:OfflineModelStore.kt:OfflineModelStore$override suspend fun download: Unit</ID>
+    <ID>CyclomaticComplexMethod:ReaderTranslationServices.kt:ReaderTranslation.Companion$public fun detectLanguage: String</ID>
+    <ID>CyclomaticComplexMethod:TranslationPrefetchQueue.kt:TranslationPrefetchQueue$private suspend fun translate</ID>
+    <ID>CyclomaticComplexMethod:TranslationService.kt:TranslationService.Plan$private suspend fun translateRoute: List&lt;String?&gt;</ID>
+    <ID>DoubleMutabilityForCollection:ChineseScript.kt:ChineseScriptTable$var current: HashMap&lt;String, String&gt;? = null</ID>
+    <ID>DoubleMutabilityForCollection:CloudTranslationProviders.kt:CloudTranslationProvider$var batch = ArrayList&lt;String&gt;()</ID>
+    <ID>EmptyElseBlock:MangaLayout.kt:MangaLayout$if (first &lt; 0) first = x</ID>
+    <ID>EmptyElseBlock:MangaLayout.kt:MangaLayout$if (first &lt; 0) first = y</ID>
+    <ID>EmptyElseBlock:MangaTextRecognizer.kt:if (x &lt; minX) minX = x</ID>
+    <ID>EmptyElseBlock:MangaTextRecognizer.kt:if (y &lt; minY) minY = y</ID>
+    <ID>EmptyElseBlock:TranslationMemoryStore.kt:TranslationMemoryStore$if (includePaid) add(1L)</ID>
+    <ID>FunctionParameterNaming:MangaEraser.kt:MangaEraser$W: Int</ID>
+    <ID>LongParameterList:MangaEraser.kt:Erased</ID>
+    <ID>LongParameterList:MangaEraser.kt:MangaEraser$private fun inkColour: FloatArray?</ID>
+    <ID>LongParameterList:MangaEraser.kt:MangaEraser$private fun sourceGlyphSize: Int?</ID>
+    <ID>LongParameterList:MangaInpainter.kt:MangaInpainter$public fun inpaint</ID>
+    <ID>LongParameterList:MangaLayout.kt:MangaLayout$public fun layout: TextLayout?</ID>
+    <ID>LongParameterList:MangaPipeline.kt:MangaPipeline$public fun render: RgbImage</ID>
+    <ID>LongParameterList:MangaPlatform.kt:VisionOps$public fun morphology: ByteArray</ID>
+    <ID>LongParameterList:MangaStorage.kt:MangaModelStore$private suspend fun fetch</ID>
+    <ID>LongParameterList:MangaStorage.kt:MangaRenderCache$public fun key: String</ID>
+    <ID>LongParameterList:MangaTranslation.kt:MangaChapterRequest</ID>
+    <ID>LongParameterList:MangaTranslation.kt:MangaTranslation</ID>
+    <ID>LongParameterList:ReaderTranslation.kt:TranslationDisplayText$private fun map: Int</ID>
+    <ID>LongParameterList:TranslationMemoryStore.kt:TranslationMemoryStore$public fun lookup: Map&lt;String, String&gt;</ID>
+    <ID>LongParameterList:TranslationMemoryStore.kt:TranslationMemoryStore$public fun saveChapterSegments</ID>
+    <ID>LongParameterList:TranslationPrefetchQueue.kt:PrefetchChapter</ID>
+    <ID>LongParameterList:TranslationPrefetchQueue.kt:TranslationPrefetchJob</ID>
+    <ID>LoopWithTooManyJumpStatements:MangaPipeline.kt:MangaPipeline$for</ID>
+    <ID>LoopWithTooManyJumpStatements:MangaPlatform.kt:RgbImage$for</ID>
+    <ID>LoopWithTooManyJumpStatements:MangaStorage.kt:MangaModelStore$while</ID>
+    <ID>LoopWithTooManyJumpStatements:MangaTextRecognizer.kt:for</ID>
+    <ID>LoopWithTooManyJumpStatements:OfflineModelStore.kt:OfflineModelStore$while</ID>
+    <ID>NestedBlockDepth:MangaInpainter.kt:MangaInpainter$public fun inpaint</ID>
+    <ID>NestedBlockDepth:MangaOcr.kt:MangaOcr$private fun decode</ID>
+    <ID>NestedBlockDepth:MangaTextRecognizer.kt:internal fun lineBoxes: List&lt;Box&gt;</ID>
+    <ID>NoNameShadowing:MangaAccelerators.kt:{ current[it] }</ID>
+    <ID>NoNameShadowing:MangaStorage.kt:MangaModelStore${ "zh-Hans" to it.getValue("NotoSansSC-VF.ttf") }</ID>
+    <ID>ReturnCount:ChineseScript.kt:ChineseScript$public fun converts: Boolean</ID>
+    <ID>ReturnCount:ChineseScript.kt:ChineseScriptProvider$override fun route: List&lt;TranslationHop&gt;?</ID>
+    <ID>ReturnCount:CloudTranslationProviders.kt:CloudTranslationProvider$final override fun route: List&lt;TranslationHop&gt;?</ID>
+    <ID>ReturnCount:CloudTranslationProviders.kt:CloudTranslationProvider$private suspend fun runBatch: Result&lt;List&lt;String&gt;&gt;</ID>
+    <ID>ReturnCount:LlmTranslationProvider.kt:private fun isLocalLlmHost: Boolean</ID>
+    <ID>ReturnCount:LlmTranslationProvider.kt:public fun normalizedLlmBaseUrl: String?</ID>
+    <ID>ReturnCount:MangaEraser.kt:MangaEraser$private fun bubbleInterior: Region?</ID>
+    <ID>ReturnCount:MangaPipeline.kt:internal fun tidyTranslation: String?</ID>
+    <ID>ReturnCount:MangaStorage.kt:MangaModelStore$private fun bytesUnder: Long</ID>
+    <ID>ReturnCount:OfflineModelCatalog.kt:OfflineModelCatalog$public fun route: List&lt;OfflineModel&gt;?</ID>
+    <ID>ReturnCount:OfflineModelStore.kt:OfflineModelStore$override fun installed: OfflineModelPaths?</ID>
+    <ID>ReturnCount:ReaderTranslation.kt:DefaultReaderTranslation$override suspend fun downloadSystemLanguages: Boolean</ID>
+    <ID>ReturnCount:ReaderTranslation.kt:DefaultReaderTranslation$override suspend fun systemLanguagesMissing: Boolean</ID>
+    <ID>ReturnCount:ReaderTranslationServices.kt:ReaderTranslation.Companion$public fun autoTranslationPair: Pair&lt;String, String&gt;?</ID>
+    <ID>ReturnCount:ReaderTranslation.kt:TranslationDisplayText$private fun map: Int</ID>
+    <ID>ReturnCount:ReaderTranslation.kt:TranslationDisplayText.Companion$public fun build: TranslationDisplayText?</ID>
+    <ID>ReturnCount:SystemTranslation.kt:SystemTranslationProvider$override fun route: List&lt;TranslationHop&gt;?</ID>
+    <ID>ReturnCount:TranslationPrefetchQueue.kt:TranslationPrefetchQueue$private suspend fun translate</ID>
+    <ID>ThrowsCount:CloudTranslationProviders.kt:CloudTranslationProvider$final override suspend fun translate: List&lt;String&gt;</ID>
+    <ID>ThrowsCount:MangaStorage.kt:MangaModelStore$private suspend fun fetch</ID>
+    <ID>ThrowsCount:OfflineTranslationProvider.kt:OfflineTranslationProvider$override suspend fun translate: List&lt;String&gt;</ID>
+    <ID>ThrowsCount:SystemTranslation.kt:SystemTranslationProvider$override suspend fun translate: List&lt;String&gt;</ID>
+    <ID>ThrowsCount:TranslationPrefetchQueue.kt:TranslationPrefetchQueue$private suspend fun translate</ID>
+    <ID>TooGenericExceptionCaught:ChineseScript.kt:ChineseScriptProvider$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:CloudTranslationProviders.kt:CloudTranslationProvider$error: Exception</ID>
+    <ID>TooGenericExceptionCaught:MangaStorage.kt:MangaModelStore$error: Exception</ID>
+    <ID>TooGenericExceptionCaught:OfflineModelStore.kt:OfflineModelStore$error: Exception</ID>
+    <ID>TooGenericExceptionCaught:SystemTranslation.kt:SystemTranslationProvider$error: Exception</ID>
+    <ID>UnsafeCallOnNullableType:TranslationService.kt:TranslationService.Plan$hashes[position]!!</ID>
+    <ID>UnsafeCallOnNullableType:TranslationService.kt:TranslationService.Plan$text!!</ID>
+    <ID>UnusedPrivateProperty:MangaPipeline.kt:MangaPipeline$/** Where detection runs (the user's choice, installed); empty for the CPU alone. */ private val accelerators: List&lt;AcceleratorSupport&gt; = emptyList()</ID>
+    <ID>UnusedVariable:MangaOcr.kt:MangaOcr$step</ID>
+    <ID>UseOrEmpty:LlmTranslationProvider.kt:this ?: emptyList()</ID>
+    <ID>VariableNaming:MangaEraser.kt:MangaEraser$val H = img.height</ID>
+    <ID>VariableNaming:MangaEraser.kt:MangaEraser$val W = img.width</ID>
+    <ID>VariableNaming:MangaInpainter.kt:MangaInpainter$val H = img.height</ID>
+    <ID>VariableNaming:MangaInpainter.kt:MangaInpainter$val W = img.width</ID>
+  </CurrentIssues>
+</SmellBaseline>

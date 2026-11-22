@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongParameterList:ShinsouComposition.kt:ShinsouComposition</ID>
+    <ID>ReturnCount:ContentFeatureRuntime.kt:ContentFeatureRuntime$private fun currentAnnotationAccess: ContentAccessRequest?</ID>
+    <ID>ReturnCount:LegacyPublicationStartupMigration.kt:LegacyPublicationStartupMigration$private fun candidateGraph: Publication?</ID>
+    <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$/** The operating system's own translation, where the platform has one. */ private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null</ID>
+    <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null</ID>
+  </CurrentIssues>
+</SmellBaseline>

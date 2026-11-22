@@ -4,17 +4,17 @@ package dev.shinsou.kmp.ui.reader
 internal expect val platformSupportsReaderVolumeKeys: Boolean
 
 
-fun shouldShowReaderVolumeKeySetting(
+public fun shouldShowReaderVolumeKeySetting(
     platformSupported: Boolean = platformSupportsReaderVolumeKeys,
 ): Boolean = platformSupported
 
-fun effectiveReaderVolumeKeysEnabled(
+public fun effectiveReaderVolumeKeysEnabled(
     configured: Boolean,
     platformSupported: Boolean = platformSupportsReaderVolumeKeys,
 ): Boolean = configured && platformSupported
 
 /** Enables interception only while a reader that consumes the event flow is actually visible. */
-fun effectiveReaderVolumeKeyMonitoringEnabled(
+public fun effectiveReaderVolumeKeyMonitoringEnabled(
     readerOpen: Boolean,
     configured: Boolean,
     platformSupported: Boolean = platformSupportsReaderVolumeKeys,

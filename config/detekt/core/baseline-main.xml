@@ -3,9 +3,5 @@
   <ManuallySuppressedIssues/>
   <CurrentIssues>
     <ID>ImplicitDefaultLocale:PlatformLibsodium.desktop.kt:DesktopLibsodium$"%02x".format(it)</ID>
-    <ID>ReturnCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
-    <ID>ThrowsCount:CanonicalJson.kt:private fun canonicalPrimitive: String</ID>
-    <ID>TooGenericExceptionCaught:RunCatchingCancellable.kt:error: Throwable</ID>
-    <ID>UnusedPrivateProperty:SynchronousLock.jvm.kt:SynchronousLock$private val delegate = ReentrantLock(true)</ID>
   </CurrentIssues>
 </SmellBaseline>

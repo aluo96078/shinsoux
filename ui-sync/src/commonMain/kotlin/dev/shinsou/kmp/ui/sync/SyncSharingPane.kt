@@ -586,7 +586,7 @@ private fun ShareCandidateList(
 
 /** Picks a recipient for [workHash] among the accounts the user follows, or by username search. */
 @Composable
-fun ShareWithUserDialog(sync: SyncSharing, workHash: String, title: String, onDismiss: () -> Unit) {
+public fun ShareWithUserDialog(sync: SyncSharing, workHash: String, title: String, onDismiss: () -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }

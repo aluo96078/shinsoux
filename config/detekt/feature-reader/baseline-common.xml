@@ -9,7 +9,6 @@
     <ID>ComplexCondition:EpubRenderer.kt:openingHeadEnd != null &amp;&amp; tagName == "head" &amp;&amp; openingHeadDepth == openElements.size &amp;&amp; openElements.lastOrNull() == "head"</ID>
     <ID>ComplexCondition:EpubRenderer.kt:url.length &gt; MAX_PRIVATE_PUBLICATION_URL_LENGTH || url.any { it.isISOControl() || it.isWhitespace() } || '\\' in url || !url.startsWith(publicationRootUrl)</ID>
     <ID>CyclomaticComplexMethod:ContentTextToSpeech.kt:private fun splitText: List&lt;IntRange&gt;</ID>
-    <ID>CyclomaticComplexMethod:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
     <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlHead: HtmlHeadScan</ID>
     <ID>CyclomaticComplexMethod:EpubRenderer.kt:private fun scanHtmlTag: HtmlMarkupTag?</ID>
     <ID>CyclomaticComplexMethod:LocalArchive.kt:private fun compareNaturalPaths: Int</ID>
@@ -30,12 +29,6 @@
     <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$override suspend fun speak: ContentSpeechResult</ID>
     <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$override suspend fun speak: EpubContentSpeechResult</ID>
     <ID>ReturnCount:ContentTextToSpeech.kt:private fun isWellFormedText: Boolean</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$@Deprecated("Legacy WebView callback retained for old engines") override fun shouldOverrideUrlLoading: Boolean</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun configure</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun documentLoadFailed: Boolean</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:AndroidEpubBrowserState$fun sampleViewport</ID>
-    <ID>ReturnCount:EpubBrowserView.android.kt:private fun readerActionForKey: ReaderTapAction?</ID>
     <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$fun documentLoaded: EpubBrowserDocumentLoad?</ID>
     <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$fun sameDocumentNavigationLoaded: EpubBrowserDocumentLoad?</ID>
     <ID>ReturnCount:EpubBrowserView.kt:EpubBrowserDocumentState$private fun navigationTarget: EpubBrowserNavigationTarget?</ID>

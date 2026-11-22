@@ -52,7 +52,7 @@ private const val ORIGINS_SHOWN = 5
  * package name (names prove nothing); every sensitive item is its own switch, off by default.
  */
 @Composable
-fun PluginPermissionReviewDialog(
+public fun PluginPermissionReviewDialog(
     review: PluginEventGrantReview,
     details: PluginPermissionDetails?,
     /** The current grant when opened from settings: items can only be switched off there. */

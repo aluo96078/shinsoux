@@ -10,8 +10,8 @@ private val sourceFailureKeys = mapOf(
     "SHINSOU_SOURCE_QUOTA_EXCEEDED" to StringKey.THE_SOURCE_S_DAILY_IMAGE_QUOTA_HAS,
 )
 
-fun Throwable.localizedSourceFailure(strings: ShinsouStrings): String? =
+public fun Throwable.localizedSourceFailure(strings: ShinsouStrings): String? =
     sourceFailureKeys[sourceFailureMarker()]?.let { strings.text(it) }
 
-fun String.localizedSourceFailure(strings: ShinsouStrings): String? =
+public fun String.localizedSourceFailure(strings: ShinsouStrings): String? =
     sourceFailureKeys[sourceFailureMarker(this)]?.let { strings.text(it) }

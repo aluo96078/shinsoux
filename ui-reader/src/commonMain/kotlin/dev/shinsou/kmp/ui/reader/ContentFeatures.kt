@@ -23,27 +23,27 @@ import dev.shinsou.kmp.tts.ProtectedTextToSpeech
  * feature layers; `ui` is the lowest layer that may see all of them at once. Each member is the
  * narrow interface its module declares for the screens; the implementations stay with the host.
  */
-interface ContentFeatures {
+public interface ContentFeatures {
     /** Reader translation (ADR-0004); null where the platform has no offline engine. */
-    val translation: ReaderTranslation?
-    val operations: ProtectedContentOperations
-    val searchIndex: ReaderSearchIndex
-    val annotations: ContentAnnotationService
-    val textToSpeech: ProtectedTextToSpeech
-    val speechCapability: PlatformSpeechCapability
+    public val translation: ReaderTranslation?
+    public val operations: ProtectedContentOperations
+    public val searchIndex: ReaderSearchIndex
+    public val annotations: ContentAnnotationService
+    public val textToSpeech: ProtectedTextToSpeech
+    public val speechCapability: PlatformSpeechCapability
 
     /** Reads exact EPUB resources lazily, only after the reader has passed the DISPLAY gate. */
-    val epubRenderRequests: EpubRenderRequests
+    public val epubRenderRequests: EpubRenderRequests
 
     /** Rebuildable XHTML text/CFI map shared by EPUB progress, search, TTS and annotations. */
-    val epubSemanticDocuments: EpubSemanticDocuments
+    public val epubSemanticDocuments: EpubSemanticDocuments
 
     /** Reads only visible image bodies; opening a long comic never hydrates every page at once. */
-    val imageRenderPages: ImageRenderPages
+    public val imageRenderPages: ImageRenderPages
 
     /** Read-only format metadata used by library chrome; bodies remain lazy and unopened. */
-    fun publicationContentKinds(publicationKeys: Set<PublicationKey>): Map<PublicationKey, Set<ContentKind>>
+    public fun publicationContentKinds(publicationKeys: Set<PublicationKey>): Map<PublicationKey, Set<ContentKind>>
 
     /** Called after foreground/resume and before presenting a typed content session. */
-    suspend fun cleanupRevokedDerivedData(scope: ReadingScope, access: ContentAccessRequest): RevokedContentCleanupResult
+    public suspend fun cleanupRevokedDerivedData(scope: ReadingScope, access: ContentAccessRequest): RevokedContentCleanupResult
 }

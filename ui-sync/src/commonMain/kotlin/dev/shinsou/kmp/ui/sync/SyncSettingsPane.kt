@@ -60,7 +60,7 @@ import dev.shinsou.kmp.ui.components.SettingsList
 
 /** More → Sync: choose a server, sign in or register, then see status and manage devices. */
 @Composable
-fun <S> SyncSettingsPane(
+public fun <S> SyncSettingsPane(
     sync: S?,
     copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
     kinds: SyncKindSettings = SyncKindSettings(),

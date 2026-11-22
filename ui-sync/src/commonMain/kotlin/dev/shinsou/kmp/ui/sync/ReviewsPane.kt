@@ -96,7 +96,7 @@ private sealed interface EntryState {
  * row when it is in the library, so the first review can be written after a sync.
  */
 @Composable
-fun ReviewsEntry(sync: SyncReviews, workHash: String, title: String, inLibrary: Boolean) {
+public fun ReviewsEntry(sync: SyncReviews, workHash: String, title: String, inLibrary: Boolean) {
     val strings = LocalShinsouStrings.current
     var tick by remember(workHash) { mutableIntStateOf(0) }
     var state by remember(workHash) { mutableStateOf<EntryState>(EntryState.Loading) }

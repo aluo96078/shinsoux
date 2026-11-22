@@ -6,7 +6,7 @@ import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 
 /** One-based page label for detail screens; the total is shown only when it was measured. */
-fun readingProgressPageLabel(strings: ShinsouStrings, pageIndex: Int, pageCount: Int?): String {
+public fun readingProgressPageLabel(strings: ShinsouStrings, pageIndex: Int, pageCount: Int?): String {
     val page = pageIndex.coerceAtLeast(0) + 1
     return if (pageCount != null && pageCount >= page) {
         strings.text(StringKey.PAGE_X_X, page, pageCount)
@@ -16,7 +16,7 @@ fun readingProgressPageLabel(strings: ShinsouStrings, pageIndex: Int, pageCount:
 }
 
 /** "Last read" hint under the continue button: the chapter title plus its page when unfinished. */
-fun extensionContinueReadingDetail(
+public fun extensionContinueReadingDetail(
     strings: ShinsouStrings,
     unitTitle: String,
     progress: ExtensionUnitPageProgressV2?,

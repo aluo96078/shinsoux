@@ -111,7 +111,7 @@ private enum class SettingsSection(val icon: ImageVector) {
 }
 
 @Composable
-fun SettingsScreen(
+public fun SettingsScreen(
     settings: AppSettings,
     categories: List<Category>,
     securityCapabilities: PlatformSecurityCapabilities = PlatformSecurityCapabilities.Unavailable,

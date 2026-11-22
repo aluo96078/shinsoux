@@ -114,7 +114,7 @@ import kotlin.math.ceil
 import dev.shinsou.kmp.ui.components.CategoryNameDialog
 
 @Composable
-fun LibraryScreen(
+public fun LibraryScreen(
     items: List<LibraryItem>,
     contentTypes: Map<Long, LibraryContentType> = emptyMap(),
     categories: List<Category>,
@@ -1119,7 +1119,7 @@ private fun LibrarySortMenu(
 }
 
 @Composable
-fun CategoryPickerDialog(
+public fun CategoryPickerDialog(
     categories: List<Category>,
     selectedCategoryIds: Set<Long>,
     onDismiss: () -> Unit,
@@ -1240,4 +1240,4 @@ private fun LibrarySortType.displayName(strings: dev.shinsou.kmp.ui.i18n.Shinsou
 
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
 
-const val ALL_LIBRARY_CATEGORY_ID: Long = Long.MIN_VALUE
+public const val ALL_LIBRARY_CATEGORY_ID: Long = Long.MIN_VALUE

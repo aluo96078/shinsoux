@@ -38,7 +38,7 @@ import dev.shinsou.kmp.ui.i18n.text
  * fingerprint and either trusts it on first use or enters the full fingerprint from the publisher.
  */
 @Composable
-fun RepositoryTrustDialog(
+public fun RepositoryTrustDialog(
     prompt: RepositoryTrustPrompt,
     onTrust: (fingerprint: String?) -> Unit,
     onDismiss: () -> Unit,

@@ -12,7 +12,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlin.time.Clock
 
-const val MAX_COOKIE_FILE_BYTES: Int = 1_048_576
+public const val MAX_COOKIE_FILE_BYTES: Int = 1_048_576
 
 /** Parses the browser-export formats supported by the original mobile application. */
 internal object CookieFileParser {

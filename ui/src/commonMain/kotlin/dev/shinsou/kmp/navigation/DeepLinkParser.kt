@@ -6,8 +6,8 @@ import dev.shinsou.kmp.ui.DeepLinkSection
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 
 /** Parses the URL contract already published by the native Shinsou application. */
-object DeepLinkParser {
-    fun parse(rawValue: String): ShinsouDeepLink? {
+public object DeepLinkParser {
+    public fun parse(rawValue: String): ShinsouDeepLink? {
         val trimmed = rawValue.trim()
         if (!trimmed.startsWith("shinsou://", ignoreCase = true)) return null
         if (trimmed.length > MAX_DEEP_LINK_LENGTH || '#' in trimmed) return null

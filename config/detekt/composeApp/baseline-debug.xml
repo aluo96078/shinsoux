@@ -2,29 +2,13 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>CyclomaticComplexMethod:AndroidAppServices.kt:internal fun imageMimeType: String</ID>
     <ID>InjectDispatcher:AndroidAppRuntime.kt:AndroidAppRuntime$Default</ID>
     <ID>InjectDispatcher:AndroidAppServices.kt:AndroidAppServices$IO</ID>
     <ID>InjectDispatcher:AndroidDownloadJobService.kt:AndroidDownloadJobService$Default</ID>
     <ID>InjectDispatcher:MainActivity.kt:MainActivity.ActivityDocumentLauncher$IO</ID>
     <ID>LongParameterList:AndroidAppServices.kt:AndroidAppServices</ID>
-    <ID>LongParameterList:ShinsouComposition.kt:ShinsouComposition</ID>
-    <ID>ReturnCount:AndroidAppServices.kt:AndroidAppServices$fun emitReaderVolumeKey: Boolean</ID>
-    <ID>ReturnCount:AndroidDownloadJobService.kt:AndroidDownloadJobService.Companion$fun schedule: Boolean</ID>
-    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$override suspend fun getString: String?</ID>
-    <ID>ReturnCount:AndroidPluginKeyValueStore.kt:AndroidPluginKeyValueStore$private fun ensureSensitiveValuesMigrated</ID>
-    <ID>ReturnCount:ContentFeatureRuntime.kt:ContentFeatureRuntime$private fun currentAnnotationAccess: ContentAccessRequest?</ID>
-    <ID>ReturnCount:LegacyPublicationStartupMigration.kt:LegacyPublicationStartupMigration$private fun candidateGraph: Publication?</ID>
     <ID>SuspendFunSwallowedCancellation:AndroidAppRuntime.kt:AndroidAppRuntime$catch (error: Throwable) { // Let the next activity try again instead of leaving the core unstarted for good. started.set(false) throw error }</ID>
     <ID>SuspendFunSwallowedCancellation:AndroidDownloadJobService.kt:AndroidDownloadJobService$catch (error: Throwable) { if (error is kotlinx.coroutines.CancellationException) throw error Log.w(TAG, "Could not start downloads for the background job", error) }</ID>
     <ID>SuspendFunSwallowedCancellation:MainActivity.kt:MainActivity.ActivityDocumentLauncher$catch (error: Throwable) { if (continuation.isActive) continuation.resumeWithException(error) }</ID>
-    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher$private fun readDocument: ImportedDocument</ID>
-    <ID>ThrowsCount:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$override fun read: ByteArray</ID>
-    <ID>TooGenericExceptionCaught:AndroidAppRuntime.kt:AndroidAppRuntime$error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:AndroidDownloadJobService.kt:AndroidDownloadJobService$error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher$error: Throwable</ID>
-    <ID>TooGenericExceptionCaught:MainActivity.kt:MainActivity.ActivityDocumentLauncher.AndroidUriImportedDocumentSource$error: Throwable</ID>
-    <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$/** The operating system's own translation, where the platform has one. */ private val systemTranslation: dev.shinsou.kmp.translation.SystemTranslationEngine? = null</ID>
-    <ID>UnusedPrivateProperty:ShinsouComposition.kt:ShinsouComposition$private val shuYueMigrationSecretStore: ShuYueMigrationSecretStore? = null</ID>
   </CurrentIssues>
 </SmellBaseline>

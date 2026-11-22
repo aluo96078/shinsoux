@@ -6,6 +6,16 @@
 # They are compared by count: their entries name files and signatures, so moving code renames
 # entries without adding a finding. The detekt baselines are counted per rule too, so one finding
 # fixed does not make room for another of a different rule.
+#
+# Detekt baseline layout (0007 §7 follow-up 6): a module's findings are in
+# config/detekt/<module>/baseline-<kind>.xml, each finding once. detekt reads one file per task, so
+# the typed desktop task reads common + main, the typed Android task common + debug +
+# androidMainSourceSet, and the untyped source-set tasks androidMainSourceSet / iosMainSourceSet
+# (build-logic DetektBaselines.kt and QualityPlugin). Before that layout main and debug listed the
+# findings of the common sources twice. So the detekt baselines are counted as unique findings: the
+# distinct `<ID>` entries of all of a module's files, added up over the modules (code moving between
+# modules still moves entries without growing the total). The same count on the old layout of the
+# base ref is what makes the de-duplication neither growth nor a way to hide a finding.
 set -euo pipefail
 
 base="${1:?usage: check_baselines_shrink.sh <base ref>}"
@@ -39,51 +49,54 @@ check() { # <path> <grep pattern>
   fi
 }
 
-# R5-1: every Gradle module has its own detekt baselines, config/detekt/<module>/baseline-<kind>.xml
-# (before R5-1 there was one set, config/detekt/baseline-<kind>.xml). They are added up per kind
-# (the source set: main, androidMainSourceSet, ...), so code moving between modules moves entries
-# without growing anything, while the kind as a whole still may only shrink.
-baseline_files() { # <ref or "WORKTREE"> <kind>: the baseline files of that kind in every module
+# R5-1: every Gradle module has its own detekt baselines (before R5-1 there was one set,
+# config/detekt/baseline-<kind>.xml). A finding is one entry of one module: the module is the
+# directory of the file, the finding its <ID> text. The kinds (common, main, debug, ...) only say
+# which tasks read the file, so they are not told apart: a finding listed in two of a module's files
+# (the old layout listed every common finding in main and debug) counts once.
+baseline_files() { # <ref or "WORKTREE">: the detekt baseline files of every module
   if [[ "$1" == WORKTREE ]]; then
-    find config/detekt -type f -name "baseline-$2.xml" | sort
+    find config/detekt -type f -name 'baseline*.xml' | sort
   else
-    git ls-tree -r --name-only "$1" -- config/detekt | grep -- "/baseline-$2\.xml$" || true
+    git ls-tree -r --name-only "$1" -- config/detekt | grep -E -- '/baseline[^/]*\.xml$' || true
   fi
 }
 
-detekt_entries() { # <ref or "WORKTREE"> <kind>: the entries of every baseline of that kind
+findings() { # <ref or "WORKTREE">: "<module directory>|<ID entry>", one line per distinct finding
   local file
-  for file in $(baseline_files "$1" "$2"); do entries "$1" "$file" "<ID>"; done
+  for file in $(baseline_files "$1"); do
+    entries "$1" "$file" "<ID>" | sed -E 's/^[[:space:]]+//' | sed "s#^#$(dirname "$file")|#"
+  done | sort -u
 }
 
-# The rule of a baseline entry: <ID>Rule:File.kt$signature</ID>.
-rules() { detekt_entries "$1" "$2" | sed -E 's/.*<ID>([A-Za-z]+):.*/\1/' | sort | uniq -c | awk '{print $2 " " $1}'; }
+# The rule of a finding: <ID>Rule:File.kt$signature</ID>.
+rules() { sed -E 's/^[^|]*\|<ID>([A-Za-z]+):.*/\1/' | sort | uniq -c | awk '{print $2 " " $1}'; }
 
-check_kind() { # <kind>: no more entries in total, and none of any rule, than in the base
-  local before after rule
-  before="$(detekt_entries "$base" "$1" | wc -l | tr -d ' ')"
-  after="$(detekt_entries WORKTREE "$1" | wc -l | tr -d ' ')"
-  echo "detekt baselines $1: $before -> $after"
-  # A kind the base does not have yet is being introduced, not grown.
-  [[ -n "$(baseline_files "$base" "$1")" ]] || return 0
+check_findings() { # no more distinct findings in total, and none of any rule, than in the base
+  local before_list after_list before after rule
+  before_list="$(findings "$base")"
+  after_list="$(findings WORKTREE)"
+  before="$(printf '%s\n' "$before_list" | grep -c . || true)"
+  after="$(printf '%s\n' "$after_list" | grep -c . || true)"
+  echo "detekt baselines (unique findings): $before -> $after"
+  # A base without baselines yet is being introduced, not grown.
+  [[ -n "$(baseline_files "$base")" ]] || return 0
   if (( after > before )); then
-    echo "::error::the detekt baselines of $1 grew from $before to $after entries; fix the new findings instead"
+    echo "::error::the detekt baselines grew from $before to $after unique findings; fix the new findings instead"
     status=1
   fi
   # By rule as well: fixing one finding must not make room for a finding of another kind.
   while read -r rule after; do
-    before="$(rules "$base" "$1" | awk -v rule="$rule" '$1 == rule {print $2}')"
+    before="$(printf '%s\n' "$before_list" | rules | awk -v rule="$rule" '$1 == rule {print $2}')"
+    echo "  $rule: ${before:-0} -> $after"
     if (( after > ${before:-0} )); then
-      echo "::error::the detekt baselines of $1 have $after entries of $rule, up from ${before:-0}; fix the new findings instead"
+      echo "::error::the detekt baselines have $after findings of $rule, up from ${before:-0}; fix the new findings instead"
       status=1
     fi
-  done < <(rules WORKTREE "$1")
+  done < <(printf '%s\n' "$after_list" | rules)
 }
 
-kinds="$( { baseline_files WORKTREE '*'; baseline_files "$base" '[^/]*'; } | sed -E 's#.*/baseline-(.*)\.xml$#\1#' | sort -u)"
-for kind in $kinds; do
-  check_kind "$kind"
-done
+check_findings
 check config/architecture/dependency-allowlist.txt "^[^#].*|"
 check config/architecture/module-allowlist.txt "^[^#].*|"
 

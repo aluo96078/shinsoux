@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.core
 
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.compositionLocalOf
 
 /**
@@ -8,4 +9,4 @@ import androidx.compose.runtime.compositionLocalOf
  * while this is true, so nobody can approve them without unlocking first. The work behind them
  * (a restored screen looking for a pending grant) still runs; its dialog waits for the unlock.
  */
-val LocalAppUnlocked = compositionLocalOf { true }
+public val LocalAppUnlocked: ProvidableCompositionLocal<Boolean> = compositionLocalOf { true }

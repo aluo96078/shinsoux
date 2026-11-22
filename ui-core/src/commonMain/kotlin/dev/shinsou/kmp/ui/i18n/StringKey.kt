@@ -4,7 +4,7 @@ package dev.shinsou.kmp.ui.i18n
 
 /** Every user-facing UI string; [english] is the text shown when a language has no entry. */
 @Suppress("LargeClass") // one entry per string; splitting it would only scatter the keys
-enum class StringKey(val english: String) {
+public enum class StringKey(public val english: String) {
     ABOUT("About"),
     ABOUT_SHINSOU_X("About Shinsou X"),
     ACCEPTED("Accepted"),

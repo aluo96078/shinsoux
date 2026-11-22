@@ -72,20 +72,20 @@ internal data class BrowseOverlayState(
 }
 
 /** Which sources and extensions Browse lists, from the settings. */
-class BrowseSourceFilters(
-    val showNsfw: Boolean,
-    val enabledLanguages: Set<String>,
-    val pinnedSourceIds: Set<Long>,
+public class BrowseSourceFilters(
+    internal val showNsfw: Boolean,
+    internal val enabledLanguages: Set<String>,
+    internal val pinnedSourceIds: Set<Long>,
     /** Stable v2 source identities corresponding to [pinnedSourceIds] of v2 sources. */
-    val pinnedSourceKeys: Set<String> = emptySet(),
+    internal val pinnedSourceKeys: Set<String> = emptySet(),
 ) {
     /** Whether [source] may be listed (its rating and language). */
-    fun admits(nsfw: Boolean, language: String): Boolean =
+    internal fun admits(nsfw: Boolean, language: String): Boolean =
         (showNsfw || !nsfw) && (enabledLanguages.isEmpty() || language in enabledLanguages)
 }
 
 /** What Browse tells the app shell. */
-data class BrowseHost(
+public data class BrowseHost(
     /** A legacy source title: the shell shows it at once while it is resolved. */
     val onOpenManga: (BrowseManga) -> Unit,
     val onSourcePinnedChange: (sourceId: Long, pinned: Boolean) -> Unit,
@@ -98,19 +98,19 @@ data class BrowseHost(
 )
 
 /** A position an extension reader reached, for the app's reading history. */
-fun interface ExtensionReaderProgressSink {
-    fun record(title: String, unitTitle: String, locator: ReadingLocator, pageIndex: Int, pageCount: Int?)
+public fun interface ExtensionReaderProgressSink {
+    public fun record(title: String, unitTitle: String, locator: ReadingLocator, pageIndex: Int, pageCount: Int?)
 }
 
 /** The app's own library of extension publications. */
-class ExtensionLibraryHost(
+public class ExtensionLibraryHost(
     /** App-owned library mutation for every extension v2 publication. */
-    val setFavorite: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
-    val isFavorite: (BrowseManga) -> Boolean = { false },
+    internal val setFavorite: suspend (BrowseManga, RemotePublicationV2, Boolean) -> Unit = { _, _, _ -> },
+    internal val isFavorite: (BrowseManga) -> Boolean = { false },
 )
 
 /** What the extension publication page and its reader need from the app. */
-data class ExtensionReaderHost(
+public data class ExtensionReaderHost(
     val contentFeatures: ContentFeatures? = null,
     val readerSettings: ReaderSettings = ReaderSettings(),
     val onReaderSettingsChange: (SettingsEdit<ReaderSettings>) -> Unit = {},
