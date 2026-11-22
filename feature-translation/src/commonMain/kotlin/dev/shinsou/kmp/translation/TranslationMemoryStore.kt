@@ -10,6 +10,9 @@ import dev.shinsou.kmp.content.ContentRow
 import dev.shinsou.kmp.content.SchemaComponent
 import dev.shinsou.kmp.content.SchemaMigrator
 import dev.shinsou.kmp.content.columnExists
+import dev.shinsou.kmp.content.executeStatement
+import dev.shinsou.kmp.content.executeUncached
+import dev.shinsou.kmp.content.queryStatement
 import dev.shinsou.kmp.content.tableExists
 import dev.shinsou.kmp.domain.model.TranslationBackup
 import dev.shinsou.kmp.translation.sql.TranslationMemoryDatabase
@@ -515,8 +518,7 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         parameters: Int,
         binders: (SqlPreparedStatement.() -> Unit)?,
         map: (SqlCursor) -> T,
-    ): List<T> = driver.executeQuery(
-        identifier = null,
+    ): List<T> = driver.queryStatement(
         sql = sql,
         mapper = { cursor ->
             val rows = ArrayList<T>()
@@ -589,7 +591,7 @@ public object TranslationMemorySchema {
     /** Before it, a source language other than the default Japanese was taken as the reader's choice. */
     private fun addFromPicked(driver: SqlDriver) {
         if (addColumn(driver, "tm_work", "from_picked")) {
-            driver.execute(null, "UPDATE tm_work SET from_picked = 1 WHERE from_lang != 'ja'", 0).value
+            driver.executeStatement("UPDATE tm_work SET from_picked = 1 WHERE from_lang != 'ja'", 0).value
         }
     }
 
@@ -600,7 +602,7 @@ public object TranslationMemorySchema {
     private fun addColumn(driver: SqlDriver, table: String, column: String): Boolean {
         if (!tableExists(driver, table)) TranslationMemoryDatabase.Schema.create(driver).value
         if (columnExists(driver, table, column)) return false
-        driver.execute(null, "ALTER TABLE $table ADD COLUMN $column INTEGER NOT NULL DEFAULT 0", 0).value
+        driver.executeUncached("ALTER TABLE $table ADD COLUMN $column INTEGER NOT NULL DEFAULT 0", 0).value
         return true
     }
 

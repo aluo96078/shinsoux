@@ -237,9 +237,8 @@ internal object ContentBlobPersistenceSchema {
                   scan_after_name TEXT
                 )
             """.trimIndent(),
-        ).forEach { sql -> driver.execute(null, sql, 0).value }
-        driver.execute(
-            identifier = null,
+        ).forEach { sql -> driver.executeUncached(sql, 0).value }
+        driver.executeStatement(
             sql = "INSERT OR IGNORE INTO $TABLE_BLOB_MAINTENANCE(" +
                 "singleton_id, scan_kind, scan_after_name) VALUES (1, 'OBJECT', NULL)",
             parameters = 0,
@@ -248,7 +247,7 @@ internal object ContentBlobPersistenceSchema {
 
     private fun addOpaqueName(driver: SqlDriver) {
         if (!columnExists(driver, TABLE_BLOBS, "opaque_name")) {
-            driver.execute(null, "ALTER TABLE $TABLE_BLOBS ADD COLUMN opaque_name TEXT", 0).value
+            driver.executeUncached("ALTER TABLE $TABLE_BLOBS ADD COLUMN opaque_name TEXT", 0).value
         }
     }
 }

@@ -26,7 +26,11 @@ import java.io.File
  *
  * Generated statements carry hashed cache identifiers on the same driver as the numbered
  * registry of `:data-content` (`SqlStatementIdentifiers`): [CheckSqlStatementIdentifiers] fails
- * the build when one falls inside the registry's range or two are the same.
+ * the build when one falls inside the registry's range or two are the same. It also fails when
+ * product code (any module's `src/<target>Main`) hands a driver a literal null identifier, which would
+ * silently turn the prepared-statement cache off: statements take their identifier from the
+ * registry (`executeStatement` / `queryStatement`), and `executeUncached` / `queryUncached` are the
+ * explicit, greppable exemption for DDL, PRAGMA and statements with unbounded text.
  */
 public class SqlDelightPlugin : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
@@ -66,6 +70,9 @@ private fun Project.registerIdentifierCheck(): String {
             generatedSources.from(File(module.projectDir, GENERATED_SOURCES))
             dependsOn("${module.path}:generateSqlDelightInterface")
         }
+        rootProject.subprojects.forEach { module ->
+            productSources.from(module.fileTree(File(module.projectDir, "src")) { include("*Main/**/*.kt") })
+        }
         registrySource.set(owner.file(REGISTRY_SOURCE))
         report.set(layout.buildDirectory.file("reports/sqlStatementIdentifiers.txt"))
     }
@@ -81,6 +88,11 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     public abstract val generatedSources: ConfigurableFileCollection
+
+    /** Every module's `src/<target>Main` sources, scanned for a literal null identifier. */
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    public abstract val productSources: ConfigurableFileCollection
 
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
@@ -102,7 +114,11 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
                 uses.getOrPut(match.groupValues[1].replace("_", "").toLong(), ::mutableListOf) += file.name
             }
         }
+        val nullIdentifiers = nullIdentifierUses()
         val problems = buildList {
+            nullIdentifiers.forEach {
+                add("$it passes a null statement identifier; use executeStatement/queryStatement, or executeUncached/queryUncached for DDL, PRAGMA and unbounded text")
+            }
             uses.forEach { (id, files) ->
                 if (id in reserved) add("$id (${files.joinToString()}) is in the registry's range $reserved")
                 if (files.size > 1) add("$id is used by ${files.size} statements (${files.joinToString()})")
@@ -113,7 +129,27 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
             writeText(uses.keys.sorted().joinToString("\n", postfix = "\n") { "$it ${uses.getValue(it).joinToString()}" })
         }
         if (uses.isEmpty()) throw GradleException("No SQLDelight statement identifiers found in ${generatedSources.files}")
-        if (problems.isNotEmpty()) throw GradleException("SQL statement identifiers collide:\n" + problems.joinToString("\n"))
+        if (problems.isNotEmpty()) throw GradleException("SQL statement identifiers are not usable:\n" + problems.joinToString("\n"))
+    }
+
+    /** `file:line` of every `execute(null, ...)`, `executeQuery(null, ...)` or `identifier = null` in product code. */
+    private fun nullIdentifierUses(): List<String> {
+        // The registry's own file holds the exemption helpers, which are the one place that passes null.
+        val exempt = registrySource.get().asFile
+        return productSources.files.filter { it != exempt }.sortedBy { it.path }.flatMap { file ->
+            val text = file.readText()
+            NULL_IDENTIFIER.findAll(text).filterNot { isInComment(text, it.range.first) }.map { match ->
+                "${file.name}:${text.substring(0, match.range.first).count { it == '\n' } + 1}"
+            }.toList()
+        }
+    }
+
+    /** True when [index] lies in a `//` line comment or a block comment (KDoc included). */
+    private fun isInComment(text: String, index: Int): Boolean {
+        val lineStart = text.lastIndexOf('\n', index) + 1
+        if (text.substring(lineStart, index).contains("//")) return true
+        val open = text.lastIndexOf("/*", index)
+        return open >= 0 && text.lastIndexOf("*/", index).let { it < open }
     }
 
     private fun registryConstant(source: String, name: String): Long =
@@ -123,6 +159,8 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
 
 /** `driver.execute(id, ...)`, `driver.executeQuery(id, ...)` and the parameterless `Query(id, ...)`. */
 private val STATEMENT = Regex("""(?:\.execute|\.executeQuery|\bQuery)\(\s*(-?[0-9][0-9_]*)\s*,""")
+/** A driver call with a literal null identifier (the call's first argument, positional or named). */
+private val NULL_IDENTIFIER = Regex("""(?:\.execute|\.executeQuery)\(\s*(?:identifier\s*=\s*)?null\s*,|\bidentifier\s*=\s*null\b""")
 private const val REGISTRY_PROJECT = ":data-content"
 private const val REGISTRY_SOURCE = "src/commonMain/kotlin/dev/shinsou/kmp/content/SqlStatementIdentifiers.kt"
 private const val CHECK_TASK = "checkSqlStatementIdentifiers"

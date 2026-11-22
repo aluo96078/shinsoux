@@ -78,4 +78,25 @@ class SqlStatementIdentifiersTest {
             assertEquals(mapOf("c" to "c2"), access.readPairs("kv", "k", "v"))
         }
     }
+
+    @Test
+    fun theStatementHelpersRunWithAndWithoutACacheIdentifier() {
+        JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+            driver.executeUncached("CREATE TABLE kv(k TEXT PRIMARY KEY, v TEXT NOT NULL)", 0).value
+            repeat(3) { round ->
+                driver.executeStatement("INSERT OR REPLACE INTO kv(k, v) VALUES (?, ?)", 2) {
+                    bindString(0, "k")
+                    bindString(1, "v$round")
+                }.value
+            }
+            val select = "SELECT v FROM kv WHERE k = ?"
+            val read = { cursor: app.cash.sqldelight.db.SqlCursor ->
+                app.cash.sqldelight.db.QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
+            }
+            assertEquals("v2", driver.queryStatement(select, read, 1) { bindString(0, "k") }.value)
+            assertEquals("v2", driver.queryUncached(select, read, 1) { bindString(0, "k") }.value)
+            assertEquals(null, driver.queryStatement(select, read, 1) { bindString(0, "none") }.value)
+            assertNotNull(SqlStatementIdentifiers.shared.identifierFor(select))
+        }
+    }
 }

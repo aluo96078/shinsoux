@@ -15,14 +15,13 @@ internal object ContentConnection {
         // journal_mode is a value-returning PRAGMA. NativeSqliteDriver rejects it when it is
         // sent through execute (which is reserved for non-query statements), while the JDBC
         // driver happens to tolerate that misuse, so the result row is read through executeQuery.
-        driver.executeQuery(
-            identifier = null,
+        driver.queryUncached(
             sql = "PRAGMA journal_mode = WAL",
             mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
             parameters = 0,
         ).value
-        driver.execute(null, "PRAGMA synchronous = FULL", 0).value
+        driver.executeUncached("PRAGMA synchronous = FULL", 0).value
         // Publication rows cascade to their acquisitions and units.
-        driver.execute(null, "PRAGMA foreign_keys = ON", 0).value
+        driver.executeUncached("PRAGMA foreign_keys = ON", 0).value
     }
 }

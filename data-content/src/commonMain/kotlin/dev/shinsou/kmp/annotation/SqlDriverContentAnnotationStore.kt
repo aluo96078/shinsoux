@@ -11,6 +11,7 @@ import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.content.SchemaComponent
 import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.queryStatement
 import dev.shinsou.kmp.content.tableExists
 import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.rights.DerivedRightsCleanupTarget
@@ -262,8 +263,7 @@ public class SqlDriverContentAnnotationStore(
         } else {
             predicates.joinToString(prefix = " WHERE ", separator = " AND ")
         }
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT annotation_id, publication_id, acquisition_id, unit_id,
                        content_revision, state, created_at, updated_at, annotation_json

@@ -66,8 +66,7 @@ internal sealed interface SchemaVersionStore {
     class Shared(private val component: String) : SchemaVersionStore {
         override fun read(driver: SqlDriver): Long? {
             ensureTable(driver)
-            return driver.executeQuery(
-                null,
+            return driver.queryStatement(
                 "SELECT version FROM $VERSIONS_TABLE WHERE component = ?",
                 { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
                 1,
@@ -76,15 +75,14 @@ internal sealed interface SchemaVersionStore {
 
         override fun write(driver: SqlDriver, version: Long) {
             ensureTable(driver)
-            driver.execute(null, "INSERT OR REPLACE INTO $VERSIONS_TABLE(component, version) VALUES (?, ?)", 2) {
+            driver.executeStatement("INSERT OR REPLACE INTO $VERSIONS_TABLE(component, version) VALUES (?, ?)", 2) {
                 bindString(0, component)
                 bindLong(1, version)
             }.value
         }
 
         private fun ensureTable(driver: SqlDriver) {
-            driver.execute(
-                null,
+            driver.executeUncached(
                 "CREATE TABLE IF NOT EXISTS $VERSIONS_TABLE(component TEXT NOT NULL PRIMARY KEY, version INTEGER NOT NULL) WITHOUT ROWID",
                 0,
             ).value
@@ -98,8 +96,7 @@ internal sealed interface SchemaVersionStore {
     class Singleton(private val table: String) : SchemaVersionStore {
         override fun read(driver: SqlDriver): Long? {
             if (!tableExists(driver, table)) return null
-            return driver.executeQuery(
-                null,
+            return driver.queryStatement(
                 "SELECT format_version FROM $table WHERE singleton_id = 1",
                 { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
                 0,
@@ -107,12 +104,11 @@ internal sealed interface SchemaVersionStore {
         }
 
         override fun write(driver: SqlDriver, version: Long) {
-            driver.execute(
-                null,
+            driver.executeUncached(
                 "CREATE TABLE IF NOT EXISTS $table(singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 1), format_version INTEGER NOT NULL)",
                 0,
             ).value
-            driver.execute(null, "INSERT OR REPLACE INTO $table(singleton_id, format_version) VALUES (1, ?)", 1) {
+            driver.executeStatement("INSERT OR REPLACE INTO $table(singleton_id, format_version) VALUES (1, ?)", 1) {
                 bindLong(0, version)
             }.value
         }
@@ -189,16 +185,14 @@ object SchemaMigrator {
 }
 
 fun tableExists(driver: SqlDriver, table: String): Boolean =
-    driver.executeQuery(
-        null,
+    driver.queryStatement(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
         { cursor -> QueryResult.Value(cursor.next().value) },
         1,
     ) { bindString(0, table) }.value
 
 fun columnExists(driver: SqlDriver, table: String, column: String): Boolean =
-    driver.executeQuery(
-        null,
+    driver.queryStatement(
         "SELECT 1 FROM pragma_table_info(?) WHERE name = ?",
         { cursor -> QueryResult.Value(cursor.next().value) },
         2,

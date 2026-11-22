@@ -243,6 +243,6 @@ Gemini 4 Neon 列出、這一輪不處理的架構後續（依其優先順序）
 3. C3 的持久化埠放在 `:domain`，領域層因此知道 JSON 與 SQL 配對的細節；可考慮獨立的持久化 API 模組。`:domain` 仍只為一個 `SynchronousLock` 依賴 `:core`。
 4. `explicitApi()` 只在 4 個模組；`:feature-plugin`、`:data-content`、各 UI 模組未啟用。SQLDelight 產生的 `TranslationMemory*` 經 `:feature-translation` 的 export 進入 iOS framework 標頭。
 5. `:ui` 仍有約 25.8k 行（瀏覽、擴充、書庫、設定），需先解開發佈頁對外殼的依賴再拆；`downloadQueue` 仍在 `AppSnapshot` 的重組路徑上。
-6. 仍有約 80 處 SQL 不帶語句識別碼（`SqlDriverContentBlobDurability`、`SqlDriverLocalFullTextIndex`、`MangaStorage`）；桌面 helper 的 CMake／codesign task 仍無輸入輸出宣告；套件結構仍扁平（`plugin` 85 檔、`content` 40 檔）；detekt `main` 與 `debug` 兩份 baseline 重複收錄 common 的問題。
+6. ~~仍有約 80 處 SQL 不帶語句識別碼；桌面 helper 的 CMake／codesign task 仍無輸入輸出宣告~~（已處理：產品程式碼的 SQL 一律經 `executeStatement`／`queryStatement` 取註冊表識別碼，DDL、PRAGMA 與長度不固定的文字用 `executeUncached`／`queryUncached` 明確豁免，`checkSqlStatementIdentifiers` 在任何模組的 `src/*Main` 發現字面的 `null` 識別碼就讓建置失敗；`NativeLibrariesPlugin` 的 CMake configure／build 與簽章 task 宣告了輸入輸出，第二次建置為 UP-TO-DATE，設定快取可重用）；套件結構仍扁平（`plugin` 85 檔、`content` 40 檔）；detekt `main` 與 `debug` 兩份 baseline 重複收錄 common 的問題。
 7. C2 的 `PageLayer` 顯示順序與 Back 處理順序不一致（沿用舊行為，刻意保留）。
 8. 未上機驗證：C2 的返回手勢與寬版多層、C3 在中階 Android 與 iOS 上的遷移耗時與背景寫入、降版再升版、Android 雲端還原；C1／C5 的 UI 未手動操作。

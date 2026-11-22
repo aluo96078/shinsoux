@@ -42,7 +42,7 @@ public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
      */
     private fun createLookupIndexes(driver: SqlDriver) {
         listOf(TABLE_ACQUISITIONS, TABLE_ACQUISITION_RIGHTS, TABLE_UNITS, TABLE_RIGHTS_GRANTS).forEach { table ->
-            driver.execute(null, "CREATE INDEX IF NOT EXISTS ${table}_publication ON $table(publication_id)", 0).value
+            driver.executeUncached("CREATE INDEX IF NOT EXISTS ${table}_publication ON $table(publication_id)", 0).value
         }
     }
 
@@ -247,7 +247,7 @@ public object ContentTransactionSchema : SqlSchema<QueryResult.Value<Unit>> {
                   receipt_descriptors_json TEXT NOT NULL
                 ) WITHOUT ROWID
             """.trimIndent(),
-        ).forEach { sql -> driver.execute(null, sql, 0).value }
+        ).forEach { sql -> driver.executeUncached(sql, 0).value }
     }
 }
 

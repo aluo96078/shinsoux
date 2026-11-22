@@ -1,5 +1,9 @@
 package dev.shinsou.kmp.content
 
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlCursor
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlPreparedStatement
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 
@@ -17,6 +21,12 @@ import dev.shinsou.kmp.concurrent.withLock
  * and the build's `checkSqlStatementIdentifiers` (build-logic SqlDelightPlugin) fails when a
  * generated identifier falls in `[FIRST_IDENTIFIER, FIRST_IDENTIFIER + DEFAULT_MAX_ENTRIES)` or two
  * generated ones are equal. It reads both constants from this file.
+ *
+ * Product code never hands a driver a literal null identifier: [executeStatement] and
+ * [queryStatement] take the identifier from this registry, and [executeUncached] / [queryUncached]
+ * are the one named exemption for DDL, PRAGMA and statements whose text is unbounded. The build's
+ * `checkSqlStatementIdentifiers` fails on any `execute(null, ...)`, `executeQuery(null, ...)` or
+ * `identifier = null` in a module's product sources, so a new null cannot slip back in.
  *
  * Statements whose text is built from values (a variable `IN (?, ?, ...)` list, or an embedded
  * literal) could register without bound, so the registry stops at [maxEntries]; later new texts get
@@ -53,3 +63,41 @@ internal class SqlStatementIdentifiers(private val maxEntries: Int = DEFAULT_MAX
  * connection state, run once, and gain nothing from a cached statement.
  */
 internal fun statementIdentifier(sql: String): Int? = SqlStatementIdentifiers.shared.identifierFor(sql)
+
+/**
+ * `driver.execute` with the registry's identifier for [sql], so the driver prepares the statement
+ * once. For fixed texts and texts with a small, bounded set of variants (a `?` list of one of a few
+ * lengths); [executeUncached] otherwise.
+ */
+public fun SqlDriver.executeStatement(
+    sql: String,
+    parameters: Int,
+    binders: (SqlPreparedStatement.() -> Unit)? = null,
+): QueryResult<Long> = execute(statementIdentifier(sql), sql, parameters, binders)
+
+/** `driver.executeQuery` with the registry's identifier for [sql]; see [executeStatement]. */
+public fun <R> SqlDriver.queryStatement(
+    sql: String,
+    mapper: (SqlCursor) -> QueryResult<R>,
+    parameters: Int,
+    binders: (SqlPreparedStatement.() -> Unit)? = null,
+): QueryResult<R> = executeQuery(statementIdentifier(sql), sql, mapper, parameters, binders)
+
+/**
+ * Runs [sql] without a statement-cache identifier. The explicit exemption of
+ * `checkSqlStatementIdentifiers`: DDL, PRAGMA and ATTACH (they change the schema or connection
+ * state, run once and gain nothing from a cached statement), and text that varies without a bound.
+ */
+public fun SqlDriver.executeUncached(
+    sql: String,
+    parameters: Int,
+    binders: (SqlPreparedStatement.() -> Unit)? = null,
+): QueryResult<Long> = execute(null, sql, parameters, binders)
+
+/** [executeUncached] for a query (`PRAGMA wal_checkpoint`, `PRAGMA journal_mode`, ...). */
+public fun <R> SqlDriver.queryUncached(
+    sql: String,
+    mapper: (SqlCursor) -> QueryResult<R>,
+    parameters: Int,
+    binders: (SqlPreparedStatement.() -> Unit)? = null,
+): QueryResult<R> = executeQuery(null, sql, mapper, parameters, binders)

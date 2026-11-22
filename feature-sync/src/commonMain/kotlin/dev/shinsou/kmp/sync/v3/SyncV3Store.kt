@@ -11,6 +11,8 @@ import dev.shinsou.kmp.content.ContentCursorRow
 import dev.shinsou.kmp.content.ContentRow
 import dev.shinsou.kmp.content.SchemaComponent
 import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.queryStatement
+import dev.shinsou.kmp.content.queryUncached
 import dev.shinsou.kmp.content.tableExists
 import dev.shinsou.kmp.sync.v3.sql.Sync3_record
 import dev.shinsou.kmp.sync.v3.sql.SyncV3Database
@@ -366,7 +368,7 @@ internal class SyncV3Store(private val driver: SqlDriver) {
      * [SyncKinds], never user input, so they are written into the statement.
      */
     private fun notIn(excluded: Set<String>): String =
-        if (excluded.isEmpty()) "" else " AND kind NOT IN (${excluded.joinToString(",") { "'${it.replace("'", "")}'" }})"
+        if (excluded.isEmpty()) "" else "$NOT_IN_KINDS(${excluded.joinToString(",") { "'${it.replace("'", "")}'" }})"
 
     /** Keys of every non-deleted record of [kind]; used by 410 recovery. */
     fun recordKeys(kind: String): List<String> = queries.recordKeys(kind).executeAsList()
@@ -427,17 +429,20 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         parameters: Int,
         binders: (SqlPreparedStatement.() -> Unit)?,
         map: (SqlCursor) -> T,
-    ): List<T> = driver.executeQuery(
-        identifier = null,
-        sql = sql,
-        mapper = { cursor ->
+    ): List<T> {
+        val mapper: (SqlCursor) -> QueryResult<List<T>> = { cursor ->
             val rows = ArrayList<T>()
             while (cursor.next().value) rows += map(cursor)
             QueryResult.Value(rows)
-        },
-        parameters = parameters,
-        binders = binders,
-    ).value
+        }
+        // A `NOT IN (kinds)` list is written into the text, one text per set of switched-off kinds:
+        // those run uncached rather than fill the shared identifier registry with combinations.
+        return if (NOT_IN_KINDS in sql) {
+            driver.queryUncached(sql, mapper, parameters, binders).value
+        } else {
+            driver.queryStatement(sql, mapper, parameters, binders).value
+        }
+    }
 
     /**
      * [query], with each row read by column name instead of by position. The names are those of
@@ -558,3 +563,6 @@ object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
         return QueryResult.Unit
     }
 }
+
+/** Starts the `kind` exclusion list of [SyncV3Store.notIn]. */
+private const val NOT_IN_KINDS = " AND kind NOT IN "
