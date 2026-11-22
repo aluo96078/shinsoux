@@ -26,21 +26,21 @@ public class SchemaTooNewException(
  * dropped with [drop] and created again instead of being refused or upgraded; it has no [steps].
  */
 @Suppress("LongParameterList") // A declaration: every parameter but the first three has a default.
-class SchemaComponent internal constructor(
-    val name: String,
-    val version: Long,
-    val create: (SqlDriver) -> Unit,
-    val steps: Map<Long, (SqlDriver) -> Unit> = emptyMap(),
-    val unrecordedVersion: (SqlDriver) -> Long?,
+public class SchemaComponent internal constructor(
+    public val name: String,
+    public val version: Long,
+    public val create: (SqlDriver) -> Unit,
+    public val steps: Map<Long, (SqlDriver) -> Unit> = emptyMap(),
+    public val unrecordedVersion: (SqlDriver) -> Long?,
     internal val versionStore: SchemaVersionStore,
-    val rebuildWhenNewer: Boolean = false,
-    val drop: (SqlDriver) -> Unit = {},
+    internal val rebuildWhenNewer: Boolean = false,
+    public val drop: (SqlDriver) -> Unit = {},
 ) {
     /**
      * A component of another module records its version in the shared table (R5-1: where the
      * version is kept stays this module's business).
      */
-    constructor(
+    public constructor(
         name: String,
         version: Long,
         create: (SqlDriver) -> Unit,
@@ -120,8 +120,8 @@ internal sealed interface SchemaVersionStore {
  * missing steps in one transaction when it is older; [SchemaTooNewException] when it is newer,
  * unless the component is rebuildable.
  */
-object SchemaMigrator {
-    fun migrate(driver: SqlDriver, component: SchemaComponent) {
+public object SchemaMigrator {
+    public fun migrate(driver: SqlDriver, component: SchemaComponent) {
         val transactions = object : TransacterImpl(driver) {}
         transactions.transaction(noEnclosing = false) {
             val recorded = component.versionStore.read(driver)
@@ -150,7 +150,7 @@ object SchemaMigrator {
     }
 
     /** The first of [components] this version cannot open, read without changing anything. */
-    fun tooNew(driver: SqlDriver, components: List<SchemaComponent>): SchemaTooNewException? =
+    public fun tooNew(driver: SqlDriver, components: List<SchemaComponent>): SchemaTooNewException? =
         components.firstNotNullOfOrNull { component ->
             if (component.rebuildWhenNewer) return@firstNotNullOfOrNull null
             val stored = component.versionStore.readWithoutCreating(driver) ?: return@firstNotNullOfOrNull null
@@ -161,7 +161,7 @@ object SchemaMigrator {
      * The format each of [components] is in now, as one line: what a copy of the database was
      * taken of. Reads only.
      */
-    fun formats(driver: SqlDriver, components: List<SchemaComponent>): String =
+    public fun formats(driver: SqlDriver, components: List<SchemaComponent>): String =
         components.joinToString(",") { component ->
             val recorded = component.versionStore.readWithoutCreating(driver)
             "${component.name}=${recorded ?: "unrecorded:${component.unrecordedVersion(driver)}"}"
@@ -171,7 +171,7 @@ object SchemaMigrator {
      * Whether opening the stores will upgrade a table group of [components] that already holds
      * data: one older than its version, or one from before versions were recorded. Reads only.
      */
-    fun upgrades(driver: SqlDriver, components: List<SchemaComponent>): Boolean =
+    public fun upgrades(driver: SqlDriver, components: List<SchemaComponent>): Boolean =
         components.any { component ->
             val recorded = component.versionStore.readWithoutCreating(driver)
             val stored = recorded ?: component.unrecordedVersion(driver)
@@ -184,14 +184,14 @@ object SchemaMigrator {
     }
 }
 
-fun tableExists(driver: SqlDriver, table: String): Boolean =
+public fun tableExists(driver: SqlDriver, table: String): Boolean =
     driver.queryStatement(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
         { cursor -> QueryResult.Value(cursor.next().value) },
         1,
     ) { bindString(0, table) }.value
 
-fun columnExists(driver: SqlDriver, table: String, column: String): Boolean =
+public fun columnExists(driver: SqlDriver, table: String, column: String): Boolean =
     driver.queryStatement(
         "SELECT 1 FROM pragma_table_info(?) WHERE name = ?",
         { cursor -> QueryResult.Value(cursor.next().value) },

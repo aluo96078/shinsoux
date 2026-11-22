@@ -145,7 +145,7 @@ public data class EpubPackageMetadata(
  * remap its untrusted remote graph against [previewRepresentation] before granting offline storage
  * or making any body visible.
  */
-class PreparedEpubAcquisition internal constructor(
+public class PreparedEpubAcquisition internal constructor(
     internal val serviceToken: Any,
     internal val target: LocalAcquisitionTarget,
     internal val archiveSource: EpubArchiveSource,
@@ -154,9 +154,9 @@ class PreparedEpubAcquisition internal constructor(
     internal val referencesByPath: Map<String, BlobRef>,
     internal val aggregateDigest: String,
     internal val previewPublicationDraft: Publication,
-    val previewRepresentation: ContentRepresentation.EpubSpine,
-    val metadata: EpubPackageMetadata,
-    val offlineByteCount: Long,
+    public val previewRepresentation: ContentRepresentation.EpubSpine,
+    public val metadata: EpubPackageMetadata,
+    internal val offlineByteCount: Long,
 )
 
 /** Parses a complete OCF/OPF graph and publishes the archive plus every exact expanded resource. */
@@ -173,7 +173,7 @@ public class EpubAcquisitionService(
         publish(prepare(request))
 
     /** Parses, hashes and preflights the complete graph without beginning or publishing a stage. */
-    fun prepare(request: EpubAcquisitionRequest): PreparedEpubAcquisition {
+    public fun prepare(request: EpubAcquisitionRequest): PreparedEpubAcquisition {
         val archive = request.archiveSource
         if (archive.byteSize !in 1..policy.archiveLimits.maximumArchiveBytes) {
             throw EpubAcquisitionException.InvalidArchive("EPUB archive exceeds the configured size limit")
@@ -275,7 +275,7 @@ public class EpubAcquisitionService(
      * [representation] may remap host-visible EPUB ids, but its authoritative href-to-body mapping
      * must remain exactly the one verified from the archive during [prepare].
      */
-    fun publish(
+    public fun publish(
         prepared: PreparedEpubAcquisition,
         representation: ContentRepresentation.EpubSpine = prepared.previewRepresentation,
     ): ContentAcquisitionResult<EpubPackageMetadata> {

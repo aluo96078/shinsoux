@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** macOS `say` and Windows System.Speech adapter. Sensitive text is written only to process stdin. */
-class DesktopTextToSpeechEngine(
+public class DesktopTextToSpeechEngine(
     private val platform: DesktopPlatform = DesktopPlatform.current,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : PlatformTextToSpeechEngine {

@@ -20,14 +20,14 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-const val APP_SNAPSHOT_SCHEMA_VERSION: Int = 1
+internal const val APP_SNAPSHOT_SCHEMA_VERSION: Int = 1
 
 /**
  * Portable, complete application state. It is deliberately platform-neutral so the same JSON can
  * back Android, iOS and desktop persistence and can also serve as a lossless backup payload.
  */
 @Serializable
-data class AppSnapshot(
+public data class AppSnapshot(
     val schemaVersion: Int = APP_SNAPSHOT_SCHEMA_VERSION,
     val revision: Long = 0,
     val settings: AppSettings = AppSettings(),
@@ -51,7 +51,7 @@ data class AppSnapshot(
     /** Stable portable-category to legacy numeric-id bindings owned by the ShuYue projection. */
     val shuyueCategoryProjectionBindings: Map<String, Long> = emptyMap(),
 ) {
-    fun validate(): AppSnapshot {
+    public fun validate(): AppSnapshot {
         if (schemaVersion !in 1..APP_SNAPSHOT_SCHEMA_VERSION) {
             throw SnapshotValidationException("Unsupported snapshot schema version: $schemaVersion")
         }
@@ -159,10 +159,10 @@ data class AppSnapshot(
 private const val MAX_CONTENT_PROJECTION_MARKERS: Int = 10_000
 private const val MAX_CONTENT_PROJECTION_MARKER_LENGTH: Int = 256
 
-class SnapshotValidationException(message: String) : IllegalArgumentException(message)
+internal class SnapshotValidationException(message: String) : IllegalArgumentException(message)
 
-object AppSnapshotJson {
-    val format: Json = Json {
+public object AppSnapshotJson {
+    public val format: Json = Json {
         encodeDefaults = true
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -175,15 +175,15 @@ object AppSnapshotJson {
         prettyPrint = false
     }
 
-    fun encode(snapshot: AppSnapshot): String = persistenceFormat.encodeToString(snapshot.withoutPortableSecrets())
+    public fun encode(snapshot: AppSnapshot): String = persistenceFormat.encodeToString(snapshot.withoutPortableSecrets())
 
-    fun decode(encoded: String): AppSnapshot = persistenceFormat.decodeFromString<AppSnapshot>(encoded)
+    public fun decode(encoded: String): AppSnapshot = persistenceFormat.decodeFromString<AppSnapshot>(encoded)
         .withRequiredDefaults()
         .validate()
 }
 
 /** Values that must remain device-local even though the UI keeps them in its in-memory settings. */
-fun AppSnapshot.withoutPortableSecrets(): AppSnapshot =
+public fun AppSnapshot.withoutPortableSecrets(): AppSnapshot =
     if (settings.advanced.proxyApiKey.isEmpty()) this
     else copy(
         settings = settings.copy(

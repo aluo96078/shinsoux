@@ -80,7 +80,7 @@ public interface PlatformTextToSpeechEngine {
 
     public suspend fun speak(request: PlatformSpeechRequest): PlatformSpeechResult
     public fun stop()
-    public fun close() = stop()
+    public fun close(): Unit = stop()
 }
 
 /** Explicit fail-closed adapter used by previews and unsupported desktop platforms. */

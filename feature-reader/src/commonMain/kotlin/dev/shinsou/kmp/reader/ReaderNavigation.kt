@@ -6,14 +6,14 @@ import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
 
-enum class ReaderTapAction {
+public enum class ReaderTapAction {
     PREVIOUS_PAGE,
     TOGGLE_CHROME,
     NEXT_PAGE,
 }
 
 /** Maps the reader's left/centre/right thirds to a logical action. */
-fun readerTapAction(
+public fun readerTapAction(
     horizontalPosition: Float,
     viewportWidth: Float,
     readingMode: ReadingMode,
@@ -36,7 +36,7 @@ fun readerTapAction(
     }
 }
 
-data class ReaderChapterNavigation(
+public data class ReaderChapterNavigation(
     val storyOrder: List<Chapter>,
     val currentIndex: Int,
     val previous: Chapter?,
@@ -52,7 +52,7 @@ data class ReaderChapterNavigation(
  * descending here. Enabled skip rules are applied to candidates, never to the currently open
  * chapter, so changing settings cannot eject the reader from its current session.
  */
-fun buildReaderChapterNavigation(
+public fun buildReaderChapterNavigation(
     chapters: List<Chapter>,
     currentChapterId: Long,
     manga: Manga,
@@ -89,7 +89,7 @@ fun buildReaderChapterNavigation(
 }
 
 /** Logical page indices worth warming in Coil; nearer forward pages are prioritised. */
-fun readerPrefetchIndices(
+public fun readerPrefetchIndices(
     currentPage: Int,
     pageCount: Int,
     ahead: Int = 3,
@@ -109,13 +109,13 @@ fun readerPrefetchIndices(
 }
 
 /** Progress value sent to trackers after a chapter is completed. */
-fun readerTrackingProgress(chapter: Chapter, storyOrder: List<Chapter>): Double {
+public fun readerTrackingProgress(chapter: Chapter, storyOrder: List<Chapter>): Double {
     if (chapter.chapterNumber.isFinite() && chapter.chapterNumber >= 0.0) return chapter.chapterNumber
     val storyIndex = storyOrder.indexOfFirst { it.id == chapter.id }
     return if (storyIndex >= 0) (storyIndex + 1).toDouble() else 0.0
 }
 
-val readerStoryOrderComparator: Comparator<Chapter> =
+public val readerStoryOrderComparator: Comparator<Chapter> =
     compareByDescending<Chapter> { it.sourceOrder }
         .thenBy { it.chapterNumber }
         .thenBy { it.id }

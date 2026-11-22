@@ -31,7 +31,7 @@ import kotlinx.serialization.json.Json
  * driver (C3-5: a content-backup v2 restore writes the restored rows inside its own); never on the
  * UI thread ([ContentSqlThreadGuard]).
  */
-class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
+public class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
     private val transactions = object : TransacterImpl(driver) {}
     private val queries = LegacyHotStateQueries(driver)
 
@@ -233,10 +233,10 @@ class SqlHotStateStore(driver: SqlDriver) : HotStateStore {
 private fun Boolean.toLong(): Long = if (this) 1L else 0L
 
 /** The `legacy_hot_state` table group, versioned on its own ([SchemaMigrator]). */
-object LegacyHotStateSchema : SqlSchema<QueryResult.Value<Unit>> {
+public object LegacyHotStateSchema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = 1
 
-    val component: SchemaComponent = SchemaComponent(
+    public val component: SchemaComponent = SchemaComponent(
         name = "legacy_hot_state",
         version = version,
         // The generated DDL (LegacyHotState.sq); its own Schema version is not used.

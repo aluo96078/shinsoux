@@ -15,9 +15,9 @@ import dev.shinsou.kmp.domain.content.BlobRef
  * The database file and blob directory keep the locations they had when this facility also hosted
  * the (removed) sync client, so existing libraries open unchanged.
  */
-interface PlatformContentInfrastructure {
+public interface PlatformContentInfrastructure {
     /** Unified local SQLite authority; callers must never close the returned driver directly. */
-    fun contentDriver(): SqlDriver
+    public fun contentDriver(): SqlDriver
 
     /**
      * App-private root for immutable content bodies.
@@ -25,12 +25,12 @@ interface PlatformContentInfrastructure {
      * This path is device-local adapter state: it must never enter a BlobRef or backup. The content
      * foundation stores only an opaque file name beside SQLite lifecycle metadata.
      */
-    fun contentBlobDirectory(): String
+    public fun contentBlobDirectory(): String
 
     /** The content database's file; null where there is none to copy. */
-    fun databaseFile(): String? = null
+    public fun databaseFile(): String? = null
 
-    fun close()
+    public fun close()
 }
 
 /**
@@ -45,7 +45,7 @@ internal fun PlatformContentInfrastructure.schemaTooNew(components: List<SchemaC
  * What the app checks before anything opens the stores: [schemaTooNew]; when the database can
  * be opened and opening it upgrades one of [components], the file is copied first (R3-1).
  */
-fun PlatformContentInfrastructure.checkBeforeOpening(components: List<SchemaComponent>): SchemaTooNewException? =
+public fun PlatformContentInfrastructure.checkBeforeOpening(components: List<SchemaComponent>): SchemaTooNewException? =
     schemaTooNew(components).also { tooNew ->
         if (tooNew == null) backUpBeforeUpgrade(contentDriver(), databaseFile(), components)
     }
@@ -55,7 +55,7 @@ fun PlatformContentInfrastructure.checkBeforeOpening(components: List<SchemaComp
  * stored beside it). The features that keep tables in the same database add theirs where the app
  * is composed.
  */
-fun contentFoundationSchemaComponents(): List<SchemaComponent> = listOf(
+public fun contentFoundationSchemaComponents(): List<SchemaComponent> = listOf(
     ContentTransactionSchema.component,
     ContentBlobPersistenceSchema.component,
     ContentAnnotationSchema.component,
@@ -70,7 +70,7 @@ fun contentFoundationSchemaComponents(): List<SchemaComponent> = listOf(
  * downgraded, and a fresh install gets an identical schema. The `sync_*` tables are no longer read
  * or written. Content tables are created by the content stores themselves.
  */
-object PlatformContentDatabaseSchema : SqlSchema<QueryResult.Value<Unit>> {
+public object PlatformContentDatabaseSchema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = DATABASE_FORMAT_VERSION
 
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {

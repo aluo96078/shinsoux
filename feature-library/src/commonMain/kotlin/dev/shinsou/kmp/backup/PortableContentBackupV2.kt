@@ -912,7 +912,7 @@ public object BackupV2BinaryCodec {
      * [PortableContentBackupV2Service.inspect]. This avoids a throwaway encoding pass while a UI
      * prepares a streaming platform export.
      */
-    fun encodedSizeOfInspectedArchive(
+    public fun encodedSizeOfInspectedArchive(
         archive: BackupV2Archive,
         maximumArchiveBytes: Long = DEFAULT_MAX_ARCHIVE_BYTES,
     ): Long = encodedSizeOf(ordered(archive), maximumArchiveBytes)

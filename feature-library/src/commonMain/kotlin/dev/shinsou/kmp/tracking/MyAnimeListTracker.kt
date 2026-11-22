@@ -34,7 +34,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
-data class MyAnimeListTrackerConfig(
+public data class MyAnimeListTrackerConfig(
     val clientId: String,
     val redirectUri: String? = null,
     val apiUrl: String = "https://api.myanimelist.net",
@@ -48,13 +48,13 @@ data class MyAnimeListTrackerConfig(
     }
 }
 
-class MyAnimeListTracker(
+public class MyAnimeListTracker(
     private val client: HttpClient,
     private val tokenStore: TokenStore,
     private val config: MyAnimeListTrackerConfig,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : TrackerAdapter {
-    override val descriptor = TrackerDescriptor(
+    override val descriptor: TrackerDescriptor = TrackerDescriptor(
         id = TrackerIds.MY_ANIME_LIST,
         name = "MyAnimeList",
         scoreFormat = TrackerScoreFormat.POINT_10,
@@ -65,7 +65,7 @@ class MyAnimeListTracker(
 
     override suspend fun isAuthenticated(): Boolean = tokenStore.read(tokenKey) != null
 
-    fun authorizationUrl(codeChallenge: String, state: String? = null): String {
+    public fun authorizationUrl(codeChallenge: String, state: String? = null): String {
         require(codeChallenge.isNotBlank()) { "MyAnimeList PKCE code challenge cannot be blank" }
         return URLBuilder(config.authorizationUrl).apply {
             parameters.append("response_type", "code")
@@ -77,7 +77,7 @@ class MyAnimeListTracker(
         }.buildString()
     }
 
-    suspend fun exchangeAuthorizationCode(code: String, codeVerifier: String, nowMillis: Long): OAuthToken {
+    internal suspend fun exchangeAuthorizationCode(code: String, codeVerifier: String, nowMillis: Long): OAuthToken {
         require(code.isNotBlank()) { "Authorization code cannot be blank" }
         require(codeVerifier.isNotBlank()) { "PKCE verifier cannot be blank" }
         val parameters = Parameters.build {
@@ -90,7 +90,7 @@ class MyAnimeListTracker(
         return requestToken(parameters, nowMillis, previousRefreshToken = null)
     }
 
-    suspend fun refreshAccessToken(nowMillis: Long): OAuthToken {
+    internal suspend fun refreshAccessToken(nowMillis: Long): OAuthToken {
         val existing = tokenStore.read(tokenKey)
             ?: throw TrackerAuthenticationException("MyAnimeList authentication is required")
         val refreshToken = existing.refreshToken
@@ -103,7 +103,7 @@ class MyAnimeListTracker(
         return requestToken(parameters, nowMillis, refreshToken)
     }
 
-    suspend fun logout() = tokenStore.clear(tokenKey)
+    public suspend fun logout(): Unit = tokenStore.clear(tokenKey)
 
     override suspend fun search(query: String, limit: Int): List<TrackSearch> {
         if (query.isBlank() || limit <= 0) return emptyList()
@@ -276,7 +276,7 @@ class MyAnimeListTracker(
         if (!success) throw TrackerHttpException(statusCode, body)
     }
 
-    companion object {
+    public companion object {
         private const val SEARCH_FIELDS =
             "id,title,main_picture,alternative_titles,start_date,synopsis,media_type,status,num_chapters"
         private const val DETAIL_FIELDS =

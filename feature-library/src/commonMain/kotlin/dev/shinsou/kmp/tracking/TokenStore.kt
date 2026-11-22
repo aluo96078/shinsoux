@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
-data class OAuthToken(
+public data class OAuthToken(
     val accessToken: String,
     val tokenType: String = "Bearer",
     val refreshToken: String? = null,
@@ -20,17 +20,17 @@ data class OAuthToken(
         require(accessToken.isNotBlank()) { "OAuth access token cannot be blank" }
     }
 
-    fun isExpired(nowMillis: Long, leewayMillis: Long = 30_000): Boolean =
+    public fun isExpired(nowMillis: Long, leewayMillis: Long = 30_000): Boolean =
         expiresAt?.let { nowMillis + leewayMillis >= it } ?: false
 }
 
-interface TokenStore {
-    suspend fun read(key: String): OAuthToken?
-    suspend fun write(key: String, token: OAuthToken)
-    suspend fun clear(key: String)
+public interface TokenStore {
+    public suspend fun read(key: String): OAuthToken?
+    public suspend fun write(key: String, token: OAuthToken)
+    public suspend fun clear(key: String)
 }
 
-class InMemoryTokenStore(initial: Map<String, OAuthToken> = emptyMap()) : TokenStore {
+internal class InMemoryTokenStore(initial: Map<String, OAuthToken> = emptyMap()) : TokenStore {
     private val mutex = Mutex()
     private val tokens = initial.toMutableMap()
 
@@ -52,7 +52,7 @@ class InMemoryTokenStore(initial: Map<String, OAuthToken> = emptyMap()) : TokenS
  * through their AES-GCM path and iOS routes it to Keychain. A malformed legacy value is removed
  * instead of repeatedly surfacing a broken authenticated state.
  */
-class KeyValueTokenStore(
+public class KeyValueTokenStore(
     private val keyValueStore: KeyValueStore,
     private val json: Json = TokenJson,
 ) : TokenStore {
@@ -81,10 +81,10 @@ class KeyValueTokenStore(
     }
 }
 
-fun trackerTokenKey(trackerId: Int): String = "tracker.oauth.$trackerId"
+public fun trackerTokenKey(trackerId: Int): String = "tracker.oauth.$trackerId"
 
 /** Visible for platform-independent persistence regression tests. */
-fun persistedTrackerTokenKey(logicalKey: String): String = "tracking.token.$logicalKey"
+public fun persistedTrackerTokenKey(logicalKey: String): String = "tracking.token.$logicalKey"
 
 /** The JSON settings tokens have always been stored with (the same as the plugin store's). */
 private val TokenJson: Json = Json {

@@ -44,7 +44,7 @@
     <ID>CyclomaticComplexMethod:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability$private fun copyInlineMigrationSlice: ContentBlobStorageMaintenanceResult</ID>
     <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$internal suspend fun currentSegments: List&lt;Boolean&gt;</ID>
     <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$private fun loadRightsCleanupPageLocked: List&lt;SearchAccessRow&gt;</ID>
-    <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend fun purgeUnauthorizedInBackground: DerivedSearchCleanupResult</ID>
+    <ID>CyclomaticComplexMethod:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$public suspend fun purgeUnauthorizedInBackground: DerivedSearchCleanupResult</ID>
     <ID>CyclomaticComplexMethod:TextAcquisitionService.kt:StrictTextDecoder$public fun decode: DecodedText</ID>
     <ID>CyclomaticComplexMethod:TextAcquisitionService.kt:private fun ByteArray.decodeUtf8Strict: String</ID>
     <ID>LargeClass:EpubAcquisitionService.kt:EpubAcquisitionService</ID>
@@ -65,7 +65,7 @@
     <ID>LongParameterList:EpubAcquisitionService.kt:PreparedEpubAcquisition</ID>
     <ID>LongParameterList:SqlDriverContentBlobStore.kt:SqlDriverContentBlobStore$constructor</ID>
     <ID>LongParameterList:SqlDriverContentBlobStore.kt:private fun createPersistentDelegate: InMemoryContentBlobStore</ID>
-    <ID>LongParameterList:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend fun isCurrent: Boolean</ID>
+    <ID>LongParameterList:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$public suspend fun isCurrent: Boolean</ID>
     <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$for</ID>
     <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$while</ID>
     <ID>LoopWithTooManyJumpStatements:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$for</ID>
@@ -101,11 +101,11 @@
     <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateBlobSyncJobs</ID>
     <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateSqlRows</ID>
     <ID>ThrowsCount:ContentCommitValidator.kt:ContentCommitValidator$fun validateUniqueBatchEntries</ID>
-    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$fun prepare: PreparedEpubAcquisition</ID>
     <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parseEncryption: List&lt;EpubEncryptionDescriptor&gt;</ID>
     <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parsePackage: ParsedEpub</ID>
     <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun preflightPersistedGraph: Publication</ID>
     <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$private fun validatePreparedBodyGraph</ID>
+    <ID>ThrowsCount:EpubAcquisitionService.kt:EpubAcquisitionService$public fun prepare: PreparedEpubAcquisition</ID>
     <ID>ThrowsCount:EpubArchive.kt:internal fun validateArchiveEntries: List&lt;EpubArchiveEntry&gt;</ID>
     <ID>ThrowsCount:EpubArchive.kt:private fun EpubArchiveSource.readExact: ByteArray</ID>
     <ID>ThrowsCount:EpubArchive.kt:private fun parseCentralDirectory: List&lt;ZipCentralRecord&gt;</ID>

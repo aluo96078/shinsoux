@@ -8,23 +8,23 @@ import kotlin.math.roundToLong
 private const val READER_OFFSET_PRECISION = 10_000.0
 
 /** A platform-neutral sample of the first visible item in a continuous reader. */
-data class ReaderViewportSample(
+public data class ReaderViewportSample(
     val pageIndex: Int,
     val pageOffsetPixels: Int,
     val pageExtentPixels: Int,
 )
 
-enum class ReaderPositionUpdateDecision {
+public enum class ReaderPositionUpdateDecision {
     IGNORE,
     RESTORE_ON_OPEN,
     OFFER_APPLY,
 }
 
-fun isContinuousReaderMode(readingMode: ReadingMode): Boolean =
+public fun isContinuousReaderMode(readingMode: ReadingMode): Boolean =
     readingMode == ReadingMode.WEBTOON || readingMode == ReadingMode.CONTINUOUS_VERTICAL
 
 /** Converts a logical source page into the physical pager index rendered by Compose. */
-fun readerPhysicalPageIndex(
+public fun readerPhysicalPageIndex(
     logicalPageIndex: Int,
     pageCount: Int,
     readingMode: ReadingMode,
@@ -35,7 +35,7 @@ fun readerPhysicalPageIndex(
 }
 
 /** Converts a Compose pager index back into the source's logical page index. */
-fun readerLogicalPageIndex(
+public fun readerLogicalPageIndex(
     physicalPageIndex: Int,
     pageCount: Int,
     readingMode: ReadingMode,
@@ -46,7 +46,7 @@ fun readerLogicalPageIndex(
 }
 
 /** Normalises a persisted or remote position for the reader mode that is currently displayed. */
-fun coerceReaderPosition(
+public fun coerceReaderPosition(
     position: ReaderPosition,
     readingMode: ReadingMode,
     pageCount: Int,
@@ -64,7 +64,7 @@ fun coerceReaderPosition(
     resetEpoch = position.resetEpoch,
 )
 
-fun pagedReaderPosition(
+public fun pagedReaderPosition(
     readingMode: ReadingMode,
     logicalPageIndex: Int,
     pageCount: Int,
@@ -76,7 +76,7 @@ fun pagedReaderPosition(
 }
 
 /** Encodes a Webtoon/continuous viewport without leaking device-specific pixel offsets. */
-fun continuousReaderPosition(
+public fun continuousReaderPosition(
     readingMode: ReadingMode,
     sample: ReaderViewportSample,
     pageCount: Int,
@@ -95,7 +95,7 @@ fun continuousReaderPosition(
 }
 
 /** Reconstructs a best-effort local pixel offset after the target item has been measured. */
-fun restoredReaderPageOffsetPixels(position: ReaderPosition, pageExtentPixels: Int): Int {
+public fun restoredReaderPageOffsetPixels(position: ReaderPosition, pageExtentPixels: Int): Int {
     if (!isContinuousReaderMode(position.readingMode) || pageExtentPixels <= 0) return 0
     return (position.normalizedOffsetFraction * pageExtentPixels.toDouble())
         .roundToInt()
@@ -106,7 +106,7 @@ fun restoredReaderPageOffsetPixels(position: ReaderPosition, pageExtentPixels: I
  * Distinguishes the initial restore from an update arriving while the same chapter is already
  * open. A foreign session is only offered after its HLC is newer than the last observed register.
  */
-fun readerPositionUpdateDecision(
+public fun readerPositionUpdateDecision(
     initialized: Boolean,
     activeSessionId: String,
     lastObservedHlc: HlcTimestamp?,

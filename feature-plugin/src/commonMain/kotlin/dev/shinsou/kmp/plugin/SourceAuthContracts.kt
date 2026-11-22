@@ -15,11 +15,11 @@ import io.ktor.http.Url
  * It intentionally exposes no identifier or serializable value. Equality remains object identity,
  * and the internal constructor prevents extensions or remote data from minting import authority.
  */
-class SourceWebChallengeCapability internal constructor() {
+public class SourceWebChallengeCapability internal constructor() {
     override fun toString(): String = "SourceWebChallengeCapability(opaque)"
 }
 
-data class SourceWebChallengeRequest(
+public data class SourceWebChallengeRequest(
     val capability: SourceWebChallengeCapability,
     val sourceId: Long,
     val sourceName: String,

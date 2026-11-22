@@ -1,22 +1,22 @@
 package dev.shinsou.kmp.content.acquisition
 
-class XmlElement(
-    val qualifiedName: String,
-    val namespaceUri: String?,
-    val attributes: Map<String, String>,
+public class XmlElement(
+    public val qualifiedName: String,
+    internal val namespaceUri: String?,
+    public val attributes: Map<String, String>,
     private val attributeNamespaceUris: Map<String, String?>,
-    val content: List<XmlContentNode>,
+    public val content: List<XmlContentNode>,
 ) {
-    val localName: String get() = qualifiedName.substringAfter(':')
-    val children: List<XmlElement> = content.mapNotNull { node ->
+    public val localName: String get() = qualifiedName.substringAfter(':')
+    public val children: List<XmlElement> = content.mapNotNull { node ->
         (node as? XmlContentNode.Element)?.value
     }
-    val ownText: String = buildString {
+    public val ownText: String = buildString {
         content.forEach { node -> if (node is XmlContentNode.Text) append(node.value) }
     }
 
     /** Unqualified XML attributes never inherit the element's default namespace. */
-    fun attribute(localName: String): String? {
+    public fun attribute(localName: String): String? {
         require(':' !in localName) { "XML unqualified attribute lookup must use a local name" }
         val candidates = attributes.keys.filter { name ->
             !name.isNamespaceDeclaration() && name.substringAfter(':') == localName
@@ -28,7 +28,7 @@ class XmlElement(
     }
 
     /** Resolves one attribute by expanded name and rejects local-name namespace collisions. */
-    fun attribute(namespaceUri: String, localName: String): String? {
+    public fun attribute(namespaceUri: String, localName: String): String? {
         require(namespaceUri.isNotBlank() && ':' !in localName) {
             "XML namespaced attribute lookup is invalid"
         }
@@ -43,20 +43,20 @@ class XmlElement(
         return attributes.getValue(matching.single())
     }
 
-    fun hasExpandedName(namespaceUri: String, localName: String): Boolean {
+    internal fun hasExpandedName(namespaceUri: String, localName: String): Boolean {
         require(namespaceUri.isNotBlank() && XML_NCNAME.matches(localName)) {
             "XML expanded element name is invalid"
         }
         return this.namespaceUri == namespaceUri && this.localName == localName
     }
 
-    fun children(namespaceUri: String, localName: String): List<XmlElement> =
+    public fun children(namespaceUri: String, localName: String): List<XmlElement> =
         children.filter { child -> child.hasExpandedName(namespaceUri, localName) }
 
-    fun child(namespaceUri: String, localName: String): XmlElement? =
+    public fun child(namespaceUri: String, localName: String): XmlElement? =
         children.firstOrNull { child -> child.hasExpandedName(namespaceUri, localName) }
 
-    fun descendants(namespaceUri: String, localName: String): List<XmlElement> = buildList {
+    public fun descendants(namespaceUri: String, localName: String): List<XmlElement> = buildList {
         fun visit(element: XmlElement) {
             element.children.forEach { child ->
                 if (child.hasExpandedName(namespaceUri, localName)) add(child)
@@ -67,7 +67,7 @@ class XmlElement(
     }
 
     /** Preserves mixed-content order (`text <em>child</em> tail`) for locator-safe extraction. */
-    fun textContent(): String = buildString {
+    public fun textContent(): String = buildString {
         content.forEach { node ->
             when (node) {
                 is XmlContentNode.Text -> append(node.value)
@@ -78,13 +78,13 @@ class XmlElement(
 }
 
 /** Ordered XML content retained by the bounded parser; no entity or external-node capability. */
-sealed interface XmlContentNode {
-    data class Text(val value: String) : XmlContentNode
-    data class Element(val value: XmlElement) : XmlContentNode
+public sealed interface XmlContentNode {
+    public data class Text(val value: String) : XmlContentNode
+    public data class Element(val value: XmlElement) : XmlContentNode
 }
 
-object BoundedXmlParser {
-    fun parse(
+public object BoundedXmlParser {
+    public fun parse(
         bytes: ByteArray,
         maximumBytes: Long,
         cancellationCheckpoint: () -> Unit = {},

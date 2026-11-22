@@ -5,7 +5,7 @@ import dev.shinsou.kmp.domain.model.DownloadState
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class SnapshotStatistics(
+internal data class SnapshotStatistics(
     val totalMangaCount: Int,
     val libraryMangaCount: Int,
     val completedMangaCount: Int,
@@ -27,13 +27,13 @@ data class SnapshotStatistics(
 )
 
 @Serializable
-data class GenreStatistic(
+internal data class GenreStatistic(
     val genre: String,
     val mangaCount: Int,
 )
 
 @Serializable
-data class SourceStatistic(
+internal data class SourceStatistic(
     val sourceId: Long,
     val mangaCount: Int,
     val libraryMangaCount: Int,
@@ -41,7 +41,7 @@ data class SourceStatistic(
 )
 
 @Serializable
-data class MangaActivityStatistic(
+internal data class MangaActivityStatistic(
     val mangaId: Long,
     val title: String,
     val readingTimeMillis: Long,
@@ -49,7 +49,7 @@ data class MangaActivityStatistic(
     val chaptersRead: Int,
 )
 
-object SnapshotStatisticsAggregator {
+internal object SnapshotStatisticsAggregator {
     private const val MILLIS_PER_DAY = 86_400_000L
 
     fun aggregate(snapshot: AppSnapshot, completedStatus: Long = 2): SnapshotStatistics {

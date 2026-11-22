@@ -182,7 +182,7 @@ public data class FullTextSearchHit(
  * reader/annotation locator. Only [documentId] is segmented; this is derived state and therefore
  * does not alter portable identity or reading progress.
  */
-data class FullTextDocumentSegment(
+public data class FullTextDocumentSegment(
     val documentId: String,
     val blockId: String,
     val startUtf16: Int,
@@ -209,7 +209,7 @@ internal fun fullTextDocumentSegments(
  * Lazy form used by the foreground reader so an unopened search never scans the complete book and
  * a cancelled search never materializes later slices from the current semantic block.
  */
-fun fullTextDocumentSegmentsLazy(
+public fun fullTextDocumentSegmentsLazy(
     representationId: String,
     block: TextBlock,
     canonicalText: String,

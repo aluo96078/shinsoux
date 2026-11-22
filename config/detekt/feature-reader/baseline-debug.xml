@@ -62,8 +62,8 @@
     <ID>ReturnCount:LocalTypedContentController.kt:LocalTypedContentController$fun extensionSourceKey: dev.shinsou.kmp.domain.model.SourceKey?</ID>
     <ID>ReturnCount:LocalTypedContentController.kt:LocalTypedContentController.TypedLocalChapterReference.Companion$fun parse: TypedLocalChapterReference?</ID>
     <ID>ReturnCount:ReaderNavigation.kt:fun Chapter.isCandidate: Boolean</ID>
-    <ID>ReturnCount:ReaderNavigation.kt:fun readerTapAction: ReaderTapAction</ID>
-    <ID>ReturnCount:ReaderPositionMapping.kt:fun readerPositionUpdateDecision: ReaderPositionUpdateDecision</ID>
+    <ID>ReturnCount:ReaderNavigation.kt:public fun readerTapAction: ReaderTapAction</ID>
+    <ID>ReturnCount:ReaderPositionMapping.kt:public fun readerPositionUpdateDecision: ReaderPositionUpdateDecision</ID>
     <ID>ThrowsCount:EpubSemanticDocument.kt:private suspend fun ContentBlobStore.readSemanticBodyCancellable: ByteArray</ID>
     <ID>ThrowsCount:LocalContentManager.kt:LocalContentManager$override suspend fun loadReaderChapter: ReaderChapter</ID>
     <ID>ThrowsCount:LocalContentManager.kt:LocalContentManager$private suspend fun extractArchivePages: List&lt;LocalPagePayload&gt;</ID>

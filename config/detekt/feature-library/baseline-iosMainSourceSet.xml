@@ -2,6 +2,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ReturnCount:IosSilentAudioKeepAlive.kt:IosSilentAudioKeepAlive$fun start: Boolean</ID>
+    <ID>ReturnCount:IosSilentAudioKeepAlive.kt:IosSilentAudioKeepAlive$public fun start: Boolean</ID>
   </CurrentIssues>
 </SmellBaseline>

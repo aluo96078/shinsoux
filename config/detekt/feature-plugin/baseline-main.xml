@@ -191,7 +191,7 @@
     <ID>SwallowedException:SandboxCbor.kt:CborReader$e: CharacterCodingException</ID>
     <ID>SwallowedException:SandboxSession.kt:SandboxSession$e: TimeoutCancellationException</ID>
     <ID>SwallowedException:SandboxSession.kt:SandboxSession.Session$e: Throwable</ID>
-    <ID>ThrowsCount:DesktopWebHelperProcess.kt:BoundedUtf8LineReader$fun readLine: String?</ID>
+    <ID>ThrowsCount:DesktopWebHelperProcess.kt:BoundedUtf8LineReader$public fun readLine: String?</ID>
     <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun parseRepositoryUrl: ParsedRepositoryUrl</ID>
     <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private fun validateRelativePath</ID>
     <ID>ThrowsCount:ExtensionRepositoryClient.kt:ExtensionRepositoryClient$private suspend fun requestBytes: ByteArray</ID>

@@ -35,15 +35,15 @@ private val emptyExtensionDownloads =
     MutableStateFlow<List<dev.shinsou.kmp.domain.model.ExtensionDownloadEntryV2>>(emptyList())
 
 /** Browsing, searching and resolving titles of legacy sources. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface SourceCatalog {
-    val state: StateFlow<BrowseSnapshot>
+public interface SourceCatalog {
+    public val state: StateFlow<BrowseSnapshot>
 
     /** Exact-source generations emitted by admitted plugin refresh events. */
-    val sourceRefreshInvalidations: StateFlow<Map<SourceKey, Long>>
+    public val sourceRefreshInvalidations: StateFlow<Map<SourceKey, Long>>
 
-    suspend fun refresh()
+    public suspend fun refresh()
 
-    suspend fun browseSource(
+    public suspend fun browseSource(
         sourceId: Long,
         query: String = "",
         page: Int = 1,
@@ -51,97 +51,97 @@ interface SourceCatalog {
     ): BrowsePage
 
     /** Loads the source's latest-updates catalogue when that capability is advertised. */
-    suspend fun browseSourceLatest(
+    public suspend fun browseSourceLatest(
         sourceId: Long,
         page: Int = 1,
     ): BrowsePage = browseSource(sourceId = sourceId, page = page)
 
     /** Loads a legacy source's account-owned collection without using the local library. */
-    suspend fun browseSourceFavorites(
+    public suspend fun browseSourceFavorites(
         sourceId: Long,
         page: Int = 1,
     ): BrowsePage = browseSource(sourceId = sourceId, page = page)
 
     /** True when [sourceId] belongs to an executable plugin source. */
-    fun isPluginSource(sourceId: Long): Boolean
+    public fun isPluginSource(sourceId: Long): Boolean
 
-    fun isPluginSource(sourceKey: SourceKey): Boolean = sourceKey.legacyLongId?.let(::isPluginSource) == true
+    public fun isPluginSource(sourceKey: SourceKey): Boolean = sourceKey.legacyLongId?.let(::isPluginSource) == true
 
     /**
      * Fetches a plugin-owned image through the host content plane. Implementations must return
      * bounded bytes only; UI image loaders must never receive a plugin-controlled remote URL.
      */
-    suspend fun loadPluginThumbnail(
+    public suspend fun loadPluginThumbnail(
         sourceId: Long,
         url: String,
         headers: Map<String, String> = emptyMap(),
     ): ByteArray?
 
-    suspend fun loadPluginThumbnail(
+    public suspend fun loadPluginThumbnail(
         sourceKey: SourceKey,
         url: String,
         headers: Map<String, String> = emptyMap(),
     ): ByteArray? = sourceKey.legacyLongId?.let { loadPluginThumbnail(it, url, headers) }
 
     /** Returns the local manga id when the bridge imported or resolved the item. */
-    suspend fun resolveManga(item: BrowseManga): Long?
+    public suspend fun resolveManga(item: BrowseManga): Long?
 
-    suspend fun migrateManga(mangaId: Long, target: BrowseManga)
+    public suspend fun migrateManga(mangaId: Long, target: BrowseManga)
 }
 
 /** Enabling sources and saving their preferences. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface SourceSettings {
-    suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean)
+public interface SourceSettings {
+    public suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean)
 
-    suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean)
+    public suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean)
 
-    suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>)
+    public suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>)
 }
 
 /** Browsing and reading publications of v2 extensions. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface ExtensionPublicationCatalog {
+public interface ExtensionPublicationCatalog {
     /** Exact, capability-gated v2 source; opaque ids are never projected into legacy Long DTOs. */
-    suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2?
+    public suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2?
 
     /** Production v2 browse route. Page numbering is zero-based at the extension contract. */
-    suspend fun browseSourceV2(
+    public suspend fun browseSourceV2(
         sourceKey: SourceKey,
         options: BrowseOptionsV2 = BrowseOptionsV2(),
         page: Int = 0,
     ): PagedResultV2<RemotePublicationV2>
 
-    suspend fun searchSourceV2(
+    public suspend fun searchSourceV2(
         sourceKey: SourceKey,
         query: String,
         page: Int = 0,
         options: BrowseOptionsV2 = BrowseOptionsV2(),
     ): PagedResultV2<RemotePublicationV2>
 
-    suspend fun latestSourceV2(
+    public suspend fun latestSourceV2(
         sourceKey: SourceKey,
         page: Int = 0,
     ): PagedResultV2<RemotePublicationV2>
 
-    suspend fun extensionDetailsV2(
+    public suspend fun extensionDetailsV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
     ): RemotePublicationV2
 
-    suspend fun extensionUnitsV2(
+    public suspend fun extensionUnitsV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         page: Int = 0,
     ): PagedResultV2<RemoteUnitV2>
 
     /** Returns every representation supplied for the exact unit; no preferred form is selected. */
-    suspend fun extensionContentV2(
+    public suspend fun extensionContentV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         remoteUnitId: String,
     ): UnitContentResultV2
 
     /** Host-issued details/unit capabilities; raw extension units never become UI authority. */
-    suspend fun extensionPublicationPageV2(
+    public suspend fun extensionPublicationPageV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         page: Int = 0,
@@ -152,7 +152,7 @@ interface ExtensionPublicationCatalog {
      * before the chapter list can be rendered. Implementations may still refresh full details
      * independently after the initial page becomes visible.
      */
-    suspend fun extensionPublicationUnitsPageV2(
+    public suspend fun extensionPublicationUnitsPageV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         publication: RemotePublicationV2,
@@ -164,41 +164,41 @@ interface ExtensionPublicationCatalog {
      * The units of [publication] stored on this device (downloaded or read), as a unit page; null
      * when none is. They open without the source, listed by it or not.
      */
-    suspend fun storedExtensionPublicationPageV2(
+    public suspend fun storedExtensionPublicationPageV2(
         sourceKey: SourceKey,
         publication: RemotePublicationV2,
     ): ExtensionPublicationPageV2? = null
 
     /** Cached details and full unit list of a library title, as an offline unit page. */
-    suspend fun cachedExtensionPublicationPageV2(
+    public suspend fun cachedExtensionPublicationPageV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
     ): ExtensionPublicationPageV2?
 
     /** Records a library title's details and complete unit list for offline and instant display. */
-    suspend fun cacheExtensionPublicationV2(
+    public suspend fun cacheExtensionPublicationV2(
         sourceKey: SourceKey,
         publication: RemotePublicationV2,
         units: List<dev.shinsou.kmp.plugin.v2.RemoteUnitV2>,
     )
 
-    suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String)
+    public suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String)
 }
 
 /** How a v2 publication is linked to the local library. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface ExtensionLibraryBinding {
+public interface ExtensionLibraryBinding {
     /** Recovers the exact extension authority for a legacy UUID-only local-library row. */
-    fun extensionLibraryBindingV2(
+    public fun extensionLibraryBindingV2(
         publicationKey: PublicationKey,
     ): ExtensionLibraryBindingV2?
 
     /** Local-only chapter completion and exact resume unit for a typed extension publication. */
-    fun extensionLocalReadingStateV2(
+    public fun extensionLocalReadingStateV2(
         publicationKey: PublicationKey,
     ): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2
 
     /** Also resolves progress of listed units never opened here (for example carried by a migration). */
-    fun extensionLocalReadingStateV2(
+    public fun extensionLocalReadingStateV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         remoteUnitIds: Collection<String>,
@@ -206,19 +206,19 @@ interface ExtensionLibraryBinding {
         extensionLocalReadingStateV2(dev.shinsou.kmp.domain.model.extensionPublicationKey(sourceKey, remotePublicationId))
 
     /** Source unit ids of a typed extension publication whose content is stored offline. */
-    fun extensionDownloadedUnitIdsV2(publicationKey: PublicationKey): Set<String>
+    public fun extensionDownloadedUnitIdsV2(publicationKey: PublicationKey): Set<String>
 
     /**
      * Best-effort repair for beta-era UUID-only extension favorites. Implementations must return
      * a binding only after the deterministic publication UUID matches an authoritative search row.
      */
-    suspend fun recoverExtensionLibraryBindingV2(
+    public suspend fun recoverExtensionLibraryBindingV2(
         publicationKey: PublicationKey,
         title: String,
     ): ExtensionLibraryBindingV2? = null
 
     /** Source-owned favorite/library mutation for v2 publications when the capability exists. */
-    suspend fun favoriteExtensionPublicationV2(
+    public suspend fun favoriteExtensionPublicationV2(
         sourceKey: SourceKey,
         remotePublicationId: String,
         favorite: Boolean,
@@ -226,65 +226,65 @@ interface ExtensionLibraryBinding {
 }
 
 /** The v2 download queue and offline content. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface ContentAcquisition {
+public interface ContentAcquisition {
     /** App-scoped extension (novel) chapter downloads; they outlive the detail screen. */
-    val extensionDownloadsV2: StateFlow<List<dev.shinsou.kmp.domain.model.ExtensionDownloadEntryV2>>
+    public val extensionDownloadsV2: StateFlow<List<dev.shinsou.kmp.domain.model.ExtensionDownloadEntryV2>>
 
-    suspend fun enqueueExtensionDownloadsV2(
+    public suspend fun enqueueExtensionDownloadsV2(
         selections: List<dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2>,
     ): Unit
 
-    suspend fun retryExtensionDownloadV2(id: String)
+    public suspend fun retryExtensionDownloadV2(id: String)
 
-    suspend fun removeExtensionDownloadV2(id: String)
+    public suspend fun removeExtensionDownloadV2(id: String)
 
-    suspend fun clearCompletedExtensionDownloadsV2()
+    public suspend fun clearCompletedExtensionDownloadsV2()
 
     /** Removes every queued or finished download row of one title (when the title is deleted). */
-    suspend fun removeExtensionPublicationDownloadsV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String)
+    public suspend fun removeExtensionPublicationDownloadsV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String)
 
     /**
      * Deletes the stored chapter bodies of a title that left the library, keeping its reading
      * progress and library binding. Local only: nothing is propagated through sync.
      */
-    suspend fun purgeExtensionPublicationContentV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String)
+    public suspend fun purgeExtensionPublicationContentV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String)
 
-    suspend fun pauseExtensionDownloadsV2(paused: Boolean)
+    public suspend fun pauseExtensionDownloadsV2(paused: Boolean)
 
-    suspend fun materializeExtensionContentV2(
+    public suspend fun materializeExtensionContentV2(
         selection: ExtensionUnitSelectionV2,
         representationId: String? = null,
     ): ExtensionContentMaterializationV2
 
     /** Opens the exact immutable revision returned by materialization through host rights. */
-    suspend fun openMaterializedExtensionContentV2(
+    public suspend fun openMaterializedExtensionContentV2(
         materialization: ExtensionContentMaterializationV2,
     ): TypedReaderContentSession
 }
 
 /** Source sign-in, credentials and logout. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface SourceAuth {
+public interface SourceAuth {
     /** FIFO login prompts requested by sources, deduplicated by source id. */
-    val loginRequests: StateFlow<List<SourceLoginRequest>>
+    public val loginRequests: StateFlow<List<SourceLoginRequest>>
 
-    val logoutConfirmations: StateFlow<List<PluginLogoutConfirmation>>
+    public val logoutConfirmations: StateFlow<List<PluginLogoutConfirmation>>
 
-    suspend fun confirmPluginLogout(eventId: String): Boolean
+    public suspend fun confirmPluginLogout(eventId: String): Boolean
 
-    fun dismissPluginLogout(eventId: String)
+    public fun dismissPluginLogout(eventId: String)
 
-    fun dismissAllPluginLogouts()
+    public fun dismissAllPluginLogouts()
 
-    suspend fun setPluginUiAvailable(available: Boolean)
+    public suspend fun setPluginUiAvailable(available: Boolean)
 
-    fun dismissSourceLoginRequest(sourceId: Long)
+    public fun dismissSourceLoginRequest(sourceId: Long)
 
-    fun dismissSourceLoginEvent(eventId: String)
+    public fun dismissSourceLoginEvent(eventId: String)
 
     /** Invokes the advertised login contract and stores credentials only after a successful login. */
-    suspend fun saveSourceCredentials(sourceId: Long, username: String, password: String): Boolean
+    public suspend fun saveSourceCredentials(sourceId: Long, username: String, password: String): Boolean
 
-    suspend fun saveSourceCredentialsResult(
+    public suspend fun saveSourceCredentialsResult(
         sourceId: Long,
         username: String,
         password: String,
@@ -298,7 +298,7 @@ interface SourceAuth {
         SourceLoginResult(false, failureStage = SourceLoginFailureStage.UNKNOWN)
     }
 
-    suspend fun saveSourceEventCredentialsResult(
+    public suspend fun saveSourceEventCredentialsResult(
         eventId: String,
         sourceId: Long,
         username: String,
@@ -313,7 +313,7 @@ interface SourceAuth {
         SourceLoginResult(false, failureStage = SourceLoginFailureStage.UNKNOWN)
     }
 
-    suspend fun saveSourceEventCredentials(
+    public suspend fun saveSourceEventCredentials(
         eventId: String,
         sourceId: Long,
         username: String,
@@ -324,17 +324,17 @@ interface SourceAuth {
      * Decrypts one source's private settings on demand. Catalogue refresh and source discovery
      * must never call this method because protected storage may require interactive OS access.
      */
-    suspend fun loadSourceSecrets(sourceId: Long): SourceSecretsResult
+    public suspend fun loadSourceSecrets(sourceId: Long): SourceSecretsResult
 
-    suspend fun logoutSource(sourceId: Long)
+    public suspend fun logoutSource(sourceId: Long)
 }
 
 /** Source cookies and browser challenges. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface SourceWebSession {
-    suspend fun setSourceCookie(sourceId: Long, cookie: SourceCookie)
+public interface SourceWebSession {
+    public suspend fun setSourceCookie(sourceId: Long, cookie: SourceCookie)
 
     /** Persists one isolated browser session and its browser-bound User-Agent together. */
-    suspend fun importSourceWebChallengeSession(
+    public suspend fun importSourceWebChallengeSession(
         sourceId: Long,
         capability: SourceWebChallengeCapability,
         cookies: List<SourceCookie>,
@@ -343,24 +343,24 @@ interface SourceWebSession {
     )
 
     /** Invalidates a browser capability when its isolated browser is dismissed without import. */
-    suspend fun cancelSourceWebChallenge(capability: SourceWebChallengeCapability)
+    public suspend fun cancelSourceWebChallenge(capability: SourceWebChallengeCapability)
 
-    suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String)
+    public suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String)
 
-    suspend fun clearSourceCookies(sourceId: Long)
+    public suspend fun clearSourceCookies(sourceId: Long)
 
     /**
      * Reports whether the exact live source artifact may start a host-reviewed Web challenge.
      * This is an availability check only: it must not issue a capability or read source secrets.
      */
-    suspend fun isSourceWebChallengeAvailable(sourceId: Long): Boolean
+    public suspend fun isSourceWebChallengeAvailable(sourceId: Long): Boolean
 
     /**
      * Builds the browser challenge request with the exact source URL and source-isolated cookies.
      * A platform browser may need its native User-Agent to complete anti-bot verification; the
      * actual value captured with the resulting cookies is then reused by Browse/Reader/Download.
      */
-    suspend fun sourceWebChallenge(
+    public suspend fun sourceWebChallenge(
         sourceId: Long,
         username: String? = null,
         password: String? = null,
@@ -368,81 +368,81 @@ interface SourceWebSession {
 }
 
 /** Repositories, installing and updating extensions. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface ExtensionManagement {
-    suspend fun addRepository(url: String): BrowseRepository?
+public interface ExtensionManagement {
+    public suspend fun addRepository(url: String): BrowseRepository?
 
     /**
      * ADR-0002 S5: a signed repository's key, for the user to confirm before [trustAndAddRepository].
      * Null when the repository answered but is not signed ([addRepository] takes the URL as it is);
      * throws when it could not be reached, so a caller can try again later.
      */
-    suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt?
+    public suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt?
 
     /**
      * Trusts exactly the key [prompt] showed (refused if the repository presented another one since)
      * — with [fingerprint] when the user entered one — and adds the repository.
      */
-    suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository?
+    public suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository?
 
-    suspend fun removeRepository(repositoryId: String) = removeRepository(repositoryId, fromAccount = false)
+    public suspend fun removeRepository(repositoryId: String): Unit = removeRepository(repositoryId, fromAccount = false)
 
     /**
      * Removes a repository from this device. Deleting is local by default; with [fromAccount] the
      * repository also stops being suggested to the account's other devices (those that already
      * added it keep it).
      */
-    suspend fun removeRepository(repositoryId: String, fromAccount: Boolean)
+    public suspend fun removeRepository(repositoryId: String, fromAccount: Boolean)
 
     /** Hides a repository suggested by the account on this device only; it is never suggested here again. */
-    suspend fun dismissRepositorySuggestion(url: String)
+    public suspend fun dismissRepositorySuggestion(url: String)
 
-    suspend fun selectRepository(repositoryId: String?)
+    public suspend fun selectRepository(repositoryId: String?)
 
-    suspend fun installExtension(extensionId: String)
+    public suspend fun installExtension(extensionId: String)
 
     /**
      * ADR-0002 §6.3: what an update of a running plugin would ask for, when it asks for something
      * new — reviewed before updating, so the installed version keeps running until accepted.
      */
-    suspend fun updatePermissionPreview(extensionId: String): UpdatePermissionPreview?
+    public suspend fun updatePermissionPreview(extensionId: String): UpdatePermissionPreview?
 
     /**
      * Installs the update [preview] showed and grants [selection] to it. Returns the update's own
      * review when it turned out to ask for something else than the preview (it is then not granted).
      */
-    suspend fun installReviewedUpdate(
+    public suspend fun installReviewedUpdate(
         extensionId: String,
         preview: UpdatePermissionPreview,
         selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
     ): PluginEventGrantReview?
 
-    suspend fun uninstallExtension(extensionId: String)
+    public suspend fun uninstallExtension(extensionId: String)
 
-    suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean)
+    public suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean)
 }
 
 /** Publisher trust, blocks, developer mode and permissions. Part of [BrowseCallbacks] (R4-2, docs/architecture/0006). */
-interface ExtensionTrust {
-    suspend fun packageSecurity(): PackageSecuritySnapshot
+public interface ExtensionTrust {
+    public suspend fun packageSecurity(): PackageSecuritySnapshot
 
-    suspend fun setStrictPublisherTrust(strict: Boolean)
+    public suspend fun setStrictPublisherTrust(strict: Boolean)
 
-    suspend fun setPluginDeveloperMode(enabled: Boolean)
+    public suspend fun setPluginDeveloperMode(enabled: Boolean)
 
     /** Throws when an address is not on a private network. */
-    suspend fun setPluginDeveloperHosts(hosts: List<String>)
+    public suspend fun setPluginDeveloperHosts(hosts: List<String>)
 
-    suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String)
+    public suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String)
 
-    suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean)
+    public suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean)
 
-    suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean)
+    public suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean)
 
-    suspend fun unblockPackageEntry(key: String)
+    public suspend fun unblockPackageEntry(key: String)
 
-    suspend fun pendingPluginEventGrantReview(extensionId: String): PluginEventGrantReview?
+    public suspend fun pendingPluginEventGrantReview(extensionId: String): PluginEventGrantReview?
 
-    suspend fun approvePluginEventGrantReview(
+    public suspend fun approvePluginEventGrantReview(
         extensionId: String,
         expectedReview: PluginEventGrantReview,
         permissions: Set<PluginHostPermission>,
@@ -450,17 +450,17 @@ interface ExtensionTrust {
     )
 
     /** Who published [review]'s artifact and where it connects: what the permission page shows (ADR-0002 §6.5). */
-    suspend fun pluginPermissionDetails(extensionId: String, review: PluginEventGrantReview): PluginPermissionDetails?
+    public suspend fun pluginPermissionDetails(extensionId: String, review: PluginEventGrantReview): PluginPermissionDetails?
 
     /** The granted plugin's current permissions, for source settings; null when not granted. */
-    suspend fun installedPluginPermissions(extensionId: String): InstalledPluginPermissions?
+    public suspend fun installedPluginPermissions(extensionId: String): InstalledPluginPermissions?
 
     /** Withdraws sensitive items from a granted plugin and reloads it. */
-    suspend fun narrowPluginPermissions(extensionId: String, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection)
+    public suspend fun narrowPluginPermissions(extensionId: String, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection)
 }
 
 /** Extension/source bridge. Plugin modules adapt their own models to these DTOs. */
-interface BrowseCallbacks :
+public interface BrowseCallbacks :
     SourceCatalog,
     SourceSettings,
     ExtensionPublicationCatalog,
@@ -470,8 +470,8 @@ interface BrowseCallbacks :
     SourceWebSession,
     ExtensionManagement,
     ExtensionTrust {
-    companion object {
-        val None: BrowseCallbacks = EmptyBrowseCallbacks()
+    public companion object {
+        public val None: BrowseCallbacks = EmptyBrowseCallbacks()
     }
 }
 
@@ -483,21 +483,21 @@ private val emptyBrowseState = MutableStateFlow(BrowseSnapshot())
  * platform bridge cannot leave one out by accident; previews, [BrowseCallbacks.None] and test
  * fakes extend this class instead and override only what they use.
  */
-open class EmptyBrowseCallbacks : BrowseCallbacks {
+public open class EmptyBrowseCallbacks : BrowseCallbacks {
     override val state: StateFlow<BrowseSnapshot> get() = emptyBrowseState
     override val sourceRefreshInvalidations: StateFlow<Map<SourceKey, Long>> get() = emptySourceRefreshInvalidations
     override val extensionDownloadsV2: StateFlow<List<dev.shinsou.kmp.domain.model.ExtensionDownloadEntryV2>> get() = emptyExtensionDownloads
     override val loginRequests: StateFlow<List<SourceLoginRequest>> get() = emptySourceLoginRequests
     override val logoutConfirmations: StateFlow<List<PluginLogoutConfirmation>> get() = emptyLogoutConfirmations
-    override suspend fun refresh() = Unit
+    override suspend fun refresh(): Unit = Unit
     override suspend fun browseSource(sourceId: Long, query: String, page: Int, filters: List<BrowseFilter>?): BrowsePage = BrowsePage()
     override fun isPluginSource(sourceId: Long): Boolean = false
     override suspend fun loadPluginThumbnail(sourceId: Long, url: String, headers: Map<String, String>): ByteArray? = null
     override suspend fun resolveManga(item: BrowseManga): Long? = null
-    override suspend fun migrateManga(mangaId: Long, target: BrowseManga) = Unit
-    override suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean) = Unit
-    override suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean) = Unit
-    override suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>) = Unit
+    override suspend fun migrateManga(mangaId: Long, target: BrowseManga): Unit = Unit
+    override suspend fun setSourceEnabled(sourceId: Long, enabled: Boolean): Unit = Unit
+    override suspend fun setSourceEnabledV2(sourceKey: SourceKey, enabled: Boolean): Unit = Unit
+    override suspend fun saveSourcePreferences(sourceId: Long, values: Map<String, String>): Unit = Unit
     override suspend fun extensionSourceV2(sourceKey: SourceKey): HostExtensionSourceV2? = null
     override suspend fun browseSourceV2(sourceKey: SourceKey, options: BrowseOptionsV2, page: Int): PagedResultV2<RemotePublicationV2> = throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
     override suspend fun searchSourceV2(sourceKey: SourceKey, query: String, page: Int, options: BrowseOptionsV2): PagedResultV2<RemotePublicationV2> = throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
@@ -507,64 +507,64 @@ open class EmptyBrowseCallbacks : BrowseCallbacks {
     override suspend fun extensionContentV2(sourceKey: SourceKey, remotePublicationId: String, remoteUnitId: String): UnitContentResultV2 = throw IllegalArgumentException("Unknown extension v2 source: ${sourceKey.canonicalId}")
     override suspend fun extensionPublicationPageV2(sourceKey: SourceKey, remotePublicationId: String, page: Int): ExtensionPublicationPageV2 = error("Extension v2 content storage is unavailable")
     override suspend fun cachedExtensionPublicationPageV2(sourceKey: SourceKey, remotePublicationId: String): ExtensionPublicationPageV2? = null
-    override suspend fun cacheExtensionPublicationV2(sourceKey: SourceKey, publication: RemotePublicationV2, units: List<dev.shinsou.kmp.plugin.v2.RemoteUnitV2>) = Unit
-    override suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String) = Unit
+    override suspend fun cacheExtensionPublicationV2(sourceKey: SourceKey, publication: RemotePublicationV2, units: List<dev.shinsou.kmp.plugin.v2.RemoteUnitV2>): Unit = Unit
+    override suspend fun forgetCachedExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String): Unit = Unit
     override fun extensionLibraryBindingV2(publicationKey: PublicationKey): ExtensionLibraryBindingV2? = null
     override fun extensionLocalReadingStateV2(publicationKey: PublicationKey): dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2 = dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2()
     override fun extensionDownloadedUnitIdsV2(publicationKey: PublicationKey): Set<String> = emptySet()
-    override suspend fun favoriteExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String, favorite: Boolean) = Unit
+    override suspend fun favoriteExtensionPublicationV2(sourceKey: SourceKey, remotePublicationId: String, favorite: Boolean): Unit = Unit
     override suspend fun enqueueExtensionDownloadsV2(selections: List<dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2>): Unit = throw UnsupportedOperationException("Extension downloads are unavailable")
-    override suspend fun retryExtensionDownloadV2(id: String) = Unit
-    override suspend fun removeExtensionDownloadV2(id: String) = Unit
-    override suspend fun clearCompletedExtensionDownloadsV2() = Unit
-    override suspend fun removeExtensionPublicationDownloadsV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String) = Unit
-    override suspend fun purgeExtensionPublicationContentV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String) = Unit
-    override suspend fun pauseExtensionDownloadsV2(paused: Boolean) = Unit
+    override suspend fun retryExtensionDownloadV2(id: String): Unit = Unit
+    override suspend fun removeExtensionDownloadV2(id: String): Unit = Unit
+    override suspend fun clearCompletedExtensionDownloadsV2(): Unit = Unit
+    override suspend fun removeExtensionPublicationDownloadsV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String): Unit = Unit
+    override suspend fun purgeExtensionPublicationContentV2(sourceKey: dev.shinsou.kmp.domain.model.SourceKey, remotePublicationId: String): Unit = Unit
+    override suspend fun pauseExtensionDownloadsV2(paused: Boolean): Unit = Unit
     override suspend fun materializeExtensionContentV2(selection: ExtensionUnitSelectionV2, representationId: String?): ExtensionContentMaterializationV2 = error("Extension v2 content storage is unavailable")
     override suspend fun openMaterializedExtensionContentV2(materialization: ExtensionContentMaterializationV2): TypedReaderContentSession = error("Extension v2 reader content is unavailable")
     override suspend fun confirmPluginLogout(eventId: String): Boolean = false
-    override fun dismissPluginLogout(eventId: String) = Unit
-    override fun dismissAllPluginLogouts() = Unit
-    override suspend fun setPluginUiAvailable(available: Boolean) = Unit
-    override fun dismissSourceLoginRequest(sourceId: Long) = Unit
-    override fun dismissSourceLoginEvent(eventId: String) = Unit
+    override fun dismissPluginLogout(eventId: String): Unit = Unit
+    override fun dismissAllPluginLogouts(): Unit = Unit
+    override suspend fun setPluginUiAvailable(available: Boolean): Unit = Unit
+    override fun dismissSourceLoginRequest(sourceId: Long): Unit = Unit
+    override fun dismissSourceLoginEvent(eventId: String): Unit = Unit
     override suspend fun saveSourceCredentials(sourceId: Long, username: String, password: String): Boolean = false
     override suspend fun loadSourceSecrets(sourceId: Long): SourceSecretsResult = SourceSecretsResult()
-    override suspend fun logoutSource(sourceId: Long) = Unit
-    override suspend fun setSourceCookie(sourceId: Long, cookie: SourceCookie) = Unit
-    override suspend fun importSourceWebChallengeSession(sourceId: Long, capability: SourceWebChallengeCapability, cookies: List<SourceCookie>, userAgent: String, localStorage: Map<String, String>) = Unit
-    override suspend fun cancelSourceWebChallenge(capability: SourceWebChallengeCapability) = Unit
-    override suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String) = Unit
-    override suspend fun clearSourceCookies(sourceId: Long) = Unit
+    override suspend fun logoutSource(sourceId: Long): Unit = Unit
+    override suspend fun setSourceCookie(sourceId: Long, cookie: SourceCookie): Unit = Unit
+    override suspend fun importSourceWebChallengeSession(sourceId: Long, capability: SourceWebChallengeCapability, cookies: List<SourceCookie>, userAgent: String, localStorage: Map<String, String>): Unit = Unit
+    override suspend fun cancelSourceWebChallenge(capability: SourceWebChallengeCapability): Unit = Unit
+    override suspend fun deleteSourceCookie(sourceId: Long, name: String, domain: String): Unit = Unit
+    override suspend fun clearSourceCookies(sourceId: Long): Unit = Unit
     override suspend fun isSourceWebChallengeAvailable(sourceId: Long): Boolean = false
     override suspend fun sourceWebChallenge(sourceId: Long, username: String?, password: String?): SourceWebChallengeRequest? = null
     override suspend fun addRepository(url: String): BrowseRepository? = null
     override suspend fun inspectRepositoryTrust(url: String): RepositoryTrustPrompt? = null
     override suspend fun trustAndAddRepository(prompt: RepositoryTrustPrompt, fingerprint: String?): BrowseRepository? = null
-    override suspend fun removeRepository(repositoryId: String, fromAccount: Boolean) = Unit
-    override suspend fun dismissRepositorySuggestion(url: String) = Unit
-    override suspend fun selectRepository(repositoryId: String?) = Unit
-    override suspend fun installExtension(extensionId: String) = Unit
+    override suspend fun removeRepository(repositoryId: String, fromAccount: Boolean): Unit = Unit
+    override suspend fun dismissRepositorySuggestion(url: String): Unit = Unit
+    override suspend fun selectRepository(repositoryId: String?): Unit = Unit
+    override suspend fun installExtension(extensionId: String): Unit = Unit
     override suspend fun updatePermissionPreview(extensionId: String): UpdatePermissionPreview? = null
     override suspend fun installReviewedUpdate(extensionId: String, preview: UpdatePermissionPreview, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection): PluginEventGrantReview? = null
-    override suspend fun uninstallExtension(extensionId: String) = Unit
-    override suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean) = Unit
+    override suspend fun uninstallExtension(extensionId: String): Unit = Unit
+    override suspend fun setExtensionTrusted(extensionId: String, trusted: Boolean): Unit = Unit
     override suspend fun packageSecurity(): PackageSecuritySnapshot = PackageSecuritySnapshot()
-    override suspend fun setStrictPublisherTrust(strict: Boolean) = Unit
-    override suspend fun setPluginDeveloperMode(enabled: Boolean) = Unit
-    override suspend fun setPluginDeveloperHosts(hosts: List<String>) = Unit
-    override suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String) = Unit
-    override suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean) = Unit
-    override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean) = Unit
-    override suspend fun unblockPackageEntry(key: String) = Unit
+    override suspend fun setStrictPublisherTrust(strict: Boolean): Unit = Unit
+    override suspend fun setPluginDeveloperMode(enabled: Boolean): Unit = Unit
+    override suspend fun setPluginDeveloperHosts(hosts: List<String>): Unit = Unit
+    override suspend fun confirmPublisherFingerprint(publisherId: String, fingerprint: String): Unit = Unit
+    override suspend fun setPublisherBlocked(publisherId: String, blocked: Boolean): Unit = Unit
+    override suspend fun setExtensionBlocked(extensionId: String, blocked: Boolean): Unit = Unit
+    override suspend fun unblockPackageEntry(key: String): Unit = Unit
     override suspend fun pendingPluginEventGrantReview(extensionId: String): PluginEventGrantReview? = null
-    override suspend fun approvePluginEventGrantReview(extensionId: String, expectedReview: PluginEventGrantReview, permissions: Set<PluginHostPermission>, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection?) = Unit
+    override suspend fun approvePluginEventGrantReview(extensionId: String, expectedReview: PluginEventGrantReview, permissions: Set<PluginHostPermission>, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection?): Unit = Unit
     override suspend fun pluginPermissionDetails(extensionId: String, review: PluginEventGrantReview): PluginPermissionDetails? = null
     override suspend fun installedPluginPermissions(extensionId: String): InstalledPluginPermissions? = null
-    override suspend fun narrowPluginPermissions(extensionId: String, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection) = Unit
+    override suspend fun narrowPluginPermissions(extensionId: String, selection: dev.shinsou.kmp.plugin.events.PluginGrantSelection): Unit = Unit
 }
 
-data class BrowseSnapshot(
+public data class BrowseSnapshot(
     val repositories: List<BrowseRepository> = emptyList(),
     val selectedRepositoryId: String? = null,
     /** Repositories the account knows that this device neither has nor dismissed. */
@@ -576,7 +576,7 @@ data class BrowseSnapshot(
     val errorMessage: String? = null,
 )
 
-data class BrowseRepository(
+public data class BrowseRepository(
     val id: String,
     val url: String,
     val name: String,
@@ -587,13 +587,13 @@ data class BrowseRepository(
 )
 
 /** A repository another device added to the account; adding it here goes through the usual trust flow. */
-data class BrowseRepositorySuggestion(
+public data class BrowseRepositorySuggestion(
     val url: String,
     val name: String,
     val signingFingerprint: String? = null,
 )
 
-data class BrowseSource(
+public data class BrowseSource(
     val id: Long,
     val name: String,
     val language: String,
@@ -630,61 +630,61 @@ data class BrowseSource(
 }
 
 /** Stable UI-side representation of executable source filters, preserving recursive order/state. */
-sealed interface BrowseFilter {
-    val name: String
+public sealed interface BrowseFilter {
+    public val name: String
 
-    data class Header(override val name: String) : BrowseFilter
+    public data class Header(override val name: String) : BrowseFilter
 
-    data object Separator : BrowseFilter {
+    public data object Separator : BrowseFilter {
         override val name: String = ""
     }
 
-    data class Select(
+    public data class Select(
         override val name: String,
         val values: List<String>,
         val state: Int,
     ) : BrowseFilter
 
-    data class Text(
+    public data class Text(
         override val name: String,
         val state: String,
     ) : BrowseFilter
 
-    data class CheckBox(
+    public data class CheckBox(
         override val name: String,
         val state: Boolean,
     ) : BrowseFilter
 
-    data class TriState(
+    public data class TriState(
         override val name: String,
         val state: BrowseTriState,
     ) : BrowseFilter
 
-    data class Group(
+    public data class Group(
         override val name: String,
         val filters: List<BrowseFilter>,
     ) : BrowseFilter
 
-    data class Sort(
+    public data class Sort(
         override val name: String,
         val values: List<String>,
         val selection: BrowseSortSelection?,
     ) : BrowseFilter
 }
 
-enum class BrowseTriState {
+public enum class BrowseTriState {
     Ignore,
     Include,
     Exclude,
 }
 
-data class BrowseSortSelection(
+public data class BrowseSortSelection(
     val index: Int,
     val ascending: Boolean,
 )
 
 
-data class BrowseExtension(
+public data class BrowseExtension(
     val id: String,
     val name: String,
     val version: String,
@@ -711,7 +711,7 @@ data class BrowseExtension(
     val preinstalledFromAccount: Boolean = false,
 )
 
-data class BrowseManga(
+public data class BrowseManga(
     val sourceId: Long,
     val url: String,
     val title: String,
@@ -732,12 +732,12 @@ data class BrowseManga(
             ?: "legacy:$sourceId:$url"
 }
 
-data class BrowsePage(
+public data class BrowsePage(
     val items: List<BrowseManga> = emptyList(),
     val hasNextPage: Boolean = false,
 )
 
-data class MigrationCandidate(
+public data class MigrationCandidate(
     val mangaId: Long,
     val title: String,
     val thumbnailUrl: String? = null,
@@ -766,7 +766,7 @@ internal fun MigrationCandidate.resolvedAgainst(sources: List<BrowseSource>): Mi
 }
 
 /** ADR-0002 S5: a repository presenting a publisher key the user has not trusted yet. */
-data class RepositoryTrustPrompt(
+public data class RepositoryTrustPrompt(
     val url: String,
     /** As the repository names itself: not verified. */
     val name: String,
@@ -782,13 +782,13 @@ data class RepositoryTrustPrompt(
     val alreadyTrusted: Boolean = false,
 )
 
-enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_REPLACED }
+public enum class PublisherTrustState { TRUSTED, PENDING_FINGERPRINT, KEY_REVOKED, KEY_REPLACED }
 
 /**
  * Everything the permission page shows for one exact artifact (ADR-0002 §6.5). The publisher's
  * key is the identity: a package name can be anything, so the page puts the publisher first.
  */
-data class PluginPermissionDetails(
+public data class PluginPermissionDetails(
     val packageName: String,
     val version: String,
     /** Null for a package without a publisher key (it cannot run, unless [inDevelopment]). */
@@ -810,16 +810,16 @@ data class PluginPermissionDetails(
 )
 
 /** An update's permission page, from the repository's index (nothing downloaded yet). */
-data class UpdatePermissionPreview(val review: PluginEventGrantReview, val details: PluginPermissionDetails)
+public data class UpdatePermissionPreview(val review: PluginEventGrantReview, val details: PluginPermissionDetails)
 
 /** A granted plugin's review and the items currently granted from it (source settings → permissions). */
-data class InstalledPluginPermissions(
+public data class InstalledPluginPermissions(
     val review: PluginEventGrantReview,
     val granted: dev.shinsou.kmp.plugin.events.PluginGrantSelection,
     val details: PluginPermissionDetails,
 )
 
-data class PackagePublisher(
+public data class PackagePublisher(
     val id: String,
     val displayFingerprint: String,
     val state: PublisherTrustState,
@@ -829,9 +829,9 @@ data class PackagePublisher(
     val blocked: Boolean,
 )
 
-data class PackageBlock(val key: String, val label: String)
+public data class PackageBlock(val key: String, val label: String)
 
-data class PackageSecuritySnapshot(
+public data class PackageSecuritySnapshot(
     val strictMode: Boolean = false,
     val publishers: List<PackagePublisher> = emptyList(),
     val blocks: List<PackageBlock> = emptyList(),
@@ -840,4 +840,4 @@ data class PackageSecuritySnapshot(
 )
 
 /** ADR-0002 §8.1: loading unsigned packages from this device or the LAN addresses entered here. */
-data class PluginDeveloperModeSettings(val enabled: Boolean, val lanHosts: List<String>)
+public data class PluginDeveloperModeSettings(val enabled: Boolean, val lanHosts: List<String>)

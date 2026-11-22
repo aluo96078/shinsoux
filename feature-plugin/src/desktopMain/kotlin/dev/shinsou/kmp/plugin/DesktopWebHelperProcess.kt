@@ -29,7 +29,7 @@ public class MacOsWebChallengeHelperLocator internal constructor(
         developmentCandidates = defaultDevelopmentHelperCandidates(),
     )
 
-    fun resolve(): Path {
+    public fun resolve(): Path {
         check(osName.lowercase().contains("mac")) {
             "The native WKWebView helper is available only on macOS"
         }
@@ -43,7 +43,7 @@ public class MacOsWebChallengeHelperLocator internal constructor(
             ?: throw IllegalStateException("The packaged WKWebView helper is missing")
     }
 
-    fun prepareExecutableCopy(): Path {
+    public fun prepareExecutableCopy(): Path {
         val source = resolve()
         val directory = Files.createTempDirectory("shinsou-wkwebview-")
         val target = directory.resolve(WEB_CHALLENGE_HELPER_NAME)
@@ -83,7 +83,7 @@ public class BoundedUtf8LineReader(input: InputStream) {
     private var limit = 0
 
     /** Returns a newline-delimited UTF-8 frame. EOF with a partial frame fails closed. */
-    fun readLine(maxBytes: Int): String? {
+    public fun readLine(maxBytes: Int): String? {
         require(maxBytes > 0)
         val bytes = ByteArrayOutputStream(minOf(maxBytes, 8_192))
         while (true) {

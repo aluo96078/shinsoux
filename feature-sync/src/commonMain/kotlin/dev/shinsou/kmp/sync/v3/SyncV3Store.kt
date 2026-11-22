@@ -536,10 +536,10 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 }
 
 /** Schema for the sync v3 tables, versioned on its own ([SchemaMigrator]). */
-object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
+public object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
     override val version: Long = 1
 
-    val component: SchemaComponent = SchemaComponent(
+    public val component: SchemaComponent = SchemaComponent(
         name = "sync_v3",
         version = version,
         // The generated DDL (SyncV3.sq); its own Schema version is not used.

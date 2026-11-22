@@ -9,7 +9,7 @@ import kotlinx.serialization.json.Json
  * One protected value is deliberately used for the complete migration result. Platform stores can
  * therefore replace the selected credential and cookie set without exposing an intermediate state.
  */
-class KeyValueShuYueMigrationSecretStore(
+public class KeyValueShuYueMigrationSecretStore(
     private val keyValueStore: KeyValueStore,
 ) : ShuYueMigrationSecretStore {
     override val protectedAtRest: Boolean = true
@@ -77,7 +77,7 @@ internal fun encodeShuYueSecretBatch(batch: ShuYueSecretWriteBatch): String =
         ),
     )
 
-fun encodeShuYueSecretBatchBytes(batch: ShuYueSecretWriteBatch): ByteArray =
+public fun encodeShuYueSecretBatchBytes(batch: ShuYueSecretWriteBatch): ByteArray =
     encodeShuYueSecretBatch(batch).encodeToByteArray()
 
 private val ShuYueSecretPayloadJson = Json {

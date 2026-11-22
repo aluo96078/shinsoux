@@ -34,7 +34,7 @@ import platform.darwin.NSObjectProtocol
  * with other audio, so the user's music is never interrupted. Main thread only.
  */
 @OptIn(ExperimentalForeignApi::class)
-class IosSilentAudioKeepAlive(
+public class IosSilentAudioKeepAlive(
     /**
      * True when another app's audio (a call, an alarm) stopped ours; false when it may play again
      * (the interruption ended, or the media services were reset and the player must be rebuilt).
@@ -44,10 +44,10 @@ class IosSilentAudioKeepAlive(
     private var player: AVAudioPlayer? = null
     private var observers: List<NSObjectProtocol> = emptyList()
 
-    val isPlaying: Boolean get() = player?.playing == true
+    public val isPlaying: Boolean get() = player?.playing == true
 
     /** Starts the loop; false when audio cannot keep this process alive or could not start. */
-    fun start(): Boolean {
+    public fun start(): Boolean {
         if (isPlaying) return true
         if (!available) return false
         val session = AVAudioSession.sharedInstance()
@@ -74,7 +74,7 @@ class IosSilentAudioKeepAlive(
      * Stops the loop. The session is left active: the reader's volume-key support shares it, and
      * an idle session that mixes with others costs nothing.
      */
-    fun stop() {
+    public fun stop() {
         player?.stop()
         player = null
         observers.forEach(NSNotificationCenter.defaultCenter::removeObserver)
@@ -106,7 +106,7 @@ class IosSilentAudioKeepAlive(
         )
     }
 
-    companion object {
+    public companion object {
         /**
          * Whether the running process may play audio in the background. iOS reads the
          * `UIBackgroundModes` of the app that owns the process: LiveContainer's own Info.plist
@@ -115,7 +115,7 @@ class IosSilentAudioKeepAlive(
          * LiveContainer presents our bundle as the main bundle, so the executable's own
          * Info.plist is read as well.
          */
-        val available: Boolean by lazy {
+        public val available: Boolean by lazy {
             val executable = (NSProcessInfo.processInfo.arguments.firstOrNull() as? String).orEmpty()
             val hostInfo = executable.substringBeforeLast('/', missingDelimiterValue = "")
                 .takeIf(String::isNotEmpty)

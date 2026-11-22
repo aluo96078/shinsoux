@@ -319,17 +319,17 @@ public class LocalContentManager(
         if (!isLocalManga(mangaId)) remote.enqueueDownload(mangaId, chapterId)
     }
 
-    override suspend fun retryDownload(itemId: String) = remote.retryDownload(itemId)
+    override suspend fun retryDownload(itemId: String): Unit = remote.retryDownload(itemId)
 
-    override suspend fun removeDownload(itemId: String) = remote.removeDownload(itemId)
+    override suspend fun removeDownload(itemId: String): Unit = remote.removeDownload(itemId)
 
-    override suspend fun removeUnfinishedDownload(itemId: String) = remote.removeUnfinishedDownload(itemId)
+    override suspend fun removeUnfinishedDownload(itemId: String): Unit = remote.removeUnfinishedDownload(itemId)
 
-    override suspend fun reorderDownloads(orderedIds: List<String>) = remote.reorderDownloads(orderedIds)
+    override suspend fun reorderDownloads(orderedIds: List<String>): Unit = remote.reorderDownloads(orderedIds)
 
-    override suspend fun clearCompletedDownloads() = remote.clearCompletedDownloads()
+    override suspend fun clearCompletedDownloads(): Unit = remote.clearCompletedDownloads()
 
-    override suspend fun pauseDownloads(paused: Boolean) = remote.pauseDownloads(paused)
+    override suspend fun pauseDownloads(paused: Boolean): Unit = remote.pauseDownloads(paused)
 
     private suspend fun persist(work: LocalWork): LocalImportResult {
         require(work.pages.isNotEmpty()) { "A local manga needs at least one page." }

@@ -22,7 +22,7 @@ import platform.darwin.dispatch_get_main_queue
 
 /** AVSpeechSynthesizer adapter retained for the lifetime of the shared application composition. */
 @OptIn(ExperimentalForeignApi::class)
-class IosTextToSpeechEngine : PlatformTextToSpeechEngine {
+public class IosTextToSpeechEngine : PlatformTextToSpeechEngine {
     private val synthesizer = AVSpeechSynthesizer()
     private val speechMutex = Mutex()
     private val delegate = SpeechDelegate(::completeActive)
