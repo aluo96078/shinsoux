@@ -95,8 +95,7 @@ object PlatformContentDatabaseSchema : SqlSchema<QueryResult.Value<Unit>> {
     }
 
     private fun createLegacyTable(driver: SqlDriver) {
-        driver.execute(
-            identifier = null,
+        driver.executeUncached(
             sql = """
                 CREATE TABLE IF NOT EXISTS sync_local_state(
                   singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 1),
@@ -109,8 +108,7 @@ object PlatformContentDatabaseSchema : SqlSchema<QueryResult.Value<Unit>> {
     }
 
     private fun createV2Tables(driver: SqlDriver) {
-        driver.execute(
-            identifier = null,
+        driver.executeUncached(
             sql = """
                 CREATE TABLE IF NOT EXISTS sync_local_meta(
                   singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 1),
@@ -121,8 +119,7 @@ object PlatformContentDatabaseSchema : SqlSchema<QueryResult.Value<Unit>> {
             parameters = 0,
         ).value
         LEGACY_SHARD_TABLES.forEach { table ->
-            driver.execute(
-                identifier = null,
+            driver.executeUncached(
                 sql = """
                     CREATE TABLE IF NOT EXISTS $table(
                       row_key TEXT NOT NULL PRIMARY KEY,

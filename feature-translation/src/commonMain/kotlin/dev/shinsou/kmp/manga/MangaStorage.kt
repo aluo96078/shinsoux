@@ -2,6 +2,9 @@ package dev.shinsou.kmp.manga
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.shinsou.kmp.content.executeStatement
+import dev.shinsou.kmp.content.executeUncached
+import dev.shinsou.kmp.content.queryStatement
 import dev.shinsou.kmp.logging.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
@@ -375,8 +378,7 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
-        driver.execute(
-            null,
+        driver.executeUncached(
             """
             CREATE TABLE IF NOT EXISTS manga_ocr_page(
                 image_hash TEXT NOT NULL,
@@ -388,8 +390,7 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
             """.trimIndent(),
             0,
         ).value
-        driver.execute(
-            null,
+        driver.executeUncached(
             """
             CREATE TABLE IF NOT EXISTS manga_chapter_render(
                 work_key TEXT NOT NULL,
@@ -409,7 +410,7 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
      * layout), by page: a chapter opened again is shown from them without loading its pages.
      */
     public fun chapterRenders(workKey: String, chapterKey: String, variant: String): List<String>? {
-        val found = driver.executeQuery(null, "SELECT page_keys FROM manga_chapter_render WHERE work_key = ? AND chapter_key = ? AND variant = ?", { cursor ->
+        val found = driver.queryStatement("SELECT page_keys FROM manga_chapter_render WHERE work_key = ? AND chapter_key = ? AND variant = ?", { cursor ->
             QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
         }, 3) { bindString(0, workKey); bindString(1, chapterKey); bindString(2, variant) }.value ?: return null
         return runCatching { json.decodeFromString(PAGE_KEYS, found) }
@@ -418,7 +419,7 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
     }
 
     public fun putChapterRenders(workKey: String, chapterKey: String, variant: String, pageKeys: List<String>) {
-        driver.execute(null, "INSERT OR REPLACE INTO manga_chapter_render(work_key, chapter_key, variant, page_keys, updated_at) VALUES (?, ?, ?, ?, ?)", 5) {
+        driver.executeStatement("INSERT OR REPLACE INTO manga_chapter_render(work_key, chapter_key, variant, page_keys, updated_at) VALUES (?, ?, ?, ?, ?)", 5) {
             bindString(0, workKey); bindString(1, chapterKey); bindString(2, variant)
             bindString(3, json.encodeToString(PAGE_KEYS, pageKeys)); bindLong(4, now())
         }.value
@@ -426,10 +427,10 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
 
     /** [version]: [VERSION], with the detector's id when another detector read the page. */
     public fun get(imageHash: String, version: String = VERSION): PageAnalysis? {
-        val found = driver.executeQuery(null, "SELECT analysis FROM manga_ocr_page WHERE image_hash = ? AND version = ?", { cursor ->
+        val found = driver.queryStatement("SELECT analysis FROM manga_ocr_page WHERE image_hash = ? AND version = ?", { cursor ->
             QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null)
         }, 2) { bindString(0, imageHash); bindString(1, version) }.value ?: return null
-        driver.execute(null, "UPDATE manga_ocr_page SET used_at = ? WHERE image_hash = ? AND version = ?", 3) {
+        driver.executeStatement("UPDATE manga_ocr_page SET used_at = ? WHERE image_hash = ? AND version = ?", 3) {
             bindLong(0, now()); bindString(1, imageHash); bindString(2, version)
         }.value
         return runCatching { json.decodeFromString(PageAnalysis.serializer(), found) }
@@ -438,19 +439,18 @@ public class MangaPageStore(private val driver: SqlDriver, private val now: () -
     }
 
     public fun put(imageHash: String, analysis: PageAnalysis, version: String = VERSION) {
-        driver.execute(null, "INSERT OR REPLACE INTO manga_ocr_page(image_hash, version, analysis, used_at) VALUES (?, ?, ?, ?)", 4) {
+        driver.executeStatement("INSERT OR REPLACE INTO manga_ocr_page(image_hash, version, analysis, used_at) VALUES (?, ?, ?, ?)", 4) {
             bindString(0, imageHash); bindString(1, version); bindString(2, json.encodeToString(PageAnalysis.serializer(), analysis)); bindLong(3, now())
         }.value
-        driver.execute(
-            null,
+        driver.executeStatement(
             "DELETE FROM manga_ocr_page WHERE rowid IN (SELECT rowid FROM manga_ocr_page ORDER BY used_at DESC LIMIT -1 OFFSET ?)",
             1,
         ) { bindLong(0, maxPages.toLong()) }.value
     }
 
     public fun clear() {
-        driver.execute(null, "DELETE FROM manga_ocr_page", 0).value
-        driver.execute(null, "DELETE FROM manga_chapter_render", 0).value
+        driver.executeStatement("DELETE FROM manga_ocr_page", 0).value
+        driver.executeStatement("DELETE FROM manga_chapter_render", 0).value
     }
 
     public companion object {

@@ -28,8 +28,7 @@ internal class SqlDriverContentBlobDurability(
         storeInstanceId = readStoreInstanceId() ?: run {
             val created = storeInstanceIdFactory()
             requireSqlIdentity(created, "Content blob store instance id")
-            driver.execute(
-                identifier = null,
+            driver.executeStatement(
                 sql = "INSERT OR IGNORE INTO $TABLE_BLOB_STORE(singleton_id, store_instance_id) VALUES (1, ?)",
                 parameters = 1,
             ) { bindString(0, created) }.value
@@ -38,8 +37,7 @@ internal class SqlDriverContentBlobDurability(
         requireSqlIdentity(storeInstanceId, "Content blob store instance id")
     }
 
-    override fun loadMetadata(): List<DurableContentBlob> = driver.executeQuery(
-        identifier = null,
+    override fun loadMetadata(): List<DurableContentBlob> = driver.queryStatement(
         sql = """
             SELECT blob_id, reference_json, incarnation, generation,
                    published_at_epoch_millis, lifecycle_state, discovered_at_epoch_millis,
@@ -77,8 +75,7 @@ internal class SqlDriverContentBlobDurability(
         parameters = 0,
     ).value
 
-    override fun readPayload(blob: DurableContentBlob): ByteArray? = driver.executeQuery(
-        identifier = null,
+    override fun readPayload(blob: DurableContentBlob): ByteArray? = driver.queryStatement(
         sql = """
             SELECT reference_json, payload, opaque_name, incarnation, generation
             FROM $TABLE_BLOBS WHERE blob_id = ?
@@ -194,8 +191,7 @@ internal class SqlDriverContentBlobDurability(
         blob: DurableContentBlob,
         offset: Long,
         maximumBytes: Int,
-    ): ByteArray? = driver.executeQuery(
-        identifier = null,
+    ): ByteArray? = driver.queryStatement(
         sql = """
             SELECT reference_json, substr(payload, ?, ?), length(payload), opaque_name
             FROM $TABLE_BLOBS WHERE blob_id = ? AND incarnation = ? AND generation = ?
@@ -228,8 +224,7 @@ internal class SqlDriverContentBlobDurability(
         offset: Long,
         maximumBytes: Int,
     ): ByteArray? {
-        val row = driver.executeQuery(
-            identifier = null,
+        val row = driver.queryStatement(
             sql = """
                 SELECT reference_json, substr(payload, ?, ?), length(payload), opaque_name
                 FROM $TABLE_BLOBS WHERE blob_id = ? AND incarnation = ?
@@ -275,8 +270,7 @@ internal class SqlDriverContentBlobDurability(
         val encodedReference = codec.encodeToString(snapshot.reference)
         val payload = snapshot.bytes
         if (payload == null) {
-            val updated = driver.execute(
-                identifier = null,
+            val updated = driver.executeStatement(
                 sql = """
                     UPDATE $TABLE_BLOBS
                     SET generation = ?, published_at_epoch_millis = ?, lifecycle_state = ?,
@@ -324,13 +318,12 @@ internal class SqlDriverContentBlobDurability(
                 snapshot.lifecycleState.name,
                 snapshot.discoveredAtEpochMillis,
             ),
-        ) { sql, parameters, bind -> driver.execute(identifier = null, sql = sql, parameters = parameters, binders = bind).value }
+        ) { sql, parameters, bind -> driver.executeStatement(sql = sql, parameters = parameters, binders = bind).value }
     }
 
     override fun delete(blob: DurableContentBlob) {
         val opaqueName = readOpaqueName(blob)
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "DELETE FROM $TABLE_BLOBS WHERE blob_id = ? AND incarnation = ? AND generation = ?",
             parameters = 3,
         ) {
@@ -493,8 +486,7 @@ internal class SqlDriverContentBlobDurability(
             throw ContentBlobStoreException.CorruptBlob(reference.blobId)
         }
 
-        val migrated = driver.execute(
-            identifier = null,
+        val migrated = driver.executeStatement(
             sql = """
                 UPDATE $TABLE_BLOBS SET payload = ?, opaque_name = ?
                 WHERE blob_id = ? AND reference_json = ? AND incarnation = ? AND generation = ?
@@ -523,8 +515,7 @@ internal class SqlDriverContentBlobDurability(
 
     private fun loadInlineCandidate(blobId: String? = null): InlineBodyCandidate? {
         val predicate = if (blobId == null) "opaque_name IS NULL" else "blob_id = ? AND opaque_name IS NULL"
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT blob_id, reference_json, incarnation, generation, length(payload)
                 FROM $TABLE_BLOBS WHERE $predicate ORDER BY blob_id LIMIT 1
@@ -558,8 +549,7 @@ internal class SqlDriverContentBlobDurability(
         candidate: InlineBodyCandidate,
         offset: Long,
         maximumBytes: Int,
-    ): ByteArray = driver.executeQuery(
-        identifier = null,
+    ): ByteArray = driver.queryStatement(
         sql = """
             SELECT substr(payload, ?, ?)
             FROM $TABLE_BLOBS
@@ -584,8 +574,7 @@ internal class SqlDriverContentBlobDurability(
         },
     ).value
 
-    private fun loadInlineMigrationProgress(): InlineBodyMigrationProgress? = driver.executeQuery(
-        identifier = null,
+    private fun loadInlineMigrationProgress(): InlineBodyMigrationProgress? = driver.queryStatement(
         sql = """
             SELECT blob_id, reference_json, incarnation, generation, staged_name, phase,
                    copy_offset, copy_hash_state, verify_offset, verify_hash_state
@@ -626,8 +615,7 @@ internal class SqlDriverContentBlobDurability(
     ).value
 
     private fun insertInlineMigrationProgress(progress: InlineBodyMigrationProgress) {
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = """
                 INSERT OR IGNORE INTO $TABLE_BLOB_FILE_MIGRATIONS(
                   blob_id, reference_json, incarnation, generation, staged_name, phase,
@@ -648,8 +636,7 @@ internal class SqlDriverContentBlobDurability(
     private fun updateInlineMigrationCopy(
         previous: InlineBodyMigrationProgress,
         updated: InlineBodyMigrationProgress,
-    ): Boolean = driver.execute(
-        identifier = null,
+    ): Boolean = driver.executeStatement(
         sql = """
             UPDATE $TABLE_BLOB_FILE_MIGRATIONS SET copy_offset = ?, copy_hash_state = ?
             WHERE blob_id = ? AND reference_json = ? AND incarnation = ? AND generation = ?
@@ -673,8 +660,7 @@ internal class SqlDriverContentBlobDurability(
         opaqueName: String,
     ): Boolean {
         check(opaqueName == "v1-${progress.candidate.reference.blobId}.blob")
-        return driver.execute(
-            identifier = null,
+        return driver.executeStatement(
             sql = """
                 UPDATE $TABLE_BLOB_FILE_MIGRATIONS SET phase = 'VERIFYING'
                 WHERE blob_id = ? AND reference_json = ? AND incarnation = ? AND generation = ?
@@ -694,8 +680,7 @@ internal class SqlDriverContentBlobDurability(
     private fun updateInlineMigrationVerification(
         previous: InlineBodyMigrationProgress,
         updated: InlineBodyMigrationProgress,
-    ): Boolean = driver.execute(
-        identifier = null,
+    ): Boolean = driver.executeStatement(
         sql = """
             UPDATE $TABLE_BLOB_FILE_MIGRATIONS SET verify_offset = ?, verify_hash_state = ?
             WHERE blob_id = ? AND reference_json = ? AND incarnation = ? AND generation = ?
@@ -720,8 +705,7 @@ internal class SqlDriverContentBlobDurability(
     ) {
         files.deleteMigrationStage(progress.stagedName)
         val initial = ResumableSha256.initial().snapshot()
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = """
                 UPDATE $TABLE_BLOB_FILE_MIGRATIONS
                 SET phase = 'COPYING', copy_offset = 0, copy_hash_state = ?,
@@ -740,8 +724,7 @@ internal class SqlDriverContentBlobDurability(
     }
 
     private fun deleteInlineMigrationProgress(blobId: String) {
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "DELETE FROM $TABLE_BLOB_FILE_MIGRATIONS WHERE blob_id = ?",
             parameters = 1,
         ) { bindString(0, blobId) }.value
@@ -808,8 +791,7 @@ internal class SqlDriverContentBlobDurability(
     ): Boolean = when (file.kind) {
         ContentBlobCrashFileKind.OBJECT -> {
             val blobId = blobIdFromCanonicalOpaqueName(file.opaqueName) ?: return false
-            driver.executeQuery(
-                identifier = null,
+            driver.queryStatement(
                 sql = "SELECT reference_json FROM $TABLE_BLOBS WHERE blob_id = ?",
                 mapper = { cursor ->
                     if (!cursor.next().value) {
@@ -827,8 +809,7 @@ internal class SqlDriverContentBlobDurability(
             ).value
         }
         ContentBlobCrashFileKind.STAGING -> files.isActiveStage(file.opaqueName) ||
-            driver.executeQuery(
-                identifier = null,
+            driver.queryStatement(
                 sql = "SELECT count(*) FROM $TABLE_BLOB_FILE_MIGRATIONS WHERE staged_name = ?",
                 mapper = { cursor ->
                     check(cursor.next().value)
@@ -839,8 +820,7 @@ internal class SqlDriverContentBlobDurability(
             ).value
     }
 
-    private fun loadCrashFileCursor(): ContentBlobCrashFileCursor = driver.executeQuery(
-        identifier = null,
+    private fun loadCrashFileCursor(): ContentBlobCrashFileCursor = driver.queryStatement(
         sql = "SELECT scan_kind, scan_after_name FROM $TABLE_BLOB_MAINTENANCE WHERE singleton_id = 1",
         mapper = { cursor ->
             check(cursor.next().value)
@@ -856,8 +836,7 @@ internal class SqlDriverContentBlobDurability(
     ).value
 
     private fun storeCrashFileCursor(kind: ContentBlobCrashFileKind, afterName: String?) {
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "UPDATE $TABLE_BLOB_MAINTENANCE SET scan_kind = ?, scan_after_name = ? " +
                 "WHERE singleton_id = 1",
             parameters = 2,
@@ -870,8 +849,7 @@ internal class SqlDriverContentBlobDurability(
     private fun loadCrashFileObservation(
         kind: ContentBlobCrashFileKind,
         opaqueName: String,
-    ): ContentBlobCrashFileObservation? = driver.executeQuery(
-        identifier = null,
+    ): ContentBlobCrashFileObservation? = driver.queryStatement(
         sql = """
             SELECT byte_size, modified_at_epoch_millis, discovered_at_epoch_millis
             FROM $TABLE_BLOB_FILE_ORPHANS WHERE file_kind = ? AND opaque_name = ?
@@ -896,12 +874,11 @@ internal class SqlDriverContentBlobDurability(
         // SqliteUpsert: Android 10's SQLite has no `ON CONFLICT ... DO UPDATE`.
         crashFileUpsert.run(
             listOf(file.kind.name, file.opaqueName, file.byteSize, file.modifiedAtEpochMillis, discoveredAt),
-        ) { sql, parameters, bind -> driver.execute(identifier = null, sql = sql, parameters = parameters, binders = bind).value }
+        ) { sql, parameters, bind -> driver.executeStatement(sql = sql, parameters = parameters, binders = bind).value }
     }
 
     private fun deleteCrashFileObservation(kind: ContentBlobCrashFileKind, opaqueName: String) {
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "DELETE FROM $TABLE_BLOB_FILE_ORPHANS WHERE file_kind = ? AND opaque_name = ?",
             parameters = 2,
         ) {
@@ -910,8 +887,7 @@ internal class SqlDriverContentBlobDurability(
         }.value
     }
 
-    private fun existingMetadata(blobId: String): DurableContentBlob? = driver.executeQuery(
-        identifier = null,
+    private fun existingMetadata(blobId: String): DurableContentBlob? = driver.queryStatement(
         sql = """
             SELECT reference_json, incarnation, generation,
                    published_at_epoch_millis, lifecycle_state, discovered_at_epoch_millis
@@ -942,15 +918,13 @@ internal class SqlDriverContentBlobDurability(
         binders = { bindString(0, blobId) },
     ).value
 
-    private fun readStoreInstanceId(): String? = driver.executeQuery(
-        identifier = null,
+    private fun readStoreInstanceId(): String? = driver.queryStatement(
         sql = "SELECT store_instance_id FROM $TABLE_BLOB_STORE WHERE singleton_id = 1",
         mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
         parameters = 0,
     ).value
 
-    private fun readOpaqueName(blob: DurableContentBlob): String? = driver.executeQuery(
-        identifier = null,
+    private fun readOpaqueName(blob: DurableContentBlob): String? = driver.queryStatement(
         sql = "SELECT opaque_name FROM $TABLE_BLOBS " +
             "WHERE blob_id = ? AND incarnation = ? AND generation = ?",
         mapper = { cursor ->

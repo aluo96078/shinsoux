@@ -36,7 +36,7 @@ internal fun backUpBeforeUpgrade(
         val marked = if (tableExists(driver, VERSIONS_TABLE)) mark.read(driver) else null
         if (marked != null && alreadyCopied(fileSystem, copy, "$formats\n$marked")) return@runCatching copy
         // a pragma only runs once its row is stepped to
-        driver.executeQuery(null, "PRAGMA wal_checkpoint(TRUNCATE)", { cursor -> QueryResult.Value(cursor.next().value) }, 0)
+        driver.queryUncached("PRAGMA wal_checkpoint(TRUNCATE)", { cursor -> QueryResult.Value(cursor.next().value) }, 0)
         val wal = "$databaseFile-wal".toPath()
         val hasLog = (fileSystem.metadataOrNull(wal)?.size ?: 0L) > 0L
         // Both written beside the last copy first, so one cut short never replaces it.

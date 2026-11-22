@@ -4,12 +4,16 @@ import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.content.SchemaComponent
 import dev.shinsou.kmp.content.SchemaMigrator
 import dev.shinsou.kmp.content.SchemaVersionStore
+import dev.shinsou.kmp.content.executeStatement
+import dev.shinsou.kmp.content.executeUncached
+import dev.shinsou.kmp.content.queryStatement
 import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.domain.model.ReadingLocator
@@ -138,8 +142,7 @@ public class DerivedLocalFullTextIndex(
 
     /** Shared row for every block of one resource revision with the same access request. */
     private fun contextKeyLocked(source: SearchableTextDocument, encodedContext: String): Long {
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = """
                 INSERT OR IGNORE INTO $TABLE_SEARCH_CONTEXTS(
                   publication_id, acquisition_id, unit_id, content_revision, resource_id,
@@ -156,8 +159,7 @@ public class DerivedLocalFullTextIndex(
             bindLong(5, source.canonicalDocumentUtf16Length.toLong())
             bindString(6, encodedContext)
         }.value
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = "SELECT context_key FROM $TABLE_SEARCH_CONTEXTS WHERE context_json = ?",
             mapper = { cursor ->
                 check(cursor.next().value) { "Search context row is missing" }
@@ -175,8 +177,7 @@ public class DerivedLocalFullTextIndex(
             transactions.transactionWithResult<Unit>(noEnclosing = false) {
                 deleteDocumentRowsLocked(source.documentId)
                 val contextKey = contextKeyLocked(source, prepared.encodedContext)
-                driver.execute(
-                    identifier = null,
+                driver.executeStatement(
                     sql = """
                         INSERT INTO $TABLE_SEARCH_DOCUMENTS(
                           document_id, context_key, block_id, base_offset_utf16, epub_anchor_json, body_text
@@ -195,29 +196,35 @@ public class DerivedLocalFullTextIndex(
                 // One row per distinct token of the block, its occurrences packed into one value:
                 // a row per occurrence (keyed by the 64-character document id, and indexed a
                 // second time by token) cost about 170 bytes per CJK character of the library.
-                prepared.postings.chunked(SEARCH_TOKEN_INSERT_BATCH_SIZE).forEach { batch ->
-                    val values = batch.joinToString(",") { "(?, ?, ?, ?)" }
-                    driver.execute(
-                        identifier = null,
-                        sql = """
-                            INSERT INTO $TABLE_SEARCH_POSTINGS(token, doc_key, hits, positions)
-                            VALUES $values
-                        """.trimIndent(),
-                        parameters = batch.size * 4,
-                    ) {
-                        batch.forEachIndexed { index, posting ->
-                            val offset = index * 4
-                            bindString(offset, posting.token)
-                            bindLong(offset + 1, documentKey)
-                            bindLong(offset + 2, posting.hits.toLong())
-                            bindString(offset + 3, posting.positions)
-                        }
-                    }.value
-                }
+                prepared.postings.chunked(SEARCH_TOKEN_INSERT_BATCH_SIZE).forEach { batch -> insertPostingsLocked(batch, documentKey) }
             }
             source.access.protectionAuthorization?.let { authorization ->
                 liveAuthorizations[source.documentId] = authorization
             } ?: liveAuthorizations.remove(source.documentId)
+        }
+    }
+
+    private fun insertPostingsLocked(batch: List<SearchPosting>, documentKey: Long) {
+        val values = batch.joinToString(",") { "(?, ?, ?, ?)" }
+        val sql = """
+            INSERT INTO $TABLE_SEARCH_POSTINGS(token, doc_key, hits, positions)
+            VALUES $values
+        """.trimIndent()
+        val bind: SqlPreparedStatement.() -> Unit = {
+            batch.forEachIndexed { index, posting ->
+                val offset = index * 4
+                bindString(offset, posting.token)
+                bindLong(offset + 1, documentKey)
+                bindLong(offset + 2, posting.hits.toLong())
+                bindString(offset + 3, posting.positions)
+            }
+        }
+        // The text varies with the batch length. Only the full batch (nearly every one) gets an
+        // identifier; the shorter tails (127 other texts) stay out of the shared registry.
+        if (batch.size == SEARCH_TOKEN_INSERT_BATCH_SIZE) {
+            driver.executeStatement(sql, batch.size * 4, bind).value
+        } else {
+            driver.executeUncached(sql, batch.size * 4, bind).value
         }
     }
 
@@ -242,9 +249,9 @@ public class DerivedLocalFullTextIndex(
     override fun clear() {
         withIndexLock {
             transactions.transactionWithResult<Unit>(noEnclosing = false) {
-                driver.execute(null, "DELETE FROM $TABLE_SEARCH_POSTINGS", 0).value
-                driver.execute(null, "DELETE FROM $TABLE_SEARCH_DOCUMENTS", 0).value
-                driver.execute(null, "DELETE FROM $TABLE_SEARCH_CONTEXTS", 0).value
+                driver.executeStatement("DELETE FROM $TABLE_SEARCH_POSTINGS", 0).value
+                driver.executeStatement("DELETE FROM $TABLE_SEARCH_DOCUMENTS", 0).value
+                driver.executeStatement("DELETE FROM $TABLE_SEARCH_CONTEXTS", 0).value
                 removals++
                 liveAuthorizations.clear()
             }
@@ -590,8 +597,7 @@ public class DerivedLocalFullTextIndex(
             )
             if (documentScope.resourceId != null) append(" AND c.resource_id = ?")
         }
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT $SEARCH_ACCESS_COLUMNS
                 FROM $SEARCH_DOCUMENTS_JOIN
@@ -642,8 +648,7 @@ public class DerivedLocalFullTextIndex(
             "SELECT document_id FROM $TABLE_SEARCH_DOCUMENTS " +
                 "WHERE document_id > ? ORDER BY document_id LIMIT ?"
         }
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = sql,
             mapper = { cursor ->
                 val ids = mutableListOf<String>()
@@ -682,8 +687,7 @@ public class DerivedLocalFullTextIndex(
         }
         val where = if (predicates.isEmpty()) "" else
             predicates.joinToString(prefix = " WHERE ", separator = " AND ")
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT $SEARCH_ACCESS_COLUMNS
                 FROM $SEARCH_DOCUMENTS_JOIN$where
@@ -728,8 +732,7 @@ public class DerivedLocalFullTextIndex(
         ).value
     }
 
-    private fun loadAccessRowLocked(documentId: String): SearchAccessRow? = driver.executeQuery(
-        identifier = null,
+    private fun loadAccessRowLocked(documentId: String): SearchAccessRow? = driver.queryStatement(
         sql = """
             SELECT $SEARCH_ACCESS_COLUMNS
             FROM $SEARCH_DOCUMENTS_JOIN WHERE d.document_id = ?
@@ -759,8 +762,7 @@ public class DerivedLocalFullTextIndex(
         binders = { bindString(0, documentId) },
     ).value
 
-    private fun loadDocumentLocked(documentId: String): SearchableTextDocument? = driver.executeQuery(
-        identifier = null,
+    private fun loadDocumentLocked(documentId: String): SearchableTextDocument? = driver.queryStatement(
         sql = """
             SELECT $SEARCH_ACCESS_COLUMNS, d.body_text
             FROM $SEARCH_DOCUMENTS_JOIN WHERE d.document_id = ?
@@ -890,8 +892,7 @@ public class DerivedLocalFullTextIndex(
             )
             if (documentScope.resourceId != null) append(" AND c.resource_id = ?")
         }
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT d.document_id
                 FROM $TABLE_SEARCH_POSTINGS AS p
@@ -936,8 +937,7 @@ public class DerivedLocalFullTextIndex(
         body: String,
     ): List<FullTextToken> {
         val placeholders = queryTokens.joinToString(",") { "?" }
-        return driver.executeQuery(
-            identifier = null,
+        return driver.queryStatement(
             sql = """
                 SELECT p.token, p.hits, p.positions
                 FROM $TABLE_SEARCH_POSTINGS AS p
@@ -996,8 +996,7 @@ public class DerivedLocalFullTextIndex(
         )
     }
 
-    private fun documentExistsLocked(documentId: String): Boolean = driver.executeQuery(
-        identifier = null,
+    private fun documentExistsLocked(documentId: String): Boolean = driver.queryStatement(
         sql = "SELECT 1 FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?",
         mapper = { cursor -> QueryResult.Value(cursor.next().value) },
         parameters = 1,
@@ -1015,8 +1014,7 @@ public class DerivedLocalFullTextIndex(
     }
 
     private fun deleteDocumentRowsLocked(documentId: String) {
-        val keys = driver.executeQuery(
-            identifier = null,
+        val keys = driver.queryStatement(
             sql = "SELECT doc_key, context_key FROM $TABLE_SEARCH_DOCUMENTS WHERE document_id = ?",
             mapper = { cursor ->
                 QueryResult.Value(
@@ -1028,18 +1026,15 @@ public class DerivedLocalFullTextIndex(
         ).value ?: return
         removals++
         val (documentKey, contextKey) = keys
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "DELETE FROM $TABLE_SEARCH_POSTINGS WHERE doc_key = ?",
             parameters = 1,
         ) { bindLong(0, documentKey) }.value
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = "DELETE FROM $TABLE_SEARCH_DOCUMENTS WHERE doc_key = ?",
             parameters = 1,
         ) { bindLong(0, documentKey) }.value
-        driver.execute(
-            identifier = null,
+        driver.executeStatement(
             sql = """
                 DELETE FROM $TABLE_SEARCH_CONTEXTS WHERE context_key = ?
                 AND NOT EXISTS (SELECT 1 FROM $TABLE_SEARCH_DOCUMENTS WHERE context_key = ?)
@@ -1066,8 +1061,7 @@ public class DerivedLocalFullTextIndex(
     }
 
     private fun dropLegacyBatchLocked(): Boolean {
-        val legacy = driver.executeQuery(
-            identifier = null,
+        val legacy = driver.queryStatement(
             sql = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
             mapper = { cursor ->
                 val names = mutableSetOf<String>()
@@ -1084,8 +1078,7 @@ public class DerivedLocalFullTextIndex(
         transactions.transactionWithResult<Unit>(noEnclosing = false) {
             if (LEGACY_TABLE_SEARCH_DOCUMENTS in legacy) {
                 if (LEGACY_TABLE_SEARCH_TOKENS in legacy) {
-                    driver.execute(
-                        identifier = null,
+                    driver.executeStatement(
                         sql = """
                             DELETE FROM $LEGACY_TABLE_SEARCH_TOKENS WHERE document_id IN (
                               SELECT document_id FROM $LEGACY_TABLE_SEARCH_DOCUMENTS
@@ -1095,8 +1088,7 @@ public class DerivedLocalFullTextIndex(
                         parameters = 0,
                     ).value
                 }
-                driver.execute(
-                    identifier = null,
+                driver.executeStatement(
                     sql = """
                         DELETE FROM $LEGACY_TABLE_SEARCH_DOCUMENTS WHERE document_id IN (
                           SELECT document_id FROM $LEGACY_TABLE_SEARCH_DOCUMENTS
@@ -1110,15 +1102,14 @@ public class DerivedLocalFullTextIndex(
                 scalarLong("SELECT EXISTS(SELECT 1 FROM $LEGACY_TABLE_SEARCH_DOCUMENTS)") != 0L
             if (!documentsLeft) {
                 // Tokens without a document row are unreachable; the table is dropped whole.
-                driver.execute(null, "DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_TOKENS", 0).value
-                driver.execute(null, "DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_DOCUMENTS", 0).value
+                driver.executeUncached("DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_TOKENS", 0).value
+                driver.executeUncached("DROP TABLE IF EXISTS $LEGACY_TABLE_SEARCH_DOCUMENTS", 0).value
             }
         }
         return false
     }
 
-    private fun scalarLong(sql: String): Long = driver.executeQuery(
-        identifier = null,
+    private fun scalarLong(sql: String): Long = driver.queryStatement(
         sql = sql,
         mapper = { cursor ->
             check(cursor.next().value)
@@ -1323,7 +1314,7 @@ public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
 
     private fun dropTables(driver: SqlDriver) {
         listOf(TABLE_SEARCH_POSTINGS, TABLE_SEARCH_DOCUMENTS, TABLE_SEARCH_CONTEXTS).forEach { table ->
-            driver.execute(null, "DROP TABLE IF EXISTS $table", 0).value
+            driver.executeUncached("DROP TABLE IF EXISTS $table", 0).value
         }
     }
 
@@ -1373,7 +1364,7 @@ public object LocalFullTextIndexSchema : SqlSchema<QueryResult.Value<Unit>> {
                 CREATE INDEX IF NOT EXISTS ${TABLE_SEARCH_POSTINGS}_document
                 ON $TABLE_SEARCH_POSTINGS(doc_key)
             """,
-        ).forEach { sql -> driver.execute(null, sql.trimIndent(), 0).value }
+        ).forEach { sql -> driver.executeUncached(sql.trimIndent(), 0).value }
     }
 
     override fun migrate(

@@ -119,6 +119,77 @@ private fun Exec.stampedFetch(root: File) {
     doLast { stamp.writeText("fetched\n") }
 }
 
+/**
+ * What a desktop helper's CMake build reads from the repository, as inputs of its configure and
+ * compile steps: the tracked sources (not `third_party/`, which is hundreds of megabytes: the
+ * fetch's [stampedFetch] stamp, script and patches stand for it) and [extra] files the build embeds.
+ * Without these the Exec tasks had no inputs or outputs and ran on every build.
+ */
+private class CmakeSources(val root: File, private val directories: List<String>, private val extra: List<File> = emptyList()) {
+    fun Task.readsSources() {
+        inputs.file(File(root, "CMakeLists.txt"))
+        directories.map { File(root, it) }.filter { it.isDirectory }.forEach { inputs.dir(it) }
+        extra.forEach { inputs.file(it) }
+        inputs.file(File(root, "scripts/fetch-deps.sh"))
+        File(root, "patches").takeIf { it.isDirectory }?.let { inputs.dir(it) }
+        inputs.files(File(root, "third_party/.fetched"))
+    }
+}
+
+/**
+ * A CMake configure step: its [arguments] are an input (another architecture or generator
+ * configures again), its `CMakeCache.txt` the output that says it ran.
+ */
+private fun Exec.configuresCmake(sources: CmakeSources, buildDir: String, arguments: List<String>) {
+    with(sources) { readsSources() }
+    inputs.property("cmakeArguments", arguments)
+    outputs.file(File(buildDir, "CMakeCache.txt"))
+    commandLine(listOf("cmake") + arguments)
+}
+
+/**
+ * A CMake build of one [target] that produces [executable]: it reruns when a source, the configure
+ * [arguments] or the executable change, and is up to date otherwise.
+ */
+private fun Exec.buildsCmakeTarget(
+    sources: CmakeSources,
+    buildDir: String,
+    target: String,
+    executable: File,
+    configureArguments: List<String>,
+    extraArguments: List<String> = emptyList(),
+) {
+    with(sources) { readsSources() }
+    inputs.property("cmakeArguments", configureArguments)
+    outputs.file(executable)
+    commandLine(listOf("cmake", "--build", buildDir, "--target", target) + extraArguments)
+}
+
+private fun Project.sandboxCoreSources() = CmakeSources(
+    root = rootProject.file("sandbox-core"),
+    directories = listOf("src", "scripts", "test"),
+    // Embedded into the driver by the CMake build (ssc_bootstrap_js.c).
+    extra = listOf(rootProject.file("feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/IosJavaScriptBootstrap.kt")),
+)
+
+private fun Project.translationCoreSources() = CmakeSources(
+    root = rootProject.file("translation-core"),
+    directories = listOf("src"),
+)
+
+/**
+ * Copies [built] to [output] and signs it ([signedHelperCommand]). Up to date while the built
+ * helper, the signing identity and the signed output stay as they were: a changed or removed
+ * output signs again.
+ */
+private fun Exec.signsHelper(built: String, output: String, settings: ShinsouBuildSettings) {
+    inputs.file(built)
+    inputs.property("signingIdentity", settings.macOsSigning.identity ?: "-")
+    inputs.property("signingKeychain", settings.macOsSigning.keychain ?: "")
+    outputs.file(output)
+    commandLine(signedHelperCommand(built, output, settings))
+}
+
 /** Copies a built helper into the app resources and signs it (hardened runtime, no entitlements). */
 private fun signedHelperCommand(built: String, output: String, settings: ShinsouBuildSettings): List<String> {
     // The configured identity when there is one (so a Developer ID build can be notarized), ad-hoc
@@ -143,18 +214,16 @@ private fun Project.registerMacOsHelpers(
 
     // Keep task actions free of build-script closures so Gradle can serialize the configuration
     // cache. swiftc creates an executable output; the packaged app still copies it to a private
-    // directory and restores owner-execute permission before launch.
-    val prepareOutputDirectory = tasks.register("prepareMacOsWebChallengeHelperOutput", Exec::class.java) {
-        commandLine("/bin/mkdir", "-p", webChallengeHelper.get().asFile.parentFile.absolutePath)
-    }
+    // directory and restores owner-execute permission before launch. Gradle creates the output
+    // file's parent directory, so no task has to make it first.
     val compileWebChallengeHelper = tasks.register("compileMacOsWebChallengeHelper", Exec::class.java) {
         group = "build"
         description = "Builds the native macOS WKWebView challenge helper"
-        dependsOn(prepareOutputDirectory)
         val sourcePath = layout.projectDirectory
             .file("src/desktopMain/swift/ShinsouWebChallenge/main.swift")
             .asFile.absolutePath
         inputs.file(sourcePath)
+        inputs.property("architecture", architecture)
         outputs.file(webChallengeHelper)
         commandLine(
             "xcrun", "--sdk", "macosx", "swiftc", "-swift-version", "5", "-Osize",
@@ -168,58 +237,60 @@ private fun Project.registerMacOsHelpers(
     // ADR-0002 S3: the plugin sandbox helper (sandbox-core's shinsou-sandbox), built for the host
     // architecture and shipped next to the WKWebView helper. It confines itself with sandbox_init at
     // startup; the signature carries no entitlements, so it gains nothing the deny-all profile removes.
-    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val sandboxSources = sandboxCoreSources()
     val sandboxBuild = layout.buildDirectory.dir("sandbox-core-macos").get().asFile.absolutePath
+    val sandboxConfigure = listOf(
+        "-S", sandboxSources.root.absolutePath, "-B", sandboxBuild,
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_OSX_ARCHITECTURES=$architecture",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+    )
     val configureSandbox = tasks.register("configureMacOsSandboxHelper", Exec::class.java) {
         dependsOn(fetchSandbox)
-        commandLine(
-            "cmake", "-S", sandboxCore, "-B", sandboxBuild,
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_OSX_ARCHITECTURES=$architecture",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
-        )
+        configuresCmake(sandboxSources, sandboxBuild, sandboxConfigure)
     }
     val compileSandbox = tasks.register("compileMacOsSandboxHelper", Exec::class.java) {
         dependsOn(configureSandbox)
-        commandLine("cmake", "--build", sandboxBuild, "--target", "shinsou-sandbox", "-j", nativeBuildJobs)
+        buildsCmakeTarget(
+            sandboxSources, sandboxBuild, "shinsou-sandbox", File(sandboxBuild, "shinsou-sandbox"),
+            sandboxConfigure, listOf("-j", nativeBuildJobs),
+        )
     }
     val buildSandbox = tasks.register("buildMacOsSandboxHelper", Exec::class.java) {
         group = "build"
         description = "Builds and signs the plugin sandbox helper for the macOS app resources"
-        dependsOn(compileSandbox, "prepareMacOsWebChallengeHelperOutput")
-        val output = macOsDir.get().file("shinsou-sandbox").asFile.absolutePath
-        outputs.file(output)
-        outputs.upToDateWhen { false }
-        commandLine(signedHelperCommand("$sandboxBuild/shinsou-sandbox", output, settings))
+        dependsOn(compileSandbox)
+        signsHelper("$sandboxBuild/shinsou-sandbox", macOsDir.get().file("shinsou-sandbox").asFile.absolutePath, settings)
     }
 
     // ADR-0004 §4.5: the offline translation helper (translation-core's shinsou-translate), built
     // for the host architecture and shipped next to the other helpers. A build without the helper
     // reports offline translation as unavailable.
-    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
+    val translationSources = translationCoreSources()
     val translationBuild = layout.buildDirectory.dir("translation-core-macos").get().asFile.absolutePath
+    // The host architecture: the engine's architecture detection refuses an explicit
+    // CMAKE_OSX_ARCHITECTURES=arm64.
+    val translationConfigure = listOf(
+        "-S", translationSources.root.absolutePath, "-B", translationBuild,
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+    )
     val configureTranslation = tasks.register("configureMacOsTranslationHelper", Exec::class.java) {
         dependsOn(fetchTranslation)
-        commandLine(
-            // The host architecture: the engine's architecture detection refuses an explicit
-            // CMAKE_OSX_ARCHITECTURES=arm64.
-            "cmake", "-S", translationCore, "-B", translationBuild,
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
-        )
+        configuresCmake(translationSources, translationBuild, translationConfigure)
     }
     val compileTranslation = tasks.register("compileMacOsTranslationHelper", Exec::class.java) {
         dependsOn(configureTranslation)
-        commandLine("cmake", "--build", translationBuild, "--target", "shinsou-translate", "-j", nativeBuildJobs)
+        buildsCmakeTarget(
+            translationSources, translationBuild, "shinsou-translate", File(translationBuild, "shinsou-translate"),
+            translationConfigure, listOf("-j", nativeBuildJobs),
+        )
     }
     val buildTranslation = tasks.register("buildMacOsTranslationHelper", Exec::class.java) {
         group = "build"
         description = "Builds and signs the offline translation helper for the macOS app resources"
-        dependsOn(compileTranslation, "prepareMacOsWebChallengeHelperOutput")
-        val output = macOsDir.get().file("shinsou-translate").asFile.absolutePath
-        outputs.file(output)
-        outputs.upToDateWhen { false }
-        commandLine(signedHelperCommand("$translationBuild/shinsou-translate", output, settings))
+        dependsOn(compileTranslation)
+        signsHelper("$translationBuild/shinsou-translate", macOsDir.get().file("shinsou-translate").asFile.absolutePath, settings)
     }
     return listOf(compileWebChallengeHelper, buildSandbox, buildTranslation)
 }
@@ -230,18 +301,21 @@ private fun Project.registerWindowsHelpers(fetchSandbox: String, fetchTranslatio
     // ADR-0002 S3 (Windows): the same helper, built with MinGW-w64 (UCRT64; sandbox-core needs
     // pthreads and POSIX I/O, so not MSVC) as one static executable. It relaunches itself in a Low
     // Privilege AppContainer and a Job object (sandbox-core/src/ssc_os_windows.c).
-    val sandboxCore = rootProject.layout.projectDirectory.dir("sandbox-core").asFile.absolutePath
+    val sandboxSources = sandboxCoreSources()
     val sandboxBuild = layout.buildDirectory.dir("sandbox-core-windows").get().asFile.absolutePath
+    val sandboxConfigure = listOf(
+        "-S", sandboxSources.root.absolutePath, "-B", sandboxBuild, "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc",
+    )
     val configureSandbox = tasks.register("configureWindowsSandboxHelper", Exec::class.java) {
         dependsOn(fetchSandbox)
-        commandLine(
-            "cmake", "-S", sandboxCore, "-B", sandboxBuild, "-G", "Ninja",
-            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc",
-        )
+        configuresCmake(sandboxSources, sandboxBuild, sandboxConfigure)
     }
     val compileSandbox = tasks.register("compileWindowsSandboxHelper", Exec::class.java) {
         dependsOn(configureSandbox)
-        commandLine("cmake", "--build", sandboxBuild, "--target", "shinsou-sandbox")
+        buildsCmakeTarget(
+            sandboxSources, sandboxBuild, "shinsou-sandbox", File(sandboxBuild, "shinsou-sandbox.exe"), sandboxConfigure,
+        )
     }
     val buildSandbox = tasks.register("buildWindowsSandboxHelper", Copy::class.java) {
         group = "build"
@@ -253,18 +327,22 @@ private fun Project.registerWindowsHelpers(fetchSandbox: String, fetchTranslatio
 
     // ADR-0004 §4.5 (Windows): the offline translation helper, built with the same MinGW-w64
     // (UCRT64) toolchain as the sandbox helper, as one static executable.
-    val translationCore = rootProject.layout.projectDirectory.dir("translation-core").asFile.absolutePath
+    val translationSources = translationCoreSources()
     val translationBuild = layout.buildDirectory.dir("translation-core-windows").get().asFile.absolutePath
+    val translationConfigure = listOf(
+        "-S", translationSources.root.absolutePath, "-B", translationBuild, "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++",
+    )
     val configureTranslation = tasks.register("configureWindowsTranslationHelper", Exec::class.java) {
         dependsOn(fetchTranslation)
-        commandLine(
-            "cmake", "-S", translationCore, "-B", translationBuild, "-G", "Ninja",
-            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++",
-        )
+        configuresCmake(translationSources, translationBuild, translationConfigure)
     }
     val compileTranslation = tasks.register("compileWindowsTranslationHelper", Exec::class.java) {
         dependsOn(configureTranslation)
-        commandLine("cmake", "--build", translationBuild, "--target", "shinsou-translate")
+        buildsCmakeTarget(
+            translationSources, translationBuild, "shinsou-translate", File(translationBuild, "shinsou-translate.exe"),
+            translationConfigure,
+        )
     }
     val buildTranslation = tasks.register("buildWindowsTranslationHelper", Copy::class.java) {
         group = "build"
