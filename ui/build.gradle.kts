@@ -58,10 +58,6 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
         }
-        androidMain.dependencies {
-            // The challenge dialog's WebView runs in a dedicated profile (AndroidX WebKit).
-            implementation(libs.androidx.webkit)
-        }
         val desktopTest by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)

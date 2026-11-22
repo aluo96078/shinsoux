@@ -986,8 +986,10 @@ internal fun MoreDestinationPane(
                     .map { it.id }
                     .toMutableList()
                 val current = ordered.indexOf(id)
+                // The queue is read live: the row may have gone since the page was drawn.
+                if (current < 0) return@DownloadsScreen
                 val target = (current + delta).coerceIn(0, ordered.lastIndex)
-                if (current >= 0 && target != current) {
+                if (target != current) {
                     ordered.removeAt(current)
                     ordered.add(target, id)
                     actions.inStores { appServices.content.reorderDownloads(ordered) }

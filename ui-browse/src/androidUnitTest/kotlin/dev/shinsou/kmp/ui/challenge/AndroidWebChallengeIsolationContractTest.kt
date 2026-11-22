@@ -21,7 +21,7 @@ class AndroidWebChallengeIsolationContractTest {
             .first { File(it, ANDROID_SOURCE).isFile }
         val source = File(root, ANDROID_SOURCE).readText()
         val catalog = File(root, "gradle/libs.versions.toml").readText()
-        val build = File(root, "ui/build.gradle.kts").readText()
+        val build = File(root, "ui-browse/build.gradle.kts").readText()
 
         assertFalse(source.contains("CookieManager." + "getInstance"))
         assertFalse(source.contains("removeAll" + "Cookies"))

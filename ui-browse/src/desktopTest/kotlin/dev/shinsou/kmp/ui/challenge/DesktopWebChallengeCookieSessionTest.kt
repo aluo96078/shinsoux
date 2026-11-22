@@ -245,7 +245,7 @@ class DesktopWebChallengeCookieSessionTest {
     fun desktopHelperReadersUseBoundedFramesForStdoutAndStderr() {
         val challengeSource = Path.of(
             "src/desktopMain/kotlin/dev/shinsou/kmp/ui/challenge/PlatformWebChallengeView.desktop.kt",
-        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("ui").resolve(local) }
+        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("ui-browse").resolve(local) }
         // R5-1: the plugin transport is in :feature-plugin, next to this module.
         val sessionSource = Path.of(
             "feature-plugin/src/desktopMain/kotlin/dev/shinsou/kmp/plugin/DesktopPluginBrowserSessionTransport.kt",
@@ -301,7 +301,7 @@ class DesktopWebChallengeCookieSessionTest {
     fun challengeUiDoesNotProjectHelperControlledDiagnostics() {
         val source = Path.of(
             "src/desktopMain/kotlin/dev/shinsou/kmp/ui/challenge/PlatformWebChallengeView.desktop.kt",
-        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("ui").resolve(local) }
+        ).let { local -> if (Files.isRegularFile(local)) local else Path.of("ui-browse").resolve(local) }
             .let { Files.readString(it) }
 
         assertTrue(source.contains("dispatchError(\"The native browser could not be initialized.\")"))
