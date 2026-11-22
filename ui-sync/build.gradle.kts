@@ -1,6 +1,6 @@
 // C1 (docs/architecture/0007): the sync screens: the sync settings and account, sharing with other
 // users, and the reviews pane. Depends on :ui-core and the layers below, never on another UI module;
-// :ui (More, the publication pane) opens it.
+// :ui-settings (More) and :ui-browse (the publication pane) open it.
 plugins {
     id("shinsou.kmp-library")
     alias(libs.plugins.composeMultiplatform)

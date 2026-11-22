@@ -1,8 +1,8 @@
 // R5-1 (docs/architecture/0006 §4.2): ui (the Compose screens, the challenge dialog) and navigation.
-// C1 (0007): the shell (ShinsouApp, the app services, navigation, app state, layouts and panes) and
-// the screens not yet in a feature UI module (library, updates, history, details, browse,
-// extensions, settings, more); it wires :ui-reader, :ui-translation and :ui-sync, and the design
-// system and strings are :ui-core's. Owns the Compose resources (the app icon, Res in dev.aluo.shinsoux.generated.resources);
+// C1 (0007): the shell (ShinsouApp, the app services, navigation, app state, layouts and panes).
+// 0008 §7-5: the screens are in the section UI modules (:ui-browse, :ui-library, :ui-settings) and
+// the feature UI modules (:ui-reader, :ui-translation, :ui-sync); the shell composes and wires them,
+// and the design system and strings are :ui-core's. Owns the Compose resources (the app icon, Res in dev.aluo.shinsoux.generated.resources);
 // the app module reaches the icon through shinsouIconPainter(). Depends on the feature modules and
 // the layers below; only the app module (composition, entry points, packaging) is above it.
 plugins {
@@ -36,6 +36,9 @@ kotlin {
             implementation(project(":ui-reader"))
             implementation(project(":ui-translation"))
             implementation(project(":ui-sync"))
+            implementation(project(":ui-browse"))
+            implementation(project(":ui-library"))
+            implementation(project(":ui-settings"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
@@ -54,10 +57,6 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
-        }
-        androidMain.dependencies {
-            // The challenge dialog's WebView runs in a dedicated profile (AndroidX WebKit).
-            implementation(libs.androidx.webkit)
         }
         val desktopTest by getting {
             dependencies {

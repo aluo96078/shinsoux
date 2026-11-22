@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 class ShinsouStringsTest {
     private fun key(english: String): StringKey = StringKey.entries.single { it.english == english }
 
-    /** 0008: the permission labels themselves are the shell's (`ui.screens.PluginPermissionLabelsTest`). */
+    /** 0008: the permission labels themselves are :ui-browse's (`ui.browse.PluginPermissionLabelsTest`). */
     @Test
     fun pluginReviewProgressIsLocalizedForEverySupportedLocale() {
         val locales = listOf("en-US", "zh-TW", "zh-CN", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-BR")

@@ -2,6 +2,5 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ReturnCount:PlatformWebChallengeView.ios.kt:IosChallengeState$fun load</ID>
   </CurrentIssues>
 </SmellBaseline>

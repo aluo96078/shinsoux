@@ -1,0 +1,16 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
+    <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
+    <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
+    <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ContentBackupV2Screen</ID>
+    <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
+    <ID>LongMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
+    <ID>LongMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
+    <ID>SwallowedException:ShuYueMigrationUiController.kt:DefaultShuYueMigrationUiController$conflict: ShuYueMigrationConflictException</ID>
+    <ID>UnusedParameter:SettingsScreen.kt:steps: Int</ID>
+    <ID>UseCheckOrError:BinaryDocumentExport.kt:throw IllegalStateException("Binary document source exceeded its declared size")</ID>
+  </CurrentIssues>
+</SmellBaseline>

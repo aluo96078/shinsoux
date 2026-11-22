@@ -152,13 +152,14 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 ## 專案結構
 
-- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`core-network`、`domain`、`data-persistence-api`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui-core`、`ui-reader`／`ui-translation`／`ui-sync`、`ui`，以及 App 本身 `composeApp`
+- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`core-network`、`domain`、`data-persistence-api`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui-core`、`ui-reader`／`ui-translation`／`ui-sync`、`ui-browse`／`ui-library`／`ui-settings`、`ui`，以及 App 本身 `composeApp`
 - `data-persistence-api`：C3 的持久化埠（`SnapshotStorage`、`HotStateStore`、`HotDelta` 與 JSON／SQL 配對），介於 `domain` 與實作它的 `data-content`、`data-repository`、App host 之間；`domain` 不依賴任何其他模組
 - `feature-plugin`：外掛 repository、信任、外掛網路、沙箱 runtime 與各平台 host（iOS WASM 沙箱 cinterop、Android 隔離程序與 `libshinsou_sandbox.so`）；`jvmCommonTest` 的 Rhino runtime 只供相容性測試比對
 - `ui-core`：設計系統（主題、共用元件、設定列、外掛圖片載入）、i18n（`StringKey`／`ShinsouStrings`）與評論 Markdown；不認識任何畫面
 - `ui-reader`：閱讀器畫面（頁面閱讀器、統一內容閱讀器、外掛小說閱讀器、閱讀翻譯面板）與 `ContentFeatures`、音量鍵路由
 - `ui-translation`：翻譯設定畫面；`ui-sync`：同步設定、分享與評論畫面（功能 UI 模組彼此不相依，只依賴 `ui-core` 與更下層）
-- `ui`：外殼（`ShinsouApp`、App services、navigation、版面與 panes）、書庫／更新／歷史／詳情／瀏覽／擴充／設定／更多等尚未拆出的畫面，與 App 圖示（Compose resource）
+- 區段 UI 模組（位於功能 UI 模組與外殼之間，可開啟功能 UI 模組，彼此不相依、不依賴外殼）：`ui-browse`：瀏覽（來源、目錄、全域搜尋、擴充與 repository、遷移、外掛發佈頁、權限與套件安全對話框、網頁驗證）；`ui-library`：書庫、詳情、追蹤、更新、歷史與續讀；`ui-settings`：更多分頁（設定、下載、統計、備份與內容搬移、更新檢查、關於）
+- `ui`：外殼（`ShinsouApp`、App services、navigation、版面與 panes、App 狀態與平台接線）與 App 圖示（Compose resource）
 - `sandbox-core`：擴充套件沙箱核心（QuickJS、SandboxProtocol v1、各平台 OS 隔離 helper 與 WASM 建置）
 - `translation-core`：離線翻譯引擎的原生程式庫（CMake 建置）；它和 `sandbox-core` 一樣不是 Gradle 模組，由 build-logic 的 `shinsou.native-libraries` 取得或建置
 - `composeApp`：App 組裝（`app`）與各平台入口——Android Activity、WorkManager 與持久化接線；iOS framework entry、Keychain、BGTask 與 Widget payload；macOS／Windows Desktop host、Menu Bar、平台資料目錄、Keychain／DPAPI 接線，以及打包設定

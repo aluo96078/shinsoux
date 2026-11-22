@@ -35,6 +35,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.ui.library.LibrarySelectionState
 
 class TitleNavigationControllerTest {
     private val sourceKey = SourceKey(packageId = "pkg.test", sourceId = "novels")

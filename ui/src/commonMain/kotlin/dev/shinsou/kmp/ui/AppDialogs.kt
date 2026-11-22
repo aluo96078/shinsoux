@@ -29,8 +29,8 @@ import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.PluginPermissionReviewDialog
-import dev.shinsou.kmp.ui.screens.RepositoryTrustDialog
+import dev.shinsou.kmp.ui.browse.PluginPermissionReviewDialog
+import dev.shinsou.kmp.ui.browse.RepositoryTrustDialog
 import kotlinx.coroutines.launch
 
 /**

@@ -2,7 +2,7 @@
 // components (cover images and the plugin image loader, the image viewer, the settings rows, the
 // loading indicator), the UI strings (StringKey, ShinsouStrings and the labels of lower-layer
 // enums), the review Markdown and small Compose utilities. It knows no screen: every UI module
-// (:ui-reader, :ui-translation, :ui-sync, :ui) and the app depend on it, and it only on the layers
+// (:ui-reader, :ui-translation, :ui-sync, :ui-browse, :ui-library, :ui-settings, :ui) and the app depend on it, and it only on the layers
 // below. No Compose resources (they are :ui's); no generated Res class.
 // 0008: no feature module either (DependencyDirectionTest): a plugin or translation ABI change
 // recompiles only the UI modules that use it. The plugin image loader takes a PluginImageSource

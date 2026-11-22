@@ -14,8 +14,8 @@ import dev.shinsou.kmp.navigation.PageEntry
 import dev.shinsou.kmp.navigation.PageStack
 import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
-import dev.shinsou.kmp.ui.screens.ALL_LIBRARY_CATEGORY_ID
-import dev.shinsou.kmp.ui.screens.MoreDestination
+import dev.shinsou.kmp.ui.library.ALL_LIBRARY_CATEGORY_ID
+import dev.shinsou.kmp.ui.settings.MoreDestination
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -26,6 +26,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import dev.shinsou.kmp.ui.browse.extensionUnitIdentity
+import dev.shinsou.kmp.ui.library.LibrarySelection
 
 class ShellSavedStateTest {
     private val full = ShellSavedState(

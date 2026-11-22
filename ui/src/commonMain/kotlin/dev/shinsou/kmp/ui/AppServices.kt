@@ -20,6 +20,11 @@ import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.DEFAULT_BINARY_DOCUMENT_BYTE_ARRAY_COMPATIBILITY_BYTES
+import dev.shinsou.kmp.ui.settings.PlatformSecurityCapabilities
+import dev.shinsou.kmp.ui.settings.SecurityFeatureCapability
+import dev.shinsou.kmp.ui.settings.copyToByteArray
 
 private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
@@ -263,60 +268,6 @@ interface ShinsouAppServices :
         val None: ShinsouAppServices = object : ShinsouAppServices {}
     }
 }
-
-data class SecurityFeatureCapability(
-    val available: Boolean,
-    val unavailableReason: String? = null,
-) {
-    init {
-        require(available || !unavailableReason.isNullOrBlank()) {
-            "An unavailable security capability must explain why it is unavailable."
-        }
-    }
-
-    companion object {
-        val Available = SecurityFeatureCapability(available = true)
-
-        fun unavailable(reason: String) = SecurityFeatureCapability(
-            available = false,
-            unavailableReason = reason,
-        )
-    }
-}
-
-data class PlatformSecurityCapabilities(
-    val appLock: SecurityFeatureCapability,
-    val secureScreen: SecurityFeatureCapability,
-) {
-    companion object {
-        val Available = PlatformSecurityCapabilities(
-            appLock = SecurityFeatureCapability.Available,
-            secureScreen = SecurityFeatureCapability.Available,
-        )
-
-        val Unavailable = PlatformSecurityCapabilities(
-            appLock = SecurityFeatureCapability.unavailable("Device authentication is unavailable on this platform."),
-            secureScreen = SecurityFeatureCapability.unavailable("Secure-screen protection is unavailable on this platform."),
-        )
-    }
-}
-
-/**
- * Mobile hosts can always enforce their secure-screen implementation, but app lock is safe to
- * advertise only while the device can actually perform owner authentication. This value is a
- * runtime capability and must never be copied into the portable snapshot.
- */
-public fun mobileSecurityCapabilities(
-    deviceOwnerAuthenticationAvailable: Boolean,
-    unavailableReason: String = "Set up a device passcode, PIN, password, or biometric authentication to use app lock.",
-): PlatformSecurityCapabilities = PlatformSecurityCapabilities(
-    appLock = if (deviceOwnerAuthenticationAvailable) {
-        SecurityFeatureCapability.Available
-    } else {
-        SecurityFeatureCapability.unavailable(unavailableReason)
-    },
-    secureScreen = SecurityFeatureCapability.Available,
-)
 
 /** Existing app-lock settings must become active when device authentication is added or recovers. */
 internal fun shouldLockOnAuthenticationAvailabilityChange(

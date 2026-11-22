@@ -29,12 +29,12 @@ import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
-import dev.shinsou.kmp.ui.BinaryDocumentExportSource
+import dev.shinsou.kmp.ui.settings.BinaryDocumentExportSource
 import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits
-import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
+import dev.shinsou.kmp.ui.settings.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEventSink
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
@@ -44,7 +44,7 @@ import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.mobileSecurityCapabilities
+import dev.shinsou.kmp.ui.settings.mobileSecurityCapabilities
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import java.util.concurrent.Executor

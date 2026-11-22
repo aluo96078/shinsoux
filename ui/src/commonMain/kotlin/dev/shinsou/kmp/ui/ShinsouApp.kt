@@ -34,6 +34,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,6 +85,11 @@ import dev.shinsou.kmp.ui.core.LocalMobileKeyboardDismissEnabled
 import dev.shinsou.kmp.ui.core.PluginImageLoader
 import dev.shinsou.kmp.ui.core.onUnconsumedBlankTap
 import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeyMonitoringEnabled
+import dev.shinsou.kmp.ui.browse.SourceCatalogImages
+import dev.shinsou.kmp.ui.core.LocalAppUnlocked
+import dev.shinsou.kmp.ui.settings.AppUpdateHost
+import dev.shinsou.kmp.ui.settings.AppUpdateState
+import dev.shinsou.kmp.ui.settings.LocalAppUpdates
 
 /** Primary, platform-neutral composition entry point. */
 @Composable
@@ -93,7 +99,8 @@ fun ShinsouApp(
     autoBackupService: AutoBackupService? = null,
     interactionReady: Boolean = true,
 ) {
-    val snapshot by repository.snapshot.collectAsState()
+    // 0008 §7-5: without the download queue's ticks (DownloadQueueObservation).
+    val snapshot by rememberShellSnapshot(repository)
     val pluginImages = remember(appServices.browse) { PluginImageLoader.forSource(SourceCatalogImages(appServices.browse)) }
     val appUpdates = remember(appServices.appUpdates) { appServices.appUpdates?.let(::AppUpdateState) }
     val updateScope = rememberCoroutineScope()
@@ -209,7 +216,7 @@ private fun ShinsouAppContent(
 ) {
     val snackbar = remember { SnackbarHostState() }
     val focusRequester = remember { FocusRequester() }
-    val queuesPaused = rememberQueuesPaused(snapshot, appServices)
+    val queuesPaused = rememberQueuesPaused(repository, appServices)
     val app = rememberShinsouAppState(
         ShellHost(repository, appServices, autoBackupService, snackbar, focusRequester),
         snapshot,
@@ -441,13 +448,17 @@ private class ShellStateKeeper(private var restored: ShellSavedState?) {
  * "running".
  */
 @Composable
-private fun rememberQueuesPaused(snapshot: AppSnapshot, appServices: ShinsouAppServices): Boolean {
-    val novelDownloadStates by appServices.browse.extensionDownloadsV2.collectAsState()
-    return remember(snapshot.downloadQueue, novelDownloadStates) {
-        val states = snapshot.downloadQueue.map { it.state } + novelDownloadStates.map { it.state }
-        states.any { it == DownloadState.PAUSED } &&
-            states.none { it == DownloadState.QUEUED || it == DownloadState.DOWNLOADING }
-    }
+private fun rememberQueuesPaused(repository: ShinsouRepository, appServices: ShinsouAppServices): Boolean {
+    // Derived: the shell recomposes when the answer changes, not on every download's progress.
+    val queue = rememberDownloadQueue(repository)
+    val novelDownloads = appServices.browse.extensionDownloadsV2.collectAsState()
+    return remember(queue, novelDownloads) {
+        derivedStateOf {
+            val states = queue.value.map { it.state } + novelDownloads.value.map { it.state }
+            states.any { it == DownloadState.PAUSED } &&
+                states.none { it == DownloadState.QUEUED || it == DownloadState.DOWNLOADING }
+        }
+    }.value
 }
 
 /** What the entry points show while the app's stores are opened, off the UI thread. */
@@ -478,14 +489,21 @@ internal suspend fun removeDownloadsForMangas(
 
 /** Manga and novel downloads that still need work; both queues feed the same Downloads screen. */
 @Composable
-internal fun pendingDownloadCount(queue: List<DownloadQueueItem>, acquisition: ContentAcquisition): Int {
-    val extensionDownloads by acquisition.extensionDownloadsV2.collectAsState()
-    // "Queued or active": failed rows wait for the user, not the queue.
-    fun DownloadState.waiting() =
-        this == DownloadState.QUEUED || this == DownloadState.DOWNLOADING || this == DownloadState.PAUSED
-    return queue.count { it.visibleInQueue && it.state.waiting() } +
-        extensionDownloads.count { it.state.waiting() }
+internal fun pendingDownloadCount(repository: ShinsouRepository, acquisition: ContentAcquisition): Int {
+    // Derived: the badge's reader recomposes when the count changes, not on every download's progress.
+    val queue = rememberDownloadQueue(repository)
+    val extensionDownloads = acquisition.extensionDownloadsV2.collectAsState()
+    return remember(queue, extensionDownloads) {
+        derivedStateOf {
+            queue.value.count { it.visibleInQueue && it.state.waitsInQueue() } +
+                extensionDownloads.value.count { it.state.waitsInQueue() }
+        }
+    }.value
 }
+
+/** "Queued or active": failed rows wait for the user, not the queue. */
+private fun DownloadState.waitsInQueue() =
+    this == DownloadState.QUEUED || this == DownloadState.DOWNLOADING || this == DownloadState.PAUSED
 
 internal data class NavigationItem(
     val section: MainSection,

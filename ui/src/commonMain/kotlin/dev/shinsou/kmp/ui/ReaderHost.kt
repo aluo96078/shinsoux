@@ -18,7 +18,6 @@ import dev.shinsou.kmp.contract.ReaderChapter
 import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Chapter
-import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
 import dev.shinsou.kmp.domain.model.Manga
 import dev.shinsou.kmp.manga.MangaChapterTranslation
@@ -29,7 +28,7 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
+import dev.shinsou.kmp.ui.library.CategoryPickerDialog
 import dev.shinsou.kmp.ui.reader.MangaReaderTranslationState
 import dev.shinsou.kmp.ui.reader.MangaTranslationNotice
 import dev.shinsou.kmp.ui.reader.MangaTranslationSheet
@@ -81,10 +80,7 @@ private fun ReaderSessionContent(
         currentChapterId = chapter.id,
         manga = manga,
         settings = snapshot.settings.reader,
-        downloadedChapterIds = snapshot.downloadQueue
-            .asSequence()
-            .filter { it.state == DownloadState.DOWNLOADED }
-            .mapTo(mutableSetOf()) { it.chapterId },
+        downloadedChapterIds = rememberDownloadQueueValue(app.repository, ::downloadedChapterIds),
     )
     LaunchedEffect(session) { app.reader.markPositionInitialized(session) }
     var mangaTranslationOpen by remember(session) { mutableStateOf(false) }

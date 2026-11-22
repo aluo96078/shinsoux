@@ -11,6 +11,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import dev.shinsou.kmp.ui.browse.extensionFavoriteDestination
+import dev.shinsou.kmp.ui.browse.mutateExtensionFavorite
 
 class LocalLibraryExtensionRoutingTest {
     private val sourceKey = SourceKey(

@@ -18,6 +18,7 @@ dependencyResolutionManagement {
 rootProject.name = "Shinsou X"
 // R5-1 (docs/architecture/0006 §4.2): the library modules, lowest layer first, and the app.
 // C1 (0007): the UI is :ui-core (design system), the feature UI modules and :ui (the shell).
+// 0008 §7-5: the section UI modules (browse, library, more) sit between the feature UI modules and the shell.
 include(":core")
 include(":core-network")
 include(":domain")
@@ -33,5 +34,8 @@ include(":ui-core")
 include(":ui-reader")
 include(":ui-translation")
 include(":ui-sync")
+include(":ui-browse")
+include(":ui-library")
+include(":ui-settings")
 include(":ui")
 include(":composeApp")
