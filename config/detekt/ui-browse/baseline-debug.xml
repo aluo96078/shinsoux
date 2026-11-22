@@ -8,9 +8,9 @@
     <ID>CyclomaticComplexMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
     <ID>CyclomaticComplexMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
     <ID>CyclomaticComplexMethod:MigrationPane.kt:@Composable private fun MigrationCandidateCard</ID>
-    <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable fun PluginPermissionReviewDialog</ID>
+    <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable public fun PluginPermissionReviewDialog</ID>
     <ID>CyclomaticComplexMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
-    <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable fun SourceLoginDialog</ID>
+    <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable public fun SourceLoginDialog</ID>
     <ID>CyclomaticComplexMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
     <ID>CyclomaticComplexMethod:SourceWebChallengeCookies.kt:internal fun normalizeWebChallengeCookies: List&lt;SourceCookie&gt;</ID>
     <ID>InstanceOfCheckForException:PlatformWebChallengeView.android.kt:AndroidChallengeState$failure is kotlinx.coroutines.TimeoutCancellationException</ID>

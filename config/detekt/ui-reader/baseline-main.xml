@@ -8,7 +8,7 @@
     <ID>ComplexCondition:NovelReader.kt:!restorationReady || navigationRequestKey &lt;= 0L || navigationRequestKey == initialNavigationRequestKey || action == null</ID>
     <ID>ComplexCondition:NovelReader.kt:(tagName == "br" || closingTag &amp;&amp; tagName in NOVEL_BLOCK_HTML_TAGS) &amp;&amp; display.isNotEmpty() &amp;&amp; display.last() != '\n'</ID>
     <ID>CyclomaticComplexMethod:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
-    <ID>CyclomaticComplexMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable fun ExtensionNovelReaderShell</ID>
+    <ID>CyclomaticComplexMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable public fun ExtensionNovelReaderShell</ID>
     <ID>CyclomaticComplexMethod:ExtensionNovelReaderShell.kt:private fun prefetchFailureText: String</ID>
     <ID>CyclomaticComplexMethod:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
     <ID>CyclomaticComplexMethod:MangaTranslationPanel.kt:@Composable public fun MangaTranslationNotice</ID>
@@ -27,14 +27,14 @@
     <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceVerticalPager</ID>
     <ID>EmptyElseBlock:MangaTranslationPanel.kt:MangaReaderTranslationState$if (known) autoPending = false</ID>
     <ID>LongMethod:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
-    <ID>LongMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable fun ExtensionNovelReaderShell</ID>
+    <ID>LongMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable public fun ExtensionNovelReaderShell</ID>
     <ID>LongMethod:NovelReader.kt:@Composable private fun ContinuousNovelReader</ID>
     <ID>LongMethod:ReaderControls.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ReaderSettingsSheet</ID>
     <ID>LongParameterList:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
     <ID>LongParameterList:MangaPrefetch.kt:public fun mangaPrefetchJob: TranslationPrefetchJob</ID>
     <ID>LongParameterList:NovelReader.kt:private fun measuredNovelPageEnd: Int</ID>
     <ID>LongParameterList:NovelReader.kt:private fun reportNovelPage</ID>
-    <ID>LongParameterList:UnifiedContentReader.kt:suspend fun prefetchChapter: dev.shinsou.kmp.translation.PrefetchChapter</ID>
+    <ID>LongParameterList:UnifiedContentReader.kt:public suspend fun prefetchChapter: dev.shinsou.kmp.translation.PrefetchChapter</ID>
     <ID>LoopWithTooManyJumpStatements:NovelReader.kt:while</ID>
     <ID>LoopWithTooManyJumpStatements:ReaderPages.kt:while</ID>
     <ID>MatchingDeclarationName:MangaTranslationPanel.kt:MangaReaderTranslationState</ID>
@@ -49,10 +49,10 @@
     <ID>ReturnCount:NovelReader.kt:internal fun novelTapAction: ReaderTapAction</ID>
     <ID>ReturnCount:NovelReader.kt:internal fun preferredNovelPageBreak: Int</ID>
     <ID>ReturnCount:NovelReader.kt:internal fun readerPreviewKeyIsHostOwned: Boolean</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:@Composable fun UnifiedContentReader</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:fun mangaTranslationAvailable: Boolean</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:fun readerTranslationAvailable: Boolean</ID>
+    <ID>ReturnCount:UnifiedContentReader.kt:@Composable public fun UnifiedContentReader</ID>
     <ID>ReturnCount:UnifiedContentReader.kt:internal fun parseNovelReaderSegments: List&lt;NovelReaderSegment&gt;</ID>
+    <ID>ReturnCount:UnifiedContentReader.kt:public fun mangaTranslationAvailable: Boolean</ID>
+    <ID>ReturnCount:UnifiedContentReader.kt:public fun readerTranslationAvailable: Boolean</ID>
     <ID>ThrowsCount:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
     <ID>ThrowsCount:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
     <ID>TooGenericExceptionCaught:ReaderPages.kt:failure: Throwable</ID>

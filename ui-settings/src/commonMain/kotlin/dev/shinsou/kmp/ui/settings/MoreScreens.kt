@@ -104,7 +104,7 @@ import kotlinx.datetime.toLocalDateTime
 import androidx.compose.ui.graphics.painter.Painter
 import dev.shinsou.kmp.ui.sync.SyncSettingsPane
 
-enum class MoreDestination {
+public enum class MoreDestination {
     Downloads,
     Statistics,
     Translation,
@@ -117,7 +117,7 @@ enum class MoreDestination {
 }
 
 @Composable
-fun MoreScreen(
+public fun MoreScreen(
     downloadCount: Int,
     lastBackupLabel: String?,
     syncLabel: String,
@@ -350,7 +350,7 @@ private data class MoreRow(
 )
 
 @Composable
-fun DownloadsScreen(
+public fun DownloadsScreen(
     queue: List<DownloadQueueItem>,
     mangaById: Map<Long, Manga>,
     chapterById: Map<Long, Chapter>,
@@ -811,7 +811,7 @@ private fun DownloadStateIcon(state: DownloadState) {
 }
 
 @Composable
-fun StatisticsScreen(
+public fun StatisticsScreen(
     library: List<LibraryItem>,
     chapters: List<Chapter>,
     tracks: List<Track>,
@@ -884,7 +884,7 @@ private fun StatCard(label: String, value: String, icon: ImageVector, modifier: 
 }
 
 @Composable
-fun BackupScreen(
+public fun BackupScreen(
     state: BackupState,
     onBack: () -> Unit,
     onCreate: () -> Unit,
@@ -1268,7 +1268,7 @@ private const val MAX_RETAINED_BACKUPS = 20
 
 /** The line under "Sync" on the More screen: who is signed in, if anyone. */
 @Composable
-fun syncSummary(sync: SyncStatus?): String {
+public fun syncSummary(sync: SyncStatus?): String {
     val strings = LocalShinsouStrings.current
     if (sync == null) return strings.text(StringKey.SYNC_IS_UNAVAILABLE_IN_THIS_BUILD)
     val state by sync.state.collectAsState()
@@ -1278,7 +1278,7 @@ fun syncSummary(sync: SyncStatus?): String {
 
 /** More → Sync: the sync account, its status and its devices. */
 @Composable
-fun <S> SyncScreen(
+public fun <S> SyncScreen(
     sync: S?,
     copyText: (label: String, text: String) -> Boolean,
     onBack: () -> Unit,
@@ -1297,7 +1297,7 @@ fun <S> SyncScreen(
 }
 
 @Composable
-fun AboutScreen(
+public fun AboutScreen(
     /** The app icon: the Compose resources are the shell's (:ui). */
     appIcon: Painter,
     onBack: () -> Unit,

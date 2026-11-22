@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.ui.settings
 
 // 0008 §7-5: from AppServices.kt; the settings show them, the platform hosts supply them.
-data class SecurityFeatureCapability(
+public data class SecurityFeatureCapability(
     val available: Boolean,
     val unavailableReason: String? = null,
 ) {
@@ -11,27 +11,27 @@ data class SecurityFeatureCapability(
         }
     }
 
-    companion object {
-        val Available = SecurityFeatureCapability(available = true)
+    public companion object {
+        public val Available: SecurityFeatureCapability = SecurityFeatureCapability(available = true)
 
-        fun unavailable(reason: String) = SecurityFeatureCapability(
+        public fun unavailable(reason: String): SecurityFeatureCapability = SecurityFeatureCapability(
             available = false,
             unavailableReason = reason,
         )
     }
 }
 
-data class PlatformSecurityCapabilities(
+public data class PlatformSecurityCapabilities(
     val appLock: SecurityFeatureCapability,
     val secureScreen: SecurityFeatureCapability,
 ) {
-    companion object {
-        val Available = PlatformSecurityCapabilities(
+    public companion object {
+        internal val Available = PlatformSecurityCapabilities(
             appLock = SecurityFeatureCapability.Available,
             secureScreen = SecurityFeatureCapability.Available,
         )
 
-        val Unavailable = PlatformSecurityCapabilities(
+        public val Unavailable: PlatformSecurityCapabilities = PlatformSecurityCapabilities(
             appLock = SecurityFeatureCapability.unavailable("Device authentication is unavailable on this platform."),
             secureScreen = SecurityFeatureCapability.unavailable("Secure-screen protection is unavailable on this platform."),
         )

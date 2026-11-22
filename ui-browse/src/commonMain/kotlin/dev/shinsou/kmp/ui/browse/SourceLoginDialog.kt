@@ -111,7 +111,7 @@ private fun SourceLoginConfirmLabel(busy: Boolean, requiresBrowserSession: Boole
 
 /** App-wide credential prompt raised asynchronously by an executable source. */
 @Composable
-fun SourceLoginDialog(
+public fun SourceLoginDialog(
     request: SourceLoginRequest,
     source: BrowseSource?,
     auth: SourceAuth,

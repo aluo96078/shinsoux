@@ -127,7 +127,7 @@ import dev.shinsou.kmp.ui.sync.ShareWithUserDialog
  * [sync] is what the page uses of sync (the work hashes, reviews and sharing; 0008 §7-5).
  */
 @Composable
-fun <S> ExtensionV2PublicationPane(
+public fun <S> ExtensionV2PublicationPane(
     services: ExtensionPublicationServices,
     item: BrowseManga,
     favorites: PublicationFavorites,

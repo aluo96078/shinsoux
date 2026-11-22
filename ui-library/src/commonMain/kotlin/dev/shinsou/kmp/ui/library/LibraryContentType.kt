@@ -24,7 +24,7 @@ public enum class LibraryContentType {
  * Extension favorites carry an exact source key, typed local imports carry a publication key,
  * and legacy image imports have their own URL namespace. No title/source-name heuristics are used.
  */
-fun libraryContentType(
+public fun libraryContentType(
     manga: Manga,
     extensionSourceTypes: Map<SourceKey, PluginContentType>,
     legacySourceTypes: Map<Long, PluginContentType> = emptyMap(),

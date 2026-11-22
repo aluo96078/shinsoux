@@ -41,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -84,10 +85,10 @@ import dev.shinsou.kmp.logging.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-val LocalPluginImageLoader = staticCompositionLocalOf { PluginImageLoader.None }
+public val LocalPluginImageLoader: ProvidableCompositionLocal<PluginImageLoader> = staticCompositionLocalOf { PluginImageLoader.None }
 
 @Composable
-fun CoverImage(
+public fun CoverImage(
     title: String,
     url: String?,
     modifier: Modifier = Modifier,
@@ -252,7 +253,7 @@ private fun CoverPlaceholder(title: String) {
 }
 
 @Composable
-fun SearchField(
+public fun SearchField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -331,7 +332,7 @@ fun SearchField(
 }
 
 @Composable
-fun ScreenHeader(
+public fun ScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
@@ -368,7 +369,7 @@ fun ScreenHeader(
 }
 
 @Composable
-fun EmptyState(
+public fun EmptyState(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
@@ -405,7 +406,7 @@ fun EmptyState(
 }
 
 @Composable
-fun CountBadge(
+internal fun CountBadge(
     count: Int,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
@@ -422,7 +423,7 @@ fun CountBadge(
 }
 
 @Composable
-fun LoadingScrim(visible: Boolean, label: String? = null) {
+internal fun LoadingScrim(visible: Boolean, label: String? = null) {
     val strings = LocalShinsouStrings.current
     AnimatedVisibility(visible, enter = fadeIn(), exit = fadeOut()) {
         Box(
@@ -446,12 +447,12 @@ fun LoadingScrim(visible: Boolean, label: String? = null) {
 }
 
 @Composable
-fun HairlineDivider(modifier: Modifier = Modifier) {
+public fun HairlineDivider(modifier: Modifier = Modifier) {
     Divider(modifier, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
 }
 
 @Composable
-fun ExpandIcon(expanded: Boolean, size: Dp = 20.dp) {
+internal fun ExpandIcon(expanded: Boolean, size: Dp = 20.dp) {
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "expand")
     Icon(
         imageVector = Icons.Outlined.Close,

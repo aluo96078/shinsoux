@@ -78,7 +78,7 @@ import dev.shinsou.kmp.ui.i18n.text
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TrackingSheet(
+public fun TrackingSheet(
     manga: Manga,
     tracks: List<Track>,
     coordinator: TrackingService,

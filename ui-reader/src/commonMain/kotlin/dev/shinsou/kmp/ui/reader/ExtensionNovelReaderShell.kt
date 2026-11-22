@@ -76,7 +76,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 // R4-4 (docs/architecture/0006): split out of BrowseScreen.kt without changing it.
 
-data class PendingExtensionRepresentationSelection(
+public data class PendingExtensionRepresentationSelection(
     val selection: ExtensionUnitSelectionV2,
     val representationIds: List<String>,
     val openReader: Boolean,
@@ -86,7 +86,7 @@ private class LatestExtensionReaderProgress {
     var position: ReaderProgressPosition? = null
 }
 
-enum class ExtensionChapterFilter {
+public enum class ExtensionChapterFilter {
     ALL,
     UNREAD,
     READ,
@@ -94,7 +94,7 @@ enum class ExtensionChapterFilter {
     DOWNLOADED,
 }
 
-fun extensionContinueUnitId(
+public fun extensionContinueUnitId(
     unitIds: List<String>,
     completedUnitIds: Set<String>,
     resumeUnitId: String?,
@@ -120,7 +120,7 @@ internal suspend fun awaitProgressFlush(flush: suspend () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExtensionNovelReaderShell(
+public fun ExtensionNovelReaderShell(
     title: String,
     currentUnitTitle: String,
     sourceName: String?,
@@ -616,7 +616,7 @@ fun ExtensionNovelReaderShell(
  * the work's own translation settings when it has them.
  */
 @Composable
-fun PrefetchSetupDialog(
+public fun PrefetchSetupDialog(
     translation: dev.shinsou.kmp.translation.ReaderTranslation,
     workKey: String,
     chapterCount: Int,
@@ -702,7 +702,7 @@ fun PrefetchSetupDialog(
 
 /** One chapter's place in the translation queue, under its title. */
 @Composable
-fun PrefetchChapterStatus(entry: dev.shinsou.kmp.translation.PrefetchEntry) {
+public fun PrefetchChapterStatus(entry: dev.shinsou.kmp.translation.PrefetchEntry) {
     val strings = LocalShinsouStrings.current
     val (text, error) = when (entry.state) {
         dev.shinsou.kmp.translation.PrefetchState.QUEUED -> strings.text(StringKey.WAITING_TO_BE_TRANSLATED) to false
@@ -741,7 +741,7 @@ private fun prefetchFailureText(strings: ShinsouStrings, failure: dev.shinsou.km
 
 /** The work's translation queue at a glance: how far it is, what stopped it, and a way out. */
 @Composable
-fun PrefetchProgress(
+public fun PrefetchProgress(
     entries: List<dev.shinsou.kmp.translation.PrefetchEntry>,
     onCancel: () -> Unit,
     onClear: () -> Unit,

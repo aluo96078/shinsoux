@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.ui.i18n
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -11,84 +12,84 @@ import androidx.compose.ui.text.intl.Locale
  * [StringKey.english]. The frequently used labels are also exposed as properties.
  */
 @Immutable
-class ShinsouStrings internal constructor(internal val table: Map<StringKey, String> = emptyMap()) {
-    val library: String get() = text(StringKey.LIBRARY)
-    val updates: String get() = text(StringKey.UPDATES)
-    val history: String get() = text(StringKey.HISTORY)
-    val browse: String get() = text(StringKey.BROWSE)
-    val more: String get() = text(StringKey.MORE)
-    val sources: String get() = text(StringKey.SOURCES)
-    val extensions: String get() = text(StringKey.EXTENSIONS)
-    val migration: String get() = text(StringKey.MIGRATION)
-    val downloads: String get() = text(StringKey.DOWNLOADS)
-    val statistics: String get() = text(StringKey.STATISTICS)
-    val settings: String get() = text(StringKey.SETTINGS)
-    val backup: String get() = text(StringKey.BACKUP_RESTORE)
-    val about: String get() = text(StringKey.ABOUT)
-    val search: String get() = text(StringKey.SEARCH)
-    val searchLibrary: String get() = text(StringKey.SEARCH_YOUR_LIBRARY)
-    val refresh: String get() = text(StringKey.REFRESH)
-    val filter: String get() = text(StringKey.FILTER)
-    val sort: String get() = text(StringKey.SORT)
-    val all: String get() = text(StringKey.ALL)
-    val done: String get() = text(StringKey.DONE)
-    val cancel: String get() = text(StringKey.CANCEL)
-    val save: String get() = text(StringKey.SAVE)
-    val close: String get() = text(StringKey.CLOSE)
-    val delete: String get() = text(StringKey.DELETE)
-    val remove: String get() = text(StringKey.REMOVE)
-    val retry: String get() = text(StringKey.RETRY)
-    val share: String get() = text(StringKey.SHARE)
-    val selectAll: String get() = text(StringKey.SELECT_ALL)
-    val selected: String get() = text(StringKey.SELECTED_2)
-    val markRead: String get() = text(StringKey.MARK_READ)
-    val markUnread: String get() = text(StringKey.MARK_UNREAD)
-    val moveToCategory: String get() = text(StringKey.MOVE_TO_CATEGORY)
-    val continueReading: String get() = text(StringKey.CONTINUE_READING)
-    val favorite: String get() = text(StringKey.ADD_TO_LIBRARY)
-    val unfavorite: String get() = text(StringKey.IN_LIBRARY)
-    val myLibrary: String get() = text(StringKey.MY_LIBRARY)
-    val download: String get() = text(StringKey.DOWNLOAD)
-    val install: String get() = text(StringKey.INSTALL)
-    val uninstall: String get() = text(StringKey.UNINSTALL)
-    val chapters: String get() = text(StringKey.CHAPTERS)
-    val readerSettings: String get() = text(StringKey.READER_SETTINGS)
-    val previousChapter: String get() = text(StringKey.PREVIOUS_CHAPTER)
-    val nextChapter: String get() = text(StringKey.NEXT_CHAPTER)
-    val pageTurnAnimation: String get() = text(StringKey.PAGE_TURN_ANIMATION)
-    val pageTurnAnimationDescription: String get() = text(StringKey.ANIMATE_TRANSITIONS_WHEN_CHANGING_PAGES)
-    val clearFilters: String get() = text(StringKey.CLEAR_FILTERS)
-    val noMatches: String get() = text(StringKey.NO_MATCHES)
-    val libraryEmpty: String get() = text(StringKey.YOUR_LIBRARY_IS_EMPTY)
-    val noUpdates: String get() = text(StringKey.NO_RECENT_UPDATES)
-    val noHistory: String get() = text(StringKey.NO_READING_HISTORY)
-    val createBackup: String get() = text(StringKey.CREATE_BACKUP)
-    val restoreBackup: String get() = text(StringKey.RESTORE_BACKUP)
+public class ShinsouStrings internal constructor(internal val table: Map<StringKey, String> = emptyMap()) {
+    public val library: String get() = text(StringKey.LIBRARY)
+    public val updates: String get() = text(StringKey.UPDATES)
+    public val history: String get() = text(StringKey.HISTORY)
+    public val browse: String get() = text(StringKey.BROWSE)
+    public val more: String get() = text(StringKey.MORE)
+    public val sources: String get() = text(StringKey.SOURCES)
+    public val extensions: String get() = text(StringKey.EXTENSIONS)
+    public val migration: String get() = text(StringKey.MIGRATION)
+    public val downloads: String get() = text(StringKey.DOWNLOADS)
+    public val statistics: String get() = text(StringKey.STATISTICS)
+    public val settings: String get() = text(StringKey.SETTINGS)
+    public val backup: String get() = text(StringKey.BACKUP_RESTORE)
+    public val about: String get() = text(StringKey.ABOUT)
+    public val search: String get() = text(StringKey.SEARCH)
+    public val searchLibrary: String get() = text(StringKey.SEARCH_YOUR_LIBRARY)
+    public val refresh: String get() = text(StringKey.REFRESH)
+    public val filter: String get() = text(StringKey.FILTER)
+    public val sort: String get() = text(StringKey.SORT)
+    public val all: String get() = text(StringKey.ALL)
+    public val done: String get() = text(StringKey.DONE)
+    public val cancel: String get() = text(StringKey.CANCEL)
+    public val save: String get() = text(StringKey.SAVE)
+    public val close: String get() = text(StringKey.CLOSE)
+    public val delete: String get() = text(StringKey.DELETE)
+    public val remove: String get() = text(StringKey.REMOVE)
+    public val retry: String get() = text(StringKey.RETRY)
+    public val share: String get() = text(StringKey.SHARE)
+    public val selectAll: String get() = text(StringKey.SELECT_ALL)
+    public val selected: String get() = text(StringKey.SELECTED_2)
+    public val markRead: String get() = text(StringKey.MARK_READ)
+    public val markUnread: String get() = text(StringKey.MARK_UNREAD)
+    public val moveToCategory: String get() = text(StringKey.MOVE_TO_CATEGORY)
+    public val continueReading: String get() = text(StringKey.CONTINUE_READING)
+    public val favorite: String get() = text(StringKey.ADD_TO_LIBRARY)
+    public val unfavorite: String get() = text(StringKey.IN_LIBRARY)
+    public val myLibrary: String get() = text(StringKey.MY_LIBRARY)
+    public val download: String get() = text(StringKey.DOWNLOAD)
+    public val install: String get() = text(StringKey.INSTALL)
+    public val uninstall: String get() = text(StringKey.UNINSTALL)
+    public val chapters: String get() = text(StringKey.CHAPTERS)
+    public val readerSettings: String get() = text(StringKey.READER_SETTINGS)
+    public val previousChapter: String get() = text(StringKey.PREVIOUS_CHAPTER)
+    public val nextChapter: String get() = text(StringKey.NEXT_CHAPTER)
+    public val pageTurnAnimation: String get() = text(StringKey.PAGE_TURN_ANIMATION)
+    public val pageTurnAnimationDescription: String get() = text(StringKey.ANIMATE_TRANSITIONS_WHEN_CHANGING_PAGES)
+    public val clearFilters: String get() = text(StringKey.CLEAR_FILTERS)
+    public val noMatches: String get() = text(StringKey.NO_MATCHES)
+    public val libraryEmpty: String get() = text(StringKey.YOUR_LIBRARY_IS_EMPTY)
+    public val noUpdates: String get() = text(StringKey.NO_RECENT_UPDATES)
+    public val noHistory: String get() = text(StringKey.NO_READING_HISTORY)
+    public val createBackup: String get() = text(StringKey.CREATE_BACKUP)
+    public val restoreBackup: String get() = text(StringKey.RESTORE_BACKUP)
 }
 
-val LocalShinsouStrings = staticCompositionLocalOf { EnglishStrings }
+public val LocalShinsouStrings: ProvidableCompositionLocal<ShinsouStrings> = staticCompositionLocalOf { EnglishStrings }
 
 /** Resolve [key] in this language and replace optional `{0}`, `{1}`, ... tokens with [values]. */
-fun ShinsouStrings.text(key: StringKey, vararg values: Any?): String {
+public fun ShinsouStrings.text(key: StringKey, vararg values: Any?): String {
     var result = table[key] ?: key.english
     values.forEachIndexed { index, value -> result = result.replace("{$index}", value.toString()) }
     return result
 }
 
 /** The localized text of an English message authored by our own code, or null for any other text. */
-fun ShinsouStrings.authoredMessage(message: String): String? = authoredMessageKey(message)?.let { text(it) }
+public fun ShinsouStrings.authoredMessage(message: String): String? = authoredMessageKey(message)?.let { text(it) }
 
 /**
  * Text for display: a message authored by our own code is localized; anything else (plugin,
  * server or website text) is external and shown untranslated.
  */
-fun ShinsouStrings.authoredOrExternal(message: String): String = authoredMessage(message) ?: message
+public fun ShinsouStrings.authoredOrExternal(message: String): String = authoredMessage(message) ?: message
 
 /** The language the app is shown in (a BCP-47 tag): the one chosen in Settings, else the system's. */
-val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf { "en" }
+public val LocalAppLanguage: ProvidableCompositionLocal<String> = staticCompositionLocalOf { "en" }
 
 @Composable
-fun ProvideShinsouStrings(
+public fun ProvideShinsouStrings(
     languagePreference: String?,
     content: @Composable () -> Unit,
 ) {
@@ -106,7 +107,7 @@ fun ProvideShinsouStrings(
     )
 }
 
-fun shinsouStringsFor(language: String): ShinsouStrings {
+public fun shinsouStringsFor(language: String): ShinsouStrings {
     val normalized = language.trim().lowercase().replace('_', '-')
     val parts = normalized.split('-').filter { it.isNotBlank() }
     val languageCode = parts.firstOrNull().orEmpty()

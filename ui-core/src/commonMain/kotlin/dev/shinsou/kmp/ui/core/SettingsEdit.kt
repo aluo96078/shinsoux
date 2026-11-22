@@ -6,4 +6,4 @@ package dev.shinsou.kmp.ui.core
  * back several times before it is drawn again; a whole settings value made from the drawn ones
  * would undo an earlier change still queued, or lose a change back to the drawn value.
  */
-typealias SettingsEdit<T> = (T) -> T
+public typealias SettingsEdit<T> = (T) -> T

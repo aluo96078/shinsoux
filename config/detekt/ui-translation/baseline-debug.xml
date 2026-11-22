@@ -3,7 +3,7 @@
   <ManuallySuppressedIssues/>
   <CurrentIssues>
     <ID>CyclomaticComplexMethod:MangaResourceSettings.kt:@Composable internal fun MangaResourceSettings</ID>
-    <ID>CyclomaticComplexMethod:TranslationScreen.kt:@Composable fun TranslationScreen</ID>
+    <ID>CyclomaticComplexMethod:TranslationScreen.kt:@Composable public fun TranslationScreen</ID>
     <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable internal fun TranslationSettingsPane</ID>
     <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable private fun LlmServiceSetting</ID>
     <ID>LongMethod:TranslationSettingsPane.kt:@Composable internal fun TranslationSettingsPane</ID>

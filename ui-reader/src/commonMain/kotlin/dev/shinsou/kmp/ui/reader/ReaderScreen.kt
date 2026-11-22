@@ -95,7 +95,7 @@ import kotlinx.coroutines.flow.map
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-data class UnifiedReaderRenderState(
+public data class UnifiedReaderRenderState(
     val settings: ReaderSettings,
     val requestedPageIndex: Int,
     val pageRequestSerial: Long,
@@ -117,7 +117,7 @@ data class UnifiedReaderRenderState(
 internal val LocalReaderFocusReturn = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
 
 /** What [ReaderScreen] shows: the title, the open chapter and its neighbours. */
-data class ReaderScreenContent(
+public data class ReaderScreenContent(
     val manga: Manga,
     val chapter: Chapter,
     val pages: List<ReaderPage>,
@@ -131,18 +131,18 @@ data class ReaderScreenContent(
 )
 
 /** The reader session [ReaderScreen] belongs to, and what the host asks of it. */
-class ReaderScreenSession(
-    val id: String,
+public class ReaderScreenSession(
+    internal val id: String,
     /** Where the page reader starts instead of the chapter's stored page (a restored session). */
-    val initialPosition: ReaderPosition? = null,
-    val remotePositionSuggestion: ReaderPosition? = null,
-    val positionReportingEnabled: Boolean = true,
+    internal val initialPosition: ReaderPosition? = null,
+    internal val remotePositionSuggestion: ReaderPosition? = null,
+    internal val positionReportingEnabled: Boolean = true,
     /** One-shot: a change asks the reader to go back once. */
-    val systemBackRequest: Long = 0L,
+    internal val systemBackRequest: Long = 0L,
 )
 
 /** What [ReaderScreen] reports to its host. */
-data class ReaderScreenCallbacks(
+public data class ReaderScreenCallbacks(
     val onClose: () -> Unit,
     val onRetry: () -> Unit,
     val onOpenWeb: (() -> Unit)?,
@@ -168,13 +168,13 @@ internal typealias UnifiedReaderRenderer = @Composable (
 ) -> Unit
 
 /** Typed content and the renderer that draws it; they are always supplied together. */
-class UnifiedReaderSlot(
-    val content: UnifiedReaderContent,
-    val renderer: UnifiedReaderRenderer,
-    val initialPageIndex: Int? = null,
-    val initialPageCount: Int? = null,
+public class UnifiedReaderSlot(
+    internal val content: UnifiedReaderContent,
+    internal val renderer: UnifiedReaderRenderer,
+    internal val initialPageIndex: Int? = null,
+    internal val initialPageCount: Int? = null,
     /** True when the unified reader can translate this chapter: the toolbar then offers it. */
-    val translationAvailable: Boolean = false,
+    internal val translationAvailable: Boolean = false,
 ) {
     init {
         require(initialPageIndex == null || initialPageIndex >= 0) {
@@ -190,18 +190,18 @@ class UnifiedReaderSlot(
 }
 
 /** Manga translation (ADR-0005) of the page reader. */
-class PageReaderTranslation(
+public class PageReaderTranslation(
     /** Opens manga translation; null hides it. */
-    val onOpen: (() -> Unit)? = null,
+    internal val onOpen: (() -> Unit)? = null,
     /** Turns manga translation on or off from the toolbar; [onOpen] then opens it on a long press. */
-    val onToggle: (() -> Unit)? = null,
-    val active: Boolean = false,
+    internal val onToggle: (() -> Unit)? = null,
+    internal val active: Boolean = false,
     /** A sheet the app shows over the reader is open: the reader takes its keys back when it closes. */
-    val sheetOpen: Boolean = false,
+    internal val sheetOpen: Boolean = false,
 )
 
 @Composable
-fun ReaderScreen(
+public fun ReaderScreen(
     content: ReaderScreenContent,
     session: ReaderScreenSession,
     settings: ReaderSettings,

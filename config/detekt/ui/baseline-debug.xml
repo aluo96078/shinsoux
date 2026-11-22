@@ -2,15 +2,15 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>CyclomaticComplexMethod:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
+    <ID>CyclomaticComplexMethod:DeepLinkParser.kt:DeepLinkParser$public fun parse: ShinsouDeepLink?</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
-    <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
     <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$private fun parseDevRepositoryLink: ShinsouDeepLink?</ID>
+    <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$public fun parse: ShinsouDeepLink?</ID>
     <ID>ReturnCount:LocalLibraryExtensionRoute.kt:internal fun localLibraryExtensionRoute: LocalLibraryExtensionRoute</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:ReaderLocalProgressCoordinator$failure: Throwable</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:V2ReaderProgressCoordinator$failure: Throwable</ID>

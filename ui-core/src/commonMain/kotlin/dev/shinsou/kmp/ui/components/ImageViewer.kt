@@ -22,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -54,9 +55,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Saves picture bytes where the platform keeps pictures; null where saving is unavailable. */
-public val LocalImageSaver = staticCompositionLocalOf<(suspend (suggestedName: String, bytes: ByteArray) -> Boolean)?> {
-    null
-}
+public val LocalImageSaver: ProvidableCompositionLocal<(suspend (suggestedName: String, bytes: ByteArray) -> Boolean)?> =
+    staticCompositionLocalOf { null }
 
 private const val MAX_ZOOM = 5f
 private const val DOUBLE_TAP_ZOOM = 2.5f

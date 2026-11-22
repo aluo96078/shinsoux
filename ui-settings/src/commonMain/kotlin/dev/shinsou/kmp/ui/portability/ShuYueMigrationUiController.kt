@@ -176,11 +176,11 @@ public class DefaultShuYueMigrationUiController(
         }
     }
 
-    override fun selectAllBooks(selected: Boolean) = updateReviewSelection {
+    override fun selectAllBooks(selected: Boolean): Unit = updateReviewSelection {
         copy(selectedBookIds = if (selected) null else emptySet())
     }
 
-    override fun setBookSelected(bookId: String, selected: Boolean) = updateReviewSelection { current ->
+    override fun setBookSelected(bookId: String, selected: Boolean): Unit = updateReviewSelection { current ->
         val preview = requireNotNull(current.preview)
         require(preview.bookSummaries.any { it.id == bookId }) { "Unknown ShuYue preview book" }
         require(!preview.bookSummariesTruncated) {
@@ -192,11 +192,11 @@ public class DefaultShuYueMigrationUiController(
         current.copy(selectedBookIds = selectedIds.toSet())
     }
 
-    override fun selectAllQuarantinedPlugins(selected: Boolean) = updateReviewSelection {
+    override fun selectAllQuarantinedPlugins(selected: Boolean): Unit = updateReviewSelection {
         copy(selectedPluginDigests = if (selected) null else emptySet())
     }
 
-    override fun setQuarantinedPluginSelected(sha256: String, selected: Boolean) =
+    override fun setQuarantinedPluginSelected(sha256: String, selected: Boolean): Unit =
         updateReviewSelection { current ->
             val preview = requireNotNull(current.preview)
             require(preview.quarantinedPlugins.any { it.sha256 == sha256 }) {
@@ -211,23 +211,23 @@ public class DefaultShuYueMigrationUiController(
             current.copy(selectedPluginDigests = selectedDigests.toSet())
         }
 
-    override fun setIncludeProgress(include: Boolean) = updateReviewSelection {
+    override fun setIncludeProgress(include: Boolean): Unit = updateReviewSelection {
         copy(includeProgress = include)
     }
 
-    override fun setIncludeReaderSettings(include: Boolean) = updateReviewSelection {
+    override fun setIncludeReaderSettings(include: Boolean): Unit = updateReviewSelection {
         copy(includeReaderSettings = include)
     }
 
-    override fun setIncludeContentBodySync(include: Boolean) = updateReviewSelection {
+    override fun setIncludeContentBodySync(include: Boolean): Unit = updateReviewSelection {
         copy(includeContentBodySync = include)
     }
 
-    override fun setIncludeCredentials(include: Boolean) = updateReviewSelection {
+    override fun setIncludeCredentials(include: Boolean): Unit = updateReviewSelection {
         copy(includeCredentials = include)
     }
 
-    override fun setIncludeCookies(include: Boolean) = updateReviewSelection {
+    override fun setIncludeCookies(include: Boolean): Unit = updateReviewSelection {
         copy(includeCookies = include)
     }
 

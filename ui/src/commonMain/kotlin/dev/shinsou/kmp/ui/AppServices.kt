@@ -29,26 +29,26 @@ import dev.shinsou.kmp.ui.settings.copyToByteArray
 private val foregroundLifecycle = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
 /** Sharing and the clipboard. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface ClipboardHost {
-    fun shareText(title: String, text: String) = Unit
+public interface ClipboardHost {
+    public fun shareText(title: String, text: String): Unit = Unit
 
-    fun copyText(label: String, text: String): Boolean = false
+    public fun copyText(label: String, text: String): Boolean = false
 
-    suspend fun readClipboardText(): String? = null
+    public suspend fun readClipboardText(): String? = null
 }
 
 /** Importing and exporting files through the platform picker. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface DocumentHost {
-    suspend fun exportDocument(suggestedName: String, contents: String): Boolean = false
+public interface DocumentHost {
+    public suspend fun exportDocument(suggestedName: String, contents: String): Boolean = false
 
     /** Binary-safe document export. Implementations must not stringify or transcode [contents]. */
-    suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean = false
+    public suspend fun exportBinaryDocument(suggestedName: String, contents: ByteArray): Boolean = false
 
     /**
      * Saves a picture where the platform keeps pictures (the gallery or Photos). Hosts without
      * such a place fall back to an ordinary file export.
      */
-    suspend fun saveImage(suggestedName: String, contents: ByteArray): Boolean =
+    public suspend fun saveImage(suggestedName: String, contents: ByteArray): Boolean =
         exportBinaryDocument(suggestedName, contents)
 
     /**
@@ -56,7 +56,7 @@ interface DocumentHost {
      * write directly to their file/content-provider boundary. The bounded default keeps older
      * small-document hosts source-compatible without allowing a large archive heap copy.
      */
-    suspend fun exportBinaryDocument(
+    public suspend fun exportBinaryDocument(
         suggestedName: String,
         source: BinaryDocumentExportSource,
     ): Boolean {
@@ -66,42 +66,42 @@ interface DocumentHost {
         return exportBinaryDocument(suggestedName, source.copyToByteArray())
     }
 
-    suspend fun importDocument(
+    public suspend fun importDocument(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits = DEFAULT_IMPORTED_DOCUMENT_LIMITS,
     ): ImportedDocument? = null
 
-    suspend fun pickLocalFiles(
+    public suspend fun pickLocalFiles(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits = DEFAULT_IMPORTED_DOCUMENT_LIMITS,
     ): List<ImportedDocument> = emptyList()
 }
 
 /** URLs and events the platform application received. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface DeepLinkHost {
+public interface DeepLinkHost {
     /** Cold or hot stream of URLs/events received by the platform application. */
-    val deepLinks: Flow<ShinsouDeepLink>
+    public val deepLinks: Flow<ShinsouDeepLink>
         get() = emptyFlow()
 
     /** Called after common navigation has applied the event. */
-    fun deepLinkHandled(link: ShinsouDeepLink) = Unit
+    public fun deepLinkHandled(link: ShinsouDeepLink): Unit = Unit
 
     /**
      * Whether [link] still waits to be handled. False once another shell of this process (a
      * second Android activity) handled it: a prompt this shell shows for it is then stale.
      */
-    fun isDeepLinkPending(link: ShinsouDeepLink): Boolean = true
+    public fun isDeepLinkPending(link: ShinsouDeepLink): Boolean = true
 
 }
 
 /** Application visibility, system back and closing. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface LifecycleHost {
+public interface LifecycleHost {
     /** Current application visibility, supplied by each platform host. */
-    val appLifecycle: StateFlow<AppLifecycleState>
+    public val appLifecycle: StateFlow<AppLifecycleState>
         get() = foregroundLifecycle
 
     /** System back/edge-swipe requests emitted by native hosts (for example iOS edge-pop). */
-    val systemBackEvents: Flow<Unit>
+    public val systemBackEvents: Flow<Unit>
         get() = emptyFlow()
 
     /**
@@ -109,7 +109,7 @@ interface LifecycleHost {
      * to decide whether a system-back press should pop an in-app destination or finish the
      * activity; other platforms keep the no-op default and continue using [systemBackEvents].
      */
-    fun setSystemBackHandler(handler: (() -> Boolean)?) = Unit
+    public fun setSystemBackHandler(handler: (() -> Boolean)?): Unit = Unit
 
     /**
      * Interactive system-back gesture updates.  Mobile hosts emit progress while the user's
@@ -117,100 +117,100 @@ interface LifecycleHost {
      * common UI can therefore move the current destination with the finger instead of waiting for
      * a completed swipe before starting an animation.
      */
-    val systemBackGestureEvents: Flow<SystemBackGestureEvent>
+    public val systemBackGestureEvents: Flow<SystemBackGestureEvent>
         get() = emptyFlow()
 
-    fun requestApplicationClose() = Unit
+    public fun requestApplicationClose(): Unit = Unit
 
     /**
      * Where the shell's state ([ShellSavedState]) is kept between launches, on a platform whose own
      * saved state does not outlive the process (desktop, iOS). Null where it does (Android's Bundle).
      */
-    val shellStateStore: ShellStateStore?
+    public val shellStateStore: ShellStateStore?
         get() = null
 }
 
 /** Keeps the shell's saved state, as [storedShellStateText] wrote it, across launches. */
-interface ShellStateStore {
+public interface ShellStateStore {
     /** The state last written; null when there is none or it cannot be read. */
-    fun read(): String?
+    public fun read(): String?
 
     /** Replaces the kept state. Called on the UI thread when the app goes to the background or closes. */
-    fun write(state: String)
+    public fun write(state: String)
 }
 
 /** Window and screen behaviour while reading. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface DisplayHost {
+public interface DisplayHost {
     /** Desktop targets use this to opt into denser controls and desktop conventions. */
-    val prefersDesktopChrome: Boolean
+    public val prefersDesktopChrome: Boolean
         get() = false
 
-    fun setKeepScreenOn(enabled: Boolean) = Unit
+    public fun setKeepScreenOn(enabled: Boolean): Unit = Unit
 
     /** Hides or restores platform system chrome while the reader is active. */
-    fun setFullscreen(enabled: Boolean) = Unit
+    public fun setFullscreen(enabled: Boolean): Unit = Unit
 
     /** Applies a reader-only orientation. Passing null restores the platform's previous policy. */
-    fun setReaderOrientation(orientation: ReaderOrientation?) = Unit
+    public fun setReaderOrientation(orientation: ReaderOrientation?): Unit = Unit
 
     /**
      * Publishes whether the reader is currently presented. Native hosts use this to disable
      * navigation gestures that would otherwise compete with the reader pager.
      */
-    fun setReaderOpen(open: Boolean) = Unit
+    public fun setReaderOpen(open: Boolean): Unit = Unit
 }
 
 /** App lock and screen protection. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface SecurityHost {
+public interface SecurityHost {
     /** Security features the current platform can actually enforce. */
-    val securityCapabilities: PlatformSecurityCapabilities
+    public val securityCapabilities: PlatformSecurityCapabilities
         get() = PlatformSecurityCapabilities.Unavailable
 
-    fun setSecureScreen(enabled: Boolean) = Unit
+    public fun setSecureScreen(enabled: Boolean): Unit = Unit
 
-    suspend fun authenticate(reason: String): Boolean = false
+    public suspend fun authenticate(reason: String): Boolean = false
 }
 
 /** Hardware volume keys in the reader. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface InputHost {
+public interface InputHost {
     /** Reader-only hardware volume button presses emitted by platforms that can intercept them. */
-    val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent>
+    public val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent>
         get() = emptyFlow()
 
     /** Keeps platform volume-button infrastructure warm while the preference is enabled. */
-    fun setReaderVolumeKeyInfrastructureEnabled(enabled: Boolean) = Unit
+    public fun setReaderVolumeKeyInfrastructureEnabled(enabled: Boolean): Unit = Unit
 
     /** Starts or stops platform interception. Common UI always supplies the complete gate state. */
-    fun setReaderVolumeKeyMonitoringEnabled(enabled: Boolean) = Unit
+    public fun setReaderVolumeKeyMonitoringEnabled(enabled: Boolean): Unit = Unit
 
     /** Installs the active common-reader dispatcher for synchronous native hardware delivery. */
-    fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?) = Unit
+    public fun setReaderVolumeKeyEventSink(sink: ReaderVolumeKeyEventSink?): Unit = Unit
 }
 
 /** Opening a URL outside the app. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface ExternalNavigationHost {
-    fun openExternalUrl(url: String) = Unit
+public interface ExternalNavigationHost {
+    public fun openExternalUrl(url: String): Unit = Unit
 
     /**
      * Opens a URL and reports whether the platform accepted the request.  Existing callers use
      * [openExternalUrl] as a fire-and-forget action; provisioning uses this explicit result so a
      * browser-launch failure is visible instead of looking like a stalled deployment.
      */
-    fun tryOpenExternalUrl(url: String): Boolean {
+    public fun tryOpenExternalUrl(url: String): Boolean {
         openExternalUrl(url)
         return true
     }
 }
 
 /** Notifications and background-work restrictions. Part of [ShinsouAppServices] (R4-2, docs/architecture/0006). */
-interface BackgroundWorkHost {
-    fun requestNotificationPermission() = Unit
+public interface BackgroundWorkHost {
+    public fun requestNotificationPermission(): Unit = Unit
 
     /** True when a platform setting the user can change (Android battery optimization) may stop background downloads. */
-    fun backgroundDownloadsRestricted(): Boolean = false
+    public fun backgroundDownloadsRestricted(): Boolean = false
 
     /** Opens the setting that lifts [backgroundDownloadsRestricted]. */
-    fun openBackgroundDownloadSettings() = Unit
+    public fun openBackgroundDownloadSettings(): Unit = Unit
 }
 
 /**
@@ -220,7 +220,7 @@ interface BackgroundWorkHost {
  * an Android Activity, or an Apple framework. Each application target can provide its
  * own implementation at the composition root.
  */
-interface ShinsouAppServices :
+public interface ShinsouAppServices :
     ClipboardHost,
     DocumentHost,
     DeepLinkHost,
@@ -230,42 +230,42 @@ interface ShinsouAppServices :
     InputHost,
     ExternalNavigationHost,
     BackgroundWorkHost {
-    val browse: BrowseCallbacks
+    public val browse: BrowseCallbacks
         get() = BrowseCallbacks.None
 
-    val content: ContentCallbacks
+    public val content: ContentCallbacks
         get() = ContentCallbacks.None
 
     /** Null only in previews/tests or a host that has not supplied the shared SQLite foundation. */
-    val contentFeatures: ContentFeatures?
+    public val contentFeatures: ContentFeatures?
         get() = null
 
     /** Checks GitHub for a newer version of the app; null where the host offers no checks. */
-    val appUpdates: dev.shinsou.kmp.update.AppUpdateSource?
+    public val appUpdates: dev.shinsou.kmp.update.AppUpdateSource?
         get() = null
 
     /** On-device manga translation (ADR-0005); null where translation itself is unavailable. */
-    val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslationService?
+    public val mangaTranslation: dev.shinsou.kmp.manga.MangaTranslationService?
         get() = null
 
     /** Secure, platform-persisted tracker integration supplied by the application composition. */
-    val tracking: TrackingService?
+    public val tracking: TrackingService?
         get() = null
 
     /** Checksummed binary content archive controller; null only when shared atomic storage is absent. */
-    val portableContentBackupV2: PortableContentBackupV2UiController?
+    public val portableContentBackupV2: PortableContentBackupV2UiController?
         get() = null
 
     /** Sync v3 account, status and manual sync; null only in previews/tests without shared storage. */
-    val sync: SyncClient?
+    public val sync: SyncClient?
         get() = null
 
     /** Staged, redacted ShuYue v1 migration controller. */
-    val shuYueMigration: ShuYueMigrationUiController?
+    public val shuYueMigration: ShuYueMigrationUiController?
         get() = null
 
-    companion object {
-        val None: ShinsouAppServices = object : ShinsouAppServices {}
+    public companion object {
+        public val None: ShinsouAppServices = object : ShinsouAppServices {}
     }
 }
 
@@ -281,41 +281,41 @@ internal fun securityFeatureEnabled(
     capability: SecurityFeatureCapability,
 ): Boolean = configured && capability.available
 
-enum class AppLifecycleState {
+public enum class AppLifecycleState {
     FOREGROUND,
     BACKGROUND,
 }
 
-sealed interface SystemBackGestureEvent {
-    data class Progress(val fraction: Float) : SystemBackGestureEvent
+public sealed interface SystemBackGestureEvent {
+    public data class Progress(val fraction: Float) : SystemBackGestureEvent
 
-    data class Settled(val committed: Boolean) : SystemBackGestureEvent
+    public data class Settled(val committed: Boolean) : SystemBackGestureEvent
 }
 
-sealed interface ShinsouDeepLink {
-    data class OpenManga(val mangaId: Long) : ShinsouDeepLink
+public sealed interface ShinsouDeepLink {
+    public data class OpenManga(val mangaId: Long) : ShinsouDeepLink
 
-    data class OpenChapter(
+    public data class OpenChapter(
         val mangaId: Long,
         val chapterId: Long,
     ) : ShinsouDeepLink
 
-    data class OpenSection(val section: DeepLinkSection) : ShinsouDeepLink
+    public data class OpenSection(val section: DeepLinkSection) : ShinsouDeepLink
 
-    data object OpenSettings : ShinsouDeepLink
+    public data object OpenSettings : ShinsouDeepLink
 
     /**
      * ADR-0002 §8.1 `shinsou://add-repository?url=…&fp=…`: a publisher's repository and, optionally,
      * the full fingerprint to match. Nothing is trusted until the user confirms the key.
      */
-    data class AddRepository(val repositoryUrl: String, val fingerprint: String?) : ShinsouDeepLink
+    public data class AddRepository(val repositoryUrl: String, val fingerprint: String?) : ShinsouDeepLink
 
     /**
      * `shinsou://add-dev-repository?url=…` from `shinsou-plugin serve` (ADR-0002 §8.1): an
      * unsigned development server. Shown for confirmation; it is admitted only while developer
      * mode is on and the address is this device or one the user entered.
      */
-    data class AddDevRepository(val repositoryUrl: String) : ShinsouDeepLink
+    public data class AddDevRepository(val repositoryUrl: String) : ShinsouDeepLink
 }
 
 // R5-1: public for the platform AppServices of the app module; the bound stays this module's.
@@ -336,13 +336,13 @@ public class RetainedDeepLinkQueue internal constructor(
         require(maximumPending > 0)
     }
 
-    val events: Flow<ShinsouDeepLink> = eventsWhere { true }
+    public val events: Flow<ShinsouDeepLink> = eventsWhere { true }
 
     /**
      * The oldest waiting link whose tag [accepts]: where several shells share the queue (Android
      * activities side by side), each takes the links its own window received.
      */
-    fun eventsWhere(accepts: (tag: Any?) -> Boolean): Flow<ShinsouDeepLink> = mutableState
+    public fun eventsWhere(accepts: (tag: Any?) -> Boolean): Flow<ShinsouDeepLink> = mutableState
         .map { state -> state.pending.firstOrNull { accepts(it.tag) }?.link }
         .filterNotNull()
 
@@ -352,7 +352,7 @@ public class RetainedDeepLinkQueue internal constructor(
      * are not taking links (stopped, locked) cannot crowd out another's; all of them together, a
      * few times that.
      */
-    fun tryEnqueue(link: ShinsouDeepLink, tag: Any? = null, sameReceiver: (tag: Any?) -> Boolean = { true }): Boolean {
+    public fun tryEnqueue(link: ShinsouDeepLink, tag: Any? = null, sameReceiver: (tag: Any?) -> Boolean = { true }): Boolean {
         while (true) {
             val current = mutableState.value
             val full = current.pending.count { sameReceiver(it.tag) } >= maximumPending ||
@@ -365,16 +365,16 @@ public class RetainedDeepLinkQueue internal constructor(
     }
 
     /** Whether a link waits to be handled. */
-    val hasPending: Boolean get() = mutableState.value.pending.isNotEmpty()
+    internal val hasPending: Boolean get() = mutableState.value.pending.isNotEmpty()
 
     /** The links waiting to be handled, oldest first. */
-    val pendingLinks: List<ShinsouDeepLink> get() = mutableState.value.pending.map { it.link }
+    public val pendingLinks: List<ShinsouDeepLink> get() = mutableState.value.pending.map { it.link }
 
     /** The tags of the links waiting to be handled, oldest first. */
-    val pendingTags: List<Any?> get() = mutableState.value.pending.map { it.tag }
+    public val pendingTags: List<Any?> get() = mutableState.value.pending.map { it.tag }
 
     /** Drops the waiting links whose tag [matches]: whoever received them gave them up. */
-    fun discardWhere(matches: (tag: Any?) -> Boolean) {
+    public fun discardWhere(matches: (tag: Any?) -> Boolean) {
         while (true) {
             val current = mutableState.value
             val updated = current.copy(pending = current.pending.filterNot { matches(it.tag) })
@@ -386,7 +386,7 @@ public class RetainedDeepLinkQueue internal constructor(
      * The exact [link] event (the oldest waiting one whose tag [accepts]) was handled; returns
      * its tag, or null when it is no longer waiting (a stale acknowledgement changes nothing).
      */
-    fun handled(link: ShinsouDeepLink, accepts: (tag: Any?) -> Boolean = { true }): Any? {
+    public fun handled(link: ShinsouDeepLink, accepts: (tag: Any?) -> Boolean = { true }): Any? {
         while (true) {
             val current = mutableState.value
             val entry = current.pending.firstOrNull { accepts(it.tag) }?.takeIf { it.link === link } ?: return null
@@ -412,7 +412,7 @@ public class RetainedDeepLinkQueue internal constructor(
     )
 }
 
-enum class DeepLinkSection {
+public enum class DeepLinkSection {
     Library,
     Updates,
     History,

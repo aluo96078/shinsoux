@@ -19,7 +19,7 @@ internal fun latestHistoryChapter(
         ?.second
 }
 
-fun continueChapter(snapshot: AppSnapshot, mangaId: Long): Chapter? {
+public fun continueChapter(snapshot: AppSnapshot, mangaId: Long): Chapter? {
     latestHistoryChapter(snapshot, setOf(mangaId))?.let { return it }
     val chapters = snapshot.chapters.filter { it.mangaId == mangaId }
         .sortedWith(readerStoryOrderComparator)

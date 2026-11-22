@@ -16,24 +16,24 @@ import kotlinx.coroutines.withContext
  * host's image fetch. The shell supplies it from the browse catalogue, so the design system
  * knows no plugin type and a plugin ABI change does not recompile it.
  */
-interface PluginImageSource {
+public interface PluginImageSource {
     /**
      * A token for the current source authority (the installs, removals, updates, trust and
      * enabled state of the sources): equal tokens mean the same sources may still serve the same
      * images. Read on every cache access, so it must be cheap.
      */
-    fun currentAuthority(): Any?
+    public fun currentAuthority(): Any?
 
     /** [currentAuthority] as it changes: emits only when an install, removal, update or trust change happens. */
-    val authority: Flow<Any?>
+    public val authority: Flow<Any?>
 
     /**
      * Fetches a plugin-owned image through the host content plane: bounded bytes only, or null.
      * The UI image loaders never receive a plugin-controlled remote URL.
      */
-    suspend fun loadThumbnail(sourceId: Long, url: String, headers: Map<String, String>): ByteArray?
+    public suspend fun loadThumbnail(sourceId: Long, url: String, headers: Map<String, String>): ByteArray?
 
-    suspend fun loadThumbnail(sourceKey: SourceKey, url: String, headers: Map<String, String>): ByteArray?
+    public suspend fun loadThumbnail(sourceKey: SourceKey, url: String, headers: Map<String, String>): ByteArray?
 }
 
 /**
@@ -45,7 +45,7 @@ interface PluginImageSource {
  * is bound to the current source authority ([PluginImageSource.currentAuthority]): any install,
  * removal, update or trust change discards every entry, so a revoked source can no longer supply cached bytes.
  */
-class PluginImageLoader internal constructor(
+public class PluginImageLoader internal constructor(
     private val source: PluginImageSource?,
     maxConcurrentLoads: Int = DEFAULT_PLUGIN_IMAGE_CONCURRENCY,
     maxCachedBytes: Long = DEFAULT_PLUGIN_IMAGE_CACHE_BYTES,
@@ -68,11 +68,11 @@ class PluginImageLoader internal constructor(
      * Source authority as seen by image composables. It emits only when an install, removal,
      * update or trust change happens, so a mounted cover can drop bytes fetched under the old one.
      */
-    val authority: Flow<Any?> = source?.authority ?: flowOf(null)
+    internal val authority: Flow<Any?> = source?.authority ?: flowOf(null)
 
-    fun currentAuthority(): Any? = source?.currentAuthority()
+    public fun currentAuthority(): Any? = source?.currentAuthority()
 
-    fun load(
+    public fun load(
         sourceId: Long,
         url: String?,
         headers: Map<String, String> = emptyMap(),
@@ -93,7 +93,7 @@ class PluginImageLoader internal constructor(
             }
         }
 
-    fun load(
+    public fun load(
         sourceKey: SourceKey,
         url: String?,
         headers: Map<String, String> = emptyMap(),
@@ -124,11 +124,11 @@ class PluginImageLoader internal constructor(
         }
     }
 
-    companion object {
-        val None = PluginImageLoader(null)
+    public companion object {
+        internal val None = PluginImageLoader(null)
 
         /** C1 (0007): the shell's loader for [source], with the default limits (the constructor's tuning stays internal). */
-        fun forSource(source: PluginImageSource?): PluginImageLoader = PluginImageLoader(source)
+        public fun forSource(source: PluginImageSource?): PluginImageLoader = PluginImageLoader(source)
     }
 }
 
@@ -136,19 +136,19 @@ class PluginImageLoader internal constructor(
  * One cache-aware cover load. Requests for the same source, URL and headers compare equal, so a
  * composable that rebuilds its loader on recomposition does not restart (or re-render) the load.
  */
-class PluginImageRequest internal constructor(
+public class PluginImageRequest internal constructor(
     private val owner: PluginImageLoader,
     /** Namespaced key; also used as Coil's memory-cache key for the decoded bitmap. */
-    val cacheKey: String,
+    internal val cacheKey: String,
     private val fetch: suspend () -> ByteArray?,
 ) : suspend () -> ByteArray? {
     /** Non-suspending cache probe for the first composition frame; never starts a fetch. */
-    fun cached(): PluginImageResult? = owner.cache.peek(cacheKey)
+    internal fun cached(): PluginImageResult? = owner.cache.peek(cacheKey)
 
-    fun cachedBytes(): ByteArray? = cached()?.bytes
+    public fun cachedBytes(): ByteArray? = cached()?.bytes
 
     /** Loads the bytes together with the authority generation and fetch they came from. */
-    suspend fun load(): PluginImageResult? = owner.fetch(cacheKey, fetch)
+    public suspend fun load(): PluginImageResult? = owner.fetch(cacheKey, fetch)
 
     /**
      * Coil memory-cache key for [result]'s decoded bytes. It names the exact fetch the bytes came
@@ -156,10 +156,10 @@ class PluginImageRequest internal constructor(
      * authority) never reuses a bitmap decoded from earlier bytes. A cache hit keeps its fetch id
      * and therefore still hits Coil's decoded entry.
      */
-    fun memoryCacheKey(result: PluginImageResult): String = "$cacheKey|l${owner.instanceId}|f${result.fetchId}"
+    internal fun memoryCacheKey(result: PluginImageResult): String = "$cacheKey|l${owner.instanceId}|f${result.fetchId}"
 
     /** Drops bytes that could not be decoded so a broken response is not retained. */
-    suspend fun evict() = owner.cache.remove(cacheKey)
+    internal suspend fun evict() = owner.cache.remove(cacheKey)
 
     override suspend fun invoke(): ByteArray? = load()?.bytes
 
@@ -176,8 +176,8 @@ private val pluginImageLoaderIds = kotlin.concurrent.atomics.AtomicLong(0L)
 private fun nextPluginImageLoaderId(): Long = pluginImageLoaderIds.addAndFetch(1L)
 
 /** Host-fetched image bytes, the source-authority generation they belong to and their fetch. */
-class PluginImageResult internal constructor(
-    val bytes: ByteArray,
+public class PluginImageResult internal constructor(
+    internal val bytes: ByteArray,
     internal val generation: Long,
     /** Unique per loader for every completed download; retained by cache hits. */
     internal val fetchId: Long,

@@ -34,14 +34,14 @@ import kotlinx.coroutines.withContext
  * chapter it continues with, and for an extension title the source's id of that chapter, which
  * opens through the title's page (it may not be stored here yet).
  */
-class LibraryContinueReading internal constructor(
-    val item: LibraryItem,
-    val detail: String?,
-    val extensionUnitId: String?,
+public class LibraryContinueReading internal constructor(
+    public val item: LibraryItem,
+    internal val detail: String?,
+    public val extensionUnitId: String?,
 )
 
 /** The extension title [manga] is, by its own URL or (for a typed local row) its stored binding. */
-fun extensionBindingOf(
+public fun extensionBindingOf(
     manga: Manga,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,
 ): ExtensionLibraryBindingV2? =
@@ -53,7 +53,7 @@ fun extensionBindingOf(
  * device whose reading waits for chapters not stored here. Null when nothing is being read.
  */
 @Composable
-fun <B> rememberLibraryContinueReading(
+public fun <B> rememberLibraryContinueReading(
     snapshot: AppSnapshot,
     libraryItems: List<LibraryItem>,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,
@@ -85,7 +85,7 @@ fun <B> rememberLibraryContinueReading(
  * Where "continue reading" takes [item]; null when there is nothing left to continue. Blocks on
  * the content store: call off the UI thread.
  */
-suspend fun <B> continueReadingOf(
+public suspend fun <B> continueReadingOf(
     item: LibraryItem,
     snapshot: AppSnapshot,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,

@@ -63,14 +63,14 @@ private val ShinsouAmoledColors = ShinsouDarkColors.copy(
     surfaceContainerHigh = Color(0xFF171719),
 )
 
-enum class ShinsouThemeMode {
+public enum class ShinsouThemeMode {
     System,
     Light,
     Dark,
 }
 
 @Immutable
-data class ShinsouMetrics(
+internal data class ShinsouMetrics(
     val compact: Boolean,
     val sidebarWidth: androidx.compose.ui.unit.Dp = if (compact) 208.dp else 228.dp,
     val contentMaxWidth: androidx.compose.ui.unit.Dp = 1180.dp,
@@ -78,10 +78,10 @@ data class ShinsouMetrics(
     val controlHeight: androidx.compose.ui.unit.Dp = if (compact) 34.dp else 40.dp,
 )
 
-val LocalShinsouMetrics = staticCompositionLocalOf { ShinsouMetrics(compact = false) }
+internal val LocalShinsouMetrics = staticCompositionLocalOf { ShinsouMetrics(compact = false) }
 
 @Composable
-fun ShinsouTheme(
+public fun ShinsouTheme(
     mode: ShinsouThemeMode = ShinsouThemeMode.System,
     amoled: Boolean = false,
     compact: Boolean = false,

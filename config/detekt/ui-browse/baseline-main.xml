@@ -12,9 +12,9 @@
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:MacOsWebChallengeState$private fun readEvents</ID>
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:NativeCookiePayload$fun isValidCapturedCookie: Boolean</ID>
     <ID>CyclomaticComplexMethod:PlatformWebChallengeView.desktop.kt:private fun NativeHelperEvent.isValidForChallenge: Boolean</ID>
-    <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable fun PluginPermissionReviewDialog</ID>
+    <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable public fun PluginPermissionReviewDialog</ID>
     <ID>CyclomaticComplexMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
-    <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable fun SourceLoginDialog</ID>
+    <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable public fun SourceLoginDialog</ID>
     <ID>CyclomaticComplexMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
     <ID>CyclomaticComplexMethod:SourceWebChallengeCookies.kt:internal fun normalizeWebChallengeCookies: List&lt;SourceCookie&gt;</ID>
     <ID>LongMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterHeader</ID>

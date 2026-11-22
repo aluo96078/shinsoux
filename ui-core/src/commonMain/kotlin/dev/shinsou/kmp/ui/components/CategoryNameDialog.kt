@@ -13,7 +13,7 @@ import dev.shinsou.kmp.ui.i18n.text
 
 // 0008 §7-5: from SettingsScreen; the library and the settings both name categories with it.
 @Composable
-fun CategoryNameDialog(
+public fun CategoryNameDialog(
     title: String,
     value: String,
     onValueChange: (String) -> Unit,

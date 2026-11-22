@@ -5,7 +5,7 @@ package dev.shinsou.kmp.ui.browse
  * A stable 64-bit identity of an extension unit id (FNV-1a over its characters), saved in place of
  * the id itself.
  */
-fun extensionUnitIdentity(remoteUnitId: String): Long {
+public fun extensionUnitIdentity(remoteUnitId: String): Long {
     var hash = FNV_OFFSET_BASIS
     for (char in remoteUnitId) {
         hash = (hash xor char.code.toLong()) * FNV_PRIME

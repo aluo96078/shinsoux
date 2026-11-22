@@ -26,7 +26,7 @@ import dev.shinsou.kmp.ui.theme.ShinsouTheme
  * system language is used.
  */
 @Composable
-fun SchemaTooNewNotice(error: SchemaTooNewException) {
+public fun SchemaTooNewNotice(error: SchemaTooNewException) {
     val strings = shinsouStringsFor(Locale.current.toLanguageTag())
     ShinsouTheme {
         Surface(Modifier.fillMaxSize()) {

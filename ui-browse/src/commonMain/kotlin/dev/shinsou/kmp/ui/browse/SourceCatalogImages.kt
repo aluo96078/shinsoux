@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.map
  * what in the browse snapshot decides whether a source may still serve images, and the images
  * come through the catalogue's host content plane.
  */
-class SourceCatalogImages(private val catalog: SourceCatalog) : PluginImageSource {
+public class SourceCatalogImages(private val catalog: SourceCatalog) : PluginImageSource {
     // Last snapshot -> token. A racing recomputation is harmless: the token is a pure function.
     @kotlin.concurrent.Volatile
     private var authorityMemo: Pair<BrowseSnapshot, Any>? = null

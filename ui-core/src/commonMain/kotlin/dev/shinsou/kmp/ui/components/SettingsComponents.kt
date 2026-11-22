@@ -28,7 +28,7 @@ import dev.shinsou.kmp.ui.i18n.text
 
 /** The rows the settings screens are built from. */
 @Composable
-fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+public fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 96.dp),
@@ -38,7 +38,7 @@ fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> U
 }
 
 @Composable
-fun ChoiceSetting(
+public fun ChoiceSetting(
     title: String,
     summary: String? = null,
     selectedLabel: String,
@@ -78,7 +78,7 @@ fun ChoiceSetting(
 }
 
 @Composable
-fun SettingDescription(text: String) {
+public fun SettingDescription(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,

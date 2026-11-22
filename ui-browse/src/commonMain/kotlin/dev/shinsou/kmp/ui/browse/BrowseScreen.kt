@@ -108,7 +108,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class BrowseSection {
+public enum class BrowseSection {
     Sources,
     Extensions,
     Migration,
@@ -136,10 +136,10 @@ internal const val GLOBAL_SEARCH_MAX_CONCURRENCY: Int = 4
 internal const val GLOBAL_SEARCH_VISIBLE_RESULTS: Int = 10
 
 /** How far a back-swipe has dragged the topmost Browse overlay, and the shell's Back requests. */
-class BrowseBackNavigation(
+public class BrowseBackNavigation(
     /** One-shot: a change asks Browse to go back once. */
-    val systemBackRequest: Long = 0L,
-    val backGestureProgress: Float = 0f,
+    internal val systemBackRequest: Long = 0L,
+    internal val backGestureProgress: Float = 0f,
 )
 
 /** The holders of one Browse screen. */
@@ -190,7 +190,7 @@ private fun <B> rememberBrowseHolders(
  * [sync] what the publication page uses of sync (0008 §7-5: no umbrella crosses into this module).
  */
 @Composable
-fun <B, S> BrowseScreen(
+public fun <B, S> BrowseScreen(
     callbacks: B,
     filters: BrowseSourceFilters,
     host: BrowseHost,

@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.ui.core
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -11,7 +12,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
-val LocalMobileKeyboardDismissEnabled = staticCompositionLocalOf { false }
+public val LocalMobileKeyboardDismissEnabled: ProvidableCompositionLocal<Boolean> = staticCompositionLocalOf { false }
 
 /**
  * Decides whether a completed pointer gesture represents a mobile background tap.
@@ -31,7 +32,7 @@ internal fun shouldDismissKeyboardAfterPointerGesture(
  * Observes a complete gesture at the Final pass without consuming it. Descendant text fields,
  * buttons, cards and scroll containers therefore retain ownership of their pointer input.
  */
-fun Modifier.onUnconsumedBlankTap(
+public fun Modifier.onUnconsumedBlankTap(
     enabled: Boolean,
     onBlankTap: () -> Unit,
 ): Modifier {
@@ -88,7 +89,7 @@ fun Modifier.onUnconsumedBlankTap(
 
 /** Mobile-only convenience used by Dialog and bottom-sheet surfaces. */
 @Composable
-fun Modifier.dismissKeyboardOnMobileBlankTap(): Modifier {
+public fun Modifier.dismissKeyboardOnMobileBlankTap(): Modifier {
     val enabled = LocalMobileKeyboardDismissEnabled.current
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
