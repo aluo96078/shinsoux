@@ -50,11 +50,11 @@ class SystemTranslationTest {
     fun theSystemTranslatesDirectlyAndItsTranslationIsKept() = runBlocking<Unit> {
         val system = FakeSystem()
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        assertEquals(TranslationProviderKind.SYSTEM, translation.activeProvider())
-        assertTrue(translation.preferences().systemAvailable)
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        assertEquals(TranslationProviderKind.SYSTEM, translation.setup.activeProvider())
+        assertTrue(translation.setup.preferences().systemAvailable)
 
-        val result = translation.translate(request()) { _, _ -> }
+        val result = translation.chapters.translate(request()) { _, _ -> }
         assertTrue(result.complete)
         assertEquals("S(한 줄)\nS(두 줄)", result.text())
         // One call, straight from Korean: no English pivot.
@@ -62,7 +62,7 @@ class SystemTranslationTest {
         assertEquals("ko", system.calls.single().first)
 
         // Opening it again reads the stored translation.
-        assertEquals(0, translation.translate(request()) { _, _ -> }.translatedSegments)
+        assertEquals(0, translation.chapters.translate(request()) { _, _ -> }.translatedSegments)
         assertEquals(1, system.calls.size)
     }
 
@@ -70,64 +70,64 @@ class SystemTranslationTest {
     fun languagesNotYetDownloadedAreReportedAndCanBeDownloaded() = runBlocking<Unit> {
         val system = FakeSystem(SystemLanguageStatus.DOWNLOADABLE)
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        assertTrue(translation.systemLanguagesMissing("ko", "zh-Hant"))
-        val failure = assertFailsWith<TranslationException> { translation.translate(request()) { _, _ -> } }
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        assertTrue(translation.models.systemLanguagesMissing("ko", "zh-Hant"))
+        val failure = assertFailsWith<TranslationException> { translation.chapters.translate(request()) { _, _ -> } }
         assertEquals(TranslationFailure.SYSTEM_LANGUAGE_MISSING, failure.failure)
 
-        assertTrue(translation.downloadSystemLanguages("ko", "zh-Hant"))
-        assertFalse(translation.systemLanguagesMissing("ko", "zh-Hant"))
-        assertTrue(translation.translate(request()) { _, _ -> }.complete)
+        assertTrue(translation.models.downloadSystemLanguages("ko", "zh-Hant"))
+        assertFalse(translation.models.systemLanguagesMissing("ko", "zh-Hant"))
+        assertTrue(translation.chapters.translate(request()) { _, _ -> }.complete)
     }
 
     @Test
     fun chaptersTheSystemsOtherModelsTranslatedAreNotDoneForTheNewOnes() = runBlocking<Unit> {
         val system = FakeSystem()
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        translation.translate(request()) { _, _ -> }
-        assertEquals(setOf("c1"), translation.translatedChapterKeys("work", "zh-Hant"))
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        translation.chapters.translate(request()) { _, _ -> }
+        assertEquals(setOf("c1"), translation.storage.translatedChapterKeys("work", "zh-Hant"))
 
         // The system upgraded to other models: translating ahead must not skip the chapter.
         system.name = "fake-fast"
-        assertEquals(emptySet(), translation.translatedChapterKeys("work", "zh-Hant"))
-        assertEquals(1, translation.translate(request()) { _, _ -> }.translatedSegments.coerceAtMost(1))
+        assertEquals(emptySet(), translation.storage.translatedChapterKeys("work", "zh-Hant"))
+        assertEquals(1, translation.chapters.translate(request()) { _, _ -> }.translatedSegments.coerceAtMost(1))
         assertEquals(2, system.calls.size)
-        assertEquals(setOf("c1"), translation.translatedChapterKeys("work", "zh-Hant"))
+        assertEquals(setOf("c1"), translation.storage.translatedChapterKeys("work", "zh-Hant"))
     }
 
     @Test
     fun drawnMangaPagesAreKeyedByTheEngineNotOnlyTheProvider() = runBlocking<Unit> {
         val system = FakeSystem()
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        val before = translation.engineIdentity()
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        val before = translation.chapters.engineIdentity()
         assertTrue(before.startsWith("system:"))
         system.name = "fake-fast"
-        assertTrue(translation.engineIdentity() != before, "the system's other models draw other pages")
-        translation.setProvider(TranslationProviderKind.OFFLINE)
-        assertEquals("offline", translation.engineIdentity())
+        assertTrue(translation.chapters.engineIdentity() != before, "the system's other models draw other pages")
+        translation.setup.setProvider(TranslationProviderKind.OFFLINE)
+        assertEquals("offline", translation.chapters.engineIdentity())
     }
 
     @Test
     fun partOfAChapterIsKeptButTheChapterIsNotCountedTranslated() = runBlocking<Unit> {
         val system = FakeSystem()
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        assertTrue(translation.translate(request().copy(partial = true)) { _, _ -> }.complete)
-        assertEquals(emptySet(), translation.translatedChapterKeys("work", "zh-Hant"), "a chapter missing pages is still to do")
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        assertTrue(translation.chapters.translate(request().copy(partial = true)) { _, _ -> }.complete)
+        assertEquals(emptySet(), translation.storage.translatedChapterKeys("work", "zh-Hant"), "a chapter missing pages is still to do")
         assertEquals(1, system.calls.size)
         // the whole chapter later: its lines already translated are not sent again
-        translation.translate(request()) { _, _ -> }
-        assertEquals(setOf("c1"), translation.translatedChapterKeys("work", "zh-Hant"))
+        translation.chapters.translate(request()) { _, _ -> }
+        assertEquals(setOf("c1"), translation.storage.translatedChapterKeys("work", "zh-Hant"))
         assertEquals(1, system.calls.size)
     }
 
     @Test
     fun anUnsupportedPairIsSaidSo() = runBlocking<Unit> {
         val translation = reader(FakeSystem(SystemLanguageStatus.UNSUPPORTED))
-        translation.setProvider(TranslationProviderKind.SYSTEM)
-        val failure = assertFailsWith<TranslationException> { translation.translate(request()) { _, _ -> } }
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+        val failure = assertFailsWith<TranslationException> { translation.chapters.translate(request()) { _, _ -> } }
         assertEquals(TranslationFailure.UNSUPPORTED_PAIR, failure.failure)
     }
 
@@ -135,10 +135,10 @@ class SystemTranslationTest {
     fun withoutTheSystemsTranslationTheChoiceFallsBackToTheOfflineEngine() = runBlocking<Unit> {
         for (system in listOf(null, FakeSystem(available = false))) {
             val translation = reader(system)
-            translation.setProvider(TranslationProviderKind.SYSTEM)
-            assertEquals(TranslationProviderKind.OFFLINE, translation.activeProvider())
-            assertFalse(translation.preferences().systemAvailable)
-            assertFalse(translation.systemLanguagesMissing("ko", "zh-Hant"))
+            translation.setup.setProvider(TranslationProviderKind.SYSTEM)
+            assertEquals(TranslationProviderKind.OFFLINE, translation.setup.activeProvider())
+            assertFalse(translation.setup.preferences().systemAvailable)
+            assertFalse(translation.models.systemLanguagesMissing("ko", "zh-Hant"))
         }
     }
 
@@ -146,7 +146,7 @@ class SystemTranslationTest {
     fun theQueueStopsAWorkWhoseLanguagesAreNotDownloaded() = runBlocking<Unit> {
         val system = FakeSystem(SystemLanguageStatus.DOWNLOADABLE)
         val translation = reader(system)
-        translation.setProvider(TranslationProviderKind.SYSTEM)
+        translation.setup.setProvider(TranslationProviderKind.SYSTEM)
         val languages = PrefetchLanguages(to = "zh-Hant", from = "ko")
         val jobs = listOf("c1", "c2").map { chapter ->
             TranslationPrefetchJob("work|$chapter", "work", chapter, languages = languages, unit = chapter) {

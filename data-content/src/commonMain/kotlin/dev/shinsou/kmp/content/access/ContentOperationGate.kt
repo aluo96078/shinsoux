@@ -77,57 +77,84 @@ public class HostContentOperationGate(
 }
 
 /**
+ * The named protected side effects the screens perform (display, offline storage, sync, export,
+ * copy, print). Search, TTS and annotation have services of their own. Each call carries its
+ * operation context, so a call site cannot pass an arbitrary operation or omit the context.
+ */
+public interface ProtectedContentOperations {
+    public fun <T> display(request: ContentAccessRequest, textCharacters: Long? = null, block: () -> T): T
+
+    public suspend fun <T> displaySuspending(
+        request: ContentAccessRequest,
+        textCharacters: Long? = null,
+        block: suspend () -> T,
+    ): T
+
+    public fun <T> offlineStore(request: ContentAccessRequest, byteCount: Long, block: () -> T): T
+
+    public suspend fun <T> offlineStoreSuspending(request: ContentAccessRequest, byteCount: Long, block: suspend () -> T): T
+
+    public suspend fun <T> syncBlob(request: ContentAccessRequest, block: suspend () -> T): T
+
+    public suspend fun <T> export(request: ContentAccessRequest, textCharacters: Long? = null, block: suspend () -> T): T
+
+    public fun <T> copy(request: ContentAccessRequest, textCharacters: Long, block: () -> T): T
+
+    public suspend fun <T> print(request: ContentAccessRequest, textCharacters: Long? = null, block: suspend () -> T): T
+}
+
+/**
  * Named production entry points for non-specialized protected side effects. Search, TTS, and
  * annotation use their richer services; display/storage/sync/export/copy/print use this facade so
  * call sites cannot accidentally pass an arbitrary operation or omit the operation context.
  */
 public class RightsEnforcedContentOperations(
     private val gate: ContentOperationGate,
-) {
-    public fun <T> display(
+) : ProtectedContentOperations {
+    override fun <T> display(
         request: ContentAccessRequest,
-        textCharacters: Long? = null,
+        textCharacters: Long?,
         block: () -> T,
     ): T = gate.execute(request.withTextCharacters(textCharacters), ContentOperation.DISPLAY, block)
 
-    public suspend fun <T> displaySuspending(
+    override suspend fun <T> displaySuspending(
         request: ContentAccessRequest,
-        textCharacters: Long? = null,
+        textCharacters: Long?,
         block: suspend () -> T,
     ): T = gate.executeSuspending(request.withTextCharacters(textCharacters), ContentOperation.DISPLAY, block)
 
-    public fun <T> offlineStore(
+    override fun <T> offlineStore(
         request: ContentAccessRequest,
         byteCount: Long,
         block: () -> T,
     ): T = gate.execute(request.withOfflineBytes(byteCount), ContentOperation.OFFLINE_STORE, block)
 
-    public suspend fun <T> offlineStoreSuspending(
+    override suspend fun <T> offlineStoreSuspending(
         request: ContentAccessRequest,
         byteCount: Long,
         block: suspend () -> T,
     ): T = gate.executeSuspending(request.withOfflineBytes(byteCount), ContentOperation.OFFLINE_STORE, block)
 
-    public suspend fun <T> syncBlob(
+    override suspend fun <T> syncBlob(
         request: ContentAccessRequest,
         block: suspend () -> T,
     ): T = gate.executeSuspending(request, ContentOperation.SYNC_BLOB, block)
 
-    public suspend fun <T> export(
+    override suspend fun <T> export(
         request: ContentAccessRequest,
-        textCharacters: Long? = null,
+        textCharacters: Long?,
         block: suspend () -> T,
     ): T = gate.executeSuspending(request.withTextCharacters(textCharacters), ContentOperation.EXPORT, block)
 
-    public fun <T> copy(
+    override fun <T> copy(
         request: ContentAccessRequest,
         textCharacters: Long,
         block: () -> T,
     ): T = gate.execute(request.withTextCharacters(textCharacters), ContentOperation.COPY, block)
 
-    public suspend fun <T> print(
+    override suspend fun <T> print(
         request: ContentAccessRequest,
-        textCharacters: Long? = null,
+        textCharacters: Long?,
         block: suspend () -> T,
     ): T = gate.executeSuspending(request.withTextCharacters(textCharacters), ContentOperation.PRINT, block)
 }

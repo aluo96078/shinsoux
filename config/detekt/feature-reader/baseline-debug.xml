@@ -18,17 +18,17 @@
     <ID>DoubleMutabilityForCollection:EpubBrowserView.kt:EpubBrowserDocumentState$private var pendingRequestsByDocument: MutableMap&lt;Int, EpubRenderRequest&gt;? = null</ID>
     <ID>InstanceOfCheckForException:LocalContentManager.kt:LocalContentManager$error is LocalContentImportException</ID>
     <ID>LongMethod:EpubBrowserView.kt:private inline fun epubBrowserScript: String</ID>
-    <ID>LongParameterList:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: ContentSpeechResult</ID>
-    <ID>LongParameterList:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: EpubContentSpeechResult</ID>
+    <ID>LongParameterList:ContentTextToSpeech.kt:ProtectedTextToSpeech$public suspend fun speak: ContentSpeechResult</ID>
+    <ID>LongParameterList:ContentTextToSpeech.kt:ProtectedTextToSpeech$public suspend fun speak: EpubContentSpeechResult</ID>
     <ID>LongParameterList:EpubRenderer.kt:EpubRenderRequest</ID>
-    <ID>LongParameterList:EpubRenderer.kt:EpubRenderRequestFactory$public fun create: EpubRenderRequest</ID>
+    <ID>LongParameterList:EpubRenderer.kt:EpubRenderRequests$public fun create: EpubRenderRequest</ID>
     <ID>LongParameterList:EpubRenderer.kt:EpubRenderResource</ID>
     <ID>LongParameterList:EpubSemanticDocument.kt:EpubSemanticExtractor$private fun collectElement</ID>
     <ID>LongParameterList:LocalContentManager.kt:LocalContentManager</ID>
     <ID>LoopWithTooManyJumpStatements:EpubRenderer.kt:while</ID>
     <ID>NestedBlockDepth:EpubRenderer.kt:private fun scanHtmlHead: HtmlHeadScan</ID>
-    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: ContentSpeechResult</ID>
-    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$public suspend fun speak: EpubContentSpeechResult</ID>
+    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$override suspend fun speak: ContentSpeechResult</ID>
+    <ID>ReturnCount:ContentTextToSpeech.kt:RightsEnforcedTextToSpeechService$override suspend fun speak: EpubContentSpeechResult</ID>
     <ID>ReturnCount:ContentTextToSpeech.kt:private fun isWellFormedText: Boolean</ID>
     <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$@Deprecated("Legacy WebView callback retained for old engines") override fun shouldOverrideUrlLoading: Boolean</ID>
     <ID>ReturnCount:EpubBrowserView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>

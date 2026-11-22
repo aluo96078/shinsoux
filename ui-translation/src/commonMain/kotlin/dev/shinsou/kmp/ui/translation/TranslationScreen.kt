@@ -110,12 +110,12 @@ fun TranslationScreen(
     // Read again whenever a page closes, so the list shows what was just changed.
     LaunchedEffect(translation, selected) {
         if (translation == null) return@LaunchedEffect
-        val bytes = translation.storedTranslationBytes()
+        val bytes = translation.storage.storedTranslationBytes()
         overview = TranslationOverview(
-            service = translation.preferences().provider.label(strings),
-            downloadedBytes = translation.installedModels().sumOf { it.downloadBytes } +
+            service = translation.setup.preferences().provider.label(strings),
+            downloadedBytes = translation.models.installedModels().sumOf { it.downloadBytes } +
                 (manga?.let { withContext(workDispatcher) { it.resources().sumOf { r -> r.diskBytes } } } ?: 0L),
-            chapters = translation.storedChapters().size,
+            chapters = translation.storage.storedChapters().size,
             bytes = bytes.first + bytes.second,
         )
     }
@@ -269,25 +269,25 @@ private fun AutoTranslateSettings(translation: ReaderTranslation) {
     val scope = rememberCoroutineScope()
     val appLanguage = LocalAppLanguage.current
     var auto by remember { mutableStateOf<TranslationPreferences?>(null) }
-    LaunchedEffect(translation) { auto = translation.preferences() }
+    LaunchedEffect(translation) { auto = translation.setup.preferences() }
     val current = auto ?: return
     val on = current.autoTranslate
     val paid = current.autoTranslatePaid
 
     fun set(nextOn: Boolean, nextPaid: Boolean) {
         auto = current.copy(autoTranslate = nextOn, autoTranslatePaid = nextPaid)
-        scope.launch { translation.setAutoTranslate(nextOn, nextPaid) }
+        scope.launch { translation.setup.setAutoTranslate(nextOn, nextPaid) }
     }
 
     fun setLanguage(language: String, translated: Boolean) {
         if (ChineseScript.converts(language, ReaderTranslation.targetLanguage(appLanguage))) {
             auto = current.copy(autoTranslateOtherScript = translated)
-            scope.launch { translation.setAutoTranslateOtherScript(translated) }
+            scope.launch { translation.setup.setAutoTranslateOtherScript(translated) }
             return
         }
         val skipped = if (translated) current.autoTranslateSkipped - language else current.autoTranslateSkipped + language
         auto = current.copy(autoTranslateSkipped = skipped)
-        scope.launch { translation.setAutoTranslateLanguage(language, translated) }
+        scope.launch { translation.setup.setAutoTranslateLanguage(language, translated) }
     }
 
     @Composable
@@ -317,7 +317,7 @@ private fun AutoTranslateSettings(translation: ReaderTranslation) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(strings.text(StringKey.LANGUAGES_TRANSLATED_AUTOMATICALLY), style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (language in translation.languages.filter { it.tag != target }) {
+                        for (language in translation.setup.languages.filter { it.tag != target }) {
                             // a reader of Chinese reads the other script too: off until turned on
                             val translated = if (ChineseScript.converts(language.tag, target)) current.autoTranslateOtherScript
                             else language.tag !in current.autoTranslateSkipped

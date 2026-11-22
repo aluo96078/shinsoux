@@ -22,14 +22,19 @@ public class ImageRenderPage(
     public val byteSize: Int get() = body.size
 }
 
+/** Reads one visible page of an image sequence, digest-checked, after the caller passed the DISPLAY gate. */
+public interface ImageRenderPages {
+    public fun load(navigation: ImageSequenceNavigation, index: Int): ImageRenderPage
+}
+
 /**
  * Lazy image adapter: opening an image publication does not hydrate the whole sequence. Each
  * visible page is read and digest-checked independently after the caller passes the DISPLAY gate.
  */
 public class ImageRenderPageFactory(
     private val blobStore: ContentBlobStore,
-) {
-    public fun load(navigation: ImageSequenceNavigation, index: Int): ImageRenderPage {
+) : ImageRenderPages {
+    override fun load(navigation: ImageSequenceNavigation, index: Int): ImageRenderPage {
         require(index in 0 until navigation.itemCount) { "Image reader index is out of range" }
         val page = navigation.representation.pages[index]
         val reference = page.resource.blob

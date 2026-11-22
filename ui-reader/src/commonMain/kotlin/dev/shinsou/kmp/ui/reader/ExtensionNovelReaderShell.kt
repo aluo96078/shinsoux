@@ -631,11 +631,11 @@ fun PrefetchSetupDialog(
     var to by remember(workKey) { mutableStateOf(dev.shinsou.kmp.translation.ReaderTranslation.targetLanguage(systemLanguage)) }
     var preferences by remember { mutableStateOf<dev.shinsou.kmp.translation.TranslationPreferences?>(null) }
     LaunchedEffect(workKey) {
-        translation.settings(workKey)?.let { saved ->
+        translation.chapters.settings(workKey)?.let { saved ->
             from = saved.from
             to = saved.to
         }
-        preferences = runCatchingCancellable { translation.preferences() }
+        preferences = runCatchingCancellable { translation.setup.preferences() }
             .onFailure { Log.warn("Translation", it) { "Loading translation preferences failed" } }
             .getOrNull()
         loaded = true
@@ -653,13 +653,13 @@ fun PrefetchSetupDialog(
                 Text(strings.text(StringKey.ORIGINAL_LANGUAGE), style = MaterialTheme.typography.titleSmall)
                 androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     FilterChip(selected = from == null, onClick = { from = null }, label = { Text(strings.text(StringKey.DETECT)) })
-                    translation.languages.forEach { language ->
+                    translation.setup.languages.forEach { language ->
                         FilterChip(selected = from == language.tag, onClick = { from = language.tag }, label = { Text(language.name) })
                     }
                 }
                 Text(strings.text(StringKey.TRANSLATE_INTO), style = MaterialTheme.typography.titleSmall)
                 androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    translation.languages.forEach { language ->
+                    translation.setup.languages.forEach { language ->
                         FilterChip(selected = to == language.tag, onClick = { to = language.tag }, label = { Text(language.name) })
                     }
                 }

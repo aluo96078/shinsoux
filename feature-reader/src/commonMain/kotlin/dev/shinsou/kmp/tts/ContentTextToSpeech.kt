@@ -184,6 +184,29 @@ public data class EpubContentSpeechResult(
     init { require(completedSegments >= 0) { "Completed segment count must be non-negative" } }
 }
 
+/** Reading text aloud for the reader; every native utterance is checked against the TTS right first. */
+public interface ProtectedTextToSpeech {
+    public suspend fun speak(
+        document: SpeakableTextDocument,
+        startUtf16: Int = 0,
+        localeTag: String? = null,
+        rate: Float = 1.0f,
+        pitch: Float = 1.0f,
+        maxSegmentChars: Int = DEFAULT_SEGMENT_CHARS,
+    ): ContentSpeechResult
+
+    public suspend fun speak(
+        document: EpubSpeakableTextDocument,
+        startUtf16: Int = 0,
+        localeTag: String? = null,
+        rate: Float = 1.0f,
+        pitch: Float = 1.0f,
+        maxSegmentChars: Int = DEFAULT_SEGMENT_CHARS,
+    ): EpubContentSpeechResult
+
+    public fun stop()
+}
+
 /**
  * Segments text on the host and rechecks TTS permission before every native utterance.  A revoked
  * grant therefore stops playback at the next bounded segment instead of becoming a long lease.
@@ -191,7 +214,7 @@ public data class EpubContentSpeechResult(
 public class RightsEnforcedTextToSpeechService(
     private val operationGate: ContentOperationGate,
     private val platformEngine: PlatformTextToSpeechEngine,
-) {
+) : ProtectedTextToSpeech {
     public fun segments(
         document: SpeakableTextDocument,
         startUtf16: Int = 0,
@@ -269,13 +292,13 @@ public class RightsEnforcedTextToSpeechService(
         }
     }
 
-    public suspend fun speak(
+    override suspend fun speak(
         document: SpeakableTextDocument,
-        startUtf16: Int = 0,
-        localeTag: String? = null,
-        rate: Float = 1.0f,
-        pitch: Float = 1.0f,
-        maxSegmentChars: Int = DEFAULT_SEGMENT_CHARS,
+        startUtf16: Int,
+        localeTag: String?,
+        rate: Float,
+        pitch: Float,
+        maxSegmentChars: Int,
     ): ContentSpeechResult {
         val segments = segments(document, startUtf16, maxSegmentChars)
         if (segments.isEmpty()) {
@@ -314,13 +337,13 @@ public class RightsEnforcedTextToSpeechService(
         return ContentSpeechResult(completed, SpeechPlaybackStatus.COMPLETED, resume)
     }
 
-    public suspend fun speak(
+    override suspend fun speak(
         document: EpubSpeakableTextDocument,
-        startUtf16: Int = 0,
-        localeTag: String? = null,
-        rate: Float = 1.0f,
-        pitch: Float = 1.0f,
-        maxSegmentChars: Int = DEFAULT_SEGMENT_CHARS,
+        startUtf16: Int,
+        localeTag: String?,
+        rate: Float,
+        pitch: Float,
+        maxSegmentChars: Int,
     ): EpubContentSpeechResult {
         val segments = segments(document, startUtf16, maxSegmentChars)
         if (segments.isEmpty()) {
@@ -358,7 +381,7 @@ public class RightsEnforcedTextToSpeechService(
         return EpubContentSpeechResult(completed, SpeechPlaybackStatus.COMPLETED, resume)
     }
 
-    public fun stop() {
+    override fun stop() {
         platformEngine.stop()
     }
 

@@ -218,7 +218,7 @@ public class TranslationPrefetchQueue(
         }
         val chapter = job.load()
         set(job.id) { it.copy(fetched = true) }
-        val settings = translation.settings(chapter.workKey)
+        val settings = translation.chapters.settings(chapter.workKey)
         val chosen = job.languages
         chapter.pages?.let { pages ->
             val to = chosen?.to ?: settings?.to ?: ReaderTranslation.targetLanguage(defaultTargetLanguage())
@@ -240,31 +240,31 @@ public class TranslationPrefetchQueue(
         )
         // A work translated ahead opens translated: its settings are those it was queued with.
         if (settings == null || settings.from != request.from || settings.to != request.to || !settings.enabled) {
-            translation.saveSettings(
+            translation.chapters.saveSettings(
                 chapter.workKey,
                 (settings ?: WorkTranslationSettings(enabled = true, from = request.from, to = request.to))
                     .copy(enabled = true, from = request.from, to = request.to),
             )
         }
-        if (!translation.supports(request.from, request.to)) {
+        if (!translation.chapters.supports(request.from, request.to)) {
             throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "No translation from ${request.from} to ${request.to}")
         }
-        if (translation.stored(request)?.complete == true) return
-        if (translation.systemLanguagesMissing(request.from, request.to)) {
+        if (translation.chapters.stored(request)?.complete == true) return
+        if (translation.models.systemLanguagesMissing(request.from, request.to)) {
             // The system's prompt is shown from the reader, where the user asked for it.
             throw TranslationException(TranslationFailure.SYSTEM_LANGUAGE_MISSING, "The system's languages are not downloaded")
         }
         // the other script of Chinese is converted on the device, without the offline engine
-        if (translation.activeProvider() == TranslationProviderKind.OFFLINE && !ChineseScript.converts(request.from, request.to)) {
-            if (!translation.deviceSupported) {
+        if (translation.setup.activeProvider() == TranslationProviderKind.OFFLINE && !ChineseScript.converts(request.from, request.to)) {
+            if (!translation.models.deviceSupported) {
                 throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
             }
-            if (translation.missingModels(request.from, request.to).isNotEmpty()) {
+            if (translation.models.missingModels(request.from, request.to).isNotEmpty()) {
                 // Models are downloaded from the reader, where their size is shown first.
                 throw TranslationException(TranslationFailure.MODEL_MISSING, "The models for ${request.from} to ${request.to} are not downloaded")
             }
         }
-        val result = translation.translate(request) { done, total ->
+        val result = translation.chapters.translate(request) { done, total ->
             set(job.id) { it.copy(done = done, total = total) }
         }
         if (!result.complete) throw TranslationException(TranslationFailure.ENGINE_FAILED, "Some lines were left untranslated")

@@ -43,6 +43,45 @@ public data class DerivedSearchCleanupResult(
 )
 
 /**
+ * The derived full-text index as the reader uses it: indexing the text it opened and searching
+ * it, from a coroutine that suspends on lock contention instead of failing.
+ */
+public interface ReaderSearchIndex {
+    /** Foreground-safe variant: lock contention suspends the caller coroutine instead of failing. */
+    public suspend fun upsertForeground(document: SearchableTextDocument)
+
+    /** Metadata-only reconciliation probe; it never selects or hydrates persisted body text. */
+    public suspend fun isCurrent(
+        documentId: String,
+        scope: ReadingScope,
+        resourceId: String,
+        blockId: String,
+        baseOffsetUtf16: Int,
+        canonicalDocumentUtf16Length: Int,
+        access: ContentAccessRequest,
+        epubAnchor: EpubSearchAnchor? = null,
+    ): Boolean
+
+    /** Foreground-safe query; contention suspends its coroutine instead of surfacing as an error. */
+    public suspend fun searchForeground(query: String, limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT): List<FullTextSearchHit>
+
+    /** Foreground reader query restricted to one resource before SQL ranking/limit is applied. */
+    public suspend fun searchForegroundInResource(
+        query: String,
+        scope: ReadingScope,
+        resourceId: String,
+        limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT,
+    ): List<FullTextSearchHit>
+
+    /** Reader query across every EPUB spine resource in one exact content revision. */
+    public suspend fun searchForegroundInScope(
+        query: String,
+        scope: ReadingScope,
+        limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT,
+    ): List<FullTextSearchHit>
+}
+
+/**
  * Restart-safe local derived full-text index hosted by the platform-owned content SQLite driver.
  *
  * The normalized token table is an inverted index that behaves consistently on Android, iOS and
@@ -55,7 +94,7 @@ public class DerivedLocalFullTextIndex(
     private val driver: SqlDriver,
     private val operationGate: ContentOperationGate,
     json: Json = LocalFullTextIndexJson,
-) : LocalFullTextIndex {
+) : LocalFullTextIndex, ReaderSearchIndex {
     private val codec = Json(json) {
         encodeDefaults = true
         explicitNulls = true
@@ -90,7 +129,7 @@ public class DerivedLocalFullTextIndex(
     }
 
     /** Foreground-safe variant: lock contention suspends the caller coroutine instead of failing. */
-    public suspend fun upsertForeground(document: SearchableTextDocument) {
+    override suspend fun upsertForeground(document: SearchableTextDocument) {
         // Reader hydration is cancellable: leaving the reader must stop tokenization before it
         // reaches the SQLite transaction, even for a multi-megabyte plain-text resource.
         val prepared = prepareUpsertInBackground(document)
@@ -291,7 +330,7 @@ public class DerivedLocalFullTextIndex(
     }
 
     /** Metadata-only reconciliation probe; it never selects or hydrates persisted body text. */
-    public suspend fun isCurrent(
+    override suspend fun isCurrent(
         documentId: String,
         scope: ReadingScope,
         resourceId: String,
@@ -299,7 +338,7 @@ public class DerivedLocalFullTextIndex(
         baseOffsetUtf16: Int,
         canonicalDocumentUtf16Length: Int,
         access: ContentAccessRequest,
-        epubAnchor: EpubSearchAnchor? = null,
+        epubAnchor: EpubSearchAnchor?,
     ): Boolean {
         requireSearchIdentifier(documentId, "Search document id")
         scope.validate()
@@ -473,9 +512,9 @@ public class DerivedLocalFullTextIndex(
     }
 
     /** Foreground-safe query; contention suspends its coroutine instead of surfacing as an error. */
-    public suspend fun searchForeground(
+    override suspend fun searchForeground(
         query: String,
-        limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT,
+        limit: Int,
     ): List<FullTextSearchHit> {
         val request = prepareSearch(query, limit)
         if (request.queryTokens.isEmpty()) return emptyList()
@@ -491,11 +530,11 @@ public class DerivedLocalFullTextIndex(
      * from other books could otherwise hide every hit from the open resource. The complete reading
      * scope also prevents a stale revision which reused a resource id from entering the candidates.
      */
-    public suspend fun searchForegroundInResource(
+    override suspend fun searchForegroundInResource(
         query: String,
         scope: ReadingScope,
         resourceId: String,
-        limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT,
+        limit: Int,
     ): List<FullTextSearchHit> {
         scope.validate()
         requireSearchIdentifier(resourceId, "Search resource id")
@@ -510,10 +549,10 @@ public class DerivedLocalFullTextIndex(
     }
 
     /** Reader query across every EPUB spine resource in one exact content revision. */
-    public suspend fun searchForegroundInScope(
+    override suspend fun searchForegroundInScope(
         query: String,
         scope: ReadingScope,
-        limit: Int = DEFAULT_FOREGROUND_SEARCH_LIMIT,
+        limit: Int,
     ): List<FullTextSearchHit> {
         scope.validate()
         val request = prepareSearch(query, limit)

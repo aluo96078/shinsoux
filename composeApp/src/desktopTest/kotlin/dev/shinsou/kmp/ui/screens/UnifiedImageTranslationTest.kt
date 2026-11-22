@@ -195,12 +195,12 @@ class UnifiedImageTranslationTest {
         kotlin.test.assertTrue(entry.fetched)
         assertTrue((f.renders.listFiles()?.count { it.name.endsWith(".jpg") } ?: 0) >= 1, "the pages are drawn ahead")
         // the work opens translated, into the language chosen when queueing, from Japanese
-        val settings = f.translation.settings(f.session.content.navigation.scope.publicationId.value)!!
+        val settings = f.translation.chapters.settings(f.session.content.navigation.scope.publicationId.value)!!
         assertTrue(settings.enabled); kotlin.test.assertEquals("ja", settings.from); kotlin.test.assertEquals("zh-Hans", settings.to)
         // and the chapter counts as translated, as a text chapter would: the list marks it, and queueing it again skips it
         val scope = f.session.content.navigation.scope
-        assertTrue(scope.unitId.value in f.translation.translatedChapterKeys(scope.publicationId.value, "zh-Hans"))
-        assertTrue(scope.unitId.value !in f.translation.translatedChapterKeys(scope.publicationId.value, "ko"))
+        assertTrue(scope.unitId.value in f.translation.storage.translatedChapterKeys(scope.publicationId.value, "zh-Hans"))
+        assertTrue(scope.unitId.value !in f.translation.storage.translatedChapterKeys(scope.publicationId.value, "ko"))
 
         // without manga translation an image chapter is still not something to queue
         kotlin.test.assertFailsWith<dev.shinsou.kmp.translation.PrefetchNotTranslatable> {

@@ -7,9 +7,9 @@ import dev.shinsou.kmp.domain.model.TranslationBackup
 /** [ReaderTranslation] as a backup source. */
 public class ReaderTranslationBackups(private val translation: ReaderTranslation) : BackupTranslations {
     override suspend fun export(state: BackupState): TranslationBackup? =
-        translation.exportBackup(state.includePaidTranslations, state.includeFreeTranslations).takeUnless { it.isEmpty }
+        translation.storage.exportBackup(state.includePaidTranslations, state.includeFreeTranslations).takeUnless { it.isEmpty }
 
-    override suspend fun restore(backup: TranslationBackup): Unit = translation.importBackup(backup)
+    override suspend fun restore(backup: TranslationBackup): Unit = translation.storage.importBackup(backup)
 }
 
 /** The translation memory as a backup source, for a scheduler that runs without the app's UI. */

@@ -127,7 +127,7 @@ public class MangaReaderTranslationState internal constructor(
     public val tuning: dev.shinsou.kmp.manga.MangaTuning? get() = manga.deviceTuning
     public var lastRun: dev.shinsou.kmp.manga.MangaRunStats? by mutableStateOf(null)
         internal set
-    public val languages: List<dev.shinsou.kmp.translation.TranslationLanguage> get() = translation.languages
+    public val languages: List<dev.shinsou.kmp.translation.TranslationLanguage> get() = translation.setup.languages
 
     /** True while the chapter's pages are being read, translated or drawn. */
     public val working: Boolean get() = progress != null && !finished && failure == null
@@ -160,7 +160,7 @@ public class MangaReaderTranslationState internal constructor(
     private var storedTo: String? = null
 
     internal suspend fun load(appLanguage: String) {
-        val stored = translation.settings(workKey)
+        val stored = translation.chapters.settings(workKey)
         autoPending = WorkTranslationSettings.startsByItself(stored)
         pickedFrom = MangaReaderTranslationState.pickedFrom(stored)
         storedTo = stored?.to
@@ -170,7 +170,7 @@ public class MangaReaderTranslationState internal constructor(
 
     /**
      * Starts translating a work that was never switched off when its language is one pages can be
-     * read in ([MangaLanguages]) and is translated automatically (see [ReaderTranslation.autoTranslation]);
+     * read in ([MangaLanguages]) and is translated automatically (see [dev.shinsou.kmp.translation.ChapterTranslator.autoTranslation]);
      * a target language picked meanwhile is kept, and nothing is saved until the reader changes something. [workLanguage] is what its source says,
      * blank when it does not: its first pages are read then, once the models are there, which tells
      * Japanese only. A source that says Chinese but not the script leaves the work with the script
@@ -210,7 +210,7 @@ public class MangaReaderTranslationState internal constructor(
                     ChineseScript.SIMPLIFIED -> ChineseScript.TRADITIONAL
                     else -> OfflineModelCatalog.language(workLanguage) ?: ChineseScript.SIMPLIFIED
                 }
-                if (autoPending && translation.autoTranslation(other, appLanguage) == null) autoPending = false
+                if (autoPending && translation.chapters.autoTranslation(other, appLanguage) == null) autoPending = false
                 if (!autoPending && !retains) return
                 readsChineseScript() ?: run {
                     settings?.let { now ->
@@ -230,14 +230,14 @@ public class MangaReaderTranslationState internal constructor(
                 // on in a script it was only taken to be in: the one its pages are in, left off when it is the reader's own
                 val next = if (named == now.to) now.copy(enabled = false, from = named, to = targetFor(named, appLanguage)) else now.copy(from = named)
                 settings = next
-                translation.saveSettings(workKey, next)
+                translation.chapters.saveSettings(workKey, next)
                 retry()
             }
         }
         if (!autoPending) return
         val from = if (known) named else SOURCE_LANGUAGE
         // a language not known yet (its source not loaded) may still start once it is
-        val pair = from?.let { translation.autoTranslation(it, appLanguage) }
+        val pair = from?.let { translation.chapters.autoTranslation(it, appLanguage) }
             ?: run { if (known) autoPending = false; return }
         val before = settings
         val start = known || (readsJapanese() ?: return)
@@ -247,12 +247,12 @@ public class MangaReaderTranslationState internal constructor(
         if (!start) return
         autoPending = false
         val current = settings ?: return
-        val to = translation.autoTarget(pair, storedTo)
+        val to = translation.chapters.autoTarget(pair, storedTo)
         // changed by hand while the target was resolved: the reader's choice stands
         if (settings != current || pickedFrom != picked) return
         if (start && !current.enabled) {
             settings = current.copy(enabled = true, from = pair.first, to = to)
-            translation.startedByItself(workKey, pair.first, to)
+            translation.chapters.startedByItself(workKey, pair.first, to)
         }
     }
 
@@ -267,7 +267,7 @@ public class MangaReaderTranslationState internal constructor(
         if (next.to != settings?.to) storedTo = next.to
         val restart = next.enabled != settings?.enabled || next.to != settings?.to || next.from != settings?.from
         settings = next
-        translation.saveSettings(workKey, next)
+        translation.chapters.saveSettings(workKey, next)
         if (restart) retry()
     }
 
@@ -317,8 +317,8 @@ public class MangaReaderTranslationState internal constructor(
         textModelDownloadFailed = false
         textModelDownload = 0L to textModelBytes.coerceAtLeast(1L)
         try {
-            translation.downloadModels(s.from, s.to) { received, total -> textModelDownload = received to total.coerceAtLeast(1L) }
-            textModelBytes = translation.missingModels(s.from, s.to).sumOf { it.downloadBytes }
+            translation.models.downloadModels(s.from, s.to) { received, total -> textModelDownload = received to total.coerceAtLeast(1L) }
+            textModelBytes = translation.models.missingModels(s.from, s.to).sumOf { it.downloadBytes }
             if (textModelBytes == 0L) retry()
         } catch (e: CancellationException) {
             throw e
@@ -336,10 +336,10 @@ public class MangaReaderTranslationState internal constructor(
         textModelDownloadFailed = false
         systemLanguagesDownloading = true
         try {
-            val installed = runCatchingCancellable { translation.downloadSystemLanguages(s.from, s.to) }
+            val installed = runCatchingCancellable { translation.models.downloadSystemLanguages(s.from, s.to) }
                 .onFailure { Log.warn("Manga", it) { "Downloading the system translation languages failed" } }
                 .getOrDefault(false)
-            if (installed && !translation.systemLanguagesMissing(s.from, s.to)) { systemLanguagesMissing = false; retry() } else textModelDownloadFailed = true
+            if (installed && !translation.models.systemLanguagesMissing(s.from, s.to)) { systemLanguagesMissing = false; retry() } else textModelDownloadFailed = true
         } finally {
             systemLanguagesDownloading = false
         }
@@ -475,14 +475,14 @@ public fun rememberMangaReaderTranslation(
             state.languagePackBytes = manga.missingLanguageBytes(settings.from, settings.to)
             if (state.languagePackBytes > 0) return@LaunchedEffect
             // The offline engine's own models come next: shown with their size, downloaded on a tap.
-            if (translation.activeProvider() == TranslationProviderKind.OFFLINE && !ChineseScript.converts(settings.from, settings.to)) {
-                if (!translation.deviceSupported) throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
-                state.textModelBytes = translation.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
+            if (translation.setup.activeProvider() == TranslationProviderKind.OFFLINE && !ChineseScript.converts(settings.from, settings.to)) {
+                if (!translation.models.deviceSupported) throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "This device cannot run the offline engine")
+                state.textModelBytes = translation.models.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
                 if (state.textModelBytes > 0) return@LaunchedEffect
             } else {
                 state.textModelBytes = 0
             }
-            state.systemLanguagesMissing = translation.systemLanguagesMissing(settings.from, settings.to)
+            state.systemLanguagesMissing = translation.models.systemLanguagesMissing(settings.from, settings.to)
             if (state.systemLanguagesMissing) return@LaunchedEffect
             val complete = manga.translateChapter(
                 MangaChapterRequest(

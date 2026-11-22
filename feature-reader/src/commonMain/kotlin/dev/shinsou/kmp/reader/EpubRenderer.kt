@@ -572,10 +572,8 @@ private class EpubRenderBodyCache(
     }
 }
 
-/** Factory creates a metadata-only request; each requested resource is read and verified lazily. */
-public class EpubRenderRequestFactory(
-    private val blobStore: ContentBlobStore,
-) {
+/** Creates the reader's EPUB render requests; each requested resource is read and verified lazily. */
+public interface EpubRenderRequests {
     public fun create(
         navigation: EpubSpineNavigation,
         documentIndex: Int,
@@ -583,6 +581,20 @@ public class EpubRenderRequestFactory(
         userStyleSheets: List<EpubUserStyleSheet> = emptyList(),
         semanticDocument: EpubSemanticDocument? = null,
         resourceReadGate: EpubResourceReadGate = EpubResourceReadGate.Direct,
+    ): EpubRenderRequest
+}
+
+/** Factory creates a metadata-only request; each requested resource is read and verified lazily. */
+public class EpubRenderRequestFactory(
+    private val blobStore: ContentBlobStore,
+) : EpubRenderRequests {
+    override fun create(
+        navigation: EpubSpineNavigation,
+        documentIndex: Int,
+        initialLocator: ReadingLocator.Epub,
+        userStyleSheets: List<EpubUserStyleSheet>,
+        semanticDocument: EpubSemanticDocument?,
+        resourceReadGate: EpubResourceReadGate,
     ): EpubRenderRequest {
         val resources = navigation.representation.packageGraph.resources.map { resource ->
             lazyResource(resource, resourceReadGate)

@@ -456,14 +456,30 @@ public object EpubSemanticExtractor {
     }
 }
 
-/** Reads one immutable XHTML body and verifies its declared digest before semantic parsing. */
-public class EpubSemanticDocumentFactory(
-    private val blobStore: ContentBlobStore,
-) {
+/** The semantic text/CFI map of one EPUB spine document, built from its verified XHTML body. */
+public interface EpubSemanticDocuments {
     public fun create(
         navigation: EpubSpineNavigation,
         documentIndex: Int,
         resourceReadGate: EpubResourceReadGate = EpubResourceReadGate.Direct,
+    ): EpubSemanticDocument
+
+    /** Chunked/cancellable body hydration for reader-on-demand and low-priority indexing. */
+    public suspend fun createCancellable(
+        navigation: EpubSpineNavigation,
+        documentIndex: Int,
+        resourceReadGate: EpubResourceReadGate = EpubResourceReadGate.Direct,
+    ): EpubSemanticDocument
+}
+
+/** Reads one immutable XHTML body and verifies its declared digest before semantic parsing. */
+public class EpubSemanticDocumentFactory(
+    private val blobStore: ContentBlobStore,
+) : EpubSemanticDocuments {
+    override fun create(
+        navigation: EpubSpineNavigation,
+        documentIndex: Int,
+        resourceReadGate: EpubResourceReadGate,
     ): EpubSemanticDocument {
         val document = navigation.representation.documents.getOrNull(documentIndex)
             ?: throw IllegalArgumentException("EPUB semantic document index is out of range")
@@ -492,11 +508,10 @@ public class EpubSemanticDocumentFactory(
         }
     }
 
-    /** Chunked/cancellable body hydration for reader-on-demand and low-priority indexing. */
-    public suspend fun createCancellable(
+    override suspend fun createCancellable(
         navigation: EpubSpineNavigation,
         documentIndex: Int,
-        resourceReadGate: EpubResourceReadGate = EpubResourceReadGate.Direct,
+        resourceReadGate: EpubResourceReadGate,
     ): EpubSemanticDocument {
         val document = navigation.representation.documents.getOrNull(documentIndex)
             ?: throw IllegalArgumentException("EPUB semantic document index is out of range")

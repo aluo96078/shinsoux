@@ -89,7 +89,7 @@ internal class NovelTranslationState(
     var revision by mutableIntStateOf(0)
         private set
 
-    val languages get() = translation.languages
+    val languages get() = translation.setup.languages
 
     /** Where this chapter's text goes; shown in the panel. */
     var provider by mutableStateOf(TranslationProviderKind.OFFLINE)
@@ -107,7 +107,7 @@ internal class NovelTranslationState(
     /**
      * A work that is off and was never switched off starts translating by itself when the chapter
      * on screen is in [detected], a language translated automatically (see
-     * [ReaderTranslation.autoTranslation]); saved only once the reader changes something. Until the
+     * [dev.shinsou.kmp.translation.ChapterTranslator.autoTranslation]); saved only once the reader changes something. Until the
      * reader picks the work's language, it follows each chapter's, so a work opened on a page in
      * the reader's own language still starts on the first chapter that is not, and one that started
      * on a page read as another language is corrected by the next. [detected] is null for a chapter
@@ -136,8 +136,8 @@ internal class NovelTranslationState(
         // off while it is decided again for a chapter in another language than it started on
         if (from != now.from) settings = now.copy(from = from, enabled = false)
         val before = settings
-        val pair = translation.autoTranslation(from, appLanguage)
-        val to = pair?.let { translation.autoTarget(it, storedTo) }
+        val pair = translation.chapters.autoTranslation(from, appLanguage)
+        val to = pair?.let { translation.chapters.autoTarget(it, storedTo) }
         val current = settings
         // not when changed by the reader meanwhile: a language picked, the target, or switched on or off
         val starts = pair != null && to != null && current == before && !current.enabled && !current.turnedOff
@@ -167,7 +167,7 @@ internal class NovelTranslationState(
         settings = next
         // the target saved for the work from then on, kept when it starts by itself
         storedTo = next.to
-        scope.launch { translation.saveSettings(workKey, next) }
+        scope.launch { translation.chapters.saveSettings(workKey, next) }
     }
 
     fun retry() {
@@ -181,7 +181,7 @@ internal class NovelTranslationState(
         val to = settings.to
         downloadFailed = false
         scope.launch {
-            val installed = runCatchingCancellable { translation.downloadSystemLanguages(from, to) }
+            val installed = runCatchingCancellable { translation.models.downloadSystemLanguages(from, to) }
                 .onFailure { Log.warn("Translation", it) { "Downloading the system translation languages failed" } }
                 .getOrDefault(false)
             if (installed) revision++ else downloadFailed = true
@@ -196,7 +196,7 @@ internal class NovelTranslationState(
         downloadFailed = false
         scope.launch {
             try {
-                translation.downloadModels(from, to) { received, total -> download = received to total.coerceAtLeast(1L) }
+                translation.models.downloadModels(from, to) { received, total -> download = received to total.coerceAtLeast(1L) }
                 revision++
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -211,17 +211,17 @@ internal class NovelTranslationState(
 
     fun putTerm(source: String, target: String) {
         scope.launch {
-            runCatchingCancellable { translation.putGlossaryTerm(workKey, settings.to, source, target) }
+            runCatchingCancellable { translation.glossaries.putGlossaryTerm(workKey, settings.to, source, target) }
                 .onFailure { Log.warn("Translation", it) { "Saving a glossary term failed" } }
-            glossary = translation.glossary(workKey, settings.to)
+            glossary = translation.glossaries.glossary(workKey, settings.to)
             revision++
         }
     }
 
     fun removeTerm(id: Int) {
         scope.launch {
-            translation.removeGlossaryTerm(workKey, settings.to, id)
-            glossary = translation.glossary(workKey, settings.to)
+            translation.glossaries.removeGlossaryTerm(workKey, settings.to, id)
+            glossary = translation.glossaries.glossary(workKey, settings.to)
             revision++
         }
     }
@@ -254,7 +254,7 @@ internal fun rememberNovelTranslation(
             targetLanguage = ReaderTranslation.targetLanguage(appLanguage),
         )
     }
-    LaunchedEffect(state) { state.restore(translation.settings(workKey)) }
+    LaunchedEffect(state) { state.restore(translation.chapters.settings(workKey)) }
     // each chapter's language, until the reader picks the work's or it starts; a target picked
     // for the work while it was off is kept; a language picked by hand may let it start
     LaunchedEffect(state, state.loaded, chapterKey, canonicalText, state.settings.takeIf { it.fromPicked }?.from) {
@@ -263,7 +263,7 @@ internal fun rememberNovelTranslation(
             settled = ReaderTranslation.detectLanguageOrNull(canonicalText, ReaderTranslation.SETTLED_LETTERS) != null,
         )
     }
-    DisposableEffect(translation) { onDispose { translation.release() } }
+    DisposableEffect(translation) { onDispose { translation.models.release() } }
 
     val settings = state.settings
     // Read when the chapter is translated, not a reason to translate it again.
@@ -275,9 +275,9 @@ internal fun rememberNovelTranslation(
             state.result = null
             return@LaunchedEffect
         }
-        state.glossary = translation.glossary(workKey, settings.to)
-        state.provider = translation.activeProvider()
-        if (!translation.supports(settings.from, settings.to)) {
+        state.glossary = translation.glossaries.glossary(workKey, settings.to)
+        state.provider = translation.setup.activeProvider()
+        if (!translation.chapters.supports(settings.from, settings.to)) {
             state.result = null
             state.failure = TranslationFailure.UNSUPPORTED_PAIR
             return@LaunchedEffect
@@ -302,12 +302,12 @@ internal fun rememberNovelTranslation(
             labels = latestLabels,
         )
         try {
-            val stored = translation.stored(request)
+            val stored = translation.chapters.stored(request)
             state.result = stored
-            state.missingBytes = translation.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
+            state.missingBytes = translation.models.missingModels(settings.from, settings.to).sumOf { it.downloadBytes }
             if (stored?.complete == true) return@LaunchedEffect
             // Only now: a chapter restored from a backup reads back on a device that cannot run the engine.
-            if (state.provider == TranslationProviderKind.OFFLINE && !ChineseScript.converts(settings.from, settings.to) && !translation.deviceSupported) {
+            if (state.provider == TranslationProviderKind.OFFLINE && !ChineseScript.converts(settings.from, settings.to) && !translation.models.deviceSupported) {
                 state.failure = TranslationFailure.DEVICE_UNSUPPORTED
                 return@LaunchedEffect
             }
@@ -315,12 +315,12 @@ internal fun rememberNovelTranslation(
                 state.failure = TranslationFailure.MODEL_MISSING
                 return@LaunchedEffect
             }
-            if (translation.systemLanguagesMissing(settings.from, settings.to)) {
+            if (translation.models.systemLanguagesMissing(settings.from, settings.to)) {
                 state.failure = TranslationFailure.SYSTEM_LANGUAGE_MISSING
                 return@LaunchedEffect
             }
             state.progress = 0 to 1
-            state.result = translation.translate(request) { done, total -> state.progress = done to total.coerceAtLeast(1) }
+            state.result = translation.chapters.translate(request) { done, total -> state.progress = done to total.coerceAtLeast(1) }
             state.progress = null
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -328,7 +328,7 @@ internal fun rememberNovelTranslation(
             state.progress = null
             state.failure = error.failure
             // Whatever was finished before the failure is still worth showing.
-            runCatchingCancellable { translation.stored(request) }.getOrNull()?.let { state.result = it }
+            runCatchingCancellable { translation.chapters.stored(request) }.getOrNull()?.let { state.result = it }
         } catch (logged: Exception) {
             Log.warn("Translation", logged) { "Translation failed unexpectedly" }
             state.progress = null

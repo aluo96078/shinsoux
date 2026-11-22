@@ -238,12 +238,12 @@ class LlmTranslationTest {
         val refusing = Model(wrap = { buildJsonObject { put("stop_reason", "refusal"); put("content", buildJsonArray { }) } })
         val memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
         val translation = ReaderTranslation(memory, OfflineTranslationPlatform(NoEngine, "/nonexistent"), refusing.client, InMemoryPluginKeyValueStore(), now = { 1_000L })
-        translation.setProvider(TranslationProviderKind.LLM)
-        translation.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "m"))
+        translation.setup.setProvider(TranslationProviderKind.LLM)
+        translation.setup.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "m"))
         val request = ChapterTranslationRequest("work", "c1", "하나\n둘", "ko", "zh-Hant")
-        assertEquals(TranslationFailure.REFUSED, assertFailsWith<TranslationException> { translation.translate(request) { _, _ -> } }.failure)
+        assertEquals(TranslationFailure.REFUSED, assertFailsWith<TranslationException> { translation.chapters.translate(request) { _, _ -> } }.failure)
         // The model read the text to decline it: that is counted, so retries cannot run past the limit unseen.
-        assertEquals(3, translation.preferences().charactersUsedToday)
+        assertEquals(3, translation.setup.preferences().charactersUsedToday)
     }
 
     @Test
@@ -317,32 +317,32 @@ class LlmTranslationTest {
         val translation = ReaderTranslation(memory, OfflineTranslationPlatform(NoEngine, "/nonexistent"), model.client, secrets, now = { 1_000L })
         val request = ChapterTranslationRequest("work", "c1", "하나\n둘", "ko", "zh-Hant")
 
-        translation.setProvider(TranslationProviderKind.LLM)
+        translation.setup.setProvider(TranslationProviderKind.LLM)
         // The default service has no model named yet: nothing is sent.
-        assertEquals(TranslationFailure.NOT_CONFIGURED, assertFailsWith<TranslationException> { translation.translate(request) { _, _ -> } }.failure)
+        assertEquals(TranslationFailure.NOT_CONFIGURED, assertFailsWith<TranslationException> { translation.chapters.translate(request) { _, _ -> } }.failure)
         assertTrue(model.requests.isEmpty())
-        assertFailsWith<IllegalArgumentException> { translation.setLlmSettings(LlmSettings(LlmProtocol.OPENAI, "http://gateway.example", "m")) }
+        assertFailsWith<IllegalArgumentException> { translation.setup.setLlmSettings(LlmSettings(LlmProtocol.OPENAI, "http://gateway.example", "m")) }
 
-        translation.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com/", " claude-haiku-5-5 "))
-        translation.setKey(TranslationProviderKind.LLM, "sk-test")
-        val preferences = translation.preferences()
+        translation.setup.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com/", " claude-haiku-5-5 "))
+        translation.setup.setKey(TranslationProviderKind.LLM, "sk-test")
+        val preferences = translation.setup.preferences()
         assertEquals(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "claude-haiku-5-5"), preferences.llm)
         assertTrue(preferences.llmKeySet)
         assertEquals("sk-test", secrets.getString("translation.llm.secret"))
-        assertTrue(translation.supports("ko", "zh-Hant") && translation.missingModels("ko", "zh-Hant").isEmpty())
+        assertTrue(translation.chapters.supports("ko", "zh-Hant") && translation.models.missingModels("ko", "zh-Hant").isEmpty())
 
-        assertEquals(listOf("譯하나", "譯둘"), translation.translate(request) { _, _ -> }.segments.map { it.translation })
+        assertEquals(listOf("譯하나", "譯둘"), translation.chapters.translate(request) { _, _ -> }.segments.map { it.translation })
         assertEquals(1, model.requests.size)
         assertTrue(memory.paidBytes() > 0)
-        assertEquals(3, translation.preferences().charactersUsedToday)
+        assertEquals(3, translation.setup.preferences().charactersUsedToday)
         // Read again: from the memory.
-        translation.translate(request) { _, _ -> }
+        translation.chapters.translate(request) { _, _ -> }
         assertEquals(1, model.requests.size)
 
         // Another model is another translation: its lines are asked for afresh.
-        translation.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "another-model"))
-        assertFalse(translation.stored(request)!!.complete)
-        translation.translate(request) { _, _ -> }
+        translation.setup.setLlmSettings(LlmSettings(LlmProtocol.ANTHROPIC, "https://api.anthropic.com", "another-model"))
+        assertFalse(translation.chapters.stored(request)!!.complete)
+        translation.chapters.translate(request) { _, _ -> }
         assertEquals(2, model.requests.size)
     }
 }
