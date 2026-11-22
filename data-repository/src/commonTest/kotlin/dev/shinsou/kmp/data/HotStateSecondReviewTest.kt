@@ -4,8 +4,8 @@ import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
-import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.Ordered
+import dev.shinsou.kmp.persistence.HotDelta
+import dev.shinsou.kmp.persistence.Ordered
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest

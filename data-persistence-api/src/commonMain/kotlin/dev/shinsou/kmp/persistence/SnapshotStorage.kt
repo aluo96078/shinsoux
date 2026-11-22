@@ -1,4 +1,4 @@
-package dev.shinsou.kmp.domain.persistence
+package dev.shinsou.kmp.persistence
 
 import kotlin.time.Duration
 

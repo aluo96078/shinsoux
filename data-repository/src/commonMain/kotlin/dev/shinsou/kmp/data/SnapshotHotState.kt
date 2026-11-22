@@ -2,11 +2,11 @@ package dev.shinsou.kmp.data
 
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.History
-import dev.shinsou.kmp.domain.persistence.ChapterProgress
-import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.HotState
-import dev.shinsou.kmp.domain.persistence.Ordered
-import dev.shinsou.kmp.domain.persistence.progress
+import dev.shinsou.kmp.persistence.ChapterProgress
+import dev.shinsou.kmp.persistence.HotDelta
+import dev.shinsou.kmp.persistence.HotState
+import dev.shinsou.kmp.persistence.Ordered
+import dev.shinsou.kmp.persistence.progress
 
 /*
  * C3 (docs/architecture/0007 §6.3): the snapshot split into its hot part (chapter progress,

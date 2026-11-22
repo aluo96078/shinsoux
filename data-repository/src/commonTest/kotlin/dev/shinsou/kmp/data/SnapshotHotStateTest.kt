@@ -7,10 +7,10 @@ import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.LibraryUpdate
 import dev.shinsou.kmp.domain.model.Manga
-import dev.shinsou.kmp.domain.persistence.ChapterProgress
-import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.HotRows
-import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
+import dev.shinsou.kmp.persistence.ChapterProgress
+import dev.shinsou.kmp.persistence.HotDelta
+import dev.shinsou.kmp.persistence.HotRows
+import dev.shinsou.kmp.persistence.WholeJsonSnapshotStorage
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals

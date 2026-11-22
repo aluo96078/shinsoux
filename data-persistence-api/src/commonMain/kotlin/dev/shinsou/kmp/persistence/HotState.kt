@@ -1,4 +1,4 @@
-package dev.shinsou.kmp.domain.persistence
+package dev.shinsou.kmp.persistence
 
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem

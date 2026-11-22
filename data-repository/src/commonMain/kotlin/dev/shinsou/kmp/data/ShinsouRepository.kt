@@ -22,9 +22,9 @@ import dev.shinsou.kmp.domain.model.UpdateItem
 import dev.shinsou.kmp.domain.model.applying
 import dev.shinsou.kmp.domain.model.normalizeMangaCategorySelection
 import dev.shinsou.kmp.domain.model.ReadingLocator
-import dev.shinsou.kmp.domain.persistence.HotRows
-import dev.shinsou.kmp.domain.persistence.SnapshotStorage
-import dev.shinsou.kmp.domain.persistence.WholeJsonSnapshotStorage
+import dev.shinsou.kmp.persistence.HotRows
+import dev.shinsou.kmp.persistence.SnapshotStorage
+import dev.shinsou.kmp.persistence.WholeJsonSnapshotStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope

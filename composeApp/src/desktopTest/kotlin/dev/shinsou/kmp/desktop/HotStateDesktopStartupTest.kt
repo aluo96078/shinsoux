@@ -15,11 +15,11 @@ import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.History
 import dev.shinsou.kmp.domain.model.Manga
-import dev.shinsou.kmp.domain.persistence.HotDelta
-import dev.shinsou.kmp.domain.persistence.HotRows
-import dev.shinsou.kmp.domain.persistence.HotState
-import dev.shinsou.kmp.domain.persistence.HotStatePairing
-import dev.shinsou.kmp.domain.persistence.HotStateStore
+import dev.shinsou.kmp.persistence.HotDelta
+import dev.shinsou.kmp.persistence.HotRows
+import dev.shinsou.kmp.persistence.HotState
+import dev.shinsou.kmp.persistence.HotStatePairing
+import dev.shinsou.kmp.persistence.HotStateStore
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.readText

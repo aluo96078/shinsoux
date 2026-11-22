@@ -152,7 +152,8 @@ Desktop 是共用的 Compose Desktop 實作，目前支援 macOS 與 Windows；�
 
 ## 專案結構
 
-- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`core-network`、`domain`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui-core`、`ui-reader`／`ui-translation`／`ui-sync`、`ui`，以及 App 本身 `composeApp`
+- Gradle 模組（docs/architecture/0006 §4.2，由下往上）：`core`、`core-network`、`domain`、`data-persistence-api`、`data-content`、`data-repository`、`feature-sync`、`feature-library`、`feature-reader`、`feature-translation`、`feature-plugin`、`ui-core`、`ui-reader`／`ui-translation`／`ui-sync`、`ui`，以及 App 本身 `composeApp`
+- `data-persistence-api`：C3 的持久化埠（`SnapshotStorage`、`HotStateStore`、`HotDelta` 與 JSON／SQL 配對），介於 `domain` 與實作它的 `data-content`、`data-repository`、App host 之間；`domain` 不依賴任何其他模組
 - `feature-plugin`：外掛 repository、信任、外掛網路、沙箱 runtime 與各平台 host（iOS WASM 沙箱 cinterop、Android 隔離程序與 `libshinsou_sandbox.so`）；`jvmCommonTest` 的 Rhino runtime 只供相容性測試比對
 - `ui-core`：設計系統（主題、共用元件、設定列、外掛圖片載入）、i18n（`StringKey`／`ShinsouStrings`）與評論 Markdown；不認識任何畫面
 - `ui-reader`：閱讀器畫面（頁面閱讀器、統一內容閱讀器、外掛小說閱讀器、閱讀翻譯面板）與 `ContentFeatures`、音量鍵路由

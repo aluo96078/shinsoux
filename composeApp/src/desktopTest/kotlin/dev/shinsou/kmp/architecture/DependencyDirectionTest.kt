@@ -71,6 +71,18 @@ class DependencyDirectionTest {
         if (upward.isNotEmpty()) fail(upward.joinToString("\n", "Module dependencies against the layers (§4.2):\n") { "  $it" })
     }
 
+    /**
+     * 0007 §7 follow-up 3: the bottom modules use no other module of the app at all. :core never
+     * did; :domain once did for one lock, so a layer-1 module could have depended on :core again.
+     */
+    @Test
+    fun bottomModulesDependOnNoModule() {
+        val dependencies = BOTTOM_MODULES.flatMap { module ->
+            PROJECT_DEPENDENCY.findAll(File("../$module/build.gradle.kts").readText()).map { ":$module -> :${it.groupValues[1]}" }.toList()
+        }
+        if (dependencies.isNotEmpty()) fail(dependencies.joinToString("\n", "These modules must depend on no other module:\n") { "  $it" })
+    }
+
     /** The module of [pkg] (below `dev.shinsou.kmp`): the entry of its longest prefix in [MODULES]. */
     private fun moduleOf(pkg: String): Pair<String, Int>? =
         generateSequence(pkg) { it.substringBeforeLast('.', "").ifEmpty { null } }.firstNotNullOfOrNull { MODULES[it] }
@@ -158,6 +170,7 @@ class DependencyDirectionTest {
         val INCLUDE = Regex("""^include\(":([\w-]+)"\)""", RegexOption.MULTILINE)
         val PROJECT_DEPENDENCY = Regex("""\bproject\(":([\w-]+)"\)""")
         const val APP_MODULE = "composeApp"
+        val BOTTOM_MODULES = listOf("core", "domain")
         val QUOTED = Regex("""'(?:\\.|[^'\\])'|"(?:\\.|[^"\\])*"""")
         val INLINE_COMMENT = Regex("""/\*.*?\*/""")
         const val ROOT = "(root)"
@@ -170,21 +183,23 @@ class DependencyDirectionTest {
             module("core", 0, "concurrent", "crypto", "files", "logging", "buildinfo", "testing")
             module("core-network", 1, "network")
             module("domain", 1, "domain", "rights", "contract")
-            module("data-content", 2, "content", "annotation", "search")
-            module("data-repository", 2, "data", "migration")
-            module("feature-plugin", 3, "plugin")
-            module("feature-sync", 3, "sync")
-            module("feature-translation", 3, "translation", "manga")
-            module("feature-reader", 3, "reader", "acquisition", "local", "tts")
-            module("feature-library", 3, "backup", "download", "tracking", "statistics", "update")
+            // 0007 §7 follow-up 3: the C3 persistence ports, between the models and their implementers.
+            module("data-persistence-api", 2, "persistence")
+            module("data-content", 3, "content", "annotation", "search")
+            module("data-repository", 3, "data", "migration")
+            module("feature-plugin", 4, "plugin")
+            module("feature-sync", 4, "sync")
+            module("feature-translation", 4, "translation", "manga")
+            module("feature-reader", 4, "reader", "acquisition", "local", "tts")
+            module("feature-library", 4, "backup", "download", "tracking", "statistics", "update")
             // C1 (0007): the design system, then the feature UI modules (which never use each other),
             // then the shell, which wires them.
-            module("ui-core", 4, "ui.core", "ui.theme", "ui.components", "ui.i18n", "ui.markdown")
-            module("ui-reader", 5, "ui.reader")
-            module("ui-translation", 5, "ui.translation")
-            module("ui-sync", 5, "ui.sync")
-            module("ui", 6, "ui", "navigation")
-            module("app", 7, "app", "desktop", ROOT)
+            module("ui-core", 5, "ui.core", "ui.theme", "ui.components", "ui.i18n", "ui.markdown")
+            module("ui-reader", 6, "ui.reader")
+            module("ui-translation", 6, "ui.translation")
+            module("ui-sync", 6, "ui.sync")
+            module("ui", 7, "ui", "navigation")
+            module("app", 8, "app", "desktop", ROOT)
         }
     }
 }

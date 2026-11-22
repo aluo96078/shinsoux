@@ -28,6 +28,8 @@ kotlin {
         }
         val desktopTest by getting {
             dependencies {
+                // The v2 restore tests wire the C3 hot-state store (SqlHotStateStore) into the repository.
+                implementation(project(":data-persistence-api"))
                 implementation(libs.sqldelight.sqlite.driver)
             }
         }
