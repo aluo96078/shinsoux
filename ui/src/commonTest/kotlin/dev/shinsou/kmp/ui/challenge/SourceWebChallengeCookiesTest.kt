@@ -68,6 +68,93 @@ class SourceWebChallengeCookiesTest {
     }
 
     @Test
+    fun thirdPartyLoginOriginsDetectionDistinguishesCloudflareOnlyFromOAuthChallenges() {
+        val sourceOnly = reviewedChallengeRequest(
+            url = "https://www.bilimanga.net/login.php",
+            navigationOrigins = setOf("https://www.bilimanga.net"),
+            subresourceOrigins = setOf("https://www.bilimanga.net", "https://challenges.cloudflare.com"),
+        )
+        val withGoogleLogin = reviewedChallengeRequest(
+            url = "https://novelpia.com/",
+            navigationOrigins = setOf("https://novelpia.com", "https://accounts.google.com"),
+            subresourceOrigins = setOf("https://novelpia.com", "https://accounts.google.com", "https://www.gstatic.com"),
+        )
+
+        assertFalse(sourceOnly.hasThirdPartyLoginOrigins())
+        assertTrue(withGoogleLogin.hasThirdPartyLoginOrigins())
+    }
+
+    @Test
+    fun androidUserAgentSanitizerRemovesWebViewMarkersWhileKeepingEngineVersions() {
+        assertEquals(
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UP1A.231005.007) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.135 Mobile Safari/537.36",
+            sanitizeAndroidWebChallengeUserAgent(
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UP1A.231005.007; wv) " +
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/134.0.6998.135 Mobile Safari/537.36",
+            ),
+        )
+        assertEquals(
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/134.0.0.0 Mobile Safari/537.36",
+            sanitizeAndroidWebChallengeUserAgent(
+                "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                    "Version/4.0 Chrome/134.0.0.0 Mobile Safari/537.36",
+            ),
+        )
+        assertEquals(
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/134.0.0.0 Safari/537.36",
+            sanitizeAndroidWebChallengeUserAgent(
+                "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                    "Version/4.0 Chrome/134.0.0.0 Safari/537.36",
+            ),
+        )
+        assertEquals("", sanitizeAndroidWebChallengeUserAgent("   "))
+    }
+
+    @Test
+    fun iosUserAgentSanitizerDerivesMatchingMobileSafariFromNativeWebKitUa() {
+        assertEquals(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) " +
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+            sanitizeIosWebChallengeUserAgent(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) " +
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+            ),
+        )
+        assertEquals(
+            "Mozilla/5.0 (iPad; CPU OS 18_5_1 like Mac OS X) " +
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+            sanitizeIosWebChallengeUserAgent(
+                "Mozilla/5.0 (iPad; CPU OS 18_5_1 like Mac OS X) " +
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+            ),
+        )
+        assertNull(
+            sanitizeIosWebChallengeUserAgent(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+            ),
+        )
+        assertNull(
+            sanitizeIosWebChallengeUserAgent(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) " +
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+            ),
+        )
+        assertNull(sanitizeIosWebChallengeUserAgent(null))
+    }
+
+    @Test
+    fun appleIgnoredNavigationErrorsCoverRedirectCancellationAndInterruptedFrameLoad() {
+        assertTrue(isIgnoredAppleWebChallengeNavigationError("NSURLErrorDomain", -999L))
+        assertTrue(isIgnoredAppleWebChallengeNavigationError("WebKitErrorDomain", 102L))
+        assertFalse(isIgnoredAppleWebChallengeNavigationError("NSURLErrorDomain", -1009L))
+        assertFalse(isIgnoredAppleWebChallengeNavigationError("WebKitErrorDomain", 101L))
+        assertFalse(isIgnoredAppleWebChallengeNavigationError(null, -999L))
+    }
+
+    @Test
     fun reviewedChallengeRejectsUncanonicalPrivateOrIncompleteGrants() {
         assertFailsWith<IllegalArgumentException> {
             reviewedChallengeRequest(navigationOrigins = setOf("https://EXAMPLE.test"))

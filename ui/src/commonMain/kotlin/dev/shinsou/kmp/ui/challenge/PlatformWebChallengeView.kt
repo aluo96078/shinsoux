@@ -36,6 +36,65 @@ internal fun SourceWebChallengeRequest.allowsWebChallengeNavigation(url: String?
 internal fun SourceWebChallengeRequest.allowsWebChallengeCapture(documentUrl: String?): Boolean =
     allowsWebChallengeNavigation(documentUrl) && webChallengeOrigin(documentUrl) == webChallengeOrigin(url)
 
+/** True when the reviewed challenge allows top-level redirects to a third-party sign-in origin. */
+internal fun SourceWebChallengeRequest.hasThirdPartyLoginOrigins(): Boolean =
+    allowsEmbeddedWebChallenge() &&
+        webChallengeOrigin(url)?.let { sourceOrigin ->
+            allowedNavigationOrigins.any { it != sourceOrigin }
+        } == true
+
+/**
+ * Strips Android WebView-specific markers (`; wv` and `Version/x.y` before `Chrome/`) from the
+ * engine's genuine default User-Agent while preserving the real Android OS, device, and Chromium
+ * versions so identity providers such as Google do not reject the browser for engine/UA mismatch
+ * or embedded WebView tokens.
+ */
+internal fun sanitizeAndroidWebChallengeUserAgent(defaultUserAgent: String): String {
+    val trimmed = defaultUserAgent.trim()
+    if (trimmed.isEmpty()) return ""
+    return trimmed
+        .replace(ANDROID_WEBVIEW_TOKEN_REGEX, "")
+        .replace(ANDROID_WEBVIEW_VERSION_REGEX, "")
+        .replace(REPEATED_WHITESPACE_REGEX, " ")
+        .trim()
+}
+
+/**
+ * Derives a matching Mobile Safari User-Agent from iOS WKWebView's genuine default UA when a
+ * challenge visits third-party sign-in origins. Desktop/iPad UAs (no `Mobile/` token) and UAs
+ * already identifying Safari return null so `customUserAgent` stays unset.
+ */
+internal fun sanitizeIosWebChallengeUserAgent(defaultUserAgent: String?): String? {
+    val trimmed = defaultUserAgent?.trim().orEmpty()
+    val mobileIndex = trimmed.indexOf("Mobile/")
+    if (trimmed.isEmpty() || trimmed.contains("Safari/", ignoreCase = true) || mobileIndex < 0) {
+        return null
+    }
+    val versionPrefix = if (trimmed.contains("Version/", ignoreCase = true)) {
+        ""
+    } else {
+        IOS_OS_VERSION_REGEX.find(trimmed)?.let { match ->
+            val major = match.groupValues[1]
+            val minor = match.groupValues[2].ifEmpty { "0" }
+            "Version/$major.$minor "
+        }.orEmpty()
+    }
+    return buildString {
+        append(trimmed, 0, mobileIndex)
+        append(versionPrefix)
+        append(trimmed, mobileIndex, trimmed.length)
+        append(" Safari/604.1")
+    }
+}
+
+/**
+ * Redirect cancellations (`NSURLErrorCancelled`) and policy-interrupted frame loads
+ * (`WebKitErrorDomain` 102) happen during normal OAuth redirects and blocked third-party subframes.
+ */
+internal fun isIgnoredAppleWebChallengeNavigationError(domain: String?, code: Long): Boolean =
+    (domain == "NSURLErrorDomain" && code == -999L) ||
+        (domain == "WebKitErrorDomain" && code == 102L)
+
 internal fun SourceWebChallengeRequest.allowsWebChallengeSubresource(url: String?): Boolean =
     allowsEmbeddedWebChallenge() && webChallengeOrigin(url) in allowedSubresourceOrigins
 
@@ -124,6 +183,10 @@ internal fun webChallengeOriginUrlFilter(origin: String): String {
 }
 
 private val WEB_CHALLENGE_CONTRACT_JSON = Json { encodeDefaults = true }
+private val ANDROID_WEBVIEW_TOKEN_REGEX = Regex(""";\s*wv(?=\s*[;)])""", RegexOption.IGNORE_CASE)
+private val ANDROID_WEBVIEW_VERSION_REGEX = Regex("""\bVersion/\d+(?:\.\d+)*\s+(?=Chrome/)""")
+private val REPEATED_WHITESPACE_REGEX = Regex("""\s{2,}""")
+private val IOS_OS_VERSION_REGEX = Regex("""\bOS\s+(\d+)(?:_(\d+))?""")
 
 /** Platform WebView surface backed by an isolated, non-persistent browser session. */
 @Composable

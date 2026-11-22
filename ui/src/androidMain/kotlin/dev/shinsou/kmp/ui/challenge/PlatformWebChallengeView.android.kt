@@ -23,6 +23,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.Profile
 import androidx.webkit.ProfileStore
+import androidx.webkit.UserAgentMetadata
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -97,8 +99,10 @@ internal actual fun PlatformWebChallengeView(
                     if (!state.isActive()) return
                     currentPageLoaded.value.invoke()
                     view.evaluateJavascript(ANDROID_WEB_CHALLENGE_VIEWPORT_FIX, null)
-                    automaticWebChallengeLoginScript(request)?.let { script ->
-                        view.evaluateJavascript(script, null)
+                    if (request.allowsWebChallengeCapture(url)) {
+                        automaticWebChallengeLoginScript(request)?.let { script ->
+                            view.evaluateJavascript(script, null)
+                        }
                     }
                 }
 
@@ -112,7 +116,9 @@ internal actual fun PlatformWebChallengeView(
                             request.allowsWebChallengeInternalResource(target, isMainFrame = false)
                     }
                     if (allowed) return false
-                    currentError.value.invoke("Blocked browser navigation outside the reviewed source origins.")
+                    if (navigation.isForMainFrame) {
+                        currentError.value.invoke("Blocked browser navigation outside the reviewed source origins.")
+                    }
                     return true
                 }
 
@@ -316,7 +322,7 @@ private class AndroidChallengeState(
             safeBrowsingEnabled = true
             setSupportMultipleWindows(false)
             javaScriptCanOpenWindowsAutomatically = false
-            if (request.userAgent.isNotBlank()) userAgentString = request.userAgent
+            configureAndroidWebChallengeBrowserIdentity(this)
         }
         dedicatedProfile.cookieManager.apply {
             setAcceptCookie(true)
@@ -488,6 +494,51 @@ private object AndroidChallengeProfileLease {
 
 private const val ANDROID_CHALLENGE_PROFILE_NAME = "shinsou_isolated_web_challenge"
 private const val ANDROID_PROFILE_OPERATION_TIMEOUT_MILLIS = 15_000L
+
+internal fun sanitizeAndroidWebChallengeBrandName(brand: String): String =
+    if (brand.equals("Android WebView", ignoreCase = true)) "Google Chrome" else brand
+
+/**
+ * Keeps the genuine Android Chromium engine identity instead of applying the source's HTTP header
+ * User-Agent (often desktop macOS Chrome), while removing WebView-only markers (`; wv`,
+ * `Version/4.0`, and the `Android WebView` Client Hints brand) that cause identity providers such
+ * as Google to reject sign-in.
+ */
+private fun configureAndroidWebChallengeBrowserIdentity(settings: WebSettings) {
+    val defaultUserAgent = settings.userAgentString.orEmpty()
+    val sanitizedMetadata = runCatching {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+            val current = WebSettingsCompat.getUserAgentMetadata(settings)
+            val brands = current.brandVersionList
+            if (brands.isEmpty()) {
+                null
+            } else {
+                val updatedBrands = brands.map { entry ->
+                    UserAgentMetadata.BrandVersion.Builder(entry)
+                        .setBrand(sanitizeAndroidWebChallengeBrandName(entry.brand))
+                        .build()
+                }
+                UserAgentMetadata.Builder(current)
+                    .setBrandVersionList(updatedBrands)
+                    .build()
+            }
+        } else {
+            null
+        }
+    }.getOrNull()
+
+    val sanitizedUserAgent = sanitizeAndroidWebChallengeUserAgent(defaultUserAgent)
+    if (sanitizedUserAgent.isNotEmpty() && sanitizedUserAgent != defaultUserAgent) {
+        settings.userAgentString = sanitizedUserAgent
+    }
+    if (sanitizedMetadata != null) {
+        runCatching {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+                WebSettingsCompat.setUserAgentMetadata(settings, sanitizedMetadata)
+            }
+        }
+    }
+}
 
 /**
  * Some Chromium WebView builds retain a zero layout-viewport after being hosted by a measured

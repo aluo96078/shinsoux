@@ -2,6 +2,7 @@ package dev.shinsou.kmp.ui.challenge
 
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -47,9 +48,37 @@ class AndroidWebChallengeIsolationContractTest {
         assertTrue(build.contains("implementation(libs.androidx.webkit)"))
     }
 
+    @Test
+    fun androidWebChallengeStripsWebViewIdentityMarkersAndGatesAutomaticLogin() {
+        val root = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+            .first { File(it, ANDROID_SOURCE).isFile }
+        val androidSource = File(root, ANDROID_SOURCE).readText()
+        val iosSource = File(root, IOS_SOURCE).readText()
+
+        assertEquals("Google Chrome", sanitizeAndroidWebChallengeBrandName("Android WebView"))
+        assertEquals("Chromium", sanitizeAndroidWebChallengeBrandName("Chromium"))
+        assertEquals("Not?A_Brand", sanitizeAndroidWebChallengeBrandName("Not?A_Brand"))
+
+        assertFalse(androidSource.contains("userAgentString = request.userAgent"))
+        assertTrue(androidSource.contains("configureAndroidWebChallengeBrowserIdentity"))
+        assertTrue(androidSource.contains("WebViewFeature.USER_AGENT_METADATA"))
+        assertTrue(androidSource.contains("WebSettingsCompat.setUserAgentMetadata"))
+        assertTrue(androidSource.contains("if (request.allowsWebChallengeCapture(url))"))
+
+        assertFalse(iosSource.contains("customUserAgent = request.userAgent"))
+        assertTrue(iosSource.contains("customUserAgent = null"))
+        assertTrue(iosSource.contains("request.hasThirdPartyLoginOrigins()"))
+        assertTrue(iosSource.contains("sanitizeIosWebChallengeUserAgent"))
+        assertTrue(iosSource.contains("isIgnoredAppleWebChallengeNavigationError"))
+        assertTrue(iosSource.contains("request.allowsWebChallengeCapture(loadedWebView.URL?.absoluteString)"))
+    }
+
     private companion object {
         const val ANDROID_SOURCE =
             "ui/src/androidMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
                 "PlatformWebChallengeView.android.kt"
+        const val IOS_SOURCE =
+            "ui/src/iosMain/kotlin/dev/shinsou/kmp/ui/challenge/" +
+                "PlatformWebChallengeView.ios.kt"
     }
 }
