@@ -30,10 +30,29 @@ internal sealed interface Destination {
 }
 
 /**
- * 0007 C2: the layer a [PageEntry] sits on. Pages stack in this order on a phone, lowest first:
- * a page covers every page of a lower layer. A layer holds at most one page.
+ * 0007 C2 / 0008: the one ordering of the shell's pages. Declaration order is the stacking order,
+ * lowest first: a page covers every page of a lower layer. It decides what is drawn on top (a
+ * phone shows only the top page, a wide window draws the layers in this order, and where it
+ * shows several side by side the highest one is the one in front) and, read from the top down,
+ * what Back dismisses first. A layer holds at most one page.
+ *
+ * Nothing else may order pages: [PageStack.top], [backTransition] and the wide layout all read
+ * this order. A layer's own Back behaviour is declared here with it:
+ *  - [backTarget] is the [BackTarget] that gets the press and decides itself (it has a nested
+ *    Back of its own, such as a sheet); null means Back simply closes the page;
+ *  - [backTargetWhileReaderOpen] is the same while an extension reader covers the window.
+ * No layer is exempt from Back: a recovery overlay is cancelled like any other page.
  */
-internal enum class PageLayer { MORE, DETAIL, PENDING, LOCAL_EXTENSION, RECOVERING }
+internal enum class PageLayer(
+    val backTarget: BackTarget?,
+    val backTargetWhileReaderOpen: BackTarget? = backTarget,
+) {
+    MORE(BackTarget.MORE),
+    DETAIL(BackTarget.DETAIL),
+    PENDING(null),
+    LOCAL_EXTENSION(null, BackTarget.LOCAL_EXTENSION_READER),
+    RECOVERING(null),
+}
 
 /** One page pushed above the section, with what only that page instance owns. */
 internal sealed interface PageEntry {
@@ -93,7 +112,13 @@ internal class PageStack private constructor(private val entries: List<PageEntry
 
     val isEmpty: Boolean get() = entries.isEmpty()
 
-    /** The page a phone shows: the highest layer's. */
+    /** The pushed pages, lowest [PageLayer] first: the order they are drawn in. */
+    val pages: List<PageEntry> get() = entries
+
+    /**
+     * The page in front, the highest layer's: what a phone shows, and what Back dismisses (or
+     * hands its press to) first.
+     */
     val top: PageEntry? get() = entries.lastOrNull()
 
     val more: PageEntry.More? get() = entry(PageLayer.MORE) as PageEntry.More?
