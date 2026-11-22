@@ -10,9 +10,11 @@ import org.gradle.api.Project
 /** Static analysis (detekt, R2-1) and coverage reporting (Kover, R2-5) of docs/architecture/0006. */
 public class QualityPlugin : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
-        // R2-1 (0006): existing findings live in the baseline; it may only shrink. Each module has its
-        // own (R5-1), config/detekt/<module>/baseline-<source set>.xml, so regenerating one module's
-        // baseline leaves the others' entries alone; scripts/ci/check_baselines_shrink.sh adds them up.
+        // R2-1 (0006): existing findings live in the baselines; they may only shrink. Each module has
+        // its own (R5-1), config/detekt/<module>/baseline-<kind>.xml, and each finding is listed once
+        // (0007 §7 follow-up 6): detekt reads one file per task, so a task's baseline is the merge of
+        // the kinds it reads (DetektBaselineLayout) and `detektBaselineProduct` rewrites the files.
+        // scripts/ci/check_baselines_shrink.sh counts the unique findings of all of them.
         pluginManager.withPlugin("dev.detekt") {
             extensions.getByType(DetektExtension::class.java).apply {
                 buildUponDefaultConfig.set(true)
@@ -25,15 +27,17 @@ public class QualityPlugin : Plugin<Project> {
             tasks.withType(Detekt::class.java).configureEach { exclude { it.file.isGenerated() } }
             tasks.withType(DetektCreateBaselineTask::class.java).configureEach { exclude { it.file.isGenerated() } }
 
+            registerBaselineLayout()
+
             // What CI runs: the desktop and Android (debug variant) compilations with type resolution
             // (common, JVM and platform sources; the serialization plugin and expect/actual are not
             // seen there, so a few type-based rules are approximate) and the Android and iOS source
             // sets without it. detekt has no typed task for Kotlin/Native targets (C6, 0007), so iOS
-            // stays untyped. The typed Android baselines are config/detekt/<module>/baseline-debug.xml.
+            // stays untyped. Which baseline files each of them reads is DetektBaselineLayout.product.
             tasks.register("detektProduct") {
                 group = "verification"
                 description = "Runs detekt over every product source set against the committed baselines."
-                dependsOn("detektMainDesktop", "detektDebugAndroid", "detektAndroidMainSourceSet", "detektIosMainSourceSet")
+                dependsOn(DetektBaselineLayout.product.map { it.detektTask })
             }
         }
 
@@ -58,6 +62,42 @@ public class QualityPlugin : Plugin<Project> {
                 }
             }
         }
+    }
+}
+
+/**
+ * The baseline layout of [DetektBaselineLayout]: the product tasks that read several kinds get
+ * their merged baseline, the create-baseline tasks write to the build directory (so they cannot
+ * put the duplicated layout back) and `detektBaselineProduct` splits that into the committed files.
+ */
+private fun Project.registerBaselineLayout() {
+    val committed = rootProject.layout.projectDirectory.dir("config/detekt/$name")
+    val regenerated = layout.buildDirectory.dir("detekt/regenerated")
+    val byCreateTask = DetektBaselineLayout.product.associateBy { it.createTask }
+
+    val merged = DetektBaselineLayout.product.filter { it.reads.size > 1 }.associate { product ->
+        product.detektTask to tasks.register("merge${product.detektTask.removePrefix("detekt")}Baseline", MergeDetektBaselines::class.java) {
+            parts.from(product.reads.map { committed.file(DetektBaselineLayout.fileName(it)) })
+            merged.set(layout.buildDirectory.file("detekt/merged/${DetektBaselineLayout.fileName(product.kind)}"))
+        }
+    }
+    tasks.withType(Detekt::class.java).configureEach {
+        val merge = merged[name] ?: return@configureEach
+        baseline.set(merge.flatMap { it.merged })
+    }
+
+    // The create-baseline tasks this module has (a module without an Android target has no debug one).
+    val createTasks = tasks.withType(DetektCreateBaselineTask::class.java).matching { it.name in byCreateTask }
+    tasks.register("detektBaselineProduct", SplitDetektBaselines::class.java) {
+        group = "verification"
+        description = "Rewrites config/detekt/$name/baseline-*.xml from what the product detekt tasks report now."
+        baselineDirectory.set(committed)
+        this.regenerated.set(regenerated)
+        kinds.set(provider { createTasks.map { byCreateTask.getValue(it.name).kind }.toSet() })
+        dependsOn(createTasks)
+    }
+    createTasks.configureEach {
+        baseline.set(regenerated.map { it.file(DetektBaselineLayout.fileName(byCreateTask.getValue(name).kind)) })
     }
 }
 
