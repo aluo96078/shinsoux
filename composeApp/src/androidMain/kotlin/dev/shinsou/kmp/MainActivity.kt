@@ -40,8 +40,8 @@ import dev.shinsou.kmp.contract.ImportedDocumentSource
 import dev.shinsou.kmp.ui.BinaryDocumentExportSink
 import dev.shinsou.kmp.ui.BinaryDocumentExportSource
 import dev.shinsou.kmp.ui.ByteArrayBinaryDocumentExportSource
-import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
-import dev.shinsou.kmp.ui.ReaderVolumeKeyPressTracker
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyPressTracker
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.contract.readBoundedImportedBytes

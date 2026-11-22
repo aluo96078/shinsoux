@@ -93,7 +93,7 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import dev.aluo.shinsoux.generated.resources.Res
 import dev.aluo.shinsoux.generated.resources.shinsou_icon
@@ -102,6 +102,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.painterResource
+import dev.shinsou.kmp.ui.sync.SyncSettingsPane
 
 enum class MoreDestination {
     Downloads,
@@ -1283,7 +1284,7 @@ internal fun SyncScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     kinds: dev.shinsou.kmp.domain.model.SyncKindSettings = dev.shinsou.kmp.domain.model.SyncKindSettings(),
-    onKindsChange: (dev.shinsou.kmp.ui.SettingsEdit<dev.shinsou.kmp.domain.model.SyncKindSettings>) -> Unit = {},
+    onKindsChange: (dev.shinsou.kmp.ui.core.SettingsEdit<dev.shinsou.kmp.domain.model.SyncKindSettings>) -> Unit = {},
 ) {
     val strings = LocalShinsouStrings.current
     Column(modifier.fillMaxSize()) {

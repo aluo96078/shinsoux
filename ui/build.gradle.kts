@@ -1,5 +1,8 @@
-// R5-1 (docs/architecture/0006 §4.2): ui (the Compose screens, the challenge dialog, i18n) and
-// navigation. Owns the Compose resources (the app icon, Res in dev.aluo.shinsoux.generated.resources);
+// R5-1 (docs/architecture/0006 §4.2): ui (the Compose screens, the challenge dialog) and navigation.
+// C1 (0007): the shell (ShinsouApp, the app services, navigation, app state, layouts and panes) and
+// the screens not yet in a feature UI module (library, updates, history, details, browse,
+// extensions, settings, more); it wires :ui-reader, :ui-translation and :ui-sync, and the design
+// system and strings are :ui-core's. Owns the Compose resources (the app icon, Res in dev.aluo.shinsoux.generated.resources);
 // the app module reaches the icon through shinsouIconPainter(). Depends on the feature modules and
 // the layers below; only the app module (composition, entry points, packaging) is above it.
 plugins {
@@ -29,6 +32,10 @@ kotlin {
             implementation(project(":feature-reader"))
             implementation(project(":feature-translation"))
             implementation(project(":feature-plugin"))
+            implementation(project(":ui-core"))
+            implementation(project(":ui-reader"))
+            implementation(project(":ui-translation"))
+            implementation(project(":ui-sync"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)

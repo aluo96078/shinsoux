@@ -68,9 +68,9 @@ import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
-import dev.shinsou.kmp.ui.historyPositionLabel
+import dev.shinsou.kmp.ui.reader.historyPositionLabel
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlin.math.max

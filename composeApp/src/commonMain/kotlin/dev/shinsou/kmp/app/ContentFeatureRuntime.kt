@@ -29,7 +29,7 @@ import dev.shinsou.kmp.tts.PlatformSpeechCapability
 import dev.shinsou.kmp.tts.PlatformTextToSpeechEngine
 import dev.shinsou.kmp.tts.RightsEnforcedTextToSpeechService
 import dev.shinsou.kmp.tts.UnavailablePlatformTextToSpeechEngine
-import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.domain.model.Publication
 import dev.shinsou.kmp.domain.model.PublicationKey
 import kotlinx.coroutines.channels.Channel

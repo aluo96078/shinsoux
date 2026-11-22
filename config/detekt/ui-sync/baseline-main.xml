@@ -1,0 +1,19 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:ReviewsPane.kt:@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class) @Composable private fun ReviewsSheet</ID>
+    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedInSection</ID>
+    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedOutSection</ID>
+    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:internal fun Throwable.userMessage: String</ID>
+    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@Composable private fun ShareBox</ID>
+    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun PeoplePanel</ID>
+    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun ShareRow</ID>
+    <ID>LongMethod:ReviewsPane.kt:@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class) @Composable private fun ReviewsSheet</ID>
+    <ID>LongMethod:SyncSettingsPane.kt:@Composable private fun SignedInSection</ID>
+    <ID>LongMethod:SyncSettingsPane.kt:@Composable private fun SignedOutSection</ID>
+    <ID>LongMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun PeoplePanel</ID>
+    <ID>ReturnCount:ReviewsPane.kt:private fun Throwable.reviewMessage: String</ID>
+    <ID>UseOrEmpty:SyncSettingsPane.kt:source.language?.let { " ($it)" } ?: ""</ID>
+  </CurrentIssues>
+</SmellBaseline>

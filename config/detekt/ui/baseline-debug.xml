@@ -2,78 +2,35 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ComplexCondition:CommonComponents.kt:onSubmit != null &amp;&amp; event.type == KeyEventType.KeyDown &amp;&amp; (event.key == Key.Enter || event.key == Key.NumPadEnter)</ID>
-    <ID>ComplexCondition:MangaPrefetch.kt:settings == null || !settings.enabled || settings.from != from || settings.to != target || (chosen != null &amp;&amp; !settings.fromPicked)</ID>
-    <ID>ComplexCondition:MangaTranslationPanel.kt:MangaReaderTranslationState$retains &amp;&amp; !now.enabled &amp;&amp; pickedFrom == null &amp;&amp; MangaLanguages.readable(other)</ID>
-    <ID>ComplexCondition:MangaTranslationPanel.kt:settings == null || !settings.enabled || !state.deviceSupported || !state.modelsInstalled || pageCount == 0</ID>
-    <ID>ComplexCondition:NovelReader.kt:!restorationReady || navigationRequestKey &lt;= 0L || navigationRequestKey == initialNavigationRequestKey || action == null</ID>
-    <ID>ComplexCondition:NovelReader.kt:(tagName == "br" || closingTag &amp;&amp; tagName in NOVEL_BLOCK_HTML_TAGS) &amp;&amp; display.isNotEmpty() &amp;&amp; display.last() != '\n'</ID>
     <ID>ComplexCondition:SourceCatalogueScreen.kt:nearEnd &amp;&amp; latestPage.value.hasNextPage &amp;&amp; latestError.value == null &amp;&amp; !latestLoading.value &amp;&amp; !latestLoadingMore.value</ID>
     <ID>CyclomaticComplexMethod:ActivityScreens.kt:@OptIn(ExperimentalFoundationApi::class) @Composable fun UpdatesScreen</ID>
-    <ID>CyclomaticComplexMethod:CommonComponents.kt:@Composable fun CoverImage</ID>
     <ID>CyclomaticComplexMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
     <ID>CyclomaticComplexMethod:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
-    <ID>CyclomaticComplexMethod:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
-    <ID>CyclomaticComplexMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ExtensionNovelReaderShell</ID>
-    <ID>CyclomaticComplexMethod:ExtensionNovelReaderShell.kt:private fun prefetchFailureText: String</ID>
     <ID>CyclomaticComplexMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterHeader</ID>
     <ID>CyclomaticComplexMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterRow</ID>
     <ID>CyclomaticComplexMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
     <ID>CyclomaticComplexMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
-    <ID>CyclomaticComplexMethod:KeyboardDismissPolicy.kt:internal fun Modifier.onUnconsumedBlankTap: Modifier</ID>
     <ID>CyclomaticComplexMethod:LibraryScreen.kt:@Composable fun LibraryScreen</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable fun MangaDetailScreen</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@Composable private fun MangaInfoPane</ID>
     <ID>CyclomaticComplexMethod:MangaDetailScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable private fun ChapterPane</ID>
-    <ID>CyclomaticComplexMethod:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
-    <ID>CyclomaticComplexMethod:MangaResourceSettings.kt:@Composable internal fun MangaResourceSettings</ID>
-    <ID>CyclomaticComplexMethod:MangaTranslationPanel.kt:@Composable public fun MangaTranslationNotice</ID>
-    <ID>CyclomaticComplexMethod:MangaTranslationPanel.kt:@Composable public fun rememberMangaReaderTranslation: MangaReaderTranslationState</ID>
-    <ID>CyclomaticComplexMethod:MangaTranslationPanel.kt:@OptIn(ExperimentalLayoutApi::class) @Composable public fun MangaTranslationPanel</ID>
-    <ID>CyclomaticComplexMethod:MangaTranslationPanel.kt:MangaReaderTranslationState$internal suspend fun autoStart</ID>
     <ID>CyclomaticComplexMethod:MigrationPane.kt:@Composable private fun MigrationCandidateCard</ID>
     <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
     <ID>CyclomaticComplexMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
-    <ID>CyclomaticComplexMethod:NovelReader.kt:@Composable private fun ContinuousNovelReader</ID>
-    <ID>CyclomaticComplexMethod:NovelReader.kt:internal fun sanitizeNovelDisplayText: NovelDisplayText</ID>
-    <ID>CyclomaticComplexMethod:NovelReader.kt:private fun decodeNovelDisplayEntity: String?</ID>
-    <ID>CyclomaticComplexMethod:NovelTranslationPanel.kt:@Composable internal fun rememberNovelTranslation: NovelTranslationState?</ID>
-    <ID>CyclomaticComplexMethod:NovelTranslationPanel.kt:@Composable private fun NovelTranslationStatus</ID>
     <ID>CyclomaticComplexMethod:PluginPermissionReview.kt:@Composable internal fun PluginPermissionReviewDialog</ID>
-    <ID>CyclomaticComplexMethod:ReaderControls.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ReaderSettingsSheet</ID>
-    <ID>CyclomaticComplexMethod:ReaderPages.kt:@Composable private fun ResolvedReaderPageImage</ID>
-    <ID>CyclomaticComplexMethod:ReviewMarkdown.kt:private fun inline: List&lt;MarkdownInline&gt;</ID>
-    <ID>CyclomaticComplexMethod:ReviewsPane.kt:@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class) @Composable private fun ReviewsSheet</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>CyclomaticComplexMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
-    <ID>CyclomaticComplexMethod:ShinsouStrings.kt:fun shinsouStringsFor: ShinsouStrings</ID>
     <ID>CyclomaticComplexMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
     <ID>CyclomaticComplexMethod:SourceLoginDialog.kt:@Composable internal fun SourceLoginDialog</ID>
     <ID>CyclomaticComplexMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
     <ID>CyclomaticComplexMethod:SourceWebChallengeCookies.kt:internal fun normalizeWebChallengeCookies: List&lt;SourceCookie&gt;</ID>
-    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedInSection</ID>
-    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:@Composable private fun SignedOutSection</ID>
-    <ID>CyclomaticComplexMethod:SyncSettingsPane.kt:internal fun Throwable.userMessage: String</ID>
-    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@Composable private fun ShareBox</ID>
-    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun PeoplePanel</ID>
-    <ID>CyclomaticComplexMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun ShareRow</ID>
     <ID>CyclomaticComplexMethod:TrackingSheet.kt:@Composable private fun BoundTrackEditor</ID>
     <ID>CyclomaticComplexMethod:TrackingSheet.kt:@Composable private fun TrackerProviderCard</ID>
-    <ID>CyclomaticComplexMethod:TranslationScreen.kt:@Composable internal fun TranslationScreen</ID>
-    <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable internal fun TranslationSettingsPane</ID>
-    <ID>CyclomaticComplexMethod:TranslationSettingsPane.kt:@Composable private fun LlmServiceSetting</ID>
-    <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceContinuousReader</ID>
-    <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceHorizontalPager</ID>
-    <ID>CyclomaticComplexMethod:UnifiedContentReader.kt:@Composable private fun ImageSequenceVerticalPager</ID>
-    <ID>EmptyElseBlock:MangaTranslationPanel.kt:MangaReaderTranslationState$if (known) autoPending = false</ID>
-    <ID>FunctionNaming:Drawable0.commonMain.kt:@InternalResourceApi internal fun _collectCommonMainDrawable0Resources</ID>
     <ID>InstanceOfCheckForException:PlatformWebChallengeView.android.kt:AndroidChallengeState$failure is kotlinx.coroutines.TimeoutCancellationException</ID>
     <ID>LongMethod:ActivityScreens.kt:@OptIn(ExperimentalFoundationApi::class) @Composable fun UpdatesScreen</ID>
     <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ContentBackupV2Screen</ID>
     <ID>LongMethod:ContentPortabilityScreens.kt:@Composable public fun ShuYueMigrationScreen</ID>
-    <ID>LongMethod:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
-    <ID>LongMethod:ExtensionNovelReaderShell.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ExtensionNovelReaderShell</ID>
     <ID>LongMethod:ExtensionV2ChapterPane.kt:@Composable internal fun ExtensionV2ChapterHeader</ID>
     <ID>LongMethod:ExtensionV2PublicationPane.kt:@Composable private fun ExtensionV2PublicationInfoPane</ID>
     <ID>LongMethod:ExtensionsPane.kt:@Composable internal fun ExtensionsPane</ID>
@@ -85,37 +42,17 @@
     <ID>LongMethod:MigrationPane.kt:@Composable private fun MigrationCandidateCard</ID>
     <ID>LongMethod:MoreScreens.kt:@Composable fun BackupScreen</ID>
     <ID>LongMethod:MoreScreens.kt:@Composable fun DownloadsScreen</ID>
-    <ID>LongMethod:NovelReader.kt:@Composable private fun ContinuousNovelReader</ID>
-    <ID>LongMethod:ReaderControls.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun ReaderSettingsSheet</ID>
-    <ID>LongMethod:ReviewsPane.kt:@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class) @Composable private fun ReviewsSheet</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun DetailPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun MoreDestinationPane</ID>
     <ID>LongMethod:ShinsouAppPanes.kt:@Composable internal fun SectionPane</ID>
     <ID>LongMethod:SourceCatalogueScreen.kt:@OptIn(ExperimentalFoundationApi::class) @Composable internal fun SourceCatalogueScreen</ID>
     <ID>LongMethod:SourceSettingsDialog.kt:@Composable internal fun SourceSettingsDialog</ID>
-    <ID>LongMethod:SyncSettingsPane.kt:@Composable private fun SignedInSection</ID>
-    <ID>LongMethod:SyncSettingsPane.kt:@Composable private fun SignedOutSection</ID>
-    <ID>LongMethod:SyncSharingPane.kt:@OptIn(ExperimentalLayoutApi::class) @Composable private fun PeoplePanel</ID>
     <ID>LongMethod:TrackingSheet.kt:@Composable private fun TrackerProviderCard</ID>
-    <ID>LongMethod:TranslationSettingsPane.kt:@Composable internal fun TranslationSettingsPane</ID>
     <ID>LongParameterList:ExtensionV2ChapterPane.kt:ExtensionV2ChapterPaneModel</ID>
-    <ID>LongParameterList:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
-    <ID>LongParameterList:MangaPrefetch.kt:public fun mangaPrefetchJob: TranslationPrefetchJob</ID>
-    <ID>LongParameterList:NovelReader.kt:private fun measuredNovelPageEnd: Int</ID>
-    <ID>LongParameterList:NovelReader.kt:private fun reportNovelPage</ID>
-    <ID>LongParameterList:UnifiedContentReader.kt:internal suspend fun prefetchChapter: dev.shinsou.kmp.translation.PrefetchChapter</ID>
-    <ID>LoopWithTooManyJumpStatements:CommonComponents.kt:for</ID>
-    <ID>LoopWithTooManyJumpStatements:NovelReader.kt:while</ID>
-    <ID>LoopWithTooManyJumpStatements:ReaderPages.kt:while</ID>
-    <ID>LoopWithTooManyJumpStatements:ReviewMarkdown.kt:while</ID>
     <ID>MatchingDeclarationName:ChapterPresentation.kt:ChapterPresentationItem</ID>
     <ID>MatchingDeclarationName:ExtensionV2ChapterPane.kt:ExtensionV2ChapterPaneModel</ID>
-    <ID>MatchingDeclarationName:MangaTranslationPanel.kt:MangaReaderTranslationState</ID>
-    <ID>MatchingDeclarationName:NovelTranslationPanel.kt:NovelTranslationState</ID>
     <ID>MatchingDeclarationName:PlatformWebChallengeView.kt:WebChallengeCapture</ID>
-    <ID>MatchingDeclarationName:TranslationScreen.kt:TranslationPage</ID>
     <ID>MatchingDeclarationName:UpcomingSchedule.kt:UpcomingPrediction</ID>
-    <ID>NestedBlockDepth:NovelReader.kt:internal fun sanitizeNovelDisplayText: NovelDisplayText</ID>
     <ID>ReturnCount:BrowseScreen.kt:internal fun Throwable.localizedDiagnosticMessage: String</ID>
     <ID>ReturnCount:BrowseSearch.kt:private fun levenshteinDistance: Int</ID>
     <ID>ReturnCount:BrowseSearch.kt:private fun normalizedTitleSimilarity: Double</ID>
@@ -125,29 +62,14 @@
     <ID>ReturnCount:CookieFileParser.kt:CookieFileParser$private fun parseJson: List&lt;SourceCookie&gt;</ID>
     <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$fun parse: ShinsouDeepLink?</ID>
     <ID>ReturnCount:DeepLinkParser.kt:DeepLinkParser$private fun parseDevRepositoryLink: ShinsouDeepLink?</ID>
-    <ID>ReturnCount:ExtensionNovelReaderShell.kt:fun handleVolumeKey: Boolean</ID>
     <ID>ReturnCount:LibraryContentType.kt:internal fun libraryContentType: LibraryContentType</ID>
     <ID>ReturnCount:LocalLibraryExtensionRouting.kt:internal fun localLibraryExtensionRoute: LocalLibraryExtensionRoute</ID>
-    <ID>ReturnCount:MangaTranslationPanel.kt:@Composable public fun MangaTranslationNotice</ID>
-    <ID>ReturnCount:MangaTranslationPanel.kt:MangaReaderTranslationState$internal suspend fun autoStart</ID>
-    <ID>ReturnCount:MangaTranslationPanel.kt:MangaReaderTranslationState$public fun displayPages: List&lt;ReaderPage&gt;</ID>
-    <ID>ReturnCount:MangaTranslationPanel.kt:MangaReaderTranslationState$public fun translatedPage: ByteArray?</ID>
-    <ID>ReturnCount:MangaTranslationPanel.kt:internal suspend fun loadPageBytes: ByteArray?</ID>
-    <ID>ReturnCount:NovelReader.kt:internal fun novelTapAction: ReaderTapAction</ID>
-    <ID>ReturnCount:NovelReader.kt:internal fun preferredNovelPageBreak: Int</ID>
-    <ID>ReturnCount:NovelReader.kt:internal fun readerPreviewKeyIsHostOwned: Boolean</ID>
     <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldInterceptRequest: WebResourceResponse?</ID>
     <ID>ReturnCount:PlatformWebChallengeView.android.kt:&lt;no name provided&gt;$override fun shouldOverrideUrlLoading: Boolean</ID>
     <ID>ReturnCount:PlatformWebChallengeView.android.kt:AndroidChallengeState$private fun openPendingUrlIfMeasured</ID>
-    <ID>ReturnCount:ReviewMarkdown.kt:private fun closing: Int</ID>
-    <ID>ReturnCount:ReviewsPane.kt:private fun Throwable.reviewMessage: String</ID>
     <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun automaticWebChallengeLoginScript: String?</ID>
     <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun decodeWebChallengeLocalStorageCapture: WebChallengeLocalStorageCapture</ID>
     <ID>ReturnCount:SourceWebChallengeCookies.kt:internal fun parseWebViewCookieHeader: List&lt;SourceCookie&gt;</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:@Composable internal fun UnifiedContentReader</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:internal fun mangaTranslationAvailable: Boolean</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:internal fun parseNovelReaderSegments: List&lt;NovelReaderSegment&gt;</ID>
-    <ID>ReturnCount:UnifiedContentReader.kt:internal fun readerTranslationAvailable: Boolean</ID>
     <ID>SuspendFunSwallowedCancellation:PlatformWebChallengeView.android.kt:AndroidChallengeState$catch (cancelled: CancellationException) { if (!released) { onError("The isolated Android browser session could not be prepared safely.") } if (leaseHeld) finishAndReleaseLease() }</ID>
     <ID>SuspendFunSwallowedCancellation:PlatformWebChallengeView.android.kt:AndroidChallengeState$catch (failure: Throwable) { AndroidChallengeProfileLease.poison() throw failure }</ID>
     <ID>SuspendFunSwallowedCancellation:PlatformWebChallengeView.android.kt:AndroidChallengeState$catch (failure: Throwable) { if (failure is kotlinx.coroutines.TimeoutCancellationException) { // A late cookie callback could otherwise race the final deletion and contaminate // a later holder of the fixed profile. AndroidChallengeProfileLease.poison() } throw failure }</ID>
@@ -155,25 +77,17 @@
     <ID>SuspendFunSwallowedCancellation:PlatformWebChallengeView.android.kt:AndroidChallengeState$catch (logged: Throwable) { Log.warn("WebChallenge", logged) { "Capturing the web challenge session failed" } if (!released) onError("Return to the source page after signing in, then try importing again.") }</ID>
     <ID>SwallowedException:PlatformWebChallengeView.android.kt:AndroidChallengeState$cancelled: CancellationException</ID>
     <ID>SwallowedException:ShuYueMigrationUiController.kt:DefaultShuYueMigrationUiController$conflict: ShuYueMigrationConflictException</ID>
-    <ID>ThrowsCount:EpubUnifiedContentReader.kt:@Composable internal fun EpubUnifiedContentReader</ID>
-    <ID>ThrowsCount:MangaPrefetch.kt:internal suspend fun translateMangaChapterAhead</ID>
     <ID>TooGenericExceptionCaught:ExtensionOperationRunner.kt:ExtensionOperationRunner$error: Throwable</ID>
     <ID>TooGenericExceptionCaught:MigrationPane.kt:error: Throwable</ID>
     <ID>TooGenericExceptionCaught:PlatformWebChallengeView.android.kt:AndroidChallengeState$failure: Throwable</ID>
-    <ID>TooGenericExceptionCaught:ReaderPages.kt:failure: Throwable</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:ReaderLocalProgressCoordinator$failure: Throwable</ID>
     <ID>TooGenericExceptionCaught:ReaderProgressCoordinators.kt:V2ReaderProgressCoordinator$failure: Throwable</ID>
     <ID>TooGenericExceptionCaught:SourceSearch.kt:error: Throwable</ID>
     <ID>TooGenericExceptionCaught:TrackingSheet.kt:error: Throwable</ID>
     <ID>UnusedParameter:ActivityScreens.kt:timestamp: Long</ID>
-    <ID>UnusedParameter:EpubUnifiedContentReader.kt:pageRequestSerial: Long</ID>
-    <ID>UnusedParameter:EpubUnifiedContentReader.kt:requestedPageIndex: Int?</ID>
     <ID>UnusedParameter:MangaDetailScreen.kt:manga: Manga</ID>
     <ID>UnusedParameter:SettingsScreen.kt:steps: Int</ID>
-    <ID>UnusedParameter:UnifiedContentReader.kt:copyText: (label: String, text: String) -&gt; Boolean</ID>
     <ID>UnusedPrivateFunction:SourcesPane.kt:@Composable private fun SourceSectionHeader</ID>
-    <ID>UnusedPrivateFunction:UnifiedContentReader.kt:@Composable private fun NovelTextBlock</ID>
-    <ID>UnusedPrivateFunction:UnifiedContentReader.kt:private fun blockRange: ReadingRange</ID>
     <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val bookmarkedUnitIds = model.bookmarkedUnitIds</ID>
     <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val busyUnitId = model.busyUnitId</ID>
     <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val chapterFilter = model.chapterFilter</ID>
@@ -205,12 +119,8 @@
     <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val translatedUnitIds = model.translatedUnitIds</ID>
     <ID>UnusedVariable:ExtensionV2ChapterPane.kt:val units = model.units</ID>
     <ID>UseCheckOrError:BinaryDocumentExport.kt:throw IllegalStateException("Binary document source exceeded its declared size")</ID>
-    <ID>UseCheckOrError:MangaTranslationPanel.kt:throw IllegalStateException("Page ${page.index} could not be loaded")</ID>
     <ID>UseOrEmpty:PluginPermissionReview.kt:current?.contentHostSuffixes ?: emptySet()</ID>
     <ID>UseOrEmpty:PluginPermissionReview.kt:current?.hostPermissions ?: emptySet()</ID>
     <ID>UseOrEmpty:PluginPermissionReview.kt:current?.runtimePermissions ?: emptySet()</ID>
-    <ID>UseOrEmpty:SyncSettingsPane.kt:source.language?.let { " ($it)" } ?: ""</ID>
-    <ID>UseOrEmpty:TranslationScreen.kt:overview?.let { strings.text(StringKey.X_CHAPTERS, it.chapters) + " · " + storedSize(it.bytes) } ?: ""</ID>
-    <ID>UseOrEmpty:TranslationScreen.kt:overview?.service ?: ""</ID>
   </CurrentIssues>
 </SmellBaseline>

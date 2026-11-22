@@ -7,7 +7,7 @@ import dev.shinsou.kmp.data.BEFORE_HOT_STATE_SUFFIX
 import dev.shinsou.kmp.data.SnapshotFile
 import dev.shinsou.kmp.data.WHOLE_JSON_SWITCH_FILE
 import dev.shinsou.kmp.sync.v3.SyncV3Service
-import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.ui.ShellStateStore
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.tracking.TrackingCoordinator

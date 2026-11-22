@@ -25,7 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
-import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderOrientation
 import dev.shinsou.kmp.tracking.TrackingCoordinator
 import dev.shinsou.kmp.ui.AppLifecycleState
@@ -35,8 +35,8 @@ import dev.shinsou.kmp.contract.ContentCallbacks
 import dev.shinsou.kmp.contract.ImportedDocument
 import dev.shinsou.kmp.contract.ImportedDocumentLimits
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
-import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
-import dev.shinsou.kmp.ui.ReaderVolumeKeyEventSink
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEventSink
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouAppServices
 import dev.shinsou.kmp.ui.ShinsouDeepLink

@@ -18,6 +18,10 @@ import kotlin.test.fail
  * module, composeApp holds only app, desktop and the entry points (the top layer, which may use
  * every module): of the scanned rules only "package-without-a-module" can still fire there (a new
  * top-level package missing from [MODULES]); the others are kept for the allowlists' format.
+ *
+ * C1 (0007): the UI is split into :ui-core, the feature UI modules and :ui, all under `ui.`; a
+ * package belongs to the module of the longest [MODULES] key it starts with (`ui.reader.x` is
+ * :ui-reader's, `ui.screens` falls back to `ui`, the shell's), so a package moves with its module.
  */
 class DependencyDirectionTest {
     private val sourceSets = listOf("commonMain", "jvmCommonMain", "desktopMain", "androidMain", "iosMain")
@@ -45,7 +49,7 @@ class DependencyDirectionTest {
         assertTrue(libraryModules.all { it in MODULES.values.map(Pair<String, Int>::first) }, "Unknown module in $libraryModules")
         val misplaced = (libraryModules + APP_MODULE).flatMap { module ->
             kotlinFiles(module).mapNotNull { (file, pkg) ->
-                val owner = MODULES[pkg]?.first ?: return@mapNotNull "$file: package without a module"
+                val owner = moduleOf(pkg)?.first ?: return@mapNotNull "$file: package without a module"
                 val expected = if (owner in libraryModules) owner else APP_MODULE
                 if (expected == module) null else "$file: belongs to :$expected"
             }
@@ -67,13 +71,17 @@ class DependencyDirectionTest {
         if (upward.isNotEmpty()) fail(upward.joinToString("\n", "Module dependencies against the layers (§4.2):\n") { "  $it" })
     }
 
-    /** `(<module>/src/<path>, top-level package)` of every product source file of [module]. */
+    /** The module of [pkg] (below `dev.shinsou.kmp`): the entry of its longest prefix in [MODULES]. */
+    private fun moduleOf(pkg: String): Pair<String, Int>? =
+        generateSequence(pkg) { it.substringBeforeLast('.', "").ifEmpty { null } }.firstNotNullOfOrNull { MODULES[it] }
+
+    /** `(<module>/src/<path>, package below dev.shinsou.kmp)` of every product source file of [module]. */
     private fun kotlinFiles(module: String): List<Pair<String, String>> = sourceSets.flatMap { set ->
         File("../$module/src/$set/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }.mapNotNull { file ->
             val from = file.useLines { lines -> lines.firstNotNullOfOrNull { PACKAGE.matchEntire(it.trim())?.groupValues?.get(1) } }
                 ?: return@mapNotNull null
             "$module/src/$set/kotlin/${file.relativeTo(File("../$module/src/$set/kotlin")).invariantSeparatorsPath}" to
-                from.substringBefore('.').ifEmpty { ROOT }
+                from.ifEmpty { ROOT }
         }.toList()
     }
 
@@ -169,8 +177,14 @@ class DependencyDirectionTest {
             module("feature-translation", 3, "translation", "manga")
             module("feature-reader", 3, "reader", "acquisition", "local", "tts")
             module("feature-library", 3, "backup", "download", "tracking", "statistics", "update")
-            module("ui", 4, "ui", "navigation")
-            module("app", 5, "app", "desktop", ROOT)
+            // C1 (0007): the design system, then the feature UI modules (which never use each other),
+            // then the shell, which wires them.
+            module("ui-core", 4, "ui.core", "ui.theme", "ui.components", "ui.i18n", "ui.markdown")
+            module("ui-reader", 5, "ui.reader")
+            module("ui-translation", 5, "ui.translation")
+            module("ui-sync", 5, "ui.sync")
+            module("ui", 6, "ui", "navigation")
+            module("app", 7, "app", "desktop", ROOT)
         }
     }
 }

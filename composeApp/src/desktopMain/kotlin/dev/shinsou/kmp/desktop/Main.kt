@@ -763,7 +763,7 @@ private fun verifyDesktopRuntimeAndExit(): Nothing {
     // normally but failed with VerifyError only when a chapter entered the reader. Force the JVM
     // to verify the release class during the existing installer/runtime probe as well.
     Class.forName(
-        "dev.shinsou.kmp.ui.screens.ReaderScreenKt",
+        "dev.shinsou.kmp.ui.reader.ReaderScreenKt",
         false,
         Thread.currentThread().contextClassLoader,
     )

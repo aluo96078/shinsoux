@@ -23,9 +23,9 @@ import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
-import dev.shinsou.kmp.ui.screens.extensionContinueReadingDetail
-import dev.shinsou.kmp.ui.screens.extensionContinueUnitId
-import dev.shinsou.kmp.ui.screens.readingProgressPageLabel
+import dev.shinsou.kmp.ui.reader.extensionContinueReadingDetail
+import dev.shinsou.kmp.ui.reader.extensionContinueUnitId
+import dev.shinsou.kmp.ui.reader.readingProgressPageLabel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 

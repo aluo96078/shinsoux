@@ -69,7 +69,8 @@ class ServiceInterfaceSizeTest {
         const val MAX_MEMBERS = 15
         val HEADER = Regex("""^interface (\w+)""")
         val MEMBER = Regex("""^ {4}(?:suspend )?(?:fun|val|var) """)
-        val MODULES = listOf("ui", "feature-plugin", "composeApp")
+        // C1 (0007): every UI module; the umbrellas are the shell's, the feature UI modules never name them.
+        val MODULES = listOf("ui-core", "ui-reader", "ui-translation", "ui-sync", "ui", "feature-plugin", "composeApp")
         val UMBRELLAS = setOf("ShinsouAppServices", "BrowseCallbacks")
         val DECLARING_FILES = setOf(
             "ui/src/commonMain/kotlin/dev/shinsou/kmp/ui/AppServices.kt",

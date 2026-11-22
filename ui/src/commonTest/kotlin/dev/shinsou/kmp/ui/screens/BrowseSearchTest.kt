@@ -5,13 +5,12 @@ import dev.shinsou.kmp.plugin.BrowseExtension
 import dev.shinsou.kmp.plugin.MigrationCandidate
 import dev.shinsou.kmp.plugin.PluginContentType
 import dev.shinsou.kmp.plugin.BrowseManga
-import dev.shinsou.kmp.plugin.BrowseCallbacks
 import dev.shinsou.kmp.plugin.EmptyBrowseCallbacks
 import dev.shinsou.kmp.plugin.BrowseFilter
 import dev.shinsou.kmp.plugin.BrowsePage
 import dev.shinsou.kmp.plugin.BrowseSnapshot
 import dev.shinsou.kmp.plugin.BrowseSource
-import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -113,7 +112,7 @@ class BrowseSearchTest {
         val sources = sourceIds.map { id -> BrowseSource(id, "Source $id", "en") }
 
         val searchJob = launch {
-            searchAcrossSources(callbacks, callbacks, sources, "result", ShinsouStrings()).collect(updates::send)
+            searchAcrossSources(callbacks, callbacks, sources, "result", shinsouStringsFor("en")).collect(updates::send)
         }
 
         val firstWave = List(GLOBAL_SEARCH_MAX_CONCURRENCY) { started.receive() }
@@ -169,7 +168,7 @@ class BrowseSearchTest {
                 publications = callbacks,
                 sources = listOf(BrowseSource(1L, "Source", "en")),
                 query = "late",
-                strings = ShinsouStrings(),
+                strings = shinsouStringsFor("en"),
             ).collect(updates::send)
         }
 

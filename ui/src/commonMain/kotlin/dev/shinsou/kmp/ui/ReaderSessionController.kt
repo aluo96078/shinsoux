@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.reader.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ReaderProgressObservationClock
+import dev.shinsou.kmp.ui.reader.readerProgressSessionIsActive
 
 /** One opening of the reader on a chapter; a new one is made for every chapter change. */
 internal data class ReaderSession(

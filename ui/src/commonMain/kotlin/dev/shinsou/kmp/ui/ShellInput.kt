@@ -11,6 +11,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
 
 /**
  * The shell's own keys: hardware volume buttons go to the open reader, and Escape, Back and the

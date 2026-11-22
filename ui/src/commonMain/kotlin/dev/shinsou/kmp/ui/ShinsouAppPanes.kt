@@ -94,8 +94,8 @@ import dev.shinsou.kmp.ui.screens.ExtensionLibraryHost
 import dev.shinsou.kmp.ui.screens.ExtensionReaderHost
 import dev.shinsou.kmp.ui.screens.ExtensionReaderProgressSink
 import dev.shinsou.kmp.ui.screens.MAX_COOKIE_FILE_BYTES
-import dev.shinsou.kmp.ui.screens.ReviewsEntry
-import dev.shinsou.kmp.ui.screens.ShareWithUserDialog
+import dev.shinsou.kmp.ui.sync.ReviewsEntry
+import dev.shinsou.kmp.ui.sync.ShareWithUserDialog
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
 import dev.shinsou.kmp.ui.screens.ContentBackupV2Screen
 import dev.shinsou.kmp.ui.screens.DownloadsScreen
@@ -110,7 +110,7 @@ import dev.shinsou.kmp.ui.screens.SettingsScreen
 import dev.shinsou.kmp.ui.screens.ShuYueMigrationScreen
 import dev.shinsou.kmp.ui.screens.SourceLoginDialog
 import dev.shinsou.kmp.ui.screens.StatisticsScreen
-import dev.shinsou.kmp.ui.screens.TranslationScreen
+import dev.shinsou.kmp.ui.translation.TranslationScreen
 import dev.shinsou.kmp.ui.screens.TrackingSheet
 import dev.shinsou.kmp.ui.screens.UpdatesScreen
 import dev.aluo.shinsoux.generated.resources.Res
@@ -129,6 +129,7 @@ import dev.shinsou.kmp.plugin.SourceAuth
 import dev.shinsou.kmp.plugin.SourceCatalog
 import dev.shinsou.kmp.contract.SourceLoginRequest
 import dev.shinsou.kmp.plugin.SourceWebSession
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
 
 // R4-4 (docs/architecture/0006): moved out of ShinsouApp.kt without changing it.
 
@@ -666,7 +667,7 @@ internal fun DetailPane(
     // ADR-0005: page-reader chapters translated ahead of reading, through the app-wide queue.
     val mangaTranslation = appServices.mangaTranslation
     val textTranslation = appServices.contentFeatures?.translation
-    val prefetchGroup = remember(manga.source, manga.url) { dev.shinsou.kmp.ui.screens.mangaPrefetchGroup(manga) }
+    val prefetchGroup = remember(manga.source, manga.url) { dev.shinsou.kmp.ui.reader.mangaPrefetchGroup(manga) }
     // a work with no settings is translated ahead as it would start by itself in the reader
     val prefetchAppLanguage = dev.shinsou.kmp.ui.i18n.LocalAppLanguage.current
     val prefetchWorkLanguage = rememberSourceLanguage(appServices.browse, manga.source)
@@ -688,11 +689,11 @@ internal fun DetailPane(
     LaunchedEffect(textTranslation, mangaTranslation, chapters, finishedMangaPrefetch) {
         if (textTranslation == null || mangaTranslation == null || chapters.isEmpty()) return@LaunchedEffect
         val keys = runCatchingCancellable {
-            withContext(workDispatcher) { textTranslation.translatedChapterKeys(dev.shinsou.kmp.ui.screens.mangaWorkKey(manga)) }
+            withContext(workDispatcher) { textTranslation.translatedChapterKeys(dev.shinsou.kmp.ui.reader.mangaWorkKey(manga)) }
         }
             .onFailure { Log.warn("Translation", it) { "Reading the translated chapter list failed" } }
             .getOrDefault(emptySet())
-        translatedChapterIds = if (keys.isEmpty()) emptySet() else chapters.filter { dev.shinsou.kmp.ui.screens.mangaChapterKey(it) in keys }.mapTo(hashSetOf()) { it.id }
+        translatedChapterIds = if (keys.isEmpty()) emptySet() else chapters.filter { dev.shinsou.kmp.ui.reader.mangaChapterKey(it) in keys }.mapTo(hashSetOf()) { it.id }
     }
     MangaDetailScreen(
         manga = manga,
@@ -704,7 +705,7 @@ internal fun DetailPane(
             { ids ->
                 val sourceName: String? = null
                 val jobs = chapters.filter { it.id in ids }.map { chapter ->
-                    dev.shinsou.kmp.ui.screens.mangaPrefetchJob(
+                    dev.shinsou.kmp.ui.reader.mangaPrefetchJob(
                         manga = mangaTranslation,
                         translation = textTranslation,
                         work = manga,

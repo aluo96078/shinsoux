@@ -73,10 +73,8 @@ import dev.shinsou.kmp.plugin.SourceCatalog
 import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.ExtensionFavoriteDestination
 import dev.shinsou.kmp.ui.extensionFavoriteDestination
-import dev.shinsou.kmp.ui.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingLocator
-import dev.shinsou.kmp.ui.ReaderVolumeKeyRouter
 import dev.shinsou.kmp.plugin.v2.BrowseOptionsV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog

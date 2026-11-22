@@ -36,6 +36,7 @@ import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.localizedLabel
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.i18n.displaySuffix
 
 /** Granted with the installation: running the script and reaching its declared origins (ADR-0002 §6.2). */
 private val ORDINARY_RUNTIME = setOf(PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK)
@@ -239,8 +240,3 @@ private fun PluginRuntimePermission.risk(strings: ShinsouStrings, details: Plugi
     PluginRuntimePermission.EXECUTE_SCRIPT, PluginRuntimePermission.NETWORK -> ""
 }
 
-/** `hath.network:1024-65535` reads as the host family with its port range spelled out. */
-internal fun String.displaySuffix(strings: ShinsouStrings): String {
-    val base = removeSuffix(":1024-65535")
-    return if (base == this) this else strings.text(StringKey.X_ANY_PORT_FROM_1024, base)
-}

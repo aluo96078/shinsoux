@@ -73,7 +73,7 @@ import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 
 @OptIn(ExperimentalMaterial3Api::class)

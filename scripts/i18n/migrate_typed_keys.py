@@ -92,7 +92,7 @@ def kotlin_files(sets: list[str]) -> list[Path]:
 
 
 def rel(path: Path) -> str:
-    """The path under its module's src/ (R5-1: ui/ or composeApp/)."""
+    """The path under its module's src/ (R5-1, C1: a UI module or composeApp/)."""
     src = next(s for s in SRCS if path.is_relative_to(s))
     return path.relative_to(src).as_posix()
 

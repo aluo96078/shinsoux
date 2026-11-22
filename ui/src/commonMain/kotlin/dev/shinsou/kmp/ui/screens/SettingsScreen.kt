@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SettingsEdit
+import dev.shinsou.kmp.ui.core.SettingsEdit
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
@@ -84,14 +84,17 @@ import dev.shinsou.kmp.domain.model.ThemeMode
 import dev.shinsou.kmp.ui.PlatformSecurityCapabilities
 import dev.shinsou.kmp.ui.i18n.authoredOrExternal
 import dev.shinsou.kmp.ui.i18n.StringKey
-import dev.shinsou.kmp.ui.shouldShowReaderVolumeKeySetting
+import dev.shinsou.kmp.ui.reader.shouldShowReaderVolumeKeySetting
 import dev.shinsou.kmp.ui.components.HairlineDivider
 import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import dev.shinsou.kmp.ui.components.ChoiceSetting
+import dev.shinsou.kmp.ui.components.SettingDescription
+import dev.shinsou.kmp.ui.components.SettingsList
 
 private enum class SettingsSection(val icon: ImageVector) {
     General(Icons.Outlined.Settings),
@@ -1010,16 +1013,6 @@ internal fun CategoryNameDialog(
 }
 
 @Composable
-internal fun SettingsList(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        content = content,
-    )
-}
-
-@Composable
 private fun ToggleSetting(
     title: String,
     summary: String?,
@@ -1052,46 +1045,6 @@ private fun ToggleSetting(
 }
 
 @Composable
-internal fun ChoiceSetting(
-    title: String,
-    summary: String? = null,
-    selectedLabel: String,
-    choices: List<String>,
-    onSelected: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        Surface(
-            onClick = { expanded = true },
-            shape = RoundedCornerShape(11.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    summary?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                Text(selectedLabel, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            choices.forEach { choice ->
-                DropdownMenuItem(
-                    text = { Text(choice) },
-                    onClick = {
-                        onSelected(choice)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun SliderSetting(
     title: String,
     value: Float,
@@ -1113,17 +1066,6 @@ private fun SliderSetting(
         }
     }
 }
-
-@Composable
-internal fun SettingDescription(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
-    )
-}
-
 
 private fun SettingsSection.displayName(strings: dev.shinsou.kmp.ui.i18n.ShinsouStrings): String = when (this) {
     SettingsSection.General -> strings.text(StringKey.GENERAL)

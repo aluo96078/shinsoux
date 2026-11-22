@@ -55,7 +55,7 @@ import dev.shinsou.kmp.contract.SourcePreferenceKind
 import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.authoredOrExternal
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text

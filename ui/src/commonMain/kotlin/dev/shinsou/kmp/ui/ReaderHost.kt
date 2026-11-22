@@ -30,23 +30,24 @@ import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.localizedSourceFailure
 import dev.shinsou.kmp.ui.i18n.text
 import dev.shinsou.kmp.ui.screens.CategoryPickerDialog
-import dev.shinsou.kmp.ui.screens.MangaReaderTranslationState
-import dev.shinsou.kmp.ui.screens.MangaTranslationNotice
-import dev.shinsou.kmp.ui.screens.MangaTranslationSheet
-import dev.shinsou.kmp.ui.screens.PageReaderTranslation
-import dev.shinsou.kmp.ui.screens.ReaderScreen
-import dev.shinsou.kmp.ui.screens.ReaderScreenCallbacks
-import dev.shinsou.kmp.ui.screens.ReaderScreenContent
-import dev.shinsou.kmp.ui.screens.ReaderScreenSession
-import dev.shinsou.kmp.ui.screens.UnifiedReaderSlot
-import dev.shinsou.kmp.ui.screens.UnifiedContentReader
-import dev.shinsou.kmp.ui.screens.UnifiedReaderRenderState
-import dev.shinsou.kmp.ui.screens.mangaChapterKey
-import dev.shinsou.kmp.ui.screens.mangaTranslationAvailable
-import dev.shinsou.kmp.ui.screens.mangaWorkKey
-import dev.shinsou.kmp.ui.screens.readerTranslationAvailable
-import dev.shinsou.kmp.ui.screens.rememberMangaReaderTranslation
+import dev.shinsou.kmp.ui.reader.MangaReaderTranslationState
+import dev.shinsou.kmp.ui.reader.MangaTranslationNotice
+import dev.shinsou.kmp.ui.reader.MangaTranslationSheet
+import dev.shinsou.kmp.ui.reader.PageReaderTranslation
+import dev.shinsou.kmp.ui.reader.ReaderScreen
+import dev.shinsou.kmp.ui.reader.ReaderScreenCallbacks
+import dev.shinsou.kmp.ui.reader.ReaderScreenContent
+import dev.shinsou.kmp.ui.reader.ReaderScreenSession
+import dev.shinsou.kmp.ui.reader.UnifiedReaderSlot
+import dev.shinsou.kmp.ui.reader.UnifiedContentReader
+import dev.shinsou.kmp.ui.reader.UnifiedReaderRenderState
+import dev.shinsou.kmp.ui.reader.mangaChapterKey
+import dev.shinsou.kmp.ui.reader.mangaTranslationAvailable
+import dev.shinsou.kmp.ui.reader.mangaWorkKey
+import dev.shinsou.kmp.ui.reader.readerTranslationAvailable
+import dev.shinsou.kmp.ui.reader.rememberMangaReaderTranslation
 import kotlinx.coroutines.launch
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 
 /** The page reader of [ShinsouAppState.reader], over everything else while a session is open. */
 @Composable

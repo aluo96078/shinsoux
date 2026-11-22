@@ -87,11 +87,10 @@ import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.ui.ExtensionFavoriteDestination
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.mutateExtensionFavorite
-import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.extensionPublicationKey
 import dev.shinsou.kmp.domain.model.ReadingLocator
-import dev.shinsou.kmp.ui.ReaderVolumeKeyRouter
 import dev.shinsou.kmp.plugin.v2.ExtensionContentConsumerException
 import dev.shinsou.kmp.plugin.v2.ExtensionPublicationPageV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
@@ -101,7 +100,7 @@ import dev.shinsou.kmp.plugin.v2.overKnownDetails
 import dev.shinsou.kmp.plugin.v2.withoutScriptObjectText
 import dev.shinsou.kmp.ui.components.CoverImage
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -111,6 +110,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.core.LocalMangaTranslation
+import dev.shinsou.kmp.ui.reader.ExtensionNovelReaderShell
+import dev.shinsou.kmp.ui.reader.PrefetchProgress
+import dev.shinsou.kmp.ui.reader.PrefetchSetupDialog
+import dev.shinsou.kmp.ui.reader.extensionContinueReadingDetail
+import dev.shinsou.kmp.ui.sync.ReviewsEntry
+import dev.shinsou.kmp.ui.sync.ShareWithUserDialog
 
 // R4-4 (docs/architecture/0006): split out of BrowseScreen.kt without changing it.
 

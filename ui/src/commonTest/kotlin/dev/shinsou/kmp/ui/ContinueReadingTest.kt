@@ -17,7 +17,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionLocalReadingStateV2
 import dev.shinsou.kmp.plugin.v2.ExtensionUnitPageProgressV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
-import dev.shinsou.kmp.ui.i18n.ShinsouStrings
+import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -84,7 +84,7 @@ class ContinueReadingTest {
         // A library row with no chapter stored here: only the synced reading knows the place.
         val manga = Manga(id = 1, url = encodeExtensionLibraryPublicationUrl(sourceKey, "p1"), favorite = true)
         val item = LibraryItem(LibraryManga(manga, lastRead = 0))
-        result = continueReadingOf(item, AppSnapshot(mangas = listOf(manga)), emptyMap(), browse, ShinsouStrings())
+        result = continueReadingOf(item, AppSnapshot(mangas = listOf(manga)), emptyMap(), browse, shinsouStringsFor("en"))
     }
 
     private var result: LibraryContinueReading? = null

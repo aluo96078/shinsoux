@@ -80,6 +80,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
+import dev.shinsou.kmp.ui.core.LocalMobileKeyboardDismissEnabled
+import dev.shinsou.kmp.ui.core.PluginImageLoader
+import dev.shinsou.kmp.ui.core.onUnconsumedBlankTap
+import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeyMonitoringEnabled
 
 /** Primary, platform-neutral composition entry point. */
 @Composable
@@ -90,7 +94,7 @@ fun ShinsouApp(
     interactionReady: Boolean = true,
 ) {
     val snapshot by repository.snapshot.collectAsState()
-    val pluginImages = remember(appServices.browse) { PluginImageLoader(appServices.browse) }
+    val pluginImages = remember(appServices.browse) { PluginImageLoader.forCatalog(appServices.browse) }
     val appUpdates = remember(appServices.appUpdates) { appServices.appUpdates?.let(::AppUpdateState) }
     val updateScope = rememberCoroutineScope()
     ProvideShinsouStrings(snapshot.settings.general.languagePreference) {
@@ -106,7 +110,7 @@ fun ShinsouApp(
                         dev.shinsou.kmp.ui.components.LocalPluginImageLoader provides pluginImages,
                         dev.shinsou.kmp.ui.components.LocalImageSaver provides appServices::saveImage,
                         dev.shinsou.kmp.ui.components.LocalDeveloperDiagnostics provides snapshot.settings.developer.toDiagnostics(),
-                        dev.shinsou.kmp.ui.screens.LocalMangaTranslation provides appServices.mangaTranslation,
+                        dev.shinsou.kmp.ui.core.LocalMangaTranslation provides appServices.mangaTranslation,
                         LocalAppUpdates provides appUpdates,
                     ) {
                         ShinsouAppContent(

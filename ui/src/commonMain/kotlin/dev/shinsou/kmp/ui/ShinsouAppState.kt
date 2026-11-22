@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui
 
+import dev.shinsou.kmp.ui.core.SettingsEdit
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -26,6 +27,9 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.reader.ReaderProgressObservationClock
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyPressTracker
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
 
 /** How the shell starts: its first section and what the platform says at launch. */
 internal class ShellStart(

@@ -65,6 +65,9 @@ import dev.shinsou.kmp.ui.components.EmptyState
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
+import dev.shinsou.kmp.ui.reader.ExtensionChapterFilter
+import dev.shinsou.kmp.ui.reader.PrefetchChapterStatus
+import dev.shinsou.kmp.ui.reader.readingProgressPageLabel
 
 // R4-4 (docs/architecture/0006): split out of BrowseScreen.kt without changing it.
 

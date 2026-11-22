@@ -31,7 +31,7 @@ import dev.shinsou.kmp.plugin.BrowseSource
 import dev.shinsou.kmp.contract.SourceLoginRequest
 import dev.shinsou.kmp.plugin.SourceWebChallengeRequest
 import dev.shinsou.kmp.ui.challenge.SourceWebChallengeDialog
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text

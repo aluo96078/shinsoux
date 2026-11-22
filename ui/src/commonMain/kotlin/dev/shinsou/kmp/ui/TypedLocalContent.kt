@@ -23,6 +23,8 @@ import dev.shinsou.kmp.sync.v3.SyncClient
 import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.core.PluginImageLoader
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 
 /*
  * R3-4 (docs/architecture/0006): what the library screens need from the content store about

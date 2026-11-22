@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SettingsEdit
+import dev.shinsou.kmp.ui.core.SettingsEdit
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -106,7 +106,7 @@ import dev.shinsou.kmp.ui.components.ScreenHeader
 import dev.shinsou.kmp.ui.components.SearchField
 import dev.shinsou.kmp.ui.LibraryContentType
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
-import dev.shinsou.kmp.ui.dismissKeyboardOnMobileBlankTap
+import dev.shinsou.kmp.ui.core.dismissKeyboardOnMobileBlankTap
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlin.math.absoluteValue

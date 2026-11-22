@@ -27,7 +27,7 @@ import dev.shinsou.kmp.domain.model.UnitKey
 import dev.shinsou.kmp.plugin.v2.ExtensionContentMaterializationV2
 import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.rights.RightsScope
-import dev.shinsou.kmp.ui.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ContentFeatures
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent

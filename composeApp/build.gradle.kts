@@ -56,6 +56,8 @@ kotlin {
             implementation(project(":feature-reader"))
             implementation(project(":feature-translation"))
             implementation(project(":feature-plugin"))
+            implementation(project(":ui-core"))
+            implementation(project(":ui-reader"))
             implementation(project(":ui"))
             implementation(compose.runtime)
             implementation(compose.foundation)
@@ -165,6 +167,10 @@ dependencies {
     kover(project(":feature-reader"))
     kover(project(":feature-translation"))
     kover(project(":feature-plugin"))
+    kover(project(":ui-core"))
+    kover(project(":ui-reader"))
+    kover(project(":ui-translation"))
+    kover(project(":ui-sync"))
     kover(project(":ui"))
 }
 

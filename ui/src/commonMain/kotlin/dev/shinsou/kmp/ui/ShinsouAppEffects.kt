@@ -12,6 +12,8 @@ import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.navigation.NavigationState
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeyMonitoringEnabled
+import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeysEnabled
 
 /**
  * Progress writers and plugin UI availability. The progress queues run off the UI thread: their

@@ -16,10 +16,9 @@ import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.test.currentTime
-import dev.shinsou.kmp.ui.screens.READER_PROGRESS_FLUSH_WAIT_MS
-import dev.shinsou.kmp.ui.screens.awaitProgressFlush
+import dev.shinsou.kmp.ui.reader.ReaderProgressObservationClock
+import dev.shinsou.kmp.ui.reader.ReaderProgressPosition
+import dev.shinsou.kmp.ui.reader.historyPositionLabel
 
 class ReaderHistoryPresentationTest {
     @Test
@@ -192,21 +191,6 @@ class ReaderHistoryPresentationTest {
         assertEquals(12, restored.histories.single().lastPageCount)
         worker.cancel()
         repository.closePersistence()
-    }
-
-    @Test
-    fun aProgressWriteHeldUpDoesNotKeepTheReaderOpen() = runTest {
-        // A flush that never ends (a write stuck behind other work) is waited for only so long.
-        awaitProgressFlush { awaitCancellation() }
-        assertEquals(READER_PROGRESS_FLUSH_WAIT_MS, currentTime)
-    }
-
-    @Test
-    fun aFinishedProgressWriteIsWaitedFor() = runTest {
-        var flushed = false
-        awaitProgressFlush { kotlinx.coroutines.delay(500); flushed = true }
-        assertEquals(true, flushed)
-        assertEquals(500L, currentTime)
     }
 
     private fun progressEvent(

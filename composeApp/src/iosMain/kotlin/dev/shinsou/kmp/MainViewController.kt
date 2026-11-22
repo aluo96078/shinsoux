@@ -16,7 +16,7 @@ import dev.shinsou.kmp.network.createPlatformHttpClient
 import dev.shinsou.kmp.network.installConfiguredImageLoader
 import dev.shinsou.kmp.plugin.IosBrowserUserAgentProvider
 import dev.shinsou.kmp.tts.IosTextToSpeechEngine
-import dev.shinsou.kmp.ui.ReaderVolumeKeyEvent
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyEvent
 import dev.shinsou.kmp.ui.RetainedDeepLinkQueue
 import dev.shinsou.kmp.ui.ShinsouDeepLink
 import dev.shinsou.kmp.ui.ShinsouStartupScreen

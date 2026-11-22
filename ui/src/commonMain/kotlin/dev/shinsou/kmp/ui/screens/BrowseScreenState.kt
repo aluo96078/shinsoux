@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.ui.screens
 
-import dev.shinsou.kmp.ui.SettingsEdit
+import dev.shinsou.kmp.ui.core.SettingsEdit
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -11,8 +11,8 @@ import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.plugin.BrowseManga
 import dev.shinsou.kmp.plugin.BrowseSource
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
-import dev.shinsou.kmp.ui.ContentFeatures
-import dev.shinsou.kmp.ui.ReaderVolumeKeyRouter
+import dev.shinsou.kmp.ui.reader.ContentFeatures
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 

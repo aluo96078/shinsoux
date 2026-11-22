@@ -14,6 +14,7 @@ import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.text
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.reader.prefetchChapter
 
 // Translation ahead of reading for one publication page ([ExtensionPublicationState]).
 

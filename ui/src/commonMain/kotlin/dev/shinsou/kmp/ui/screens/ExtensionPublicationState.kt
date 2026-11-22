@@ -38,6 +38,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.ui.reader.ExtensionChapterFilter
+import dev.shinsou.kmp.ui.reader.PendingExtensionRepresentationSelection
+import dev.shinsou.kmp.ui.reader.extensionContinueUnitId
 
 /** The parts of the extension bridge a publication page uses. */
 internal class ExtensionPublicationServices(
