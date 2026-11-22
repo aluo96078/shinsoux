@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.annotation
 
+import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.domain.model.UnitKey
@@ -11,6 +13,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 class SqlDriverContentAnnotationStoreTest {
     @Test
@@ -84,6 +87,77 @@ class SqlDriverContentAnnotationStoreTest {
             Files.deleteIfExists(database.resolveSibling("${database.fileName}-wal"))
             Files.deleteIfExists(database.resolveSibling("${database.fileName}-shm"))
         }
+    }
+
+    @Test
+    fun listsAreOrderedAndScopedReadsLeaveTombstonesOutUnlessAsked() = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+        val store = SqlDriverContentAnnotationStore(driver)
+        val first = annotation()
+        val later = annotation().copy(annotationId = "44444444-4444-4444-8444-000000000002", createdAtEpochMillis = 5, updatedAtEpochMillis = 5)
+        val removed = annotation().copy(
+            annotationId = "44444444-4444-4444-8444-000000000001",
+            state = ContentAnnotationState.TOMBSTONE,
+            tombstoneReason = "deleted",
+            createdAtEpochMillis = 3,
+            updatedAtEpochMillis = 3,
+        )
+        listOf(later, removed, first).forEach { store.put(it) }
+
+        assertEquals(listOf(first, later), store.list(includeTombstones = false))
+        assertEquals(listOf(first, removed, later), store.list(includeTombstones = true))
+        assertEquals(listOf(first, later), store.list(first.scope))
+        assertEquals(listOf(first, removed, later), store.list(first.scope, includeTombstones = true))
+        val otherScope = first.scope.copy(contentRevision = 1)
+        assertEquals(emptyList(), store.list(otherScope, includeTombstones = true))
+        assertEquals(listOf(later, first), store.listPage(removed.annotationId, limit = 10, includeTombstones = true))
+        assertNull(store.find("44444444-4444-4444-8444-0000000000ff"))
+    }
+
+    @Test
+    fun compareAndSetRefusesWhatChangedAndReplaceAllSwapsTheWholeSet() = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+        val store = SqlDriverContentAnnotationStore(driver)
+        val created = annotation()
+        store.put(created)
+        assertFailsWith<AnnotationConflictException> { store.put(created) }
+        assertFailsWith<AnnotationConflictException> {
+            store.put(created.copy(annotationId = "44444444-4444-4444-8444-000000000009"), expectedUpdatedAtEpochMillis = 1)
+        }
+        assertFailsWith<AnnotationConflictException> {
+            store.put(created.copy(createdAtEpochMillis = 0, updatedAtEpochMillis = 2), expectedUpdatedAtEpochMillis = 1)
+        }
+        val repaired = created.copy(createdAtEpochMillis = 0, updatedAtEpochMillis = 2)
+        store.putFromVerifiedReplica(repaired, expectedUpdatedAtEpochMillis = 1)
+        assertEquals(repaired, store.find(created.annotationId))
+
+        val restored = listOf(
+            annotation().copy(annotationId = "44444444-4444-4444-8444-000000000003", createdAtEpochMillis = 7, updatedAtEpochMillis = 7),
+            annotation().copy(annotationId = "44444444-4444-4444-8444-000000000002", createdAtEpochMillis = 6, updatedAtEpochMillis = 6),
+        )
+        store.replaceAllAtomically(restored)
+        assertEquals(restored.reversed(), store.list(includeTombstones = true))
+    }
+
+    /** Generated statements join the enclosing SQLite transaction of the same driver, as hand-written ones do. */
+    @Test
+    fun aRolledBackTransactionTakesGeneratedAndHandWrittenWritesWithIt() = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
+        val store = SqlDriverContentAnnotationStore(driver)
+        driver.execute(null, "CREATE TABLE other(v TEXT NOT NULL)", 0).value
+        val transactions = object : TransacterImpl(driver) {}
+
+        assertFailsWith<IllegalStateException> {
+            transactions.transaction {
+                store.put(annotation())
+                driver.execute(null, "INSERT INTO other(v) VALUES ('x')", 0).value
+                error("roll back")
+            }
+        }
+
+        assertNull(store.find(annotation().annotationId))
+        val others = driver.executeQuery(null, "SELECT COUNT(*) FROM other", { cursor ->
+            cursor.next()
+            QueryResult.Value(cursor.getLong(0))
+        }, 0).value
+        assertEquals(0L, others)
     }
 
     private fun annotation(): ContentAnnotation {

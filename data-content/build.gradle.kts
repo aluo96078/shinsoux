@@ -2,7 +2,17 @@
 // annotation and search. Depends on :domain and :core.
 plugins {
     id("shinsou.kmp-library")
+    id("shinsou.sqldelight")
     alias(libs.plugins.kotlinSerialization)
+}
+
+// C4 (docs/architecture/0007 §6.2): one database per table group, query code only.
+sqldelight {
+    databases {
+        create("ContentAnnotationDatabase") {
+            packageName.set("dev.shinsou.kmp.annotation.sql")
+        }
+    }
 }
 
 kotlin {

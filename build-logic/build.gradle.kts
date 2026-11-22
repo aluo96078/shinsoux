@@ -12,6 +12,7 @@ dependencies {
     compileOnly("org.jetbrains.compose:compose-gradle-plugin:${libs.versions.compose.get()}")
     compileOnly("dev.detekt:detekt-gradle-plugin:${libs.versions.detekt.get()}")
     compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:${libs.versions.kover.get()}")
+    compileOnly("app.cash.sqldelight:gradle-plugin:${libs.versions.sqldelight.get()}")
 }
 
 gradlePlugin {
@@ -51,6 +52,10 @@ gradlePlugin {
         register("quality") {
             id = "shinsou.quality"
             implementationClass = "dev.shinsou.build.QualityPlugin"
+        }
+        register("sqldelight") {
+            id = "shinsou.sqldelight"
+            implementationClass = "dev.shinsou.build.SqlDelightPlugin"
         }
         register("testing") {
             id = "shinsou.testing"

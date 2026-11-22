@@ -2,7 +2,17 @@
 // Depends on the data, domain and core modules.
 plugins {
     id("shinsou.kmp-library")
+    id("shinsou.sqldelight")
     alias(libs.plugins.kotlinSerialization)
+}
+
+// C4 (docs/architecture/0007 §6.2): one database per table group, query code only.
+sqldelight {
+    databases {
+        create("SyncV3Database") {
+            packageName.set("dev.shinsou.kmp.sync.v3.sql")
+        }
+    }
 }
 
 kotlin {

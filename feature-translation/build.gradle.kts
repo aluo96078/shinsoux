@@ -8,9 +8,19 @@ plugins {
     id("shinsou.kmp-library")
     id("shinsou.native-interop")
     id("shinsou.testing")
+    id("shinsou.sqldelight")
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+}
+
+// C4 (docs/architecture/0007 §6.2): one database per table group, query code only.
+sqldelight {
+    databases {
+        create("TranslationMemoryDatabase") {
+            packageName.set("dev.shinsou.kmp.translation.sql")
+        }
+    }
 }
 
 compose.resources {

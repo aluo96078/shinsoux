@@ -1,5 +1,7 @@
 package dev.shinsou.build
 
+import dev.detekt.gradle.Detekt
+import dev.detekt.gradle.DetektCreateBaselineTask
 import dev.detekt.gradle.extensions.DetektExtension
 import kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension
 import org.gradle.api.Plugin
@@ -18,6 +20,10 @@ public class QualityPlugin : Plugin<Project> {
                 config.setFrom(rootProject.file("config/detekt/detekt.yml"))
                 baseline.set(rootProject.file("config/detekt/${project.name}/baseline.xml"))
             }
+
+            // Generated sources (SQLDelight's query code, C4 of 0007) are not the app's code to lint.
+            tasks.withType(Detekt::class.java).configureEach { exclude { it.file.isGenerated() } }
+            tasks.withType(DetektCreateBaselineTask::class.java).configureEach { exclude { it.file.isGenerated() } }
 
             // What CI runs: the desktop and Android (debug variant) compilations with type resolution
             // (common, JVM and platform sources; the serialization plugin and expect/actual are not
@@ -39,6 +45,8 @@ public class QualityPlugin : Plugin<Project> {
                 filters {
                     excludes {
                         packages("dev.aluo.shinsoux.generated.resources")
+                        // SQLDelight's generated query code (SqlDelightPlugin): its .sq files live in `*.sql` packages.
+                        packages("*.sql")
                         classes("*ComposableSingletons*", "*.BuildInfoKt")
                         annotatedBy("androidx.compose.runtime.Composable")
                     }
@@ -52,6 +60,8 @@ public class QualityPlugin : Plugin<Project> {
         }
     }
 }
+
+private fun java.io.File.isGenerated(): Boolean = invariantSeparatorsPath.contains("/build/generated/")
 
 /** The module whose Kover report merges all the others'. */
 private const val APP_PROJECT_PATH = ":composeApp"

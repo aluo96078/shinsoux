@@ -88,3 +88,5 @@ kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref =
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+# C4 (0007): query code generated from .sq files; the same version as the runtime and drivers
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

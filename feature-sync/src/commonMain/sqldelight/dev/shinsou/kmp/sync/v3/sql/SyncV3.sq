@@ -1,0 +1,170 @@
+-- The sync_v3 table group (C4 of docs/architecture/0007). Its format version (1) and any upgrade
+-- steps stay with SyncV3Schema's SchemaComponent; this DDL is its create step and must stay safe to
+-- run on tables that are already there. Statements whose text depends on the call (the kinds a
+-- device leaves out) are written in SyncV3Store.
+CREATE TABLE IF NOT EXISTS sync3_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS sync3_record(
+  kind TEXT NOT NULL, key TEXT NOT NULL,
+  work_hash TEXT, unit_remote_id TEXT, work_json TEXT,
+  del_value INTEGER, del_clock TEXT, del_dirty INTEGER NOT NULL DEFAULT 0,
+  cleared TEXT, seq INTEGER NOT NULL DEFAULT 0,
+  unapplied INTEGER NOT NULL DEFAULT 0, pending_reason TEXT,
+  reject_reason TEXT, reject_at INTEGER,
+  has_dirty INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(kind, key)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS sync3_record_dirty ON sync3_record(has_dirty) WHERE has_dirty = 1;
+
+CREATE INDEX IF NOT EXISTS sync3_record_unapplied ON sync3_record(unapplied) WHERE unapplied = 1;
+
+CREATE TABLE IF NOT EXISTS sync3_field(
+  kind TEXT NOT NULL, key TEXT NOT NULL, field TEXT NOT NULL,
+  value TEXT NOT NULL, clock TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(kind, key, field)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS sync3_dirty(
+  kind TEXT NOT NULL, ref TEXT NOT NULL, field TEXT NOT NULL, clock TEXT NOT NULL,
+  aux TEXT, tomb_key TEXT, tomb_work TEXT, tomb_unit TEXT,
+  PRIMARY KEY(kind, ref, field)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS sync3_category(local_id INTEGER NOT NULL PRIMARY KEY, uuid TEXT NOT NULL UNIQUE);
+
+CREATE TABLE IF NOT EXISTS sync3_work_identity(
+  manga_id INTEGER NOT NULL PRIMARY KEY, record_key TEXT NOT NULL, work_hash TEXT
+);
+
+-- ---- meta -----------------------------------------------------------------------------------
+
+meta:
+SELECT v FROM sync3_meta WHERE k = ?;
+
+putMeta:
+INSERT OR REPLACE INTO sync3_meta(k, v) VALUES (?, ?);
+
+deleteMeta:
+DELETE FROM sync3_meta WHERE k = ?;
+
+-- ---- dirty set ------------------------------------------------------------------------------
+
+markDirty:
+INSERT OR REPLACE INTO sync3_dirty(kind, ref, field, clock, aux, tomb_key, tomb_work, tomb_unit)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+dirtyRefs:
+SELECT DISTINCT kind, ref FROM sync3_dirty ORDER BY kind, ref LIMIT ?;
+
+dirtyFor:
+SELECT kind, ref, field, clock, aux, tomb_key, tomb_work, tomb_unit FROM sync3_dirty WHERE kind = ? AND ref = ?;
+
+allDirty:
+SELECT kind, ref, field, clock, aux, tomb_key, tomb_work, tomb_unit FROM sync3_dirty ORDER BY kind, ref, field;
+
+hasDirty:
+SELECT 1 FROM sync3_dirty WHERE kind = ? AND ref = ? LIMIT 1;
+
+deleteDirty:
+DELETE FROM sync3_dirty WHERE kind = ? AND ref = ? AND field = ? AND clock = ?;
+
+rebaseDirtyClock:
+UPDATE sync3_dirty SET clock = :clock WHERE kind = :kind AND ref = :ref AND field = :field AND clock = :readClock;
+
+-- ---- records --------------------------------------------------------------------------------
+
+removalClocks:
+SELECT kind, key, del_clock, cleared FROM sync3_record WHERE del_clock IS NOT NULL OR cleared IS NOT NULL;
+
+liveWorkJson:
+SELECT work_hash, MAX(work_json) AS work_json FROM sync3_record
+WHERE work_hash IS NOT NULL AND work_json IS NOT NULL AND (del_value IS NULL OR del_value = 0)
+GROUP BY work_hash;
+
+record:
+SELECT * FROM sync3_record WHERE kind = ? AND key = ?;
+
+fields:
+SELECT field, value, clock, dirty FROM sync3_field WHERE kind = ? AND key = ?;
+
+putRecord:
+INSERT OR REPLACE INTO sync3_record(kind, key, work_hash, unit_remote_id, work_json, del_value, del_clock,
+  del_dirty, cleared, seq, unapplied, pending_reason, reject_reason, reject_at, has_dirty)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteFields:
+DELETE FROM sync3_field WHERE kind = ? AND key = ?;
+
+insertField:
+INSERT INTO sync3_field(kind, key, field, value, clock, dirty) VALUES (?, ?, ?, ?, ?, ?);
+
+deleteRecord:
+DELETE FROM sync3_record WHERE kind = ? AND key = ?;
+
+lastRejection:
+SELECT kind, reject_reason FROM sync3_record WHERE has_dirty = 1 AND reject_reason IS NOT NULL LIMIT 1;
+
+unappliedAfter:
+SELECT * FROM sync3_record WHERE unapplied = 1 AND kind = ? AND key > ? ORDER BY key LIMIT ?;
+
+pendingOfKind:
+SELECT * FROM sync3_record WHERE unapplied = 1 AND pending_reason = ? AND kind = ?;
+
+setApplied:
+UPDATE sync3_record SET unapplied = ?, pending_reason = ? WHERE kind = ? AND key = ?;
+
+worksWaitingForSource:
+SELECT work_json FROM sync3_record WHERE kind = ? AND unapplied = 1 AND pending_reason = ?
+  AND work_json IS NOT NULL AND (del_value IS NULL OR del_value = 0);
+
+recordKeys:
+SELECT key FROM sync3_record WHERE kind = ?;
+
+-- ---- category uuid map ----------------------------------------------------------------------
+
+categoryUuid:
+SELECT uuid FROM sync3_category WHERE local_id = ?;
+
+categoryLocalId:
+SELECT local_id FROM sync3_category WHERE uuid = ?;
+
+bindCategory:
+INSERT OR REPLACE INTO sync3_category(local_id, uuid) VALUES (?, ?);
+
+unbindCategory:
+DELETE FROM sync3_category WHERE local_id = ?;
+
+categoryBindings:
+SELECT local_id, uuid FROM sync3_category;
+
+-- ---- work identity map ----------------------------------------------------------------------
+
+rememberWork:
+INSERT OR REPLACE INTO sync3_work_identity(manga_id, record_key, work_hash) VALUES (?, ?, ?);
+
+forgetWork:
+DELETE FROM sync3_work_identity WHERE manga_id = ?;
+
+rememberedWork:
+SELECT record_key, work_hash FROM sync3_work_identity WHERE manga_id = ?;
+
+-- ---- lifecycle ------------------------------------------------------------------------------
+
+clearDirty:
+DELETE FROM sync3_dirty;
+
+clearFields:
+DELETE FROM sync3_field;
+
+clearRecords:
+DELETE FROM sync3_record;
+
+clearCategories:
+DELETE FROM sync3_category;
+
+clearWorkIdentities:
+DELETE FROM sync3_work_identity;
+
+clearMeta:
+DELETE FROM sync3_meta;

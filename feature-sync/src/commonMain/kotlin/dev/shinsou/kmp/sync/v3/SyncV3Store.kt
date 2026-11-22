@@ -12,6 +12,9 @@ import dev.shinsou.kmp.content.ContentRow
 import dev.shinsou.kmp.content.SchemaComponent
 import dev.shinsou.kmp.content.SchemaMigrator
 import dev.shinsou.kmp.content.tableExists
+import dev.shinsou.kmp.sync.v3.sql.Sync3_record
+import dev.shinsou.kmp.sync.v3.sql.SyncV3Database
+import dev.shinsou.kmp.sync.v3.sql.SyncV3Queries
 import kotlinx.serialization.json.Json
 
 /**
@@ -68,6 +71,9 @@ internal data class StoredRecord(
 internal class SyncV3Store(private val driver: SqlDriver) {
     private val transactions = object : TransacterImpl(driver) {}
 
+    /** The fixed statements (SyncV3.sq); those whose text depends on the call are written below. */
+    private val queries = SyncV3Queries(driver)
+
     init {
         SyncV3Schema.create(driver).value
     }
@@ -76,22 +82,10 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 
     // ---- meta -------------------------------------------------------------------------------
 
-    fun meta(key: String): String? = namedQuery(
-        "SELECT v FROM sync3_meta WHERE k = ?",
-        "sync3_meta",
-        1,
-        { bindString(0, key) },
-    ) { it.stringOrNull("v") }.firstOrNull()
+    fun meta(key: String): String? = queries.meta(key).executeAsList().firstOrNull()
 
     fun setMeta(key: String, value: String?) {
-        if (value == null) {
-            exec("DELETE FROM sync3_meta WHERE k = ?", 1) { bindString(0, key) }
-        } else {
-            exec("INSERT OR REPLACE INTO sync3_meta(k, v) VALUES (?, ?)", 2) {
-                bindString(0, key)
-                bindString(1, value)
-            }
-        }
+        if (value == null) queries.deleteMeta(key).value else queries.putMeta(key, value).value
     }
 
     // ---- dirty set --------------------------------------------------------------------------
@@ -100,72 +94,32 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         if (entries.isEmpty()) return
         transaction {
             entries.forEach { e ->
-                exec(
-                    "INSERT OR REPLACE INTO sync3_dirty(kind, ref, field, clock, aux, tomb_key, tomb_work, tomb_unit) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    8,
-                ) {
-                    bindString(0, e.kind)
-                    bindString(1, e.ref)
-                    bindString(2, e.field)
-                    bindString(3, e.clock)
-                    bindString(4, e.aux)
-                    bindString(5, e.tombKey)
-                    bindString(6, e.tombWork)
-                    bindString(7, e.tombUnit)
-                }
+                queries.markDirty(e.kind, e.ref, e.field, e.clock, e.aux, e.tombKey, e.tombWork, e.tombUnit).value
             }
         }
     }
 
     /** Distinct `(kind, ref)` pairs with unpromoted dirty fields. */
-    fun dirtyRefs(limit: Int): List<Pair<String, String>> = namedQuery(
-        "SELECT DISTINCT kind, ref FROM sync3_dirty ORDER BY kind, ref LIMIT ?",
-        "sync3_dirty",
-        1,
-        { bindLong(0, limit.toLong()) },
-    ) { it.string("kind") to it.string("ref") }
+    fun dirtyRefs(limit: Int): List<Pair<String, String>> =
+        queries.dirtyRefs(limit.toLong()) { kind, ref -> kind to ref }.executeAsList()
 
-    fun dirtyFor(kind: String, ref: String): List<DirtyEntry> = namedQuery(
-        "SELECT $DIRTY_PROJECTION FROM sync3_dirty WHERE kind = ? AND ref = ?",
-        "sync3_dirty",
-        2,
-        { bindString(0, kind); bindString(1, ref) },
-    ) { it.readDirty() }
+    fun dirtyFor(kind: String, ref: String): List<DirtyEntry> = queries.dirtyFor(kind, ref, ::DirtyEntry).executeAsList()
 
-    fun allDirty(): List<DirtyEntry> = namedQuery(
-        "SELECT $DIRTY_PROJECTION FROM sync3_dirty ORDER BY kind, ref, field",
-        "sync3_dirty",
-    ) { it.readDirty() }
+    fun allDirty(): List<DirtyEntry> = queries.allDirty(::DirtyEntry).executeAsList()
 
-    fun hasDirty(kind: String, ref: String): Boolean = query(
-        "SELECT 1 FROM sync3_dirty WHERE kind = ? AND ref = ? LIMIT 1", 2, { bindString(0, kind); bindString(1, ref) },
-    ) { 1 }.isNotEmpty()
+    fun hasDirty(kind: String, ref: String): Boolean = queries.hasDirty(kind, ref).executeAsList().isNotEmpty()
 
     /** Removes exactly the observed rows; a row re-marked with a newer clock stays. */
     fun deleteDirty(entries: Collection<DirtyEntry>) {
         if (entries.isEmpty()) return
         transaction {
-            entries.forEach { e ->
-                exec("DELETE FROM sync3_dirty WHERE kind = ? AND ref = ? AND field = ? AND clock = ?", 4) {
-                    bindString(0, e.kind)
-                    bindString(1, e.ref)
-                    bindString(2, e.field)
-                    bindString(3, e.clock)
-                }
-            }
+            entries.forEach { e -> queries.deleteDirty(e.kind, e.ref, e.field, e.clock).value }
         }
     }
 
     /** Moves [entry] to [clock] unless it was marked again since it was read. */
     fun rebaseDirtyClock(entry: DirtyEntry, clock: String) {
-        exec("UPDATE sync3_dirty SET clock = ? WHERE kind = ? AND ref = ? AND field = ? AND clock = ?", 5) {
-            bindString(0, clock)
-            bindString(1, entry.kind)
-            bindString(2, entry.ref)
-            bindString(3, entry.field)
-            bindString(4, entry.clock)
-        }
+        queries.rebaseDirtyClock(clock = clock, kind = entry.kind, ref = entry.ref, field = entry.field, readClock = entry.clock).value
     }
 
     // ---- acknowledged clock floor -----------------------------------------------------------
@@ -187,17 +141,9 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 
     /** Records whose removal register or removal floor satisfies [matches] (clock strings do not sort in SQL). */
     fun recordsWithRemovalClocks(matches: (deleted: String?, cleared: String?) -> Boolean): List<StoredRecord> =
-        namedQuery(
-            "SELECT kind, key, del_clock, cleared FROM sync3_record " +
-                "WHERE del_clock IS NOT NULL OR cleared IS NOT NULL",
-            "sync3_record",
-        ) { row ->
-            Triple(
-                row.string("kind"),
-                row.string("key"),
-                row.stringOrNull("del_clock") to row.stringOrNull("cleared"),
-            )
-        }.filter { (_, _, clocks) -> matches(clocks.first, clocks.second) }
+        queries.removalClocks { kind, key, deleted, cleared -> Triple(kind, key, deleted to cleared) }
+            .executeAsList()
+            .filter { (_, _, clocks) -> matches(clocks.first, clocks.second) }
             .mapNotNull { (kind, key, _) -> loadRecord(kind, key) }
 
     fun noteAcknowledgedClocks(clocks: Collection<String>) {
@@ -236,82 +182,63 @@ internal class SyncV3Store(private val driver: SqlDriver) {
     // ---- records ----------------------------------------------------------------------------
 
     /** The stored descriptor of every work this account has live records for (library, history, progress, units). */
-    fun liveWorkJson(): List<String> = namedQuery(
-        "SELECT work_hash, MAX(work_json) AS work_json FROM sync3_record " +
-            "WHERE work_hash IS NOT NULL AND work_json IS NOT NULL " +
-            "AND (del_value IS NULL OR del_value = 0) GROUP BY work_hash",
-        "sync3_record",
-    ) { it.string("work_json") }
+    fun liveWorkJson(): List<String> = queries.liveWorkJson { _, workJson ->
+        // Never null: the statement keeps only rows that have one.
+        requireNotNull(workJson) { "sync3_record.work_json is null" }
+    }.executeAsList()
 
     fun loadRecord(kind: String, key: String): StoredRecord? {
-        val head = namedQuery(
-            RECORD_SELECT + " WHERE kind = ? AND key = ?",
-            "sync3_record",
-            2,
-            { bindString(0, kind); bindString(1, key) },
-        ) { it.readRecordHead() }.firstOrNull() ?: return null
+        val head = queries.record(kind, key).executeAsList().firstOrNull()?.toHead() ?: return null
         return head.withFields(loadFields(kind, key))
     }
 
-    private fun loadFields(kind: String, key: String): Map<String, LwwMerge.LocalField> = namedQuery(
-        "SELECT field, value, clock, dirty FROM sync3_field WHERE kind = ? AND key = ?",
-        "sync3_field",
-        2,
-        { bindString(0, kind); bindString(1, key) },
-    ) { row ->
-        row.string("field") to LwwMerge.LocalField(
-            value = Json.parseToJsonElement(row.string("value")),
-            clock = row.string("clock"),
-            dirty = row.longOrNull("dirty") == 1L,
-        )
-    }.toMap()
+    private fun loadFields(kind: String, key: String): Map<String, LwwMerge.LocalField> =
+        queries.fields(kind, key) { field, value, clock, dirty ->
+            field to LwwMerge.LocalField(
+                value = Json.parseToJsonElement(value),
+                clock = clock,
+                dirty = dirty == 1L,
+            )
+        }.executeAsList().toMap()
 
     fun saveRecord(record: StoredRecord) {
         transaction {
             val hasDirty = record.state.hasDirty()
-            exec(
-                "INSERT OR REPLACE INTO sync3_record(kind, key, work_hash, unit_remote_id, work_json, del_value, del_clock, " +
-                    "del_dirty, cleared, seq, unapplied, pending_reason, reject_reason, reject_at, has_dirty) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                15,
-            ) {
-                bindString(0, record.kind)
-                bindString(1, record.key)
-                bindString(2, record.workHash)
-                bindString(3, record.unitRemoteId)
-                bindString(4, record.workJson)
-                bindLong(5, record.state.deleted?.let { if (it.value) 1L else 0L })
-                bindString(6, record.state.deleted?.clock)
-                bindLong(7, if (record.state.deleted?.dirty == true) 1L else 0L)
-                bindString(8, record.state.cleared)
-                bindLong(9, record.seq)
-                bindLong(10, if (record.unapplied) 1L else 0L)
-                bindString(11, record.pendingReason)
-                bindString(12, record.rejectReason)
-                bindLong(13, record.rejectedAt)
-                bindLong(14, if (hasDirty) 1L else 0L)
-            }
-            exec("DELETE FROM sync3_field WHERE kind = ? AND key = ?", 2) {
-                bindString(0, record.kind)
-                bindString(1, record.key)
-            }
+            queries.putRecord(
+                kind = record.kind,
+                key = record.key,
+                work_hash = record.workHash,
+                unit_remote_id = record.unitRemoteId,
+                work_json = record.workJson,
+                del_value = record.state.deleted?.let { if (it.value) 1L else 0L },
+                del_clock = record.state.deleted?.clock,
+                del_dirty = if (record.state.deleted?.dirty == true) 1L else 0L,
+                cleared = record.state.cleared,
+                seq = record.seq,
+                unapplied = if (record.unapplied) 1L else 0L,
+                pending_reason = record.pendingReason,
+                reject_reason = record.rejectReason,
+                reject_at = record.rejectedAt,
+                has_dirty = if (hasDirty) 1L else 0L,
+            ).value
+            queries.deleteFields(record.kind, record.key).value
             record.state.fields.forEach { (name, field) ->
-                exec("INSERT INTO sync3_field(kind, key, field, value, clock, dirty) VALUES (?, ?, ?, ?, ?, ?)", 6) {
-                    bindString(0, record.kind)
-                    bindString(1, record.key)
-                    bindString(2, name)
-                    bindString(3, field.value.toString())
-                    bindString(4, field.clock)
-                    bindLong(5, if (field.dirty) 1L else 0L)
-                }
+                queries.insertField(
+                    record.kind,
+                    record.key,
+                    name,
+                    field.value.toString(),
+                    field.clock,
+                    if (field.dirty) 1L else 0L,
+                ).value
             }
         }
     }
 
     fun deleteRecord(kind: String, key: String) {
         transaction {
-            exec("DELETE FROM sync3_field WHERE kind = ? AND key = ?", 2) { bindString(0, kind); bindString(1, key) }
-            exec("DELETE FROM sync3_record WHERE kind = ? AND key = ?", 2) { bindString(0, kind); bindString(1, key) }
+            queries.deleteFields(kind, key).value
+            queries.deleteRecord(kind, key).value
         }
     }
 
@@ -365,19 +292,12 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         "sync3_record",
     ) { it.long("row_count").toInt() }.first()
 
-    fun lastRejection(): String? = namedQuery(
-        "SELECT kind, reject_reason FROM sync3_record WHERE has_dirty = 1 AND reject_reason IS NOT NULL LIMIT 1",
-        "sync3_record",
-    ) { "${it.stringOrNull("kind")}: ${it.stringOrNull("reject_reason")}" }.firstOrNull()
+    fun lastRejection(): String? =
+        queries.lastRejection { kind, reason -> "$kind: $reason" }.executeAsList().firstOrNull()
 
     /** Unapplied records of one kind with `key > afterKey`, in key order (pending ones stay unapplied). */
     fun unappliedRecords(kind: String, afterKey: String, limit: Int): List<StoredRecord> {
-        val heads = namedQuery(
-            RECORD_SELECT + " WHERE unapplied = 1 AND kind = ? AND key > ? ORDER BY key LIMIT ?",
-            "sync3_record",
-            3,
-            { bindString(0, kind); bindString(1, afterKey); bindLong(2, limit.toLong()) },
-        ) { it.readRecordHead() }
+        val heads = queries.unappliedAfter(kind, afterKey, limit.toLong()).executeAsList().map { it.toHead() }
         return heads.map { it.withFields(loadFields(it.kind, it.key)) }
     }
 
@@ -407,15 +327,7 @@ internal class SyncV3Store(private val driver: SqlDriver) {
      */
     fun lastReadWaitingForUnit(excluded: Set<String> = emptySet()): Map<String, Long> {
         if (SyncKinds.HISTORY in excluded) return emptyMap()
-        val heads = namedQuery(
-            RECORD_SELECT + " WHERE unapplied = 1 AND pending_reason = ? AND kind = ?",
-            "sync3_record",
-            2,
-            {
-                bindString(0, PENDING_UNIT_UNKNOWN)
-                bindString(1, SyncKinds.HISTORY)
-            },
-        ) { it.readRecordHead() }
+        val heads = queries.pendingOfKind(PENDING_UNIT_UNKNOWN, SyncKinds.HISTORY).executeAsList().map { it.toHead() }
         val result = HashMap<String, Long>()
         for (head in heads) {
             val work = head.record.workHash ?: continue
@@ -430,22 +342,12 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 
     /** Marks a record as projected (or parked with [pendingReason]) without touching its fields. */
     fun setApplied(kind: String, key: String, pendingReason: String?) {
-        exec("UPDATE sync3_record SET unapplied = ?, pending_reason = ? WHERE kind = ? AND key = ?", 4) {
-            bindLong(0, if (pendingReason == null) 0L else 1L)
-            bindString(1, pendingReason)
-            bindString(2, kind)
-            bindString(3, key)
-        }
+        queries.setApplied(if (pendingReason == null) 0L else 1L, pendingReason, kind, key).value
     }
 
     /** Descriptors of titles from the account that wait for a source this device has not installed. */
-    fun worksWaitingForSource(): List<String> = namedQuery(
-        "SELECT work_json FROM sync3_record WHERE kind = ? AND unapplied = 1 AND pending_reason = ? " +
-            "AND work_json IS NOT NULL AND (del_value IS NULL OR del_value = 0)",
-        "sync3_record",
-        2,
-        { bindString(0, SyncKinds.LIBRARY); bindString(1, PENDING_SOURCE_NOT_INSTALLED) },
-    ) { it.string("work_json") }
+    fun worksWaitingForSource(): List<String> =
+        queries.worksWaitingForSource(SyncKinds.LIBRARY, PENDING_SOURCE_NOT_INSTALLED).executeAsList()
 
     fun pendingRemoteCount(excluded: Set<String> = emptySet()): Int = namedQuery(
         "SELECT COUNT(*) AS row_count FROM sync3_record WHERE unapplied = 1 AND pending_reason IS NOT NULL" +
@@ -467,12 +369,7 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         if (excluded.isEmpty()) "" else " AND kind NOT IN (${excluded.joinToString(",") { "'${it.replace("'", "")}'" }})"
 
     /** Keys of every non-deleted record of [kind]; used by 410 recovery. */
-    fun recordKeys(kind: String): List<String> = namedQuery(
-        "SELECT key FROM sync3_record WHERE kind = ?",
-        "sync3_record",
-        1,
-        { bindString(0, kind) },
-    ) { it.string("key") }
+    fun recordKeys(kind: String): List<String> = queries.recordKeys(kind).executeAsList()
 
     /** Every record of [kind] that is not a tombstone. */
     fun liveRecords(kind: String): List<StoredRecord> =
@@ -480,73 +377,50 @@ internal class SyncV3Store(private val driver: SqlDriver) {
 
     // ---- category uuid map ------------------------------------------------------------------
 
-    fun categoryUuid(localId: Long): String? = namedQuery(
-        "SELECT uuid FROM sync3_category WHERE local_id = ?",
-        "sync3_category",
-        1,
-        { bindLong(0, localId) },
-    ) { it.string("uuid") }.firstOrNull()
+    fun categoryUuid(localId: Long): String? = queries.categoryUuid(localId).executeAsList().firstOrNull()
 
-    fun categoryLocalId(uuid: String): Long? = namedQuery(
-        "SELECT local_id FROM sync3_category WHERE uuid = ?",
-        "sync3_category",
-        1,
-        { bindString(0, uuid) },
-    ) { it.long("local_id") }.firstOrNull()
+    fun categoryLocalId(uuid: String): Long? = queries.categoryLocalId(uuid).executeAsList().firstOrNull()
 
     fun bindCategory(localId: Long, uuid: String) {
-        exec("INSERT OR REPLACE INTO sync3_category(local_id, uuid) VALUES (?, ?)", 2) {
-            bindLong(0, localId)
-            bindString(1, uuid)
-        }
+        queries.bindCategory(localId, uuid).value
     }
 
     fun unbindCategory(localId: Long) {
-        exec("DELETE FROM sync3_category WHERE local_id = ?", 1) { bindLong(0, localId) }
+        queries.unbindCategory(localId).value
     }
 
-    fun allCategoryBindings(): Map<Long, String> = namedQuery(
-        "SELECT local_id, uuid FROM sync3_category",
-        "sync3_category",
-    ) { it.long("local_id") to it.string("uuid") }.toMap()
+    fun allCategoryBindings(): Map<Long, String> =
+        queries.categoryBindings { localId, uuid -> localId to uuid }.executeAsList().toMap()
 
     // ---- work identity map ------------------------------------------------------------------
 
     fun rememberWork(mangaId: Long, recordKey: String, workHash: String?) {
-        exec("INSERT OR REPLACE INTO sync3_work_identity(manga_id, record_key, work_hash) VALUES (?, ?, ?)", 3) {
-            bindLong(0, mangaId)
-            bindString(1, recordKey)
-            bindString(2, workHash)
-        }
+        queries.rememberWork(mangaId, recordKey, workHash).value
     }
 
     fun forgetWork(mangaId: Long) {
-        exec("DELETE FROM sync3_work_identity WHERE manga_id = ?", 1) { bindLong(0, mangaId) }
+        queries.forgetWork(mangaId).value
     }
 
     /** `recordKey to workHash` last known for a local title, used to tombstone a removed title. */
-    fun rememberedWork(mangaId: Long): Pair<String, String?>? = namedQuery(
-        "SELECT record_key, work_hash FROM sync3_work_identity WHERE manga_id = ?",
-        "sync3_work_identity",
-        1,
-        { bindLong(0, mangaId) },
-    ) { it.string("record_key") to it.stringOrNull("work_hash") }.firstOrNull()
+    fun rememberedWork(mangaId: Long): Pair<String, String?>? =
+        queries.rememberedWork(mangaId) { recordKey, workHash -> recordKey to workHash }.executeAsList().firstOrNull()
 
     // ---- lifecycle --------------------------------------------------------------------------
 
     /** Drops every sync table row (logout, or signing in to a different account). */
     fun clearAll() {
         transaction {
-            listOf("sync3_dirty", "sync3_field", "sync3_record", "sync3_category", "sync3_work_identity", "sync3_meta")
-                .forEach { exec("DELETE FROM $it", 0, null) }
+            queries.clearDirty().value
+            queries.clearFields().value
+            queries.clearRecords().value
+            queries.clearCategories().value
+            queries.clearWorkIdentities().value
+            queries.clearMeta().value
         }
     }
 
     // ---- plumbing ---------------------------------------------------------------------------
-
-    private fun exec(sql: String, parameters: Int, binders: (SqlPreparedStatement.() -> Unit)?) {
-        driver.execute(null, sql, parameters, binders).value
-    }
 
     private fun <T> query(
         sql: String,
@@ -580,17 +454,6 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         return query(sql, parameters, binders) { cursor -> map(ContentCursorRow(cursor, table, columns)) }
     }
 
-    private fun ContentCursorRow.readDirty() = DirtyEntry(
-        kind = string("kind"),
-        ref = string("ref"),
-        field = string("field"),
-        clock = string("clock"),
-        aux = stringOrNull("aux"),
-        tombKey = stringOrNull("tomb_key"),
-        tombWork = stringOrNull("tomb_work"),
-        tombUnit = stringOrNull("tomb_unit"),
-    )
-
     private data class Head(
         val record: StoredRecord,
         val deletedValue: Boolean?,
@@ -615,6 +478,26 @@ internal class SyncV3Store(private val driver: SqlDriver) {
         )
     }
 
+    private fun Sync3_record.toHead(): Head = Head(
+        record = StoredRecord(
+            kind = kind,
+            key = key,
+            workHash = work_hash,
+            unitRemoteId = unit_remote_id,
+            workJson = work_json,
+            state = LwwMerge.LocalState(cleared = cleared),
+            seq = seq,
+            unapplied = unapplied == 1L,
+            pendingReason = pending_reason,
+            rejectReason = reject_reason,
+            rejectedAt = reject_at,
+        ),
+        deletedValue = del_value?.let { it == 1L },
+        deletedClock = del_clock,
+        deletedDirty = del_dirty == 1L,
+    )
+
+    /** [toHead] for the statements written here, read by column name. */
     private fun ContentCursorRow.readRecordHead(): Head {
         val delValue = longOrNull("del_value")
         return Head(
@@ -640,8 +523,6 @@ internal class SyncV3Store(private val driver: SqlDriver) {
     private companion object {
         const val META_ACK_FLOOR = "ack_floor"
         const val META_ACK_FLOOR_COMPLETE = "ack_floor_complete"
-        const val DIRTY_PROJECTION =
-            "kind, ref, field, clock, aux, tomb_key, tomb_work, tomb_unit"
         const val RECORD_PROJECTION =
             "kind, key, work_hash, unit_remote_id, work_json, del_value, del_clock, del_dirty, cleared, seq, " +
                 "unapplied, pending_reason, reject_reason, reject_at"
@@ -656,53 +537,14 @@ object SyncV3Schema : SqlSchema<QueryResult.Value<Unit>> {
     val component: SchemaComponent = SchemaComponent(
         name = "sync_v3",
         version = version,
-        create = ::createTables,
+        // The generated DDL (SyncV3.sq); its own Schema version is not used.
+        create = { driver -> SyncV3Database.Schema.create(driver).value },
         unrecordedVersion = { driver -> if (tableExists(driver, "sync3_meta")) 1 else null },
     )
 
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
         SchemaMigrator.migrate(driver, component)
         return QueryResult.Unit
-    }
-
-    private fun createTables(driver: SqlDriver) {
-        listOf(
-            "CREATE TABLE IF NOT EXISTS sync3_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
-            """
-            CREATE TABLE IF NOT EXISTS sync3_record(
-              kind TEXT NOT NULL, key TEXT NOT NULL,
-              work_hash TEXT, unit_remote_id TEXT, work_json TEXT,
-              del_value INTEGER, del_clock TEXT, del_dirty INTEGER NOT NULL DEFAULT 0,
-              cleared TEXT, seq INTEGER NOT NULL DEFAULT 0,
-              unapplied INTEGER NOT NULL DEFAULT 0, pending_reason TEXT,
-              reject_reason TEXT, reject_at INTEGER,
-              has_dirty INTEGER NOT NULL DEFAULT 0,
-              PRIMARY KEY(kind, key)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            "CREATE INDEX IF NOT EXISTS sync3_record_dirty ON sync3_record(has_dirty) WHERE has_dirty = 1",
-            "CREATE INDEX IF NOT EXISTS sync3_record_unapplied ON sync3_record(unapplied) WHERE unapplied = 1",
-            """
-            CREATE TABLE IF NOT EXISTS sync3_field(
-              kind TEXT NOT NULL, key TEXT NOT NULL, field TEXT NOT NULL,
-              value TEXT NOT NULL, clock TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0,
-              PRIMARY KEY(kind, key, field)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            """
-            CREATE TABLE IF NOT EXISTS sync3_dirty(
-              kind TEXT NOT NULL, ref TEXT NOT NULL, field TEXT NOT NULL, clock TEXT NOT NULL,
-              aux TEXT, tomb_key TEXT, tomb_work TEXT, tomb_unit TEXT,
-              PRIMARY KEY(kind, ref, field)
-            ) WITHOUT ROWID
-            """.trimIndent(),
-            "CREATE TABLE IF NOT EXISTS sync3_category(local_id INTEGER NOT NULL PRIMARY KEY, uuid TEXT NOT NULL UNIQUE)",
-            """
-            CREATE TABLE IF NOT EXISTS sync3_work_identity(
-              manga_id INTEGER NOT NULL PRIMARY KEY, record_key TEXT NOT NULL, work_hash TEXT
-            )
-            """.trimIndent(),
-        ).forEach { driver.execute(null, it, 0).value }
     }
 
     override fun migrate(

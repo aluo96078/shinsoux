@@ -4,9 +4,11 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SqlStatementIdentifiersTest {
     @Test
@@ -39,6 +41,18 @@ class SqlStatementIdentifiersTest {
         val registry = SqlStatementIdentifiers()
         repeat(SqlStatementIdentifiers.DEFAULT_MAX_ENTRIES) { assertNotNull(registry.identifierFor("SELECT $it")) }
         assertNull(registry.identifierFor("SELECT overflow"))
+    }
+
+    @Test
+    fun numbersStayInsideTheRangeTheBuildKeepsFreeOfGeneratedIdentifiers() {
+        val registry = SqlStatementIdentifiers()
+        val first = SqlStatementIdentifiers.FIRST_IDENTIFIER
+        val ids = (0 until SqlStatementIdentifiers.DEFAULT_MAX_ENTRIES).map { requireNotNull(registry.identifierFor("SELECT $it")) }
+
+        assertEquals(first, ids.first())
+        assertEquals(first + SqlStatementIdentifiers.DEFAULT_MAX_ENTRIES - 1, ids.last())
+        assertTrue(ids.all { it in first until first + SqlStatementIdentifiers.DEFAULT_MAX_ENTRIES })
+        assertFailsWith<IllegalArgumentException> { SqlStatementIdentifiers(SqlStatementIdentifiers.DEFAULT_MAX_ENTRIES + 1) }
     }
 
     @Test

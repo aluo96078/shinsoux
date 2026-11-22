@@ -1,0 +1,65 @@
+-- The content_annotations table group (C4 of docs/architecture/0007). Its format version (1) and
+-- any upgrade steps stay with ContentAnnotationSchema's SchemaComponent; this DDL is its create
+-- step and must stay safe to run on tables that are already there.
+CREATE TABLE IF NOT EXISTS content_annotations(
+  annotation_id TEXT NOT NULL PRIMARY KEY,
+  publication_id TEXT NOT NULL,
+  acquisition_id TEXT NOT NULL,
+  unit_id TEXT NOT NULL,
+  content_revision INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  annotation_json TEXT NOT NULL
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS content_annotations_scope
+ON content_annotations(publication_id, acquisition_id, unit_id, content_revision, state);
+
+insert:
+INSERT INTO content_annotations(
+  annotation_id, publication_id, acquisition_id, unit_id,
+  content_revision, state, created_at, updated_at, annotation_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Compare-and-set: changes the row only while it still has the update time the caller read.
+updateIfUnchanged:
+UPDATE content_annotations SET
+  publication_id = :publicationId, acquisition_id = :acquisitionId, unit_id = :unitId,
+  content_revision = :contentRevision, state = :state, created_at = :createdAt, updated_at = :updatedAt,
+  annotation_json = :annotationJson
+WHERE annotation_id = :annotationId AND updated_at = :expectedUpdatedAt;
+
+deleteAll:
+DELETE FROM content_annotations;
+
+find:
+SELECT annotation_id, publication_id, acquisition_id, unit_id,
+       content_revision, state, created_at, updated_at, annotation_json
+FROM content_annotations WHERE annotation_id = ?;
+
+all:
+SELECT annotation_id, publication_id, acquisition_id, unit_id,
+       content_revision, state, created_at, updated_at, annotation_json
+FROM content_annotations ORDER BY created_at, annotation_id;
+
+inScope:
+SELECT annotation_id, publication_id, acquisition_id, unit_id,
+       content_revision, state, created_at, updated_at, annotation_json
+FROM content_annotations
+WHERE publication_id = ?
+  AND acquisition_id = ?
+  AND unit_id = ?
+  AND content_revision = ?
+ORDER BY created_at, annotation_id;
+
+inScopeExceptState:
+SELECT annotation_id, publication_id, acquisition_id, unit_id,
+       content_revision, state, created_at, updated_at, annotation_json
+FROM content_annotations
+WHERE publication_id = ?
+  AND acquisition_id = ?
+  AND unit_id = ?
+  AND content_revision = ?
+  AND state != ?
+ORDER BY created_at, annotation_id;

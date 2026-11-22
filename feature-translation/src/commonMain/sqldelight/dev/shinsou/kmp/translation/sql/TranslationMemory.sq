@@ -1,0 +1,233 @@
+-- The translation_memory table group (C4 of docs/architecture/0007), as of format 4. The format
+-- version and the steps from older formats stay with TranslationMemorySchema's SchemaComponent:
+-- formats 2 to 4 each added a column at the end of its table (tm_segment.exportable,
+-- tm_work.turned_off, tm_work.from_picked), so a new table must list them in that order. This DDL is
+-- the create step and must stay safe to run on tables that are already there. Statements whose
+-- text depends on the call (completeChapterKeys) are written in TranslationMemoryStore.
+CREATE TABLE IF NOT EXISTS tm_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS tm_segment(
+  source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
+  text TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL, used_at INTEGER NOT NULL,
+  exportable INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(source_hash, from_lang, to_lang, engine)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS tm_segment_free_age ON tm_segment(used_at) WHERE paid = 0;
+
+CREATE TABLE IF NOT EXISTS tm_chapter(
+  work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, to_lang TEXT NOT NULL, provider TEXT NOT NULL,
+  source_hash TEXT NOT NULL, segment_count INTEGER NOT NULL, complete INTEGER NOT NULL,
+  paid INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
+  PRIMARY KEY(work_key, chapter_key, to_lang, provider)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS tm_glossary(
+  work_key TEXT NOT NULL, to_lang TEXT NOT NULL, id INTEGER NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL,
+  PRIMARY KEY(work_key, to_lang, id)
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS tm_glossary_source ON tm_glossary(work_key, to_lang, source);
+
+-- Which stored lines each chapter's translation uses, so one chapter's can be removed.
+CREATE TABLE IF NOT EXISTS tm_chapter_segment(
+  work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, chapter_to TEXT NOT NULL, provider TEXT NOT NULL,
+  source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
+  PRIMARY KEY(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS tm_chapter_segment_line ON tm_chapter_segment(source_hash, from_lang, to_lang, engine);
+
+-- Names for the settings page; chapter_key '' is the work itself.
+CREATE TABLE IF NOT EXISTS tm_label(
+  work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, title TEXT NOT NULL, source TEXT,
+  PRIMARY KEY(work_key, chapter_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS tm_work(
+  work_key TEXT NOT NULL PRIMARY KEY, enabled INTEGER NOT NULL,
+  from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, mode TEXT NOT NULL,
+  turned_off INTEGER NOT NULL DEFAULT 0,
+  from_picked INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+
+-- ---- segments -------------------------------------------------------------------------------
+
+segmentsIn:
+SELECT source_hash, text FROM tm_segment
+WHERE from_lang = :from AND to_lang = :to AND engine = :engine AND source_hash IN :hashes;
+
+markSegmentsUsed:
+UPDATE tm_segment SET used_at = :now, exportable = :exportable
+WHERE from_lang = :from AND to_lang = :to AND engine = :engine AND source_hash IN :hashes;
+
+insertSegmentIfAbsent:
+INSERT OR IGNORE INTO tm_segment(source_hash, from_lang, to_lang, engine, text, paid, bytes, used_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+setSegmentExportable:
+UPDATE tm_segment SET exportable = ? WHERE source_hash = ? AND from_lang = ? AND to_lang = ? AND engine = ?;
+
+-- A translation the user paid for is never replaced by a free one, nor turned into one.
+replaceSegmentUnlessPaid:
+UPDATE tm_segment SET text = :text, paid = :paid, bytes = :bytes, used_at = :now
+WHERE source_hash = :sourceHash AND from_lang = :from AND to_lang = :to AND engine = :engine AND paid <= :paid;
+
+freeBytes:
+SELECT COALESCE(SUM(bytes), 0) AS total_bytes FROM tm_segment WHERE paid = 0;
+
+paidBytes:
+SELECT COALESCE(SUM(bytes), 0) AS total_bytes FROM tm_segment WHERE paid = 1;
+
+-- The least recently used free translations, a batch at a time.
+evictionBatch:
+SELECT source_hash, from_lang, to_lang, engine, bytes FROM tm_segment
+WHERE paid = 0 ORDER BY used_at, source_hash LIMIT 200;
+
+deleteSegment:
+DELETE FROM tm_segment WHERE source_hash = ? AND from_lang = ? AND to_lang = ? AND engine = ?;
+
+markFreeChaptersIncomplete:
+UPDATE tm_chapter SET complete = 0 WHERE paid = 0;
+
+-- ---- chapters -------------------------------------------------------------------------------
+
+replaceChapter:
+INSERT OR REPLACE INTO tm_chapter(work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertChapterIfAbsent:
+INSERT OR IGNORE INTO tm_chapter(work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+chapters:
+SELECT work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at
+FROM tm_chapter WHERE work_key = ? AND to_lang = ? ORDER BY chapter_key, provider;
+
+putWorkLabel:
+INSERT OR REPLACE INTO tm_label(work_key, chapter_key, title, source) VALUES (?, '', ?, ?);
+
+putChapterLabel:
+INSERT OR REPLACE INTO tm_label(work_key, chapter_key, title, source) VALUES (?, ?, ?, NULL);
+
+deleteChapterSegments:
+DELETE FROM tm_chapter_segment WHERE work_key = ? AND chapter_key = ? AND chapter_to = ? AND provider = ?;
+
+insertChapterSegment:
+INSERT OR IGNORE INTO tm_chapter_segment(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- The stored lines of one chapter's translation that no other chapter's translation also uses.
+-- (SQLDelight's grammar has no `NOT (...)`: "another chapter" is spelled out column by column; every
+-- column and argument is non-null, so it is the same test.)
+deleteLinesOnlyChapterUses:
+DELETE FROM tm_segment WHERE EXISTS (
+  SELECT 1 FROM tm_chapter_segment m
+  WHERE m.work_key = :workKey AND m.chapter_key = :chapterKey AND m.chapter_to = :to AND m.provider = :provider
+    AND m.source_hash = tm_segment.source_hash AND m.from_lang = tm_segment.from_lang
+    AND m.to_lang = tm_segment.to_lang AND m.engine = tm_segment.engine
+) AND NOT EXISTS (
+  SELECT 1 FROM tm_chapter_segment o
+  WHERE o.source_hash = tm_segment.source_hash AND o.from_lang = tm_segment.from_lang
+    AND o.to_lang = tm_segment.to_lang AND o.engine = tm_segment.engine
+    AND (o.work_key <> :workKey OR o.chapter_key <> :chapterKey OR o.chapter_to <> :to OR o.provider <> :provider)
+);
+
+deleteChapter:
+DELETE FROM tm_chapter WHERE work_key = ? AND chapter_key = ? AND to_lang = ? AND provider = ?;
+
+-- Names go with the last record that used them.
+deleteUnusedChapterLabel:
+DELETE FROM tm_label WHERE work_key = :workKey AND chapter_key = :chapterKey
+AND NOT EXISTS (SELECT 1 FROM tm_chapter c WHERE c.work_key = :workKey AND c.chapter_key = :chapterKey);
+
+deleteUnusedWorkLabel:
+DELETE FROM tm_label WHERE work_key = :workKey AND chapter_key = ''
+AND NOT EXISTS (SELECT 1 FROM tm_chapter c WHERE c.work_key = :workKey);
+
+workChapters:
+SELECT chapter_key, to_lang, provider FROM tm_chapter WHERE work_key = ?;
+
+storedChapters:
+SELECT c.work_key, c.chapter_key, c.to_lang, c.provider, c.segment_count, c.complete, c.paid, c.updated_at,
+       w.title AS work_title, l.title AS chapter_title, w.source
+FROM tm_chapter c
+LEFT JOIN tm_label w ON w.work_key = c.work_key AND w.chapter_key = ''
+LEFT JOIN tm_label l ON l.work_key = c.work_key AND l.chapter_key = c.chapter_key
+WHERE c.segment_count > 0 ORDER BY c.updated_at DESC, c.work_key, c.chapter_key LIMIT ?;
+
+forgetWorkChapters:
+DELETE FROM tm_chapter WHERE work_key = ?;
+
+forgetWorkGlossary:
+DELETE FROM tm_glossary WHERE work_key = ?;
+
+forgetWorkSettings:
+DELETE FROM tm_work WHERE work_key = ?;
+
+forgetWorkLabels:
+DELETE FROM tm_label WHERE work_key = ?;
+
+forgetWorkChapterSegments:
+DELETE FROM tm_chapter_segment WHERE work_key = ?;
+
+-- ---- per-work settings ----------------------------------------------------------------------
+
+workSettings:
+SELECT enabled, from_lang, to_lang, mode, turned_off, from_picked FROM tm_work WHERE work_key = ?;
+
+putWorkSettings:
+INSERT OR REPLACE INTO tm_work(work_key, enabled, from_lang, to_lang, mode, turned_off, from_picked)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- ---- glossary -------------------------------------------------------------------------------
+
+glossary:
+SELECT id, source, target FROM tm_glossary WHERE work_key = ? AND to_lang = ? ORDER BY id;
+
+glossaryTermId:
+SELECT id FROM tm_glossary WHERE work_key = ? AND to_lang = ? AND source = ?;
+
+putGlossaryTerm:
+INSERT OR REPLACE INTO tm_glossary(work_key, to_lang, id, source, target) VALUES (?, ?, ?, ?, ?);
+
+removeGlossaryTerm:
+DELETE FROM tm_glossary WHERE work_key = ? AND to_lang = ? AND id = ?;
+
+clearGlossary:
+DELETE FROM tm_glossary WHERE work_key = ? AND to_lang = ?;
+
+-- ---- backup ---------------------------------------------------------------------------------
+
+allWorkSettings:
+SELECT work_key, enabled, from_lang, to_lang, mode, turned_off, from_picked FROM tm_work ORDER BY work_key;
+
+allGlossaryTerms:
+SELECT work_key, to_lang, id, source, target FROM tm_glossary ORDER BY work_key, to_lang, id;
+
+glossaryCounterKeys:
+SELECT k FROM tm_meta WHERE k LIKE 'glossary.next.%';
+
+-- The stored translations of one kind (paid or free) a backup may carry, newest first.
+exportableSegments:
+SELECT source_hash, from_lang, to_lang, engine, text, bytes FROM tm_segment
+WHERE paid = ? AND exportable = 1 ORDER BY used_at DESC, source_hash;
+
+allChapters:
+SELECT work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at
+FROM tm_chapter ORDER BY work_key, chapter_key;
+
+chapterLines:
+SELECT source_hash, from_lang, to_lang, engine FROM tm_chapter_segment
+WHERE work_key = ? AND chapter_key = ? AND chapter_to = ? AND provider = ?;
+
+chapterLabels:
+SELECT chapter_key, title, source FROM tm_label WHERE work_key = ? AND chapter_key IN ('', ?);
+
+-- ---- plumbing -------------------------------------------------------------------------------
+
+meta:
+SELECT v FROM tm_meta WHERE k = ?;
+
+putMeta:
+INSERT OR REPLACE INTO tm_meta(k, v) VALUES (?, ?);

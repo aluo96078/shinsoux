@@ -12,6 +12,8 @@ import dev.shinsou.kmp.content.SchemaMigrator
 import dev.shinsou.kmp.content.columnExists
 import dev.shinsou.kmp.content.tableExists
 import dev.shinsou.kmp.domain.model.TranslationBackup
+import dev.shinsou.kmp.translation.sql.TranslationMemoryDatabase
+import dev.shinsou.kmp.translation.sql.TranslationMemoryQueries
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -48,6 +50,9 @@ public data class ChapterRecord(
 public class TranslationMemoryStore(private val driver: SqlDriver) {
     private val transactions = object : TransacterImpl(driver) {}
 
+    /** The fixed statements (TranslationMemory.sq); the one whose text depends on the call is written below. */
+    private val queries = TranslationMemoryQueries(driver)
+
     init {
         SchemaMigrator.migrate(driver, TranslationMemorySchema.component)
     }
@@ -74,24 +79,10 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         val found = HashMap<String, String>()
         transaction {
             hashes.distinct().chunked(LOOKUP_CHUNK).forEach { chunk ->
-                val marks = chunk.joinToString(",") { "?" }
-                namedQuery(
-                    "SELECT source_hash, text FROM tm_segment WHERE from_lang = ? AND to_lang = ? AND engine = ? AND source_hash IN ($marks)",
-                    "tm_segment",
-                    3 + chunk.size,
-                    {
-                        bindString(0, from); bindString(1, to); bindString(2, engine)
-                        chunk.forEachIndexed { index, hash -> bindString(3 + index, hash) }
-                    },
-                ) { it.string("source_hash") to it.string("text") }.forEach { (hash, text) -> found[hash] = text }
-                exec(
-                    "UPDATE tm_segment SET used_at = ?, exportable = ? " +
-                        "WHERE from_lang = ? AND to_lang = ? AND engine = ? AND source_hash IN ($marks)",
-                    5 + chunk.size,
-                ) {
-                    bindLong(0, now); bindLong(1, if (exportable) 1 else 0); bindString(2, from); bindString(3, to); bindString(4, engine)
-                    chunk.forEachIndexed { index, hash -> bindString(5 + index, hash) }
-                }
+                queries.segmentsIn(from, to, engine, chunk) { hash, text -> hash to text }
+                    .executeAsList()
+                    .forEach { (hash, text) -> found[hash] = text }
+                queries.markSegmentsUsed(now, if (exportable) 1 else 0, from, to, engine, chunk).value
             }
         }
         return found
@@ -108,41 +99,27 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 val bytes = text.encodeToByteArray().size.toLong()
                 // Two statements rather than an upsert (Android 10's SQLite has none). A translation
                 // the user paid for is never replaced by a free one, nor turned into one.
-                exec(
-                    "INSERT OR IGNORE INTO tm_segment(source_hash, from_lang, to_lang, engine, text, paid, bytes, used_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    8,
-                ) {
-                    bindString(0, key.sourceHash); bindString(1, key.from); bindString(2, key.to); bindString(3, key.engine)
-                    bindString(4, text); bindLong(5, if (paid) 1 else 0); bindLong(6, bytes); bindLong(7, now)
-                }
-                exec("UPDATE tm_segment SET exportable = ? WHERE source_hash = ? AND from_lang = ? AND to_lang = ? AND engine = ?", 5) {
-                    bindLong(0, if (exportable) 1 else 0)
-                    bindString(1, key.sourceHash); bindString(2, key.from); bindString(3, key.to); bindString(4, key.engine)
-                }
-                exec(
-                    "UPDATE tm_segment SET text = ?, paid = ?, bytes = ?, used_at = ? " +
-                        "WHERE source_hash = ? AND from_lang = ? AND to_lang = ? AND engine = ? AND paid <= ?",
-                    9,
-                ) {
-                    bindString(0, text); bindLong(1, if (paid) 1 else 0); bindLong(2, bytes); bindLong(3, now)
-                    bindString(4, key.sourceHash); bindString(5, key.from); bindString(6, key.to); bindString(7, key.engine)
-                    bindLong(8, if (paid) 1 else 0)
-                }
+                val paidFlag = if (paid) 1L else 0L
+                queries.insertSegmentIfAbsent(key.sourceHash, key.from, key.to, key.engine, text, paidFlag, bytes, now).value
+                queries.setSegmentExportable(if (exportable) 1 else 0, key.sourceHash, key.from, key.to, key.engine).value
+                queries.replaceSegmentUnlessPaid(
+                    text = text,
+                    paid = paidFlag,
+                    bytes = bytes,
+                    now = now,
+                    sourceHash = key.sourceHash,
+                    from = key.from,
+                    to = key.to,
+                    engine = key.engine,
+                ).value
             }
         }
     }
 
     /** Bytes of stored translations that cost nothing to produce again. */
-    public fun freeBytes(): Long = namedQuery(
-        "SELECT COALESCE(SUM(bytes), 0) AS total_bytes FROM tm_segment WHERE paid = 0",
-        "tm_segment",
-    ) { it.long("total_bytes") }.first()
+    public fun freeBytes(): Long = queries.freeBytes().executeAsList().first()
 
-    public fun paidBytes(): Long = namedQuery(
-        "SELECT COALESCE(SUM(bytes), 0) AS total_bytes FROM tm_segment WHERE paid = 1",
-        "tm_segment",
-    ) { it.long("total_bytes") }.first()
+    public fun paidBytes(): Long = queries.paidBytes().executeAsList().first()
 
     /**
      * Drops the least recently used free translations until at most [maximumBytes] remain.
@@ -154,31 +131,20 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         var removed = 0
         transaction {
             while (excess > 0) {
-                val batch = namedQuery(
-                    "SELECT source_hash, from_lang, to_lang, engine, bytes FROM tm_segment " +
-                        "WHERE paid = 0 ORDER BY used_at, source_hash LIMIT $EVICT_BATCH",
-                    "tm_segment",
-                ) { row ->
-                    MemoryKey(
-                        row.string("source_hash"),
-                        row.string("from_lang"),
-                        row.string("to_lang"),
-                        row.string("engine"),
-                    ) to row.long("bytes")
-                }
+                val batch = queries.evictionBatch { sourceHash, from, to, engine, bytes ->
+                    MemoryKey(sourceHash, from, to, engine) to bytes
+                }.executeAsList()
                 if (batch.isEmpty()) break
                 for ((key, bytes) in batch) {
                     if (excess <= 0) break
-                    exec("DELETE FROM tm_segment WHERE source_hash = ? AND from_lang = ? AND to_lang = ? AND engine = ?", 4) {
-                        bindString(0, key.sourceHash); bindString(1, key.from); bindString(2, key.to); bindString(3, key.engine)
-                    }
+                    queries.deleteSegment(key.sourceHash, key.from, key.to, key.engine).value
                     excess -= bytes
                     removed++
                 }
             }
             // Which chapters lost a line is not recorded: every chapter of a free provider is
             // checked again (and marked complete again, if it still is) the next time it is opened.
-            if (removed > 0) exec("UPDATE tm_chapter SET complete = 0 WHERE paid = 0", 0, null)
+            if (removed > 0) queries.markFreeChaptersIncomplete().value
         }
         return removed
     }
@@ -190,34 +156,21 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
      * (a part of a chapter must not undo the whole chapter's record).
      */
     public fun saveChapter(record: ChapterRecord, ifAbsent: Boolean = false) {
-        exec(
-            "INSERT OR ${if (ifAbsent) "IGNORE" else "REPLACE"} INTO tm_chapter(work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            9,
-        ) {
-            bindString(0, record.workKey); bindString(1, record.chapterKey); bindString(2, record.to); bindString(3, record.provider)
-            bindString(4, record.sourceHash); bindLong(5, record.segmentCount.toLong())
-            bindLong(6, if (record.complete) 1 else 0); bindLong(7, if (record.paid) 1 else 0); bindLong(8, record.updatedAt)
-        }
+        val write = if (ifAbsent) queries::insertChapterIfAbsent else queries::replaceChapter
+        write(
+            record.workKey, record.chapterKey, record.to, record.provider, record.sourceHash, record.segmentCount.toLong(),
+            if (record.complete) 1 else 0, if (record.paid) 1 else 0, record.updatedAt,
+        ).value
     }
 
-    public fun chapters(workKey: String, to: String): List<ChapterRecord> = namedQuery(
-        "SELECT $CHAPTER_PROJECTION FROM tm_chapter WHERE work_key = ? AND to_lang = ? " +
-            "ORDER BY chapter_key, provider",
-        "tm_chapter",
-        2,
-        { bindString(0, workKey); bindString(1, to) },
-    ) { it.readChapter() }
+    public fun chapters(workKey: String, to: String): List<ChapterRecord> =
+        queries.chapters(workKey, to, ::chapterRecord).executeAsList()
 
     /** Remembers what the reader calls a work and one of its chapters. */
     public fun saveLabels(workKey: String, chapterKey: String, labels: TranslationLabels) {
         transaction {
-            exec("INSERT OR REPLACE INTO tm_label(work_key, chapter_key, title, source) VALUES (?, '', ?, ?)", 3) {
-                bindString(0, workKey); bindString(1, labels.workTitle.take(MAX_LABEL_LENGTH)); bindString(2, labels.sourceName?.take(MAX_LABEL_LENGTH))
-            }
-            exec("INSERT OR REPLACE INTO tm_label(work_key, chapter_key, title, source) VALUES (?, ?, ?, NULL)", 3) {
-                bindString(0, workKey); bindString(1, chapterKey); bindString(2, labels.chapterTitle.take(MAX_LABEL_LENGTH))
-            }
+            queries.putWorkLabel(workKey, labels.workTitle.take(MAX_LABEL_LENGTH), labels.sourceName?.take(MAX_LABEL_LENGTH)).value
+            queries.putChapterLabel(workKey, chapterKey, labels.chapterTitle.take(MAX_LABEL_LENGTH)).value
         }
     }
 
@@ -231,18 +184,9 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         adding: Boolean = false,
     ) {
         transaction {
-            if (!adding) exec("DELETE FROM tm_chapter_segment WHERE work_key = ? AND chapter_key = ? AND chapter_to = ? AND provider = ?", 4) {
-                bindString(0, workKey); bindString(1, chapterKey); bindString(2, to); bindString(3, provider)
-            }
+            if (!adding) queries.deleteChapterSegments(workKey, chapterKey, to, provider).value
             for (key in keys) {
-                exec(
-                    "INSERT OR IGNORE INTO tm_chapter_segment(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    8,
-                ) {
-                    bindString(0, workKey); bindString(1, chapterKey); bindString(2, to); bindString(3, provider)
-                    bindString(4, key.sourceHash); bindString(5, key.from); bindString(6, key.to); bindString(7, key.engine)
-                }
+                queries.insertChapterSegment(workKey, chapterKey, to, provider, key.sourceHash, key.from, key.to, key.engine).value
             }
         }
     }
@@ -254,73 +198,39 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
      */
     public fun deleteChapterTranslation(workKey: String, chapterKey: String, to: String, provider: String): Long = transaction {
         val before = freeBytes() + paidBytes()
-        val same = "work_key = ? AND chapter_key = ? AND chapter_to = ? AND provider = ?"
-        exec(
-            "DELETE FROM tm_segment WHERE EXISTS (" +
-                "SELECT 1 FROM tm_chapter_segment m WHERE m.work_key = ? AND m.chapter_key = ? AND m.chapter_to = ? AND m.provider = ?" +
-                " AND m.source_hash = tm_segment.source_hash AND m.from_lang = tm_segment.from_lang " +
-                "AND m.to_lang = tm_segment.to_lang AND m.engine = tm_segment.engine) " +
-                "AND NOT EXISTS (SELECT 1 FROM tm_chapter_segment o WHERE o.source_hash = tm_segment.source_hash " +
-                "AND o.from_lang = tm_segment.from_lang AND o.to_lang = tm_segment.to_lang AND o.engine = tm_segment.engine " +
-                "AND NOT (o.work_key = ? AND o.chapter_key = ? AND o.chapter_to = ? AND o.provider = ?))",
-            8,
-        ) {
-            bindString(0, workKey); bindString(1, chapterKey); bindString(2, to); bindString(3, provider)
-            bindString(4, workKey); bindString(5, chapterKey); bindString(6, to); bindString(7, provider)
-        }
-        exec("DELETE FROM tm_chapter_segment WHERE $same", 4) {
-            bindString(0, workKey); bindString(1, chapterKey); bindString(2, to); bindString(3, provider)
-        }
-        exec("DELETE FROM tm_chapter WHERE work_key = ? AND chapter_key = ? AND to_lang = ? AND provider = ?", 4) {
-            bindString(0, workKey); bindString(1, chapterKey); bindString(2, to); bindString(3, provider)
-        }
+        queries.deleteLinesOnlyChapterUses(workKey = workKey, chapterKey = chapterKey, to = to, provider = provider).value
+        queries.deleteChapterSegments(workKey, chapterKey, to, provider).value
+        queries.deleteChapter(workKey, chapterKey, to, provider).value
         // Names go with the last record that used them.
-        exec("DELETE FROM tm_label WHERE work_key = ? AND chapter_key = ? AND NOT EXISTS (SELECT 1 FROM tm_chapter c WHERE c.work_key = ? AND c.chapter_key = ?)", 4) {
-            bindString(0, workKey); bindString(1, chapterKey); bindString(2, workKey); bindString(3, chapterKey)
-        }
-        exec("DELETE FROM tm_label WHERE work_key = ? AND chapter_key = '' AND NOT EXISTS (SELECT 1 FROM tm_chapter c WHERE c.work_key = ?)", 2) {
-            bindString(0, workKey); bindString(1, workKey)
-        }
+        queries.deleteUnusedChapterLabel(workKey, chapterKey).value
+        queries.deleteUnusedWorkLabel(workKey).value
         before - (freeBytes() + paidBytes())
     }
 
     /** Removes every stored chapter translation of a work; its glossary and settings stay. */
     public fun deleteWorkTranslations(workKey: String): Long = transaction {
-        namedQuery(
-            "SELECT chapter_key, to_lang, provider FROM tm_chapter WHERE work_key = ?",
-            "tm_chapter",
-            1,
-            { bindString(0, workKey) },
-        ) { row ->
-            Triple(row.string("chapter_key"), row.string("to_lang"), row.string("provider"))
-        }.sumOf { (chapter, to, provider) -> deleteChapterTranslation(workKey, chapter, to, provider) }
+        queries.workChapters(workKey) { chapter, to, provider -> Triple(chapter, to, provider) }
+            .executeAsList()
+            .sumOf { (chapter, to, provider) -> deleteChapterTranslation(workKey, chapter, to, provider) }
     }
 
     /** Chapters with a stored translation, most recently translated first. */
-    public fun storedChapters(limit: Int): List<StoredChapterTranslation> = namedQuery(
-        "SELECT $STORED_CHAPTER_PROJECTION " +
-            "FROM tm_chapter c " +
-            "LEFT JOIN tm_label w ON w.work_key = c.work_key AND w.chapter_key = '' " +
-            "LEFT JOIN tm_label l ON l.work_key = c.work_key AND l.chapter_key = c.chapter_key " +
-            "WHERE c.segment_count > 0 ORDER BY c.updated_at DESC, c.work_key, c.chapter_key LIMIT ?",
-        "tm_chapter",
-        1,
-        { bindLong(0, limit.toLong()) },
-    ) {
+    public fun storedChapters(limit: Int): List<StoredChapterTranslation> = queries.storedChapters(limit.toLong()) {
+            workKey, chapterKey, to, provider, segmentCount, complete, paid, updatedAt, workTitle, chapterTitle, source ->
         StoredChapterTranslation(
-            workKey = it.string("work_key"),
-            chapterKey = it.string("chapter_key"),
-            to = it.string("to_lang"),
-            provider = it.string("provider"),
-            lineCount = it.long("segment_count").toInt(),
-            complete = it.longOrNull("complete") == 1L,
-            paid = it.longOrNull("paid") == 1L,
-            updatedAt = it.long("updated_at"),
-            workTitle = it.stringOrNull("work_title"),
-            chapterTitle = it.stringOrNull("chapter_title"),
-            sourceName = it.stringOrNull("source"),
+            workKey = workKey,
+            chapterKey = chapterKey,
+            to = to,
+            provider = provider,
+            lineCount = segmentCount.toInt(),
+            complete = complete == 1L,
+            paid = paid == 1L,
+            updatedAt = updatedAt,
+            workTitle = workTitle,
+            chapterTitle = chapterTitle,
+            sourceName = source,
         )
-    }
+    }.executeAsList()
 
     /** Chapters of [workKey] with a complete translation; [to] and [provider] narrow it when given. */
     /**
@@ -360,11 +270,11 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
     /** Forgets a work's chapter records and glossary. Segment translations stay: they may serve another source of the same text. */
     public fun forgetWork(workKey: String) {
         transaction {
-            exec("DELETE FROM tm_chapter WHERE work_key = ?", 1) { bindString(0, workKey) }
-            exec("DELETE FROM tm_glossary WHERE work_key = ?", 1) { bindString(0, workKey) }
-            exec("DELETE FROM tm_work WHERE work_key = ?", 1) { bindString(0, workKey) }
-            exec("DELETE FROM tm_label WHERE work_key = ?", 1) { bindString(0, workKey) }
-            exec("DELETE FROM tm_chapter_segment WHERE work_key = ?", 1) { bindString(0, workKey) }
+            queries.forgetWorkChapters(workKey).value
+            queries.forgetWorkGlossary(workKey).value
+            queries.forgetWorkSettings(workKey).value
+            queries.forgetWorkLabels(workKey).value
+            queries.forgetWorkChapterSegments(workKey).value
         }
     }
 
@@ -379,41 +289,29 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
 
     // ---- per-work settings ------------------------------------------------------------------
 
-    public fun workSettings(workKey: String): WorkTranslationSettings? = namedQuery(
-        "SELECT enabled, from_lang, to_lang, mode, turned_off, from_picked FROM tm_work WHERE work_key = ?",
-        "tm_work",
-        1,
-        { bindString(0, workKey) },
-    ) {
-        WorkTranslationSettings(
-            enabled = it.longOrNull("enabled") == 1L,
-            from = it.string("from_lang"),
-            to = it.string("to_lang"),
-            mode = TranslationDisplayMode.entries.firstOrNull { mode -> mode.name == it.stringOrNull("mode") }
-                ?: TranslationDisplayMode.TRANSLATION,
-            turnedOff = it.longOrNull("turned_off") == 1L,
-            fromPicked = it.longOrNull("from_picked") == 1L,
-        )
-    }.firstOrNull()
+    public fun workSettings(workKey: String): WorkTranslationSettings? =
+        queries.workSettings(workKey) { enabled, from, to, mode, turnedOff, fromPicked ->
+            WorkTranslationSettings(
+                enabled = enabled == 1L,
+                from = from,
+                to = to,
+                mode = TranslationDisplayMode.entries.firstOrNull { it.name == mode } ?: TranslationDisplayMode.TRANSLATION,
+                turnedOff = turnedOff == 1L,
+                fromPicked = fromPicked == 1L,
+            )
+        }.executeAsList().firstOrNull()
 
     public fun saveWorkSettings(workKey: String, settings: WorkTranslationSettings) {
-        exec("INSERT OR REPLACE INTO tm_work(work_key, enabled, from_lang, to_lang, mode, turned_off, from_picked) VALUES (?, ?, ?, ?, ?, ?, ?)", 7) {
-            bindString(0, workKey); bindLong(1, if (settings.enabled) 1 else 0)
-            bindString(2, settings.from); bindString(3, settings.to); bindString(4, settings.mode.name)
-            bindLong(5, if (settings.turnedOff) 1 else 0); bindLong(6, if (settings.fromPicked) 1 else 0)
-        }
+        queries.putWorkSettings(
+            workKey, if (settings.enabled) 1 else 0, settings.from, settings.to, settings.mode.name,
+            if (settings.turnedOff) 1 else 0, if (settings.fromPicked) 1 else 0,
+        ).value
     }
 
     // ---- glossary ---------------------------------------------------------------------------
 
-    public fun glossary(workKey: String, to: String): List<GlossaryEntry> = namedQuery(
-        "SELECT id, source, target FROM tm_glossary WHERE work_key = ? AND to_lang = ? ORDER BY id",
-        "tm_glossary",
-        2,
-        { bindString(0, workKey); bindString(1, to) },
-    ) {
-        GlossaryEntry(it.long("id").toInt(), it.string("source"), it.string("target"))
-    }
+    public fun glossary(workKey: String, to: String): List<GlossaryEntry> =
+        queries.glossary(workKey, to) { id, source, target -> GlossaryEntry(id.toInt(), source, target) }.executeAsList()
 
     /**
      * Adds a term or changes its rendering. An existing source term keeps its id (and so its code
@@ -422,28 +320,19 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
     public fun putGlossaryTerm(workKey: String, to: String, source: String, target: String): GlossaryEntry = transaction {
         val term = source.trim()
         require(term.isNotEmpty()) { "Glossary source term is blank" }
-        val existing = namedQuery(
-            "SELECT id FROM tm_glossary WHERE work_key = ? AND to_lang = ? AND source = ?",
-            "tm_glossary",
-            3,
-            { bindString(0, workKey); bindString(1, to); bindString(2, term) },
-        ) { it.long("id").toInt() }.firstOrNull()
+        val existing = queries.glossaryTermId(workKey, to, term).executeAsList().firstOrNull()?.toInt()
         val id = existing ?: run {
             val next = (meta("glossary.next.$workKey.$to")?.toIntOrNull() ?: 1)
             require(next <= GlossaryEntry.MAX_ID) { "This work's glossary is full" }
             setMeta("glossary.next.$workKey.$to", (next + 1).toString())
             next
         }
-        exec("INSERT OR REPLACE INTO tm_glossary(work_key, to_lang, id, source, target) VALUES (?, ?, ?, ?, ?)", 5) {
-            bindString(0, workKey); bindString(1, to); bindLong(2, id.toLong()); bindString(3, term); bindString(4, target.trim())
-        }
+        queries.putGlossaryTerm(workKey, to, id.toLong(), term, target.trim()).value
         GlossaryEntry(id, term, target.trim())
     }
 
     public fun removeGlossaryTerm(workKey: String, to: String, id: Int) {
-        exec("DELETE FROM tm_glossary WHERE work_key = ? AND to_lang = ? AND id = ?", 3) {
-            bindString(0, workKey); bindString(1, to); bindLong(2, id.toLong())
-        }
+        queries.removeGlossaryTerm(workKey, to, id.toLong()).value
     }
 
     /**
@@ -472,38 +361,17 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
     }
 
     private fun exportWorks(): List<TranslationBackup.Work> =
-        namedQuery(
-            "SELECT $WORK_PROJECTION FROM tm_work ORDER BY work_key",
-            "tm_work",
-        ) { row ->
-            TranslationBackup.Work(
-                row.string("work_key"),
-                row.longOrNull("enabled") == 1L,
-                row.string("from_lang"),
-                row.string("to_lang"),
-                row.string("mode"),
-                row.longOrNull("turned_off") == 1L,
-                row.longOrNull("from_picked") == 1L,
-            )
-        }
+        queries.allWorkSettings { workKey, enabled, from, to, mode, turnedOff, fromPicked ->
+            TranslationBackup.Work(workKey, enabled == 1L, from, to, mode, turnedOff == 1L, fromPicked == 1L)
+        }.executeAsList()
 
     private fun exportGlossaries(): List<TranslationBackup.Glossary> {
-        val terms = namedQuery(
-            "SELECT work_key, to_lang, id, source, target FROM tm_glossary ORDER BY work_key, to_lang, id",
-            "tm_glossary",
-        ) { row ->
-            Triple(
-                row.string("work_key"),
-                row.string("to_lang"),
-                TranslationBackup.Term(row.long("id").toInt(), row.string("source"), row.string("target")),
-            )
-        }
+        val terms = queries.allGlossaryTerms { workKey, to, id, source, target ->
+            Triple(workKey, to, TranslationBackup.Term(id.toInt(), source, target))
+        }.executeAsList()
         val byScope = terms.groupBy { it.first to it.second }
         // A glossary that was emptied is still a glossary: restoring it must clear the old names.
-        val emptied = namedQuery(
-            "SELECT k FROM tm_meta WHERE k LIKE 'glossary.next.%'",
-            "tm_meta",
-        ) { it.string("k") }
+        val emptied = queries.glossaryCounterKeys().executeAsList()
             .map { it.removePrefix("glossary.next.") }
             .filter { '.' in it }
             .map { it.substringBeforeLast('.') to it.substringAfterLast('.') }
@@ -529,40 +397,28 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
         val segments = ArrayList<TranslationBackup.Segment>()
         var truncated = false
         var used = 0L
-        val segmentColumns = ContentRow.selectColumns(SEGMENT_EXPORT_SELECT)
         for (paid in wanted) {
             if (truncated) break
             // Row by row, stopping at the budget: paid translations are never evicted, and
             // reading all of them just to drop most would defeat the bound.
-            driver.executeQuery(
-                identifier = null,
-                sql = SEGMENT_EXPORT_SELECT,
-                mapper = { cursor ->
-                    while (cursor.next().value) {
-                        val row = ContentCursorRow(cursor, "tm_segment", segmentColumns)
-                        val segment = TranslationBackup.Segment(
-                            row.string("source_hash"),
-                            row.string("from_lang"),
-                            row.string("to_lang"),
-                            row.string("engine"),
-                            row.string("text"),
-                            paid == 1L,
-                        )
-                        // What the row costs in the file: its text (escapes included) and its keys.
-                        val cost = row.long("bytes") + segment.text.count { it == '"' || it == '\\' || it < ' ' } * 5L +
-                            segment.from.length + segment.to.length + segment.engine.length + BACKUP_ROW_OVERHEAD_BYTES
-                        if (used + cost > segmentByteBudget) {
-                            truncated = true
-                            break
-                        }
-                        segments += segment
-                        used += cost
+            val rows = queries.exportableSegments(paid) { sourceHash, from, to, engine, text, bytes ->
+                TranslationBackup.Segment(sourceHash, from, to, engine, text, paid == 1L) to bytes
+            }
+            rows.execute { cursor ->
+                while (cursor.next().value) {
+                    val (segment, bytes) = rows.mapper(cursor)
+                    // What the row costs in the file: its text (escapes included) and its keys.
+                    val cost = bytes + segment.text.count { it == '"' || it == '\\' || it < ' ' } * 5L +
+                        segment.from.length + segment.to.length + segment.engine.length + BACKUP_ROW_OVERHEAD_BYTES
+                    if (used + cost > segmentByteBudget) {
+                        truncated = true
+                        break
                     }
-                    QueryResult.Value(Unit)
-                },
-                parameters = 1,
-                binders = { bindLong(0, paid) },
-            ).value
+                    segments += segment
+                    used += cost
+                }
+                QueryResult.Value(Unit)
+            }.value
         }
         return segments to truncated
     }
@@ -571,31 +427,15 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
     private fun exportChapters(wanted: List<Long>, segments: List<TranslationBackup.Segment>, truncated: Boolean): List<TranslationBackup.Chapter> {
         val segmentIndex = HashMap<MemoryKey, Int>(segments.size * 2)
         segments.forEachIndexed { index, segment -> segmentIndex[MemoryKey(segment.sourceHash, segment.from, segment.to, segment.engine)] = index }
-        return if (wanted.isEmpty()) emptyList() else namedQuery(
-            "SELECT $CHAPTER_PROJECTION FROM tm_chapter ORDER BY work_key, chapter_key",
-            "tm_chapter",
-        ) { it.readChapter() }.filter { (if (it.paid) 1L else 0L) in wanted }.map {
+        return if (wanted.isEmpty()) emptyList() else queries.allChapters(::chapterRecord).executeAsList().filter { (if (it.paid) 1L else 0L) in wanted }.map {
             // Whether it is still complete is checked when the chapter is opened.
-            val lines = namedQuery(
-                "SELECT source_hash, from_lang, to_lang, engine FROM tm_chapter_segment " +
-                    "WHERE work_key = ? AND chapter_key = ? AND chapter_to = ? AND provider = ?",
-                "tm_chapter_segment",
-                4,
-                { bindString(0, it.workKey); bindString(1, it.chapterKey); bindString(2, it.to); bindString(3, it.provider) },
-            ) { row ->
-                MemoryKey(
-                    row.string("source_hash"),
-                    row.string("from_lang"),
-                    row.string("to_lang"),
-                    row.string("engine"),
-                )
-            }.mapNotNull(segmentIndex::get).sorted()
-            val names = namedQuery(
-                "SELECT chapter_key, title, source FROM tm_label WHERE work_key = ? AND chapter_key IN ('', ?)",
-                "tm_label",
-                2,
-                { bindString(0, it.workKey); bindString(1, it.chapterKey) },
-            ) { row -> Triple(row.string("chapter_key"), row.stringOrNull("title"), row.stringOrNull("source")) }
+            val lines = queries.chapterLines(it.workKey, it.chapterKey, it.to, it.provider, ::MemoryKey)
+                .executeAsList()
+                .mapNotNull(segmentIndex::get)
+                .sorted()
+            val names = queries.chapterLabels(it.workKey, it.chapterKey) { chapterKey, title, source ->
+                Triple(chapterKey, title, source)
+            }.executeAsList()
             val work = names.firstOrNull { name -> name.first.isEmpty() }
             TranslationBackup.Chapter(
                 it.workKey, it.chapterKey, it.to, it.provider, it.sourceHash, it.segmentCount, it.complete && !truncated, it.paid, it.updatedAt,
@@ -620,14 +460,11 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
                 saveWorkSettings(work.workKey, WorkTranslationSettings(work.enabled, work.from, work.to, mode, work.turnedOff, work.fromPicked ?: (work.from != "ja")))
             }
             for (glossary in backup.glossaries) {
-                exec("DELETE FROM tm_glossary WHERE work_key = ? AND to_lang = ?", 2) { bindString(0, glossary.workKey); bindString(1, glossary.to) }
+                queries.clearGlossary(glossary.workKey, glossary.to).value
                 setMeta("glossary.salt.${glossary.workKey}.${glossary.to}", glossary.salt)
                 setMeta("glossary.next.${glossary.workKey}.${glossary.to}", glossary.nextId.toString())
                 for (term in glossary.terms) {
-                    exec("INSERT OR REPLACE INTO tm_glossary(work_key, to_lang, id, source, target) VALUES (?, ?, ?, ?, ?)", 5) {
-                        bindString(0, glossary.workKey); bindString(1, glossary.to); bindLong(2, term.id.toLong())
-                        bindString(3, term.source.trim()); bindString(4, term.target.trim())
-                    }
+                    queries.putGlossaryTerm(glossary.workKey, glossary.to, term.id.toLong(), term.source.trim(), term.target.trim()).value
                 }
             }
             backup.chapters.forEach {
@@ -654,32 +491,24 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
 
     // ---- plumbing ---------------------------------------------------------------------------
 
-    private fun meta(key: String): String? = namedQuery(
-        "SELECT v FROM tm_meta WHERE k = ?",
-        "tm_meta",
-        1,
-        { bindString(0, key) },
-    ) { it.stringOrNull("v") }.firstOrNull()
+    private fun meta(key: String): String? = queries.meta(key).executeAsList().firstOrNull()
 
     private fun setMeta(key: String, value: String) {
-        exec("INSERT OR REPLACE INTO tm_meta(k, v) VALUES (?, ?)", 2) { bindString(0, key); bindString(1, value) }
+        queries.putMeta(key, value).value
     }
 
-    private fun ContentCursorRow.readChapter() = ChapterRecord(
-        workKey = string("work_key"),
-        chapterKey = string("chapter_key"),
-        to = string("to_lang"),
-        provider = string("provider"),
-        sourceHash = string("source_hash"),
-        segmentCount = long("segment_count").toInt(),
-        complete = longOrNull("complete") == 1L,
-        paid = longOrNull("paid") == 1L,
-        updatedAt = long("updated_at"),
-    )
-
-    private fun exec(sql: String, parameters: Int, binders: (SqlPreparedStatement.() -> Unit)?) {
-        driver.execute(null, sql, parameters, binders).value
-    }
+    @Suppress("LongParameterList") // The columns of a tm_chapter row, as the generated statements hand them over.
+    private fun chapterRecord(
+        workKey: String,
+        chapterKey: String,
+        to: String,
+        provider: String,
+        sourceHash: String,
+        segmentCount: Long,
+        complete: Long,
+        paid: Long,
+        updatedAt: Long,
+    ) = ChapterRecord(workKey, chapterKey, to, provider, sourceHash, segmentCount.toInt(), complete == 1L, paid == 1L, updatedAt)
 
     private fun <T> query(
         sql: String,
@@ -715,29 +544,17 @@ public class TranslationMemoryStore(private val driver: SqlDriver) {
 
     private companion object {
         const val LOOKUP_CHUNK = 400
-        const val EVICT_BATCH = 200
         const val MAX_LABEL_LENGTH = 300
 
         /** The hash, field names, punctuation and indentation of one stored translation in a backup file. */
         const val BACKUP_ROW_OVERHEAD_BYTES = 400L
-
-        /** The stored translations of one kind (paid or free) a backup may carry, newest first. */
-        const val SEGMENT_EXPORT_SELECT =
-            "SELECT source_hash, from_lang, to_lang, engine, text, bytes FROM tm_segment " +
-                "WHERE paid = ? AND exportable = 1 ORDER BY used_at DESC, source_hash"
-        const val CHAPTER_PROJECTION =
-            "work_key, chapter_key, to_lang, provider, source_hash, segment_count, complete, paid, updated_at"
-        const val STORED_CHAPTER_PROJECTION =
-            "c.work_key, c.chapter_key, c.to_lang, c.provider, c.segment_count, c.complete, c.paid, c.updated_at, " +
-                "w.title AS work_title, l.title AS chapter_title, w.source"
-        const val WORK_PROJECTION =
-            "work_key, enabled, from_lang, to_lang, mode, turned_off, from_picked"
     }
 }
 
 /**
- * The translation memory tables (R3-1). Formats 2 to 4 each added a column; [create] makes the
- * first tables and then adds them, so a new database and an upgraded one are the same.
+ * The translation memory tables (R3-1). Formats 2 to 4 each added a column at the end of its table;
+ * [create] makes the newest tables (TranslationMemory.sq lists those columns last), so a new
+ * database and an upgraded one are the same (GeneratedSchemaMatchesMigratorTest).
  */
 public object TranslationMemorySchema {
     public const val VERSION: Long = 4
@@ -750,8 +567,10 @@ public object TranslationMemorySchema {
         unrecordedVersion = ::unrecordedVersion,
     )
 
+    /** The generated DDL (TranslationMemory.sq, format 4); its own Schema version is not used. */
     private fun create(driver: SqlDriver) {
-        TABLES.forEach { driver.execute(null, it, 0).value }
+        TranslationMemoryDatabase.Schema.create(driver).value
+        // A table group from before the version record may hold some tables of an older format.
         addExportable(driver)
         addTurnedOff(driver)
         addFromPicked(driver)
@@ -774,9 +593,12 @@ public object TranslationMemorySchema {
         }
     }
 
-    /** Adds an `INTEGER NOT NULL DEFAULT 0` column unless it is there; the table is made first if missing. */
+    /**
+     * Adds an `INTEGER NOT NULL DEFAULT 0` column unless it is there. A missing table is made first,
+     * in the newest format (the column is then there): the same table an older one upgraded to.
+     */
     private fun addColumn(driver: SqlDriver, table: String, column: String): Boolean {
-        if (!tableExists(driver, table)) TABLES.forEach { driver.execute(null, it, 0).value }
+        if (!tableExists(driver, table)) TranslationMemoryDatabase.Schema.create(driver).value
         if (columnExists(driver, table, column)) return false
         driver.execute(null, "ALTER TABLE $table ADD COLUMN $column INTEGER NOT NULL DEFAULT 0", 0).value
         return true
@@ -790,53 +612,4 @@ public object TranslationMemorySchema {
         columnExists(driver, "tm_segment", "exportable") -> 2
         else -> 1
     }
-
-private val TABLES = listOf(
-        "CREATE TABLE IF NOT EXISTS tm_meta(k TEXT NOT NULL PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID",
-        """
-        CREATE TABLE IF NOT EXISTS tm_segment(
-          source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
-          text TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL, used_at INTEGER NOT NULL,
-          PRIMARY KEY(source_hash, from_lang, to_lang, engine)
-        ) WITHOUT ROWID
-        """.trimIndent(),
-        "CREATE INDEX IF NOT EXISTS tm_segment_free_age ON tm_segment(used_at) WHERE paid = 0",
-        """
-        CREATE TABLE IF NOT EXISTS tm_chapter(
-          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, to_lang TEXT NOT NULL, provider TEXT NOT NULL,
-          source_hash TEXT NOT NULL, segment_count INTEGER NOT NULL, complete INTEGER NOT NULL,
-          paid INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
-          PRIMARY KEY(work_key, chapter_key, to_lang, provider)
-        ) WITHOUT ROWID
-        """.trimIndent(),
-        """
-        CREATE TABLE IF NOT EXISTS tm_glossary(
-          work_key TEXT NOT NULL, to_lang TEXT NOT NULL, id INTEGER NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL,
-          PRIMARY KEY(work_key, to_lang, id)
-        ) WITHOUT ROWID
-        """.trimIndent(),
-        "CREATE UNIQUE INDEX IF NOT EXISTS tm_glossary_source ON tm_glossary(work_key, to_lang, source)",
-        // Which stored lines each chapter's translation uses, so one chapter's can be removed.
-        """
-        CREATE TABLE IF NOT EXISTS tm_chapter_segment(
-          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, chapter_to TEXT NOT NULL, provider TEXT NOT NULL,
-          source_hash TEXT NOT NULL, from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, engine TEXT NOT NULL,
-          PRIMARY KEY(work_key, chapter_key, chapter_to, provider, source_hash, from_lang, to_lang, engine)
-        ) WITHOUT ROWID
-        """.trimIndent(),
-        "CREATE INDEX IF NOT EXISTS tm_chapter_segment_line ON tm_chapter_segment(source_hash, from_lang, to_lang, engine)",
-        // Names for the settings page; chapter_key '' is the work itself.
-        """
-        CREATE TABLE IF NOT EXISTS tm_label(
-          work_key TEXT NOT NULL, chapter_key TEXT NOT NULL, title TEXT NOT NULL, source TEXT,
-          PRIMARY KEY(work_key, chapter_key)
-        ) WITHOUT ROWID
-        """.trimIndent(),
-        """
-        CREATE TABLE IF NOT EXISTS tm_work(
-          work_key TEXT NOT NULL PRIMARY KEY, enabled INTEGER NOT NULL,
-          from_lang TEXT NOT NULL, to_lang TEXT NOT NULL, mode TEXT NOT NULL
-        ) WITHOUT ROWID
-        """.trimIndent(),
-    )
 }

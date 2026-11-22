@@ -5,6 +5,8 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import dev.shinsou.kmp.annotation.sql.ContentAnnotationDatabase
+import dev.shinsou.kmp.annotation.sql.ContentAnnotationQueries
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
 import dev.shinsou.kmp.content.SchemaComponent
@@ -27,6 +29,7 @@ public class SqlDriverContentAnnotationStore(
         ignoreUnknownKeys = false
     }
     private val transactions = object : TransacterImpl(driver) {}
+    private val queries = ContentAnnotationQueries(driver)
     private val mutex = SynchronousLock()
 
     init {
@@ -120,41 +123,20 @@ public class SqlDriverContentAnnotationStore(
             val encoded = codec.encodeToString(ContentAnnotation.serializer(), annotation)
             require(encoded.length <= MAX_ANNOTATION_JSON_CHARS) { "Annotation payload is too large" }
             if (existing == null) {
-                driver.execute(
-                    identifier = null,
-                    sql = """
-                        INSERT INTO $TABLE_ANNOTATIONS(
-                          annotation_id, publication_id, acquisition_id, unit_id,
-                          content_revision, state, created_at, updated_at, annotation_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """.trimIndent(),
-                    parameters = 9,
-                ) {
-                    bindAnnotation(annotation, encoded)
-                }.value
+                insertLocked(annotation, encoded)
             } else {
-                val affected = driver.execute(
-                    identifier = null,
-                    sql = """
-                        UPDATE $TABLE_ANNOTATIONS SET
-                          publication_id = ?, acquisition_id = ?, unit_id = ?,
-                          content_revision = ?, state = ?, created_at = ?, updated_at = ?,
-                          annotation_json = ?
-                        WHERE annotation_id = ? AND updated_at = ?
-                    """.trimIndent(),
-                    parameters = 10,
-                ) {
-                    bindString(0, annotation.scope.publicationId.value)
-                    bindString(1, annotation.scope.acquisitionId)
-                    bindString(2, annotation.scope.unitId.value)
-                    bindLong(3, annotation.scope.contentRevision)
-                    bindString(4, annotation.state.name)
-                    bindLong(5, annotation.createdAtEpochMillis)
-                    bindLong(6, annotation.updatedAtEpochMillis)
-                    bindString(7, encoded)
-                    bindString(8, annotation.annotationId)
-                    bindLong(9, requireNotNull(expectedUpdatedAtEpochMillis))
-                }.value
+                val affected = queries.updateIfUnchanged(
+                    publicationId = annotation.scope.publicationId.value,
+                    acquisitionId = annotation.scope.acquisitionId,
+                    unitId = annotation.scope.unitId.value,
+                    contentRevision = annotation.scope.contentRevision,
+                    state = annotation.state.name,
+                    createdAt = annotation.createdAtEpochMillis,
+                    updatedAt = annotation.updatedAtEpochMillis,
+                    annotationJson = encoded,
+                    annotationId = annotation.annotationId,
+                    expectedUpdatedAt = requireNotNull(expectedUpdatedAtEpochMillis),
+                ).value
                 if (affected != 1L) {
                     throw AnnotationConflictException("Annotation changed concurrently")
                 }
@@ -177,42 +159,30 @@ public class SqlDriverContentAnnotationStore(
         )
         withStoreLock {
             transactions.transactionWithResult<Unit>(noEnclosing = false) {
-                driver.execute(null, "DELETE FROM $TABLE_ANNOTATIONS", 0).value
+                queries.deleteAll().value
                 ordered.forEach { annotation ->
                     val encoded = codec.encodeToString(ContentAnnotation.serializer(), annotation)
                     require(encoded.length <= MAX_ANNOTATION_JSON_CHARS) {
                         "Annotation payload is too large"
                     }
-                    driver.execute(
-                        identifier = null,
-                        sql = """
-                            INSERT INTO $TABLE_ANNOTATIONS(
-                              annotation_id, publication_id, acquisition_id, unit_id,
-                              content_revision, state, created_at, updated_at, annotation_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        parameters = 9,
-                    ) {
-                        bindAnnotation(annotation, encoded)
-                    }.value
+                    insertLocked(annotation, encoded)
                 }
             }
         }
     }
 
-    private fun app.cash.sqldelight.db.SqlPreparedStatement.bindAnnotation(
-        annotation: ContentAnnotation,
-        encoded: String,
-    ) {
-        bindString(0, annotation.annotationId)
-        bindString(1, annotation.scope.publicationId.value)
-        bindString(2, annotation.scope.acquisitionId)
-        bindString(3, annotation.scope.unitId.value)
-        bindLong(4, annotation.scope.contentRevision)
-        bindString(5, annotation.state.name)
-        bindLong(6, annotation.createdAtEpochMillis)
-        bindLong(7, annotation.updatedAtEpochMillis)
-        bindString(8, encoded)
+    private fun insertLocked(annotation: ContentAnnotation, encoded: String) {
+        queries.insert(
+            annotation_id = annotation.annotationId,
+            publication_id = annotation.scope.publicationId.value,
+            acquisition_id = annotation.scope.acquisitionId,
+            unit_id = annotation.scope.unitId.value,
+            content_revision = annotation.scope.contentRevision,
+            state = annotation.state.name,
+            created_at = annotation.createdAtEpochMillis,
+            updated_at = annotation.updatedAtEpochMillis,
+            annotation_json = encoded,
+        ).value
     }
 
     private fun validateCas(
@@ -236,56 +206,35 @@ public class SqlDriverContentAnnotationStore(
         }
     }
 
-    private fun findLocked(annotationId: String): ContentAnnotation? = queryRows(
-        """
-            SELECT annotation_id, publication_id, acquisition_id, unit_id,
-                   content_revision, state, created_at, updated_at, annotation_json
-            FROM $TABLE_ANNOTATIONS WHERE annotation_id = ?
-        """.trimIndent(),
-        annotationId,
-    ).singleOrNull()?.decodeAndVerify()
+    private fun findLocked(annotationId: String): ContentAnnotation? =
+        queries.find(annotationId, ::Row).executeAsList().singleOrNull()?.decodeAndVerify()
 
-    private fun loadAllLocked(): List<ContentAnnotation> = queryRows(
-        """
-            SELECT annotation_id, publication_id, acquisition_id, unit_id,
-                   content_revision, state, created_at, updated_at, annotation_json
-            FROM $TABLE_ANNOTATIONS ORDER BY created_at, annotation_id
-        """.trimIndent(),
-        null,
-    ).map { row -> row.decodeAndVerify() }
+    private fun loadAllLocked(): List<ContentAnnotation> =
+        queries.all(::Row).executeAsList().map { row -> row.decodeAndVerify() }
 
     private fun loadScopeLocked(
         scope: ReadingScope,
         includeTombstones: Boolean,
-    ): List<Row> = driver.executeQuery(
-        identifier = null,
-        sql = """
-            SELECT annotation_id, publication_id, acquisition_id, unit_id,
-                   content_revision, state, created_at, updated_at, annotation_json
-            FROM $TABLE_ANNOTATIONS
-            WHERE publication_id = ?
-              AND acquisition_id = ?
-              AND unit_id = ?
-              AND content_revision = ?
-              ${if (includeTombstones) "" else "AND state != ?"}
-            ORDER BY created_at, annotation_id
-        """.trimIndent(),
-        mapper = { cursor ->
-            val rows = mutableListOf<Row>()
-            while (cursor.next().value) {
-                rows += cursor.readRow()
-            }
-            QueryResult.Value(rows)
-        },
-        parameters = if (includeTombstones) 4 else 5,
-    ) {
-        bindString(0, scope.publicationId.value)
-        bindString(1, scope.acquisitionId)
-        bindString(2, scope.unitId.value)
-        bindLong(3, scope.contentRevision)
-        if (!includeTombstones) bindString(4, ContentAnnotationState.TOMBSTONE.name)
-    }.value
+    ): List<Row> = if (includeTombstones) {
+        queries.inScope(
+            scope.publicationId.value,
+            scope.acquisitionId,
+            scope.unitId.value,
+            scope.contentRevision,
+            ::Row,
+        )
+    } else {
+        queries.inScopeExceptState(
+            scope.publicationId.value,
+            scope.acquisitionId,
+            scope.unitId.value,
+            scope.contentRevision,
+            ContentAnnotationState.TOMBSTONE.name,
+            ::Row,
+        )
+    }.executeAsList()
 
+    /** Its filters vary with the call (paging, rights cleanup), so this statement is written here, not generated. */
     private fun queryPage(
         afterAnnotationIdExclusive: String?,
         limit: Int,
@@ -323,17 +272,7 @@ public class SqlDriverContentAnnotationStore(
             mapper = { cursor ->
                 val rows = mutableListOf<Row>()
                 while (cursor.next().value) {
-                    rows += Row(
-                        annotationId = requireNotNull(cursor.getString(0)),
-                        publicationId = requireNotNull(cursor.getString(1)),
-                        acquisitionId = requireNotNull(cursor.getString(2)),
-                        unitId = requireNotNull(cursor.getString(3)),
-                        contentRevision = requireNotNull(cursor.getLong(4)),
-                        state = requireNotNull(cursor.getString(5)),
-                        createdAt = requireNotNull(cursor.getLong(6)),
-                        updatedAt = requireNotNull(cursor.getLong(7)),
-                        encoded = requireNotNull(cursor.getString(8)),
-                    )
+                    rows += cursor.readRow()
                 }
                 QueryResult.Value(rows)
             },
@@ -358,22 +297,6 @@ public class SqlDriverContentAnnotationStore(
             bindLong(index, limit.toLong())
         }.value
     }
-
-    private fun queryRows(sql: String, annotationId: String?): List<Row> = driver.executeQuery(
-        identifier = null,
-        sql = sql,
-        mapper = { cursor ->
-            val rows = mutableListOf<Row>()
-            while (cursor.next().value) {
-                rows += cursor.readRow()
-            }
-            QueryResult.Value(rows)
-        },
-        parameters = if (annotationId == null) 0 else 1,
-        binders = if (annotationId == null) null else {
-            { bindString(0, annotationId) }
-        },
-    ).value
 
     private fun app.cash.sqldelight.db.SqlCursor.readRow(): Row = Row(
         annotationId = requireNotNull(getString(0)),
@@ -425,41 +348,14 @@ public object ContentAnnotationSchema : SqlSchema<QueryResult.Value<Unit>> {
     internal val component: SchemaComponent = SchemaComponent(
         name = "content_annotations",
         version = version,
-        create = ::createTables,
+        // The generated DDL (ContentAnnotation.sq); its own Schema version is not used.
+        create = { driver -> ContentAnnotationDatabase.Schema.create(driver).value },
         unrecordedVersion = { driver -> if (tableExists(driver, TABLE_ANNOTATIONS)) 1 else null },
     )
 
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
         SchemaMigrator.migrate(driver, component)
         return QueryResult.Unit
-    }
-
-    private fun createTables(driver: SqlDriver) {
-        driver.execute(
-            null,
-            """
-                CREATE TABLE IF NOT EXISTS $TABLE_ANNOTATIONS(
-                  annotation_id TEXT NOT NULL PRIMARY KEY,
-                  publication_id TEXT NOT NULL,
-                  acquisition_id TEXT NOT NULL,
-                  unit_id TEXT NOT NULL,
-                  content_revision INTEGER NOT NULL,
-                  state TEXT NOT NULL,
-                  created_at INTEGER NOT NULL,
-                  updated_at INTEGER NOT NULL,
-                  annotation_json TEXT NOT NULL
-                ) WITHOUT ROWID
-            """.trimIndent(),
-            0,
-        ).value
-        driver.execute(
-            null,
-            """
-                CREATE INDEX IF NOT EXISTS content_annotations_scope
-                ON $TABLE_ANNOTATIONS(publication_id, acquisition_id, unit_id, content_revision, state)
-            """.trimIndent(),
-            0,
-        ).value
     }
 
     override fun migrate(
