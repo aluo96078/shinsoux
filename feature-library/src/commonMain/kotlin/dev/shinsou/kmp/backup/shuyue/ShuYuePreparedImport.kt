@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.crypto.Sha256
 
 /** User choices which are cryptographically bound to the migration ledger result. */

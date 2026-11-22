@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.content.acquisition
 
-import dev.shinsou.kmp.content.ContentBlobStage
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStage
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.EpubPackageNavigationKind
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.reader.EpubBrowserRenderSession
 import dev.shinsou.kmp.reader.EpubBrowserRenderer

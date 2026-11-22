@@ -1,15 +1,15 @@
 package dev.shinsou.kmp.app
 
-import dev.shinsou.kmp.content.ContentAliasMutation
-import dev.shinsou.kmp.content.ContentCommitBatch
-import dev.shinsou.kmp.content.LegacyOutboxDraft
-import dev.shinsou.kmp.content.ContentCommitResult
+import dev.shinsou.kmp.content.transaction.ContentAliasMutation
+import dev.shinsou.kmp.content.transaction.ContentCommitBatch
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
+import dev.shinsou.kmp.content.transaction.ContentCommitResult
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
-import dev.shinsou.kmp.content.ContentMigrationLookupStatus
-import dev.shinsou.kmp.content.ContentPublicationMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLookupStatus
+import dev.shinsou.kmp.content.transaction.ContentPublicationMutation
 import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
-import dev.shinsou.kmp.content.asContentAliasMutation
+import dev.shinsou.kmp.content.portable.asContentAliasMutation
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.Category

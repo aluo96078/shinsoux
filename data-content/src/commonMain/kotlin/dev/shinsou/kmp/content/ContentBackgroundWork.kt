@@ -1,5 +1,7 @@
 package dev.shinsou.kmp.content
 
+import dev.shinsou.kmp.content.blob.ContentBlobRecoveryCoordinator
+import dev.shinsou.kmp.content.transaction.ContentOutboxDiscarder
 import dev.shinsou.kmp.logging.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher

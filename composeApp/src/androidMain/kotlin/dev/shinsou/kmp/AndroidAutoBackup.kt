@@ -11,7 +11,7 @@ import dev.shinsou.kmp.app.openShinsouRepository
 import dev.shinsou.kmp.backup.AutoBackupRunResult
 import dev.shinsou.kmp.backup.AutoBackupService
 import dev.shinsou.kmp.backup.nextAutoBackupAt
-import dev.shinsou.kmp.content.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.domain.model.BackupState

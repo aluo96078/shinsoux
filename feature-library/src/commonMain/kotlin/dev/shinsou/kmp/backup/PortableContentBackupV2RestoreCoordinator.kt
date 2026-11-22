@@ -2,16 +2,16 @@ package dev.shinsou.kmp.backup
 
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.BlobPublishReceipt
-import dev.shinsou.kmp.content.ContentBlobSyncJobMutation
-import dev.shinsou.kmp.content.ContentCommitBatch
-import dev.shinsou.kmp.content.ContentCommitSemantics
+import dev.shinsou.kmp.content.blob.BlobPublishReceipt
+import dev.shinsou.kmp.content.transaction.ContentBlobSyncJobMutation
+import dev.shinsou.kmp.content.transaction.ContentCommitBatch
+import dev.shinsou.kmp.content.transaction.ContentCommitSemantics
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.LegacyOutboxDraft
-import dev.shinsou.kmp.content.ContentPublicationMutation
-import dev.shinsou.kmp.content.ContentRightsGrantMutation
-import dev.shinsou.kmp.content.ManifestAttachment
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
+import dev.shinsou.kmp.content.transaction.ContentPublicationMutation
+import dev.shinsou.kmp.content.transaction.ContentRightsGrantMutation
+import dev.shinsou.kmp.content.blob.ManifestAttachment
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.PendingContentBodyStoreRequest
 import dev.shinsou.kmp.data.ShinsouRepository

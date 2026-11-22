@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.content.acquisition
 
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.ImageLayout
@@ -207,7 +207,7 @@ public class ImageSequenceAcquisitionService(
         )
     }
 
-    private fun publishPage(page: LocalImagePageSource): dev.shinsou.kmp.content.BlobPublishReceipt {
+    private fun publishPage(page: LocalImagePageSource): dev.shinsou.kmp.content.blob.BlobPublishReceipt {
         val stage = blobStore.beginStage(page.byteSize.toLong(), page.mediaType)
         return try {
             page.forEachChunk(cancellationCheckpoint, stage::append)

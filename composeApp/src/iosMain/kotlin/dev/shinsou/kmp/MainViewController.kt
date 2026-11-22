@@ -8,7 +8,7 @@ import dev.shinsou.kmp.app.App
 import dev.shinsou.kmp.app.ShinsouComposition
 import dev.shinsou.kmp.app.checkBeforeOpening
 import dev.shinsou.kmp.app.openShinsouRepository
-import dev.shinsou.kmp.content.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.IosAppFileSystem
 import dev.shinsou.kmp.navigation.DeepLinkParser

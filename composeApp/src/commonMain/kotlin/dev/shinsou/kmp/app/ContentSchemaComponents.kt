@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.app
 
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
-import dev.shinsou.kmp.content.SchemaComponent
-import dev.shinsou.kmp.content.SchemaTooNewException
-import dev.shinsou.kmp.content.checkBeforeOpening
-import dev.shinsou.kmp.content.contentFoundationSchemaComponents
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.schema.SchemaComponent
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.checkBeforeOpening
+import dev.shinsou.kmp.content.schema.contentFoundationSchemaComponents
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.translation.TranslationMemorySchema
 

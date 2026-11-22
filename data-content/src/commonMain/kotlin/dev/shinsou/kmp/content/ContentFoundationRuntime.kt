@@ -17,6 +17,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.RecoveryBoundary
+import dev.shinsou.kmp.content.blob.SqlDriverContentBlobStore
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.portable.SqlDriverPortableAliasResolver
+import dev.shinsou.kmp.content.sql.ContentConnection
+import dev.shinsou.kmp.content.transaction.ContentBlobRemovalIntent
+import dev.shinsou.kmp.content.transaction.ContentBlobSyncJobMutation
+import dev.shinsou.kmp.content.transaction.ContentCommitBatch
+import dev.shinsou.kmp.content.transaction.ContentCommitResult
+import dev.shinsou.kmp.content.transaction.ContentCommitSemantics
+import dev.shinsou.kmp.content.transaction.ContentLocalBodyPurgeResult
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerLookup
+import dev.shinsou.kmp.content.transaction.ContentOutboxDiscarder
+import dev.shinsou.kmp.content.transaction.ContentPublicationReplicaCursor
+import dev.shinsou.kmp.content.transaction.ContentReplicaAuthority
+import dev.shinsou.kmp.content.transaction.ContentReplicaAuthorityDepartureResult
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.ContentTransactionFailurePoint
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraftAdapter
+import dev.shinsou.kmp.content.transaction.SharedContentTransactionStore
+import dev.shinsou.kmp.content.transaction.SqlDriverContentTransactionStore
 
 /** Typed publication read side for acquisition/import consumers. */
 public interface PublicationStore {

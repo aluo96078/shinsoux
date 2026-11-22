@@ -1,10 +1,10 @@
 package dev.shinsou.kmp.content.acquisition
 
-import dev.shinsou.kmp.content.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.BlobPublishReceipt
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentManifest
-import dev.shinsou.kmp.content.ContentManifestOwner
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.EpubEncryption
 import dev.shinsou.kmp.domain.content.EpubEncryptionDescriptor
@@ -22,7 +22,7 @@ import dev.shinsou.kmp.domain.content.EpubSpineDocument
 import dev.shinsou.kmp.domain.content.ImageProgression
 import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
 import dev.shinsou.kmp.domain.content.MAX_EPUB_AUXILIARY_GRAPH_ENTRIES
-import dev.shinsou.kmp.content.ManifestAttachment
+import dev.shinsou.kmp.content.blob.ManifestAttachment
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin

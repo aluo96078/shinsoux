@@ -13,7 +13,7 @@ import dev.shinsou.kmp.plugin.v2.ExtensionUnitSelectionV2
 import dev.shinsou.kmp.plugin.v2.RemotePublicationV2
 import dev.shinsou.kmp.plugin.v2.RemoteUnitV2
 import dev.shinsou.kmp.ui.browse.ExtensionFavoriteDestination
-import dev.shinsou.kmp.content.ContentCommitResult
+import dev.shinsou.kmp.content.transaction.ContentCommitResult
 import dev.shinsou.kmp.contract.TypedReaderContentSession
 import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.domain.content.ContentKind

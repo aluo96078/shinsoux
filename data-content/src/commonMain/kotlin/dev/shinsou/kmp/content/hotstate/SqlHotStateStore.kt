@@ -5,12 +5,12 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import dev.shinsou.kmp.content.ContentSqlThreadGuard
-import dev.shinsou.kmp.content.SchemaComponent
-import dev.shinsou.kmp.content.SchemaMigrator
+import dev.shinsou.kmp.content.sql.ContentSqlThreadGuard
+import dev.shinsou.kmp.content.schema.SchemaComponent
+import dev.shinsou.kmp.content.schema.SchemaMigrator
 import dev.shinsou.kmp.content.hotstate.sql.LegacyHotStateDatabase
 import dev.shinsou.kmp.content.hotstate.sql.LegacyHotStateQueries
-import dev.shinsou.kmp.content.tableExists
+import dev.shinsou.kmp.content.schema.tableExists
 import dev.shinsou.kmp.domain.model.DownloadQueueItem
 import dev.shinsou.kmp.domain.model.DownloadState
 import dev.shinsou.kmp.domain.model.History

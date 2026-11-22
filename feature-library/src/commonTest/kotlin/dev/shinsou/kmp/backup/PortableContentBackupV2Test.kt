@@ -2,17 +2,17 @@ package dev.shinsou.kmp.backup
 
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.annotation.ContentAnnotationKind
-import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentBlobStage
-import dev.shinsou.kmp.content.ContentAliasMutation
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStage
+import dev.shinsou.kmp.content.transaction.ContentAliasMutation
 import dev.shinsou.kmp.domain.content.ContentManifest
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.ContentMetadataMutation
-import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
-import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
+import dev.shinsou.kmp.content.transaction.ContentMetadataMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
-import dev.shinsou.kmp.content.ManifestAttachment
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.blob.ManifestAttachment
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.rights.ContentAccessRequest
@@ -298,7 +298,7 @@ class PortableContentBackupV2Test {
         val fixture = fixture("x".repeat(128 * 1024))
         var bodyOpenCount = 0
         val trackingStore = object : ContentBlobStore by fixture.blobStore {
-            override fun openRead(reference: dev.shinsou.kmp.domain.content.BlobRef): dev.shinsou.kmp.content.BlobReadLease? {
+            override fun openRead(reference: dev.shinsou.kmp.domain.content.BlobRef): dev.shinsou.kmp.content.blob.BlobReadLease? {
                 bodyOpenCount++
                 return fixture.blobStore.openRead(reference)
             }

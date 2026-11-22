@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.app.ContentFeatureRuntime
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.local.LocalContentManager

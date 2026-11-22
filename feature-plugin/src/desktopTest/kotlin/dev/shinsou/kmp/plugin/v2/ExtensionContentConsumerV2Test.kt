@@ -8,13 +8,13 @@ import dev.shinsou.kmp.content.acquisition.EpubArchiveEntry
 import dev.shinsou.kmp.content.acquisition.EpubArchiveExtractor
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStage
+import dev.shinsou.kmp.content.blob.ContentBlobStage
 import dev.shinsou.kmp.domain.content.ContentKind
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.ContentTransactionFailurePoint
+import dev.shinsou.kmp.content.transaction.ContentTransactionFailurePoint
 import dev.shinsou.kmp.domain.content.ImageProgression
 import dev.shinsou.kmp.domain.content.ImageTransform
-import dev.shinsou.kmp.content.PendingBlob
+import dev.shinsou.kmp.content.blob.PendingBlob
 import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin

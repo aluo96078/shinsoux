@@ -2,8 +2,8 @@ package dev.shinsou.kmp
 
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import app.cash.sqldelight.db.SqlDriver
-import dev.shinsou.kmp.content.PlatformContentDatabaseSchema
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.schema.PlatformContentDatabaseSchema
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointerVar

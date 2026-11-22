@@ -568,7 +568,7 @@ public class SyncV3Service internal constructor(
     /**
      * Runs [block] on the service's own dispatcher, keeping the caller's job (and so its
      * cancellation). Cycles look publications up in the content store, which must never run on
-     * the UI thread ([dev.shinsou.kmp.content.ContentSqlThreadGuard] throws there in debug
+     * the UI thread ([dev.shinsou.kmp.content.sql.ContentSqlThreadGuard] throws there in debug
      * builds); these entry points are called from UI coroutines.
      */
     private suspend fun <T> offCaller(block: suspend () -> T): T =

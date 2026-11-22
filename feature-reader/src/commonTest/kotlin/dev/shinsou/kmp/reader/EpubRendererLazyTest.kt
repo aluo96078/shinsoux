@@ -1,13 +1,13 @@
 package dev.shinsou.kmp.reader
 
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.BlobReadLease
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.BlobReadLease
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.EpubPackage
 import dev.shinsou.kmp.domain.content.EpubResource
 import dev.shinsou.kmp.domain.content.EpubSpineDocument
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.content.EpubSpineNavigation
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.model.PublicationKey

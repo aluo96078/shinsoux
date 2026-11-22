@@ -4,8 +4,8 @@ import dev.shinsou.kmp.content.acquisition.BoundedXmlParser
 import dev.shinsou.kmp.content.acquisition.StrictTextDecoder
 import dev.shinsou.kmp.content.acquisition.XmlContentNode
 import dev.shinsou.kmp.content.acquisition.XmlElement
-import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentBlobStoreException
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStoreException
 import dev.shinsou.kmp.crypto.Sha256
 import dev.shinsou.kmp.domain.content.EpubSpineNavigation
 import dev.shinsou.kmp.domain.model.cfiWithTextOffset

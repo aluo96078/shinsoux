@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.reader
 
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ImageLayout
 import dev.shinsou.kmp.domain.content.ImageSequenceNavigation
 import dev.shinsou.kmp.domain.content.ImageTransform

@@ -15,6 +15,15 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.transaction.ContentAliasMutation
+import dev.shinsou.kmp.content.transaction.ContentCommitBatch
+import dev.shinsou.kmp.content.transaction.ContentMetadataMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.transaction.ContentPublicationMutation
+import dev.shinsou.kmp.content.transaction.ContentRightsGrantMutation
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
 
 class ContentFoundationDirectReadTest {
     @Test

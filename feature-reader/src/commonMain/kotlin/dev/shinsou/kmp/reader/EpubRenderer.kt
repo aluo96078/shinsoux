@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.reader
 
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.EpubResource
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock

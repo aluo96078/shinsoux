@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.content.acquisition
 
-import dev.shinsou.kmp.content.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.ResourceRef
@@ -309,7 +309,7 @@ public class TextAcquisitionService(
         }
     }
 
-    private fun publishCanonicalText(text: String, byteSize: Long): dev.shinsou.kmp.content.BlobPublishReceipt {
+    private fun publishCanonicalText(text: String, byteSize: Long): dev.shinsou.kmp.content.blob.BlobPublishReceipt {
         val stage = blobStore.beginStage(byteSize, TEXT_MEDIA_TYPE)
         return try {
             text.forEachUtf8Chunk(cancellationCheckpoint, stage::append)

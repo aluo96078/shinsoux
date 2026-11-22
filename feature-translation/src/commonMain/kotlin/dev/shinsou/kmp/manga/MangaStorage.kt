@@ -2,9 +2,9 @@ package dev.shinsou.kmp.manga
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
-import dev.shinsou.kmp.content.executeStatement
-import dev.shinsou.kmp.content.executeUncached
-import dev.shinsou.kmp.content.queryStatement
+import dev.shinsou.kmp.content.sql.executeStatement
+import dev.shinsou.kmp.content.sql.executeUncached
+import dev.shinsou.kmp.content.sql.queryStatement
 import dev.shinsou.kmp.logging.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
