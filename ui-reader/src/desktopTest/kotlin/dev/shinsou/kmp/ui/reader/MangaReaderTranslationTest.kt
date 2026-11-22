@@ -84,7 +84,7 @@ class MangaReaderTranslationTest {
             platform = OfflineTranslationPlatform(MarkingEngine, root.resolve("text").path),
             http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
         )
-        translation.setAutoTranslate(on = false, paid = false)
+        translation.setup.setAutoTranslate(on = false, paid = false)
         val manga = MangaTranslation(
             DesktopMangaPlatform.create(),
             MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
@@ -96,7 +96,7 @@ class MangaReaderTranslationTest {
         state.autoStart("en", "zh-Hant", readsJapanese = { null })
         kotlin.test.assertEquals("en", state.settings?.from, "turning it on reads English, not Japanese")
         kotlin.test.assertEquals(false, state.settings?.enabled)
-        kotlin.test.assertNull(translation.settings("work"), "nothing is saved until the reader changes something")
+        kotlin.test.assertNull(translation.chapters.settings("work"), "nothing is saved until the reader changes something")
 
         // a language the reader picks is theirs, whatever the source says
         state.update(state.settings!!.copy(from = "zh-Hans"))
@@ -121,12 +121,12 @@ class MangaReaderTranslationTest {
         chinese.autoStart("zh", "zh-Hant", readsJapanese = { null }, readsChineseScript = { null })
         kotlin.test.assertEquals("zh-Hans", chinese.settings?.from, "turning it on offers the Chinese recogniser, not Japanese")
         chinese.update(chinese.settings!!.copy(enabled = true))
-        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(translation.settings("chinese")), "a script only taken is not a choice")
+        kotlin.test.assertNull(MangaReaderTranslationState.pickedFrom(translation.chapters.settings("chinese")), "a script only taken is not a choice")
         // once told, a script that is the reader's own leaves it off
         chinese.autoStart("zh", "zh-Hant", readsJapanese = { null }, readsChineseScript = { "zh-Hant" })
-        kotlin.test.assertEquals("zh-Hant", translation.settings("chinese")?.from)
-        kotlin.test.assertEquals(false, translation.settings("chinese")?.enabled)
-        kotlin.test.assertEquals(false, translation.settings("chinese")?.turnedOff)
+        kotlin.test.assertEquals("zh-Hant", translation.chapters.settings("chinese")?.from)
+        kotlin.test.assertEquals(false, translation.chapters.settings("chinese")?.enabled)
+        kotlin.test.assertEquals(false, translation.chapters.settings("chinese")?.turnedOff)
 
         // for a reader of another language the script decides the model it is translated by
         val english = MangaReaderTranslationState(manga, translation, "chinese-en")
@@ -144,7 +144,7 @@ class MangaReaderTranslationTest {
             platform = OfflineTranslationPlatform(MarkingEngine, root.resolve("text").path),
             http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
         )
-        translation.setAutoTranslate(on = true, paid = false)
+        translation.setup.setAutoTranslate(on = true, paid = false)
         val manga = MangaTranslation(
             DesktopMangaPlatform.create(),
             MangaModelStore(root.resolve("manga").path, HttpClient(MockEngine { respond("") })),
@@ -369,10 +369,10 @@ class MangaReaderTranslationTest {
         kotlin.test.assertEquals(dev.shinsou.kmp.translation.PrefetchState.DONE, entry.state, "failure ${entry.failure}")
         println("MANGA prefetch=${(System.nanoTime() - t) / 1_000_000}ms")
         // the work now opens translated, into the default language
-        val settings = translation.settings(mangaWorkKey(work))!!
+        val settings = translation.chapters.settings(mangaWorkKey(work))!!
         kotlin.test.assertTrue(settings.enabled); kotlin.test.assertEquals("zh-Hant", settings.to)
         // and the chapter list marks it translated
-        kotlin.test.assertEquals(setOf(mangaChapterKey(chapter)), translation.translatedChapterKeys(mangaWorkKey(work)))
+        kotlin.test.assertEquals(setOf(mangaChapterKey(chapter)), translation.storage.translatedChapterKeys(mangaWorkKey(work)))
 
         // the reader then finds every page drawn already
         val opened = System.nanoTime(); var shown = 0

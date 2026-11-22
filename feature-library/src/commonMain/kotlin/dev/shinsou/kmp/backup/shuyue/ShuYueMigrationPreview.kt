@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
 import dev.shinsou.kmp.domain.model.MigrationNamespaceId
 import dev.shinsou.kmp.domain.model.PortableCategoryId
 import dev.shinsou.kmp.domain.model.PublicationKey

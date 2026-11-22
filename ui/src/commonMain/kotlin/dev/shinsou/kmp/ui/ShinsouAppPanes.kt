@@ -698,7 +698,7 @@ internal fun DetailPane(
     LaunchedEffect(textTranslation, mangaTranslation, chapters, finishedMangaPrefetch) {
         if (textTranslation == null || mangaTranslation == null || chapters.isEmpty()) return@LaunchedEffect
         val keys = runCatchingCancellable {
-            withContext(workDispatcher) { textTranslation.translatedChapterKeys(dev.shinsou.kmp.ui.reader.mangaWorkKey(manga)) }
+            withContext(workDispatcher) { textTranslation.storage.translatedChapterKeys(dev.shinsou.kmp.ui.reader.mangaWorkKey(manga)) }
         }
             .onFailure { Log.warn("Translation", it) { "Reading the translated chapter list failed" } }
             .getOrDefault(emptySet())

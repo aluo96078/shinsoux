@@ -6,6 +6,11 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.annotation.ContentAnnotationSchema
 import dev.shinsou.kmp.app.contentSchemaComponents
 import dev.shinsou.kmp.content.hotstate.LegacyHotStateSchema
+import dev.shinsou.kmp.content.schema.ContentTransactionSchema
+import dev.shinsou.kmp.content.schema.SchemaComponent
+import dev.shinsou.kmp.content.schema.SchemaMigrator
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.columnExists
 import dev.shinsou.kmp.search.LocalFullTextIndexSchema
 import dev.shinsou.kmp.sync.v3.SyncV3Schema
 import dev.shinsou.kmp.translation.TranslationMemorySchema

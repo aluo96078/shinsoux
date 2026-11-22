@@ -1,9 +1,9 @@
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.content.ContentAliasMutation
-import dev.shinsou.kmp.content.ContentMetadataMutation
-import dev.shinsou.kmp.content.ContentMigrationLedgerMutation
-import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.transaction.ContentAliasMutation
+import dev.shinsou.kmp.content.transaction.ContentMetadataMutation
+import dev.shinsou.kmp.content.transaction.ContentMigrationLedgerMutation
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.Acquisition

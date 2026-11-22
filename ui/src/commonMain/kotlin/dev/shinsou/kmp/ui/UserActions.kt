@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
  *
  * Library, content and download stores are written off the UI thread: a repository mutation runs
  * the sync dirty tracker's SQL before it returns, and the content and download stores are SQL and
- * file backed (R3-4, [dev.shinsou.kmp.content.ContentSqlThreadGuard]). Platform pickers, sheets,
+ * file backed (R3-4, [dev.shinsou.kmp.content.sql.ContentSqlThreadGuard]). Platform pickers, sheets,
  * navigation and screen state stay on the UI thread.
  */
 internal interface UserActions {

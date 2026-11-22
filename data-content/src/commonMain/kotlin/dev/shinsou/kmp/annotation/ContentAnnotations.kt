@@ -248,28 +248,11 @@ public data class AnnotationDerivedDataCleanupResult(
     val concurrentChangesDeferred: Int,
 )
 
-/** Host service that gates every mutation and performs deterministic quote-based re-anchoring. */
-public class RightsEnforcedAnnotationService(
-    private val operationGate: ContentOperationGate,
-    private val store: ContentAnnotationStore,
-    /** Must remain non-blocking; production uses it only to signal background reconciliation. */
-    private val onMutationCommitted: () -> Unit = {},
-) {
-    public fun find(annotationId: String, access: ContentAccessRequest): ContentAnnotation? =
-        operationGate.execute(access, ContentOperation.ANNOTATE) {
-            store.find(annotationId)?.also { requireScopeMatches(it.scope, access) }
-        }
+/** A reader's notes and highlights on a passage; every call is checked against the ANNOTATE right. */
+public interface ContentAnnotationService {
+    public fun find(annotationId: String, access: ContentAccessRequest): ContentAnnotation?
 
-    public fun list(
-        scope: ReadingScope,
-        access: ContentAccessRequest,
-        includeTombstones: Boolean = false,
-    ): List<ContentAnnotation> {
-        requireScopeMatches(scope, access)
-        return operationGate.execute(access, ContentOperation.ANNOTATE) {
-            store.list(scope, includeTombstones)
-        }
-    }
+    public fun list(scope: ReadingScope, access: ContentAccessRequest, includeTombstones: Boolean = false): List<ContentAnnotation>
 
     public fun create(
         annotationId: String,
@@ -279,6 +262,67 @@ public class RightsEnforcedAnnotationService(
         nowEpochMillis: Long,
         body: String? = null,
         colorArgb: Long? = null,
+    ): ContentAnnotation
+
+    public fun update(
+        annotationId: String,
+        access: ContentAccessRequest,
+        nowEpochMillis: Long,
+        body: String?,
+        colorArgb: Long?,
+    ): ContentAnnotation
+
+    public fun tombstone(
+        annotationId: String,
+        access: ContentAccessRequest,
+        nowEpochMillis: Long,
+        reason: String = USER_DELETED_REASON,
+    ): ContentAnnotation
+
+    /**
+     * Re-anchor a text annotation to a new content revision.  Failure creates a tombstone instead
+     * of silently attaching the note to unrelated text.
+     */
+    public fun reanchorText(
+        annotationId: String,
+        newScope: ReadingScope,
+        newText: String,
+        access: ContentAccessRequest,
+        nowEpochMillis: Long,
+    ): AnnotationReanchorResult
+}
+
+/** Host service that gates every mutation and performs deterministic quote-based re-anchoring. */
+public class RightsEnforcedAnnotationService(
+    private val operationGate: ContentOperationGate,
+    private val store: ContentAnnotationStore,
+    /** Must remain non-blocking; production uses it only to signal background reconciliation. */
+    private val onMutationCommitted: () -> Unit = {},
+) : ContentAnnotationService {
+    override fun find(annotationId: String, access: ContentAccessRequest): ContentAnnotation? =
+        operationGate.execute(access, ContentOperation.ANNOTATE) {
+            store.find(annotationId)?.also { requireScopeMatches(it.scope, access) }
+        }
+
+    override fun list(
+        scope: ReadingScope,
+        access: ContentAccessRequest,
+        includeTombstones: Boolean,
+    ): List<ContentAnnotation> {
+        requireScopeMatches(scope, access)
+        return operationGate.execute(access, ContentOperation.ANNOTATE) {
+            store.list(scope, includeTombstones)
+        }
+    }
+
+    override fun create(
+        annotationId: String,
+        kind: ContentAnnotationKind,
+        range: ReadingRange,
+        access: ContentAccessRequest,
+        nowEpochMillis: Long,
+        body: String?,
+        colorArgb: Long?,
     ): ContentAnnotation {
         requireRangeMatchesAccess(range, access)
         val annotation = ContentAnnotation(
@@ -299,7 +343,7 @@ public class RightsEnforcedAnnotationService(
         }
     }
 
-    public fun update(
+    override fun update(
         annotationId: String,
         access: ContentAccessRequest,
         nowEpochMillis: Long,
@@ -328,11 +372,11 @@ public class RightsEnforcedAnnotationService(
         }
     }
 
-    public fun tombstone(
+    override fun tombstone(
         annotationId: String,
         access: ContentAccessRequest,
         nowEpochMillis: Long,
-        reason: String = USER_DELETED_REASON,
+        reason: String,
     ): ContentAnnotation {
         // Do not read a private annotation, or disclose whether it exists, before the host gate.
         // The later execute call deliberately remains so a concurrent revocation still wins.
@@ -353,11 +397,7 @@ public class RightsEnforcedAnnotationService(
         }
     }
 
-    /**
-     * Re-anchor a text annotation to a new content revision.  Failure creates a tombstone instead
-     * of silently attaching the note to unrelated text.
-     */
-    public fun reanchorText(
+    override fun reanchorText(
         annotationId: String,
         newScope: ReadingScope,
         newText: String,

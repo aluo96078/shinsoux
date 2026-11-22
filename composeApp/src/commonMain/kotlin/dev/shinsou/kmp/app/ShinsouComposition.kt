@@ -12,7 +12,7 @@ import dev.shinsou.kmp.backup.shuyue.ShuYueTransactionalImporter
 import dev.shinsou.kmp.buildinfo.SHINSOU_APP_VERSION
 import dev.shinsou.kmp.content.ContentBackgroundWork
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.acquisition.BoundedEpubArchiveExtractor
 import dev.shinsou.kmp.contract.AccountPackageDirectory

@@ -207,31 +207,31 @@ class CloudTranslationTest {
     fun theChosenServiceTranslatesWithTheStoredKeyAndItsTranslationsAreKeptAsPaid() = runBlocking<Unit> {
         val service = Service()
         val device = Device(service)
-        assertEquals(TranslationProviderKind.OFFLINE, device.translation.preferences().provider)
+        assertEquals(TranslationProviderKind.OFFLINE, device.translation.setup.preferences().provider)
 
-        device.translation.setProvider(TranslationProviderKind.DEEPL)
+        device.translation.setup.setProvider(TranslationProviderKind.DEEPL)
         // Chosen but without a key: nothing is sent, and the reader is told why.
-        assertEquals(TranslationFailure.INVALID_KEY, assertFailsWith<TranslationException> { device.translation.translate(request("空が青い")) { _, _ -> } }.failure)
+        assertEquals(TranslationFailure.INVALID_KEY, assertFailsWith<TranslationException> { device.translation.chapters.translate(request("空が青い")) { _, _ -> } }.failure)
         assertTrue(service.requests.isEmpty())
 
-        device.translation.setKey(TranslationProviderKind.DEEPL, "abc:fx")
+        device.translation.setup.setKey(TranslationProviderKind.DEEPL, "abc:fx")
         assertEquals("abc:fx", device.secrets!!.getString("translation.deepl.secret"))
-        assertTrue(device.translation.preferences().deepLKeySet)
-        assertTrue(device.translation.missingModels("ja", "zh-Hant").isEmpty())
+        assertTrue(device.translation.setup.preferences().deepLKeySet)
+        assertTrue(device.translation.models.missingModels("ja", "zh-Hant").isEmpty())
 
-        val result = device.translation.translate(request("空が青い\n\n雨が降る")) { _, _ -> }
+        val result = device.translation.chapters.translate(request("空が青い\n\n雨が降る")) { _, _ -> }
         assertEquals(listOf("D(空が青い)", null, "D(雨が降る)"), result.segments.map { it.translation })
         assertEquals(1, service.requests.size)
         assertTrue(device.memory.paidBytes() > 0 && device.memory.freeBytes() == 0L)
-        assertEquals(8, device.translation.preferences().charactersUsedToday)
+        assertEquals(8, device.translation.setup.preferences().charactersUsedToday)
 
         // Read again: from the memory, nothing is sent or counted.
-        assertTrue(device.translation.stored(request("空が青い\n\n雨が降る"))!!.complete)
-        device.translation.translate(request("空が青い\n\n雨が降る")) { _, _ -> }
+        assertTrue(device.translation.chapters.stored(request("空が青い\n\n雨が降る"))!!.complete)
+        device.translation.chapters.translate(request("空が青い\n\n雨が降る")) { _, _ -> }
         assertEquals(1, service.requests.size)
-        assertEquals(8, device.translation.preferences().charactersUsedToday)
+        assertEquals(8, device.translation.setup.preferences().charactersUsedToday)
 
-        device.translation.setKey(TranslationProviderKind.DEEPL, "")
+        device.translation.setup.setKey(TranslationProviderKind.DEEPL, "")
         assertNull(device.secrets.getString("translation.deepl.secret"))
     }
 
@@ -239,44 +239,44 @@ class CloudTranslationTest {
     fun paidTranslationStopsAtTheDailyLimitAndStartsAgainTheNextDay() = runBlocking<Unit> {
         val service = Service()
         val device = Device(service)
-        device.translation.setProvider(TranslationProviderKind.GOOGLE)
-        device.translation.setKey(TranslationProviderKind.GOOGLE, "k")
-        device.translation.setDailyCharacterLimit(10)
+        device.translation.setup.setProvider(TranslationProviderKind.GOOGLE)
+        device.translation.setup.setKey(TranslationProviderKind.GOOGLE, "k")
+        device.translation.setup.setDailyCharacterLimit(10)
 
-        device.translation.translate(request("一二三四五六")) { _, _ -> }
-        val refused = assertFailsWith<TranslationException> { device.translation.translate(request("七八九十壱弐", "c2")) { _, _ -> } }
+        device.translation.chapters.translate(request("一二三四五六")) { _, _ -> }
+        val refused = assertFailsWith<TranslationException> { device.translation.chapters.translate(request("七八九十壱弐", "c2")) { _, _ -> } }
         assertEquals(TranslationFailure.DAILY_LIMIT, refused.failure)
         assertEquals(1, service.requests.size)
-        assertEquals(6, device.translation.preferences().charactersUsedToday)
+        assertEquals(6, device.translation.setup.preferences().charactersUsedToday)
 
         device.time += 86_400_000L
-        assertEquals(0, device.translation.preferences().charactersUsedToday)
-        device.translation.translate(request("七八九十壱弐", "c2")) { _, _ -> }
+        assertEquals(0, device.translation.setup.preferences().charactersUsedToday)
+        device.translation.chapters.translate(request("七八九十壱弐", "c2")) { _, _ -> }
         assertEquals(2, service.requests.size)
 
-        device.translation.setDailyCharacterLimit(0)
-        device.translation.translate(request("とても長い文章がここに続いていく", "c3")) { _, _ -> }
+        device.translation.setup.setDailyCharacterLimit(0)
+        device.translation.chapters.translate(request("とても長い文章がここに続いていく", "c3")) { _, _ -> }
         assertEquals(3, service.requests.size)
     }
 
     @Test
     fun aFailedRequestIsNotCountedAgainstTheLimit() = runBlocking<Unit> {
         val device = Device(Service(HttpStatusCode.InternalServerError))
-        device.translation.setProvider(TranslationProviderKind.DEEPL)
-        device.translation.setKey(TranslationProviderKind.DEEPL, "k")
-        assertFailsWith<TranslationException> { device.translation.translate(request("空が青い")) { _, _ -> } }
-        assertEquals(0, device.translation.preferences().charactersUsedToday)
+        device.translation.setup.setProvider(TranslationProviderKind.DEEPL)
+        device.translation.setup.setKey(TranslationProviderKind.DEEPL, "k")
+        assertFailsWith<TranslationException> { device.translation.chapters.translate(request("空が青い")) { _, _ -> } }
+        assertEquals(0, device.translation.setup.preferences().charactersUsedToday)
     }
 
     @Test
     fun whatWasSentBeforeALaterRequestFailedStaysCounted() = runBlocking<Unit> {
         val device = Device(Service(HttpStatusCode.InternalServerError, healthyRequests = 1))
-        device.translation.setProvider(TranslationProviderKind.DEEPL)
-        device.translation.setKey(TranslationProviderKind.DEEPL, "k")
+        device.translation.setup.setProvider(TranslationProviderKind.DEEPL)
+        device.translation.setup.setKey(TranslationProviderKind.DEEPL, "k")
         // More lines than go in one request: the first is answered, the second fails.
         val text = (1..60).joinToString("\n") { "行" + ('a' + it % 26) + it }
-        assertFailsWith<TranslationException> { device.translation.translate(request(text)) { _, _ -> } }
-        val used = device.translation.preferences().charactersUsedToday
+        assertFailsWith<TranslationException> { device.translation.chapters.translate(request(text)) { _, _ -> } }
+        val used = device.translation.setup.preferences().charactersUsedToday
         val all = text.lines().sumOf { it.length }
         assertTrue(used in 1 until all, "the answered request stays counted, the refused one does not: $used of $all")
     }
@@ -334,11 +334,11 @@ class CloudTranslationTest {
     @Test
     fun azureIsChosenKeyedAndGivenItsRegionLikeTheOtherServices() = runBlocking<Unit> {
         val device = Device(Service())
-        device.translation.setProvider(TranslationProviderKind.AZURE)
-        assertEquals(TranslationFailure.INVALID_KEY, assertFailsWith<TranslationException> { device.translation.translate(request("空が青い")) { _, _ -> } }.failure)
-        device.translation.setKey(TranslationProviderKind.AZURE, "k")
-        device.translation.setAzureRegion(" East Asia! ")
-        val preferences = device.translation.preferences()
+        device.translation.setup.setProvider(TranslationProviderKind.AZURE)
+        assertEquals(TranslationFailure.INVALID_KEY, assertFailsWith<TranslationException> { device.translation.chapters.translate(request("空が青い")) { _, _ -> } }.failure)
+        device.translation.setup.setKey(TranslationProviderKind.AZURE, "k")
+        device.translation.setup.setAzureRegion(" East Asia! ")
+        val preferences = device.translation.setup.preferences()
         assertTrue(preferences.azureKeySet)
         assertEquals("eastasia", preferences.azureRegion)
         assertEquals("k", device.secrets!!.getString("translation.azure.secret"))
@@ -347,8 +347,8 @@ class CloudTranslationTest {
     @Test
     fun withoutProtectedStorageOnlyTheOfflineEngineIsOffered() = runBlocking<Unit> {
         val device = Device(Service(), secrets = null)
-        device.translation.setProvider(TranslationProviderKind.DEEPL)
-        val preferences = device.translation.preferences()
+        device.translation.setup.setProvider(TranslationProviderKind.DEEPL)
+        val preferences = device.translation.setup.preferences()
         assertFalse(preferences.cloudAvailable)
         assertEquals(TranslationProviderKind.OFFLINE, preferences.provider)
     }

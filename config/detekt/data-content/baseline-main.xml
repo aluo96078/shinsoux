@@ -52,20 +52,20 @@
     <ID>LargeClass:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore&lt;D : Any&gt; : SharedContentTransactionStore</ID>
     <ID>LargeClass:SqlDriverContentBlobDurability.kt:SqlDriverContentBlobDurability : ContentBlobDurability</ID>
     <ID>LargeClass:SqlDriverContentTransactionStore.kt:SqlDriverContentTransactionStore&lt;D : Any&gt; : SharedContentTransactionStore</ID>
-    <ID>LargeClass:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex : LocalFullTextIndex</ID>
+    <ID>LargeClass:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex : LocalFullTextIndexReaderSearchIndex</ID>
     <ID>LongMethod:ContentTransactionSchema.kt:ContentTransactionSchema$private fun createTables</ID>
     <ID>LongMethod:EpubAcquisitionService.kt:EpubAcquisitionService$private fun parsePackage: ParsedEpub</ID>
     <ID>LongMethod:FoundationFullTextIndexReconciler.kt:FoundationFullTextIndexReconciler$public suspend fun reconcile: FullTextIndexReconcileResult</ID>
     <ID>LongMethod:InMemorySharedContentTransactionStore.kt:InMemorySharedContentTransactionStore$override fun commit: ContentCommitResult</ID>
     <ID>LongParameterList:AcquisitionModels.kt:LocalAcquisitionIdentityDeriver$internal fun blobId: String</ID>
-    <ID>LongParameterList:ContentAnnotations.kt:RightsEnforcedAnnotationService$public fun create: ContentAnnotation</ID>
+    <ID>LongParameterList:ContentAnnotations.kt:ContentAnnotationService$public fun create: ContentAnnotation</ID>
     <ID>LongParameterList:ContentBlobRecoveryCoordinator.kt:ContentBlobRecoveryCoordinator</ID>
     <ID>LongParameterList:ContentTransactions.kt:ContentCommitBatch</ID>
     <ID>LongParameterList:ContentTransactions.kt:ContentCommitBatch$public fun copy: ContentCommitBatch&lt;D&gt;</ID>
     <ID>LongParameterList:EpubAcquisitionService.kt:PreparedEpubAcquisition</ID>
     <ID>LongParameterList:SqlDriverContentBlobStore.kt:SqlDriverContentBlobStore$constructor</ID>
     <ID>LongParameterList:SqlDriverContentBlobStore.kt:private fun createPersistentDelegate: InMemoryContentBlobStore</ID>
-    <ID>LongParameterList:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$public suspend fun isCurrent: Boolean</ID>
+    <ID>LongParameterList:SqlDriverLocalFullTextIndex.kt:ReaderSearchIndex$public suspend fun isCurrent: Boolean</ID>
     <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$for</ID>
     <ID>LoopWithTooManyJumpStatements:ContentAnnotations.kt:RightsEnforcedAnnotationService$while</ID>
     <ID>LoopWithTooManyJumpStatements:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$for</ID>
@@ -75,7 +75,7 @@
     <ID>RedundantSuspendModifier:SqlDriverLocalFullTextIndex.kt:DerivedLocalFullTextIndex$suspend</ID>
     <ID>ReturnCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$fun deleteCrashFile: Boolean</ID>
     <ID>ReturnCount:AppPrivateContentBlobFiles.kt:AppPrivateContentBlobFiles$private fun verify: Boolean</ID>
-    <ID>ReturnCount:ContentAnnotations.kt:RightsEnforcedAnnotationService$public fun reanchorText: AnnotationReanchorResult</ID>
+    <ID>ReturnCount:ContentAnnotations.kt:RightsEnforcedAnnotationService$override fun reanchorText: AnnotationReanchorResult</ID>
     <ID>ReturnCount:ContentAnnotations.kt:private fun isWellFormedText: Boolean</ID>
     <ID>ReturnCount:ContentTransactions.kt:internal fun isImmutablePublicationGraphExtension: Boolean</ID>
     <ID>ReturnCount:ContentTransactions.kt:private fun isImmutableAcquisitionGraphExtension: Boolean</ID>

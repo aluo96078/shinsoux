@@ -9,10 +9,10 @@ import dev.shinsou.kmp.annotation.sql.ContentAnnotationDatabase
 import dev.shinsou.kmp.annotation.sql.ContentAnnotationQueries
 import dev.shinsou.kmp.concurrent.SynchronousLock
 import dev.shinsou.kmp.concurrent.withLock
-import dev.shinsou.kmp.content.SchemaComponent
-import dev.shinsou.kmp.content.SchemaMigrator
-import dev.shinsou.kmp.content.queryStatement
-import dev.shinsou.kmp.content.tableExists
+import dev.shinsou.kmp.content.schema.SchemaComponent
+import dev.shinsou.kmp.content.schema.SchemaMigrator
+import dev.shinsou.kmp.content.schema.tableExists
+import dev.shinsou.kmp.content.sql.queryStatement
 import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.rights.DerivedRightsCleanupTarget
 import kotlinx.serialization.decodeFromString

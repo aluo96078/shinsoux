@@ -48,7 +48,7 @@ import dev.shinsou.kmp.contract.readBoundedImportedBytes
 import dev.shinsou.kmp.contract.requireImportedDocumentSize
 import dev.shinsou.kmp.ui.ShinsouStartupScreen
 import dev.shinsou.kmp.ui.screens.SchemaTooNewNotice
-import dev.shinsou.kmp.content.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
 import dev.shinsou.kmp.ui.settings.writeBinaryDocumentWithFailureCleanup
 import dev.shinsou.kmp.ui.settings.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor

@@ -2,13 +2,13 @@
 
 package dev.shinsou.kmp.backup.shuyue
 
-import dev.shinsou.kmp.content.ContentOutboxAdapter
-import dev.shinsou.kmp.content.ContentSyncMode
-import dev.shinsou.kmp.content.ContentTransactionFailurePoint
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.transaction.ContentOutboxAdapter
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.ContentTransactionFailurePoint
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.content.DataContentTestAccess
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.ManifestAttachment
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
+import dev.shinsou.kmp.content.blob.ManifestAttachment
 import dev.shinsou.kmp.content.access.ContentBodyOfflineStoreAuthorizer
 import dev.shinsou.kmp.content.access.ContentOperationDeniedException
 import dev.shinsou.kmp.content.access.HostContentBodyOfflineStoreAuthorizer

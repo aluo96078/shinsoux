@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.desktop
 
 import app.cash.sqldelight.db.SqlDriver
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission

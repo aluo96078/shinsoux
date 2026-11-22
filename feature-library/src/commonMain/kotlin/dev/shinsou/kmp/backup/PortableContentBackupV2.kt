@@ -2,11 +2,11 @@ package dev.shinsou.kmp.backup
 
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentBlobStoreException
-import dev.shinsou.kmp.content.ContentManifestOwner
-import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
-import dev.shinsou.kmp.content.ManifestAttachment
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStoreException
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.blob.ManifestAttachment
 import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.data.AppSnapshot
@@ -792,7 +792,7 @@ public object PortableContentBackupV2Service {
         entry: BackupV2ArchiveEntry,
         reference: BlobRef,
         blobStore: ContentBlobStore,
-    ): dev.shinsou.kmp.content.BlobPublishReceipt {
+    ): dev.shinsou.kmp.content.blob.BlobPublishReceipt {
         if (entry.byteSize != reference.byteSize) {
             throw BackupFormatException("Content backup entry size mismatch")
         }
@@ -871,7 +871,7 @@ public object PortableContentBackupV2Service {
 
 public data class BackupV2PublishedBodies(
     val inspection: BackupV2Inspection,
-    val receipts: List<dev.shinsou.kmp.content.BlobPublishReceipt>,
+    val receipts: List<dev.shinsou.kmp.content.blob.BlobPublishReceipt>,
     val attachments: List<ManifestAttachment>,
 )
 

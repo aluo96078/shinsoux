@@ -48,6 +48,34 @@ import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.content.EpubPackageNavigationKind
 import dev.shinsou.kmp.domain.content.ResourceRef
 import dev.shinsou.kmp.domain.content.TextBlock
+import dev.shinsou.kmp.content.blob.BlobLifecycleState
+import dev.shinsou.kmp.content.blob.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.BlobRecoveryProtection
+import dev.shinsou.kmp.content.blob.ContentBlobStorageMaintenanceRequest
+import dev.shinsou.kmp.content.blob.ContentBlobStorageMaintenanceResult
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentManifestOwner
+import dev.shinsou.kmp.content.blob.ManifestAttachment
+import dev.shinsou.kmp.content.blob.RecoveryBoundary
+import dev.shinsou.kmp.content.blob.SqlDriverContentBlobStore
+import dev.shinsou.kmp.content.blob.resumableContentBlobSha256ForTesting
+import dev.shinsou.kmp.content.portable.SqlDriverPortableAliasResolver
+import dev.shinsou.kmp.content.schema.ContentTransactionSchema
+import dev.shinsou.kmp.content.sql.ContentConnection
+import dev.shinsou.kmp.content.transaction.AuxiliaryBlobAttachment
+import dev.shinsou.kmp.content.transaction.AuxiliaryBlobPurpose
+import dev.shinsou.kmp.content.transaction.ContentBlobSyncJobMutation
+import dev.shinsou.kmp.content.transaction.ContentCommitBatch
+import dev.shinsou.kmp.content.transaction.ContentLocalBodyPurgeResult
+import dev.shinsou.kmp.content.transaction.ContentOutboxPersistenceAdapter
+import dev.shinsou.kmp.content.transaction.ContentPublicationMutation
+import dev.shinsou.kmp.content.transaction.ContentQuarantineMutation
+import dev.shinsou.kmp.content.transaction.ContentRightsGrantMutation
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.ContentTransactionFailurePoint
+import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
+import dev.shinsou.kmp.content.transaction.SqlDriverContentTransactionStore
+import dev.shinsou.kmp.content.transaction.withoutManifestRevisions
 
 @Serializable
 private data class RestartDraft(val id: String)

@@ -55,7 +55,7 @@ internal fun ExtensionPublicationState.startPrefetch(selections: List<ExtensionU
 
 private suspend fun ExtensionPublicationState.enqueuePrefetch(translation: ReaderTranslation, jobs: List<TranslationPrefetchJob>, languages: PrefetchLanguages) {
     // Chapters already whole in this language, from the service in use, need nothing.
-    val done = runCatchingCancellable { translation.translatedChapterKeys(workKey, languages.to, languages.from) }
+    val done = runCatchingCancellable { translation.storage.translatedChapterKeys(workKey, languages.to, languages.from) }
         .onFailure { Log.warn("Translation", it) { "Reading the translated chapter list failed; translating every selected chapter" } }
         .getOrNull().orEmpty()
     val pending = if (done.isEmpty()) {

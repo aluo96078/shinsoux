@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.backup.shuyue
 
 import dev.shinsou.kmp.content.ContentFoundationRuntime
-import dev.shinsou.kmp.content.ContentPortableAuxiliaryState
+import dev.shinsou.kmp.content.portable.ContentPortableAuxiliaryState
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.AppSettings

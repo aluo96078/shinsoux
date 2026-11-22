@@ -772,7 +772,7 @@ internal class ExtensionPublicationState(
 /** The stored translations of the listed chapters, as the chapter list marks them. */
 internal suspend fun ExtensionPublicationState.loadTranslatedUnits(translation: ReaderTranslation) {
     if (units.isEmpty()) return
-    val keys = runCatchingCancellable { translation.translatedChapterKeys(workKey) }
+    val keys = runCatchingCancellable { translation.storage.translatedChapterKeys(workKey) }
         .onFailure { Log.warn("Translation", it) { "Reading the translated chapter list failed" } }
         .getOrDefault(emptySet())
     storedTranslatedUnitIds = if (keys.isEmpty()) {

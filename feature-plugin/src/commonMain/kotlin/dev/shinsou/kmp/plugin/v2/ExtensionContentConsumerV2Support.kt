@@ -1,11 +1,11 @@
 package dev.shinsou.kmp.plugin.v2
 
-import dev.shinsou.kmp.content.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.BlobPublishReceipt
 import dev.shinsou.kmp.domain.content.BlobRef
-import dev.shinsou.kmp.content.ContentBlobStage
-import dev.shinsou.kmp.content.ContentBlobStore
-import dev.shinsou.kmp.content.ContentBlobStoreException
-import dev.shinsou.kmp.content.PendingBlob
+import dev.shinsou.kmp.content.blob.ContentBlobStage
+import dev.shinsou.kmp.content.blob.ContentBlobStore
+import dev.shinsou.kmp.content.blob.ContentBlobStoreException
+import dev.shinsou.kmp.content.blob.PendingBlob
 import dev.shinsou.kmp.domain.model.Acquisition
 import dev.shinsou.kmp.domain.model.EXTENSION_CONTENT_NAMESPACE
 import dev.shinsou.kmp.domain.model.Rfc9562UuidV5

@@ -32,12 +32,12 @@ public interface MangaTextTranslator {
 }
 
 public fun ReaderTranslation.asMangaTranslator(): MangaTextTranslator = object : MangaTextTranslator {
-    override suspend fun providerId(): String = engineIdentity()
-    override suspend fun providerId(from: String, to: String): String = engineIdentity(from, to)
+    override suspend fun providerId(): String = chapters.engineIdentity()
+    override suspend fun providerId(from: String, to: String): String = chapters.engineIdentity(from, to)
     override suspend fun translate(request: ChapterTranslationRequest, onProgress: (Int, Int) -> Unit): ChapterTranslation =
-        this@asMangaTranslator.translate(request, onProgress)
+        this@asMangaTranslator.chapters.translate(request, onProgress)
     override suspend fun hasChapter(workKey: String, chapterKey: String, from: String, to: String): Boolean =
-        chapterKey in translatedChapterKeys(workKey, to, from)
+        chapterKey in storage.translatedChapterKeys(workKey, to, from)
 }
 
 /** A chapter to translate: its identity, its pages (loaded on demand) and the language pair. */

@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.app
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.shinsou.kmp.content.SqlDriverPortableAliasResolver
+import dev.shinsou.kmp.content.portable.SqlDriverPortableAliasResolver
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.domain.model.Category
 import dev.shinsou.kmp.domain.model.Chapter

@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.app
 
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
 import dev.shinsou.kmp.content.hotstate.SqlHotStateStore
 import dev.shinsou.kmp.data.AppSnapshot
 import dev.shinsou.kmp.data.ShinsouRepository

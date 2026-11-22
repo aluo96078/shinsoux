@@ -42,16 +42,16 @@ class ChineseScriptTest {
     @Test
     fun aTargetSavedForTheWorkDoesNotSendItToAPaidServiceByItself() = runBlocking {
         val reader = reader()
-        reader.setProvider(TranslationProviderKind.DEEPL)
-        reader.setKey(TranslationProviderKind.DEEPL, "key")
-        reader.setAutoTranslate(on = true, paid = false)
-        reader.setAutoTranslateOtherScript(true)
-        val auto = assertNotNull(reader.autoTranslation("zh-Hans", "zh-TW"))
+        reader.setup.setProvider(TranslationProviderKind.DEEPL)
+        reader.setup.setKey(TranslationProviderKind.DEEPL, "key")
+        reader.setup.setAutoTranslate(on = true, paid = false)
+        reader.setup.setAutoTranslateOtherScript(true)
+        val auto = assertNotNull(reader.chapters.autoTranslation("zh-Hans", "zh-TW"))
         // converting the script is free; English would go to DeepL, which may not start by itself
-        assertEquals("zh-Hant", reader.autoTarget(auto, "en"))
-        reader.setAutoTranslate(on = true, paid = true)
-        assertEquals("en", reader.autoTarget(auto, "en"))
-        assertEquals("zh-Hant", reader.autoTarget(auto, null))
+        assertEquals("zh-Hant", reader.chapters.autoTarget(auto, "en"))
+        reader.setup.setAutoTranslate(on = true, paid = true)
+        assertEquals("en", reader.chapters.autoTarget(auto, "en"))
+        assertEquals("zh-Hant", reader.chapters.autoTarget(auto, null))
     }
 
     @Test
@@ -96,20 +96,20 @@ class ChineseScriptTest {
     fun aChapterIsConvertedOnTheDeviceWhateverServiceIsChosen() = runBlocking<Unit> {
         val translation = reader()
         // a paid service with no key: the conversion needs neither
-        translation.setProvider(TranslationProviderKind.DEEPL)
-        assertTrue(translation.supports("zh-Hans", "zh-Hant"))
-        assertTrue(translation.missingModels("zh-Hans", "zh-Hant").isEmpty())
-        assertFalse(translation.systemLanguagesMissing("zh-Hans", "zh-Hant"))
+        translation.setup.setProvider(TranslationProviderKind.DEEPL)
+        assertTrue(translation.chapters.supports("zh-Hans", "zh-Hant"))
+        assertTrue(translation.models.missingModels("zh-Hans", "zh-Hant").isEmpty())
+        assertFalse(translation.models.systemLanguagesMissing("zh-Hans", "zh-Hant"))
         val request = ChapterTranslationRequest("work", "c1", "第一章\n他说这里很好", from = "zh-Hans", to = "zh-Hant")
-        val result = translation.translate(request) { _, _ -> }
+        val result = translation.chapters.translate(request) { _, _ -> }
         assertTrue(result.complete)
         assertEquals("第一章\n他說這裡很好", result.text())
-        assertEquals(setOf("c1"), translation.translatedChapterKeys("work", "zh-Hant"))
-        assertEquals(result.text(), translation.stored(request)?.text())
+        assertEquals(setOf("c1"), translation.storage.translatedChapterKeys("work", "zh-Hant"))
+        assertEquals(result.text(), translation.chapters.stored(request)?.text())
         // drawn manga pages are keyed by the conversion, not by the chosen service
-        assertEquals(translation.engineIdentity("zh-Hans", "zh-Hant"), translation.engineIdentity("zh-CN", "zh-TW"))
-        assertTrue(translation.engineIdentity("zh-Hans", "zh-Hant") != translation.engineIdentity())
+        assertEquals(translation.chapters.engineIdentity("zh-Hans", "zh-Hant"), translation.chapters.engineIdentity("zh-CN", "zh-TW"))
+        assertTrue(translation.chapters.engineIdentity("zh-Hans", "zh-Hant") != translation.chapters.engineIdentity())
         // and nothing is counted against the paid daily limit
-        assertEquals(0L, translation.preferences().charactersUsedToday)
+        assertEquals(0L, translation.setup.preferences().charactersUsedToday)
     }
 }

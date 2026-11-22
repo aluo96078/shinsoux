@@ -55,9 +55,9 @@ class TranslationPrefetchQueueTest {
 
         init {
             runBlocking {
-                translation.setProvider(TranslationProviderKind.DEEPL)
-                translation.setKey(TranslationProviderKind.DEEPL, "k")
-                translation.setDailyCharacterLimit(dailyLimit)
+                translation.setup.setProvider(TranslationProviderKind.DEEPL)
+                translation.setup.setKey(TranslationProviderKind.DEEPL, "k")
+                translation.setup.setDailyCharacterLimit(dailyLimit)
             }
         }
 
@@ -82,14 +82,14 @@ class TranslationPrefetchQueueTest {
         val entries = device.settled()
         assertEquals(listOf(PrefetchState.DONE, PrefetchState.DONE, PrefetchState.DONE), entries.map { it.state })
         assertEquals(listOf("c1", "c2", "c3"), device.loaded)
-        assertEquals(setOf("c1", "c2", "c3"), device.translation.translatedChapterKeys("work"))
+        assertEquals(setOf("c1", "c2", "c3"), device.translation.storage.translatedChapterKeys("work"))
         // Listed by name in the settings page, like a chapter translated while reading.
-        assertEquals(setOf("Chapter c1", "Chapter c2", "Chapter c3"), device.translation.storedChapters().map { it.chapterTitle }.toSet())
+        assertEquals(setOf("Chapter c1", "Chapter c2", "Chapter c3"), device.translation.storage.storedChapters().map { it.chapterTitle }.toSet())
 
         // The reader finds the chapter whole: nothing more is sent.
         val sent = device.requests
         val request = ChapterTranslationRequest("work", "c2", "c2 한 줄\nc2 두 줄", "ko", "zh-Hant")
-        assertTrue(device.translation.stored(request)!!.complete)
+        assertTrue(device.translation.chapters.stored(request)!!.complete)
         // Asked for again, nothing is queued; a new chapter still is.
         assertEquals(0, device.translation.prefetch.enqueue(listOf(device.job("c1"))))
         assertEquals(1, device.translation.prefetch.enqueue(listOf(device.job("c1"), device.job("c4"))))
@@ -107,20 +107,20 @@ class TranslationPrefetchQueueTest {
         device.translation.prefetch.enqueue(listOf(chosen))
         assertEquals(PrefetchState.DONE, device.settled().single().state)
         // Opening the work now shows the translation, in the languages it was queued with.
-        assertEquals(WorkTranslationSettings(enabled = true, from = "ja", to = "en"), device.translation.settings("work")!!.copy(mode = WorkTranslationSettings(true, "ja", "en").mode))
-        assertTrue(device.translation.stored(ChapterTranslationRequest("work", "c1", "一行目\n二行目", "ja", "en"))!!.complete)
+        assertEquals(WorkTranslationSettings(enabled = true, from = "ja", to = "en"), device.translation.chapters.settings("work")!!.copy(mode = WorkTranslationSettings(true, "ja", "en").mode))
+        assertTrue(device.translation.chapters.stored(ChapterTranslationRequest("work", "c1", "一行目\n二行目", "ja", "en"))!!.complete)
 
         // Without a choice the work's own settings decide; a new choice replaces them.
         device.translation.prefetch.enqueue(listOf(device.job("c2", text = "三行目")))
         device.settled()
-        assertTrue(device.translation.stored(ChapterTranslationRequest("work", "c2", "三行目", "ja", "en"))!!.complete)
+        assertTrue(device.translation.chapters.stored(ChapterTranslationRequest("work", "c2", "三行目", "ja", "en"))!!.complete)
         val other = TranslationPrefetchJob("work|c3", "work", "Chapter c3", languages = PrefetchLanguages(to = "zh-Hant", from = "ja")) {
             PrefetchChapter("work", "c3", "四行目", exportable = false, labels = null)
         }
         device.translation.prefetch.enqueue(listOf(other))
         device.settled()
-        assertEquals("zh-Hant", device.translation.settings("work")!!.to)
-        assertEquals("ja", device.translation.settings("work")!!.from)
+        assertEquals("zh-Hant", device.translation.chapters.settings("work")!!.to)
+        assertEquals("ja", device.translation.chapters.settings("work")!!.from)
     }
 
     @Test
@@ -136,7 +136,7 @@ class TranslationPrefetchQueueTest {
         assertEquals(listOf("c1", "c2"), device.loaded)
 
         // With the limit raised they can be queued again.
-        device.translation.setDailyCharacterLimit(0)
+        device.translation.setup.setDailyCharacterLimit(0)
         assertEquals(3, device.translation.prefetch.enqueue(listOf(device.job("c2"), device.job("c3"), device.job("c4"))))
         assertTrue(device.settled().all { it.state == PrefetchState.DONE })
     }
@@ -144,14 +144,14 @@ class TranslationPrefetchQueueTest {
     @Test
     fun detectingTheOriginalLooksAtEachChapterWhateverTheWorkWasSetTo() = runBlocking<Unit> {
         val device = Device()
-        device.translation.saveSettings("work", WorkTranslationSettings(enabled = false, from = "en", to = "zh-Hant"))
+        device.translation.chapters.saveSettings("work", WorkTranslationSettings(enabled = false, from = "en", to = "zh-Hant"))
         val detect = TranslationPrefetchJob("work|c1", "work", "Chapter c1", languages = PrefetchLanguages(to = "zh-Hant", from = null)) {
             PrefetchChapter("work", "c1", "一行目です\n二行目です", exportable = false, labels = null)
         }
         device.translation.prefetch.enqueue(listOf(detect))
         assertEquals(PrefetchState.DONE, device.settled().single().state)
         // The saved "English" was wrong: choosing "detect" corrects it from the text.
-        assertEquals("ja", device.translation.settings("work")!!.from)
+        assertEquals("ja", device.translation.chapters.settings("work")!!.from)
         assertTrue(device.settled().single().fetched)
         assertEquals("a|b", TranslationPrefetchJob("g|a|b", "g", "t", unit = "a|b") { error("unused") }.unit)
     }
@@ -192,23 +192,23 @@ class TranslationPrefetchQueueTest {
     fun theReaderAndTheQueueNeverSendTheSameChapterTwice() = runBlocking<Unit> {
         val device = Device()
         val request = ChapterTranslationRequest("work", "c1", "c1 한 줄\nc1 두 줄", "ko", "zh-Hant")
-        device.translation.saveSettings("work", WorkTranslationSettings(enabled = true, from = "ko", to = "zh-Hant"))
+        device.translation.chapters.saveSettings("work", WorkTranslationSettings(enabled = true, from = "ko", to = "zh-Hant"))
         val gate = CompletableDeferred<Unit>()
         device.translation.prefetch.enqueue(listOf(device.job("c1", gate = gate)))
         // The reader opens the chapter while the queue is still fetching it.
-        val reader = async(Dispatchers.Default) { device.translation.translate(request) { _, _ -> } }
+        val reader = async(Dispatchers.Default) { device.translation.chapters.translate(request) { _, _ -> } }
         gate.complete(Unit)
         assertTrue(reader.await().complete)
         device.settled()
         assertEquals(1, device.requests, "one of the two found the other's work in the memory")
-        assertEquals(setOf("c1"), device.translation.translatedChapterKeys("work", "zh-Hant"))
-        assertTrue(device.translation.translatedChapterKeys("work", "en").isEmpty())
+        assertEquals(setOf("c1"), device.translation.storage.translatedChapterKeys("work", "zh-Hant"))
+        assertTrue(device.translation.storage.translatedChapterKeys("work", "en").isEmpty())
         // the pair's own route: from Korean the service, from Simplified Chinese only the conversion
-        assertEquals(setOf("c1"), device.translation.translatedChapterKeys("work", "zh-Hant", from = "ko"))
-        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "zh-Hans").isEmpty())
+        assertEquals(setOf("c1"), device.translation.storage.translatedChapterKeys("work", "zh-Hant", from = "ko"))
+        assertTrue(device.translation.storage.translatedChapterKeys("work", "zh-Hant", from = "zh-Hans").isEmpty())
         // translated from Korean: not done for a source since corrected to another language
-        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "ja").isEmpty())
-        assertTrue(device.translation.translatedChapterKeys("work", "zh-Hant", from = "en").isEmpty())
+        assertTrue(device.translation.storage.translatedChapterKeys("work", "zh-Hant", from = "ja").isEmpty())
+        assertTrue(device.translation.storage.translatedChapterKeys("work", "zh-Hant", from = "en").isEmpty())
     }
 
     @Test
@@ -233,8 +233,8 @@ class TranslationPrefetchQueueTest {
         val entries = device.settled()
         assertEquals(listOf("other|b1"), entries.map { it.id })
         assertEquals(PrefetchState.DONE, entries.single().state)
-        assertEquals(setOf("b1"), device.translation.translatedChapterKeys("other"))
-        assertTrue(device.translation.translatedChapterKeys("work").isEmpty())
+        assertEquals(setOf("b1"), device.translation.storage.translatedChapterKeys("other"))
+        assertTrue(device.translation.storage.translatedChapterKeys("work").isEmpty())
 
         device.translation.prefetch.clearFinished("other")
         assertTrue(device.translation.prefetch.entries.value.isEmpty())

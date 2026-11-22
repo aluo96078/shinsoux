@@ -72,7 +72,7 @@ class NovelTranslationPanelTest {
             memory = TranslationMemoryStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)),
             platform = OfflineTranslationPlatform(engine, root.absolutePath, memory),
             http = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }),
-        ).also { kotlinx.coroutines.runBlocking { it.setAutoTranslate(auto, paid = false) } }
+        ).also { kotlinx.coroutines.runBlocking { it.setup.setAutoTranslate(auto, paid = false) } }
     }
 
     private var noticeTaps = 0
@@ -207,11 +207,11 @@ class NovelTranslationPanelTest {
 
         // Japanese, read in English: nothing to press.
         rule.waitUntil(10_000) { "T(" in body() }
-        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "starting by itself saves nothing")
+        assertTrue(kotlinx.coroutines.runBlocking { translation.chapters.settings("work") } == null, "starting by itself saves nothing")
 
         rule.onNode(isToggleable()).performClick()
         rule.waitUntil(5_000) { body() == chapter }
-        rule.waitUntil(5_000) { kotlinx.coroutines.runBlocking { translation.settings("work") }?.enabled == false }
+        rule.waitUntil(5_000) { kotlinx.coroutines.runBlocking { translation.chapters.settings("work") }?.enabled == false }
     }
 
     @Test
@@ -231,7 +231,7 @@ class NovelTranslationPanelTest {
 
         opened = "c1" to chapter
         rule.waitUntil(10_000) { "T(" in body() }
-        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "starting by itself saves nothing")
+        assertTrue(kotlinx.coroutines.runBlocking { translation.chapters.settings("work") } == null, "starting by itself saves nothing")
     }
 
     @Test
@@ -267,7 +267,7 @@ class NovelTranslationPanelTest {
         rule.waitUntil(5_000) { opened.first == "c2" && state!!.settings.from.startsWith("zh") }
         rule.waitForIdle()
         assertTrue(state!!.settings.from.startsWith("zh"), "not read as the language of the chapter it started on: ${state!!.settings}")
-        assertTrue(kotlinx.coroutines.runBlocking { translation.settings("work") } == null, "still nothing saved")
+        assertTrue(kotlinx.coroutines.runBlocking { translation.chapters.settings("work") } == null, "still nothing saved")
     }
 
     @Test

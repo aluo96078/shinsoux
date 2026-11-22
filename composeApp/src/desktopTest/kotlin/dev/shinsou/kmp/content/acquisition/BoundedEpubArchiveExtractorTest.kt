@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.content.acquisition
 
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.PublicationKey
 import dev.shinsou.kmp.reader.EpubPublicationResourceResolver
 import dev.shinsou.kmp.reader.EpubRenderRequestFactory

@@ -75,7 +75,7 @@ public data class TranslationPreferences(
 /** A language the reader can offer, with its own name. */
 public data class TranslationLanguage(val tag: String, val name: String)
 
-/** The clock of a [ReaderTranslation] and the dispatcher its memory-store calls run on. */
+/** The clock of a [DefaultReaderTranslation] and the dispatcher its memory-store calls run on. */
 internal class ReaderTranslationEnvironment(
     val now: () -> Long,
     val dispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -86,24 +86,19 @@ internal class ReaderTranslationEnvironment(
  * pair needs, the translation itself and the work's glossary. Everything here runs on the
  * device; nothing is sent anywhere except the model download from Mozilla's CDN.
  */
-public class ReaderTranslation internal constructor(
+internal class DefaultReaderTranslation(
     private val memory: TranslationMemoryStore,
     platform: OfflineTranslationPlatform,
     private val http: HttpClient,
     private val secrets: dev.shinsou.kmp.files.KeyValueStore?,
     private val system: SystemTranslationEngine?,
     environment: ReaderTranslationEnvironment,
-) {
-    public constructor(
-        memory: TranslationMemoryStore,
-        platform: OfflineTranslationPlatform,
-        http: HttpClient,
-        /** Where API keys are kept (the platform's protected storage); null leaves only the offline engine. */
-        secrets: dev.shinsou.kmp.files.KeyValueStore? = null,
-        now: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
-        /** The operating system's own translation, where the platform has one (iOS). */
-        system: SystemTranslationEngine? = null,
-    ) : this(memory, platform, http, secrets, system, ReaderTranslationEnvironment(now))
+) : ReaderTranslation, TranslationSetup, TranslationModels, StoredTranslations, ChapterTranslator, WorkGlossary {
+    override val setup: TranslationSetup get() = this
+    override val models: TranslationModels get() = this
+    override val storage: StoredTranslations get() = this
+    override val chapters: ChapterTranslator get() = this
+    override val glossaries: WorkGlossary get() = this
 
     private val now: () -> Long = environment.now
     private val dispatcher: CoroutineDispatcher = environment.dispatcher
@@ -112,14 +107,14 @@ public class ReaderTranslation internal constructor(
     private val offline = OfflineTranslationProvider(files, engine, platform.memory)
 
     /** False on a device that can never hold a model: nothing should be downloaded for it. */
-    public val deviceSupported: Boolean get() = offline.deviceSupported
+    override val deviceSupported: Boolean get() = offline.deviceSupported
     private val service = TranslationService(memory)
 
-    public val languages: List<TranslationLanguage> = LANGUAGES
+    override val languages: List<TranslationLanguage> = LANGUAGES
 
     // ---- which provider ---------------------------------------------------------------------
 
-    public suspend fun preferences(): TranslationPreferences = withContext(dispatcher) {
+    override suspend fun preferences(): TranslationPreferences = withContext(dispatcher) {
         TranslationPreferences(
             provider = providerKind(),
             dailyCharacterLimit = dailyLimit(),
@@ -169,7 +164,7 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Whether works in another language are translated as they are opened, and whether with a paid service too. */
-    public suspend fun setAutoTranslate(on: Boolean, paid: Boolean): Unit = withContext(dispatcher) {
+    override suspend fun setAutoTranslate(on: Boolean, paid: Boolean): Unit = withContext(dispatcher) {
         memory.transaction {
             memory.setPreference(PREF_AUTO, if (on) "1" else "0")
             memory.setPreference(PREF_AUTO_PAID, if (paid) "1" else "0")
@@ -177,7 +172,7 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Whether works in [language] are among those translated automatically (all are, until one is turned off). */
-    public suspend fun setAutoTranslateLanguage(language: String, on: Boolean): Unit = withContext(dispatcher) {
+    override suspend fun setAutoTranslateLanguage(language: String, on: Boolean): Unit = withContext(dispatcher) {
         memory.transaction {
             val skipped = memory.preference(PREF_AUTO_SKIPPED).orEmpty().split(',').filter { it.isNotBlank() }.toSet()
             val next = if (on) skipped - language else skipped + language
@@ -186,27 +181,27 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Whether a reader of Chinese has works in the other script converted as they open. */
-    public suspend fun setAutoTranslateOtherScript(on: Boolean): Unit = withContext(dispatcher) {
+    override suspend fun setAutoTranslateOtherScript(on: Boolean): Unit = withContext(dispatcher) {
         memory.setPreference(PREF_AUTO_OTHER_SCRIPT, if (on) "1" else "0")
     }
 
-    public suspend fun setProvider(kind: TranslationProviderKind): Unit =
+    override suspend fun setProvider(kind: TranslationProviderKind): Unit =
         withContext(dispatcher) { memory.setPreference(PREF_PROVIDER, kind.id) }
 
     /** Stores [value] as the API key of [kind] in protected storage; blank removes it. */
-    public suspend fun setKey(kind: TranslationProviderKind, value: String) {
+    override suspend fun setKey(kind: TranslationProviderKind, value: String) {
         val store = secrets ?: return
         val name = kind.secretName ?: return
         if (value.isBlank()) store.remove(name) else store.putString(name, value.trim())
     }
 
     /** The region of the Azure Translator resource (for example `eastasia`); empty for a global resource. */
-    public suspend fun setAzureRegion(region: String): Unit = withContext(dispatcher) {
+    override suspend fun setAzureRegion(region: String): Unit = withContext(dispatcher) {
         memory.setPreference(PREF_AZURE_REGION, region.trim().lowercase().filter { it.isLetterOrDigit() || it == '-' }.take(40))
     }
 
     /** The language-model service: wire format, address and model. Refused when the address must not be used. */
-    public suspend fun setLlmSettings(settings: LlmSettings): Unit = withContext(dispatcher) {
+    override suspend fun setLlmSettings(settings: LlmSettings): Unit = withContext(dispatcher) {
         val base = requireNotNull(normalizedLlmBaseUrl(settings.baseUrl)) {
             "The address must use https, or http for this device or a private network"
         }
@@ -227,7 +222,7 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Characters a day that may be sent to paid providers; 0 removes the limit. */
-    public suspend fun setDailyCharacterLimit(characters: Long): Unit =
+    override suspend fun setDailyCharacterLimit(characters: Long): Unit =
         withContext(dispatcher) { memory.setPreference(PREF_DAILY_LIMIT, characters.coerceAtLeast(0).toString()) }
 
     private fun providerKind(): TranslationProviderKind =
@@ -243,7 +238,7 @@ public class ReaderTranslation internal constructor(
 
     private suspend fun key(kind: TranslationProviderKind): String? = kind.secretName?.let { secrets?.getString(it) }
 
-    private fun dailyLimit(): Long = memory.preference(PREF_DAILY_LIMIT)?.toLongOrNull() ?: DEFAULT_DAILY_CHARACTER_LIMIT
+    private fun dailyLimit(): Long = memory.preference(PREF_DAILY_LIMIT)?.toLongOrNull() ?: ReaderTranslation.DEFAULT_DAILY_CHARACTER_LIMIT
 
     private fun today(): Long = now() / 86_400_000L
 
@@ -288,55 +283,55 @@ public class ReaderTranslation internal constructor(
      */
     private val startedPairs = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Pair<String, String>>>(emptyMap())
 
-    public fun startedByItself(workKey: String, from: String, to: String) {
+    override fun startedByItself(workKey: String, from: String, to: String) {
         startedPairs.update { it + (workKey to (from to to)) }
     }
 
-    public fun startedByItself(workKey: String): Pair<String, String>? = startedPairs.value[workKey]
+    override fun startedByItself(workKey: String): Pair<String, String>? = startedPairs.value[workKey]
 
     /** The provider a [from] to [to] chapter goes through: the device's own conversion between the two scripts of Chinese. */
     private suspend fun provider(from: String, to: String): TranslationProvider =
         if (ChineseScript.converts(from, to)) chineseScript else provider()
 
     /** The provider in use: the reader says where the text goes. */
-    public suspend fun activeProvider(): TranslationProviderKind = withContext(dispatcher) { providerKind() }
+    override suspend fun activeProvider(): TranslationProviderKind = withContext(dispatcher) { providerKind() }
 
     /**
      * The active provider and, where it can change under the same provider (another LLM model,
      * the system's other models), the engine: what drawn manga pages are keyed by.
      */
-    public suspend fun engineIdentity(): String = withContext(dispatcher) {
+    override suspend fun engineIdentity(): String = withContext(dispatcher) {
         val kind = providerKind().name.lowercase()
         provider().currentEngine?.let { "$kind:" + TranslationText.hash(it).take(12) } ?: kind
     }
 
     /** [engineIdentity] for the pair: a conversion between the scripts of Chinese is the same whatever service is chosen. */
-    public suspend fun engineIdentity(from: String, to: String): String =
+    override suspend fun engineIdentity(from: String, to: String): String =
         if (ChineseScript.converts(from, to)) "${ChineseScriptProvider.ID}:${ChineseScriptProvider.ENGINE}" else engineIdentity()
 
-    public suspend fun supports(from: String, to: String): Boolean = provider(from, to).route(from, to) != null
+    override suspend fun supports(from: String, to: String): Boolean = provider(from, to).route(from, to) != null
 
     /** [autoTranslationPair] with this device's settings, when the chosen service can translate the pair. */
-    public suspend fun autoTranslation(workLanguage: String?, appLanguage: String): Pair<String, String>? =
-        autoTranslationPair(workLanguage, appLanguage, autoPreferences())?.takeIf { (from, to) -> supportsForAuto(from, to) }
+    override suspend fun autoTranslation(workLanguage: String?, appLanguage: String): Pair<String, String>? =
+        ReaderTranslation.autoTranslationPair(workLanguage, appLanguage, autoPreferences())?.takeIf { (from, to) -> supportsForAuto(from, to) }
 
     /**
      * Where a work starting by itself with [auto] goes: a language [picked] for it while it was off
      * is kept, but only when that pair too may start by itself, so a saved target cannot send a work
      * to a paid service the reader did not allow to start by itself.
      */
-    public suspend fun autoTarget(auto: Pair<String, String>, picked: String?): String {
+    override suspend fun autoTarget(auto: Pair<String, String>, picked: String?): String {
         val to = picked?.takeIf { it != auto.first && it != auto.second } ?: return auto.second
-        val allowed = autoTranslationPair(auto.first, to, autoPreferences()) != null && supportsForAuto(auto.first, to)
+        val allowed = ReaderTranslation.autoTranslationPair(auto.first, to, autoPreferences()) != null && supportsForAuto(auto.first, to)
         return if (allowed) to else auto.second
     }
 
     /** Models the offline engine still needs for this pair; empty for a cloud provider. */
-    public suspend fun missingModels(from: String, to: String): List<OfflineModel> =
+    override suspend fun missingModels(from: String, to: String): List<OfflineModel> =
         if (!ChineseScript.converts(from, to) && activeProvider() == TranslationProviderKind.OFFLINE) offline.missingModels(from, to) else emptyList()
 
     /** True when the system's translation is chosen and still needs the pair's languages downloaded. */
-    public suspend fun systemLanguagesMissing(from: String, to: String): Boolean {
+    override suspend fun systemLanguagesMissing(from: String, to: String): Boolean {
         val engine = system?.takeIf { it.available } ?: return false
         if (activeProvider() != TranslationProviderKind.SYSTEM || ChineseScript.converts(from, to)) return false
         val source = OfflineModelCatalog.language(from) ?: return false
@@ -347,7 +342,7 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Asks the system to download the pair's languages (its own prompt); true once installed. */
-    public suspend fun downloadSystemLanguages(from: String, to: String): Boolean {
+    override suspend fun downloadSystemLanguages(from: String, to: String): Boolean {
         val engine = system?.takeIf { it.available } ?: return false
         val source = OfflineModelCatalog.language(from) ?: return false
         val target = OfflineModelCatalog.language(to) ?: return false
@@ -356,27 +351,27 @@ public class ReaderTranslation internal constructor(
 
     // ---- offline models and stored translations, for the settings page ------------------------
 
-    public suspend fun installedModels(): List<OfflineModel> =
+    override suspend fun installedModels(): List<OfflineModel> =
         withContext(dispatcher) { OfflineModelCatalog.models.filter { files.installed(it) != null } }
 
-    public suspend fun removeModel(model: OfflineModel): Unit = withContext(dispatcher) { files.remove(model) }
+    override suspend fun removeModel(model: OfflineModel): Unit = withContext(dispatcher) { files.remove(model) }
 
     /** Bytes of stored translations: free ones first, paid ones second. */
-    public suspend fun storedTranslationBytes(): Pair<Long, Long> =
+    override suspend fun storedTranslationBytes(): Pair<Long, Long> =
         withContext(dispatcher) { memory.freeBytes() to memory.paidBytes() }
 
     /** Translating chapters ahead of reading; shared by every screen, for the app's run. */
-    public val prefetch: TranslationPrefetchQueue get() = prefetchQueue.value
+    override val prefetch: TranslationPrefetchQueue get() = prefetchQueue.value
     private val prefetchQueue = lazy { TranslationPrefetchQueue(this) }
 
     /** Stops the work that outlives screens; called when the app shuts down. */
-    public fun close() {
+    override fun close() {
         if (prefetchQueue.isInitialized()) prefetchQueue.value.close()
         background.cancel()
     }
 
     /** Chapter keys of [workKey] that have a complete stored translation, whatever made it. */
-    public suspend fun translatedChapterKeys(workKey: String): Set<String> =
+    override suspend fun translatedChapterKeys(workKey: String): Set<String> =
         withContext(dispatcher) { memory.completeChapterKeys(workKey, to = null, provider = null) }
 
     /**
@@ -384,7 +379,7 @@ public class ReaderTranslation internal constructor(
      * ahead can skip. From the other script of Chinese that is the conversion, from any other
      * language the service in use; with [from] not known, either.
      */
-    public suspend fun translatedChapterKeys(workKey: String, to: String, from: String? = null): Set<String> {
+    override suspend fun translatedChapterKeys(workKey: String, to: String, from: String?): Set<String> {
         val target = OfflineModelCatalog.language(to) ?: to
         val source = from?.let { OfflineModelCatalog.language(it) ?: it }
         val conversion = source != null && ChineseScript.converts(source, target)
@@ -410,20 +405,20 @@ public class ReaderTranslation internal constructor(
     }
 
     /** Chapters with a stored translation, most recent first, for the settings page. */
-    public suspend fun storedChapters(): List<StoredChapterTranslation> =
+    override suspend fun storedChapters(): List<StoredChapterTranslation> =
         withContext(dispatcher) { memory.storedChapters(STORED_CHAPTER_LIST_LIMIT) }
 
     /** Removes one chapter's stored translation; returns the bytes removed. */
-    public suspend fun deleteChapterTranslation(chapter: StoredChapterTranslation): Long =
+    override suspend fun deleteChapterTranslation(chapter: StoredChapterTranslation): Long =
         withContext(dispatcher) { memory.deleteChapterTranslation(chapter.workKey, chapter.chapterKey, chapter.to, chapter.provider) }
 
     /** Removes every stored chapter translation of a work; its glossary and settings stay. */
-    public suspend fun deleteWorkTranslations(workKey: String): Long =
+    override suspend fun deleteWorkTranslations(workKey: String): Long =
         withContext(dispatcher) { memory.deleteWorkTranslations(workKey) }
 
-    public suspend fun clearFreeTranslations(): Unit = withContext(dispatcher) { memory.evictFree(0); Unit }
+    override suspend fun clearFreeTranslations(): Unit = withContext(dispatcher) { memory.evictFree(0); Unit }
 
-    public suspend fun downloadModels(from: String, to: String, onProgress: (received: Long, total: Long) -> Unit) {
+    override suspend fun downloadModels(from: String, to: String, onProgress: (received: Long, total: Long) -> Unit) {
         val missing = offline.missingModels(from, to)
         val total = missing.sumOf { it.downloadBytes }
         var before = 0L
@@ -433,15 +428,15 @@ public class ReaderTranslation internal constructor(
         }
     }
 
-    public suspend fun settings(workKey: String): WorkTranslationSettings? = withContext(dispatcher) { memory.workSettings(workKey) }
+    override suspend fun settings(workKey: String): WorkTranslationSettings? = withContext(dispatcher) { memory.workSettings(workKey) }
 
     private val settingsWrites = kotlinx.coroutines.sync.Mutex()
 
     /** Writes are queued in the order they were asked for, so the last change is the one that stays. */
-    public suspend fun saveSettings(workKey: String, settings: WorkTranslationSettings): Unit =
+    override suspend fun saveSettings(workKey: String, settings: WorkTranslationSettings): Unit =
         settingsWrites.withLock { withContext(dispatcher) { memory.saveWorkSettings(workKey, settings) } }
 
-    public suspend fun stored(request: ChapterTranslationRequest): ChapterTranslation? {
+    override suspend fun stored(request: ChapterTranslationRequest): ChapterTranslation? {
         val provider = provider(request.from, request.to)
         return withContext(dispatcher) {
             // Also for chapters translated before names were recorded: opening one names it.
@@ -453,7 +448,7 @@ public class ReaderTranslation internal constructor(
         }
     }
 
-    public suspend fun translate(request: ChapterTranslationRequest, onProgress: (done: Int, total: Int) -> Unit): ChapterTranslation {
+    override suspend fun translate(request: ChapterTranslationRequest, onProgress: (done: Int, total: Int) -> Unit): ChapterTranslation {
         // the other script of Chinese is converted on the device: no key or service to check
         val kind = if (ChineseScript.converts(request.from, request.to)) null else activeProvider()
         // Decided by the project owner (2026-11-14): a cloud provider the user chose and keyed
@@ -483,7 +478,7 @@ public class ReaderTranslation internal constructor(
                         .onFailure { Log.warn("Translation", it) { "Unloading the offline translation model failed" } }
                 }
                 // Free translations can be made again: keep the newest and let the oldest go.
-                runCatchingCancellable { memory.evictFree(FREE_MEMORY_LIMIT_BYTES) }
+                runCatchingCancellable { memory.evictFree(ReaderTranslation.FREE_MEMORY_LIMIT_BYTES) }
                     .onFailure { Log.warn("Translation", it) { "Evicting old free translations failed" } }
             }
         } }
@@ -491,32 +486,32 @@ public class ReaderTranslation internal constructor(
 
     private val translating = kotlinx.coroutines.sync.Mutex()
 
-    public suspend fun glossary(workKey: String, to: String): List<GlossaryEntry> = withContext(dispatcher) { memory.glossary(workKey, to) }
+    override suspend fun glossary(workKey: String, to: String): List<GlossaryEntry> = withContext(dispatcher) { memory.glossary(workKey, to) }
 
-    public suspend fun putGlossaryTerm(workKey: String, to: String, source: String, target: String): GlossaryEntry =
+    override suspend fun putGlossaryTerm(workKey: String, to: String, source: String, target: String): GlossaryEntry =
         withContext(dispatcher) { memory.putGlossaryTerm(workKey, to, source, target) }
 
-    public suspend fun removeGlossaryTerm(workKey: String, to: String, id: Int): Unit =
+    override suspend fun removeGlossaryTerm(workKey: String, to: String, id: Int): Unit =
         withContext(dispatcher) { memory.removeGlossaryTerm(workKey, to, id) }
 
     /** Translation data for a backup; stored translations are included by the user's choice. */
-    public suspend fun exportBackup(includePaid: Boolean, includeFree: Boolean): TranslationBackup =
-        withContext(dispatcher) { memory.exportBackup(includePaid, includeFree, BACKUP_SEGMENT_BUDGET_BYTES) }
+    override suspend fun exportBackup(includePaid: Boolean, includeFree: Boolean): TranslationBackup =
+        withContext(dispatcher) { memory.exportBackup(includePaid, includeFree, ReaderTranslation.BACKUP_SEGMENT_BUDGET_BYTES) }
 
-    public suspend fun importBackup(backup: TranslationBackup): Unit =
+    override suspend fun importBackup(backup: TranslationBackup): Unit =
         withContext(dispatcher) { memory.importBackup(backup, kotlin.time.Clock.System.now().toEpochMilliseconds()) }
 
     private val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher)
 
     /** Releases the loaded model's memory once the reader that used it is gone. */
-    public fun release() {
+    override fun release() {
         background.launch {
             runCatchingCancellable { offline.unload() }
                 .onFailure { Log.warn("Translation", it) { "Unloading the offline translation model failed" } }
         }
     }
 
-    public companion object {
+    private companion object {
         private const val STORED_CHAPTER_LIST_LIMIT = 2_000
         private const val PREF_PROVIDER = "provider"
         private const val PREF_AZURE_REGION = "azure.region"
@@ -532,15 +527,6 @@ public class ReaderTranslation internal constructor(
         private const val PREF_USAGE_DAY = "usage.day"
         private const val PREF_USAGE_CHARACTERS = "usage.characters"
 
-        /** About a dozen long chapters a day until the user sets their own limit. */
-        public const val DEFAULT_DAILY_CHARACTER_LIMIT: Long = 100_000
-
-        /** Stored free translations beyond this are dropped, least recently read first (about 30 long novels). */
-        public const val FREE_MEMORY_LIMIT_BYTES: Long = 96L * 1024 * 1024
-
-        /** A backup is one document held in memory: stored translations beyond this stay behind, oldest first. */
-        public const val BACKUP_SEGMENT_BUDGET_BYTES: Long = 24L * 1024 * 1024
-
         private val LANGUAGES = listOf(
             TranslationLanguage("zh-Hant", "繁體中文"),
             TranslationLanguage("zh-Hans", "简体中文"),
@@ -548,76 +534,6 @@ public class ReaderTranslation internal constructor(
             TranslationLanguage("ko", "한국어"),
             TranslationLanguage("en", "English"),
         )
-
-        /**
-         * A guess at the language of [text] from its script, among the languages the engine has
-         * models for. Chinese is Simplified or Traditional by the characters written only one way
-         * ([ChineseScript.detect]); Simplified when it has none of them. The reader lets the user correct it.
-         */
-        public fun detectLanguage(text: String): String {
-            var kana = 0; var hangul = 0; var han = 0; var latin = 0
-            for (char in text.take(4_000)) {
-                when {
-                    char in '぀'..'ヿ' -> kana++
-                    char in '가'..'힯' -> hangul++
-                    char in '一'..'鿿' -> han++
-                    char in 'a'..'z' || char in 'A'..'Z' -> latin++
-                }
-            }
-            return when {
-                kana > 0 && kana * 20 >= han -> "ja"
-                hangul > 0 && hangul >= han -> "ko"
-                han > latin / 4 && han > 0 -> ChineseScript.detect(text) ?: ChineseScript.SIMPLIFIED
-                else -> "en"
-            }
-        }
-
-        /**
-         * [detectLanguage], or null when [text] has too little writing to tell: an illustration
-         * page is all markup and addresses, which would read as English.
-         */
-        public fun detectLanguageOrNull(text: String, minimumLetters: Int = MIN_DETECTED_LETTERS): String? {
-            val written = text.take(DETECTED_CHARACTERS).replace(NOT_WRITING, " ")
-            return if (written.count { it.isLetter() } >= minimumLetters) detectLanguage(written) else null
-        }
-
-        /**
-         * Letters enough to take a chapter's language over the one a work is already being
-         * translated from: a title page of a few kanji reads as Chinese, a heading as English.
-         */
-        public const val SETTLED_LETTERS: Int = 60
-
-        private const val DETECTED_CHARACTERS = 4_000
-        private const val MIN_DETECTED_LETTERS = 8
-        private val NOT_WRITING = Regex("""!?\[[^\]]*]\([^)]*\)|<[^>]*>|https?://\S+""")
-
-        /** The services that charge for what they translate. */
-        public val PAID_PROVIDERS: Set<TranslationProviderKind> = setOf(
-            TranslationProviderKind.DEEPL, TranslationProviderKind.GOOGLE, TranslationProviderKind.AZURE, TranslationProviderKind.LLM,
-        )
-
-        /**
-         * The pair a work in [workLanguage] is translated with when it is opened with no settings of
-         * its own, for someone reading the app in [appLanguage]; null leaves it as it is: automatic
-         * translation is off, the work's language is unknown or already the reader's, or the service
-         * charges and may not start by itself, or the user left works in that language untranslated.
-         * Simplified and Traditional Chinese are converted on the device: free, so never held back as paid.
-         */
-        public fun autoTranslationPair(workLanguage: String?, appLanguage: String, preferences: TranslationPreferences): Pair<String, String>? {
-            if (!preferences.autoTranslate || workLanguage.isNullOrBlank()) return null
-            val from = OfflineModelCatalog.language(workLanguage) ?: return null
-            val to = OfflineModelCatalog.language(appLanguage) ?: return null
-            if (from == to) return null
-            // the other script of Chinese is converted on the device, whatever the chosen service
-            // charges, and only once the reader asked for it
-            if (ChineseScript.converts(from, to)) return (from to to).takeIf { preferences.autoTranslateOtherScript }
-            if (from in preferences.autoTranslateSkipped) return null
-            if (preferences.provider in PAID_PROVIDERS && !preferences.autoTranslatePaid) return null
-            return from to to
-        }
-
-        /** The engine language for an app or system language tag; Traditional Chinese when it has no model. */
-        public fun targetLanguage(tag: String): String = OfflineModelCatalog.language(tag) ?: "zh-Hant"
     }
 }
 

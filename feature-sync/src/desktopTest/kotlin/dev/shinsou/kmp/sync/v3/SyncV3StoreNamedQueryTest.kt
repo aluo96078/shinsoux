@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 
 /**
  * The sync store reads every row by the names of the very SELECT it runs
- * ([dev.shinsou.kmp.content.ContentRow.selectColumns]), so these round trips cover each projection:
+ * ([dev.shinsou.kmp.content.sql.ContentRow.selectColumns]), so these round trips cover each projection:
  * aliases, aggregates, joins, DISTINCT, and NULL columns. (Split from the app's NamedQueryStoreTest.)
  */
 class SyncV3StoreNamedQueryTest {

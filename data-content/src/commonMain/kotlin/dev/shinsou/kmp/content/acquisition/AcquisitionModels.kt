@@ -1,6 +1,6 @@
 package dev.shinsou.kmp.content.acquisition
 
-import dev.shinsou.kmp.content.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.BlobPublishReceipt
 import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.domain.content.ContentRepresentation
 import dev.shinsou.kmp.domain.model.Acquisition

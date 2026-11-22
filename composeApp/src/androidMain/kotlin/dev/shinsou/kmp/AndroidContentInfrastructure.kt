@@ -4,9 +4,9 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.cash.sqldelight.db.SqlDriver
-import dev.shinsou.kmp.content.ContentSqlThreadGuard
-import dev.shinsou.kmp.content.PlatformContentDatabaseSchema
-import dev.shinsou.kmp.content.PlatformContentInfrastructure
+import dev.shinsou.kmp.content.sql.ContentSqlThreadGuard
+import dev.shinsou.kmp.content.schema.PlatformContentDatabaseSchema
+import dev.shinsou.kmp.content.schema.PlatformContentInfrastructure
 
 /**
  * Android content storage: one SQLite database plus a no-backup blob directory. The database name

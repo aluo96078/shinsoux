@@ -1,7 +1,7 @@
 package dev.shinsou.kmp.content.acquisition
 
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.AcquisitionOrigin
 import dev.shinsou.kmp.domain.model.LocalPackageKind
 import dev.shinsou.kmp.domain.model.PublicationKey

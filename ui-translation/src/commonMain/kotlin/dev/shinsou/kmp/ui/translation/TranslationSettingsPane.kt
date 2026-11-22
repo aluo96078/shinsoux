@@ -92,10 +92,10 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
     var expandedWork by remember { mutableStateOf<String?>(null) }
     var removal by remember { mutableStateOf<StoredRemoval?>(null) }
     LaunchedEffect(translation, revision) {
-        val stored = translation.storedTranslationBytes()
+        val stored = translation.storage.storedTranslationBytes()
         view = TranslationSettingsView(
-            translation.preferences(), translation.installedModels(), stored.first, stored.second,
-            storedWorks(translation.storedChapters()),
+            translation.setup.preferences(), translation.models.installedModels(), stored.first, stored.second,
+            storedWorks(translation.storage.storedChapters()),
         )
     }
     val current = view ?: return
@@ -116,7 +116,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                 removal = null
                 change {
                     val chapter = pending.chapter
-                    if (chapter == null) translation.deleteWorkTranslations(pending.work.key) else translation.deleteChapterTranslation(chapter)
+                    if (chapter == null) translation.storage.deleteWorkTranslations(pending.work.key) else translation.storage.deleteChapterTranslation(chapter)
                 }
             },
             onDismiss = { removal = null },
@@ -154,7 +154,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                 selectedLabel = labels.getValue(preferences.provider),
                 choices = labels.values.toList(),
             ) { label ->
-                labels.entries.firstOrNull { it.value == label }?.let { choice -> change { translation.setProvider(choice.key) } }
+                labels.entries.firstOrNull { it.value == label }?.let { choice -> change { translation.setup.setProvider(choice.key) } }
             }
         }
         // Only the chosen service's settings: the others are filled in after switching to them.
@@ -165,7 +165,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                     help = strings.text(StringKey.FROM_YOUR_DEEPL_ACCOUNT_UNDER_API_KEYS),
                     stored = preferences.deepLKeySet,
                     tag = "translation-key-deepl",
-                ) { key -> change { translation.setKey(TranslationProviderKind.DEEPL, key) } }
+                ) { key -> change { translation.setup.setKey(TranslationProviderKind.DEEPL, key) } }
             }
         }
         if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.GOOGLE) {
@@ -175,7 +175,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                     help = strings.text(StringKey.AN_API_KEY_FROM_A_GOOGLE_CLOUD),
                     stored = preferences.googleKeySet,
                     tag = "translation-key-google",
-                ) { key -> change { translation.setKey(TranslationProviderKind.GOOGLE, key) } }
+                ) { key -> change { translation.setup.setKey(TranslationProviderKind.GOOGLE, key) } }
             }
         }
         if (preferences.cloudAvailable && preferences.provider == TranslationProviderKind.AZURE) {
@@ -185,7 +185,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                     help = strings.text(StringKey.A_KEY_OF_A_TRANSLATOR_RESOURCE_IN),
                     stored = preferences.azureKeySet,
                     tag = "translation-key-azure",
-                ) { key -> change { translation.setKey(TranslationProviderKind.AZURE, key) } }
+                ) { key -> change { translation.setup.setKey(TranslationProviderKind.AZURE, key) } }
             }
             item {
                 var region by remember(preferences.azureRegion) { mutableStateOf(preferences.azureRegion) }
@@ -204,7 +204,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                             modifier = Modifier.weight(1f).testTag("translation-azure-region"),
                         )
                         Button(
-                            onClick = { change { translation.setAzureRegion(region) } },
+                            onClick = { change { translation.setup.setAzureRegion(region) } },
                             enabled = region.trim() != preferences.azureRegion,
                         ) { Text(strings.text(StringKey.SAVE)) }
                     }
@@ -218,12 +218,12 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                     keyStored = preferences.llmKeySet,
                     onSave = { settings, key ->
                         change {
-                            translation.setLlmSettings(settings)
+                            translation.setup.setLlmSettings(settings)
                             // An empty field keeps the stored key; the Remove button clears it.
-                            if (key.isNotBlank()) translation.setKey(TranslationProviderKind.LLM, key)
+                            if (key.isNotBlank()) translation.setup.setKey(TranslationProviderKind.LLM, key)
                         }
                     },
-                    onRemoveKey = { change { translation.setKey(TranslationProviderKind.LLM, "") } },
+                    onRemoveKey = { change { translation.setup.setKey(TranslationProviderKind.LLM, "") } },
                 )
             }
         }
@@ -239,7 +239,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                         ?: strings.text(StringKey.X_CHARACTERS, grouped(preferences.dailyCharacterLimit)),
                     choices = labels.values.toList(),
                 ) { label ->
-                    labels.entries.firstOrNull { it.value == label }?.let { choice -> change { translation.setDailyCharacterLimit(choice.key) } }
+                    labels.entries.firstOrNull { it.value == label }?.let { choice -> change { translation.setup.setDailyCharacterLimit(choice.key) } }
                 }
             }
         }
@@ -262,7 +262,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                 title = "${languageName(translation, model.from)} → ${languageName(translation, model.to)}",
                 summary = strings.text(StringKey.X_MB, megabytes(model.downloadBytes)),
             ) {
-                TextButton(onClick = { change { translation.removeModel(model) } }) { Text(strings.text(StringKey.REMOVE)) }
+                TextButton(onClick = { change { translation.models.removeModel(model) } }) { Text(strings.text(StringKey.REMOVE)) }
             }
         }
         if (manga != null) item { MangaResourceSettings(manga) }
@@ -277,7 +277,7 @@ internal fun TranslationSettingsPane(translation: ReaderTranslation?, page: Tran
                 summary = strings.text(StringKey.X_THE_OLDEST_ARE_REMOVED_AUTOMATICALLY_WHEN, storedSize(current.freeBytes)),
             ) {
                 TextButton(
-                    onClick = { change { translation.clearFreeTranslations() } },
+                    onClick = { change { translation.storage.clearFreeTranslations() } },
                     enabled = current.freeBytes > 0,
                 ) { Text(strings.text(StringKey.CLEAR)) }
             }
@@ -592,7 +592,7 @@ private fun storedTime(timestamp: Long, strings: ShinsouStrings): String {
 }
 
 private fun languageName(translation: ReaderTranslation, tag: String): String =
-    translation.languages.firstOrNull { it.tag == tag || it.tag.substringBefore('-') == tag }?.name ?: tag
+    translation.setup.languages.firstOrNull { it.tag == tag || it.tag.substringBefore('-') == tag }?.name ?: tag
 
 private fun megabytes(bytes: Long): String = ((bytes + 524_288L) / 1_048_576L).toString()
 

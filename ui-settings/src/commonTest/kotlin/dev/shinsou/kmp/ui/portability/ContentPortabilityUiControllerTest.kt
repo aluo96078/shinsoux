@@ -4,8 +4,8 @@ import dev.shinsou.kmp.backup.BackupV2CreatePolicy
 import dev.shinsou.kmp.backup.BackupV2BinaryCodec
 import dev.shinsou.kmp.backup.BackupV2PortableState
 import dev.shinsou.kmp.backup.PortableContentBackupV2Service
-import dev.shinsou.kmp.content.ContentCommitResult
-import dev.shinsou.kmp.content.InMemoryContentBlobStore
+import dev.shinsou.kmp.content.transaction.ContentCommitResult
+import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.rights.ContentAccessRequest
 import dev.shinsou.kmp.content.access.ContentOperationGate
 import dev.shinsou.kmp.data.AppSnapshot

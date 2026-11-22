@@ -11,8 +11,10 @@ import kotlin.test.assertTrue
  * small interfaces into one does not slip past the limit.
  *
  * 0008: the service interfaces are found, not listed: every interface declared in the main sources
- * of a UI module (:ui and :ui-*), and every interface of a feature module (:feature-*) that a UI
- * module's main sources name. The modules come from settings.gradle.kts, so a new one is covered.
+ * of a UI module (:ui and :ui-*), every interface of a feature or data module (:feature-*, :data-*)
+ * that a UI module's main sources name, and every interface a service hands out as the type of one
+ * of its properties (`ContentFeatures.operations`, `ReaderTranslation.chapters`), which a screen
+ * uses without naming it. The modules come from settings.gradle.kts, so a new one is covered.
  *
  * The only interfaces allowed over the limit are the [UMBRELLAS]: the bundles the platform hosts
  * implement and the composition root hands over. Code depends on the narrow interfaces instead;
@@ -24,6 +26,7 @@ class ServiceInterfaceSizeTest {
         INCLUDE.findAll(File("../settings.gradle.kts").readText()).map { it.groupValues[1] }.toList()
     private val uiModules = modules.filter { it == "ui" || it.startsWith("ui-") }
     private val featureModules = modules.filter { it.startsWith("feature-") }
+    private val dataModules = modules.filter { it.startsWith("data-") }
 
     private fun mainSources(module: String): List<File> = File("../$module/src").walkTopDown()
         .filter { it.isFile && it.extension == "kt" && it.parentFile.invariantSeparatorsPath.contains("Main/") }
@@ -32,7 +35,7 @@ class ServiceInterfaceSizeTest {
     @Test
     fun noServiceInterfaceHasMoreThanFifteenMembers() {
         val uiDeclared = uiModules.flatMap(::mainSources).flatMap { parse(it.readLines()) }
-        val featureDeclared = featureModules.flatMap(::mainSources).flatMap { parse(it.readLines()) }
+        val featureDeclared = (featureModules + dataModules).flatMap(::mainSources).flatMap { parse(it.readLines()) }
         val interfaces = (featureDeclared + uiDeclared).associateBy { it.name }
         fun count(name: String, seen: Set<String> = emptySet()): Int {
             val declared = interfaces[name] ?: return 0
@@ -40,8 +43,11 @@ class ServiceInterfaceSizeTest {
             return declared.members + declared.parents.sumOf { count(it, seen + name) }
         }
         val uiText = uiModules.flatMap(::mainSources).joinToString("\n") { it.readText() }
-        val services = uiDeclared.map { it.name }.toSet() +
+        val named = uiDeclared.map { it.name }.toSet() +
             featureDeclared.map { it.name }.filter { Regex("""\b$it\b""").containsMatchIn(uiText) }
+        val services = generateSequence(named) { found ->
+            (found + found.flatMap { interfaces[it]?.propertyTypes.orEmpty() }.filter { it in interfaces }).takeIf { it != found }
+        }.last()
         assertTrue(KNOWN_SERVICES.all { it in services }, "The scan lost a known service: ${KNOWN_SERVICES - services}")
         val tooLarge = services.filter { it !in UMBRELLAS }.mapNotNull { name ->
             count(name).takeIf { it > MAX_MEMBERS }?.let { "$name: $it" }
@@ -64,7 +70,7 @@ class ServiceInterfaceSizeTest {
         assertEquals(emptySet(), gone, "No longer names an umbrella; delete these from UMBRELLA_USERS")
     }
 
-    private class Declared(val name: String, val parents: List<String>, val members: Int)
+    private class Declared(val name: String, val parents: List<String>, val members: Int, val propertyTypes: List<String>)
 
     /** The top-level interfaces of a file; one without a body (a bundle of others) has no members of its own. */
     private fun parse(lines: List<String>): List<Declared> =
@@ -75,12 +81,16 @@ class ServiceInterfaceSizeTest {
             val header = lines.subList(start, (open ?: last) + 1).joinToString(" ")
             val parents = header.substringAfter(name).substringBefore("{").substringAfter(":", "")
                 .split(',').map { it.trim().substringBefore('<') }.filter { it.isNotEmpty() }
+            val body = when {
+                open == null || lines[open].trimEnd().endsWith("}") -> emptyList()
+                else -> lines.subList(open + 1, (open until lines.size).first { lines[it] == "}" })
+            }
             val members = when {
                 open == null -> 0
                 lines[open].trimEnd().endsWith("}") -> INLINE_MEMBER.findAll(lines[open].substringAfter('{')).count()
-                else -> (open + 1 until (open until lines.size).first { lines[it] == "}" }).count { MEMBER.containsMatchIn(lines[it]) }
+                else -> body.count { MEMBER.containsMatchIn(it) }
             }
-            Declared(name, parents, members)
+            Declared(name, parents, members, body.mapNotNull { PROPERTY_TYPE.find(it)?.groupValues?.get(1)?.substringAfterLast('.') })
         }
 
     private companion object {
@@ -91,9 +101,14 @@ class ServiceInterfaceSizeTest {
         val MODIFIERS = """(?:(?:public|internal|override|abstract|open|suspend|operator|inline) )*"""
         val MEMBER = Regex("""^ {4}$MODIFIERS(?:fun|val|var) """)
         val INLINE_MEMBER = Regex("""\b(?:fun|val|var) """)
+        val PROPERTY_TYPE = Regex("""^ {4}$MODIFIERS(?:val|var) \w+: ([\w.]+)""")
 
         /** Services the scan must find, so it cannot silently stop finding anything. */
-        val KNOWN_SERVICES = setOf("SourceCatalog", "SyncAccount", "MangaChapterTranslation", "ContentFeatures", "ClipboardHost")
+        val KNOWN_SERVICES = setOf(
+            "SourceCatalog", "SyncAccount", "MangaChapterTranslation", "ContentFeatures", "ClipboardHost",
+            // a data module's, named by a UI module; one only a service's property hands out
+            "ProtectedContentOperations", "ChapterTranslator",
+        )
 
         val UMBRELLAS = setOf("ShinsouAppServices", "BrowseCallbacks", "SyncClient", "MangaTranslationService")
         val DECLARING_FILES = setOf(

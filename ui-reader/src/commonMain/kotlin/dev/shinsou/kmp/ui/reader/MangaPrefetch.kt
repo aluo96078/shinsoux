@@ -55,7 +55,7 @@ public fun mangaPrefetchJob(
         unit = chapter.id.toString(),
         load = { throw IllegalStateException("manga chapters run through run") },
         run = { progress ->
-            val settings = translation.settings(workKey)
+            val settings = translation.chapters.settings(workKey)
             val pages = loadPages().sortedBy { it.index }
             translateMangaChapterAhead(
                 manga, translation, workKey, mangaChapterKey(chapter), to = settings?.to, pageCount = pages.size,
@@ -91,7 +91,7 @@ internal suspend fun translateMangaChapterAhead(
     if (!manga.deviceSupported) throw TranslationException(TranslationFailure.DEVICE_UNSUPPORTED, "Manga translation is not available on this device")
     // Downloads are shown and started from the reader, where their size is shown first.
     if (!manga.modelsInstalled()) throw TranslationException(TranslationFailure.MODEL_MISSING, "The manga recognition models are not downloaded")
-    val settings = translation.settings(workKey)
+    val settings = translation.chapters.settings(workKey)
     // a work with no settings of its own translates as it did, or would, by itself
     // the language picked for the work's pages, else the one its source names, whether or not the
     // work may start by itself; a source naming Chinese but not the script has its pages read, as the
@@ -115,10 +115,10 @@ internal suspend fun translateMangaChapterAhead(
         else -> OfflineModelCatalog.language(named)?.takeIf(MangaLanguages::readable)
     }).also { source = it; resolved = true }
     val auto = if (chosen != null || !WorkTranslationSettings.startsByItself(settings)) null
-    else translation.startedByItself(workKey) ?: run {
-        val pair = known()?.let { k -> appLanguage?.let { translation.autoTranslation(k, it) } } ?: return@run null
+    else translation.chapters.startedByItself(workKey) ?: run {
+        val pair = known()?.let { k -> appLanguage?.let { translation.chapters.autoTranslation(k, it) } } ?: return@run null
         // as the reader does: a language picked for the work while it was off is kept when allowed
-        pair.first to translation.autoTarget(pair, settings?.to)
+        pair.first to translation.chapters.autoTarget(pair, settings?.to)
     }
     val from = auto?.first ?: picked ?: settings?.takeIf { it.enabled }?.from?.takeIf(MangaLanguages::readable) ?: known()
         ?: settings?.from?.takeIf { MangaLanguages.readable(it) && !chineseUnnamed }
@@ -134,13 +134,13 @@ internal suspend fun translateMangaChapterAhead(
     if (settings == null || !settings.enabled || settings.from != from || settings.to != target || (chosen != null && !settings.fromPicked)) {
         val base = settings ?: WorkTranslationSettings(enabled = true, from = from, to = target)
         // a language picked when queueing is the reader's, as one picked in the reader is
-        translation.saveSettings(workKey, base.copy(enabled = true, from = from, to = target, fromPicked = base.fromPicked || chosen != null))
+        translation.chapters.saveSettings(workKey, base.copy(enabled = true, from = from, to = target, fromPicked = base.fromPicked || chosen != null))
     }
     if (manga.missingLanguageBytes(from, target) > 0) {
         throw TranslationException(TranslationFailure.MODEL_MISSING, "The text recognition models or font for $from to $target are not downloaded")
     }
-    if (!translation.supports(from, target)) throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "No translation from $from to $target")
-    if (translation.activeProvider() == TranslationProviderKind.OFFLINE && translation.missingModels(from, target).isNotEmpty()) {
+    if (!translation.chapters.supports(from, target)) throw TranslationException(TranslationFailure.UNSUPPORTED_PAIR, "No translation from $from to $target")
+    if (translation.setup.activeProvider() == TranslationProviderKind.OFFLINE && translation.models.missingModels(from, target).isNotEmpty()) {
         throw TranslationException(TranslationFailure.MODEL_MISSING, "The models for $from to $target are not downloaded")
     }
     val complete = manga.translateChapter(

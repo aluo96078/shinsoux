@@ -14,7 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
-import dev.shinsou.kmp.content.SchemaTooNewException
+import dev.shinsou.kmp.content.schema.SchemaTooNewException
 import dev.shinsou.kmp.ui.i18n.StringKey
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import dev.shinsou.kmp.ui.i18n.text

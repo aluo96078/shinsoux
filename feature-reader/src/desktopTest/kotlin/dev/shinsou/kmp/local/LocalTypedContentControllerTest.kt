@@ -4,7 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.shinsou.kmp.content.acquisition.EpubArchiveExtractor
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.domain.content.ContentRepresentation
-import dev.shinsou.kmp.content.ContentSyncMode
+import dev.shinsou.kmp.content.transaction.ContentSyncMode
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.files.AppFileSystem
 import dev.shinsou.kmp.reader.ImageRenderPageFactory

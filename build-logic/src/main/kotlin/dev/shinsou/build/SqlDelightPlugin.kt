@@ -191,7 +191,7 @@ private val STATEMENT = Regex("""(?:\.execute|\.executeQuery|\bQuery)\(\s*(-?[0-
 /** A driver call with a literal null identifier (the call's first argument, positional or named). */
 private val NULL_IDENTIFIER = Regex("""(?:\.execute|\.executeQuery)\(\s*(?:identifier\s*=\s*)?null\s*,|\bidentifier\s*=\s*null\b""")
 private const val REGISTRY_PROJECT = ":data-content"
-private const val REGISTRY_SOURCE = "src/commonMain/kotlin/dev/shinsou/kmp/content/SqlStatementIdentifiers.kt"
+private const val REGISTRY_SOURCE = "src/commonMain/kotlin/dev/shinsou/kmp/content/sql/SqlStatementIdentifiers.kt"
 private const val CHECK_TASK = "checkSqlStatementIdentifiers"
 private const val SQ_SOURCES = "src/commonMain/sqldelight"
 private const val GENERATED_SOURCES = "build/generated/sqldelight/code"
